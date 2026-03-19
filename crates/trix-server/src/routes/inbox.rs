@@ -5,14 +5,23 @@ use axum::{
     routing::{get, post},
 };
 use serde::Deserialize;
+use std::time::{SystemTime, UNIX_EPOCH};
+use uuid::Uuid;
 
 use crate::{db::InboxItemRow, error::AppError, state::AppState};
-use trix_types::{AckInboxRequest, AckInboxResponse, InboxItem, InboxResponse};
+use trix_types::{
+    AckInboxRequest, AckInboxResponse, InboxItem, InboxResponse, LeaseInboxRequest,
+    LeaseInboxResponse,
+};
 
 use super::chats::message_to_api;
 
+const DEFAULT_INBOX_LEASE_TTL_SECONDS: u64 = 30;
+const MAX_INBOX_LEASE_TTL_SECONDS: u64 = 5 * 60;
+
 #[derive(Debug, Deserialize)]
 struct InboxQuery {
+    after_inbox_id: Option<u64>,
     limit: Option<usize>,
 }
 
@@ -31,7 +40,7 @@ async fn get_inbox(
     let principal = state.authenticate_active_headers(&headers).await?;
     let items = state
         .db
-        .get_inbox_for_device(principal.device_id, query.limit)
+        .get_inbox_for_device(principal.device_id, query.after_inbox_id, query.limit)
         .await?;
 
     Ok(Json(InboxResponse {
@@ -39,10 +48,44 @@ async fn get_inbox(
     }))
 }
 
-async fn lease_inbox() -> Result<Json<serde_json::Value>, AppError> {
-    Err(AppError::not_implemented(
-        "inbox lease is not implemented yet",
-    ))
+async fn lease_inbox(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    request: Option<Json<LeaseInboxRequest>>,
+) -> Result<Json<LeaseInboxResponse>, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+    let request = request
+        .map(|Json(request)| request)
+        .unwrap_or(LeaseInboxRequest {
+            lease_owner: None,
+            limit: None,
+            after_inbox_id: None,
+            lease_ttl_seconds: None,
+        });
+    let lease_owner = request
+        .lease_owner
+        .unwrap_or_else(|| format!("device:{}:{}", principal.device_id, Uuid::new_v4().simple()));
+    let lease_ttl_seconds = request
+        .lease_ttl_seconds
+        .unwrap_or(DEFAULT_INBOX_LEASE_TTL_SECONDS)
+        .clamp(1, MAX_INBOX_LEASE_TTL_SECONDS);
+
+    let items = state
+        .db
+        .lease_inbox_for_device(
+            principal.device_id,
+            &lease_owner,
+            request.after_inbox_id,
+            request.limit,
+            Some(lease_ttl_seconds),
+        )
+        .await?;
+
+    Ok(Json(LeaseInboxResponse {
+        lease_owner,
+        lease_expires_at_unix: unix_now().saturating_add(lease_ttl_seconds),
+        items: items.into_iter().map(inbox_item_to_api).collect(),
+    }))
 }
 
 async fn ack_inbox(
@@ -73,4 +116,11 @@ fn inbox_item_to_api(item: InboxItemRow) -> InboxItem {
         inbox_id: item.inbox_id,
         message: message_to_api(item.message),
     }
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
