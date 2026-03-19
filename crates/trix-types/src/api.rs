@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    AccountId, ChatId, ChatType, ContentType, DeviceId, DeviceStatus, MessageId, MessageKind,
+    AccountId, ChatId, ChatType, ContentType, DeviceId, DeviceStatus, HistorySyncJobStatus,
+    HistorySyncJobType, MessageId, MessageKind,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,6 +145,19 @@ pub struct ApproveDeviceRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApproveDeviceResponse {
+    pub account_id: AccountId,
+    pub device_id: DeviceId,
+    pub device_status: DeviceStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevokeDeviceRequest {
+    pub reason: String,
+    pub account_root_signature_b64: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevokeDeviceResponse {
     pub account_id: AccountId,
     pub device_id: DeviceId,
     pub device_status: DeviceStatus,
@@ -342,4 +356,33 @@ pub struct BlobMetadataResponse {
     pub sha256_b64: String,
     pub upload_status: BlobUploadStatus,
     pub created_by_device_id: DeviceId,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistorySyncJobSummary {
+    pub job_id: String,
+    pub job_type: HistorySyncJobType,
+    pub job_status: HistorySyncJobStatus,
+    pub source_device_id: DeviceId,
+    pub target_device_id: DeviceId,
+    pub chat_id: Option<ChatId>,
+    pub cursor_json: Value,
+    pub created_at_unix: u64,
+    pub updated_at_unix: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistorySyncJobListResponse {
+    pub jobs: Vec<HistorySyncJobSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompleteHistorySyncJobRequest {
+    pub cursor_json: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompleteHistorySyncJobResponse {
+    pub job_id: String,
+    pub job_status: HistorySyncJobStatus,
 }

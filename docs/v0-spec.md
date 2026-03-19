@@ -650,12 +650,23 @@ Request:
 
 Response:
 
-- revocation accepted
-- background membership removals scheduled
+- device becomes `revoked`
+- server-side inbox and chat membership access are cut off immediately
+- MLS cleanup commits remain a follow-up coordination step
 
 ### `GET /v0/devices`
 
 Returns all devices for the authenticated account.
+
+## History Sync
+
+### `GET /v0/history-sync/jobs`
+
+Returns orchestration jobs assigned to the authenticated source device.
+
+### `POST /v0/history-sync/jobs/{job_id}/complete`
+
+Marks a history sync job as completed and optionally updates its cursor payload.
 
 ## Key Packages
 

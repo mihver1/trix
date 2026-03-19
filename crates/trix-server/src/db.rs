@@ -6,7 +6,10 @@ use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use uuid::Uuid;
 
 use crate::error::AppError;
-use trix_types::{BlobUploadStatus, ChatType, ContentType, DeviceStatus, MessageKind};
+use trix_types::{
+    BlobUploadStatus, ChatType, ContentType, DeviceStatus, HistorySyncJobStatus,
+    HistorySyncJobType, MessageKind,
+};
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./../../migrations");
 
@@ -17,6 +20,8 @@ const DEFAULT_HISTORY_LIMIT: usize = 100;
 const MAX_HISTORY_LIMIT: usize = 500;
 const DEFAULT_INBOX_LIMIT: usize = 100;
 const MAX_INBOX_LIMIT: usize = 500;
+const DEFAULT_HISTORY_SYNC_JOB_LIMIT: usize = 100;
+const MAX_HISTORY_SYNC_JOB_LIMIT: usize = 500;
 
 #[derive(Debug, Clone)]
 pub struct Database {
@@ -125,6 +130,41 @@ pub struct PendingDeviceBootstrapRow {
     pub transport_pubkey: Vec<u8>,
     pub account_root_pubkey: Vec<u8>,
     pub device_status: DeviceStatus,
+}
+
+#[derive(Debug)]
+pub struct DeviceRevokeContextRow {
+    pub account_id: Uuid,
+    pub account_root_pubkey: Vec<u8>,
+    pub device_status: DeviceStatus,
+}
+
+#[derive(Debug)]
+pub struct RevokeDeviceInput {
+    pub actor_account_id: Uuid,
+    pub actor_device_id: Uuid,
+    pub target_device_id: Uuid,
+    pub reason: String,
+}
+
+#[derive(Debug)]
+pub struct RevokeDeviceOutput {
+    pub account_id: Uuid,
+    pub device_id: Uuid,
+    pub device_status: DeviceStatus,
+}
+
+#[derive(Debug)]
+pub struct HistorySyncJobRow {
+    pub job_id: Uuid,
+    pub job_type: HistorySyncJobType,
+    pub job_status: HistorySyncJobStatus,
+    pub source_device_id: Uuid,
+    pub target_device_id: Uuid,
+    pub chat_id: Option<Uuid>,
+    pub cursor_json: Value,
+    pub created_at_unix: u64,
+    pub updated_at_unix: u64,
 }
 
 #[derive(Debug)]
@@ -590,6 +630,117 @@ impl Database {
         Ok(())
     }
 
+    pub async fn list_history_sync_jobs_for_source_device(
+        &self,
+        account_id: Uuid,
+        source_device_id: Uuid,
+        status: Option<HistorySyncJobStatus>,
+        limit: Option<usize>,
+    ) -> Result<Vec<HistorySyncJobRow>, AppError> {
+        let limit = clamp_limit(
+            limit,
+            DEFAULT_HISTORY_SYNC_JOB_LIMIT,
+            MAX_HISTORY_SYNC_JOB_LIMIT,
+        );
+
+        let rows =
+            if let Some(status) = status {
+                sqlx::query(
+                    r#"
+                SELECT
+                    job_id,
+                    job_type::text AS job_type,
+                    job_status::text AS job_status,
+                    source_device_id,
+                    target_device_id,
+                    chat_id,
+                    cursor_json,
+                    extract(epoch from created_at)::bigint AS created_at_unix,
+                    extract(epoch from updated_at)::bigint AS updated_at_unix
+                FROM history_sync_jobs
+                WHERE account_id = $1
+                  AND source_device_id = $2
+                  AND job_status = $3::history_sync_job_status
+                ORDER BY created_at ASC, job_id ASC
+                LIMIT $4
+                "#,
+                )
+                .bind(account_id)
+                .bind(source_device_id)
+                .bind(history_sync_job_status_db(status))
+                .bind(i64::try_from(limit).map_err(|_| {
+                    AppError::bad_request("history sync limit exceeds supported range")
+                })?)
+                .fetch_all(&self.pool)
+                .await
+            } else {
+                sqlx::query(
+                    r#"
+                SELECT
+                    job_id,
+                    job_type::text AS job_type,
+                    job_status::text AS job_status,
+                    source_device_id,
+                    target_device_id,
+                    chat_id,
+                    cursor_json,
+                    extract(epoch from created_at)::bigint AS created_at_unix,
+                    extract(epoch from updated_at)::bigint AS updated_at_unix
+                FROM history_sync_jobs
+                WHERE account_id = $1
+                  AND source_device_id = $2
+                ORDER BY created_at ASC, job_id ASC
+                LIMIT $3
+                "#,
+                )
+                .bind(account_id)
+                .bind(source_device_id)
+                .bind(i64::try_from(limit).map_err(|_| {
+                    AppError::bad_request("history sync limit exceeds supported range")
+                })?)
+                .fetch_all(&self.pool)
+                .await
+            }
+            .map_err(map_db_error)?;
+
+        rows.into_iter().map(history_sync_job_row_from_db).collect()
+    }
+
+    pub async fn complete_history_sync_job_for_source_device(
+        &self,
+        account_id: Uuid,
+        source_device_id: Uuid,
+        job_id: Uuid,
+        cursor_json: Option<Value>,
+    ) -> Result<Option<HistorySyncJobStatus>, AppError> {
+        let row = sqlx::query(
+            r#"
+            UPDATE history_sync_jobs
+            SET job_status = 'completed'::history_sync_job_status,
+                cursor_json = COALESCE($4, cursor_json),
+                updated_at = now()
+            WHERE job_id = $1
+              AND account_id = $2
+              AND source_device_id = $3
+              AND job_status IN (
+                'pending'::history_sync_job_status,
+                'running'::history_sync_job_status
+              )
+            RETURNING job_status::text AS job_status
+            "#,
+        )
+        .bind(job_id)
+        .bind(account_id)
+        .bind(source_device_id)
+        .bind(cursor_json)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        row.map(|row| parse_history_sync_job_status(&row_text(&row, "job_status")?))
+            .transpose()
+    }
+
     pub async fn list_devices_for_account(
         &self,
         account_id: Uuid,
@@ -830,6 +981,38 @@ impl Database {
         }))
     }
 
+    pub async fn get_device_revoke_context(
+        &self,
+        target_device_id: Uuid,
+    ) -> Result<Option<DeviceRevokeContextRow>, AppError> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                d.account_id,
+                d.device_status::text AS device_status,
+                a.account_root_pubkey
+            FROM devices d
+            JOIN accounts a
+              ON a.account_id = d.account_id
+            WHERE d.device_id = $1
+            "#,
+        )
+        .bind(target_device_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        Ok(Some(DeviceRevokeContextRow {
+            account_id: row_uuid(&row, "account_id")?,
+            account_root_pubkey: row_bytes(&row, "account_root_pubkey")?,
+            device_status: parse_device_status(&row_text(&row, "device_status")?)?,
+        }))
+    }
+
     pub async fn approve_pending_device(
         &self,
         input: ApprovePendingDeviceInput,
@@ -944,6 +1127,14 @@ impl Database {
         .await
         .map_err(map_db_error)?;
 
+        schedule_approved_device_sync_jobs_tx(
+            &mut tx,
+            input.actor_account_id,
+            input.actor_device_id,
+            input.target_device_id,
+        )
+        .await?;
+
         tx.commit()
             .await
             .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
@@ -952,6 +1143,173 @@ impl Database {
             account_id: input.actor_account_id,
             device_id: input.target_device_id,
             device_status: DeviceStatus::Active,
+        })
+    }
+
+    pub async fn revoke_device(
+        &self,
+        input: RevokeDeviceInput,
+    ) -> Result<RevokeDeviceOutput, AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
+        let actor_row = sqlx::query(
+            r#"
+            SELECT 1
+            FROM devices
+            WHERE device_id = $1
+              AND account_id = $2
+              AND device_status = 'active'::device_status
+            "#,
+        )
+        .bind(input.actor_device_id)
+        .bind(input.actor_account_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        if actor_row.is_none() {
+            return Err(AppError::unauthorized("active revoking device not found"));
+        }
+
+        if input.target_device_id == input.actor_device_id {
+            return Err(AppError::bad_request(
+                "self-revocation is not supported through this endpoint",
+            ));
+        }
+
+        let target_row = sqlx::query(
+            r#"
+            SELECT account_id, device_status::text AS device_status
+            FROM devices
+            WHERE device_id = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(input.target_device_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        let Some(target_row) = target_row else {
+            return Err(AppError::not_found("target device not found"));
+        };
+
+        let target_account_id = row_uuid(&target_row, "account_id")?;
+        if target_account_id != input.actor_account_id {
+            return Err(AppError::unauthorized(
+                "target device does not belong to the authenticated account",
+            ));
+        }
+
+        let target_status = parse_device_status(&row_text(&target_row, "device_status")?)?;
+        if target_status == DeviceStatus::Revoked {
+            return Err(AppError::conflict("device is already revoked"));
+        }
+
+        sqlx::query(
+            r#"
+            UPDATE devices
+            SET device_status = 'revoked'::device_status,
+                revoked_at = COALESCE(revoked_at, now())
+            WHERE device_id = $1
+            "#,
+        )
+        .bind(input.target_device_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        sqlx::query(
+            r#"
+            UPDATE device_key_packages
+            SET status = 'expired'::key_package_status
+            WHERE device_id = $1
+              AND status IN ('available'::key_package_status, 'reserved'::key_package_status)
+            "#,
+        )
+        .bind(input.target_device_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        sqlx::query(
+            r#"
+            UPDATE device_inbox
+            SET delivery_state = 'failed'::delivery_state,
+                lease_owner = NULL,
+                lease_expires_at = NULL
+            WHERE device_id = $1
+              AND delivery_state IN ('pending'::delivery_state, 'leased'::delivery_state)
+            "#,
+        )
+        .bind(input.target_device_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        sqlx::query(
+            r#"
+            UPDATE chat_device_members cdm
+            SET membership_status = 'removed'::device_membership_status,
+                removed_in_epoch = COALESCE(cdm.removed_in_epoch, mgs.epoch),
+                removed_at = COALESCE(cdm.removed_at, now())
+            FROM mls_group_states mgs
+            WHERE cdm.chat_id = mgs.chat_id
+              AND cdm.device_id = $1
+              AND cdm.membership_status <> 'removed'::device_membership_status
+            "#,
+        )
+        .bind(input.target_device_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        sqlx::query(
+            r#"
+            UPDATE device_link_intents
+            SET status = 'canceled'::link_intent_status
+            WHERE status IN ('open'::link_intent_status, 'pending_approval'::link_intent_status)
+              AND (created_by_device_id = $1 OR pending_device_id = $1)
+            "#,
+        )
+        .bind(input.target_device_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO device_log (account_id, event_type, subject_device_id, actor_device_id, payload_json)
+            VALUES ($1, 'device_revoked'::device_log_event_type, $2, $3, $4)
+            "#,
+        )
+        .bind(input.actor_account_id)
+        .bind(input.target_device_id)
+        .bind(input.actor_device_id)
+        .bind(serde_json::json!({ "reason": input.reason }))
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        schedule_revoked_device_sync_jobs_tx(
+            &mut tx,
+            input.actor_account_id,
+            input.actor_device_id,
+            input.target_device_id,
+            &input.reason,
+        )
+        .await?;
+
+        tx.commit()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
+
+        Ok(RevokeDeviceOutput {
+            account_id: input.actor_account_id,
+            device_id: input.target_device_id,
+            device_status: DeviceStatus::Revoked,
         })
     }
 
@@ -2525,6 +2883,256 @@ async fn insert_device_key_packages_tx(
     Ok(())
 }
 
+async fn schedule_approved_device_sync_jobs_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: Uuid,
+    source_device_id: Uuid,
+    target_device_id: Uuid,
+) -> Result<(), AppError> {
+    let account_sync_row = sqlx::query(
+        r#"
+        SELECT c.chat_id, mgs.epoch
+        FROM chats c
+        JOIN mls_group_states mgs
+          ON mgs.chat_id = c.chat_id
+        JOIN chat_account_members cam
+          ON cam.chat_id = c.chat_id
+        WHERE c.chat_type = 'account_sync'::chat_type
+          AND c.archived_at IS NULL
+          AND cam.account_id = $1
+          AND cam.membership_status = 'active'::membership_status
+        ORDER BY c.created_at ASC
+        LIMIT 1
+        FOR UPDATE
+        "#,
+    )
+    .bind(account_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(map_db_error)?;
+    let Some(account_sync_row) = account_sync_row else {
+        return Err(AppError::conflict("account sync chat not found"));
+    };
+    let account_sync_chat_id = row_uuid(&account_sync_row, "chat_id")?;
+    let account_sync_epoch = row_u64_from_i64(&account_sync_row, "epoch")?;
+
+    let membership_row = sqlx::query(
+        r#"
+        SELECT membership_status::text AS membership_status
+        FROM chat_device_members
+        WHERE chat_id = $1
+          AND device_id = $2
+        "#,
+    )
+    .bind(account_sync_chat_id)
+    .bind(target_device_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(map_db_error)?;
+
+    let is_active = membership_row
+        .as_ref()
+        .map(|row| row_text(row, "membership_status"))
+        .transpose()?
+        .is_some_and(|status| status == "active");
+
+    if !is_active {
+        let leaf_index_row = sqlx::query(
+            r#"
+            SELECT COALESCE(MAX(leaf_index), -1) AS max_leaf_index
+            FROM chat_device_members
+            WHERE chat_id = $1
+            "#,
+        )
+        .bind(account_sync_chat_id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(map_db_error)?;
+        let next_leaf_index = row_i32(&leaf_index_row, "max_leaf_index")? + 1;
+
+        sqlx::query(
+            r#"
+            INSERT INTO chat_device_members (
+                chat_id,
+                device_id,
+                leaf_index,
+                membership_status,
+                added_in_epoch,
+                removed_in_epoch,
+                joined_at,
+                removed_at
+            )
+            VALUES (
+                $1,
+                $2,
+                $3,
+                'active'::device_membership_status,
+                $4,
+                NULL,
+                now(),
+                NULL
+            )
+            ON CONFLICT (chat_id, device_id) DO UPDATE
+            SET leaf_index = EXCLUDED.leaf_index,
+                membership_status = 'active'::device_membership_status,
+                added_in_epoch = EXCLUDED.added_in_epoch,
+                removed_in_epoch = NULL,
+                joined_at = now(),
+                removed_at = NULL
+            "#,
+        )
+        .bind(account_sync_chat_id)
+        .bind(target_device_id)
+        .bind(next_leaf_index)
+        .bind(u64_to_i64(account_sync_epoch, "account sync epoch")?)
+        .execute(&mut **tx)
+        .await
+        .map_err(map_db_error)?;
+    }
+
+    schedule_history_sync_job_tx(
+        tx,
+        account_id,
+        source_device_id,
+        target_device_id,
+        Some(account_sync_chat_id),
+        HistorySyncJobType::InitialSync,
+        serde_json::json!({
+            "kind": "account_sync_bootstrap",
+            "account_sync_chat_id": account_sync_chat_id,
+            "target_device_id": target_device_id,
+        }),
+    )
+    .await?;
+
+    let chat_rows = sqlx::query(
+        r#"
+        SELECT c.chat_id
+        FROM chats c
+        JOIN chat_account_members cam
+          ON cam.chat_id = c.chat_id
+        WHERE cam.account_id = $1
+          AND cam.membership_status = 'active'::membership_status
+          AND c.archived_at IS NULL
+          AND c.chat_type <> 'account_sync'::chat_type
+        ORDER BY c.created_at ASC, c.chat_id ASC
+        "#,
+    )
+    .bind(account_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(map_db_error)?;
+
+    for chat_row in chat_rows {
+        let chat_id = row_uuid(&chat_row, "chat_id")?;
+        schedule_history_sync_job_tx(
+            tx,
+            account_id,
+            source_device_id,
+            target_device_id,
+            Some(chat_id),
+            HistorySyncJobType::ChatBackfill,
+            serde_json::json!({
+                "kind": "chat_backfill",
+                "chat_id": chat_id,
+                "target_device_id": target_device_id,
+            }),
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn schedule_revoked_device_sync_jobs_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: Uuid,
+    source_device_id: Uuid,
+    revoked_device_id: Uuid,
+    reason: &str,
+) -> Result<(), AppError> {
+    let chat_rows = sqlx::query(
+        r#"
+        SELECT DISTINCT c.chat_id
+        FROM chats c
+        JOIN chat_device_members cdm
+          ON cdm.chat_id = c.chat_id
+        WHERE cdm.device_id = $1
+          AND c.archived_at IS NULL
+        ORDER BY c.chat_id ASC
+        "#,
+    )
+    .bind(revoked_device_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(map_db_error)?;
+
+    for chat_row in chat_rows {
+        let chat_id = row_uuid(&chat_row, "chat_id")?;
+        schedule_history_sync_job_tx(
+            tx,
+            account_id,
+            source_device_id,
+            revoked_device_id,
+            Some(chat_id),
+            HistorySyncJobType::DeviceRekey,
+            serde_json::json!({
+                "kind": "device_rekey",
+                "chat_id": chat_id,
+                "revoked_device_id": revoked_device_id,
+                "reason": reason,
+            }),
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn schedule_history_sync_job_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: Uuid,
+    source_device_id: Uuid,
+    target_device_id: Uuid,
+    chat_id: Option<Uuid>,
+    job_type: HistorySyncJobType,
+    cursor_json: Value,
+) -> Result<(), AppError> {
+    sqlx::query(
+        r#"
+        INSERT INTO history_sync_jobs (
+            account_id,
+            source_device_id,
+            target_device_id,
+            chat_id,
+            job_type,
+            job_status,
+            cursor_json
+        )
+        VALUES (
+            $1,
+            $2,
+            $3,
+            $4,
+            $5::history_sync_job_type,
+            'pending'::history_sync_job_status,
+            $6
+        )
+        "#,
+    )
+    .bind(account_id)
+    .bind(source_device_id)
+    .bind(target_device_id)
+    .bind(chat_id)
+    .bind(history_sync_job_type_db(job_type))
+    .bind(sqlx::types::Json(cursor_json))
+    .execute(&mut **tx)
+    .await
+    .map_err(map_db_error)?;
+
+    Ok(())
+}
+
 async fn active_chat_device_ids_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     chat_id: Uuid,
@@ -2844,6 +3452,30 @@ fn parse_blob_upload_status(value: &str) -> Result<BlobUploadStatus, AppError> {
     }
 }
 
+fn parse_history_sync_job_type(value: &str) -> Result<HistorySyncJobType, AppError> {
+    match value {
+        "initial_sync" => Ok(HistorySyncJobType::InitialSync),
+        "chat_backfill" => Ok(HistorySyncJobType::ChatBackfill),
+        "device_rekey" => Ok(HistorySyncJobType::DeviceRekey),
+        other => Err(AppError::internal(format!(
+            "unknown history sync job type from database: {other}"
+        ))),
+    }
+}
+
+fn parse_history_sync_job_status(value: &str) -> Result<HistorySyncJobStatus, AppError> {
+    match value {
+        "pending" => Ok(HistorySyncJobStatus::Pending),
+        "running" => Ok(HistorySyncJobStatus::Running),
+        "completed" => Ok(HistorySyncJobStatus::Completed),
+        "failed" => Ok(HistorySyncJobStatus::Failed),
+        "canceled" => Ok(HistorySyncJobStatus::Canceled),
+        other => Err(AppError::internal(format!(
+            "unknown history sync job status from database: {other}"
+        ))),
+    }
+}
+
 fn parse_content_type(value: &str) -> Result<ContentType, AppError> {
     match value {
         "text" => Ok(ContentType::Text),
@@ -2881,6 +3513,24 @@ fn content_type_db(value: ContentType) -> &'static str {
         ContentType::Receipt => "receipt",
         ContentType::Attachment => "attachment",
         ContentType::ChatEvent => "chat_event",
+    }
+}
+
+fn history_sync_job_type_db(value: HistorySyncJobType) -> &'static str {
+    match value {
+        HistorySyncJobType::InitialSync => "initial_sync",
+        HistorySyncJobType::ChatBackfill => "chat_backfill",
+        HistorySyncJobType::DeviceRekey => "device_rekey",
+    }
+}
+
+fn history_sync_job_status_db(value: HistorySyncJobStatus) -> &'static str {
+    match value {
+        HistorySyncJobStatus::Pending => "pending",
+        HistorySyncJobStatus::Running => "running",
+        HistorySyncJobStatus::Completed => "completed",
+        HistorySyncJobStatus::Failed => "failed",
+        HistorySyncJobStatus::Canceled => "canceled",
     }
 }
 
@@ -2949,6 +3599,20 @@ fn blob_metadata_row_from_db(row: sqlx::postgres::PgRow) -> Result<BlobMetadataR
         upload_status: parse_blob_upload_status(&row_text(&row, "upload_status")?)?,
         created_by_device_id: row_uuid(&row, "created_by_device_id")?,
         relative_path: row_text(&row, "relative_path")?,
+    })
+}
+
+fn history_sync_job_row_from_db(row: sqlx::postgres::PgRow) -> Result<HistorySyncJobRow, AppError> {
+    Ok(HistorySyncJobRow {
+        job_id: row_uuid(&row, "job_id")?,
+        job_type: parse_history_sync_job_type(&row_text(&row, "job_type")?)?,
+        job_status: parse_history_sync_job_status(&row_text(&row, "job_status")?)?,
+        source_device_id: row_uuid(&row, "source_device_id")?,
+        target_device_id: row_uuid(&row, "target_device_id")?,
+        chat_id: row_optional_uuid(&row, "chat_id")?,
+        cursor_json: row_value(&row, "cursor_json")?,
+        created_at_unix: row_u64_from_i64(&row, "created_at_unix")?,
+        updated_at_unix: row_u64_from_i64(&row, "updated_at_unix")?,
     })
 }
 
