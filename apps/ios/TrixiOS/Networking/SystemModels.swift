@@ -1,28 +1,129 @@
 import Foundation
 
-enum ServiceStatus: String, Decodable {
+enum ServiceStatus: String, Codable {
     case ok
     case degraded
 }
 
-enum DeviceStatus: String, Decodable {
+enum DeviceStatus: String, Codable {
     case pending
     case active
     case revoked
 }
 
-enum HistorySyncJobType: String, Decodable {
-    case initialSync
-    case chatBackfill
-    case deviceRekey
+enum ChatType: String, Codable, CaseIterable {
+    case dm
+    case group
+    case accountSync = "account_sync"
 }
 
-enum HistorySyncJobStatus: String, Decodable {
+enum MessageKind: String, Codable {
+    case application
+    case commit
+    case welcomeRef = "welcome_ref"
+    case system
+}
+
+enum ContentType: String, Codable {
+    case text
+    case reaction
+    case receipt
+    case attachment
+    case chatEvent = "chat_event"
+}
+
+enum HistorySyncJobType: String, Codable {
+    case initialSync = "initial_sync"
+    case chatBackfill = "chat_backfill"
+    case deviceRekey = "device_rekey"
+}
+
+enum HistorySyncJobStatus: String, Codable {
     case pending
     case running
     case completed
     case failed
     case canceled
+}
+
+enum JSONValue: Codable, Equatable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case object([String: JSONValue])
+    case array([JSONValue])
+    case null
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .number(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([String: JSONValue].self) {
+            self = .object(value)
+        } else if let value = try? container.decode([JSONValue].self) {
+            self = .array(value)
+        } else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unsupported JSON value"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+
+        switch self {
+        case let .string(value):
+            try container.encode(value)
+        case let .number(value):
+            try container.encode(value)
+        case let .bool(value):
+            try container.encode(value)
+        case let .object(value):
+            try container.encode(value)
+        case let .array(value):
+            try container.encode(value)
+        case .null:
+            try container.encodeNil()
+        }
+    }
+
+    var prettyPrinted: String {
+        switch self {
+        case let .string(value):
+            return value
+        case let .number(value):
+            return String(value)
+        case let .bool(value):
+            return value ? "true" : "false"
+        case let .object(value):
+            guard
+                let data = try? JSONEncoder().encode(value),
+                let string = String(data: data, encoding: .utf8)
+            else {
+                return "{...}"
+            }
+            return string
+        case let .array(value):
+            guard
+                let data = try? JSONEncoder().encode(value),
+                let string = String(data: data, encoding: .utf8)
+            else {
+                return "[...]"
+            }
+            return string
+        case .null:
+            return "null"
+        }
+    }
 }
 
 struct HealthResponse: Decodable, Equatable {
@@ -113,6 +214,7 @@ struct CreateLinkIntentResponse: Decodable, Identifiable {
     let expiresAtUnix: UInt64
 
     var id: String { linkIntentId }
+
     var expirationDate: Date {
         Date(timeIntervalSince1970: TimeInterval(expiresAtUnix))
     }
@@ -163,6 +265,41 @@ struct PublishKeyPackageItem: Encodable {
     let keyPackageB64: String
 }
 
+struct PublishKeyPackagesRequest: Encodable {
+    let packages: [PublishKeyPackageItem]
+}
+
+struct PublishedKeyPackage: Decodable, Identifiable {
+    let keyPackageId: String
+    let cipherSuite: String
+
+    var id: String { keyPackageId }
+}
+
+struct PublishKeyPackagesResponse: Decodable {
+    let deviceId: String
+    let packages: [PublishedKeyPackage]
+}
+
+struct ReserveKeyPackagesRequest: Encodable {
+    let accountId: String
+    let deviceIds: [String]
+}
+
+struct ReservedKeyPackage: Decodable, Identifiable {
+    let keyPackageId: String
+    let deviceId: String
+    let cipherSuite: String
+    let keyPackageB64: String
+
+    var id: String { keyPackageId }
+}
+
+struct AccountKeyPackagesResponse: Decodable {
+    let accountId: String
+    let packages: [ReservedKeyPackage]
+}
+
 struct RevokeDeviceRequest: Encodable {
     let reason: String
     let accountRootSignatureB64: String
@@ -198,4 +335,142 @@ struct CompleteHistorySyncJobRequest: Encodable {
 struct CompleteHistorySyncJobResponse: Decodable {
     let jobId: String
     let jobStatus: HistorySyncJobStatus
+}
+
+struct ChatSummary: Decodable, Identifiable {
+    let chatId: String
+    let chatType: ChatType
+    let title: String?
+    let lastServerSeq: UInt64
+
+    var id: String { chatId }
+}
+
+struct ChatListResponse: Decodable {
+    let chats: [ChatSummary]
+}
+
+struct ChatMemberSummary: Decodable, Identifiable {
+    let accountId: String
+    let role: String
+    let membershipStatus: String
+
+    var id: String { accountId }
+}
+
+struct ChatDetailResponse: Decodable {
+    let chatId: String
+    let chatType: ChatType
+    let title: String?
+    let lastServerSeq: UInt64
+    let epoch: UInt64
+    let lastCommitMessageId: String?
+    let members: [ChatMemberSummary]
+}
+
+struct ControlMessageInput: Encodable {
+    let messageId: String
+    let ciphertextB64: String
+    let aadJson: JSONValue?
+}
+
+struct CreateChatRequest: Encodable {
+    let chatType: ChatType
+    let title: String?
+    let participantAccountIds: [String]
+    let reservedKeyPackageIds: [String]
+    let initialCommit: ControlMessageInput?
+    let welcomeMessage: ControlMessageInput?
+}
+
+struct CreateChatResponse: Decodable {
+    let chatId: String
+    let chatType: ChatType
+    let epoch: UInt64
+}
+
+struct ModifyChatMembersRequest: Encodable {
+    let epoch: UInt64
+    let participantAccountIds: [String]
+    let reservedKeyPackageIds: [String]
+    let commitMessage: ControlMessageInput?
+    let welcomeMessage: ControlMessageInput?
+}
+
+struct ModifyChatMembersResponse: Decodable {
+    let chatId: String
+    let epoch: UInt64
+    let changedAccountIds: [String]
+}
+
+struct ModifyChatDevicesRequest: Encodable {
+    let epoch: UInt64
+    let deviceIds: [String]
+    let reservedKeyPackageIds: [String]
+    let commitMessage: ControlMessageInput?
+    let welcomeMessage: ControlMessageInput?
+}
+
+struct ModifyChatDevicesResponse: Decodable {
+    let chatId: String
+    let epoch: UInt64
+    let changedDeviceIds: [String]
+}
+
+struct CreateMessageRequest: Encodable {
+    let messageId: String
+    let epoch: UInt64
+    let messageKind: MessageKind
+    let contentType: ContentType
+    let ciphertextB64: String
+    let aadJson: JSONValue?
+}
+
+struct CreateMessageResponse: Decodable {
+    let messageId: String
+    let serverSeq: UInt64
+}
+
+struct MessageEnvelope: Decodable, Identifiable {
+    let messageId: String
+    let chatId: String
+    let serverSeq: UInt64
+    let senderAccountId: String
+    let senderDeviceId: String
+    let epoch: UInt64
+    let messageKind: MessageKind
+    let contentType: ContentType
+    let ciphertextB64: String
+    let aadJson: JSONValue
+    let createdAtUnix: UInt64
+
+    var id: String { messageId }
+
+    var createdAtDate: Date {
+        Date(timeIntervalSince1970: TimeInterval(createdAtUnix))
+    }
+}
+
+struct ChatHistoryResponse: Decodable {
+    let chatId: String
+    let messages: [MessageEnvelope]
+}
+
+struct InboxItem: Decodable, Identifiable {
+    let inboxId: UInt64
+    let message: MessageEnvelope
+
+    var id: UInt64 { inboxId }
+}
+
+struct InboxResponse: Decodable {
+    let items: [InboxItem]
+}
+
+struct AckInboxRequest: Encodable {
+    let inboxIds: [UInt64]
+}
+
+struct AckInboxResponse: Decodable {
+    let ackedInboxIds: [UInt64]
 }

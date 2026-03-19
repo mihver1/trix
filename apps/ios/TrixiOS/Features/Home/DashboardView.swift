@@ -191,6 +191,22 @@ struct DashboardView: View {
                         }
                     }
                 }
+
+                Section("Messaging PoC") {
+                    NavigationLink {
+                        MessagingLabView(
+                            serverBaseURL: $serverBaseURL,
+                            model: model
+                        )
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Chats, Inbox, Membership")
+                            Text("\(dashboard.chats.count) chats, \(dashboard.inboxItems.count) inbox items")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
             } else {
                 Section {
                     HStack {
