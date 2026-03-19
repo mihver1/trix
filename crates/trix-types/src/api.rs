@@ -142,11 +142,15 @@ pub struct AccountKeyPackagesResponse {
     pub packages: Vec<ReservedKeyPackage>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CreateChatRequest {
     pub chat_type: ChatType,
     pub title: Option<String>,
     pub participant_account_ids: Vec<AccountId>,
+    #[serde(default)]
+    pub reserved_key_package_ids: Vec<String>,
+    pub initial_commit: Option<ControlMessageInput>,
+    pub welcome_message: Option<ControlMessageInput>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -183,7 +187,32 @@ pub struct ChatDetailResponse {
     pub title: Option<String>,
     pub last_server_seq: u64,
     pub epoch: u64,
+    pub last_commit_message_id: Option<MessageId>,
     pub members: Vec<ChatMemberSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ControlMessageInput {
+    pub message_id: MessageId,
+    pub ciphertext_b64: String,
+    pub aad_json: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModifyChatMembersRequest {
+    pub epoch: u64,
+    pub participant_account_ids: Vec<AccountId>,
+    #[serde(default)]
+    pub reserved_key_package_ids: Vec<String>,
+    pub commit_message: Option<ControlMessageInput>,
+    pub welcome_message: Option<ControlMessageInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModifyChatMembersResponse {
+    pub chat_id: ChatId,
+    pub epoch: u64,
+    pub changed_account_ids: Vec<AccountId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

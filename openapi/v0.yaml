@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Trix API
   version: 0.1.0
-  summary: Scaffolded v0 API for the Trix backend
+  summary: v0 API for the Trix backend
 servers:
   - url: http://localhost:8080
 tags:
@@ -10,7 +10,9 @@ tags:
   - name: auth
   - name: accounts
   - name: devices
+  - name: key_packages
   - name: chats
+  - name: inbox
   - name: blobs
 paths:
   /v0/system/health:
@@ -99,6 +101,23 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AccountProfileResponse'
+  /v0/accounts/{account_id}/key-packages:
+    get:
+      operationId: reserveAccountKeyPackages
+      tags: [accounts, key_packages]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      responses:
+        '200':
+          description: Reserved one key package per active device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountKeyPackagesResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v0/devices:
     get:
       operationId: listDevices
@@ -112,16 +131,218 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeviceListResponse'
+  /v0/key-packages:publish:
+    post:
+      operationId: publishKeyPackages
+      tags: [key_packages]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublishKeyPackagesRequest'
+      responses:
+        '200':
+          description: Key packages published for the authenticated device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishKeyPackagesResponse'
   /v0/chats:
     get:
       operationId: listChats
       tags: [chats]
+      security:
+        - bearerAuth: []
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Chats visible to the authenticated device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatListResponse'
     post:
       operationId: createChat
       tags: [chats]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChatRequest'
+      responses:
+        '200':
+          description: Chat created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateChatResponse'
+  /v0/chats/{chat_id}:
+    get:
+      operationId: getChat
+      tags: [chats]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChatId'
+      responses:
+        '200':
+          description: Chat metadata and active membership
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatDetailResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v0/chats/{chat_id}/messages:
+    post:
+      operationId: createMessage
+      tags: [chats]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMessageRequest'
+      responses:
+        '200':
+          description: Message accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateMessageResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v0/chats/{chat_id}/history:
+    get:
+      operationId: getChatHistory
+      tags: [chats]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChatId'
+        - in: query
+          name: after_server_seq
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 500
+      responses:
+        '200':
+          description: Server-stored encrypted history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatHistoryResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v0/chats/{chat_id}/members:add:
+    post:
+      operationId: addChatMembers
+      tags: [chats]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModifyChatMembersRequest'
+      responses:
+        '200':
+          description: Accounts added to the chat and epoch advanced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModifyChatMembersResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v0/chats/{chat_id}/members:remove:
+    post:
+      operationId: removeChatMembers
+      tags: [chats]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModifyChatMembersRequest'
+      responses:
+        '200':
+          description: Accounts removed from the chat and epoch advanced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModifyChatMembersResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v0/inbox:
+    get:
+      operationId: getInbox
+      tags: [inbox]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 500
+      responses:
+        '200':
+          description: Pending inbox items for the authenticated device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboxResponse'
+  /v0/inbox/ack:
+    post:
+      operationId: ackInbox
+      tags: [inbox]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AckInboxRequest'
+      responses:
+        '200':
+          description: Inbox items acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AckInboxResponse'
+  /v0/inbox/lease:
+    post:
+      operationId: leaseInbox
+      tags: [inbox]
+      security:
+        - bearerAuth: []
       responses:
         '501':
           $ref: '#/components/responses/NotImplemented'
@@ -129,6 +350,8 @@ paths:
     post:
       operationId: createBlobUpload
       tags: [blobs]
+      security:
+        - bearerAuth: []
       responses:
         '501':
           $ref: '#/components/responses/NotImplemented'
@@ -138,7 +361,34 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+  parameters:
+    AccountId:
+      in: path
+      name: account_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ChatId:
+      in: path
+      name: chat_id
+      required: true
+      schema:
+        type: string
+        format: uuid
   responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Request conflicts with current server state
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     NotImplemented:
       description: Endpoint scaffold exists but behavior is not implemented yet.
       content:
@@ -146,9 +396,24 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
   schemas:
+    Uuid:
+      type: string
+      format: uuid
     ServiceStatus:
       type: string
       enum: [ok, degraded]
+    DeviceStatus:
+      type: string
+      enum: [pending, active, revoked]
+    ChatType:
+      type: string
+      enum: [dm, group, account_sync]
+    MessageKind:
+      type: string
+      enum: [application, commit, welcome_ref, system]
+    ContentType:
+      type: string
+      enum: [text, reaction, receipt, attachment, chat_event]
     HealthResponse:
       type: object
       required: [service, status, version, uptime_ms]
@@ -181,9 +446,6 @@ components:
           type: string
         message:
           type: string
-    DeviceStatus:
-      type: string
-      enum: [pending, active, revoked]
     CreateAccountRequest:
       type: object
       required:
@@ -220,21 +482,17 @@ components:
       required: [account_id, device_id, account_sync_chat_id]
       properties:
         account_id:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/Uuid'
         device_id:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/Uuid'
         account_sync_chat_id:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/Uuid'
     AuthChallengeRequest:
       type: object
       required: [device_id]
       properties:
         device_id:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/Uuid'
     AuthChallengeResponse:
       type: object
       required: [challenge_id, challenge_b64, expires_at_unix]
@@ -252,8 +510,7 @@ components:
       required: [device_id, challenge_id, signature_b64]
       properties:
         device_id:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/Uuid'
         challenge_id:
           type: string
           format: uuid
@@ -269,8 +526,7 @@ components:
           type: integer
           format: int64
         account_id:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/Uuid'
         device_status:
           $ref: '#/components/schemas/DeviceStatus'
     AccountProfileResponse:
@@ -278,8 +534,7 @@ components:
       required: [account_id, profile_name, device_id, device_status]
       properties:
         account_id:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/Uuid'
         handle:
           type: string
           nullable: true
@@ -289,8 +544,7 @@ components:
           type: string
           nullable: true
         device_id:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/Uuid'
         device_status:
           $ref: '#/components/schemas/DeviceStatus'
     DeviceSummary:
@@ -298,8 +552,7 @@ components:
       required: [device_id, display_name, platform, device_status]
       properties:
         device_id:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/Uuid'
         display_name:
           type: string
         platform:
@@ -311,9 +564,313 @@ components:
       required: [account_id, devices]
       properties:
         account_id:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/Uuid'
         devices:
           type: array
           items:
             $ref: '#/components/schemas/DeviceSummary'
+    PublishKeyPackageItem:
+      type: object
+      required: [cipher_suite, key_package_b64]
+      properties:
+        cipher_suite:
+          type: string
+        key_package_b64:
+          type: string
+    PublishKeyPackagesRequest:
+      type: object
+      required: [packages]
+      properties:
+        packages:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublishKeyPackageItem'
+    PublishedKeyPackage:
+      type: object
+      required: [key_package_id, cipher_suite]
+      properties:
+        key_package_id:
+          type: string
+          format: uuid
+        cipher_suite:
+          type: string
+    PublishKeyPackagesResponse:
+      type: object
+      required: [device_id, packages]
+      properties:
+        device_id:
+          $ref: '#/components/schemas/Uuid'
+        packages:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublishedKeyPackage'
+    ReservedKeyPackage:
+      type: object
+      required: [key_package_id, device_id, cipher_suite, key_package_b64]
+      properties:
+        key_package_id:
+          type: string
+          format: uuid
+        device_id:
+          $ref: '#/components/schemas/Uuid'
+        cipher_suite:
+          type: string
+        key_package_b64:
+          type: string
+    AccountKeyPackagesResponse:
+      type: object
+      required: [account_id, packages]
+      properties:
+        account_id:
+          $ref: '#/components/schemas/Uuid'
+        packages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReservedKeyPackage'
+    CreateChatRequest:
+      type: object
+      required: [chat_type, participant_account_ids]
+      properties:
+        chat_type:
+          $ref: '#/components/schemas/ChatType'
+        title:
+          type: string
+          nullable: true
+        participant_account_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uuid'
+        reserved_key_package_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uuid'
+        initial_commit:
+          $ref: '#/components/schemas/ControlMessageInput'
+          nullable: true
+        welcome_message:
+          $ref: '#/components/schemas/ControlMessageInput'
+          nullable: true
+    CreateChatResponse:
+      type: object
+      required: [chat_id, chat_type, epoch]
+      properties:
+        chat_id:
+          $ref: '#/components/schemas/Uuid'
+        chat_type:
+          $ref: '#/components/schemas/ChatType'
+        epoch:
+          type: integer
+          format: int64
+    ChatSummary:
+      type: object
+      required: [chat_id, chat_type, last_server_seq]
+      properties:
+        chat_id:
+          $ref: '#/components/schemas/Uuid'
+        chat_type:
+          $ref: '#/components/schemas/ChatType'
+        title:
+          type: string
+          nullable: true
+        last_server_seq:
+          type: integer
+          format: int64
+    ChatListResponse:
+      type: object
+      required: [chats]
+      properties:
+        chats:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatSummary'
+    ChatMemberSummary:
+      type: object
+      required: [account_id, role, membership_status]
+      properties:
+        account_id:
+          $ref: '#/components/schemas/Uuid'
+        role:
+          type: string
+        membership_status:
+          type: string
+    ChatDetailResponse:
+      type: object
+      required: [chat_id, chat_type, last_server_seq, epoch, members]
+      properties:
+        chat_id:
+          $ref: '#/components/schemas/Uuid'
+        chat_type:
+          $ref: '#/components/schemas/ChatType'
+        title:
+          type: string
+          nullable: true
+        last_server_seq:
+          type: integer
+          format: int64
+        epoch:
+          type: integer
+          format: int64
+        last_commit_message_id:
+          $ref: '#/components/schemas/Uuid'
+          nullable: true
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatMemberSummary'
+    ControlMessageInput:
+      type: object
+      required: [message_id, ciphertext_b64]
+      properties:
+        message_id:
+          $ref: '#/components/schemas/Uuid'
+        ciphertext_b64:
+          type: string
+        aad_json:
+          type: object
+          nullable: true
+    ModifyChatMembersRequest:
+      type: object
+      required: [epoch, participant_account_ids]
+      properties:
+        epoch:
+          type: integer
+          format: int64
+        participant_account_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uuid'
+        reserved_key_package_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uuid'
+        commit_message:
+          $ref: '#/components/schemas/ControlMessageInput'
+          nullable: true
+        welcome_message:
+          $ref: '#/components/schemas/ControlMessageInput'
+          nullable: true
+    ModifyChatMembersResponse:
+      type: object
+      required: [chat_id, epoch, changed_account_ids]
+      properties:
+        chat_id:
+          $ref: '#/components/schemas/Uuid'
+        epoch:
+          type: integer
+          format: int64
+        changed_account_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uuid'
+    CreateMessageRequest:
+      type: object
+      required: [message_id, epoch, message_kind, content_type, ciphertext_b64]
+      properties:
+        message_id:
+          $ref: '#/components/schemas/Uuid'
+        epoch:
+          type: integer
+          format: int64
+        message_kind:
+          $ref: '#/components/schemas/MessageKind'
+        content_type:
+          $ref: '#/components/schemas/ContentType'
+        ciphertext_b64:
+          type: string
+        aad_json:
+          type: object
+          nullable: true
+    CreateMessageResponse:
+      type: object
+      required: [message_id, server_seq]
+      properties:
+        message_id:
+          $ref: '#/components/schemas/Uuid'
+        server_seq:
+          type: integer
+          format: int64
+    MessageEnvelope:
+      type: object
+      required:
+        - message_id
+        - chat_id
+        - server_seq
+        - sender_account_id
+        - sender_device_id
+        - epoch
+        - message_kind
+        - content_type
+        - ciphertext_b64
+        - aad_json
+        - created_at_unix
+      properties:
+        message_id:
+          $ref: '#/components/schemas/Uuid'
+        chat_id:
+          $ref: '#/components/schemas/Uuid'
+        server_seq:
+          type: integer
+          format: int64
+        sender_account_id:
+          $ref: '#/components/schemas/Uuid'
+        sender_device_id:
+          $ref: '#/components/schemas/Uuid'
+        epoch:
+          type: integer
+          format: int64
+        message_kind:
+          $ref: '#/components/schemas/MessageKind'
+        content_type:
+          $ref: '#/components/schemas/ContentType'
+        ciphertext_b64:
+          type: string
+        aad_json:
+          type: object
+        created_at_unix:
+          type: integer
+          format: int64
+    ChatHistoryResponse:
+      type: object
+      required: [chat_id, messages]
+      properties:
+        chat_id:
+          $ref: '#/components/schemas/Uuid'
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessageEnvelope'
+    InboxItem:
+      type: object
+      required: [inbox_id, message]
+      properties:
+        inbox_id:
+          type: integer
+          format: int64
+        message:
+          $ref: '#/components/schemas/MessageEnvelope'
+    InboxResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InboxItem'
+    AckInboxRequest:
+      type: object
+      required: [inbox_ids]
+      properties:
+        inbox_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+    AckInboxResponse:
+      type: object
+      required: [acked_inbox_ids]
+      properties:
+        acked_inbox_ids:
+          type: array
+          items:
+            type: integer
+            format: int64

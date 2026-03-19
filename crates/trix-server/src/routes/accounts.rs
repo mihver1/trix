@@ -84,10 +84,10 @@ async fn get_account_key_packages(
     headers: HeaderMap,
     Path(account_id): Path<AccountId>,
 ) -> Result<Json<AccountKeyPackagesResponse>, AppError> {
-    state.auth.authenticate_headers(&headers)?;
+    let principal = state.auth.authenticate_headers(&headers)?;
     let packages = state
         .db
-        .reserve_key_packages_for_account(account_id.0)
+        .reserve_key_packages_for_account(principal.account_id, account_id.0)
         .await?;
 
     Ok(Json(AccountKeyPackagesResponse {
