@@ -9,8 +9,8 @@ use serde::Deserialize;
 
 use crate::{
     db::{
-        CreateChatInput, CreateMessageInput, MessageEnvelopeRow, ModifyChatMembersInput,
-        PendingControlMessage,
+        CreateChatInput, CreateMessageInput, MessageEnvelopeRow, ModifyChatDevicesInput,
+        ModifyChatMembersInput, PendingControlMessage,
     },
     error::AppError,
     state::AppState,
@@ -18,7 +18,8 @@ use crate::{
 use trix_types::{
     ChatDetailResponse, ChatHistoryResponse, ChatListResponse, ChatMemberSummary, ChatSummary,
     ControlMessageInput, CreateChatRequest, CreateChatResponse, CreateMessageRequest,
-    CreateMessageResponse, MessageEnvelope, ModifyChatMembersRequest, ModifyChatMembersResponse,
+    CreateMessageResponse, MessageEnvelope, ModifyChatDevicesRequest, ModifyChatDevicesResponse,
+    ModifyChatMembersRequest, ModifyChatMembersResponse,
 };
 
 pub fn router() -> Router<AppState> {
@@ -29,6 +30,8 @@ pub fn router() -> Router<AppState> {
         .route("/{chat_id}/history", get(get_history))
         .route("/{chat_id}/members:add", post(add_members))
         .route("/{chat_id}/members:remove", post(remove_members))
+        .route("/{chat_id}/devices:add", post(add_devices))
+        .route("/{chat_id}/devices:remove", post(remove_devices))
 }
 
 #[derive(Debug, Deserialize)]
@@ -264,6 +267,92 @@ async fn remove_members(
             .changed_account_ids
             .into_iter()
             .map(trix_types::AccountId)
+            .collect(),
+    }))
+}
+
+async fn add_devices(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(chat_id): Path<trix_types::ChatId>,
+    Json(request): Json<ModifyChatDevicesRequest>,
+) -> Result<Json<ModifyChatDevicesResponse>, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+    let reserved_key_package_ids = parse_uuid_list(&request.reserved_key_package_ids)?;
+    let updated = state
+        .db
+        .add_chat_devices(ModifyChatDevicesInput {
+            chat_id: chat_id.0,
+            actor_account_id: principal.account_id,
+            actor_device_id: principal.device_id,
+            epoch: request.epoch,
+            device_ids: request
+                .device_ids
+                .into_iter()
+                .map(|device_id| device_id.0)
+                .collect(),
+            reserved_key_package_ids,
+            commit_message: request
+                .commit_message
+                .map(decode_control_message)
+                .transpose()?,
+            welcome_message: request
+                .welcome_message
+                .map(decode_control_message)
+                .transpose()?,
+        })
+        .await?;
+
+    Ok(Json(ModifyChatDevicesResponse {
+        chat_id: trix_types::ChatId(updated.chat_id),
+        epoch: updated.epoch,
+        changed_device_ids: updated
+            .changed_device_ids
+            .into_iter()
+            .map(trix_types::DeviceId)
+            .collect(),
+    }))
+}
+
+async fn remove_devices(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(chat_id): Path<trix_types::ChatId>,
+    Json(request): Json<ModifyChatDevicesRequest>,
+) -> Result<Json<ModifyChatDevicesResponse>, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+    let reserved_key_package_ids = parse_uuid_list(&request.reserved_key_package_ids)?;
+    let updated = state
+        .db
+        .remove_chat_devices(ModifyChatDevicesInput {
+            chat_id: chat_id.0,
+            actor_account_id: principal.account_id,
+            actor_device_id: principal.device_id,
+            epoch: request.epoch,
+            device_ids: request
+                .device_ids
+                .into_iter()
+                .map(|device_id| device_id.0)
+                .collect(),
+            reserved_key_package_ids,
+            commit_message: request
+                .commit_message
+                .map(decode_control_message)
+                .transpose()?,
+            welcome_message: request
+                .welcome_message
+                .map(decode_control_message)
+                .transpose()?,
+        })
+        .await?;
+
+    Ok(Json(ModifyChatDevicesResponse {
+        chat_id: trix_types::ChatId(updated.chat_id),
+        epoch: updated.epoch,
+        changed_device_ids: updated
+            .changed_device_ids
+            .into_iter()
+            .map(trix_types::DeviceId)
             .collect(),
     }))
 }

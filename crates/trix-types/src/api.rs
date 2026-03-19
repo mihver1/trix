@@ -175,6 +175,12 @@ pub struct PublishKeyPackagesRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReserveKeyPackagesRequest {
+    pub account_id: AccountId,
+    pub device_ids: Vec<DeviceId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublishedKeyPackage {
     pub key_package_id: String,
     pub cipher_suite: String,
@@ -271,6 +277,23 @@ pub struct ModifyChatMembersResponse {
     pub chat_id: ChatId,
     pub epoch: u64,
     pub changed_account_ids: Vec<AccountId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModifyChatDevicesRequest {
+    pub epoch: u64,
+    pub device_ids: Vec<DeviceId>,
+    #[serde(default)]
+    pub reserved_key_package_ids: Vec<String>,
+    pub commit_message: Option<ControlMessageInput>,
+    pub welcome_message: Option<ControlMessageInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModifyChatDevicesResponse {
+    pub chat_id: ChatId,
+    pub epoch: u64,
+    pub changed_device_ids: Vec<DeviceId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
