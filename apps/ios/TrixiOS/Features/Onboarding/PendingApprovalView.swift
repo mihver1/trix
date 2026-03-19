@@ -21,6 +21,9 @@ struct PendingApprovalView: View {
             Section("Pending Approval") {
                 Text("This device finished link setup and is waiting for approval from an already trusted device on the same account.")
                     .foregroundStyle(.secondary)
+                Text("A trusted device can now use the `Approve Device` action in its `Trusted Devices` list to activate this pending device.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
 
                 if let localIdentity = model.localIdentity {
                     LabeledContent("Account ID") {

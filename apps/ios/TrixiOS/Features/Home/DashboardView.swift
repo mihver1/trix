@@ -123,12 +123,21 @@ struct DashboardView: View {
                                 Text("Current device")
                                     .font(.caption.weight(.medium))
                                     .foregroundStyle(.secondary)
-                            } else if model.canManageAccountDevices, device.deviceStatus != .revoked {
-                                Button("Revoke Device", role: .destructive) {
-                                    revokeCandidate = device
-                                    revokeReason = ""
+                            } else if model.canManageAccountDevices {
+                                if device.deviceStatus == .pending {
+                                    Button("Approve Device") {
+                                        approvePendingDevice(deviceId: device.deviceId)
+                                    }
+                                    .disabled(model.isLoading)
                                 }
-                                .disabled(model.isLoading)
+
+                                if device.deviceStatus == .active {
+                                    Button("Revoke Device", role: .destructive) {
+                                        revokeCandidate = device
+                                        revokeReason = ""
+                                    }
+                                    .disabled(model.isLoading)
+                                }
                             }
                         }
                         .padding(.vertical, 4)
@@ -312,6 +321,15 @@ struct DashboardView: View {
     private func createLinkIntent() {
         Task {
             await model.createLinkIntent(baseURLString: serverBaseURL)
+        }
+    }
+
+    private func approvePendingDevice(deviceId: String) {
+        Task {
+            _ = await model.approvePendingDevice(
+                baseURLString: serverBaseURL,
+                deviceId: deviceId
+            )
         }
     }
 

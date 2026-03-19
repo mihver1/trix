@@ -12,6 +12,7 @@ struct MessagingLabView: View {
 
     @State private var createChatDraft = CreateChatDraft()
     @State private var activityMessage: String?
+    @State private var leasedInboxBatch: LeaseInboxResponse?
 
     var body: some View {
         List {
@@ -124,6 +125,44 @@ struct MessagingLabView: View {
                 }
 
                 Section {
+                    Button(action: pollInboxIncremental) {
+                        if model.isLoading {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Text("Poll Inbox Incrementally")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .disabled(model.isLoading)
+
+                    Button(action: leaseInboxBatch) {
+                        if model.isLoading {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Text("Lease Inbox Batch")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .disabled(model.isLoading)
+
+                    if let leasedInboxBatch {
+                        LabeledContent("Lease Owner") {
+                            Text(leasedInboxBatch.leaseOwner)
+                                .font(.system(.footnote, design: .monospaced))
+                                .multilineTextAlignment(.trailing)
+                        }
+
+                        LabeledContent("Lease Expires") {
+                            Text(leasedInboxBatch.leaseExpiresAtDate.formatted(date: .abbreviated, time: .standard))
+                        }
+
+                        LabeledContent("Leased Items") {
+                            Text(String(leasedInboxBatch.items.count))
+                        }
+                    }
+
                     if !dashboard.inboxItems.isEmpty {
                         Button(action: acknowledgeAllInbox) {
                             if model.isLoading {
@@ -178,7 +217,7 @@ struct MessagingLabView: View {
                 } header: {
                     Text("Inbox")
                 } footer: {
-                    Text("Inbox rows are fan-out records for this device. Acknowledging them only clears the local server queue, not the underlying chat history.")
+                    Text("Inbox rows are fan-out records for this device. Incremental polling uses `after_inbox_id`. Leasing is a debug worker-style path that claims temporary delivery ownership until the lease expires or the items are acknowledged.")
                 }
             } else {
                 Section {
@@ -214,6 +253,28 @@ struct MessagingLabView: View {
         Task {
             if let response = await model.publishDebugKeyPackages(baseURLString: serverBaseURL) {
                 activityMessage = "Published \(response.packages.count) debug key packages for device \(response.deviceId)."
+            }
+        }
+    }
+
+    private func pollInboxIncremental() {
+        activityMessage = nil
+
+        Task {
+            if let response = await model.pollInboxIncremental(baseURLString: serverBaseURL) {
+                activityMessage = "Incremental inbox poll returned \(response.items.count) items."
+            }
+        }
+    }
+
+    private func leaseInboxBatch() {
+        activityMessage = nil
+        leasedInboxBatch = nil
+
+        Task {
+            if let response = await model.leaseInboxBatch(baseURLString: serverBaseURL) {
+                leasedInboxBatch = response
+                activityMessage = "Leased \(response.items.count) inbox items to \(response.leaseOwner)."
             }
         }
     }

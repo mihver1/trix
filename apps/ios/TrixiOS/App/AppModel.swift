@@ -40,6 +40,10 @@ struct DashboardData {
     var currentDevice: DeviceSummary? {
         devices.first { $0.deviceId == profile.deviceId }
     }
+
+    var maxInboxId: UInt64? {
+        inboxItems.map(\.inboxId).max()
+    }
 }
 
 struct ChatSnapshot {
@@ -268,6 +272,49 @@ final class AppModel: ObservableObject {
 
     func dismissActiveLinkIntent() {
         activeLinkIntent = nil
+    }
+
+    @discardableResult
+    func approvePendingDevice(
+        baseURLString: String,
+        deviceId: String
+    ) async -> ApproveDeviceResponse? {
+        guard !isLoading else {
+            return nil
+        }
+
+        isLoading = true
+        errorMessage = nil
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            let approvePayload: DeviceApprovePayloadResponse = try await context.client.get(
+                "/v0/devices/\(deviceId)/approve-payload",
+                accessToken: context.session.accessToken
+            )
+            guard let bootstrapPayload = Data(base64Encoded: approvePayload.bootstrapPayloadB64) else {
+                throw AppModelError.invalidBootstrapPayload
+            }
+
+            let signature = try context.identity.signAccountBootstrapPayload(bootstrapPayload)
+            let response: ApproveDeviceResponse = try await context.client.post(
+                "/v0/devices/\(deviceId)/approve",
+                body: ApproveDeviceRequest(
+                    accountRootSignatureB64: signature.base64EncodedString()
+                ),
+                accessToken: context.session.accessToken
+            )
+
+            try await refreshAuthenticatedState(client: context.client, identity: context.identity)
+            return response
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
     }
 
     func revokeDevice(
@@ -784,6 +831,83 @@ final class AppModel: ObservableObject {
         }
     }
 
+    @discardableResult
+    func pollInboxIncremental(
+        baseURLString: String,
+        limit: Int = 50
+    ) async -> InboxResponse? {
+        guard !isLoading else {
+            return nil
+        }
+
+        isLoading = true
+        errorMessage = nil
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            let response: InboxResponse = try await context.client.get(
+                makeInboxPath(
+                    afterInboxId: dashboard?.maxInboxId,
+                    limit: limit
+                ),
+                accessToken: context.session.accessToken
+            )
+
+            if !response.items.isEmpty {
+                updateDashboardInboxItems(response.items)
+            }
+            lastUpdatedAt = Date()
+            return response
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    @discardableResult
+    func leaseInboxBatch(
+        baseURLString: String,
+        leaseOwner: String? = nil,
+        limit: Int = 25,
+        afterInboxId: UInt64? = nil,
+        leaseTtlSeconds: UInt64? = nil
+    ) async -> LeaseInboxResponse? {
+        guard !isLoading else {
+            return nil
+        }
+
+        isLoading = true
+        errorMessage = nil
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            let response: LeaseInboxResponse = try await context.client.post(
+                "/v0/inbox/lease",
+                body: LeaseInboxRequest(
+                    leaseOwner: leaseOwner,
+                    limit: limit,
+                    afterInboxId: afterInboxId,
+                    leaseTtlSeconds: leaseTtlSeconds
+                ),
+                accessToken: context.session.accessToken
+            )
+
+            lastUpdatedAt = Date()
+            return response
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
     func fetchChatSnapshot(
         baseURLString: String,
         chatId: String
@@ -827,7 +951,7 @@ final class AppModel: ObservableObject {
             accessToken: session.accessToken
         )
         async let inbox: InboxResponse = client.get(
-            "/v0/inbox?limit=50",
+            makeInboxPath(afterInboxId: nil, limit: 50),
             accessToken: session.accessToken
         )
 
@@ -923,6 +1047,50 @@ final class AppModel: ObservableObject {
         return response.packages
     }
 
+    private func makeInboxPath(afterInboxId: UInt64?, limit: Int) -> String {
+        let clampedLimit = min(max(limit, 1), 500)
+
+        if let afterInboxId {
+            return "/v0/inbox?after_inbox_id=\(afterInboxId)&limit=\(clampedLimit)"
+        }
+
+        return "/v0/inbox?limit=\(clampedLimit)"
+    }
+
+    private func updateDashboardInboxItems(_ newItems: [InboxItem]) {
+        guard let dashboard else {
+            return
+        }
+
+        let mergedInboxItems = mergeInboxItems(
+            existing: dashboard.inboxItems,
+            incoming: newItems
+        )
+        self.dashboard = DashboardData(
+            session: dashboard.session,
+            profile: dashboard.profile,
+            devices: dashboard.devices,
+            historySyncJobs: dashboard.historySyncJobs,
+            chats: dashboard.chats,
+            inboxItems: mergedInboxItems
+        )
+    }
+
+    private func mergeInboxItems(
+        existing: [InboxItem],
+        incoming: [InboxItem]
+    ) -> [InboxItem] {
+        var mergedById = Dictionary(uniqueKeysWithValues: existing.map { ($0.inboxId, $0) })
+
+        for item in incoming {
+            mergedById[item.inboxId] = item
+        }
+
+        return mergedById
+            .values
+            .sorted { $0.inboxId < $1.inboxId }
+    }
+
     private func makeDebugKeyPackagePayload(deviceId: String, index: Int) -> String {
         let raw = "trix-ios-debug-key-package:\(deviceId):\(index):\(UUID().uuidString.lowercased())"
         return Data(raw.utf8).base64EncodedString()
@@ -986,11 +1154,14 @@ private struct AuthenticatedContext {
 
 private enum AppModelError: LocalizedError {
     case localIdentityMissing
+    case invalidBootstrapPayload
 
     var errorDescription: String? {
         switch self {
         case .localIdentityMissing:
             return "Local identity is missing."
+        case .invalidBootstrapPayload:
+            return "Server bootstrap payload is invalid."
         }
     }
 }

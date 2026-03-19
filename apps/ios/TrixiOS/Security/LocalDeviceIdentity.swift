@@ -235,6 +235,16 @@ extension LocalDeviceIdentity {
     }
 
     func signDeviceRevoke(deviceId: String, reason: String) throws -> Data {
+        try signAccountRootMessage(
+            Self.revokeMessage(deviceId: deviceId, reason: reason)
+        )
+    }
+
+    func signAccountBootstrapPayload(_ payload: Data) throws -> Data {
+        try signAccountRootMessage(payload)
+    }
+
+    private func signAccountRootMessage(_ message: Data) throws -> Data {
         guard let accountRootPrivateKeyRaw else {
             throw LocalDeviceIdentityError.accountRootKeyUnavailable
         }
@@ -242,9 +252,7 @@ extension LocalDeviceIdentity {
         let accountRootPrivateKey = try Curve25519.Signing.PrivateKey(
             rawRepresentation: accountRootPrivateKeyRaw
         )
-        return try accountRootPrivateKey.signature(
-            for: Self.revokeMessage(deviceId: deviceId, reason: reason)
-        )
+        return try accountRootPrivateKey.signature(for: message)
     }
 
     func markingActive() -> LocalDeviceIdentity {

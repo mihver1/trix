@@ -248,6 +248,18 @@ struct CompleteLinkIntentResponse: Decodable {
     let accountId: String
     let pendingDeviceId: String
     let deviceStatus: DeviceStatus
+    let bootstrapPayloadB64: String
+}
+
+struct DeviceApprovePayloadResponse: Decodable {
+    let accountId: String
+    let deviceId: String
+    let deviceDisplayName: String
+    let platform: String
+    let deviceStatus: DeviceStatus
+    let credentialIdentityB64: String
+    let transportPubkeyB64: String
+    let bootstrapPayloadB64: String
 }
 
 struct ApproveDeviceRequest: Encodable {
@@ -465,6 +477,23 @@ struct InboxItem: Decodable, Identifiable {
 
 struct InboxResponse: Decodable {
     let items: [InboxItem]
+}
+
+struct LeaseInboxRequest: Encodable {
+    let leaseOwner: String?
+    let limit: Int?
+    let afterInboxId: UInt64?
+    let leaseTtlSeconds: UInt64?
+}
+
+struct LeaseInboxResponse: Decodable {
+    let leaseOwner: String
+    let leaseExpiresAtUnix: UInt64
+    let items: [InboxItem]
+
+    var leaseExpiresAtDate: Date {
+        Date(timeIntervalSince1970: TimeInterval(leaseExpiresAtUnix))
+    }
 }
 
 struct AckInboxRequest: Encodable {
