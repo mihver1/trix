@@ -10,14 +10,16 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::{
-    db::{ApprovePendingDeviceInput, CompleteLinkIntentInput, KeyPackageBytesInput},
+    db::{
+        ApprovePendingDeviceInput, CompleteLinkIntentInput, KeyPackageBytesInput, RevokeDeviceInput,
+    },
     error::AppError,
     state::AppState,
 };
 use trix_types::{
     ApproveDeviceRequest, ApproveDeviceResponse, CompleteLinkIntentRequest,
     CompleteLinkIntentResponse, CreateLinkIntentResponse, DeviceId, DeviceListResponse,
-    DeviceSummary,
+    DeviceSummary, RevokeDeviceRequest, RevokeDeviceResponse,
 };
 
 pub fn router() -> Router<AppState> {
@@ -181,10 +183,53 @@ async fn approve_device(
     }))
 }
 
-async fn revoke_device() -> Result<Json<serde_json::Value>, AppError> {
-    Err(AppError::not_implemented(
-        "device revocation flow is not implemented yet",
-    ))
+async fn revoke_device(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(device_id): Path<DeviceId>,
+    Json(request): Json<RevokeDeviceRequest>,
+) -> Result<Json<RevokeDeviceResponse>, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+    let reason = request.reason.trim().to_owned();
+    if reason.is_empty() {
+        return Err(AppError::bad_request("reason must not be empty"));
+    }
+
+    let revoke_context = state
+        .db
+        .get_device_revoke_context(device_id.0)
+        .await?
+        .ok_or_else(|| AppError::not_found("target device not found"))?;
+
+    if revoke_context.account_id != principal.account_id {
+        return Err(AppError::unauthorized(
+            "target device does not belong to the authenticated account",
+        ));
+    }
+
+    let account_root_signature = decode_b64(&request.account_root_signature_b64)?;
+    verify_account_root_signature(
+        &revoke_context.account_root_pubkey,
+        &account_root_signature,
+        &revoke_message(device_id.0, &reason),
+        "invalid device revoke signature",
+    )?;
+
+    let revoked = state
+        .db
+        .revoke_device(RevokeDeviceInput {
+            actor_account_id: principal.account_id,
+            actor_device_id: principal.device_id,
+            target_device_id: device_id.0,
+            reason,
+        })
+        .await?;
+
+    Ok(Json(RevokeDeviceResponse {
+        account_id: trix_types::AccountId(revoked.account_id),
+        device_id: DeviceId(revoked.device_id),
+        device_status: revoked.device_status,
+    }))
 }
 
 fn decode_b64(value: &str) -> Result<Vec<u8>, AppError> {
@@ -208,6 +253,20 @@ fn verify_account_bootstrap_signature(
     transport_pubkey: &[u8],
     credential_identity: &[u8],
 ) -> Result<(), AppError> {
+    verify_account_root_signature(
+        account_root_pubkey,
+        account_root_signature,
+        &bootstrap_message(transport_pubkey, credential_identity),
+        "invalid account bootstrap signature",
+    )
+}
+
+fn verify_account_root_signature(
+    account_root_pubkey: &[u8],
+    account_root_signature: &[u8],
+    message: &[u8],
+    error_message: &str,
+) -> Result<(), AppError> {
     let account_root_pubkey: [u8; 32] = account_root_pubkey
         .try_into()
         .map_err(|_| AppError::bad_request("account root public key must be 32 bytes"))?;
@@ -215,11 +274,10 @@ fn verify_account_bootstrap_signature(
         .map_err(|_| AppError::bad_request("invalid account root public key"))?;
     let signature = Signature::from_slice(account_root_signature)
         .map_err(|_| AppError::bad_request("invalid account root signature length"))?;
-    let message = bootstrap_message(transport_pubkey, credential_identity);
 
     verifying_key
-        .verify(&message, &signature)
-        .map_err(|_| AppError::bad_request("invalid account bootstrap signature"))
+        .verify(message, &signature)
+        .map_err(|_| AppError::bad_request(error_message))
 }
 
 fn bootstrap_message(transport_pubkey: &[u8], credential_identity: &[u8]) -> Vec<u8> {
@@ -231,5 +289,20 @@ fn bootstrap_message(transport_pubkey: &[u8], credential_identity: &[u8]) -> Vec
     message.extend_from_slice(transport_pubkey);
     message.extend_from_slice(&(credential_identity.len() as u32).to_be_bytes());
     message.extend_from_slice(credential_identity);
+    message
+}
+
+fn revoke_message(device_id: Uuid, reason: &str) -> Vec<u8> {
+    let device_id = device_id.to_string();
+    let device_id = device_id.as_bytes();
+    let reason = reason.as_bytes();
+
+    let mut message =
+        Vec::with_capacity(b"trix-device-revoke:v1".len() + 8 + device_id.len() + reason.len());
+    message.extend_from_slice(b"trix-device-revoke:v1");
+    message.extend_from_slice(&(device_id.len() as u32).to_be_bytes());
+    message.extend_from_slice(device_id);
+    message.extend_from_slice(&(reason.len() as u32).to_be_bytes());
+    message.extend_from_slice(reason);
     message
 }

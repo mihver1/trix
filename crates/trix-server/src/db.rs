@@ -128,6 +128,28 @@ pub struct PendingDeviceBootstrapRow {
 }
 
 #[derive(Debug)]
+pub struct DeviceRevokeContextRow {
+    pub account_id: Uuid,
+    pub account_root_pubkey: Vec<u8>,
+    pub device_status: DeviceStatus,
+}
+
+#[derive(Debug)]
+pub struct RevokeDeviceInput {
+    pub actor_account_id: Uuid,
+    pub actor_device_id: Uuid,
+    pub target_device_id: Uuid,
+    pub reason: String,
+}
+
+#[derive(Debug)]
+pub struct RevokeDeviceOutput {
+    pub account_id: Uuid,
+    pub device_id: Uuid,
+    pub device_status: DeviceStatus,
+}
+
+#[derive(Debug)]
 pub struct PublishKeyPackageInput {
     pub device_id: Uuid,
     pub cipher_suite: String,
@@ -830,6 +852,38 @@ impl Database {
         }))
     }
 
+    pub async fn get_device_revoke_context(
+        &self,
+        target_device_id: Uuid,
+    ) -> Result<Option<DeviceRevokeContextRow>, AppError> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                d.account_id,
+                d.device_status::text AS device_status,
+                a.account_root_pubkey
+            FROM devices d
+            JOIN accounts a
+              ON a.account_id = d.account_id
+            WHERE d.device_id = $1
+            "#,
+        )
+        .bind(target_device_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        Ok(Some(DeviceRevokeContextRow {
+            account_id: row_uuid(&row, "account_id")?,
+            account_root_pubkey: row_bytes(&row, "account_root_pubkey")?,
+            device_status: parse_device_status(&row_text(&row, "device_status")?)?,
+        }))
+    }
+
     pub async fn approve_pending_device(
         &self,
         input: ApprovePendingDeviceInput,
@@ -952,6 +1006,164 @@ impl Database {
             account_id: input.actor_account_id,
             device_id: input.target_device_id,
             device_status: DeviceStatus::Active,
+        })
+    }
+
+    pub async fn revoke_device(
+        &self,
+        input: RevokeDeviceInput,
+    ) -> Result<RevokeDeviceOutput, AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
+        let actor_row = sqlx::query(
+            r#"
+            SELECT 1
+            FROM devices
+            WHERE device_id = $1
+              AND account_id = $2
+              AND device_status = 'active'::device_status
+            "#,
+        )
+        .bind(input.actor_device_id)
+        .bind(input.actor_account_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        if actor_row.is_none() {
+            return Err(AppError::unauthorized("active revoking device not found"));
+        }
+
+        if input.target_device_id == input.actor_device_id {
+            return Err(AppError::bad_request(
+                "self-revocation is not supported through this endpoint",
+            ));
+        }
+
+        let target_row = sqlx::query(
+            r#"
+            SELECT account_id, device_status::text AS device_status
+            FROM devices
+            WHERE device_id = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(input.target_device_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        let Some(target_row) = target_row else {
+            return Err(AppError::not_found("target device not found"));
+        };
+
+        let target_account_id = row_uuid(&target_row, "account_id")?;
+        if target_account_id != input.actor_account_id {
+            return Err(AppError::unauthorized(
+                "target device does not belong to the authenticated account",
+            ));
+        }
+
+        let target_status = parse_device_status(&row_text(&target_row, "device_status")?)?;
+        if target_status == DeviceStatus::Revoked {
+            return Err(AppError::conflict("device is already revoked"));
+        }
+
+        sqlx::query(
+            r#"
+            UPDATE devices
+            SET device_status = 'revoked'::device_status,
+                revoked_at = COALESCE(revoked_at, now())
+            WHERE device_id = $1
+            "#,
+        )
+        .bind(input.target_device_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        sqlx::query(
+            r#"
+            UPDATE device_key_packages
+            SET status = 'expired'::key_package_status
+            WHERE device_id = $1
+              AND status IN ('available'::key_package_status, 'reserved'::key_package_status)
+            "#,
+        )
+        .bind(input.target_device_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        sqlx::query(
+            r#"
+            UPDATE device_inbox
+            SET delivery_state = 'failed'::delivery_state,
+                lease_owner = NULL,
+                lease_expires_at = NULL
+            WHERE device_id = $1
+              AND delivery_state IN ('pending'::delivery_state, 'leased'::delivery_state)
+            "#,
+        )
+        .bind(input.target_device_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        sqlx::query(
+            r#"
+            UPDATE chat_device_members cdm
+            SET membership_status = 'removed'::device_membership_status,
+                removed_in_epoch = COALESCE(cdm.removed_in_epoch, mgs.epoch),
+                removed_at = COALESCE(cdm.removed_at, now())
+            FROM mls_group_states mgs
+            WHERE cdm.chat_id = mgs.chat_id
+              AND cdm.device_id = $1
+              AND cdm.membership_status <> 'removed'::device_membership_status
+            "#,
+        )
+        .bind(input.target_device_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        sqlx::query(
+            r#"
+            UPDATE device_link_intents
+            SET status = 'canceled'::link_intent_status
+            WHERE status IN ('open'::link_intent_status, 'pending_approval'::link_intent_status)
+              AND (created_by_device_id = $1 OR pending_device_id = $1)
+            "#,
+        )
+        .bind(input.target_device_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO device_log (account_id, event_type, subject_device_id, actor_device_id, payload_json)
+            VALUES ($1, 'device_revoked'::device_log_event_type, $2, $3, $4)
+            "#,
+        )
+        .bind(input.actor_account_id)
+        .bind(input.target_device_id)
+        .bind(input.actor_device_id)
+        .bind(serde_json::json!({ "reason": input.reason }))
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        tx.commit()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
+
+        Ok(RevokeDeviceOutput {
+            account_id: input.actor_account_id,
+            device_id: input.target_device_id,
+            device_status: DeviceStatus::Revoked,
         })
     }
 

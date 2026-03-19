@@ -150,6 +150,19 @@ pub struct ApproveDeviceResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevokeDeviceRequest {
+    pub reason: String,
+    pub account_root_signature_b64: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevokeDeviceResponse {
+    pub account_id: AccountId,
+    pub device_id: DeviceId,
+    pub device_status: DeviceStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublishKeyPackageItem {
     pub cipher_suite: String,
     pub key_package_b64: String,

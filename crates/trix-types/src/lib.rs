@@ -13,7 +13,8 @@ pub use api::{
     CreateMessageResponse, DeviceListResponse, DeviceSummary, ErrorResponse, HealthResponse,
     InboxItem, InboxResponse, MessageEnvelope, ModifyChatMembersRequest, ModifyChatMembersResponse,
     PublishKeyPackageItem, PublishKeyPackagesRequest, PublishKeyPackagesResponse,
-    PublishedKeyPackage, ReservedKeyPackage, ServiceStatus, VersionResponse,
+    PublishedKeyPackage, ReservedKeyPackage, RevokeDeviceRequest, RevokeDeviceResponse,
+    ServiceStatus, VersionResponse,
 };
 pub use ids::{AccountId, ChatId, DeviceId, MessageId};
 pub use model::{ChatType, ContentType, DeviceStatus, MessageKind};

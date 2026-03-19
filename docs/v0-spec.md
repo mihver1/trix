@@ -650,8 +650,9 @@ Request:
 
 Response:
 
-- revocation accepted
-- background membership removals scheduled
+- device becomes `revoked`
+- server-side inbox and chat membership access are cut off immediately
+- MLS cleanup commits remain a follow-up coordination step
 
 ### `GET /v0/devices`
 
