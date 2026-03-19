@@ -1,35 +1,43 @@
-# macOS App Scaffold
+# Trix macOS Client
 
-The first client target is `macOS`.
+`apps/macos` now contains the first runnable macOS client slice as a `SwiftPM` app target.
 
-This repository does not yet include an `Xcode` project. The app-side scaffold is split into:
+## Current Scope
 
-- `trix-core` for shared Rust-side client logic
-- future `UniFFI` bindings for Swift
-- future native `SwiftUI` app target living in this directory
+- `SwiftUI` macOS app entrypoint
+- server handshake via `/v0/system/health` and `/v0/system/version`
+- first-device account bootstrap against `/v0/accounts`
+- challenge/session sign-in using locally generated Ed25519 keys
+- local session persistence in `Application Support`
+- secret material persisted in `Keychain`
+- post-auth snapshot for `/v0/accounts/me`, `/v0/devices`, and `/v0/chats`
 
-## Planned Layout
+## Layout
 
 ```text
 apps/macos/
-  TrixMac.xcodeproj
-  TrixMac/
+  Package.swift
+  Sources/TrixMac/
     App/
     Features/
     Bridge/
-    Resources/
+    Support/
+  Tests/TrixMacTests/
 ```
 
-## Planned Responsibilities
+## Run
 
-- `App/` app lifecycle, environment, navigation
-- `Features/` chat list, conversation, attachments, settings, device linking
-- `Bridge/` Swift wrappers around generated Rust FFI bindings
-- `Resources/` assets, previews, localization
+```bash
+cd apps/macos
+swift build
+swift run TrixMac
+```
 
-## Next App Tasks
+You can also open `Package.swift` in `Xcode` and run the `TrixMac` target as a regular macOS app.
 
-- generate a minimal Swift binding surface from `trix-core`
-- create the `Xcode` project
-- wire `health` and `version` endpoints
-- add local secure storage integration through `Keychain`
+## Next Steps
+
+- move bootstrap/auth and storage logic behind `trix-core` + `UniFFI`
+- replace metadata-only chat view with real message sync/decrypt flow
+- add device linking, approval, and revocation UI
+- move access token refresh/session policies into a dedicated bridge layer

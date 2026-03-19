@@ -1,8 +1,9 @@
 .DS_Store
 /target
+.build/
+.swiftpm/
 /.idea
 /.vscode
 .env
 blobs/
 postgres-data/
-
