@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    AccountId, ChatId, ChatType, ContentType, DeviceId, DeviceStatus, MessageId, MessageKind,
+    AccountId, ChatId, ChatType, ContentType, DeviceId, DeviceStatus, HistorySyncJobStatus,
+    HistorySyncJobType, MessageId, MessageKind,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -11,6 +12,13 @@ use crate::{
 pub enum ServiceStatus {
     Ok,
     Degraded,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlobUploadStatus {
+    PendingUpload,
+    Available,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +114,56 @@ pub struct DeviceListResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateLinkIntentResponse {
+    pub link_intent_id: String,
+    pub qr_payload: String,
+    pub expires_at_unix: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompleteLinkIntentRequest {
+    pub link_token: String,
+    pub device_display_name: String,
+    pub platform: String,
+    pub credential_identity_b64: String,
+    pub transport_pubkey_b64: String,
+    #[serde(default)]
+    pub key_packages: Vec<PublishKeyPackageItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompleteLinkIntentResponse {
+    pub account_id: AccountId,
+    pub pending_device_id: DeviceId,
+    pub device_status: DeviceStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApproveDeviceRequest {
+    pub account_root_signature_b64: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApproveDeviceResponse {
+    pub account_id: AccountId,
+    pub device_id: DeviceId,
+    pub device_status: DeviceStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevokeDeviceRequest {
+    pub reason: String,
+    pub account_root_signature_b64: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevokeDeviceResponse {
+    pub account_id: AccountId,
+    pub device_id: DeviceId,
+    pub device_status: DeviceStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublishKeyPackageItem {
     pub cipher_suite: String,
     pub key_package_b64: String,
@@ -142,11 +200,15 @@ pub struct AccountKeyPackagesResponse {
     pub packages: Vec<ReservedKeyPackage>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CreateChatRequest {
     pub chat_type: ChatType,
     pub title: Option<String>,
     pub participant_account_ids: Vec<AccountId>,
+    #[serde(default)]
+    pub reserved_key_package_ids: Vec<String>,
+    pub initial_commit: Option<ControlMessageInput>,
+    pub welcome_message: Option<ControlMessageInput>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -183,7 +245,32 @@ pub struct ChatDetailResponse {
     pub title: Option<String>,
     pub last_server_seq: u64,
     pub epoch: u64,
+    pub last_commit_message_id: Option<MessageId>,
     pub members: Vec<ChatMemberSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ControlMessageInput {
+    pub message_id: MessageId,
+    pub ciphertext_b64: String,
+    pub aad_json: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModifyChatMembersRequest {
+    pub epoch: u64,
+    pub participant_account_ids: Vec<AccountId>,
+    #[serde(default)]
+    pub reserved_key_package_ids: Vec<String>,
+    pub commit_message: Option<ControlMessageInput>,
+    pub welcome_message: Option<ControlMessageInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModifyChatMembersResponse {
+    pub chat_id: ChatId,
+    pub epoch: u64,
+    pub changed_account_ids: Vec<AccountId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -242,4 +329,60 @@ pub struct AckInboxRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AckInboxResponse {
     pub acked_inbox_ids: Vec<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateBlobUploadRequest {
+    pub chat_id: ChatId,
+    pub mime_type: String,
+    pub size_bytes: u64,
+    pub sha256_b64: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateBlobUploadResponse {
+    pub blob_id: String,
+    pub upload_url: String,
+    pub upload_status: BlobUploadStatus,
+    pub needs_upload: bool,
+    pub max_upload_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlobMetadataResponse {
+    pub blob_id: String,
+    pub mime_type: String,
+    pub size_bytes: u64,
+    pub sha256_b64: String,
+    pub upload_status: BlobUploadStatus,
+    pub created_by_device_id: DeviceId,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistorySyncJobSummary {
+    pub job_id: String,
+    pub job_type: HistorySyncJobType,
+    pub job_status: HistorySyncJobStatus,
+    pub source_device_id: DeviceId,
+    pub target_device_id: DeviceId,
+    pub chat_id: Option<ChatId>,
+    pub cursor_json: Value,
+    pub created_at_unix: u64,
+    pub updated_at_unix: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistorySyncJobListResponse {
+    pub jobs: Vec<HistorySyncJobSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompleteHistorySyncJobRequest {
+    pub cursor_json: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompleteHistorySyncJobResponse {
+    pub job_id: String,
+    pub job_status: HistorySyncJobStatus,
 }

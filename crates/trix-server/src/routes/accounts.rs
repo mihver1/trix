@@ -62,7 +62,7 @@ async fn get_me(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<AccountProfileResponse>, AppError> {
-    let principal = state.auth.authenticate_headers(&headers)?;
+    let principal = state.authenticate_active_headers(&headers).await?;
     let profile = state
         .db
         .get_account_profile(principal.account_id, principal.device_id)
@@ -84,10 +84,10 @@ async fn get_account_key_packages(
     headers: HeaderMap,
     Path(account_id): Path<AccountId>,
 ) -> Result<Json<AccountKeyPackagesResponse>, AppError> {
-    state.auth.authenticate_headers(&headers)?;
+    let principal = state.authenticate_active_headers(&headers).await?;
     let packages = state
         .db
-        .reserve_key_packages_for_account(account_id.0)
+        .reserve_key_packages_for_account(principal.account_id, account_id.0)
         .await?;
 
     Ok(Json(AccountKeyPackagesResponse {

@@ -8,14 +8,17 @@ use base64::{Engine as _, engine::general_purpose};
 use serde::Deserialize;
 
 use crate::{
-    db::{CreateChatInput, CreateMessageInput, MessageEnvelopeRow},
+    db::{
+        CreateChatInput, CreateMessageInput, MessageEnvelopeRow, ModifyChatMembersInput,
+        PendingControlMessage,
+    },
     error::AppError,
     state::AppState,
 };
 use trix_types::{
     ChatDetailResponse, ChatHistoryResponse, ChatListResponse, ChatMemberSummary, ChatSummary,
-    CreateChatRequest, CreateChatResponse, CreateMessageRequest, CreateMessageResponse,
-    MessageEnvelope,
+    ControlMessageInput, CreateChatRequest, CreateChatResponse, CreateMessageRequest,
+    CreateMessageResponse, MessageEnvelope, ModifyChatMembersRequest, ModifyChatMembersResponse,
 };
 
 pub fn router() -> Router<AppState> {
@@ -38,7 +41,7 @@ async fn list_chats(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<ChatListResponse>, AppError> {
-    let principal = state.auth.authenticate_headers(&headers)?;
+    let principal = state.authenticate_active_headers(&headers).await?;
     let chats = state
         .db
         .list_chats_for_device(principal.account_id, principal.device_id)
@@ -62,7 +65,8 @@ async fn create_chat(
     headers: HeaderMap,
     Json(request): Json<CreateChatRequest>,
 ) -> Result<Json<CreateChatResponse>, AppError> {
-    let principal = state.auth.authenticate_headers(&headers)?;
+    let principal = state.authenticate_active_headers(&headers).await?;
+    let reserved_key_package_ids = parse_uuid_list(&request.reserved_key_package_ids)?;
     let created = state
         .db
         .create_chat(CreateChatInput {
@@ -75,6 +79,15 @@ async fn create_chat(
                 .into_iter()
                 .map(|account_id| account_id.0)
                 .collect(),
+            reserved_key_package_ids,
+            initial_commit: request
+                .initial_commit
+                .map(decode_control_message)
+                .transpose()?,
+            welcome_message: request
+                .welcome_message
+                .map(decode_control_message)
+                .transpose()?,
         })
         .await?;
 
@@ -90,7 +103,7 @@ async fn get_chat(
     headers: HeaderMap,
     Path(chat_id): Path<trix_types::ChatId>,
 ) -> Result<Json<ChatDetailResponse>, AppError> {
-    let principal = state.auth.authenticate_headers(&headers)?;
+    let principal = state.authenticate_active_headers(&headers).await?;
     let chat = state
         .db
         .get_chat_detail_for_device(chat_id.0, principal.device_id)
@@ -103,6 +116,7 @@ async fn get_chat(
         title: chat.title,
         last_server_seq: chat.last_server_seq,
         epoch: chat.epoch,
+        last_commit_message_id: chat.last_commit_message_id.map(trix_types::MessageId),
         members: chat
             .members
             .into_iter()
@@ -121,7 +135,7 @@ async fn create_message(
     Path(chat_id): Path<trix_types::ChatId>,
     Json(request): Json<CreateMessageRequest>,
 ) -> Result<Json<CreateMessageResponse>, AppError> {
-    let principal = state.auth.authenticate_headers(&headers)?;
+    let principal = state.authenticate_active_headers(&headers).await?;
     let ciphertext = decode_b64(&request.ciphertext_b64)?;
     let created = state
         .db
@@ -150,7 +164,7 @@ async fn get_history(
     Path(chat_id): Path<trix_types::ChatId>,
     Query(query): Query<HistoryQuery>,
 ) -> Result<Json<ChatHistoryResponse>, AppError> {
-    let principal = state.auth.authenticate_headers(&headers)?;
+    let principal = state.authenticate_active_headers(&headers).await?;
     let messages = state
         .db
         .get_chat_history_for_device(
@@ -168,16 +182,90 @@ async fn get_history(
     }))
 }
 
-async fn add_members() -> Result<Json<serde_json::Value>, AppError> {
-    Err(AppError::not_implemented(
-        "member add flow is not implemented yet",
-    ))
+async fn add_members(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(chat_id): Path<trix_types::ChatId>,
+    Json(request): Json<ModifyChatMembersRequest>,
+) -> Result<Json<ModifyChatMembersResponse>, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+    let reserved_key_package_ids = parse_uuid_list(&request.reserved_key_package_ids)?;
+    let updated = state
+        .db
+        .add_chat_members(ModifyChatMembersInput {
+            chat_id: chat_id.0,
+            actor_account_id: principal.account_id,
+            actor_device_id: principal.device_id,
+            epoch: request.epoch,
+            participant_account_ids: request
+                .participant_account_ids
+                .into_iter()
+                .map(|account_id| account_id.0)
+                .collect(),
+            reserved_key_package_ids,
+            commit_message: request
+                .commit_message
+                .map(decode_control_message)
+                .transpose()?,
+            welcome_message: request
+                .welcome_message
+                .map(decode_control_message)
+                .transpose()?,
+        })
+        .await?;
+
+    Ok(Json(ModifyChatMembersResponse {
+        chat_id: trix_types::ChatId(updated.chat_id),
+        epoch: updated.epoch,
+        changed_account_ids: updated
+            .changed_account_ids
+            .into_iter()
+            .map(trix_types::AccountId)
+            .collect(),
+    }))
 }
 
-async fn remove_members() -> Result<Json<serde_json::Value>, AppError> {
-    Err(AppError::not_implemented(
-        "member remove flow is not implemented yet",
-    ))
+async fn remove_members(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(chat_id): Path<trix_types::ChatId>,
+    Json(request): Json<ModifyChatMembersRequest>,
+) -> Result<Json<ModifyChatMembersResponse>, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+    let reserved_key_package_ids = parse_uuid_list(&request.reserved_key_package_ids)?;
+    let updated = state
+        .db
+        .remove_chat_members(ModifyChatMembersInput {
+            chat_id: chat_id.0,
+            actor_account_id: principal.account_id,
+            actor_device_id: principal.device_id,
+            epoch: request.epoch,
+            participant_account_ids: request
+                .participant_account_ids
+                .into_iter()
+                .map(|account_id| account_id.0)
+                .collect(),
+            reserved_key_package_ids,
+            commit_message: request
+                .commit_message
+                .map(decode_control_message)
+                .transpose()?,
+            welcome_message: request
+                .welcome_message
+                .map(decode_control_message)
+                .transpose()?,
+        })
+        .await?;
+
+    Ok(Json(ModifyChatMembersResponse {
+        chat_id: trix_types::ChatId(updated.chat_id),
+        epoch: updated.epoch,
+        changed_account_ids: updated
+            .changed_account_ids
+            .into_iter()
+            .map(trix_types::AccountId)
+            .collect(),
+    }))
 }
 
 fn decode_b64(value: &str) -> Result<Vec<u8>, AppError> {
@@ -193,6 +281,24 @@ fn decode_b64(value: &str) -> Result<Vec<u8>, AppError> {
     }
 
     Err(AppError::bad_request("invalid base64 payload"))
+}
+
+fn decode_control_message(message: ControlMessageInput) -> Result<PendingControlMessage, AppError> {
+    Ok(PendingControlMessage {
+        message_id: message.message_id.0,
+        ciphertext: decode_b64(&message.ciphertext_b64)?,
+        aad_json: message.aad_json.unwrap_or_default(),
+    })
+}
+
+fn parse_uuid_list(values: &[String]) -> Result<Vec<uuid::Uuid>, AppError> {
+    values
+        .iter()
+        .map(|value| {
+            uuid::Uuid::parse_str(value)
+                .map_err(|_| AppError::bad_request("invalid reserved key package id"))
+        })
+        .collect()
 }
 
 pub(super) fn message_to_api(message: MessageEnvelopeRow) -> MessageEnvelope {
