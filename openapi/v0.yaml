@@ -279,6 +279,27 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PublishKeyPackagesResponse'
+  /v0/key-packages:reserve:
+    post:
+      operationId: reserveKeyPackages
+      tags: [key_packages]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReserveKeyPackagesRequest'
+      responses:
+        '200':
+          description: Reserved key packages for the requested devices
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountKeyPackagesResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v0/chats:
     get:
       operationId: listChats
@@ -424,6 +445,52 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ModifyChatMembersResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v0/chats/{chat_id}/devices:add:
+    post:
+      operationId: addChatDevices
+      tags: [chats]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModifyChatDevicesRequest'
+      responses:
+        '200':
+          description: Devices added to the chat and epoch advanced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModifyChatDevicesResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v0/chats/{chat_id}/devices:remove:
+    post:
+      operationId: removeChatDevices
+      tags: [chats]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModifyChatDevicesRequest'
+      responses:
+        '200':
+          description: Devices removed from the chat and epoch advanced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModifyChatDevicesResponse'
         '409':
           $ref: '#/components/responses/Conflict'
   /v0/inbox:
@@ -987,6 +1054,16 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PublishKeyPackageItem'
+    ReserveKeyPackagesRequest:
+      type: object
+      required: [account_id, device_ids]
+      properties:
+        account_id:
+          $ref: '#/components/schemas/Uuid'
+        device_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uuid'
     PublishedKeyPackage:
       type: object
       required: [key_package_id, cipher_suite]
@@ -1161,6 +1238,40 @@ components:
           type: integer
           format: int64
         changed_account_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uuid'
+    ModifyChatDevicesRequest:
+      type: object
+      required: [epoch, device_ids]
+      properties:
+        epoch:
+          type: integer
+          format: int64
+        device_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uuid'
+        reserved_key_package_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uuid'
+        commit_message:
+          $ref: '#/components/schemas/ControlMessageInput'
+          nullable: true
+        welcome_message:
+          $ref: '#/components/schemas/ControlMessageInput'
+          nullable: true
+    ModifyChatDevicesResponse:
+      type: object
+      required: [chat_id, epoch, changed_device_ids]
+      properties:
+        chat_id:
+          $ref: '#/components/schemas/Uuid'
+        epoch:
+          type: integer
+          format: int64
+        changed_device_ids:
           type: array
           items:
             $ref: '#/components/schemas/Uuid'

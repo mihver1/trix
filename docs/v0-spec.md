@@ -678,6 +678,10 @@ Publishes a batch of `KeyPackage` objects for the authenticated device.
 
 Returns reservable `KeyPackage` references for all active devices of the target account.
 
+### `POST /v0/key-packages:reserve`
+
+Returns reservable `KeyPackage` references for the explicitly requested devices of the target account.
+
 Server rules:
 
 - packages are leased atomically
@@ -726,6 +730,26 @@ Removes accounts or devices from the chat.
 Request:
 
 - target account IDs or device IDs
+- MLS `Commit`
+
+### `POST /v0/chats/{chat_id}/devices:add`
+
+Adds one or more devices of an already active account to the chat.
+
+Request:
+
+- target device IDs
+- reserved key package IDs for those devices
+- MLS `Commit`
+- `Welcome` payload references
+
+### `POST /v0/chats/{chat_id}/devices:remove`
+
+Removes one or more devices from the chat without changing account-level membership.
+
+Request:
+
+- target device IDs
 - MLS `Commit`
 
 ## Messages and Inbox

@@ -12,9 +12,10 @@ pub use api::{
     CreateBlobUploadRequest, CreateBlobUploadResponse, CreateChatRequest, CreateChatResponse,
     CreateLinkIntentResponse, CreateMessageRequest, CreateMessageResponse, DeviceListResponse,
     DeviceSummary, ErrorResponse, HealthResponse, HistorySyncJobListResponse,
-    HistorySyncJobSummary, InboxItem, InboxResponse, MessageEnvelope, ModifyChatMembersRequest,
-    ModifyChatMembersResponse, PublishKeyPackageItem, PublishKeyPackagesRequest,
-    PublishKeyPackagesResponse, PublishedKeyPackage, ReservedKeyPackage, RevokeDeviceRequest,
+    HistorySyncJobSummary, InboxItem, InboxResponse, MessageEnvelope, ModifyChatDevicesRequest,
+    ModifyChatDevicesResponse, ModifyChatMembersRequest, ModifyChatMembersResponse,
+    PublishKeyPackageItem, PublishKeyPackagesRequest, PublishKeyPackagesResponse,
+    PublishedKeyPackage, ReserveKeyPackagesRequest, ReservedKeyPackage, RevokeDeviceRequest,
     RevokeDeviceResponse, ServiceStatus, VersionResponse,
 };
 pub use ids::{AccountId, ChatId, DeviceId, MessageId};
