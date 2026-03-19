@@ -141,6 +141,37 @@ struct TrixAPIClient {
         )
     }
 
+    func fetchHistorySyncJobs(
+        accessToken: String,
+        status: HistorySyncJobStatus? = nil,
+        limit: Int = 50
+    ) async throws -> HistorySyncJobListResponse {
+        var queryItems = [
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        if let status {
+            queryItems.append(URLQueryItem(name: "status", value: status.rawValue))
+        }
+
+        return try await get(
+            "v0/history-sync/jobs",
+            queryItems: queryItems,
+            accessToken: accessToken
+        )
+    }
+
+    func completeHistorySyncJob(
+        accessToken: String,
+        jobId: UUID,
+        request: CompleteHistorySyncJobRequest
+    ) async throws -> CompleteHistorySyncJobResponse {
+        try await post(
+            "v0/history-sync/jobs/\(jobId.uuidString)/complete",
+            body: request,
+            accessToken: accessToken
+        )
+    }
+
     func fetchChats(accessToken: String) async throws -> ChatListResponse {
         try await get("v0/chats", accessToken: accessToken)
     }

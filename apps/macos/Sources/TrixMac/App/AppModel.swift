@@ -12,6 +12,8 @@ final class AppModel: ObservableObject {
     @Published var currentAccount: AccountProfileResponse?
     @Published var devices: [DeviceSummary] = []
     @Published var chats: [ChatSummary] = []
+    @Published var historySyncJobs: [HistorySyncJobSummary] = []
+    @Published var historySyncCursorDrafts: [UUID: String] = [:]
     @Published var selectedChatID: UUID?
     @Published var selectedChatDetail: ChatDetailResponse?
     @Published var selectedChatHistory: [MessageEnvelope] = []
@@ -24,9 +26,11 @@ final class AppModel: ObservableObject {
     @Published var isCompletingLink = false
     @Published var isRestoringSession = false
     @Published var isRefreshingWorkspace = false
+    @Published var isRefreshingHistorySyncJobs = false
     @Published var isLoadingSelectedChat = false
     @Published var isApprovingPendingDevice = false
     @Published var revokingDeviceIDs: Set<UUID> = []
+    @Published var completingHistorySyncJobIDs: Set<UUID> = []
     @Published var lastErrorMessage: String?
 
     private let sessionStore: SessionStore
@@ -352,6 +356,64 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func refreshHistorySyncJobs() async {
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
+
+        isRefreshingHistorySyncJobs = true
+        defer { isRefreshingHistorySyncJobs = false }
+
+        do {
+            try await loadHistorySyncJobs(client: client, accessToken: token)
+        } catch let error as TrixAPIError {
+            if error.isCredentialFailure {
+                accessToken = nil
+                await restoreSession()
+            } else {
+                lastErrorMessage = error.userFacingMessage
+            }
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    func completeHistorySyncJob(_ jobID: UUID) async {
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
+
+        completingHistorySyncJobIDs.insert(jobID)
+        defer { completingHistorySyncJobIDs.remove(jobID) }
+
+        do {
+            let cursorJSON = try decodeCursorJSON(historySyncCursorDrafts[jobID])
+            _ = try await client.completeHistorySyncJob(
+                accessToken: token,
+                jobId: jobID,
+                request: CompleteHistorySyncJobRequest(cursorJson: cursorJSON)
+            )
+            try await loadHistorySyncJobs(client: client, accessToken: token)
+        } catch let error as TrixAPIError {
+            if error.isCredentialFailure {
+                accessToken = nil
+                await restoreSession()
+            } else {
+                lastErrorMessage = error.userFacingMessage
+            }
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
     func approvePendingDevice() async {
         guard canApprovePendingDevice else {
             return
@@ -540,6 +602,7 @@ final class AppModel: ObservableObject {
 
         try updatePersistedSessionProfile(from: loadedProfile)
         refreshLocalIdentityState(reportErrors: false)
+        try await loadHistorySyncJobs(client: client, accessToken: accessToken)
 
         if let preferredChatID = preferredChatSelection(from: sortedChats) {
             try await loadSelectedChat(
@@ -645,6 +708,8 @@ final class AppModel: ObservableObject {
         currentAccount = nil
         devices = []
         chats = []
+        historySyncJobs = []
+        historySyncCursorDrafts = [:]
         clearSelectedChat()
     }
 
@@ -694,6 +759,19 @@ final class AppModel: ObservableObject {
         persistedSession = session
     }
 
+    private func loadHistorySyncJobs(
+        client: TrixAPIClient,
+        accessToken: String
+    ) async throws {
+        let loadedJobs = try await client.fetchHistorySyncJobs(accessToken: accessToken)
+        historySyncJobs = loadedJobs.jobs
+        for job in loadedJobs.jobs {
+            if historySyncCursorDrafts[job.jobId] == nil {
+                historySyncCursorDrafts[job.jobId] = try encodeCursorJSON(job.cursorJson) ?? ""
+            }
+        }
+    }
+
     private func decodeLinkIntentPayload(_ rawValue: String) throws -> LinkIntentPayload {
         guard let data = rawValue.nonEmptyTrimmed?.data(using: .utf8) else {
             throw TrixAPIError.invalidPayload("Вставь link payload от активного устройства.")
@@ -725,6 +803,29 @@ final class AppModel: ObservableObject {
         }
 
         return string
+    }
+
+    private func decodeCursorJSON(_ rawValue: String?) throws -> JSONValue? {
+        guard let rawValue = rawValue?.nonEmptyTrimmed else {
+            return nil
+        }
+
+        guard let data = rawValue.data(using: .utf8) else {
+            throw TrixAPIError.invalidPayload("Cursor JSON должен быть валидным UTF-8.")
+        }
+
+        return try JSONDecoder().decode(JSONValue.self, from: data)
+    }
+
+    private func encodeCursorJSON(_ value: JSONValue?) throws -> String? {
+        guard let value else {
+            return nil
+        }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(value)
+        return String(data: data, encoding: .utf8)
     }
 
     private func chatSort(lhs: ChatSummary, rhs: ChatSummary) -> Bool {

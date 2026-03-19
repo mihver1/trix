@@ -195,6 +195,35 @@ enum ChatType: String, Codable {
     case accountSync = "account_sync"
 }
 
+enum HistorySyncJobType: String, Codable {
+    case initialSync = "initial_sync"
+    case chatBackfill = "chat_backfill"
+    case deviceRekey = "device_rekey"
+
+    var label: String {
+        switch self {
+        case .initialSync:
+            return "Initial Sync"
+        case .chatBackfill:
+            return "Chat Backfill"
+        case .deviceRekey:
+            return "Device Rekey"
+        }
+    }
+}
+
+enum HistorySyncJobStatus: String, Codable {
+    case pending
+    case running
+    case completed
+    case failed
+    case canceled
+
+    var label: String {
+        rawValue.capitalized
+    }
+}
+
 struct ChatListResponse: Codable {
     let chats: [ChatSummary]
 }
@@ -289,6 +318,45 @@ struct ChatHistoryResponse: Codable {
     let messages: [MessageEnvelope]
 }
 
+struct HistorySyncJobListResponse: Codable, Sendable {
+    let jobs: [HistorySyncJobSummary]
+}
+
+struct HistorySyncJobSummary: Codable, Identifiable, Sendable {
+    let jobId: UUID
+    let jobType: HistorySyncJobType
+    let jobStatus: HistorySyncJobStatus
+    let sourceDeviceId: UUID
+    let targetDeviceId: UUID
+    let chatId: UUID?
+    let cursorJson: JSONValue?
+    let createdAtUnix: UInt64
+    let updatedAtUnix: UInt64
+
+    var id: UUID { jobId }
+
+    var createdAt: Date {
+        Date(timeIntervalSince1970: TimeInterval(createdAtUnix))
+    }
+
+    var updatedAt: Date {
+        Date(timeIntervalSince1970: TimeInterval(updatedAtUnix))
+    }
+
+    var isCompletable: Bool {
+        jobStatus == .pending || jobStatus == .running
+    }
+}
+
+struct CompleteHistorySyncJobRequest: Codable, Sendable {
+    let cursorJson: JSONValue?
+}
+
+struct CompleteHistorySyncJobResponse: Codable, Sendable {
+    let jobId: UUID
+    let jobStatus: HistorySyncJobStatus
+}
+
 struct MessageEnvelope: Codable, Identifiable {
     let messageId: UUID
     let chatId: UUID
@@ -321,7 +389,7 @@ struct MessageEnvelope: Codable, Identifiable {
     }
 }
 
-enum JSONValue: Codable, Hashable {
+enum JSONValue: Codable, Hashable, Sendable {
     case string(String)
     case number(Double)
     case bool(Bool)

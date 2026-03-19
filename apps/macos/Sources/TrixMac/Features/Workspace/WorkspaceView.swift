@@ -40,6 +40,11 @@ struct WorkspaceView: View {
                                 value: "\(model.chats.count)",
                                 footnote: "Sorted from live server metadata"
                             )
+                            TrixMetricTile(
+                                label: "Sync Jobs",
+                                value: "\(model.historySyncJobs.count)",
+                                footnote: "Visible for this source device"
+                            )
                         }
                     }
                 }
@@ -160,6 +165,44 @@ struct WorkspaceView: View {
                         }
                         .buttonStyle(TrixActionButtonStyle(tone: .primary))
                         .disabled(!model.canApprovePendingDevice)
+                    }
+                }
+            }
+
+            TrixPanel(
+                title: "History Sync Jobs",
+                subtitle: "Server-side jobs targeted from this device. Useful after device approval, revoke and future chat backfills."
+            ) {
+                VStack(alignment: .leading, spacing: 16) {
+                    Button {
+                        Task {
+                            await model.refreshHistorySyncJobs()
+                        }
+                    } label: {
+                        Label(
+                            model.isRefreshingHistorySyncJobs ? "Refreshing Jobs…" : "Refresh Jobs",
+                            systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90"
+                        )
+                    }
+                    .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                    .disabled(model.isRefreshingHistorySyncJobs)
+
+                    if model.historySyncJobs.isEmpty {
+                        EmptyWorkspaceLabel("No history sync jobs are visible for this device yet.")
+                    } else {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(model.historySyncJobs) { job in
+                                HistorySyncJobRow(
+                                    job: job,
+                                    cursorText: cursorBinding(for: job.jobId),
+                                    isCompleting: model.completingHistorySyncJobIDs.contains(job.jobId)
+                                ) {
+                                    Task {
+                                        await model.completeHistorySyncJob(job.jobId)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -311,9 +354,119 @@ struct WorkspaceView: View {
         String(uuid.uuidString.prefix(8)).lowercased()
     }
 
+    private func cursorBinding(for jobID: UUID) -> Binding<String> {
+        Binding(
+            get: { model.historySyncCursorDrafts[jobID] ?? "" },
+            set: { model.historySyncCursorDrafts[jobID] = $0 }
+        )
+    }
+
     private static let linkExpiryFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
+        return formatter
+    }()
+}
+
+private struct HistorySyncJobRow: View {
+    @Environment(\.trixColors) private var colors
+    let job: HistorySyncJobSummary
+    @Binding var cursorText: String
+    let isCompleting: Bool
+    let complete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(job.jobType.label)
+                        .font(.headline)
+                        .foregroundStyle(colors.ink)
+                    Text("job \(shortID(job.jobId)) • target \(shortID(job.targetDeviceId))")
+                        .font(.subheadline)
+                        .foregroundStyle(colors.inkMuted)
+                }
+                Spacer()
+                TrixToneBadge(label: job.jobStatus.label, tint: statusTint)
+            }
+
+            HStack(spacing: 10) {
+                InlineMeta(label: "updated \(Self.relativeFormatter.localizedString(for: job.updatedAt, relativeTo: .now))")
+                if let chatID = job.chatId {
+                    InlineMeta(label: "chat \(shortID(chatID))")
+                }
+            }
+
+            if let cursor = job.cursorJson {
+                TrixInputBlock("Server Cursor", hint: "Last cursor JSON already stored on the server for this job.") {
+                    TrixPayloadBox(payload: prettyCursor(cursor), minHeight: 90)
+                }
+            }
+
+            if job.isCompletable {
+                TrixInputBlock(
+                    "Complete Cursor JSON",
+                    hint: "Optional JSON persisted while marking the job completed. Leave empty to send `null`."
+                ) {
+                    TextEditor(text: $cursorText)
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: 92)
+                        .font(.system(.footnote, design: .monospaced))
+                        .trixInputChrome()
+                }
+
+                Button(action: complete) {
+                    Label(
+                        isCompleting ? "Completing Job…" : "Mark Completed",
+                        systemImage: "checkmark.circle"
+                    )
+                }
+                .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                .disabled(isCompleting)
+            }
+        }
+        .padding(16)
+        .background(colors.tileFill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(colors.outline, lineWidth: 1)
+        }
+    }
+
+    private var statusTint: Color {
+        switch job.jobStatus {
+        case .pending:
+            return colors.warning
+        case .running:
+            return colors.accent
+        case .completed:
+            return colors.success
+        case .failed, .canceled:
+            return colors.rust
+        }
+    }
+
+    private func shortID(_ uuid: UUID) -> String {
+        String(uuid.uuidString.prefix(8)).lowercased()
+    }
+
+    private func prettyCursor(_ value: JSONValue) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+
+        guard
+            let data = try? encoder.encode(value),
+            let string = String(data: data, encoding: .utf8)
+        else {
+            return "cursor unavailable"
+        }
+
+        return string
+    }
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
         return formatter
     }()
 }

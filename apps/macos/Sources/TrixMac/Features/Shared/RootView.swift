@@ -101,6 +101,7 @@ private struct SidebarView: View {
                         SidebarBullet("health and version handshake")
                         SidebarBullet("first-device bootstrap")
                         SidebarBullet("manual device linking + approval payloads")
+                        SidebarBullet("history sync job inspector")
                         SidebarBullet("challenge/session auth restore")
                         SidebarBullet("chat metadata + encrypted history browser")
                     }
