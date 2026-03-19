@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    AccountId, ChatId, ChatType, ContentType, DeviceId, DeviceStatus, MessageId, MessageKind,
+    AccountId, ChatId, ChatType, ContentType, DeviceId, DeviceStatus, HistorySyncJobStatus,
+    HistorySyncJobType, MessageId, MessageKind,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -174,6 +175,12 @@ pub struct PublishKeyPackagesRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReserveKeyPackagesRequest {
+    pub account_id: AccountId,
+    pub device_ids: Vec<DeviceId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublishedKeyPackage {
     pub key_package_id: String,
     pub cipher_suite: String,
@@ -273,6 +280,23 @@ pub struct ModifyChatMembersResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModifyChatDevicesRequest {
+    pub epoch: u64,
+    pub device_ids: Vec<DeviceId>,
+    #[serde(default)]
+    pub reserved_key_package_ids: Vec<String>,
+    pub commit_message: Option<ControlMessageInput>,
+    pub welcome_message: Option<ControlMessageInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModifyChatDevicesResponse {
+    pub chat_id: ChatId,
+    pub epoch: u64,
+    pub changed_device_ids: Vec<DeviceId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CreateMessageRequest {
     pub message_id: MessageId,
     pub epoch: u64,
@@ -355,4 +379,33 @@ pub struct BlobMetadataResponse {
     pub sha256_b64: String,
     pub upload_status: BlobUploadStatus,
     pub created_by_device_id: DeviceId,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistorySyncJobSummary {
+    pub job_id: String,
+    pub job_type: HistorySyncJobType,
+    pub job_status: HistorySyncJobStatus,
+    pub source_device_id: DeviceId,
+    pub target_device_id: DeviceId,
+    pub chat_id: Option<ChatId>,
+    pub cursor_json: Value,
+    pub created_at_unix: u64,
+    pub updated_at_unix: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistorySyncJobListResponse {
+    pub jobs: Vec<HistorySyncJobSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompleteHistorySyncJobRequest {
+    pub cursor_json: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompleteHistorySyncJobResponse {
+    pub job_id: String,
+    pub job_status: HistorySyncJobStatus,
 }

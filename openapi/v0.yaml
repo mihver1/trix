@@ -10,6 +10,7 @@ tags:
   - name: auth
   - name: accounts
   - name: devices
+  - name: history_sync
   - name: key_packages
   - name: chats
   - name: inbox
@@ -211,6 +212,54 @@ paths:
                 $ref: '#/components/schemas/RevokeDeviceResponse'
         '409':
           $ref: '#/components/responses/Conflict'
+  /v0/history-sync/jobs:
+    get:
+      operationId: listHistorySyncJobs
+      tags: [history_sync]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: status
+          schema:
+            $ref: '#/components/schemas/HistorySyncJobStatus'
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 500
+      responses:
+        '200':
+          description: History sync jobs assigned to the authenticated source device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistorySyncJobListResponse'
+  /v0/history-sync/jobs/{job_id}/complete:
+    post:
+      operationId: completeHistorySyncJob
+      tags: [history_sync]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteHistorySyncJobRequest'
+      responses:
+        '200':
+          description: History sync job marked completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompleteHistorySyncJobResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v0/key-packages:publish:
     post:
       operationId: publishKeyPackages
@@ -230,6 +279,27 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PublishKeyPackagesResponse'
+  /v0/key-packages:reserve:
+    post:
+      operationId: reserveKeyPackages
+      tags: [key_packages]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReserveKeyPackagesRequest'
+      responses:
+        '200':
+          description: Reserved key packages for the requested devices
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountKeyPackagesResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v0/chats:
     get:
       operationId: listChats
@@ -375,6 +445,52 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ModifyChatMembersResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v0/chats/{chat_id}/devices:add:
+    post:
+      operationId: addChatDevices
+      tags: [chats]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModifyChatDevicesRequest'
+      responses:
+        '200':
+          description: Devices added to the chat and epoch advanced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModifyChatDevicesResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v0/chats/{chat_id}/devices:remove:
+    post:
+      operationId: removeChatDevices
+      tags: [chats]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModifyChatDevicesRequest'
+      responses:
+        '200':
+          description: Devices removed from the chat and epoch advanced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModifyChatDevicesResponse'
         '409':
           $ref: '#/components/responses/Conflict'
   /v0/inbox:
@@ -576,6 +692,13 @@ components:
       schema:
         type: string
         format: uuid
+    JobId:
+      in: path
+      name: job_id
+      required: true
+      schema:
+        type: string
+        format: uuid
   responses:
     NotFound:
       description: Resource not found
@@ -605,6 +728,12 @@ components:
     DeviceStatus:
       type: string
       enum: [pending, active, revoked]
+    HistorySyncJobType:
+      type: string
+      enum: [initial_sync, chat_backfill, device_rekey]
+    HistorySyncJobStatus:
+      type: string
+      enum: [pending, running, completed, failed, canceled]
     BlobUploadStatus:
       type: string
       enum: [pending_upload, available]
@@ -852,6 +981,63 @@ components:
           $ref: '#/components/schemas/Uuid'
         device_status:
           $ref: '#/components/schemas/DeviceStatus'
+    HistorySyncJobSummary:
+      type: object
+      required:
+        - job_id
+        - job_type
+        - job_status
+        - source_device_id
+        - target_device_id
+        - cursor_json
+        - created_at_unix
+        - updated_at_unix
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        job_type:
+          $ref: '#/components/schemas/HistorySyncJobType'
+        job_status:
+          $ref: '#/components/schemas/HistorySyncJobStatus'
+        source_device_id:
+          $ref: '#/components/schemas/Uuid'
+        target_device_id:
+          $ref: '#/components/schemas/Uuid'
+        chat_id:
+          $ref: '#/components/schemas/Uuid'
+          nullable: true
+        cursor_json:
+          type: object
+        created_at_unix:
+          type: integer
+          format: int64
+        updated_at_unix:
+          type: integer
+          format: int64
+    HistorySyncJobListResponse:
+      type: object
+      required: [jobs]
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/HistorySyncJobSummary'
+    CompleteHistorySyncJobRequest:
+      type: object
+      properties:
+        cursor_json:
+          type: object
+          nullable: true
+    CompleteHistorySyncJobResponse:
+      type: object
+      required: [job_id, job_status]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        job_status:
+          $ref: '#/components/schemas/HistorySyncJobStatus'
     PublishKeyPackageItem:
       type: object
       required: [cipher_suite, key_package_b64]
@@ -868,6 +1054,16 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PublishKeyPackageItem'
+    ReserveKeyPackagesRequest:
+      type: object
+      required: [account_id, device_ids]
+      properties:
+        account_id:
+          $ref: '#/components/schemas/Uuid'
+        device_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uuid'
     PublishedKeyPackage:
       type: object
       required: [key_package_id, cipher_suite]
@@ -1042,6 +1238,40 @@ components:
           type: integer
           format: int64
         changed_account_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uuid'
+    ModifyChatDevicesRequest:
+      type: object
+      required: [epoch, device_ids]
+      properties:
+        epoch:
+          type: integer
+          format: int64
+        device_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uuid'
+        reserved_key_package_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uuid'
+        commit_message:
+          $ref: '#/components/schemas/ControlMessageInput'
+          nullable: true
+        welcome_message:
+          $ref: '#/components/schemas/ControlMessageInput'
+          nullable: true
+    ModifyChatDevicesResponse:
+      type: object
+      required: [chat_id, epoch, changed_device_ids]
+      properties:
+        chat_id:
+          $ref: '#/components/schemas/Uuid'
+        epoch:
+          type: integer
+          format: int64
+        changed_device_ids:
           type: array
           items:
             $ref: '#/components/schemas/Uuid'

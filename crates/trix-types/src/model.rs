@@ -34,3 +34,21 @@ pub enum ContentType {
     Attachment,
     ChatEvent,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistorySyncJobType {
+    InitialSync,
+    ChatBackfill,
+    DeviceRekey,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistorySyncJobStatus {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+    Canceled,
+}

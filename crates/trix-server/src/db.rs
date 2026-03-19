@@ -6,7 +6,10 @@ use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use uuid::Uuid;
 
 use crate::error::AppError;
-use trix_types::{BlobUploadStatus, ChatType, ContentType, DeviceStatus, MessageKind};
+use trix_types::{
+    BlobUploadStatus, ChatType, ContentType, DeviceStatus, HistorySyncJobStatus,
+    HistorySyncJobType, MessageKind,
+};
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./../../migrations");
 
@@ -17,6 +20,8 @@ const DEFAULT_HISTORY_LIMIT: usize = 100;
 const MAX_HISTORY_LIMIT: usize = 500;
 const DEFAULT_INBOX_LIMIT: usize = 100;
 const MAX_INBOX_LIMIT: usize = 500;
+const DEFAULT_HISTORY_SYNC_JOB_LIMIT: usize = 100;
+const MAX_HISTORY_SYNC_JOB_LIMIT: usize = 500;
 
 #[derive(Debug, Clone)]
 pub struct Database {
@@ -150,6 +155,19 @@ pub struct RevokeDeviceOutput {
 }
 
 #[derive(Debug)]
+pub struct HistorySyncJobRow {
+    pub job_id: Uuid,
+    pub job_type: HistorySyncJobType,
+    pub job_status: HistorySyncJobStatus,
+    pub source_device_id: Uuid,
+    pub target_device_id: Uuid,
+    pub chat_id: Option<Uuid>,
+    pub cursor_json: Value,
+    pub created_at_unix: u64,
+    pub updated_at_unix: u64,
+}
+
+#[derive(Debug)]
 pub struct PublishKeyPackageInput {
     pub device_id: Uuid,
     pub cipher_suite: String,
@@ -245,6 +263,25 @@ pub struct ModifyChatMembersOutput {
     pub chat_id: Uuid,
     pub epoch: u64,
     pub changed_account_ids: Vec<Uuid>,
+}
+
+#[derive(Debug)]
+pub struct ModifyChatDevicesInput {
+    pub chat_id: Uuid,
+    pub actor_account_id: Uuid,
+    pub actor_device_id: Uuid,
+    pub epoch: u64,
+    pub device_ids: Vec<Uuid>,
+    pub reserved_key_package_ids: Vec<Uuid>,
+    pub commit_message: Option<PendingControlMessage>,
+    pub welcome_message: Option<PendingControlMessage>,
+}
+
+#[derive(Debug)]
+pub struct ModifyChatDevicesOutput {
+    pub chat_id: Uuid,
+    pub epoch: u64,
+    pub changed_device_ids: Vec<Uuid>,
 }
 
 #[derive(Debug)]
@@ -610,6 +647,117 @@ impl Database {
         }
 
         Ok(())
+    }
+
+    pub async fn list_history_sync_jobs_for_source_device(
+        &self,
+        account_id: Uuid,
+        source_device_id: Uuid,
+        status: Option<HistorySyncJobStatus>,
+        limit: Option<usize>,
+    ) -> Result<Vec<HistorySyncJobRow>, AppError> {
+        let limit = clamp_limit(
+            limit,
+            DEFAULT_HISTORY_SYNC_JOB_LIMIT,
+            MAX_HISTORY_SYNC_JOB_LIMIT,
+        );
+
+        let rows =
+            if let Some(status) = status {
+                sqlx::query(
+                    r#"
+                SELECT
+                    job_id,
+                    job_type::text AS job_type,
+                    job_status::text AS job_status,
+                    source_device_id,
+                    target_device_id,
+                    chat_id,
+                    cursor_json,
+                    extract(epoch from created_at)::bigint AS created_at_unix,
+                    extract(epoch from updated_at)::bigint AS updated_at_unix
+                FROM history_sync_jobs
+                WHERE account_id = $1
+                  AND source_device_id = $2
+                  AND job_status = $3::history_sync_job_status
+                ORDER BY created_at ASC, job_id ASC
+                LIMIT $4
+                "#,
+                )
+                .bind(account_id)
+                .bind(source_device_id)
+                .bind(history_sync_job_status_db(status))
+                .bind(i64::try_from(limit).map_err(|_| {
+                    AppError::bad_request("history sync limit exceeds supported range")
+                })?)
+                .fetch_all(&self.pool)
+                .await
+            } else {
+                sqlx::query(
+                    r#"
+                SELECT
+                    job_id,
+                    job_type::text AS job_type,
+                    job_status::text AS job_status,
+                    source_device_id,
+                    target_device_id,
+                    chat_id,
+                    cursor_json,
+                    extract(epoch from created_at)::bigint AS created_at_unix,
+                    extract(epoch from updated_at)::bigint AS updated_at_unix
+                FROM history_sync_jobs
+                WHERE account_id = $1
+                  AND source_device_id = $2
+                ORDER BY created_at ASC, job_id ASC
+                LIMIT $3
+                "#,
+                )
+                .bind(account_id)
+                .bind(source_device_id)
+                .bind(i64::try_from(limit).map_err(|_| {
+                    AppError::bad_request("history sync limit exceeds supported range")
+                })?)
+                .fetch_all(&self.pool)
+                .await
+            }
+            .map_err(map_db_error)?;
+
+        rows.into_iter().map(history_sync_job_row_from_db).collect()
+    }
+
+    pub async fn complete_history_sync_job_for_source_device(
+        &self,
+        account_id: Uuid,
+        source_device_id: Uuid,
+        job_id: Uuid,
+        cursor_json: Option<Value>,
+    ) -> Result<Option<HistorySyncJobStatus>, AppError> {
+        let row = sqlx::query(
+            r#"
+            UPDATE history_sync_jobs
+            SET job_status = 'completed'::history_sync_job_status,
+                cursor_json = COALESCE($4, cursor_json),
+                updated_at = now()
+            WHERE job_id = $1
+              AND account_id = $2
+              AND source_device_id = $3
+              AND job_status IN (
+                'pending'::history_sync_job_status,
+                'running'::history_sync_job_status
+              )
+            RETURNING job_status::text AS job_status
+            "#,
+        )
+        .bind(job_id)
+        .bind(account_id)
+        .bind(source_device_id)
+        .bind(cursor_json)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        row.map(|row| parse_history_sync_job_status(&row_text(&row, "job_status")?))
+            .transpose()
     }
 
     pub async fn list_devices_for_account(
@@ -998,6 +1146,14 @@ impl Database {
         .await
         .map_err(map_db_error)?;
 
+        schedule_approved_device_sync_jobs_tx(
+            &mut tx,
+            input.actor_account_id,
+            input.actor_device_id,
+            input.target_device_id,
+        )
+        .await?;
+
         tx.commit()
             .await
             .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
@@ -1156,6 +1312,15 @@ impl Database {
         .await
         .map_err(map_db_error)?;
 
+        schedule_revoked_device_sync_jobs_tx(
+            &mut tx,
+            input.actor_account_id,
+            input.actor_device_id,
+            input.target_device_id,
+            &input.reason,
+        )
+        .await?;
+
         tx.commit()
             .await
             .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
@@ -1274,61 +1439,45 @@ impl Database {
             return Err(AppError::conflict("account has no active devices"));
         }
 
-        let mut reserved = Vec::with_capacity(device_rows.len());
-        for device_row in device_rows {
-            let device_id = row_uuid(&device_row, "device_id")?;
-            let reserved_row = sqlx::query(
-                r#"
-                WITH candidate AS (
-                    SELECT key_package_id
-                    FROM device_key_packages
-                    WHERE device_id = $1
-                      AND (
-                        status = 'available'::key_package_status
-                        OR (
-                            status = 'reserved'::key_package_status
-                            AND reserved_at < now() - make_interval(secs => $2)
-                        )
-                      )
-                    ORDER BY
-                        CASE
-                            WHEN status = 'available'::key_package_status THEN 0
-                            ELSE 1
-                        END,
-                        published_at ASC,
-                        key_package_id ASC
-                    LIMIT 1
-                    FOR UPDATE SKIP LOCKED
-                )
-                UPDATE device_key_packages kp
-                SET status = 'reserved'::key_package_status,
-                    reserved_at = now(),
-                    reserved_by_account_id = $3
-                FROM candidate
-                WHERE kp.key_package_id = candidate.key_package_id
-                RETURNING kp.key_package_id, kp.device_id, kp.cipher_suite, kp.key_package_bytes
-                "#,
-            )
-            .bind(device_id)
-            .bind(KEY_PACKAGE_RESERVATION_TTL_SECONDS)
-            .bind(reserved_by_account_id)
-            .fetch_optional(&mut *tx)
+        let device_ids = device_rows
+            .into_iter()
+            .map(|row| row_uuid(&row, "device_id"))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let reserved = reserve_key_packages_for_device_ids_tx(
+            &mut tx,
+            reserved_by_account_id,
+            account_id,
+            &device_ids,
+        )
+        .await?;
+
+        tx.commit()
             .await
-            .map_err(map_db_error)?;
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
 
-            let Some(reserved_row) = reserved_row else {
-                return Err(AppError::conflict(
-                    "one or more active devices have no available key packages",
-                ));
-            };
+        Ok(reserved)
+    }
 
-            reserved.push(ReservedKeyPackageRow {
-                key_package_id: row_uuid(&reserved_row, "key_package_id")?,
-                device_id: row_uuid(&reserved_row, "device_id")?,
-                cipher_suite: row_text(&reserved_row, "cipher_suite")?,
-                key_package_bytes: row_bytes(&reserved_row, "key_package_bytes")?,
-            });
-        }
+    pub async fn reserve_key_packages_for_devices(
+        &self,
+        reserved_by_account_id: Uuid,
+        account_id: Uuid,
+        device_ids: Vec<Uuid>,
+    ) -> Result<Vec<ReservedKeyPackageRow>, AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
+        let reserved = reserve_key_packages_for_device_ids_tx(
+            &mut tx,
+            reserved_by_account_id,
+            account_id,
+            &device_ids,
+        )
+        .await?;
 
         tx.commit()
             .await
@@ -2363,6 +2512,435 @@ impl Database {
         })
     }
 
+    pub async fn add_chat_devices(
+        &self,
+        input: ModifyChatDevicesInput,
+    ) -> Result<ModifyChatDevicesOutput, AppError> {
+        let mut target_device_ids = BTreeSet::new();
+        target_device_ids.extend(input.device_ids);
+        if target_device_ids.is_empty() {
+            return Err(AppError::bad_request("at least one device id is required"));
+        }
+        if target_device_ids.contains(&input.actor_device_id) {
+            return Err(AppError::bad_request("cannot add the acting device"));
+        }
+        let target_device_ids: Vec<Uuid> = target_device_ids.into_iter().collect();
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
+        let actor_row = sqlx::query(
+            r#"
+            SELECT
+                c.chat_type::text AS chat_type,
+                mgs.epoch
+            FROM chats c
+            JOIN mls_group_states mgs
+              ON mgs.chat_id = c.chat_id
+            JOIN chat_account_members cam
+              ON cam.chat_id = c.chat_id
+            JOIN chat_device_members cdm
+              ON cdm.chat_id = c.chat_id
+            JOIN devices d
+              ON d.device_id = cdm.device_id
+            WHERE c.chat_id = $1
+              AND cam.account_id = $2
+              AND cam.membership_status = 'active'::membership_status
+              AND cdm.device_id = $3
+              AND cdm.membership_status = 'active'::device_membership_status
+              AND d.account_id = $2
+              AND d.device_status = 'active'::device_status
+            "#,
+        )
+        .bind(input.chat_id)
+        .bind(input.actor_account_id)
+        .bind(input.actor_device_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        let Some(actor_row) = actor_row else {
+            return Err(AppError::not_found("active chat membership not found"));
+        };
+
+        let current_epoch = row_u64_from_i64(&actor_row, "epoch")?;
+        if current_epoch != input.epoch {
+            return Err(AppError::conflict("chat epoch is out of date"));
+        }
+
+        let _chat_type = parse_chat_type(&row_text(&actor_row, "chat_type")?)?;
+
+        let target_rows = sqlx::query(
+            r#"
+            SELECT
+                d.device_id,
+                d.account_id,
+                d.device_status::text AS device_status
+            FROM devices d
+            WHERE d.device_id = ANY($1)
+            FOR UPDATE
+            "#,
+        )
+        .bind(&target_device_ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        if target_rows.len() != target_device_ids.len() {
+            return Err(AppError::not_found(
+                "one or more target devices were not found",
+            ));
+        }
+
+        for row in &target_rows {
+            let account_id = row_uuid(row, "account_id")?;
+            if account_id != input.actor_account_id {
+                return Err(AppError::unauthorized(
+                    "all target devices must belong to the authenticated account",
+                ));
+            }
+            let status = parse_device_status(&row_text(row, "device_status")?)?;
+            if status != DeviceStatus::Active {
+                return Err(AppError::conflict(
+                    "one or more target devices are not active",
+                ));
+            }
+        }
+
+        let existing_rows = sqlx::query(
+            r#"
+            SELECT device_id, membership_status::text AS membership_status
+            FROM chat_device_members
+            WHERE chat_id = $1
+              AND device_id = ANY($2)
+            "#,
+        )
+        .bind(input.chat_id)
+        .bind(&target_device_ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        for row in existing_rows {
+            if row_text(&row, "membership_status")? == "active" {
+                return Err(AppError::conflict(
+                    "one or more target devices are already active in the chat",
+                ));
+            }
+        }
+
+        consume_reserved_key_packages_for_devices_tx(
+            &mut tx,
+            input.actor_account_id,
+            input.chat_id,
+            &target_device_ids,
+            &input.reserved_key_package_ids,
+        )
+        .await?;
+
+        let next_epoch = current_epoch + 1;
+        let leaf_index_row = sqlx::query(
+            r#"
+            SELECT COALESCE(MAX(leaf_index), -1) AS max_leaf_index
+            FROM chat_device_members
+            WHERE chat_id = $1
+            "#,
+        )
+        .bind(input.chat_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        let mut next_leaf_index = row_i32(&leaf_index_row, "max_leaf_index")? + 1;
+
+        for target_device_id in &target_device_ids {
+            sqlx::query(
+                r#"
+                INSERT INTO chat_device_members (
+                    chat_id,
+                    device_id,
+                    leaf_index,
+                    membership_status,
+                    added_in_epoch,
+                    removed_in_epoch,
+                    joined_at,
+                    removed_at
+                )
+                VALUES (
+                    $1,
+                    $2,
+                    $3,
+                    'active'::device_membership_status,
+                    $4,
+                    NULL,
+                    now(),
+                    NULL
+                )
+                ON CONFLICT (chat_id, device_id) DO UPDATE
+                SET leaf_index = EXCLUDED.leaf_index,
+                    membership_status = 'active'::device_membership_status,
+                    added_in_epoch = EXCLUDED.added_in_epoch,
+                    removed_in_epoch = NULL,
+                    joined_at = now(),
+                    removed_at = NULL
+                "#,
+            )
+            .bind(input.chat_id)
+            .bind(*target_device_id)
+            .bind(next_leaf_index)
+            .bind(u64_to_i64(next_epoch, "next epoch")?)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+            next_leaf_index += 1;
+        }
+
+        sqlx::query(
+            r#"
+            UPDATE mls_group_states
+            SET epoch = $2,
+                updated_at = now()
+            WHERE chat_id = $1
+            "#,
+        )
+        .bind(input.chat_id)
+        .bind(u64_to_i64(next_epoch, "next epoch")?)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        if let Some(commit) = input.commit_message {
+            let commit_message_id = commit.message_id;
+            let recipients =
+                active_chat_device_ids_tx(&mut tx, input.chat_id, input.actor_device_id, None)
+                    .await?;
+            insert_control_message_tx(
+                &mut tx,
+                input.chat_id,
+                input.actor_account_id,
+                input.actor_device_id,
+                next_epoch,
+                MessageKind::Commit,
+                commit,
+                &recipients,
+            )
+            .await?;
+            set_last_commit_message_id_tx(&mut tx, input.chat_id, commit_message_id).await?;
+        }
+
+        if let Some(welcome) = input.welcome_message {
+            insert_control_message_tx(
+                &mut tx,
+                input.chat_id,
+                input.actor_account_id,
+                input.actor_device_id,
+                next_epoch,
+                MessageKind::WelcomeRef,
+                welcome,
+                &target_device_ids,
+            )
+            .await?;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
+
+        Ok(ModifyChatDevicesOutput {
+            chat_id: input.chat_id,
+            epoch: next_epoch,
+            changed_device_ids: target_device_ids,
+        })
+    }
+
+    pub async fn remove_chat_devices(
+        &self,
+        input: ModifyChatDevicesInput,
+    ) -> Result<ModifyChatDevicesOutput, AppError> {
+        if input.welcome_message.is_some() {
+            return Err(AppError::bad_request(
+                "welcome message is not valid for device removal",
+            ));
+        }
+        if !input.reserved_key_package_ids.is_empty() {
+            return Err(AppError::bad_request(
+                "reserved key package ids are not valid for device removal",
+            ));
+        }
+
+        let mut target_device_ids = BTreeSet::new();
+        target_device_ids.extend(input.device_ids);
+        if target_device_ids.is_empty() {
+            return Err(AppError::bad_request("at least one device id is required"));
+        }
+        if target_device_ids.contains(&input.actor_device_id) {
+            return Err(AppError::bad_request(
+                "cannot remove the acting device through this endpoint",
+            ));
+        }
+        let target_device_ids: Vec<Uuid> = target_device_ids.into_iter().collect();
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
+        let actor_row = sqlx::query(
+            r#"
+            SELECT mgs.epoch
+            FROM chats c
+            JOIN mls_group_states mgs
+              ON mgs.chat_id = c.chat_id
+            JOIN chat_account_members cam
+              ON cam.chat_id = c.chat_id
+            JOIN chat_device_members cdm
+              ON cdm.chat_id = c.chat_id
+            JOIN devices d
+              ON d.device_id = cdm.device_id
+            WHERE c.chat_id = $1
+              AND cam.account_id = $2
+              AND cam.membership_status = 'active'::membership_status
+              AND cdm.device_id = $3
+              AND cdm.membership_status = 'active'::device_membership_status
+              AND d.account_id = $2
+              AND d.device_status = 'active'::device_status
+            "#,
+        )
+        .bind(input.chat_id)
+        .bind(input.actor_account_id)
+        .bind(input.actor_device_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        let Some(actor_row) = actor_row else {
+            return Err(AppError::not_found("active chat membership not found"));
+        };
+
+        let current_epoch = row_u64_from_i64(&actor_row, "epoch")?;
+        if current_epoch != input.epoch {
+            return Err(AppError::conflict("chat epoch is out of date"));
+        }
+
+        let target_rows = sqlx::query(
+            r#"
+            SELECT
+                d.device_id,
+                d.account_id
+            FROM devices d
+            WHERE d.device_id = ANY($1)
+            FOR UPDATE
+            "#,
+        )
+        .bind(&target_device_ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        if target_rows.len() != target_device_ids.len() {
+            return Err(AppError::not_found(
+                "one or more target devices were not found",
+            ));
+        }
+
+        for row in &target_rows {
+            let account_id = row_uuid(row, "account_id")?;
+            if account_id != input.actor_account_id {
+                return Err(AppError::unauthorized(
+                    "all target devices must belong to the authenticated account",
+                ));
+            }
+        }
+
+        let membership_rows = sqlx::query(
+            r#"
+            SELECT device_id, membership_status::text AS membership_status
+            FROM chat_device_members
+            WHERE chat_id = $1
+              AND device_id = ANY($2)
+            FOR UPDATE
+            "#,
+        )
+        .bind(input.chat_id)
+        .bind(&target_device_ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        if membership_rows.len() != target_device_ids.len() {
+            return Err(AppError::conflict(
+                "one or more target devices are not active in the chat",
+            ));
+        }
+
+        for row in &membership_rows {
+            if row_text(row, "membership_status")? != "active" {
+                return Err(AppError::conflict(
+                    "one or more target devices are not active in the chat",
+                ));
+            }
+        }
+
+        let next_epoch = current_epoch + 1;
+        sqlx::query(
+            r#"
+            UPDATE chat_device_members
+            SET membership_status = 'removed'::device_membership_status,
+                removed_in_epoch = $3,
+                removed_at = now()
+            WHERE chat_id = $1
+              AND device_id = ANY($2)
+              AND membership_status = 'active'::device_membership_status
+            "#,
+        )
+        .bind(input.chat_id)
+        .bind(&target_device_ids)
+        .bind(u64_to_i64(next_epoch, "next epoch")?)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        sqlx::query(
+            r#"
+            UPDATE mls_group_states
+            SET epoch = $2,
+                updated_at = now()
+            WHERE chat_id = $1
+            "#,
+        )
+        .bind(input.chat_id)
+        .bind(u64_to_i64(next_epoch, "next epoch")?)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        if let Some(commit) = input.commit_message {
+            let commit_message_id = commit.message_id;
+            let recipients =
+                active_chat_device_ids_tx(&mut tx, input.chat_id, input.actor_device_id, None)
+                    .await?;
+            insert_control_message_tx(
+                &mut tx,
+                input.chat_id,
+                input.actor_account_id,
+                input.actor_device_id,
+                next_epoch,
+                MessageKind::Commit,
+                commit,
+                &recipients,
+            )
+            .await?;
+            set_last_commit_message_id_tx(&mut tx, input.chat_id, commit_message_id).await?;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
+
+        Ok(ModifyChatDevicesOutput {
+            chat_id: input.chat_id,
+            epoch: next_epoch,
+            changed_device_ids: target_device_ids,
+        })
+    }
+
     pub async fn get_chat_detail_for_device(
         &self,
         chat_id: Uuid,
@@ -2737,6 +3315,256 @@ async fn insert_device_key_packages_tx(
     Ok(())
 }
 
+async fn schedule_approved_device_sync_jobs_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: Uuid,
+    source_device_id: Uuid,
+    target_device_id: Uuid,
+) -> Result<(), AppError> {
+    let account_sync_row = sqlx::query(
+        r#"
+        SELECT c.chat_id, mgs.epoch
+        FROM chats c
+        JOIN mls_group_states mgs
+          ON mgs.chat_id = c.chat_id
+        JOIN chat_account_members cam
+          ON cam.chat_id = c.chat_id
+        WHERE c.chat_type = 'account_sync'::chat_type
+          AND c.archived_at IS NULL
+          AND cam.account_id = $1
+          AND cam.membership_status = 'active'::membership_status
+        ORDER BY c.created_at ASC
+        LIMIT 1
+        FOR UPDATE
+        "#,
+    )
+    .bind(account_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(map_db_error)?;
+    let Some(account_sync_row) = account_sync_row else {
+        return Err(AppError::conflict("account sync chat not found"));
+    };
+    let account_sync_chat_id = row_uuid(&account_sync_row, "chat_id")?;
+    let account_sync_epoch = row_u64_from_i64(&account_sync_row, "epoch")?;
+
+    let membership_row = sqlx::query(
+        r#"
+        SELECT membership_status::text AS membership_status
+        FROM chat_device_members
+        WHERE chat_id = $1
+          AND device_id = $2
+        "#,
+    )
+    .bind(account_sync_chat_id)
+    .bind(target_device_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(map_db_error)?;
+
+    let is_active = membership_row
+        .as_ref()
+        .map(|row| row_text(row, "membership_status"))
+        .transpose()?
+        .is_some_and(|status| status == "active");
+
+    if !is_active {
+        let leaf_index_row = sqlx::query(
+            r#"
+            SELECT COALESCE(MAX(leaf_index), -1) AS max_leaf_index
+            FROM chat_device_members
+            WHERE chat_id = $1
+            "#,
+        )
+        .bind(account_sync_chat_id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(map_db_error)?;
+        let next_leaf_index = row_i32(&leaf_index_row, "max_leaf_index")? + 1;
+
+        sqlx::query(
+            r#"
+            INSERT INTO chat_device_members (
+                chat_id,
+                device_id,
+                leaf_index,
+                membership_status,
+                added_in_epoch,
+                removed_in_epoch,
+                joined_at,
+                removed_at
+            )
+            VALUES (
+                $1,
+                $2,
+                $3,
+                'active'::device_membership_status,
+                $4,
+                NULL,
+                now(),
+                NULL
+            )
+            ON CONFLICT (chat_id, device_id) DO UPDATE
+            SET leaf_index = EXCLUDED.leaf_index,
+                membership_status = 'active'::device_membership_status,
+                added_in_epoch = EXCLUDED.added_in_epoch,
+                removed_in_epoch = NULL,
+                joined_at = now(),
+                removed_at = NULL
+            "#,
+        )
+        .bind(account_sync_chat_id)
+        .bind(target_device_id)
+        .bind(next_leaf_index)
+        .bind(u64_to_i64(account_sync_epoch, "account sync epoch")?)
+        .execute(&mut **tx)
+        .await
+        .map_err(map_db_error)?;
+    }
+
+    schedule_history_sync_job_tx(
+        tx,
+        account_id,
+        source_device_id,
+        target_device_id,
+        Some(account_sync_chat_id),
+        HistorySyncJobType::InitialSync,
+        serde_json::json!({
+            "kind": "account_sync_bootstrap",
+            "account_sync_chat_id": account_sync_chat_id,
+            "target_device_id": target_device_id,
+        }),
+    )
+    .await?;
+
+    let chat_rows = sqlx::query(
+        r#"
+        SELECT c.chat_id
+        FROM chats c
+        JOIN chat_account_members cam
+          ON cam.chat_id = c.chat_id
+        WHERE cam.account_id = $1
+          AND cam.membership_status = 'active'::membership_status
+          AND c.archived_at IS NULL
+          AND c.chat_type <> 'account_sync'::chat_type
+        ORDER BY c.created_at ASC, c.chat_id ASC
+        "#,
+    )
+    .bind(account_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(map_db_error)?;
+
+    for chat_row in chat_rows {
+        let chat_id = row_uuid(&chat_row, "chat_id")?;
+        schedule_history_sync_job_tx(
+            tx,
+            account_id,
+            source_device_id,
+            target_device_id,
+            Some(chat_id),
+            HistorySyncJobType::ChatBackfill,
+            serde_json::json!({
+                "kind": "chat_backfill",
+                "chat_id": chat_id,
+                "target_device_id": target_device_id,
+            }),
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn schedule_revoked_device_sync_jobs_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: Uuid,
+    source_device_id: Uuid,
+    revoked_device_id: Uuid,
+    reason: &str,
+) -> Result<(), AppError> {
+    let chat_rows = sqlx::query(
+        r#"
+        SELECT DISTINCT c.chat_id
+        FROM chats c
+        JOIN chat_device_members cdm
+          ON cdm.chat_id = c.chat_id
+        WHERE cdm.device_id = $1
+          AND c.archived_at IS NULL
+        ORDER BY c.chat_id ASC
+        "#,
+    )
+    .bind(revoked_device_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(map_db_error)?;
+
+    for chat_row in chat_rows {
+        let chat_id = row_uuid(&chat_row, "chat_id")?;
+        schedule_history_sync_job_tx(
+            tx,
+            account_id,
+            source_device_id,
+            revoked_device_id,
+            Some(chat_id),
+            HistorySyncJobType::DeviceRekey,
+            serde_json::json!({
+                "kind": "device_rekey",
+                "chat_id": chat_id,
+                "revoked_device_id": revoked_device_id,
+                "reason": reason,
+            }),
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn schedule_history_sync_job_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: Uuid,
+    source_device_id: Uuid,
+    target_device_id: Uuid,
+    chat_id: Option<Uuid>,
+    job_type: HistorySyncJobType,
+    cursor_json: Value,
+) -> Result<(), AppError> {
+    sqlx::query(
+        r#"
+        INSERT INTO history_sync_jobs (
+            account_id,
+            source_device_id,
+            target_device_id,
+            chat_id,
+            job_type,
+            job_status,
+            cursor_json
+        )
+        VALUES (
+            $1,
+            $2,
+            $3,
+            $4,
+            $5::history_sync_job_type,
+            'pending'::history_sync_job_status,
+            $6
+        )
+        "#,
+    )
+    .bind(account_id)
+    .bind(source_device_id)
+    .bind(target_device_id)
+    .bind(chat_id)
+    .bind(history_sync_job_type_db(job_type))
+    .bind(sqlx::types::Json(cursor_json))
+    .execute(&mut **tx)
+    .await
+    .map_err(map_db_error)?;
+
+    Ok(())
+}
+
 async fn active_chat_device_ids_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     chat_id: Uuid,
@@ -3012,6 +3840,228 @@ async fn consume_reserved_key_packages_tx(
     Ok(())
 }
 
+async fn reserve_key_packages_for_device_ids_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    reserved_by_account_id: Uuid,
+    account_id: Uuid,
+    device_ids: &[Uuid],
+) -> Result<Vec<ReservedKeyPackageRow>, AppError> {
+    let mut unique_device_ids = BTreeSet::new();
+    unique_device_ids.extend(device_ids.iter().copied());
+    let unique_device_ids: Vec<Uuid> = unique_device_ids.into_iter().collect();
+    if unique_device_ids.is_empty() {
+        return Err(AppError::bad_request("at least one device id is required"));
+    }
+
+    let account_row = sqlx::query(
+        r#"
+        SELECT 1
+        FROM accounts
+        WHERE account_id = $1
+          AND deleted_at IS NULL
+        "#,
+    )
+    .bind(account_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(map_db_error)?;
+    if account_row.is_none() {
+        return Err(AppError::not_found("account not found"));
+    }
+
+    let device_rows = sqlx::query(
+        r#"
+        SELECT device_id, account_id, device_status::text AS device_status
+        FROM devices
+        WHERE device_id = ANY($1)
+        ORDER BY created_at ASC, device_id ASC
+        FOR UPDATE
+        "#,
+    )
+    .bind(&unique_device_ids)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(map_db_error)?;
+    if device_rows.len() != unique_device_ids.len() {
+        return Err(AppError::not_found(
+            "one or more target devices were not found",
+        ));
+    }
+
+    let mut ordered_device_ids = Vec::with_capacity(device_rows.len());
+    for device_row in &device_rows {
+        let device_account_id = row_uuid(device_row, "account_id")?;
+        if device_account_id != account_id {
+            return Err(AppError::unauthorized(
+                "one or more target devices do not belong to the target account",
+            ));
+        }
+
+        let device_status = parse_device_status(&row_text(device_row, "device_status")?)?;
+        if device_status != DeviceStatus::Active {
+            return Err(AppError::conflict(
+                "one or more target devices are not active",
+            ));
+        }
+
+        ordered_device_ids.push(row_uuid(device_row, "device_id")?);
+    }
+
+    let mut reserved = Vec::with_capacity(ordered_device_ids.len());
+    for device_id in ordered_device_ids {
+        let reserved_row = sqlx::query(
+            r#"
+            WITH candidate AS (
+                SELECT key_package_id
+                FROM device_key_packages
+                WHERE device_id = $1
+                  AND (
+                    status = 'available'::key_package_status
+                    OR (
+                        status = 'reserved'::key_package_status
+                        AND reserved_at < now() - make_interval(secs => $2)
+                    )
+                  )
+                ORDER BY
+                    CASE
+                        WHEN status = 'available'::key_package_status THEN 0
+                        ELSE 1
+                    END,
+                    published_at ASC,
+                    key_package_id ASC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE device_key_packages kp
+            SET status = 'reserved'::key_package_status,
+                reserved_at = now(),
+                reserved_by_account_id = $3
+            FROM candidate
+            WHERE kp.key_package_id = candidate.key_package_id
+            RETURNING kp.key_package_id, kp.device_id, kp.cipher_suite, kp.key_package_bytes
+            "#,
+        )
+        .bind(device_id)
+        .bind(KEY_PACKAGE_RESERVATION_TTL_SECONDS)
+        .bind(reserved_by_account_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(reserved_row) = reserved_row else {
+            return Err(AppError::conflict(
+                "one or more target devices have no available key packages",
+            ));
+        };
+
+        reserved.push(ReservedKeyPackageRow {
+            key_package_id: row_uuid(&reserved_row, "key_package_id")?,
+            device_id: row_uuid(&reserved_row, "device_id")?,
+            cipher_suite: row_text(&reserved_row, "cipher_suite")?,
+            key_package_bytes: row_bytes(&reserved_row, "key_package_bytes")?,
+        });
+    }
+
+    Ok(reserved)
+}
+
+async fn consume_reserved_key_packages_for_devices_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    reserved_by_account_id: Uuid,
+    consumed_by_chat_id: Uuid,
+    target_device_ids: &[Uuid],
+    reserved_key_package_ids: &[Uuid],
+) -> Result<(), AppError> {
+    if target_device_ids.is_empty() {
+        if reserved_key_package_ids.is_empty() {
+            return Ok(());
+        }
+        return Err(AppError::bad_request(
+            "reserved key packages were provided without target devices",
+        ));
+    }
+
+    if reserved_key_package_ids.is_empty() {
+        return Err(AppError::bad_request(
+            "reserved key package ids are required for target devices",
+        ));
+    }
+
+    let unique_key_package_ids: BTreeSet<Uuid> = reserved_key_package_ids.iter().copied().collect();
+    if unique_key_package_ids.len() != reserved_key_package_ids.len() {
+        return Err(AppError::bad_request(
+            "reserved key package ids must be unique",
+        ));
+    }
+    let unique_key_package_ids: Vec<Uuid> = unique_key_package_ids.into_iter().collect();
+
+    let target_device_ids: BTreeSet<Uuid> = target_device_ids.iter().copied().collect();
+    let reserved_rows = sqlx::query(
+        r#"
+        SELECT
+            kp.key_package_id,
+            kp.device_id,
+            kp.status::text AS status,
+            kp.reserved_by_account_id
+        FROM device_key_packages kp
+        WHERE kp.key_package_id = ANY($1)
+        FOR UPDATE
+        "#,
+    )
+    .bind(&unique_key_package_ids)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(map_db_error)?;
+
+    if reserved_rows.len() != unique_key_package_ids.len() {
+        return Err(AppError::conflict(
+            "one or more reserved key packages were not found",
+        ));
+    }
+
+    let mut reserved_device_ids = BTreeSet::new();
+    for row in reserved_rows {
+        let status = row_text(&row, "status")?;
+        if status != "reserved" {
+            return Err(AppError::conflict(
+                "one or more key packages are no longer reserved",
+            ));
+        }
+
+        let reserved_owner = row_optional_uuid(&row, "reserved_by_account_id")?;
+        if reserved_owner != Some(reserved_by_account_id) {
+            return Err(AppError::conflict(
+                "one or more key packages are reserved by another account",
+            ));
+        }
+
+        reserved_device_ids.insert(row_uuid(&row, "device_id")?);
+    }
+
+    if reserved_device_ids != target_device_ids {
+        return Err(AppError::conflict(
+            "reserved key packages do not cover the target devices exactly",
+        ));
+    }
+
+    sqlx::query(
+        r#"
+        UPDATE device_key_packages
+        SET status = 'consumed'::key_package_status,
+            consumed_at = now(),
+            consumed_by_chat_id = $2
+        WHERE key_package_id = ANY($1)
+        "#,
+    )
+    .bind(&unique_key_package_ids)
+    .bind(consumed_by_chat_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(map_db_error)?;
+
+    Ok(())
+}
+
 fn parse_device_status(value: &str) -> Result<DeviceStatus, AppError> {
     match value {
         "pending" => Ok(DeviceStatus::Pending),
@@ -3056,6 +4106,30 @@ fn parse_blob_upload_status(value: &str) -> Result<BlobUploadStatus, AppError> {
     }
 }
 
+fn parse_history_sync_job_type(value: &str) -> Result<HistorySyncJobType, AppError> {
+    match value {
+        "initial_sync" => Ok(HistorySyncJobType::InitialSync),
+        "chat_backfill" => Ok(HistorySyncJobType::ChatBackfill),
+        "device_rekey" => Ok(HistorySyncJobType::DeviceRekey),
+        other => Err(AppError::internal(format!(
+            "unknown history sync job type from database: {other}"
+        ))),
+    }
+}
+
+fn parse_history_sync_job_status(value: &str) -> Result<HistorySyncJobStatus, AppError> {
+    match value {
+        "pending" => Ok(HistorySyncJobStatus::Pending),
+        "running" => Ok(HistorySyncJobStatus::Running),
+        "completed" => Ok(HistorySyncJobStatus::Completed),
+        "failed" => Ok(HistorySyncJobStatus::Failed),
+        "canceled" => Ok(HistorySyncJobStatus::Canceled),
+        other => Err(AppError::internal(format!(
+            "unknown history sync job status from database: {other}"
+        ))),
+    }
+}
+
 fn parse_content_type(value: &str) -> Result<ContentType, AppError> {
     match value {
         "text" => Ok(ContentType::Text),
@@ -3093,6 +4167,24 @@ fn content_type_db(value: ContentType) -> &'static str {
         ContentType::Receipt => "receipt",
         ContentType::Attachment => "attachment",
         ContentType::ChatEvent => "chat_event",
+    }
+}
+
+fn history_sync_job_type_db(value: HistorySyncJobType) -> &'static str {
+    match value {
+        HistorySyncJobType::InitialSync => "initial_sync",
+        HistorySyncJobType::ChatBackfill => "chat_backfill",
+        HistorySyncJobType::DeviceRekey => "device_rekey",
+    }
+}
+
+fn history_sync_job_status_db(value: HistorySyncJobStatus) -> &'static str {
+    match value {
+        HistorySyncJobStatus::Pending => "pending",
+        HistorySyncJobStatus::Running => "running",
+        HistorySyncJobStatus::Completed => "completed",
+        HistorySyncJobStatus::Failed => "failed",
+        HistorySyncJobStatus::Canceled => "canceled",
     }
 }
 
@@ -3164,6 +4256,20 @@ fn blob_metadata_row_from_db(row: sqlx::postgres::PgRow) -> Result<BlobMetadataR
     })
 }
 
+fn history_sync_job_row_from_db(row: sqlx::postgres::PgRow) -> Result<HistorySyncJobRow, AppError> {
+    Ok(HistorySyncJobRow {
+        job_id: row_uuid(&row, "job_id")?,
+        job_type: parse_history_sync_job_type(&row_text(&row, "job_type")?)?,
+        job_status: parse_history_sync_job_status(&row_text(&row, "job_status")?)?,
+        source_device_id: row_uuid(&row, "source_device_id")?,
+        target_device_id: row_uuid(&row, "target_device_id")?,
+        chat_id: row_optional_uuid(&row, "chat_id")?,
+        cursor_json: row_value(&row, "cursor_json")?,
+        created_at_unix: row_u64_from_i64(&row, "created_at_unix")?,
+        updated_at_unix: row_u64_from_i64(&row, "updated_at_unix")?,
+    })
+}
+
 fn message_row_from_db(row: sqlx::postgres::PgRow) -> Result<MessageEnvelopeRow, AppError> {
     Ok(MessageEnvelopeRow {
         message_id: row_uuid(&row, "message_id")?,
@@ -3192,4 +4298,247 @@ fn map_db_error(err: sqlx::Error) -> AppError {
     }
 
     AppError::internal(format!("database error: {err}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::env;
+
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use super::{
+        ApprovePendingDeviceInput, ChatType, CompleteLinkIntentInput, CreateAccountInput,
+        CreateChatInput, Database, KeyPackageBytesInput, ModifyChatDevicesInput,
+        PendingControlMessage, PublishKeyPackageInput,
+    };
+
+    const DEFAULT_TEST_DATABASE_URL: &str = "postgres://trix:trix@localhost:5432/trix";
+    const TEST_CIPHER_SUITE: &str = "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519";
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn smoke_adds_and_removes_account_device_from_existing_chat() {
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [11; 32],
+                [12; 32],
+            ))
+            .await
+            .expect("create alice account");
+        let bob = db
+            .create_account(make_account_input("bob", "Bob Primary", [21; 32], [22; 32]))
+            .await
+            .expect("create bob account");
+
+        db.publish_key_packages(
+            bob.device_id,
+            vec![PublishKeyPackageInput {
+                device_id: bob.device_id,
+                cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                key_package_bytes: b"bob-primary-kp".to_vec(),
+            }],
+        )
+        .await
+        .expect("publish bob key package");
+
+        let bob_reserved = db
+            .reserve_key_packages_for_account(alice.account_id, bob.account_id)
+            .await
+            .expect("reserve bob key package");
+        let dm = db
+            .create_chat(CreateChatInput {
+                creator_account_id: alice.account_id,
+                creator_device_id: alice.device_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                participant_account_ids: vec![bob.account_id],
+                reserved_key_package_ids: bob_reserved
+                    .iter()
+                    .map(|package| package.key_package_id)
+                    .collect(),
+                initial_commit: Some(make_control_message("dm-create-commit")),
+                welcome_message: Some(make_control_message("dm-create-welcome")),
+            })
+            .await
+            .expect("create dm");
+
+        let intent = db
+            .create_link_intent(alice.account_id, alice.device_id)
+            .await
+            .expect("create link intent");
+        let completed = db
+            .complete_link_intent(CompleteLinkIntentInput {
+                link_intent_id: intent.link_intent_id,
+                link_token: intent.link_token,
+                device_display_name: "Alice Secondary".to_owned(),
+                platform: "macos".to_owned(),
+                credential_identity: b"alice-secondary-credential".to_vec(),
+                transport_pubkey: vec![32; 32],
+                key_packages: vec![KeyPackageBytesInput {
+                    cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                    key_package_bytes: b"alice-secondary-kp".to_vec(),
+                }],
+            })
+            .await
+            .expect("complete link intent");
+
+        db.approve_pending_device(ApprovePendingDeviceInput {
+            actor_account_id: alice.account_id,
+            actor_device_id: alice.device_id,
+            target_device_id: completed.pending_device_id,
+            account_root_signature: vec![99; 64],
+        })
+        .await
+        .expect("approve secondary device");
+
+        db.publish_key_packages(
+            alice.device_id,
+            vec![PublishKeyPackageInput {
+                device_id: alice.device_id,
+                cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                key_package_bytes: b"alice-primary-kp".to_vec(),
+            }],
+        )
+        .await
+        .expect("publish alice primary key package");
+
+        assert!(
+            db.get_chat_detail_for_device(dm.chat_id, completed.pending_device_id)
+                .await
+                .expect("pre-add lookup succeeds")
+                .is_none(),
+            "secondary device must not see the dm before devices:add"
+        );
+
+        let alice_reserved = db
+            .reserve_key_packages_for_devices(
+                alice.account_id,
+                alice.account_id,
+                vec![completed.pending_device_id],
+            )
+            .await
+            .expect("reserve alice secondary key package");
+        let secondary_reserved = alice_reserved
+            .first()
+            .expect("secondary device reservation must exist");
+
+        let added = db
+            .add_chat_devices(ModifyChatDevicesInput {
+                chat_id: dm.chat_id,
+                actor_account_id: alice.account_id,
+                actor_device_id: alice.device_id,
+                epoch: dm.epoch,
+                device_ids: vec![completed.pending_device_id],
+                reserved_key_package_ids: vec![secondary_reserved.key_package_id],
+                commit_message: Some(make_control_message("dm-add-device-commit")),
+                welcome_message: Some(make_control_message("dm-add-device-welcome")),
+            })
+            .await
+            .expect("add secondary device to dm");
+
+        assert_eq!(added.epoch, 1);
+        assert_eq!(added.changed_device_ids, vec![completed.pending_device_id]);
+        assert!(
+            db.get_chat_detail_for_device(dm.chat_id, completed.pending_device_id)
+                .await
+                .expect("post-add lookup succeeds")
+                .is_some(),
+            "secondary device must see the dm after devices:add"
+        );
+
+        let consumed_status: String = sqlx::query_scalar(
+            r#"
+            SELECT status::text
+            FROM device_key_packages
+            WHERE key_package_id = $1
+            "#,
+        )
+        .bind(secondary_reserved.key_package_id)
+        .fetch_one(&db.pool)
+        .await
+        .expect("read consumed key package status");
+        assert_eq!(consumed_status, "consumed");
+
+        let removed = db
+            .remove_chat_devices(ModifyChatDevicesInput {
+                chat_id: dm.chat_id,
+                actor_account_id: alice.account_id,
+                actor_device_id: alice.device_id,
+                epoch: added.epoch,
+                device_ids: vec![completed.pending_device_id],
+                reserved_key_package_ids: Vec::new(),
+                commit_message: Some(make_control_message("dm-remove-device-commit")),
+                welcome_message: None,
+            })
+            .await
+            .expect("remove secondary device from dm");
+
+        assert_eq!(removed.epoch, 2);
+        assert_eq!(
+            removed.changed_device_ids,
+            vec![completed.pending_device_id]
+        );
+        assert!(
+            db.get_chat_detail_for_device(dm.chat_id, completed.pending_device_id)
+                .await
+                .expect("post-remove lookup succeeds")
+                .is_none(),
+            "secondary device must lose access after devices:remove"
+        );
+        assert!(
+            db.get_chat_detail_for_device(dm.chat_id, alice.device_id)
+                .await
+                .expect("primary lookup succeeds")
+                .is_some(),
+            "primary device must keep access after secondary removal"
+        );
+    }
+
+    async fn connect_test_db() -> Database {
+        let database_url = env::var("TRIX_TEST_DATABASE_URL")
+            .unwrap_or_else(|_| DEFAULT_TEST_DATABASE_URL.to_owned());
+        Database::connect(&database_url)
+            .await
+            .expect("connect test database")
+    }
+
+    async fn reset_test_db(db: &Database) {
+        sqlx::query("TRUNCATE TABLE accounts CASCADE")
+            .execute(&db.pool)
+            .await
+            .expect("truncate test database");
+    }
+
+    fn make_account_input(
+        handle: &str,
+        device_display_name: &str,
+        account_root_pubkey: [u8; 32],
+        transport_pubkey: [u8; 32],
+    ) -> CreateAccountInput {
+        CreateAccountInput {
+            handle: Some(handle.to_owned()),
+            profile_name: handle.to_owned(),
+            profile_bio: None,
+            device_display_name: device_display_name.to_owned(),
+            platform: "macos".to_owned(),
+            credential_identity: format!("{handle}-credential").into_bytes(),
+            account_root_pubkey: account_root_pubkey.to_vec(),
+            account_root_signature: vec![7; 64],
+            transport_pubkey: transport_pubkey.to_vec(),
+        }
+    }
+
+    fn make_control_message(tag: &str) -> PendingControlMessage {
+        PendingControlMessage {
+            message_id: Uuid::new_v4(),
+            ciphertext: tag.as_bytes().to_vec(),
+            aad_json: json!({ "tag": tag }),
+        }
+    }
 }

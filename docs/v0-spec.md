@@ -658,6 +658,16 @@ Response:
 
 Returns all devices for the authenticated account.
 
+## History Sync
+
+### `GET /v0/history-sync/jobs`
+
+Returns orchestration jobs assigned to the authenticated source device.
+
+### `POST /v0/history-sync/jobs/{job_id}/complete`
+
+Marks a history sync job as completed and optionally updates its cursor payload.
+
 ## Key Packages
 
 ### `POST /v0/key-packages:publish`
@@ -667,6 +677,10 @@ Publishes a batch of `KeyPackage` objects for the authenticated device.
 ### `GET /v0/accounts/{account_id}/key-packages`
 
 Returns reservable `KeyPackage` references for all active devices of the target account.
+
+### `POST /v0/key-packages:reserve`
+
+Returns reservable `KeyPackage` references for the explicitly requested devices of the target account.
 
 Server rules:
 
@@ -716,6 +730,26 @@ Removes accounts or devices from the chat.
 Request:
 
 - target account IDs or device IDs
+- MLS `Commit`
+
+### `POST /v0/chats/{chat_id}/devices:add`
+
+Adds one or more devices of an already active account to the chat.
+
+Request:
+
+- target device IDs
+- reserved key package IDs for those devices
+- MLS `Commit`
+- `Welcome` payload references
+
+### `POST /v0/chats/{chat_id}/devices:remove`
+
+Removes one or more devices from the chat without changing account-level membership.
+
+Request:
+
+- target device IDs
 - MLS `Commit`
 
 ## Messages and Inbox
