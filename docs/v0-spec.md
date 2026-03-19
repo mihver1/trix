@@ -783,9 +783,33 @@ Rules:
 
 Poll API for queued messages for the authenticated device.
 
+Rules:
+
+- returns `pending` items plus items whose previous lease has expired
+- does not mutate delivery state on the server
+
 ### `POST /v0/inbox/lease`
 
 Returns a leased batch of inbox items for delivery workers or websocket sessions.
+
+Request:
+
+- optional `lease_owner`
+- optional `after_inbox_id`
+- optional `limit`
+- optional `lease_ttl_seconds`
+
+Response:
+
+- effective `lease_owner`
+- `lease_expires_at_unix`
+- leased inbox items
+
+Rules:
+
+- only `pending` or expired leased items can be claimed
+- lease claim is atomic and uses row-level locking
+- lease ownership is advisory for `v0`; final acceptance still happens through `ack`
 
 ### `POST /v0/inbox/ack`
 

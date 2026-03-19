@@ -344,6 +344,21 @@ pub struct InboxResponse {
     pub items: Vec<InboxItem>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LeaseInboxRequest {
+    pub lease_owner: Option<String>,
+    pub limit: Option<usize>,
+    pub after_inbox_id: Option<u64>,
+    pub lease_ttl_seconds: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LeaseInboxResponse {
+    pub lease_owner: String,
+    pub lease_expires_at_unix: u64,
+    pub items: Vec<InboxItem>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AckInboxRequest {
     pub inbox_ids: Vec<u64>,

@@ -20,6 +20,8 @@ const DEFAULT_HISTORY_LIMIT: usize = 100;
 const MAX_HISTORY_LIMIT: usize = 500;
 const DEFAULT_INBOX_LIMIT: usize = 100;
 const MAX_INBOX_LIMIT: usize = 500;
+const DEFAULT_INBOX_LEASE_TTL_SECONDS: u64 = 30;
+const MAX_INBOX_LEASE_TTL_SECONDS: u64 = 5 * 60;
 const DEFAULT_HISTORY_SYNC_JOB_LIMIT: usize = 100;
 const MAX_HISTORY_SYNC_JOB_LIMIT: usize = 500;
 
@@ -3210,9 +3212,11 @@ impl Database {
     pub async fn get_inbox_for_device(
         &self,
         device_id: Uuid,
+        after_inbox_id: Option<u64>,
         limit: Option<usize>,
     ) -> Result<Vec<InboxItemRow>, AppError> {
         let limit = clamp_limit(limit, DEFAULT_INBOX_LIMIT, MAX_INBOX_LIMIT);
+        let after_inbox_id = u64_to_i64(after_inbox_id.unwrap_or_default(), "after_inbox_id")?;
 
         let rows = sqlx::query(
             r#"
@@ -3235,14 +3239,110 @@ impl Database {
             JOIN devices d
               ON d.device_id = di.device_id
             WHERE di.device_id = $1
-              AND di.delivery_state = 'pending'::delivery_state
+              AND di.inbox_id > $2
+              AND (
+                    di.delivery_state = 'pending'::delivery_state
+                    OR (
+                        di.delivery_state = 'leased'::delivery_state
+                        AND di.lease_expires_at IS NOT NULL
+                        AND di.lease_expires_at <= now()
+                    )
+                  )
               AND d.device_status = 'active'::device_status
             ORDER BY di.inbox_id ASC
-            LIMIT $2
+            LIMIT $3
             "#,
         )
         .bind(device_id)
+        .bind(after_inbox_id)
         .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(InboxItemRow {
+                    inbox_id: row_u64_from_i64(&row, "inbox_id")?,
+                    message: message_row_from_db(row)?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn lease_inbox_for_device(
+        &self,
+        device_id: Uuid,
+        lease_owner: &str,
+        after_inbox_id: Option<u64>,
+        limit: Option<usize>,
+        lease_ttl_seconds: Option<u64>,
+    ) -> Result<Vec<InboxItemRow>, AppError> {
+        let limit = clamp_limit(limit, DEFAULT_INBOX_LIMIT, MAX_INBOX_LIMIT);
+        let after_inbox_id = u64_to_i64(after_inbox_id.unwrap_or_default(), "after_inbox_id")?;
+        let lease_ttl_seconds = clamp_ttl_seconds(
+            lease_ttl_seconds,
+            DEFAULT_INBOX_LEASE_TTL_SECONDS,
+            MAX_INBOX_LEASE_TTL_SECONDS,
+        );
+        let lease_ttl_seconds = u64_to_i64(lease_ttl_seconds, "lease_ttl_seconds")?;
+
+        let rows = sqlx::query(
+            r#"
+            WITH candidates AS (
+                SELECT di.inbox_id, di.message_id
+                FROM device_inbox di
+                JOIN devices d
+                  ON d.device_id = di.device_id
+                WHERE di.device_id = $1
+                  AND di.inbox_id > $2
+                  AND d.device_status = 'active'::device_status
+                  AND (
+                        di.delivery_state = 'pending'::delivery_state
+                        OR (
+                            di.delivery_state = 'leased'::delivery_state
+                            AND di.lease_expires_at IS NOT NULL
+                            AND di.lease_expires_at <= now()
+                        )
+                      )
+                ORDER BY di.inbox_id ASC
+                LIMIT $3
+                FOR UPDATE OF di SKIP LOCKED
+            ),
+            leased AS (
+                UPDATE device_inbox di
+                SET delivery_state = 'leased'::delivery_state,
+                    lease_owner = $4,
+                    lease_expires_at = now() + ($5 * interval '1 second'),
+                    acked_at = NULL
+                FROM candidates c
+                WHERE di.inbox_id = c.inbox_id
+                RETURNING di.inbox_id, di.message_id
+            )
+            SELECT
+                leased.inbox_id,
+                m.message_id,
+                m.chat_id,
+                m.server_seq,
+                m.sender_account_id,
+                m.sender_device_id,
+                m.epoch,
+                m.message_kind::text AS message_kind,
+                m.content_type::text AS content_type,
+                m.ciphertext,
+                m.aad_json,
+                extract(epoch from m.created_at)::bigint AS created_at_unix
+            FROM leased
+            JOIN messages m
+              ON m.message_id = leased.message_id
+            ORDER BY leased.inbox_id ASC
+            "#,
+        )
+        .bind(device_id)
+        .bind(after_inbox_id)
+        .bind(limit as i64)
+        .bind(lease_owner)
+        .bind(lease_ttl_seconds)
         .fetch_all(&self.pool)
         .await
         .map_err(map_db_error)?;
@@ -3270,6 +3370,8 @@ impl Database {
             r#"
             UPDATE device_inbox
             SET delivery_state = 'acked'::delivery_state,
+                lease_owner = NULL,
+                lease_expires_at = NULL,
                 acked_at = COALESCE(acked_at, now())
             WHERE device_id = $1
               AND inbox_id = ANY($2)
@@ -4193,6 +4295,11 @@ fn clamp_limit(requested: Option<usize>, default_limit: usize, max_limit: usize)
     limit.clamp(1, max_limit)
 }
 
+fn clamp_ttl_seconds(requested: Option<u64>, default_ttl: u64, max_ttl: u64) -> u64 {
+    let ttl = requested.unwrap_or(default_ttl);
+    ttl.clamp(1, max_ttl)
+}
+
 fn u64_to_i64(value: u64, field: &str) -> Result<i64, AppError> {
     i64::try_from(value)
         .map_err(|_| AppError::bad_request(format!("{field} exceeds supported range")))
@@ -4308,10 +4415,11 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        ApprovePendingDeviceInput, ChatType, CompleteLinkIntentInput, CreateAccountInput,
-        CreateChatInput, Database, KeyPackageBytesInput, ModifyChatDevicesInput,
-        PendingControlMessage, PublishKeyPackageInput,
+        ApprovePendingDeviceInput, CompleteLinkIntentInput, ContentType, CreateAccountInput,
+        CreateChatInput, CreateMessageInput, Database, KeyPackageBytesInput, MessageKind,
+        ModifyChatDevicesInput, PendingControlMessage, PublishKeyPackageInput,
     };
+    use trix_types::ChatType;
 
     const DEFAULT_TEST_DATABASE_URL: &str = "postgres://trix:trix@localhost:5432/trix";
     const TEST_CIPHER_SUITE: &str = "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519";
@@ -4498,6 +4606,137 @@ mod tests {
                 .is_some(),
             "primary device must keep access after secondary removal"
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn smoke_leases_and_reclaims_expired_inbox_items() {
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [31; 32],
+                [32; 32],
+            ))
+            .await
+            .expect("create alice account");
+        let bob = db
+            .create_account(make_account_input("bob", "Bob Primary", [41; 32], [42; 32]))
+            .await
+            .expect("create bob account");
+
+        db.publish_key_packages(
+            bob.device_id,
+            vec![PublishKeyPackageInput {
+                device_id: bob.device_id,
+                cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                key_package_bytes: b"bob-primary-kp".to_vec(),
+            }],
+        )
+        .await
+        .expect("publish bob key package");
+
+        let bob_reserved = db
+            .reserve_key_packages_for_account(alice.account_id, bob.account_id)
+            .await
+            .expect("reserve bob key package");
+        let dm = db
+            .create_chat(CreateChatInput {
+                creator_account_id: alice.account_id,
+                creator_device_id: alice.device_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                participant_account_ids: vec![bob.account_id],
+                reserved_key_package_ids: bob_reserved
+                    .iter()
+                    .map(|package| package.key_package_id)
+                    .collect(),
+                initial_commit: Some(make_control_message("dm-create-commit")),
+                welcome_message: Some(make_control_message("dm-create-welcome")),
+            })
+            .await
+            .expect("create dm");
+
+        let bootstrap_inbox = db
+            .get_inbox_for_device(bob.device_id, None, Some(10))
+            .await
+            .expect("list bootstrap inbox items");
+        db.ack_inbox_items(
+            bob.device_id,
+            bootstrap_inbox
+                .iter()
+                .map(|item| i64::try_from(item.inbox_id).expect("inbox id fits in i64"))
+                .collect(),
+        )
+        .await
+        .expect("ack bootstrap inbox items");
+
+        let sent = db
+            .append_message(CreateMessageInput {
+                chat_id: dm.chat_id,
+                sender_account_id: alice.account_id,
+                sender_device_id: alice.device_id,
+                message_id: Uuid::new_v4(),
+                epoch: dm.epoch,
+                message_kind: MessageKind::Application,
+                content_type: ContentType::Text,
+                ciphertext: b"hello bob".to_vec(),
+                aad_json: json!({ "kind": "text" }),
+            })
+            .await
+            .expect("append message");
+
+        let leased = db
+            .lease_inbox_for_device(bob.device_id, "lease-1", None, Some(10), Some(30))
+            .await
+            .expect("lease pending inbox item");
+        assert_eq!(leased.len(), 1);
+        assert_eq!(leased[0].message.message_id, sent.message_id);
+
+        let second_attempt = db
+            .lease_inbox_for_device(bob.device_id, "lease-2", None, Some(10), Some(30))
+            .await
+            .expect("lease should skip active lease");
+        assert!(second_attempt.is_empty());
+
+        sqlx::query(
+            r#"
+            UPDATE device_inbox
+            SET lease_expires_at = now() - interval '1 second'
+            WHERE device_id = $1
+              AND inbox_id = $2
+            "#,
+        )
+        .bind(bob.device_id)
+        .bind(i64::try_from(leased[0].inbox_id).expect("inbox id fits in i64"))
+        .execute(&db.pool)
+        .await
+        .expect("expire lease manually");
+
+        let reclaimed = db
+            .lease_inbox_for_device(bob.device_id, "lease-2", None, Some(10), Some(30))
+            .await
+            .expect("reclaim expired lease");
+        assert_eq!(reclaimed.len(), 1);
+        assert_eq!(reclaimed[0].inbox_id, leased[0].inbox_id);
+
+        let acked = db
+            .ack_inbox_items(
+                bob.device_id,
+                vec![i64::try_from(reclaimed[0].inbox_id).expect("inbox id fits in i64")],
+            )
+            .await
+            .expect("ack reclaimed inbox item");
+        assert_eq!(acked, vec![reclaimed[0].inbox_id]);
+
+        let remaining = db
+            .get_inbox_for_device(bob.device_id, None, Some(10))
+            .await
+            .expect("list remaining inbox items");
+        assert!(remaining.is_empty());
     }
 
     async fn connect_test_db() -> Database {
