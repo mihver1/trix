@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{Json as ExtractJson, State},
+    extract::{Json as ExtractJson, Path, State},
     http::HeaderMap,
     routing::{get, post},
 };
@@ -8,7 +8,10 @@ use base64::{Engine as _, engine::general_purpose};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
 use crate::{db::CreateAccountInput, error::AppError, state::AppState};
-use trix_types::{AccountId, AccountProfileResponse, CreateAccountRequest, CreateAccountResponse};
+use trix_types::{
+    AccountId, AccountKeyPackagesResponse, AccountProfileResponse, CreateAccountRequest,
+    CreateAccountResponse, DeviceId, ReservedKeyPackage,
+};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -76,10 +79,29 @@ async fn get_me(
     }))
 }
 
-async fn get_account_key_packages() -> Result<Json<serde_json::Value>, AppError> {
-    Err(AppError::not_implemented(
-        "key package lookup is not implemented yet",
-    ))
+async fn get_account_key_packages(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(account_id): Path<AccountId>,
+) -> Result<Json<AccountKeyPackagesResponse>, AppError> {
+    state.auth.authenticate_headers(&headers)?;
+    let packages = state
+        .db
+        .reserve_key_packages_for_account(account_id.0)
+        .await?;
+
+    Ok(Json(AccountKeyPackagesResponse {
+        account_id,
+        packages: packages
+            .into_iter()
+            .map(|package| ReservedKeyPackage {
+                key_package_id: package.key_package_id.to_string(),
+                device_id: DeviceId(package.device_id),
+                cipher_suite: package.cipher_suite,
+                key_package_b64: general_purpose::STANDARD.encode(package.key_package_bytes),
+            })
+            .collect(),
+    }))
 }
 
 fn decode_b64(value: &str) -> Result<Vec<u8>, AppError> {

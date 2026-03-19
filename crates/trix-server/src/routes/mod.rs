@@ -6,6 +6,8 @@ pub mod auth;
 pub mod blobs;
 pub mod chats;
 pub mod devices;
+pub mod inbox;
+pub mod key_packages;
 pub mod system;
 
 pub async fn root() -> Json<Value> {
@@ -24,5 +26,7 @@ pub fn v0_router() -> Router<crate::state::AppState> {
         .nest("/accounts", accounts::router())
         .nest("/devices", devices::router())
         .nest("/chats", chats::router())
+        .merge(inbox::router())
+        .merge(key_packages::router())
         .nest("/blobs", blobs::router())
 }

@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{AccountId, ChatId, DeviceId, DeviceStatus};
+use serde_json::Value;
+
+use crate::{
+    AccountId, ChatId, ChatType, ContentType, DeviceId, DeviceStatus, MessageId, MessageKind,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -99,4 +103,143 @@ pub struct DeviceSummary {
 pub struct DeviceListResponse {
     pub account_id: AccountId,
     pub devices: Vec<DeviceSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublishKeyPackageItem {
+    pub cipher_suite: String,
+    pub key_package_b64: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublishKeyPackagesRequest {
+    pub packages: Vec<PublishKeyPackageItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublishedKeyPackage {
+    pub key_package_id: String,
+    pub cipher_suite: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublishKeyPackagesResponse {
+    pub device_id: DeviceId,
+    pub packages: Vec<PublishedKeyPackage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReservedKeyPackage {
+    pub key_package_id: String,
+    pub device_id: DeviceId,
+    pub cipher_suite: String,
+    pub key_package_b64: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountKeyPackagesResponse {
+    pub account_id: AccountId,
+    pub packages: Vec<ReservedKeyPackage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateChatRequest {
+    pub chat_type: ChatType,
+    pub title: Option<String>,
+    pub participant_account_ids: Vec<AccountId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateChatResponse {
+    pub chat_id: ChatId,
+    pub chat_type: ChatType,
+    pub epoch: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatSummary {
+    pub chat_id: ChatId,
+    pub chat_type: ChatType,
+    pub title: Option<String>,
+    pub last_server_seq: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatListResponse {
+    pub chats: Vec<ChatSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatMemberSummary {
+    pub account_id: AccountId,
+    pub role: String,
+    pub membership_status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatDetailResponse {
+    pub chat_id: ChatId,
+    pub chat_type: ChatType,
+    pub title: Option<String>,
+    pub last_server_seq: u64,
+    pub epoch: u64,
+    pub members: Vec<ChatMemberSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CreateMessageRequest {
+    pub message_id: MessageId,
+    pub epoch: u64,
+    pub message_kind: MessageKind,
+    pub content_type: ContentType,
+    pub ciphertext_b64: String,
+    pub aad_json: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateMessageResponse {
+    pub message_id: MessageId,
+    pub server_seq: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MessageEnvelope {
+    pub message_id: MessageId,
+    pub chat_id: ChatId,
+    pub server_seq: u64,
+    pub sender_account_id: AccountId,
+    pub sender_device_id: DeviceId,
+    pub epoch: u64,
+    pub message_kind: MessageKind,
+    pub content_type: ContentType,
+    pub ciphertext_b64: String,
+    pub aad_json: Value,
+    pub created_at_unix: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChatHistoryResponse {
+    pub chat_id: ChatId,
+    pub messages: Vec<MessageEnvelope>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InboxItem {
+    pub inbox_id: u64,
+    pub message: MessageEnvelope,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InboxResponse {
+    pub items: Vec<InboxItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AckInboxRequest {
+    pub inbox_ids: Vec<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AckInboxResponse {
+    pub acked_inbox_ids: Vec<u64>,
 }

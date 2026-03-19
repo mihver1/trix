@@ -120,9 +120,7 @@ mod tests {
             HeaderValue::from_str(&format!("Bearer {token}")).expect("header value"),
         );
 
-        let principal = manager
-            .authenticate_headers(&headers)
-            .expect("principal");
+        let principal = manager.authenticate_headers(&headers).expect("principal");
 
         assert_eq!(principal.account_id, account_id);
         assert_eq!(principal.device_id, device_id);

@@ -1,15 +1,20 @@
-use std::time::Duration;
+use std::{collections::BTreeSet, time::Duration};
 
 use anyhow::{Context, Result};
+use serde_json::Value;
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use uuid::Uuid;
 
 use crate::error::AppError;
-use trix_types::DeviceStatus;
+use trix_types::{ChatType, ContentType, DeviceStatus, MessageKind};
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./../../migrations");
 
 const AUTH_CHALLENGE_TTL_SECONDS: i32 = 5 * 60;
+const DEFAULT_HISTORY_LIMIT: usize = 100;
+const MAX_HISTORY_LIMIT: usize = 500;
+const DEFAULT_INBOX_LIMIT: usize = 100;
+const MAX_INBOX_LIMIT: usize = 500;
 
 #[derive(Debug, Clone)]
 pub struct Database {
@@ -70,6 +75,108 @@ pub struct DeviceSummaryRow {
     pub device_status: DeviceStatus,
 }
 
+#[derive(Debug)]
+pub struct PublishKeyPackageInput {
+    pub device_id: Uuid,
+    pub cipher_suite: String,
+    pub key_package_bytes: Vec<u8>,
+}
+
+#[derive(Debug)]
+pub struct PublishedKeyPackageRow {
+    pub key_package_id: Uuid,
+    pub cipher_suite: String,
+}
+
+#[derive(Debug)]
+pub struct ReservedKeyPackageRow {
+    pub key_package_id: Uuid,
+    pub device_id: Uuid,
+    pub cipher_suite: String,
+    pub key_package_bytes: Vec<u8>,
+}
+
+#[derive(Debug)]
+pub struct ChatSummaryRow {
+    pub chat_id: Uuid,
+    pub chat_type: ChatType,
+    pub title: Option<String>,
+    pub last_server_seq: u64,
+}
+
+#[derive(Debug)]
+pub struct ChatMemberRow {
+    pub account_id: Uuid,
+    pub role: String,
+    pub membership_status: String,
+}
+
+#[derive(Debug)]
+pub struct ChatDetail {
+    pub chat_id: Uuid,
+    pub chat_type: ChatType,
+    pub title: Option<String>,
+    pub last_server_seq: u64,
+    pub epoch: u64,
+    pub members: Vec<ChatMemberRow>,
+}
+
+#[derive(Debug)]
+pub struct CreateChatInput {
+    pub creator_account_id: Uuid,
+    pub creator_device_id: Uuid,
+    pub chat_type: ChatType,
+    pub title: Option<String>,
+    pub participant_account_ids: Vec<Uuid>,
+}
+
+#[derive(Debug)]
+pub struct CreateChatOutput {
+    pub chat_id: Uuid,
+    pub chat_type: ChatType,
+    pub epoch: u64,
+}
+
+#[derive(Debug)]
+pub struct CreateMessageInput {
+    pub chat_id: Uuid,
+    pub sender_account_id: Uuid,
+    pub sender_device_id: Uuid,
+    pub message_id: Uuid,
+    pub epoch: u64,
+    pub message_kind: MessageKind,
+    pub content_type: ContentType,
+    pub ciphertext: Vec<u8>,
+    pub aad_json: Value,
+}
+
+#[derive(Debug)]
+pub struct CreateMessageOutput {
+    pub message_id: Uuid,
+    pub server_seq: u64,
+}
+
+#[derive(Debug)]
+pub struct MessageEnvelopeRow {
+    pub message_id: Uuid,
+    pub chat_id: Uuid,
+    pub server_seq: u64,
+    pub sender_account_id: Uuid,
+    pub sender_device_id: Uuid,
+    pub epoch: u64,
+    pub message_kind: MessageKind,
+    pub content_type: ContentType,
+    pub ciphertext: Vec<u8>,
+    pub aad_json: Value,
+    pub created_at_unix: u64,
+}
+
+#[derive(Debug)]
+pub struct InboxItemRow {
+    pub inbox_id: u64,
+    pub message: MessageEnvelopeRow,
+}
+
 impl Database {
     pub async fn connect(database_url: &str) -> Result<Self> {
         let pool = PgPoolOptions::new()
@@ -113,9 +220,7 @@ impl Database {
         .fetch_one(&mut *tx)
         .await
         .map_err(map_db_error)?;
-        let account_id: Uuid = account_row
-            .try_get("account_id")
-            .map_err(|err| AppError::internal(format!("failed to read account id: {err}")))?;
+        let account_id: Uuid = row_uuid(&account_row, "account_id")?;
 
         let device_row = sqlx::query(
             r#"
@@ -142,9 +247,7 @@ impl Database {
         .fetch_one(&mut *tx)
         .await
         .map_err(map_db_error)?;
-        let device_id: Uuid = device_row
-            .try_get("device_id")
-            .map_err(|err| AppError::internal(format!("failed to read device id: {err}")))?;
+        let device_id: Uuid = row_uuid(&device_row, "device_id")?;
 
         sqlx::query(
             r#"
@@ -171,9 +274,7 @@ impl Database {
         .fetch_one(&mut *tx)
         .await
         .map_err(map_db_error)?;
-        let chat_id: Uuid = chat_row
-            .try_get("chat_id")
-            .map_err(|err| AppError::internal(format!("failed to read chat id: {err}")))?;
+        let chat_id: Uuid = row_uuid(&chat_row, "chat_id")?;
 
         sqlx::query(
             r#"
@@ -248,17 +349,13 @@ impl Database {
             return Err(AppError::not_found("active device not found"));
         };
 
-        let challenge_id: Uuid = row
-            .try_get("challenge_id")
-            .map_err(|err| AppError::internal(format!("failed to read challenge id: {err}")))?;
-        let expires_at_unix: i64 = row
-            .try_get("expires_at_unix")
-            .map_err(|err| AppError::internal(format!("failed to read challenge expiry: {err}")))?;
+        let challenge_id: Uuid = row_uuid(&row, "challenge_id")?;
+        let expires_at_unix = row_u64_from_i64(&row, "expires_at_unix")?;
 
         Ok(AuthChallengeOutput {
             challenge_id,
             challenge_bytes,
-            expires_at_unix: expires_at_unix as u64,
+            expires_at_unix,
         })
     }
 
@@ -298,24 +395,12 @@ impl Database {
             return Ok(None);
         };
 
-        let device_status: String = row
-            .try_get("device_status")
-            .map_err(|err| AppError::internal(format!("failed to read device status: {err}")))?;
-
         Ok(Some(TakenAuthChallenge {
-            account_id: row
-                .try_get("account_id")
-                .map_err(|err| AppError::internal(format!("failed to read account id: {err}")))?,
-            device_id: row
-                .try_get("device_id")
-                .map_err(|err| AppError::internal(format!("failed to read device id: {err}")))?,
-            device_status: parse_device_status(&device_status)?,
-            transport_pubkey: row.try_get("transport_pubkey").map_err(|err| {
-                AppError::internal(format!("failed to read transport pubkey: {err}"))
-            })?,
-            challenge_bytes: row.try_get("challenge_bytes").map_err(|err| {
-                AppError::internal(format!("failed to read challenge bytes: {err}"))
-            })?,
+            account_id: row_uuid(&row, "account_id")?,
+            device_id: row_uuid(&row, "device_id")?,
+            device_status: parse_device_status(&row_text(&row, "device_status")?)?,
+            transport_pubkey: row_bytes(&row, "transport_pubkey")?,
+            challenge_bytes: row_bytes(&row, "challenge_bytes")?,
         }))
     }
 
@@ -348,27 +433,13 @@ impl Database {
             return Ok(None);
         };
 
-        let device_status: String = row
-            .try_get("device_status")
-            .map_err(|err| AppError::internal(format!("failed to read device status: {err}")))?;
-
         Ok(Some(AccountProfile {
-            account_id: row
-                .try_get("account_id")
-                .map_err(|err| AppError::internal(format!("failed to read account id: {err}")))?,
-            handle: row
-                .try_get("handle")
-                .map_err(|err| AppError::internal(format!("failed to read handle: {err}")))?,
-            profile_name: row
-                .try_get("profile_name")
-                .map_err(|err| AppError::internal(format!("failed to read profile name: {err}")))?,
-            profile_bio: row
-                .try_get("profile_bio")
-                .map_err(|err| AppError::internal(format!("failed to read profile bio: {err}")))?,
-            device_id: row
-                .try_get("device_id")
-                .map_err(|err| AppError::internal(format!("failed to read device id: {err}")))?,
-            device_status: parse_device_status(&device_status)?,
+            account_id: row_uuid(&row, "account_id")?,
+            handle: row_optional_text(&row, "handle")?,
+            profile_name: row_text(&row, "profile_name")?,
+            profile_bio: row_optional_text(&row, "profile_bio")?,
+            device_id: row_uuid(&row, "device_id")?,
+            device_status: parse_device_status(&row_text(&row, "device_status")?)?,
         }))
     }
 
@@ -395,24 +466,731 @@ impl Database {
 
         rows.into_iter()
             .map(|row| {
-                let device_status: String = row.try_get("device_status").map_err(|err| {
-                    AppError::internal(format!("failed to read device status: {err}"))
-                })?;
-
                 Ok(DeviceSummaryRow {
-                    device_id: row.try_get("device_id").map_err(|err| {
-                        AppError::internal(format!("failed to read device id: {err}"))
-                    })?,
-                    display_name: row.try_get("display_name").map_err(|err| {
-                        AppError::internal(format!("failed to read display name: {err}"))
-                    })?,
-                    platform: row.try_get("platform").map_err(|err| {
-                        AppError::internal(format!("failed to read platform: {err}"))
-                    })?,
-                    device_status: parse_device_status(&device_status)?,
+                    device_id: row_uuid(&row, "device_id")?,
+                    display_name: row_text(&row, "display_name")?,
+                    platform: row_text(&row, "platform")?,
+                    device_status: parse_device_status(&row_text(&row, "device_status")?)?,
                 })
             })
             .collect()
+    }
+
+    pub async fn publish_key_packages(
+        &self,
+        device_id: Uuid,
+        packages: Vec<PublishKeyPackageInput>,
+    ) -> Result<Vec<PublishedKeyPackageRow>, AppError> {
+        if packages.is_empty() {
+            return Err(AppError::bad_request(
+                "at least one key package is required",
+            ));
+        }
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
+        let device_row = sqlx::query(
+            r#"
+            SELECT 1
+            FROM devices
+            WHERE device_id = $1
+              AND device_status = 'active'::device_status
+            "#,
+        )
+        .bind(device_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        if device_row.is_none() {
+            return Err(AppError::not_found("active device not found"));
+        }
+
+        let mut published = Vec::with_capacity(packages.len());
+        for package in packages {
+            let row = sqlx::query(
+                r#"
+                INSERT INTO device_key_packages (device_id, cipher_suite, key_package_bytes, status)
+                VALUES ($1, $2, $3, 'available'::key_package_status)
+                RETURNING key_package_id
+                "#,
+            )
+            .bind(device_id)
+            .bind(&package.cipher_suite)
+            .bind(&package.key_package_bytes)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            published.push(PublishedKeyPackageRow {
+                key_package_id: row_uuid(&row, "key_package_id")?,
+                cipher_suite: package.cipher_suite,
+            });
+        }
+
+        tx.commit()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
+
+        Ok(published)
+    }
+
+    pub async fn reserve_key_packages_for_account(
+        &self,
+        account_id: Uuid,
+    ) -> Result<Vec<ReservedKeyPackageRow>, AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
+        let account_row = sqlx::query(
+            r#"
+            SELECT 1
+            FROM accounts
+            WHERE account_id = $1
+              AND deleted_at IS NULL
+            "#,
+        )
+        .bind(account_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        if account_row.is_none() {
+            return Err(AppError::not_found("account not found"));
+        }
+
+        let device_rows = sqlx::query(
+            r#"
+            SELECT device_id
+            FROM devices
+            WHERE account_id = $1
+              AND device_status = 'active'::device_status
+            ORDER BY created_at ASC, device_id ASC
+            "#,
+        )
+        .bind(account_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        if device_rows.is_empty() {
+            return Err(AppError::conflict("account has no active devices"));
+        }
+
+        let mut reserved = Vec::with_capacity(device_rows.len());
+        for device_row in device_rows {
+            let device_id = row_uuid(&device_row, "device_id")?;
+            let reserved_row = sqlx::query(
+                r#"
+                WITH candidate AS (
+                    SELECT key_package_id
+                    FROM device_key_packages
+                    WHERE device_id = $1
+                      AND status = 'available'::key_package_status
+                    ORDER BY published_at ASC, key_package_id ASC
+                    LIMIT 1
+                    FOR UPDATE SKIP LOCKED
+                )
+                UPDATE device_key_packages kp
+                SET status = 'reserved'::key_package_status,
+                    reserved_at = now()
+                FROM candidate
+                WHERE kp.key_package_id = candidate.key_package_id
+                RETURNING kp.key_package_id, kp.device_id, kp.cipher_suite, kp.key_package_bytes
+                "#,
+            )
+            .bind(device_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            let Some(reserved_row) = reserved_row else {
+                return Err(AppError::conflict(
+                    "one or more active devices have no available key packages",
+                ));
+            };
+
+            reserved.push(ReservedKeyPackageRow {
+                key_package_id: row_uuid(&reserved_row, "key_package_id")?,
+                device_id: row_uuid(&reserved_row, "device_id")?,
+                cipher_suite: row_text(&reserved_row, "cipher_suite")?,
+                key_package_bytes: row_bytes(&reserved_row, "key_package_bytes")?,
+            });
+        }
+
+        tx.commit()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
+
+        Ok(reserved)
+    }
+
+    pub async fn list_chats_for_device(
+        &self,
+        account_id: Uuid,
+        device_id: Uuid,
+    ) -> Result<Vec<ChatSummaryRow>, AppError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                c.chat_id,
+                c.chat_type::text AS chat_type,
+                c.title,
+                c.last_server_seq
+            FROM chats c
+            JOIN chat_account_members cam
+              ON cam.chat_id = c.chat_id
+            JOIN chat_device_members cdm
+              ON cdm.chat_id = c.chat_id
+            WHERE cam.account_id = $1
+              AND cam.membership_status = 'active'::membership_status
+              AND cdm.device_id = $2
+              AND cdm.membership_status = 'active'::device_membership_status
+              AND c.archived_at IS NULL
+              AND c.chat_type <> 'account_sync'::chat_type
+            ORDER BY c.last_server_seq DESC, c.created_at DESC
+            "#,
+        )
+        .bind(account_id)
+        .bind(device_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(ChatSummaryRow {
+                    chat_id: row_uuid(&row, "chat_id")?,
+                    chat_type: parse_chat_type(&row_text(&row, "chat_type")?)?,
+                    title: row_optional_text(&row, "title")?,
+                    last_server_seq: row_u64_from_i64(&row, "last_server_seq")?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn create_chat(&self, input: CreateChatInput) -> Result<CreateChatOutput, AppError> {
+        if input.chat_type == ChatType::AccountSync {
+            return Err(AppError::bad_request(
+                "account sync chats are created internally",
+            ));
+        }
+
+        let mut participant_account_ids = BTreeSet::new();
+        participant_account_ids.insert(input.creator_account_id);
+        participant_account_ids.extend(input.participant_account_ids);
+        let participant_account_ids: Vec<Uuid> = participant_account_ids.into_iter().collect();
+
+        match input.chat_type {
+            ChatType::Dm if participant_account_ids.len() != 2 => {
+                return Err(AppError::bad_request(
+                    "dm chats require exactly two unique accounts",
+                ));
+            }
+            ChatType::Group if participant_account_ids.len() < 2 => {
+                return Err(AppError::bad_request(
+                    "group chats require at least two unique accounts",
+                ));
+            }
+            ChatType::AccountSync => unreachable!(),
+            ChatType::Dm | ChatType::Group => {}
+        }
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
+        let creator_row = sqlx::query(
+            r#"
+            SELECT 1
+            FROM devices
+            WHERE device_id = $1
+              AND account_id = $2
+              AND device_status = 'active'::device_status
+            "#,
+        )
+        .bind(input.creator_device_id)
+        .bind(input.creator_account_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        if creator_row.is_none() {
+            return Err(AppError::unauthorized("active creator device not found"));
+        }
+
+        let account_rows = sqlx::query(
+            r#"
+            SELECT account_id
+            FROM accounts
+            WHERE deleted_at IS NULL
+              AND account_id = ANY($1)
+            "#,
+        )
+        .bind(&participant_account_ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        let existing_accounts: BTreeSet<Uuid> = account_rows
+            .into_iter()
+            .map(|row| row_uuid(&row, "account_id"))
+            .collect::<Result<_, _>>()?;
+
+        if existing_accounts.len() != participant_account_ids.len() {
+            return Err(AppError::not_found(
+                "one or more participant accounts were not found",
+            ));
+        }
+
+        let active_device_rows = sqlx::query(
+            r#"
+            SELECT device_id, account_id
+            FROM devices
+            WHERE account_id = ANY($1)
+              AND device_status = 'active'::device_status
+            ORDER BY account_id ASC, created_at ASC, device_id ASC
+            "#,
+        )
+        .bind(&participant_account_ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        let active_device_accounts: BTreeSet<Uuid> = active_device_rows
+            .iter()
+            .map(|row| row_uuid(row, "account_id"))
+            .collect::<Result<_, _>>()?;
+
+        if active_device_accounts.len() != participant_account_ids.len() {
+            return Err(AppError::conflict(
+                "one or more participant accounts have no active devices",
+            ));
+        }
+
+        let chat_row = sqlx::query(
+            r#"
+            INSERT INTO chats (chat_type, title, created_by_account_id)
+            VALUES ($1::chat_type, $2, $3)
+            RETURNING chat_id
+            "#,
+        )
+        .bind(chat_type_db(input.chat_type))
+        .bind(input.title.as_deref())
+        .bind(input.creator_account_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        let chat_id = row_uuid(&chat_row, "chat_id")?;
+
+        for account_id in &participant_account_ids {
+            sqlx::query(
+                r#"
+                INSERT INTO chat_account_members (chat_id, account_id, role, membership_status)
+                VALUES ($1, $2, $3::chat_role, 'active'::membership_status)
+                "#,
+            )
+            .bind(chat_id)
+            .bind(*account_id)
+            .bind(if *account_id == input.creator_account_id {
+                "owner"
+            } else {
+                "member"
+            })
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+        }
+
+        for (leaf_index, row) in active_device_rows.into_iter().enumerate() {
+            sqlx::query(
+                r#"
+                INSERT INTO chat_device_members (chat_id, device_id, leaf_index, membership_status, added_in_epoch)
+                VALUES ($1, $2, $3, 'active'::device_membership_status, 0)
+                "#,
+            )
+            .bind(chat_id)
+            .bind(row_uuid(&row, "device_id")?)
+            .bind(leaf_index as i32)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+        }
+
+        sqlx::query(
+            r#"
+            INSERT INTO mls_group_states (chat_id, group_id_bytes, epoch, state_status)
+            VALUES ($1, $2, 0, 'active'::group_state_status)
+            "#,
+        )
+        .bind(chat_id)
+        .bind(Uuid::new_v4().as_bytes().to_vec())
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        tx.commit()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
+
+        Ok(CreateChatOutput {
+            chat_id,
+            chat_type: input.chat_type,
+            epoch: 0,
+        })
+    }
+
+    pub async fn get_chat_detail_for_device(
+        &self,
+        chat_id: Uuid,
+        device_id: Uuid,
+    ) -> Result<Option<ChatDetail>, AppError> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                c.chat_id,
+                c.chat_type::text AS chat_type,
+                c.title,
+                c.last_server_seq,
+                mgs.epoch
+            FROM chats c
+            JOIN mls_group_states mgs
+              ON mgs.chat_id = c.chat_id
+            JOIN chat_device_members cdm
+              ON cdm.chat_id = c.chat_id
+            JOIN devices d
+              ON d.device_id = cdm.device_id
+            WHERE c.chat_id = $1
+              AND cdm.device_id = $2
+              AND cdm.membership_status = 'active'::device_membership_status
+              AND d.device_status = 'active'::device_status
+              AND c.archived_at IS NULL
+            "#,
+        )
+        .bind(chat_id)
+        .bind(device_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let member_rows = sqlx::query(
+            r#"
+            SELECT
+                account_id,
+                role::text AS role,
+                membership_status::text AS membership_status
+            FROM chat_account_members
+            WHERE chat_id = $1
+              AND membership_status = 'active'::membership_status
+            ORDER BY joined_at ASC, account_id ASC
+            "#,
+        )
+        .bind(chat_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let members = member_rows
+            .into_iter()
+            .map(|member_row| {
+                Ok(ChatMemberRow {
+                    account_id: row_uuid(&member_row, "account_id")?,
+                    role: row_text(&member_row, "role")?,
+                    membership_status: row_text(&member_row, "membership_status")?,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Some(ChatDetail {
+            chat_id: row_uuid(&row, "chat_id")?,
+            chat_type: parse_chat_type(&row_text(&row, "chat_type")?)?,
+            title: row_optional_text(&row, "title")?,
+            last_server_seq: row_u64_from_i64(&row, "last_server_seq")?,
+            epoch: row_u64_from_i64(&row, "epoch")?,
+            members,
+        }))
+    }
+
+    pub async fn append_message(
+        &self,
+        input: CreateMessageInput,
+    ) -> Result<CreateMessageOutput, AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
+        let membership_row = sqlx::query(
+            r#"
+            SELECT mgs.epoch
+            FROM chat_device_members cdm
+            JOIN devices d
+              ON d.device_id = cdm.device_id
+            JOIN mls_group_states mgs
+              ON mgs.chat_id = cdm.chat_id
+            WHERE cdm.chat_id = $1
+              AND cdm.device_id = $2
+              AND d.account_id = $3
+              AND d.device_status = 'active'::device_status
+              AND cdm.membership_status = 'active'::device_membership_status
+            "#,
+        )
+        .bind(input.chat_id)
+        .bind(input.sender_device_id)
+        .bind(input.sender_account_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(membership_row) = membership_row else {
+            return Err(AppError::not_found("active chat membership not found"));
+        };
+
+        let current_epoch = row_u64_from_i64(&membership_row, "epoch")?;
+        if current_epoch != input.epoch {
+            return Err(AppError::conflict("chat epoch is out of date"));
+        }
+
+        let seq_row = sqlx::query(
+            r#"
+            UPDATE chats
+            SET last_server_seq = last_server_seq + 1
+            WHERE chat_id = $1
+            RETURNING last_server_seq
+            "#,
+        )
+        .bind(input.chat_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        let Some(seq_row) = seq_row else {
+            return Err(AppError::not_found("chat not found"));
+        };
+        let server_seq = row_u64_from_i64(&seq_row, "last_server_seq")?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO messages (
+                message_id,
+                chat_id,
+                server_seq,
+                sender_account_id,
+                sender_device_id,
+                epoch,
+                message_kind,
+                content_type,
+                ciphertext,
+                aad_json
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7::message_kind, $8::content_type, $9, $10)
+            "#,
+        )
+        .bind(input.message_id)
+        .bind(input.chat_id)
+        .bind(u64_to_i64(server_seq, "server sequence")?)
+        .bind(input.sender_account_id)
+        .bind(input.sender_device_id)
+        .bind(u64_to_i64(input.epoch, "message epoch")?)
+        .bind(message_kind_db(input.message_kind))
+        .bind(content_type_db(input.content_type))
+        .bind(&input.ciphertext)
+        .bind(sqlx::types::Json(input.aad_json))
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO device_inbox (device_id, chat_id, message_id, delivery_state)
+            SELECT
+                cdm.device_id,
+                $1,
+                $2,
+                'pending'::delivery_state
+            FROM chat_device_members cdm
+            JOIN devices d
+              ON d.device_id = cdm.device_id
+            WHERE cdm.chat_id = $1
+              AND cdm.membership_status = 'active'::device_membership_status
+              AND d.device_status = 'active'::device_status
+              AND cdm.device_id <> $3
+            "#,
+        )
+        .bind(input.chat_id)
+        .bind(input.message_id)
+        .bind(input.sender_device_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        tx.commit()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
+
+        Ok(CreateMessageOutput {
+            message_id: input.message_id,
+            server_seq,
+        })
+    }
+
+    pub async fn get_chat_history_for_device(
+        &self,
+        chat_id: Uuid,
+        device_id: Uuid,
+        after_server_seq: Option<u64>,
+        limit: Option<usize>,
+    ) -> Result<Option<Vec<MessageEnvelopeRow>>, AppError> {
+        let membership_row = sqlx::query(
+            r#"
+            SELECT 1
+            FROM chat_device_members cdm
+            JOIN devices d
+              ON d.device_id = cdm.device_id
+            WHERE cdm.chat_id = $1
+              AND cdm.device_id = $2
+              AND cdm.membership_status = 'active'::device_membership_status
+              AND d.device_status = 'active'::device_status
+            "#,
+        )
+        .bind(chat_id)
+        .bind(device_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        if membership_row.is_none() {
+            return Ok(None);
+        }
+
+        let after_server_seq = u64_to_i64(after_server_seq.unwrap_or(0), "history cursor")?;
+        let limit = clamp_limit(limit, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT);
+
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                message_id,
+                chat_id,
+                server_seq,
+                sender_account_id,
+                sender_device_id,
+                epoch,
+                message_kind::text AS message_kind,
+                content_type::text AS content_type,
+                ciphertext,
+                aad_json,
+                extract(epoch from created_at)::bigint AS created_at_unix
+            FROM messages
+            WHERE chat_id = $1
+              AND server_seq > $2
+            ORDER BY server_seq ASC
+            LIMIT $3
+            "#,
+        )
+        .bind(chat_id)
+        .bind(after_server_seq)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        rows.into_iter()
+            .map(message_row_from_db)
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some)
+    }
+
+    pub async fn get_inbox_for_device(
+        &self,
+        device_id: Uuid,
+        limit: Option<usize>,
+    ) -> Result<Vec<InboxItemRow>, AppError> {
+        let limit = clamp_limit(limit, DEFAULT_INBOX_LIMIT, MAX_INBOX_LIMIT);
+
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                di.inbox_id,
+                m.message_id,
+                m.chat_id,
+                m.server_seq,
+                m.sender_account_id,
+                m.sender_device_id,
+                m.epoch,
+                m.message_kind::text AS message_kind,
+                m.content_type::text AS content_type,
+                m.ciphertext,
+                m.aad_json,
+                extract(epoch from m.created_at)::bigint AS created_at_unix
+            FROM device_inbox di
+            JOIN messages m
+              ON m.message_id = di.message_id
+            JOIN devices d
+              ON d.device_id = di.device_id
+            WHERE di.device_id = $1
+              AND di.delivery_state = 'pending'::delivery_state
+              AND d.device_status = 'active'::device_status
+            ORDER BY di.inbox_id ASC
+            LIMIT $2
+            "#,
+        )
+        .bind(device_id)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(InboxItemRow {
+                    inbox_id: row_u64_from_i64(&row, "inbox_id")?,
+                    message: message_row_from_db(row)?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn ack_inbox_items(
+        &self,
+        device_id: Uuid,
+        inbox_ids: Vec<i64>,
+    ) -> Result<Vec<u64>, AppError> {
+        if inbox_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let rows = sqlx::query(
+            r#"
+            UPDATE device_inbox
+            SET delivery_state = 'acked'::delivery_state,
+                acked_at = COALESCE(acked_at, now())
+            WHERE device_id = $1
+              AND inbox_id = ANY($2)
+              AND delivery_state <> 'acked'::delivery_state
+            RETURNING inbox_id
+            "#,
+        )
+        .bind(device_id)
+        .bind(&inbox_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let mut acked = rows
+            .into_iter()
+            .map(|row| row_u64_from_i64(&row, "inbox_id"))
+            .collect::<Result<Vec<_>, _>>()?;
+        acked.sort_unstable();
+        Ok(acked)
     }
 }
 
@@ -427,10 +1205,139 @@ fn parse_device_status(value: &str) -> Result<DeviceStatus, AppError> {
     }
 }
 
+fn parse_chat_type(value: &str) -> Result<ChatType, AppError> {
+    match value {
+        "dm" => Ok(ChatType::Dm),
+        "group" => Ok(ChatType::Group),
+        "account_sync" => Ok(ChatType::AccountSync),
+        other => Err(AppError::internal(format!(
+            "unknown chat type from database: {other}"
+        ))),
+    }
+}
+
+fn parse_message_kind(value: &str) -> Result<MessageKind, AppError> {
+    match value {
+        "application" => Ok(MessageKind::Application),
+        "commit" => Ok(MessageKind::Commit),
+        "welcome_ref" => Ok(MessageKind::WelcomeRef),
+        "system" => Ok(MessageKind::System),
+        other => Err(AppError::internal(format!(
+            "unknown message kind from database: {other}"
+        ))),
+    }
+}
+
+fn parse_content_type(value: &str) -> Result<ContentType, AppError> {
+    match value {
+        "text" => Ok(ContentType::Text),
+        "reaction" => Ok(ContentType::Reaction),
+        "receipt" => Ok(ContentType::Receipt),
+        "attachment" => Ok(ContentType::Attachment),
+        "chat_event" => Ok(ContentType::ChatEvent),
+        other => Err(AppError::internal(format!(
+            "unknown content type from database: {other}"
+        ))),
+    }
+}
+
+fn chat_type_db(value: ChatType) -> &'static str {
+    match value {
+        ChatType::Dm => "dm",
+        ChatType::Group => "group",
+        ChatType::AccountSync => "account_sync",
+    }
+}
+
+fn message_kind_db(value: MessageKind) -> &'static str {
+    match value {
+        MessageKind::Application => "application",
+        MessageKind::Commit => "commit",
+        MessageKind::WelcomeRef => "welcome_ref",
+        MessageKind::System => "system",
+    }
+}
+
+fn content_type_db(value: ContentType) -> &'static str {
+    match value {
+        ContentType::Text => "text",
+        ContentType::Reaction => "reaction",
+        ContentType::Receipt => "receipt",
+        ContentType::Attachment => "attachment",
+        ContentType::ChatEvent => "chat_event",
+    }
+}
+
+fn clamp_limit(requested: Option<usize>, default_limit: usize, max_limit: usize) -> usize {
+    let limit = requested.unwrap_or(default_limit);
+    limit.clamp(1, max_limit)
+}
+
+fn u64_to_i64(value: u64, field: &str) -> Result<i64, AppError> {
+    i64::try_from(value)
+        .map_err(|_| AppError::bad_request(format!("{field} exceeds supported range")))
+}
+
+fn row_uuid(row: &sqlx::postgres::PgRow, column: &str) -> Result<Uuid, AppError> {
+    row.try_get(column)
+        .map_err(|err| AppError::internal(format!("failed to read {column}: {err}")))
+}
+
+fn row_text(row: &sqlx::postgres::PgRow, column: &str) -> Result<String, AppError> {
+    row.try_get(column)
+        .map_err(|err| AppError::internal(format!("failed to read {column}: {err}")))
+}
+
+fn row_optional_text(
+    row: &sqlx::postgres::PgRow,
+    column: &str,
+) -> Result<Option<String>, AppError> {
+    row.try_get(column)
+        .map_err(|err| AppError::internal(format!("failed to read {column}: {err}")))
+}
+
+fn row_bytes(row: &sqlx::postgres::PgRow, column: &str) -> Result<Vec<u8>, AppError> {
+    row.try_get(column)
+        .map_err(|err| AppError::internal(format!("failed to read {column}: {err}")))
+}
+
+fn row_value(row: &sqlx::postgres::PgRow, column: &str) -> Result<Value, AppError> {
+    row.try_get(column)
+        .map_err(|err| AppError::internal(format!("failed to read {column}: {err}")))
+}
+
+fn row_u64_from_i64(row: &sqlx::postgres::PgRow, column: &str) -> Result<u64, AppError> {
+    let value: i64 = row
+        .try_get(column)
+        .map_err(|err| AppError::internal(format!("failed to read {column}: {err}")))?;
+    u64::try_from(value)
+        .map_err(|_| AppError::internal(format!("negative value encountered for {column}")))
+}
+
+fn message_row_from_db(row: sqlx::postgres::PgRow) -> Result<MessageEnvelopeRow, AppError> {
+    Ok(MessageEnvelopeRow {
+        message_id: row_uuid(&row, "message_id")?,
+        chat_id: row_uuid(&row, "chat_id")?,
+        server_seq: row_u64_from_i64(&row, "server_seq")?,
+        sender_account_id: row_uuid(&row, "sender_account_id")?,
+        sender_device_id: row_uuid(&row, "sender_device_id")?,
+        epoch: row_u64_from_i64(&row, "epoch")?,
+        message_kind: parse_message_kind(&row_text(&row, "message_kind")?)?,
+        content_type: parse_content_type(&row_text(&row, "content_type")?)?,
+        ciphertext: row_bytes(&row, "ciphertext")?,
+        aad_json: row_value(&row, "aad_json")?,
+        created_at_unix: row_u64_from_i64(&row, "created_at_unix")?,
+    })
+}
+
 fn map_db_error(err: sqlx::Error) -> AppError {
     if let sqlx::Error::Database(db_err) = &err {
         if db_err.constraint() == Some("accounts_handle_key") {
             return AppError::conflict("handle is already taken");
+        }
+
+        if db_err.constraint() == Some("messages_pkey") {
+            return AppError::conflict("message already exists");
         }
     }
 
