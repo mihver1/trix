@@ -95,12 +95,14 @@ private struct SidebarView: View {
                         SidebarValue(label: "Handle", value: account.handle ?? "not set")
                         SidebarValue(label: "Devices", value: "\(model.devices.count)")
                         SidebarValue(label: "Chats", value: "\(model.chats.count)")
+                        SidebarValue(label: "Inbox", value: "\(model.inboxItems.count)")
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 10) {
                         SidebarBullet("health and version handshake")
                         SidebarBullet("first-device bootstrap")
                         SidebarBullet("device linking + server-backed approval")
+                        SidebarBullet("inbox leasing + incremental polling")
                         SidebarBullet("manual key-package publish + reserve")
                         SidebarBullet("history sync job inspector")
                         SidebarBullet("challenge/session auth restore")

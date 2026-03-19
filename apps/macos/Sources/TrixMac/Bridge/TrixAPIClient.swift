@@ -99,6 +99,48 @@ struct TrixAPIClient {
         try await get("v0/devices", accessToken: accessToken)
     }
 
+    func fetchInbox(
+        accessToken: String,
+        afterInboxId: UInt64? = nil,
+        limit: Int = 50
+    ) async throws -> InboxResponse {
+        var queryItems = [
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+
+        if let afterInboxId {
+            queryItems.append(URLQueryItem(name: "after_inbox_id", value: String(afterInboxId)))
+        }
+
+        return try await get(
+            "v0/inbox",
+            queryItems: queryItems,
+            accessToken: accessToken
+        )
+    }
+
+    func leaseInbox(
+        accessToken: String,
+        request: LeaseInboxRequest
+    ) async throws -> LeaseInboxResponse {
+        try await post(
+            "v0/inbox/lease",
+            body: request,
+            accessToken: accessToken
+        )
+    }
+
+    func ackInbox(
+        accessToken: String,
+        request: AckInboxRequest
+    ) async throws -> AckInboxResponse {
+        try await post(
+            "v0/inbox/ack",
+            body: request,
+            accessToken: accessToken
+        )
+    }
+
     func fetchAccountKeyPackages(
         accessToken: String,
         accountId: UUID

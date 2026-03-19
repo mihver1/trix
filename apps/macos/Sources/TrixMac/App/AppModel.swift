@@ -11,6 +11,11 @@ final class AppModel: ObservableObject {
     @Published var currentAccount: AccountProfileResponse?
     @Published var devices: [DeviceSummary] = []
     @Published var chats: [ChatSummary] = []
+    @Published var inboxItems: [InboxItem] = []
+    @Published var inboxLeaseDraft = InboxLeaseDraft()
+    @Published var activeInboxLease: InboxLeaseState?
+    @Published var lastInboxCursor: UInt64?
+    @Published var lastAckedInboxIDs: [UInt64] = []
     @Published var historySyncJobs: [HistorySyncJobSummary] = []
     @Published var historySyncCursorDrafts: [UUID: String] = [:]
     @Published var keyPackagePublishDraft = KeyPackagePublishDraft()
@@ -31,6 +36,9 @@ final class AppModel: ObservableObject {
     @Published var isReservingKeyPackages = false
     @Published var isRestoringSession = false
     @Published var isRefreshingWorkspace = false
+    @Published var isRefreshingInbox = false
+    @Published var isLeasingInbox = false
+    @Published var isAckingInbox = false
     @Published var isRefreshingHistorySyncJobs = false
     @Published var isLoadingSelectedChat = false
     @Published var revokingDeviceIDs: Set<UUID> = []
@@ -100,6 +108,10 @@ final class AppModel: ObservableObject {
         }
 
         return !isReservingKeyPackages
+    }
+
+    var canAckLoadedInboxItems: Bool {
+        !inboxItems.isEmpty && !isAckingInbox
     }
 
     var currentDeviceID: UUID? {
@@ -398,6 +410,139 @@ final class AppModel: ObservableObject {
         } catch {
             lastErrorMessage = error.userFacingMessage
         }
+    }
+
+    func refreshInbox() async {
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
+
+        isRefreshingInbox = true
+        lastErrorMessage = nil
+        defer { isRefreshingInbox = false }
+
+        do {
+            let parameters = try decodeInboxPollParameters()
+            let response = try await client.fetchInbox(
+                accessToken: token,
+                afterInboxId: parameters.afterInboxId,
+                limit: parameters.limit
+            )
+            mergeInboxItems(response.items, autoAdvanceCursor: true)
+        } catch let error as TrixAPIError {
+            if error.isCredentialFailure {
+                accessToken = nil
+                await restoreSession()
+            } else {
+                lastErrorMessage = error.userFacingMessage
+            }
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    func leaseInbox() async {
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
+
+        isLeasingInbox = true
+        lastErrorMessage = nil
+        defer { isLeasingInbox = false }
+
+        do {
+            let parameters = try decodeInboxPollParameters()
+            let response = try await client.leaseInbox(
+                accessToken: token,
+                request: LeaseInboxRequest(
+                    leaseOwner: parameters.leaseOwner,
+                    limit: parameters.limit,
+                    afterInboxId: parameters.afterInboxId,
+                    leaseTtlSeconds: parameters.leaseTtlSeconds
+                )
+            )
+            activeInboxLease = InboxLeaseState(
+                owner: response.leaseOwner,
+                expiresAt: response.leaseExpiresAt
+            )
+            mergeInboxItems(response.items, autoAdvanceCursor: true)
+        } catch let error as TrixAPIError {
+            if error.isCredentialFailure {
+                accessToken = nil
+                await restoreSession()
+            } else {
+                lastErrorMessage = error.userFacingMessage
+            }
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    func ackLoadedInboxItems() async {
+        guard canAckLoadedInboxItems else {
+            return
+        }
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
+
+        isAckingInbox = true
+        lastErrorMessage = nil
+        defer { isAckingInbox = false }
+
+        do {
+            let inboxIds = inboxItems.map(\.inboxId)
+            let response = try await client.ackInbox(
+                accessToken: token,
+                request: AckInboxRequest(inboxIds: inboxIds)
+            )
+
+            let acked = Set(response.ackedInboxIds)
+            inboxItems.removeAll { acked.contains($0.inboxId) }
+            lastAckedInboxIDs = response.ackedInboxIds.sorted()
+
+            if let maxAcked = response.ackedInboxIds.max() {
+                lastInboxCursor = max(lastInboxCursor ?? 0, maxAcked)
+            }
+        } catch let error as TrixAPIError {
+            if error.isCredentialFailure {
+                accessToken = nil
+                await restoreSession()
+            } else {
+                lastErrorMessage = error.userFacingMessage
+            }
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    func useLastInboxCursor() {
+        guard let lastInboxCursor else {
+            return
+        }
+
+        inboxLeaseDraft.afterInboxID = String(lastInboxCursor)
+    }
+
+    func resetInboxCursor() {
+        inboxLeaseDraft.afterInboxID = ""
+    }
+
+    func clearLoadedInboxItems() {
+        inboxItems = []
+        lastAckedInboxIDs = []
     }
 
     func publishKeyPackages() async {
@@ -725,6 +870,7 @@ final class AppModel: ObservableObject {
         try updatePersistedSessionProfile(from: loadedProfile)
         refreshLocalIdentityState(reportErrors: false)
         syncKeyPackageDrafts(with: loadedProfile)
+        syncInboxDrafts(with: loadedProfile)
         try await loadHistorySyncJobs(client: client, accessToken: accessToken)
 
         if let preferredChatID = preferredChatSelection(from: sortedChats) {
@@ -820,6 +966,7 @@ final class AppModel: ObservableObject {
         accessToken = nil
         clearWorkspaceData()
         outgoingLinkIntent = nil
+        inboxLeaseDraft = InboxLeaseDraft()
         keyPackagePublishDraft = KeyPackagePublishDraft()
         keyPackageReserveDraft = KeyPackageReserveDraft()
         hasAccountRootKey = false
@@ -831,6 +978,10 @@ final class AppModel: ObservableObject {
         currentAccount = nil
         devices = []
         chats = []
+        inboxItems = []
+        activeInboxLease = nil
+        lastInboxCursor = nil
+        lastAckedInboxIDs = []
         historySyncJobs = []
         historySyncCursorDrafts = [:]
         approvingDeviceIDs = []
@@ -868,6 +1019,12 @@ final class AppModel: ObservableObject {
     private func syncKeyPackageDrafts(with profile: AccountProfileResponse) {
         if keyPackageReserveDraft.accountID.nonEmptyTrimmed == nil {
             keyPackageReserveDraft.accountID = profile.accountId.uuidString
+        }
+    }
+
+    private func syncInboxDrafts(with profile: AccountProfileResponse) {
+        if inboxLeaseDraft.leaseOwner.nonEmptyTrimmed == nil {
+            inboxLeaseDraft.leaseOwner = defaultInboxLeaseOwner(for: profile.deviceId)
         }
     }
 
@@ -930,11 +1087,73 @@ final class AppModel: ObservableObject {
         return packages
     }
 
+    private func decodeInboxPollParameters() throws -> InboxPollParameters {
+        let afterInboxId = try decodeOptionalUInt64(
+            inboxLeaseDraft.afterInboxID,
+            label: "after inbox id"
+        )
+        let limit = try decodeOptionalInt(
+            inboxLeaseDraft.limit,
+            label: "limit",
+            range: 1...500
+        ) ?? InboxLeaseDraft.defaultLimit
+        let leaseTtlSeconds = try decodeOptionalUInt64(
+            inboxLeaseDraft.leaseTTLSeconds,
+            label: "lease ttl seconds",
+            range: 1...300
+        ) ?? InboxLeaseDraft.defaultLeaseTTLSeconds
+
+        return InboxPollParameters(
+            afterInboxId: afterInboxId,
+            limit: limit,
+            leaseOwner: inboxLeaseDraft.leaseOwner.nonEmptyTrimmed,
+            leaseTtlSeconds: leaseTtlSeconds
+        )
+    }
+
     private func decodeUUID(_ rawValue: String, label: String) throws -> UUID {
         guard let trimmed = rawValue.nonEmptyTrimmed, let uuid = UUID(uuidString: trimmed) else {
             throw TrixAPIError.invalidPayload("Не удалось разобрать \(label).")
         }
         return uuid
+    }
+
+    private func decodeOptionalUInt64(_ rawValue: String, label: String) throws -> UInt64? {
+        guard let trimmed = rawValue.nonEmptyTrimmed else {
+            return nil
+        }
+        guard let value = UInt64(trimmed) else {
+            throw TrixAPIError.invalidPayload("Не удалось разобрать \(label).")
+        }
+        return value
+    }
+
+    private func decodeOptionalUInt64(
+        _ rawValue: String,
+        label: String,
+        range: ClosedRange<UInt64>
+    ) throws -> UInt64? {
+        guard let value = try decodeOptionalUInt64(rawValue, label: label) else {
+            return nil
+        }
+        guard range.contains(value) else {
+            throw TrixAPIError.invalidPayload("\(label.capitalized) должен быть в диапазоне \(range.lowerBound)...\(range.upperBound).")
+        }
+        return value
+    }
+
+    private func decodeOptionalInt(
+        _ rawValue: String,
+        label: String,
+        range: ClosedRange<Int>
+    ) throws -> Int? {
+        guard let trimmed = rawValue.nonEmptyTrimmed else {
+            return nil
+        }
+        guard let value = Int(trimmed), range.contains(value) else {
+            throw TrixAPIError.invalidPayload("\(label.capitalized) должен быть в диапазоне \(range.lowerBound)...\(range.upperBound).")
+        }
+        return value
     }
 
     private func decodeUUIDList(_ rawValue: String, label: String) throws -> [UUID] {
@@ -978,6 +1197,32 @@ final class AppModel: ObservableObject {
         selectedChatID = nil
         selectedChatDetail = nil
         selectedChatHistory = []
+    }
+
+    private func mergeInboxItems(_ newItems: [InboxItem], autoAdvanceCursor: Bool) {
+        guard !newItems.isEmpty else {
+            return
+        }
+
+        var mergedByID = Dictionary(uniqueKeysWithValues: inboxItems.map { ($0.inboxId, $0) })
+        for item in newItems {
+            mergedByID[item.inboxId] = item
+        }
+
+        let merged = mergedByID.values.sorted { $0.inboxId < $1.inboxId }
+        inboxItems = merged
+
+        if let maxInboxId = merged.last?.inboxId {
+            lastInboxCursor = max(lastInboxCursor ?? 0, maxInboxId)
+            if autoAdvanceCursor {
+                inboxLeaseDraft.afterInboxID = String(maxInboxId)
+            }
+        }
+    }
+
+    private func defaultInboxLeaseOwner(for deviceId: UUID) -> String {
+        let prefix = String(deviceId.uuidString.prefix(8)).lowercased()
+        return "macos-alpha:\(prefix)"
     }
 }
 
@@ -1036,6 +1281,32 @@ struct KeyPackageReserveDraft {
     var accountID = ""
     var selectedDeviceIDs = ""
     var mode: KeyPackageReserveMode = .allActiveDevices
+}
+
+struct InboxLeaseDraft {
+    static let defaultLimit = 50
+    static let defaultLeaseTTLSeconds: UInt64 = 30
+
+    var afterInboxID = ""
+    var limit = String(defaultLimit)
+    var leaseOwner = ""
+    var leaseTTLSeconds = String(defaultLeaseTTLSeconds)
+}
+
+struct InboxLeaseState {
+    let owner: String
+    let expiresAt: Date
+
+    var isExpired: Bool {
+        expiresAt <= Date()
+    }
+}
+
+private struct InboxPollParameters {
+    let afterInboxId: UInt64?
+    let limit: Int
+    let leaseOwner: String?
+    let leaseTtlSeconds: UInt64
 }
 
 struct DeviceLinkIntentState: Identifiable {

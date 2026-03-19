@@ -343,6 +343,42 @@ struct ChatHistoryResponse: Codable {
     let messages: [MessageEnvelope]
 }
 
+struct InboxItem: Codable, Identifiable {
+    let inboxId: UInt64
+    let message: MessageEnvelope
+
+    var id: UInt64 { inboxId }
+}
+
+struct InboxResponse: Codable {
+    let items: [InboxItem]
+}
+
+struct LeaseInboxRequest: Codable {
+    let leaseOwner: String?
+    let limit: Int?
+    let afterInboxId: UInt64?
+    let leaseTtlSeconds: UInt64?
+}
+
+struct LeaseInboxResponse: Codable {
+    let leaseOwner: String
+    let leaseExpiresAtUnix: UInt64
+    let items: [InboxItem]
+
+    var leaseExpiresAt: Date {
+        Date(timeIntervalSince1970: TimeInterval(leaseExpiresAtUnix))
+    }
+}
+
+struct AckInboxRequest: Codable {
+    let inboxIds: [UInt64]
+}
+
+struct AckInboxResponse: Codable {
+    let ackedInboxIds: [UInt64]
+}
+
 struct HistorySyncJobListResponse: Codable, Sendable {
     let jobs: [HistorySyncJobSummary]
 }
