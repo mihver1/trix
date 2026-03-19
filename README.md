@@ -27,18 +27,20 @@
 
 ## Current State
 
-The repository currently contains a compile-ready scaffold:
+The repository currently contains a compile-ready scaffold plus the first working backend vertical slice:
 
 - workspace and crate layout
 - backend HTTP router with health and version endpoints
-- placeholder route groups for auth, accounts, devices, chats, key packages, inbox, and blobs
+- `PostgreSQL` bootstrap and automatic migrations on startup
+- working `create account`, `auth challenge`, `auth session`, `accounts/me`, and `devices` endpoints
+- Ed25519 verification for device auth challenge flow
+- JWT-based device session tokens
 - initial migration draft
 - single-node `docker compose` setup
 
 ## Next Steps
 
-- wire `PostgreSQL` access and migrations into `trix-server`
-- implement device registration and auth challenge flow
 - add `OpenMLS` group state management into `trix-core`
+- implement device linking and revocation flows
+- implement chat creation and encrypted message append paths
 - generate `UniFFI` bindings for the future `macOS` app
-

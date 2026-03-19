@@ -21,6 +21,7 @@ CREATE TABLE accounts (
     profile_name text NOT NULL,
     profile_bio text,
     avatar_blob_id text,
+    account_root_pubkey bytea NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     deleted_at timestamptz
 );
@@ -194,3 +195,14 @@ CREATE TABLE idempotency_keys (
     PRIMARY KEY (scope, key)
 );
 
+CREATE TABLE auth_challenges (
+    challenge_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id uuid NOT NULL REFERENCES devices(device_id) ON DELETE CASCADE,
+    challenge_bytes bytea NOT NULL,
+    expires_at timestamptz NOT NULL,
+    consumed_at timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX auth_challenges_device_expires_at_idx
+    ON auth_challenges(device_id, expires_at);

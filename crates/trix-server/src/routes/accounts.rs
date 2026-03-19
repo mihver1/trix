@@ -1,31 +1,130 @@
 use axum::{
     Json, Router,
+    extract::{Json as ExtractJson, State},
+    http::HeaderMap,
     routing::{get, post},
 };
+use base64::{Engine as _, engine::general_purpose};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
-use crate::error::AppError;
+use crate::{db::CreateAccountInput, error::AppError, state::AppState};
+use trix_types::{AccountId, AccountProfileResponse, CreateAccountRequest, CreateAccountResponse};
 
-pub fn router() -> Router<crate::state::AppState> {
+pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", post(create_account))
         .route("/me", get(get_me))
         .route("/{account_id}/key-packages", get(get_account_key_packages))
 }
 
-async fn create_account() -> Result<Json<serde_json::Value>, AppError> {
-    Err(AppError::not_implemented(
-        "account creation flow is not implemented yet",
-    ))
+async fn create_account(
+    State(state): State<AppState>,
+    ExtractJson(request): ExtractJson<CreateAccountRequest>,
+) -> Result<Json<CreateAccountResponse>, AppError> {
+    let credential_identity = decode_b64(&request.credential_identity_b64)?;
+    let account_root_pubkey = decode_b64(&request.account_root_pubkey_b64)?;
+    let account_root_signature = decode_b64(&request.account_root_signature_b64)?;
+    let transport_pubkey = decode_b64(&request.transport_pubkey_b64)?;
+
+    verify_account_bootstrap_signature(
+        &account_root_pubkey,
+        &account_root_signature,
+        &transport_pubkey,
+        &credential_identity,
+    )?;
+
+    let created = state
+        .db
+        .create_account(CreateAccountInput {
+            handle: request.handle,
+            profile_name: request.profile_name,
+            profile_bio: request.profile_bio,
+            device_display_name: request.device_display_name,
+            platform: request.platform,
+            credential_identity,
+            account_root_pubkey,
+            account_root_signature,
+            transport_pubkey,
+        })
+        .await?;
+
+    Ok(Json(CreateAccountResponse {
+        account_id: AccountId(created.account_id),
+        device_id: trix_types::DeviceId(created.device_id),
+        account_sync_chat_id: trix_types::ChatId(created.account_sync_chat_id),
+    }))
 }
 
-async fn get_me() -> Result<Json<serde_json::Value>, AppError> {
-    Err(AppError::not_implemented(
-        "account profile lookup is not implemented yet",
-    ))
+async fn get_me(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<AccountProfileResponse>, AppError> {
+    let principal = state.auth.authenticate_headers(&headers)?;
+    let profile = state
+        .db
+        .get_account_profile(principal.account_id, principal.device_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("account not found"))?;
+
+    Ok(Json(AccountProfileResponse {
+        account_id: AccountId(profile.account_id),
+        handle: profile.handle,
+        profile_name: profile.profile_name,
+        profile_bio: profile.profile_bio,
+        device_id: trix_types::DeviceId(profile.device_id),
+        device_status: profile.device_status,
+    }))
 }
 
 async fn get_account_key_packages() -> Result<Json<serde_json::Value>, AppError> {
     Err(AppError::not_implemented(
         "key package lookup is not implemented yet",
     ))
+}
+
+fn decode_b64(value: &str) -> Result<Vec<u8>, AppError> {
+    for engine in [
+        &general_purpose::STANDARD,
+        &general_purpose::STANDARD_NO_PAD,
+        &general_purpose::URL_SAFE,
+        &general_purpose::URL_SAFE_NO_PAD,
+    ] {
+        if let Ok(bytes) = engine.decode(value) {
+            return Ok(bytes);
+        }
+    }
+
+    Err(AppError::bad_request("invalid base64 payload"))
+}
+
+fn verify_account_bootstrap_signature(
+    account_root_pubkey: &[u8],
+    account_root_signature: &[u8],
+    transport_pubkey: &[u8],
+    credential_identity: &[u8],
+) -> Result<(), AppError> {
+    let account_root_pubkey: [u8; 32] = account_root_pubkey
+        .try_into()
+        .map_err(|_| AppError::bad_request("account root public key must be 32 bytes"))?;
+    let verifying_key = VerifyingKey::from_bytes(&account_root_pubkey)
+        .map_err(|_| AppError::bad_request("invalid account root public key"))?;
+    let signature = Signature::from_slice(account_root_signature)
+        .map_err(|_| AppError::bad_request("invalid account root signature length"))?;
+    let message = bootstrap_message(transport_pubkey, credential_identity);
+
+    verifying_key
+        .verify(&message, &signature)
+        .map_err(|_| AppError::bad_request("invalid account bootstrap signature"))
+}
+
+fn bootstrap_message(transport_pubkey: &[u8], credential_identity: &[u8]) -> Vec<u8> {
+    let mut message = Vec::with_capacity(
+        b"trix-account-bootstrap:v1".len() + 8 + transport_pubkey.len() + credential_identity.len(),
+    );
+    message.extend_from_slice(b"trix-account-bootstrap:v1");
+    message.extend_from_slice(&(transport_pubkey.len() as u32).to_be_bytes());
+    message.extend_from_slice(transport_pubkey);
+    message.extend_from_slice(&(credential_identity.len() as u32).to_be_bytes());
+    message.extend_from_slice(credential_identity);
+    message
 }

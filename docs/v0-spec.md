@@ -132,6 +132,7 @@ Fields:
 - `profile_name` `text`
 - `profile_bio` `text`, optional
 - `avatar_blob_id` `text`, optional
+- `account_root_pubkey` `bytea`
 - `created_at`
 - `deleted_at`, optional
 
@@ -329,6 +330,7 @@ Fields:
 - `attachment_blobs`
 - `history_sync_jobs`
 - `idempotency_keys`
+- `auth_challenges`
 
 ### Required Indexes
 
@@ -393,6 +395,10 @@ Fields:
 ### idempotency_keys
 
 - unique index on `(scope, key)`
+
+### auth_challenges
+
+- index on `(device_id, expires_at)`
 
 ## Ephemeral State
 

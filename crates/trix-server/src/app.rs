@@ -4,12 +4,17 @@ use tokio::net::TcpListener;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::info;
 
-use crate::{blobs::LocalBlobStore, build::BuildInfo, config::AppConfig, routes, state::AppState};
+use crate::{
+    auth::AuthManager, blobs::LocalBlobStore, build::BuildInfo, config::AppConfig, db::Database,
+    routes, state::AppState,
+};
 
 pub async fn run(config: AppConfig) -> Result<()> {
+    let db = Database::connect(&config.database_url).await?;
     let blob_store = LocalBlobStore::new(&config.blob_root)?;
+    let auth = AuthManager::new(&config.jwt_signing_key);
     let build = BuildInfo::current();
-    let state = AppState::new(config.clone(), build, blob_store);
+    let state = AppState::new(config.clone(), build, db, auth, blob_store);
     let app = build_router(state);
 
     let listener = TcpListener::bind(config.bind_addr).await?;
