@@ -1,40 +1,107 @@
 import SwiftUI
 
-enum TrixPalette {
-    static let canvasStart = Color(red: 0.95, green: 0.93, blue: 0.88)
-    static let canvasEnd = Color(red: 0.99, green: 0.98, blue: 0.95)
-    static let sidebar = Color(red: 0.13, green: 0.14, blue: 0.13)
-    static let sidebarElevated = Color(red: 0.18, green: 0.19, blue: 0.17)
-    static let ink = Color(red: 0.15, green: 0.12, blue: 0.10)
-    static let inkMuted = Color(red: 0.39, green: 0.35, blue: 0.31)
-    static let accent = Color(red: 0.32, green: 0.45, blue: 0.26)
-    static let accentSoft = Color(red: 0.88, green: 0.92, blue: 0.84)
-    static let rust = Color(red: 0.72, green: 0.43, blue: 0.25)
-    static let panel = Color.white.opacity(0.70)
-    static let panelStrong = Color(red: 0.99, green: 0.98, blue: 0.95)
-    static let outline = Color.black.opacity(0.08)
-    static let success = Color(red: 0.24, green: 0.55, blue: 0.29)
-    static let warning = Color(red: 0.75, green: 0.46, blue: 0.21)
+struct TrixColors {
+    let canvasStart: Color
+    let canvasEnd: Color
+    let sidebar: Color
+    let sidebarElevated: Color
+    let ink: Color
+    let inkMuted: Color
+    let inverseInk: Color
+    let inverseInkMuted: Color
+    let accent: Color
+    let accentSoft: Color
+    let rust: Color
+    let panel: Color
+    let panelStrong: Color
+    let outline: Color
+    let success: Color
+    let warning: Color
+    let inputFill: Color
+    let tileFill: Color
+
+    static func resolve(for scheme: ColorScheme) -> TrixColors {
+        switch scheme {
+        case .dark:
+            return TrixColors(
+                canvasStart: Color(red: 0.07, green: 0.08, blue: 0.09),
+                canvasEnd: Color(red: 0.10, green: 0.11, blue: 0.13),
+                sidebar: Color(red: 0.05, green: 0.06, blue: 0.07),
+                sidebarElevated: Color(red: 0.09, green: 0.10, blue: 0.11),
+                ink: Color(red: 0.93, green: 0.92, blue: 0.89),
+                inkMuted: Color(red: 0.66, green: 0.68, blue: 0.70),
+                inverseInk: Color.white,
+                inverseInkMuted: Color.white.opacity(0.72),
+                accent: Color(red: 0.52, green: 0.70, blue: 0.45),
+                accentSoft: Color(red: 0.23, green: 0.31, blue: 0.21),
+                rust: Color(red: 0.82, green: 0.56, blue: 0.33),
+                panel: Color.white.opacity(0.06),
+                panelStrong: Color(red: 0.12, green: 0.13, blue: 0.15),
+                outline: Color.white.opacity(0.09),
+                success: Color(red: 0.55, green: 0.79, blue: 0.53),
+                warning: Color(red: 0.91, green: 0.66, blue: 0.37),
+                inputFill: Color.white.opacity(0.07),
+                tileFill: Color.white.opacity(0.05)
+            )
+        case .light:
+            return TrixColors(
+                canvasStart: Color(red: 0.95, green: 0.93, blue: 0.88),
+                canvasEnd: Color(red: 0.99, green: 0.98, blue: 0.95),
+                sidebar: Color(red: 0.13, green: 0.14, blue: 0.13),
+                sidebarElevated: Color(red: 0.18, green: 0.19, blue: 0.17),
+                ink: Color(red: 0.15, green: 0.12, blue: 0.10),
+                inkMuted: Color(red: 0.39, green: 0.35, blue: 0.31),
+                inverseInk: Color.white,
+                inverseInkMuted: Color.white.opacity(0.72),
+                accent: Color(red: 0.32, green: 0.45, blue: 0.26),
+                accentSoft: Color(red: 0.88, green: 0.92, blue: 0.84),
+                rust: Color(red: 0.72, green: 0.43, blue: 0.25),
+                panel: Color.white.opacity(0.70),
+                panelStrong: Color(red: 0.99, green: 0.98, blue: 0.95),
+                outline: Color.black.opacity(0.08),
+                success: Color(red: 0.24, green: 0.55, blue: 0.29),
+                warning: Color(red: 0.75, green: 0.46, blue: 0.21),
+                inputFill: Color.white.opacity(0.76),
+                tileFill: Color.white.opacity(0.52)
+            )
+        @unknown default:
+            return resolve(for: .light)
+        }
+    }
+}
+
+private struct TrixColorsKey: EnvironmentKey {
+    static let defaultValue = TrixColors.resolve(for: .light)
+}
+
+extension EnvironmentValues {
+    var trixColors: TrixColors {
+        get { self[TrixColorsKey.self] }
+        set { self[TrixColorsKey.self] = newValue }
+    }
 }
 
 struct TrixCanvas: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.trixColors) private var colors
+
     var body: some View {
         ZStack {
             LinearGradient(
-                colors: [TrixPalette.canvasStart, TrixPalette.canvasEnd],
+                colors: [colors.canvasStart, colors.canvasEnd],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
             .ignoresSafeArea()
 
             Circle()
-                .fill(TrixPalette.accent.opacity(0.16))
+                .fill(colors.accent.opacity(colorScheme == .dark ? 0.20 : 0.16))
                 .frame(width: 460, height: 460)
                 .blur(radius: 110)
                 .offset(x: 320, y: -240)
 
             RoundedRectangle(cornerRadius: 120, style: .continuous)
-                .fill(TrixPalette.rust.opacity(0.10))
+                .fill(colors.rust.opacity(colorScheme == .dark ? 0.14 : 0.10))
                 .frame(width: 420, height: 280)
                 .rotationEffect(.degrees(-18))
                 .blur(radius: 70)
@@ -50,6 +117,8 @@ enum TrixPanelTone {
 }
 
 struct TrixPanel<Content: View>: View {
+    @Environment(\.trixColors) private var colors
+
     let title: String
     let subtitle: String?
     let tone: TrixPanelTone
@@ -89,19 +158,19 @@ struct TrixPanel<Content: View>: View {
             RoundedRectangle(cornerRadius: 30, style: .continuous)
                 .stroke(borderColor, lineWidth: 1)
         }
-        .shadow(color: .black.opacity(tone == .inverted ? 0.22 : 0.08), radius: 28, y: 12)
+        .shadow(color: shadowColor, radius: 28, y: 12)
     }
 
     private var background: some ShapeStyle {
         switch tone {
         case .surface:
-            return AnyShapeStyle(TrixPalette.panel)
+            return AnyShapeStyle(colors.panel)
         case .strong:
-            return AnyShapeStyle(TrixPalette.panelStrong)
+            return AnyShapeStyle(colors.panelStrong)
         case .inverted:
             return AnyShapeStyle(
                 LinearGradient(
-                    colors: [TrixPalette.sidebarElevated, TrixPalette.sidebar],
+                    colors: [colors.sidebarElevated, colors.sidebar],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
@@ -110,20 +179,19 @@ struct TrixPanel<Content: View>: View {
     }
 
     private var borderColor: Color {
-        switch tone {
-        case .inverted:
-            return Color.white.opacity(0.08)
-        case .surface, .strong:
-            return TrixPalette.outline
-        }
+        tone == .inverted ? Color.white.opacity(0.08) : colors.outline
     }
 
     private var titleColor: Color {
-        tone == .inverted ? .white : TrixPalette.ink
+        tone == .inverted ? colors.inverseInk : colors.ink
     }
 
     private var subtitleColor: Color {
-        tone == .inverted ? .white.opacity(0.72) : TrixPalette.inkMuted
+        tone == .inverted ? colors.inverseInkMuted : colors.inkMuted
+    }
+
+    private var shadowColor: Color {
+        tone == .inverted ? .black.opacity(0.24) : .black.opacity(0.10)
     }
 }
 
@@ -147,6 +215,8 @@ struct TrixToneBadge: View {
 }
 
 struct TrixMetricTile: View {
+    @Environment(\.trixColors) private var colors
+
     let label: String
     let value: String
     let footnote: String?
@@ -162,27 +232,29 @@ struct TrixMetricTile: View {
             Text(label.uppercased())
                 .font(.caption.weight(.bold))
                 .tracking(1.1)
-                .foregroundStyle(TrixPalette.inkMuted)
+                .foregroundStyle(colors.inkMuted)
             Text(value)
                 .font(.system(size: 22, weight: .bold, design: .rounded))
-                .foregroundStyle(TrixPalette.ink)
+                .foregroundStyle(colors.ink)
             if let footnote {
                 Text(footnote)
                     .font(.footnote)
-                    .foregroundStyle(TrixPalette.inkMuted)
+                    .foregroundStyle(colors.inkMuted)
             }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.52), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(colors.tileFill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(TrixPalette.outline, lineWidth: 1)
+                .stroke(colors.outline, lineWidth: 1)
         }
     }
 }
 
 struct TrixInputBlock<Content: View>: View {
+    @Environment(\.trixColors) private var colors
+
     let label: String
     let hint: String?
     @ViewBuilder let content: Content
@@ -201,28 +273,30 @@ struct TrixInputBlock<Content: View>: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(label)
                 .font(.headline)
-                .foregroundStyle(TrixPalette.ink)
+                .foregroundStyle(colors.ink)
             content
             if let hint {
                 Text(hint)
                     .font(.footnote)
-                    .foregroundStyle(TrixPalette.inkMuted)
+                    .foregroundStyle(colors.inkMuted)
             }
         }
     }
 }
 
 struct TrixInputChrome: ViewModifier {
+    @Environment(\.trixColors) private var colors
+
     func body(content: Content) -> some View {
         content
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
-            .background(Color.white.opacity(0.76), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .background(colors.inputFill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(TrixPalette.outline, lineWidth: 1)
+                    .stroke(colors.outline, lineWidth: 1)
             }
-            .foregroundStyle(TrixPalette.ink)
+            .foregroundStyle(colors.ink)
     }
 }
 
@@ -234,6 +308,8 @@ enum TrixActionTone {
 }
 
 struct TrixActionButtonStyle: ButtonStyle {
+    @Environment(\.trixColors) private var colors
+
     let tone: TrixActionTone
 
     func makeBody(configuration: Configuration) -> some View {
@@ -257,13 +333,13 @@ struct TrixActionButtonStyle: ButtonStyle {
 
         switch tone {
         case .primary:
-            return AnyShapeStyle(TrixPalette.accent.opacity(opacity))
+            return AnyShapeStyle(colors.accent.opacity(opacity))
         case .secondary:
-            return AnyShapeStyle(TrixPalette.panelStrong.opacity(opacity))
+            return AnyShapeStyle(colors.panelStrong.opacity(opacity))
         case .ghost:
-            return AnyShapeStyle(Color.white.opacity(configuration.isPressed ? 0.42 : 0.22))
+            return AnyShapeStyle(colors.tileFill.opacity(configuration.isPressed ? 0.88 : 0.72))
         case .sidebar:
-            return AnyShapeStyle(TrixPalette.sidebarElevated.opacity(opacity))
+            return AnyShapeStyle(colors.sidebarElevated.opacity(opacity))
         }
     }
 
@@ -271,21 +347,19 @@ struct TrixActionButtonStyle: ButtonStyle {
         switch tone {
         case .primary:
             return .white
-        case .secondary:
-            return TrixPalette.ink
-        case .ghost:
-            return TrixPalette.ink
+        case .secondary, .ghost:
+            return colors.ink
         case .sidebar:
-            return .white
+            return colors.inverseInk
         }
     }
 
     private var borderColor: Color {
         switch tone {
         case .primary:
-            return TrixPalette.accent.opacity(0.25)
+            return colors.accent.opacity(0.25)
         case .secondary, .ghost:
-            return TrixPalette.outline
+            return colors.outline
         case .sidebar:
             return Color.white.opacity(0.08)
         }

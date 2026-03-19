@@ -1,32 +1,48 @@
 import SwiftUI
 
 struct OnboardingView: View {
+    @Environment(\.trixColors) private var colors
     @ObservedObject var model: AppModel
+    let availableSize: CGSize
+
+    private var prefersSingleColumn: Bool {
+        availableSize.width < 1380 || availableSize.height < 860
+    }
+
+    private var featurePanelWidth: CGFloat {
+        min(380, max(320, availableSize.width * 0.28))
+    }
+
+    private var bioHeight: CGFloat {
+        availableSize.height < 760 ? 108 : 136
+    }
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
+        Group {
+            if prefersSingleColumn {
+                VStack(alignment: .leading, spacing: 20) {
+                    formColumn
+                    leadingColumn
+                }
+            } else {
             HStack(alignment: .top, spacing: 24) {
                 leadingColumn
-                    .frame(width: 410)
+                        .frame(width: featurePanelWidth)
 
                 formColumn
             }
-
-            VStack(alignment: .leading, spacing: 24) {
-                leadingColumn
-                formColumn
             }
         }
     }
 
     private var leadingColumn: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: 20) {
             TrixPanel(
                 title: "Mac-First Bootstrap",
                 subtitle: "The first device flow should feel like a launch console, not a settings screen.",
                 tone: .inverted
             ) {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 14) {
                     OnboardingFeature(
                         symbol: "wave.3.right.circle.fill",
                         title: "Live runtime handshake",
@@ -61,7 +77,7 @@ struct OnboardingView: View {
                         if let health = model.health {
                             Text("uptime \(formatUptime(health.uptimeMs))")
                                 .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(TrixPalette.inkMuted)
+                                .foregroundStyle(colors.inkMuted)
                         }
                     }
 
@@ -78,7 +94,7 @@ struct OnboardingView: View {
 
                     Text("Until MLS and native Rust bindings land, this screen is the quickest way to validate backend lifecycle and account bootstrap.")
                         .font(.footnote)
-                        .foregroundStyle(TrixPalette.inkMuted)
+                        .foregroundStyle(colors.inkMuted)
                 }
             }
         }
@@ -90,12 +106,12 @@ struct OnboardingView: View {
             subtitle: "Register the account root, transport key and local device profile in one pass.",
             tone: .strong
         ) {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 12) {
                     TrixToneBadge(label: endpointLabel, tint: readinessTint)
                     Text("platform macos")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(TrixPalette.inkMuted)
+                        .foregroundStyle(colors.inkMuted)
                 }
 
                 TrixInputBlock("Server URL", hint: "Usually `http://127.0.0.1:8080` in local development.") {
@@ -110,28 +126,81 @@ struct OnboardingView: View {
                         .trixInputChrome()
                 }
 
-                HStack(alignment: .top, spacing: 16) {
-                    TrixInputBlock("Handle", hint: "Optional public handle.") {
-                        TextField("optional handle", text: $model.draft.handle)
-                            .textFieldStyle(.plain)
-                            .trixInputChrome()
+                if prefersSingleColumn {
+                    VStack(alignment: .leading, spacing: 16) {
+                        handleField
+                        deviceField
                     }
-
-                    TrixInputBlock("Device Name", hint: "How this Mac appears in the device list.") {
-                        TextField("This Mac", text: $model.draft.deviceDisplayName)
-                            .textFieldStyle(.plain)
-                            .trixInputChrome()
+                } else {
+                    HStack(alignment: .top, spacing: 16) {
+                        handleField
+                        deviceField
                     }
                 }
 
                 TrixInputBlock("Profile Bio", hint: "Stored as profile metadata on the server.") {
                     TextEditor(text: $model.draft.profileBio)
                         .scrollContentBackground(.hidden)
-                        .frame(minHeight: 140)
+                        .frame(minHeight: bioHeight)
                         .font(.body)
                         .trixInputChrome()
                 }
 
+                actionRow
+
+                Text("Private keys stay on this Mac. The server only receives public material and the signed bootstrap payload.")
+                    .font(.footnote)
+                    .foregroundStyle(colors.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var handleField: some View {
+        TrixInputBlock("Handle", hint: "Optional public handle.") {
+            TextField("optional handle", text: $model.draft.handle)
+                .textFieldStyle(.plain)
+                .trixInputChrome()
+        }
+    }
+
+    private var deviceField: some View {
+        TrixInputBlock("Device Name", hint: "How this Mac appears in the device list.") {
+            TextField("This Mac", text: $model.draft.deviceDisplayName)
+                .textFieldStyle(.plain)
+                .trixInputChrome()
+        }
+    }
+
+    private var actionRow: some View {
+        Group {
+            if prefersSingleColumn {
+                VStack(spacing: 12) {
+                    Button {
+                        Task {
+                            await model.refreshServerStatus()
+                        }
+                    } label: {
+                        Label("Check Server", systemImage: "bolt.horizontal.circle")
+                    }
+                    .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                    .frame(maxWidth: 190)
+
+                    Button {
+                        Task {
+                            await model.createAccount()
+                        }
+                    } label: {
+                        if model.isCreatingAccount {
+                            Label("Creating Device…", systemImage: "hourglass")
+                        } else {
+                            Label("Create Account", systemImage: "arrow.up.right.circle.fill")
+                        }
+                    }
+                    .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                    .disabled(!model.canCreateAccount || model.isCreatingAccount)
+                }
+            } else {
                 HStack(spacing: 12) {
                     Button {
                         Task {
@@ -158,11 +227,6 @@ struct OnboardingView: View {
                     .disabled(!model.canCreateAccount || model.isCreatingAccount)
                     .frame(maxWidth: 240)
                 }
-
-                Text("Private keys stay on this Mac. The server only receives public material and the signed bootstrap payload.")
-                    .font(.footnote)
-                    .foregroundStyle(TrixPalette.inkMuted)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -183,12 +247,12 @@ struct OnboardingView: View {
 
     private var readinessTint: Color {
         if model.isRefreshingStatus {
-            return TrixPalette.rust
+            return colors.rust
         }
         if let health = model.health {
-            return health.status == .ok ? TrixPalette.success : TrixPalette.warning
+            return health.status == .ok ? colors.success : colors.warning
         }
-        return TrixPalette.warning
+        return colors.warning
     }
 
     private func formatUptime(_ uptimeMs: UInt64) -> String {
@@ -209,6 +273,7 @@ struct OnboardingView: View {
 }
 
 private struct OnboardingFeature: View {
+    @Environment(\.trixColors) private var colors
     let symbol: String
     let title: String
     let detail: String
@@ -217,22 +282,23 @@ private struct OnboardingFeature: View {
         HStack(alignment: .top, spacing: 14) {
             Image(systemName: symbol)
                 .font(.title3)
-                .foregroundStyle(TrixPalette.accentSoft)
+                .foregroundStyle(colors.accentSoft)
                 .frame(width: 28)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.headline)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(colors.inverseInk)
                 Text(detail)
                     .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.70))
+                    .foregroundStyle(colors.inverseInkMuted)
             }
         }
     }
 }
 
 private struct CommandLineChip: View {
+    @Environment(\.trixColors) private var colors
     let command: String
 
     init(_ command: String) {
@@ -242,13 +308,13 @@ private struct CommandLineChip: View {
     var body: some View {
         Text(command)
             .font(.system(.footnote, design: .monospaced))
-            .foregroundStyle(TrixPalette.ink)
+            .foregroundStyle(colors.ink)
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(Color.white.opacity(0.55), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .background(colors.tileFill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(TrixPalette.outline, lineWidth: 1)
+                    .stroke(colors.outline, lineWidth: 1)
             }
     }
 }

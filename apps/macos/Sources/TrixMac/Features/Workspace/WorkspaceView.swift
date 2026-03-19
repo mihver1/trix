@@ -1,11 +1,17 @@
 import SwiftUI
 
 struct WorkspaceView: View {
+    @Environment(\.trixColors) private var colors
     @ObservedObject var model: AppModel
+    let availableSize: CGSize
+
+    private var prefersSingleColumn: Bool {
+        availableSize.width < 1380 || availableSize.height < 860
+    }
 
     var body: some View {
         if let currentAccount = model.currentAccount {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 20) {
                 TrixPanel(
                     title: currentAccount.profileName,
                     subtitle: currentAccount.handle ?? "No public handle yet.",
@@ -15,7 +21,7 @@ struct WorkspaceView: View {
                         if let profileBio = currentAccount.profileBio, !profileBio.isEmpty {
                             Text(profileBio)
                                 .font(.body)
-                                .foregroundStyle(TrixPalette.inkMuted)
+                                .foregroundStyle(colors.inkMuted)
                         }
 
                         HStack(spacing: 16) {
@@ -38,16 +44,16 @@ struct WorkspaceView: View {
                     }
                 }
 
-                ViewThatFits(in: .horizontal) {
+                if prefersSingleColumn {
+                    VStack(alignment: .leading, spacing: 20) {
+                        inspectorColumn
+                        sidebarColumn
+                    }
+                } else {
                     HStack(alignment: .top, spacing: 24) {
                         sidebarColumn
                             .frame(width: 340)
 
-                        inspectorColumn
-                    }
-
-                    VStack(alignment: .leading, spacing: 24) {
-                        sidebarColumn
                         inspectorColumn
                     }
                 }
@@ -59,7 +65,7 @@ struct WorkspaceView: View {
             ) {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("Reconnect to reload account metadata, device state and encrypted chat history.")
-                        .foregroundStyle(TrixPalette.inkMuted)
+                        .foregroundStyle(colors.inkMuted)
 
                     Button {
                         Task {
@@ -80,7 +86,7 @@ struct WorkspaceView: View {
     }
 
     private var sidebarColumn: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: 20) {
             TrixPanel(
                 title: "Chats",
                 subtitle: "Choose a chat to inspect current members and encrypted history metadata."
@@ -117,15 +123,15 @@ struct WorkspaceView: View {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(device.displayName)
                                         .font(.headline)
-                                        .foregroundStyle(TrixPalette.ink)
+                                        .foregroundStyle(colors.ink)
                                     Text(device.platform)
                                         .font(.subheadline)
-                                        .foregroundStyle(TrixPalette.inkMuted)
+                                        .foregroundStyle(colors.inkMuted)
                                 }
                                 Spacer()
                                 TrixToneBadge(
                                     label: device.deviceStatus.label,
-                                    tint: device.deviceStatus == .active ? TrixPalette.success : TrixPalette.warning
+                                    tint: device.deviceStatus == .active ? colors.success : colors.warning
                                 )
                             }
                         }
@@ -136,7 +142,7 @@ struct WorkspaceView: View {
     }
 
     private var inspectorColumn: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: 20) {
             if let summary = model.selectedChatSummary {
                 TrixPanel(
                     title: summary.displayTitle,
@@ -144,9 +150,9 @@ struct WorkspaceView: View {
                 ) {
                     VStack(alignment: .leading, spacing: 18) {
                         HStack(spacing: 12) {
-                            TrixToneBadge(label: summary.chatType.rawValue.replacingOccurrences(of: "_", with: " "), tint: TrixPalette.accent)
+                            TrixToneBadge(label: summary.chatType.rawValue.replacingOccurrences(of: "_", with: " "), tint: colors.accent)
                             if model.isLoadingSelectedChat {
-                                TrixToneBadge(label: "Refreshing detail", tint: TrixPalette.rust)
+                                TrixToneBadge(label: "Refreshing detail", tint: colors.rust)
                             }
                         }
 
@@ -164,25 +170,25 @@ struct WorkspaceView: View {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text("Members")
                                     .font(.headline)
-                                    .foregroundStyle(TrixPalette.ink)
+                                    .foregroundStyle(colors.ink)
 
                                 ForEach(detail.members) { member in
                                     HStack(alignment: .top) {
                                         VStack(alignment: .leading, spacing: 4) {
                                             Text(shortID(member.accountId))
                                                 .font(.system(.subheadline, design: .monospaced))
-                                                .foregroundStyle(TrixPalette.ink)
+                                                .foregroundStyle(colors.ink)
                                             Text(member.role)
                                                 .font(.footnote.weight(.semibold))
-                                                .foregroundStyle(TrixPalette.inkMuted)
+                                                .foregroundStyle(colors.inkMuted)
                                         }
                                         Spacer()
                                         Text(member.membershipStatus)
                                             .font(.caption.weight(.bold))
                                             .padding(.horizontal, 10)
                                             .padding(.vertical, 6)
-                                            .background(Color.white.opacity(0.55), in: Capsule())
-                                            .foregroundStyle(TrixPalette.inkMuted)
+                                            .background(colors.tileFill, in: Capsule())
+                                            .foregroundStyle(colors.inkMuted)
                                     }
                                     .padding(.bottom, 2)
                                 }
@@ -192,7 +198,7 @@ struct WorkspaceView: View {
                                 ProgressView()
                                     .controlSize(.small)
                                 Text("Loading chat detail…")
-                                    .foregroundStyle(TrixPalette.inkMuted)
+                                    .foregroundStyle(colors.inkMuted)
                             }
                         }
                     }
@@ -206,7 +212,7 @@ struct WorkspaceView: View {
                         HStack(spacing: 12) {
                             ProgressView()
                             Text("Loading history…")
-                                .foregroundStyle(TrixPalette.inkMuted)
+                                .foregroundStyle(colors.inkMuted)
                         }
                     } else if model.selectedChatHistory.isEmpty {
                         EmptyWorkspaceLabel("This chat has no server-stored messages yet.")
@@ -235,6 +241,7 @@ struct WorkspaceView: View {
 }
 
 private struct ChatRow: View {
+    @Environment(\.trixColors) private var colors
     let chat: ChatSummary
     let isSelected: Bool
     let isLoading: Bool
@@ -245,29 +252,29 @@ private struct ChatRow: View {
             HStack(alignment: .top, spacing: 14) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(isSelected ? TrixPalette.accent.opacity(0.18) : Color.white.opacity(0.52))
+                        .fill(isSelected ? colors.accent.opacity(0.18) : colors.tileFill)
                         .frame(width: 48, height: 48)
 
                     Image(systemName: iconName)
                         .font(.title3)
-                        .foregroundStyle(isSelected ? TrixPalette.accent : TrixPalette.inkMuted)
+                        .foregroundStyle(isSelected ? colors.accent : colors.inkMuted)
                 }
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(chat.displayTitle)
                         .font(.headline)
-                        .foregroundStyle(TrixPalette.ink)
+                        .foregroundStyle(colors.ink)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                     Text(chat.chatType.rawValue.replacingOccurrences(of: "_", with: " "))
                         .font(.subheadline)
-                        .foregroundStyle(TrixPalette.inkMuted)
+                        .foregroundStyle(colors.inkMuted)
                 }
 
                 VStack(alignment: .trailing, spacing: 6) {
                     Text("seq \(chat.lastServerSeq)")
                         .font(.caption.weight(.bold))
-                        .foregroundStyle(TrixPalette.inkMuted)
+                        .foregroundStyle(colors.inkMuted)
 
                     if isLoading {
                         ProgressView()
@@ -277,12 +284,12 @@ private struct ChatRow: View {
             }
             .padding(14)
             .background(
-                isSelected ? TrixPalette.accentSoft.opacity(0.66) : Color.white.opacity(0.42),
+                isSelected ? colors.accentSoft.opacity(0.66) : colors.panel,
                 in: RoundedRectangle(cornerRadius: 22, style: .continuous)
             )
             .overlay {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(isSelected ? TrixPalette.accent.opacity(0.26) : TrixPalette.outline, lineWidth: 1)
+                    .stroke(isSelected ? colors.accent.opacity(0.26) : colors.outline, lineWidth: 1)
             }
         }
         .buttonStyle(.plain)
@@ -301,6 +308,7 @@ private struct ChatRow: View {
 }
 
 private struct MessageHistoryRow: View {
+    @Environment(\.trixColors) private var colors
     let message: MessageEnvelope
 
     var body: some View {
@@ -309,15 +317,15 @@ private struct MessageHistoryRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("seq \(message.serverSeq) • \(message.messageKind.label)")
                         .font(.headline)
-                        .foregroundStyle(TrixPalette.ink)
+                        .foregroundStyle(colors.ink)
                     Text("sender \(message.senderShortID) • epoch \(message.epoch)")
                         .font(.subheadline)
-                        .foregroundStyle(TrixPalette.inkMuted)
+                        .foregroundStyle(colors.inkMuted)
                 }
                 Spacer()
                 Text(Self.relativeFormatter.localizedString(for: message.createdAt, relativeTo: .now))
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(TrixPalette.inkMuted)
+                    .foregroundStyle(colors.inkMuted)
             }
 
             HStack(spacing: 10) {
@@ -327,10 +335,10 @@ private struct MessageHistoryRow: View {
             }
         }
         .padding(16)
-        .background(Color.white.opacity(0.50), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(colors.tileFill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(TrixPalette.outline, lineWidth: 1)
+                .stroke(colors.outline, lineWidth: 1)
         }
     }
 
@@ -342,19 +350,21 @@ private struct MessageHistoryRow: View {
 }
 
 private struct InlineMeta: View {
+    @Environment(\.trixColors) private var colors
     let label: String
 
     var body: some View {
         Text(label)
             .font(.caption.weight(.semibold))
-            .foregroundStyle(TrixPalette.inkMuted)
+            .foregroundStyle(colors.inkMuted)
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
-            .background(Color.white.opacity(0.72), in: Capsule())
+            .background(colors.inputFill, in: Capsule())
     }
 }
 
 private struct EmptyWorkspaceLabel: View {
+    @Environment(\.trixColors) private var colors
     let text: String
 
     init(_ text: String) {
@@ -363,7 +373,7 @@ private struct EmptyWorkspaceLabel: View {
 
     var body: some View {
         Text(text)
-            .foregroundStyle(TrixPalette.inkMuted)
+            .foregroundStyle(colors.inkMuted)
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
     }

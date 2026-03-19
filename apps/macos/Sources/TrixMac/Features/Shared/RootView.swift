@@ -1,64 +1,75 @@
 import SwiftUI
 
 struct RootView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var model: AppModel
+
+    private var colors: TrixColors {
+        TrixColors.resolve(for: colorScheme)
+    }
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(model: model)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(24)
-                .background(
-                    LinearGradient(
-                        colors: [TrixPalette.sidebarElevated, TrixPalette.sidebar],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
+            ScrollView(.vertical, showsIndicators: false) {
+                SidebarView(model: model)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .padding(20)
+            }
+            .background(
+                LinearGradient(
+                    colors: [colors.sidebarElevated, colors.sidebar],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
                 )
-                .toolbar(removing: .sidebarToggle)
+            )
+            .toolbar(removing: .sidebarToggle)
         } detail: {
-            ZStack {
-                TrixCanvas()
+            GeometryReader { proxy in
+                ZStack {
+                    TrixCanvas()
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        ContentHeader(model: model)
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 20) {
+                            ContentHeader(model: model, size: proxy.size)
 
-                        if let message = model.lastErrorMessage {
-                            ErrorStrip(message: message) {
-                                model.dismissError()
+                            if let message = model.lastErrorMessage {
+                                ErrorStrip(message: message) {
+                                    model.dismissError()
+                                }
+                            }
+
+                            if model.showsWorkspace {
+                                WorkspaceView(model: model, availableSize: proxy.size)
+                            } else {
+                                OnboardingView(model: model, availableSize: proxy.size)
                             }
                         }
-
-                        if model.showsWorkspace {
-                            WorkspaceView(model: model)
-                        } else {
-                            OnboardingView(model: model)
-                        }
+                        .padding(24)
                     }
-                    .padding(32)
                 }
             }
         }
         .navigationSplitViewStyle(.balanced)
+        .environment(\.trixColors, TrixColors.resolve(for: colorScheme))
     }
 }
 
 private struct SidebarView: View {
+    @Environment(\.trixColors) private var colors
     @ObservedObject var model: AppModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 10) {
-                TrixToneBadge(label: "alpha / macOS", tint: TrixPalette.accentSoft)
+                TrixToneBadge(label: "alpha / macOS", tint: colors.accentSoft)
 
                 Text("Trix")
-                    .font(.system(size: 42, weight: .bold, design: .serif))
-                    .foregroundStyle(.white)
+                    .font(.system(size: 38, weight: .bold, design: .serif))
+                    .foregroundStyle(colors.inverseInk)
 
                 Text("Native encrypted messaging, starting with a Mac-first control room.")
                     .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(colors.inverseInkMuted)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -153,7 +164,7 @@ private struct SidebarView: View {
 
             Text("Local keys. Server-assisted coordination. Message crypto next.")
                 .font(.footnote)
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(colors.inverseInkMuted.opacity(0.8))
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -172,31 +183,43 @@ private struct SidebarView: View {
 
     private var connectionTint: Color {
         if model.isRefreshingStatus {
-            return Color.white
+            return colors.inverseInk
         }
 
         if let health = model.health {
-            return health.status == .ok ? TrixPalette.accentSoft : Color(red: 0.98, green: 0.77, blue: 0.42)
+            return health.status == .ok ? colors.accentSoft : colors.warning
         }
 
-        return Color(red: 0.95, green: 0.66, blue: 0.42)
+        return colors.warning
     }
 }
 
 private struct ContentHeader: View {
+    @Environment(\.trixColors) private var colors
     @ObservedObject var model: AppModel
+    let size: CGSize
+
+    private var titleFontSize: CGFloat {
+        size.height < 760 ? 34 : 42
+    }
+
+    private var metricColumns: [GridItem] {
+        [
+            GridItem(.adaptive(minimum: size.width < 1180 ? 220 : 250), spacing: 14),
+        ]
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(model.showsWorkspace ? "Workspace" : "Bring The First Device Online")
-                        .font(.system(size: 42, weight: .bold, design: .serif))
-                        .foregroundStyle(TrixPalette.ink)
+                        .font(.system(size: titleFontSize, weight: .bold, design: .serif))
+                        .foregroundStyle(colors.ink)
 
                     Text(subtitle)
-                        .font(.title3)
-                        .foregroundStyle(TrixPalette.inkMuted)
+                        .font(size.height < 760 ? .headline : .title3)
+                        .foregroundStyle(colors.inkMuted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -207,12 +230,12 @@ private struct ContentHeader: View {
                     if let version = model.version {
                         Text("server \(version.version)")
                             .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(TrixPalette.inkMuted)
+                            .foregroundStyle(colors.inkMuted)
                     }
                 }
             }
 
-            HStack(spacing: 16) {
+            LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 14) {
                 TrixMetricTile(
                     label: "Endpoint",
                     value: endpointValue,
@@ -257,16 +280,17 @@ private struct ContentHeader: View {
 
     private var connectionTint: Color {
         if model.isRefreshingStatus {
-            return TrixPalette.rust
+            return colors.rust
         }
         if let health = model.health {
-            return health.status == .ok ? TrixPalette.success : TrixPalette.warning
+            return health.status == .ok ? colors.success : colors.warning
         }
-        return TrixPalette.warning
+        return colors.warning
     }
 }
 
 private struct SidebarModule<Content: View>: View {
+    @Environment(\.trixColors) private var colors
     let title: String
     @ViewBuilder let content: Content
 
@@ -280,21 +304,22 @@ private struct SidebarModule<Content: View>: View {
             Text(title.uppercased())
                 .font(.caption.weight(.bold))
                 .tracking(1.2)
-                .foregroundStyle(.white.opacity(0.48))
+                .foregroundStyle(colors.inverseInkMuted.opacity(0.68))
 
             content
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .background(colors.inverseInk.opacity(0.05), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                .stroke(colors.inverseInk.opacity(0.06), lineWidth: 1)
         }
     }
 }
 
 private struct SidebarValue: View {
+    @Environment(\.trixColors) private var colors
     let label: String
     let value: String
     var tint: Color = .white
@@ -304,7 +329,7 @@ private struct SidebarValue: View {
             Text(label.uppercased())
                 .font(.caption.weight(.bold))
                 .tracking(1)
-                .foregroundStyle(.white.opacity(0.42))
+                .foregroundStyle(colors.inverseInkMuted.opacity(0.58))
             Text(value)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(tint)
@@ -315,6 +340,7 @@ private struct SidebarValue: View {
 }
 
 private struct SidebarBullet: View {
+    @Environment(\.trixColors) private var colors
     let text: String
 
     init(_ text: String) {
@@ -324,18 +350,19 @@ private struct SidebarBullet: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Circle()
-                .fill(TrixPalette.accentSoft.opacity(0.86))
+                .fill(colors.accentSoft.opacity(0.86))
                 .frame(width: 7, height: 7)
                 .padding(.top, 6)
 
             Text(text)
                 .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.75))
+                .foregroundStyle(colors.inverseInkMuted)
         }
     }
 }
 
 private struct ErrorStrip: View {
+    @Environment(\.trixColors) private var colors
     let message: String
     let dismiss: () -> Void
 
@@ -343,21 +370,21 @@ private struct ErrorStrip: View {
         HStack(alignment: .top, spacing: 14) {
             Image(systemName: "bolt.horizontal.circle.fill")
                 .font(.title3)
-                .foregroundStyle(TrixPalette.warning)
+                .foregroundStyle(colors.warning)
 
             Text(message)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .foregroundStyle(TrixPalette.ink)
+                .foregroundStyle(colors.ink)
 
             Button("Dismiss", action: dismiss)
                 .buttonStyle(TrixActionButtonStyle(tone: .ghost))
                 .frame(width: 140)
         }
         .padding(18)
-        .background(TrixPalette.panelStrong, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .background(colors.panelStrong, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(TrixPalette.warning.opacity(0.24), lineWidth: 1)
+                .stroke(colors.warning.opacity(0.24), lineWidth: 1)
         }
     }
 }
