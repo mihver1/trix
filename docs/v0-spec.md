@@ -643,12 +643,21 @@ Called by an already trusted device to activate the pending device.
 Request:
 
 - `account_root_signature_b64` over the canonical `bootstrap_payload_b64`
-- encrypted transfer bundle for the new device
+- optional encrypted `transfer_bundle_b64` for the new device
 
 Response:
 
 - device becomes `active`
 - history sync jobs are scheduled
+
+### `GET /v0/devices/{device_id}/transfer-bundle`
+
+Returns the encrypted transfer bundle previously uploaded during approval.
+
+Rules:
+
+- only the target authenticated device can fetch it
+- payload remains opaque to the server
 
 ### `POST /v0/devices/{device_id}/revoke`
 

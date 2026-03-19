@@ -11,13 +11,13 @@ pub use api::{
     CompleteLinkIntentResponse, ControlMessageInput, CreateAccountRequest, CreateAccountResponse,
     CreateBlobUploadRequest, CreateBlobUploadResponse, CreateChatRequest, CreateChatResponse,
     CreateLinkIntentResponse, CreateMessageRequest, CreateMessageResponse,
-    DeviceApprovePayloadResponse, DeviceListResponse, DeviceSummary, ErrorResponse, HealthResponse,
-    HistorySyncJobListResponse, HistorySyncJobSummary, InboxItem, InboxResponse, LeaseInboxRequest,
-    LeaseInboxResponse, MessageEnvelope, ModifyChatDevicesRequest, ModifyChatDevicesResponse,
-    ModifyChatMembersRequest, ModifyChatMembersResponse, PublishKeyPackageItem,
-    PublishKeyPackagesRequest, PublishKeyPackagesResponse, PublishedKeyPackage,
-    ReserveKeyPackagesRequest, ReservedKeyPackage, RevokeDeviceRequest, RevokeDeviceResponse,
-    ServiceStatus, VersionResponse,
+    DeviceApprovePayloadResponse, DeviceListResponse, DeviceSummary, DeviceTransferBundleResponse,
+    ErrorResponse, HealthResponse, HistorySyncJobListResponse, HistorySyncJobSummary, InboxItem,
+    InboxResponse, LeaseInboxRequest, LeaseInboxResponse, MessageEnvelope,
+    ModifyChatDevicesRequest, ModifyChatDevicesResponse, ModifyChatMembersRequest,
+    ModifyChatMembersResponse, PublishKeyPackageItem, PublishKeyPackagesRequest,
+    PublishKeyPackagesResponse, PublishedKeyPackage, ReserveKeyPackagesRequest, ReservedKeyPackage,
+    RevokeDeviceRequest, RevokeDeviceResponse, ServiceStatus, VersionResponse,
 };
 pub use ids::{AccountId, ChatId, DeviceId, MessageId};
 pub use model::{
