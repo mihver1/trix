@@ -10,6 +10,7 @@ tags:
   - name: auth
   - name: accounts
   - name: devices
+  - name: history_sync
   - name: key_packages
   - name: chats
   - name: inbox
@@ -211,6 +212,54 @@ paths:
                 $ref: '#/components/schemas/RevokeDeviceResponse'
         '409':
           $ref: '#/components/responses/Conflict'
+  /v0/history-sync/jobs:
+    get:
+      operationId: listHistorySyncJobs
+      tags: [history_sync]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: status
+          schema:
+            $ref: '#/components/schemas/HistorySyncJobStatus'
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 500
+      responses:
+        '200':
+          description: History sync jobs assigned to the authenticated source device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistorySyncJobListResponse'
+  /v0/history-sync/jobs/{job_id}/complete:
+    post:
+      operationId: completeHistorySyncJob
+      tags: [history_sync]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteHistorySyncJobRequest'
+      responses:
+        '200':
+          description: History sync job marked completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompleteHistorySyncJobResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v0/key-packages:publish:
     post:
       operationId: publishKeyPackages
@@ -576,6 +625,13 @@ components:
       schema:
         type: string
         format: uuid
+    JobId:
+      in: path
+      name: job_id
+      required: true
+      schema:
+        type: string
+        format: uuid
   responses:
     NotFound:
       description: Resource not found
@@ -605,6 +661,12 @@ components:
     DeviceStatus:
       type: string
       enum: [pending, active, revoked]
+    HistorySyncJobType:
+      type: string
+      enum: [initial_sync, chat_backfill, device_rekey]
+    HistorySyncJobStatus:
+      type: string
+      enum: [pending, running, completed, failed, canceled]
     BlobUploadStatus:
       type: string
       enum: [pending_upload, available]
@@ -852,6 +914,63 @@ components:
           $ref: '#/components/schemas/Uuid'
         device_status:
           $ref: '#/components/schemas/DeviceStatus'
+    HistorySyncJobSummary:
+      type: object
+      required:
+        - job_id
+        - job_type
+        - job_status
+        - source_device_id
+        - target_device_id
+        - cursor_json
+        - created_at_unix
+        - updated_at_unix
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        job_type:
+          $ref: '#/components/schemas/HistorySyncJobType'
+        job_status:
+          $ref: '#/components/schemas/HistorySyncJobStatus'
+        source_device_id:
+          $ref: '#/components/schemas/Uuid'
+        target_device_id:
+          $ref: '#/components/schemas/Uuid'
+        chat_id:
+          $ref: '#/components/schemas/Uuid'
+          nullable: true
+        cursor_json:
+          type: object
+        created_at_unix:
+          type: integer
+          format: int64
+        updated_at_unix:
+          type: integer
+          format: int64
+    HistorySyncJobListResponse:
+      type: object
+      required: [jobs]
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/HistorySyncJobSummary'
+    CompleteHistorySyncJobRequest:
+      type: object
+      properties:
+        cursor_json:
+          type: object
+          nullable: true
+    CompleteHistorySyncJobResponse:
+      type: object
+      required: [job_id, job_status]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        job_status:
+          $ref: '#/components/schemas/HistorySyncJobStatus'
     PublishKeyPackageItem:
       type: object
       required: [cipher_suite, key_package_b64]
