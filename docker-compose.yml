@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: trix
+      POSTGRES_PASSWORD: trix
+      POSTGRES_DB: trix
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trix -d trix"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TRIX_BIND_ADDR: 0.0.0.0:8080
+      TRIX_PUBLIC_BASE_URL: http://localhost:8080
+      TRIX_DATABASE_URL: postgres://trix:trix@postgres:5432/trix
+      TRIX_BLOB_ROOT: /var/lib/trix/blobs
+      TRIX_LOG: info,trix_server=debug
+      TRIX_JWT_SIGNING_KEY: replace-me
+    ports:
+      - "8080:8080"
+    volumes:
+      - blob-data:/var/lib/trix/blobs
+
+volumes:
+  postgres-data:
+  blob-data:
+
