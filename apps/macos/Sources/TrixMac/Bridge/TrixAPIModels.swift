@@ -95,6 +95,53 @@ struct DeviceListResponse: Codable {
     let devices: [DeviceSummary]
 }
 
+struct CreateLinkIntentResponse: Codable {
+    let linkIntentId: UUID
+    let qrPayload: String
+    let expiresAtUnix: UInt64
+}
+
+struct CompleteLinkIntentRequest: Codable {
+    let linkToken: String
+    let deviceDisplayName: String
+    let platform: String
+    let credentialIdentityB64: String
+    let transportPubkeyB64: String
+    let keyPackages: [PublishKeyPackageItem]
+}
+
+struct CompleteLinkIntentResponse: Codable {
+    let accountId: UUID
+    let pendingDeviceId: UUID
+    let deviceStatus: DeviceStatus
+}
+
+struct ApproveDeviceRequest: Codable {
+    let accountRootSignatureB64: String
+}
+
+struct ApproveDeviceResponse: Codable {
+    let accountId: UUID
+    let deviceId: UUID
+    let deviceStatus: DeviceStatus
+}
+
+struct RevokeDeviceRequest: Codable {
+    let reason: String
+    let accountRootSignatureB64: String
+}
+
+struct RevokeDeviceResponse: Codable {
+    let accountId: UUID
+    let deviceId: UUID
+    let deviceStatus: DeviceStatus
+}
+
+struct PublishKeyPackageItem: Codable {
+    let cipherSuite: String
+    let keyPackageB64: String
+}
+
 struct DeviceSummary: Codable, Identifiable {
     let deviceId: UUID
     let displayName: String
@@ -102,6 +149,44 @@ struct DeviceSummary: Codable, Identifiable {
     let deviceStatus: DeviceStatus
 
     var id: UUID { deviceId }
+}
+
+struct LinkIntentPayload: Codable {
+    let version: Int
+    let baseURL: String
+    let accountId: UUID
+    let linkIntentId: UUID
+    let linkToken: UUID
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case baseURL = "base_url"
+        case accountId = "account_id"
+        case linkIntentId = "link_intent_id"
+        case linkToken = "link_token"
+    }
+}
+
+struct DeviceApprovalPayload: Codable {
+    let version: Int
+    let baseURL: String
+    let accountId: UUID
+    let pendingDeviceId: UUID
+    let deviceDisplayName: String
+    let platform: String
+    let credentialIdentityB64: String
+    let transportPubkeyB64: String
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case baseURL = "base_url"
+        case accountId = "account_id"
+        case pendingDeviceId = "pending_device_id"
+        case deviceDisplayName = "device_display_name"
+        case platform
+        case credentialIdentityB64 = "credential_identity_b64"
+        case transportPubkeyB64 = "transport_pubkey_b64"
+    }
 }
 
 enum ChatType: String, Codable {

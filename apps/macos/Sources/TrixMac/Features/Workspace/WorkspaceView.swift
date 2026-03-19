@@ -33,7 +33,7 @@ struct WorkspaceView: View {
                             TrixMetricTile(
                                 label: "Devices",
                                 value: "\(model.devices.count)",
-                                footnote: "Visible in the active device directory"
+                                footnote: model.hasAccountRootKey ? "This Mac can sign root-level device actions" : "This Mac cannot sign root-level device actions"
                             )
                             TrixMetricTile(
                                 label: "Chats",
@@ -46,13 +46,13 @@ struct WorkspaceView: View {
 
                 if prefersSingleColumn {
                     VStack(alignment: .leading, spacing: 20) {
+                        operationsColumn
                         inspectorColumn
-                        sidebarColumn
                     }
                 } else {
                     HStack(alignment: .top, spacing: 24) {
-                        sidebarColumn
-                            .frame(width: 340)
+                        operationsColumn
+                            .frame(width: 360)
 
                         inspectorColumn
                     }
@@ -85,8 +85,109 @@ struct WorkspaceView: View {
         }
     }
 
-    private var sidebarColumn: some View {
+    private var operationsColumn: some View {
         VStack(alignment: .leading, spacing: 20) {
+            TrixPanel(
+                title: "Device Linking",
+                subtitle: model.hasAccountRootKey
+                    ? "Create a link intent here, then approve the resulting payload once the new Mac registers itself."
+                    : "This device can create link intents, but approval must happen on a root-capable device."
+            ) {
+                VStack(alignment: .leading, spacing: 16) {
+                    Button {
+                        Task {
+                            await model.createLinkIntent()
+                        }
+                    } label: {
+                        Label(
+                            model.isCreatingLinkIntent ? "Creating Link Intent…" : "Create Link Intent",
+                            systemImage: "qrcode.viewfinder"
+                        )
+                    }
+                    .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                    .disabled(model.isCreatingLinkIntent)
+
+                    if let linkIntent = model.outgoingLinkIntent {
+                        TrixInputBlock(
+                            "Link Payload",
+                            hint: "Move this JSON to the Mac that should join the account."
+                        ) {
+                            TrixPayloadBox(payload: linkIntent.payload, minHeight: 160)
+                        }
+
+                        HStack(spacing: 12) {
+                            Button {
+                                copyStringToPasteboard(linkIntent.payload)
+                            } label: {
+                                Label("Copy Payload", systemImage: "doc.on.doc")
+                            }
+                            .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+
+                            Text("expires \(Self.linkExpiryFormatter.localizedString(for: linkIntent.expiresAt, relativeTo: .now))")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(colors.inkMuted)
+                        }
+                    }
+                }
+            }
+
+            if model.hasAccountRootKey {
+                TrixPanel(
+                    title: "Approve Pending Device",
+                    subtitle: "Paste the approval payload emitted by the new Mac. The account-root signature is generated locally on this device."
+                ) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        TrixInputBlock(
+                            "Approval Payload",
+                            hint: "This compensates for the current API gap: active devices cannot fetch pending bootstrap data directly."
+                        ) {
+                            TextEditor(text: $model.approvalDraft.payload)
+                                .scrollContentBackground(.hidden)
+                                .frame(minHeight: 148)
+                                .font(.system(.body, design: .monospaced))
+                                .trixInputChrome()
+                        }
+
+                        Button {
+                            Task {
+                                await model.approvePendingDevice()
+                            }
+                        } label: {
+                            Label(
+                                model.isApprovingPendingDevice ? "Approving Device…" : "Approve Device",
+                                systemImage: "checkmark.seal.fill"
+                            )
+                        }
+                        .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                        .disabled(!model.canApprovePendingDevice)
+                    }
+                }
+            }
+
+            TrixPanel(
+                title: "Devices",
+                subtitle: "Current account device directory."
+            ) {
+                if model.devices.isEmpty {
+                    EmptyWorkspaceLabel("No devices returned by the server.")
+                } else {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(model.devices) { device in
+                            DeviceRow(
+                                device: device,
+                                isCurrentDevice: device.deviceId == model.currentDeviceID,
+                                canRevoke: model.hasAccountRootKey && device.deviceId != model.currentDeviceID,
+                                isRevoking: model.revokingDeviceIDs.contains(device.deviceId)
+                            ) {
+                                Task {
+                                    await model.revokeDevice(device)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             TrixPanel(
                 title: "Chats",
                 subtitle: "Choose a chat to inspect current members and encrypted history metadata."
@@ -104,35 +205,6 @@ struct WorkspaceView: View {
                                 Task {
                                     await model.selectChat(chat.chatId)
                                 }
-                            }
-                        }
-                    }
-                }
-            }
-
-            TrixPanel(
-                title: "Devices",
-                subtitle: "Current account device directory."
-            ) {
-                if model.devices.isEmpty {
-                    EmptyWorkspaceLabel("No devices returned by the server.")
-                } else {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(model.devices) { device in
-                            HStack(alignment: .top) {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(device.displayName)
-                                        .font(.headline)
-                                        .foregroundStyle(colors.ink)
-                                    Text(device.platform)
-                                        .font(.subheadline)
-                                        .foregroundStyle(colors.inkMuted)
-                                }
-                                Spacer()
-                                TrixToneBadge(
-                                    label: device.deviceStatus.label,
-                                    tint: device.deviceStatus == .active ? colors.success : colors.warning
-                                )
                             }
                         }
                     }
@@ -227,9 +299,9 @@ struct WorkspaceView: View {
             } else {
                 TrixPanel(
                     title: "No Chat Selected",
-                    subtitle: "Once chats exist, the inspector will show membership and encrypted message envelopes here."
+                    subtitle: "The right-hand inspector still focuses on encrypted history and membership metadata."
                 ) {
-                    EmptyWorkspaceLabel("Select a chat from the left rail or create one through the API to continue.")
+                    EmptyWorkspaceLabel("Select a chat from the operations rail or create one through the API to continue.")
                 }
             }
         }
@@ -237,6 +309,65 @@ struct WorkspaceView: View {
 
     private func shortID(_ uuid: UUID) -> String {
         String(uuid.uuidString.prefix(8)).lowercased()
+    }
+
+    private static let linkExpiryFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter
+    }()
+}
+
+private struct DeviceRow: View {
+    @Environment(\.trixColors) private var colors
+    let device: DeviceSummary
+    let isCurrentDevice: Bool
+    let canRevoke: Bool
+    let isRevoking: Bool
+    let revoke: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(device.displayName)
+                        .font(.headline)
+                        .foregroundStyle(colors.ink)
+                    Text(device.platform)
+                        .font(.subheadline)
+                        .foregroundStyle(colors.inkMuted)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 8) {
+                    if isCurrentDevice {
+                        Text("current")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(colors.accent)
+                    }
+                    TrixToneBadge(
+                        label: device.deviceStatus.label,
+                        tint: device.deviceStatus == .active ? colors.success : (device.deviceStatus == .pending ? colors.warning : colors.rust)
+                    )
+                }
+            }
+
+            if canRevoke {
+                Button(role: .destructive, action: revoke) {
+                    Label(
+                        isRevoking ? (device.deviceStatus == .pending ? "Rejecting…" : "Revoking…") : (device.deviceStatus == .pending ? "Reject Pending Device" : "Revoke Device"),
+                        systemImage: "xmark.shield"
+                    )
+                }
+                .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+                .disabled(isRevoking)
+            }
+        }
+        .padding(16)
+        .background(colors.tileFill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(colors.outline, lineWidth: 1)
+        }
     }
 }
 

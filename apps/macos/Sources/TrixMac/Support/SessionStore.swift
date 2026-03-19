@@ -1,13 +1,46 @@
 import Foundation
 
 struct PersistedSession: Codable {
-    let baseURLString: String
-    let accountId: UUID
-    let deviceId: UUID
-    let accountSyncChatId: UUID
-    let profileName: String
-    let handle: String?
-    let deviceDisplayName: String
+    var baseURLString: String
+    var accountId: UUID
+    var deviceId: UUID
+    var accountSyncChatId: UUID?
+    var profileName: String
+    var handle: String?
+    var deviceDisplayName: String
+    var deviceStatus: DeviceStatus
+
+    init(
+        baseURLString: String,
+        accountId: UUID,
+        deviceId: UUID,
+        accountSyncChatId: UUID?,
+        profileName: String,
+        handle: String?,
+        deviceDisplayName: String,
+        deviceStatus: DeviceStatus
+    ) {
+        self.baseURLString = baseURLString
+        self.accountId = accountId
+        self.deviceId = deviceId
+        self.accountSyncChatId = accountSyncChatId
+        self.profileName = profileName
+        self.handle = handle
+        self.deviceDisplayName = deviceDisplayName
+        self.deviceStatus = deviceStatus
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        baseURLString = try container.decode(String.self, forKey: .baseURLString)
+        accountId = try container.decode(UUID.self, forKey: .accountId)
+        deviceId = try container.decode(UUID.self, forKey: .deviceId)
+        accountSyncChatId = try container.decodeIfPresent(UUID.self, forKey: .accountSyncChatId)
+        profileName = try container.decode(String.self, forKey: .profileName)
+        handle = try container.decodeIfPresent(String.self, forKey: .handle)
+        deviceDisplayName = try container.decode(String.self, forKey: .deviceDisplayName)
+        deviceStatus = try container.decodeIfPresent(DeviceStatus.self, forKey: .deviceStatus) ?? .active
+    }
 }
 
 struct SessionStore {

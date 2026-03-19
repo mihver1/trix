@@ -100,6 +100,7 @@ private struct SidebarView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         SidebarBullet("health and version handshake")
                         SidebarBullet("first-device bootstrap")
+                        SidebarBullet("manual device linking + approval payloads")
                         SidebarBullet("challenge/session auth restore")
                         SidebarBullet("chat metadata + encrypted history browser")
                     }
@@ -213,7 +214,7 @@ private struct ContentHeader: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(model.showsWorkspace ? "Workspace" : "Bring The First Device Online")
+                    Text(headerTitle)
                         .font(.system(size: titleFontSize, weight: .bold, design: .serif))
                         .foregroundStyle(colors.ink)
 
@@ -243,13 +244,13 @@ private struct ContentHeader: View {
                 )
                 TrixMetricTile(
                     label: "Mode",
-                    value: model.isAuthenticated ? "Authenticated" : (model.hasPersistedSession ? "Reconnectable" : "Bootstrap"),
-                    footnote: model.isAuthenticated ? "Device and chats loaded from the server" : "Create or restore the first trusted device"
+                    value: model.isAuthenticated ? "Authenticated" : (model.isAwaitingLinkApproval ? "Pending Approval" : (model.hasPersistedSession ? "Reconnectable" : "Bootstrap")),
+                    footnote: model.isAuthenticated ? "Device and chats loaded from the server" : (model.isAwaitingLinkApproval ? "Waiting for another trusted device to sign this Mac" : "Create or restore the first trusted device")
                 )
                 TrixMetricTile(
                     label: "Scope",
-                    value: model.isAuthenticated ? "\(model.chats.count) chats" : "Mac alpha",
-                    footnote: model.isAuthenticated ? "\(model.devices.count) device records visible" : "First-device onboarding and history inspection"
+                    value: model.isAuthenticated ? "\(model.chats.count) chats" : (model.isAwaitingLinkApproval ? "Link handoff" : "Mac alpha"),
+                    footnote: model.isAuthenticated ? "\(model.devices.count) device records visible" : (model.isAwaitingLinkApproval ? "Approval payload export and reconnect loop" : "First-device onboarding and history inspection")
                 )
             }
         }
@@ -258,7 +259,19 @@ private struct ContentHeader: View {
     private var subtitle: String {
         model.showsWorkspace
             ? "A calmer shell for browsing account state, devices, chats and encrypted history."
-            : "The UI now leads with runtime diagnostics and a cleaner first-device bootstrap flow."
+            : (model.isAwaitingLinkApproval
+                ? "This Mac is registered as a pending device and is waiting for a root-capable device to approve it."
+                : "The UI now leads with runtime diagnostics and a cleaner first-device bootstrap flow.")
+    }
+
+    private var headerTitle: String {
+        if model.showsWorkspace {
+            return "Workspace"
+        }
+        if model.isAwaitingLinkApproval {
+            return "Finish Linking This Mac"
+        }
+        return "Bring The First Device Online"
     }
 
     private var endpointValue: String {

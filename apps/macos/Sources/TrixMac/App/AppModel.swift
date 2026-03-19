@@ -4,6 +4,9 @@ import Foundation
 final class AppModel: ObservableObject {
     @Published var serverBaseURLString: String
     @Published var draft: OnboardingDraft
+    @Published var linkDraft: LinkDeviceDraft
+    @Published var approvalDraft = DeviceApprovalDraft()
+    @Published var onboardingMode: OnboardingMode = .createAccount
     @Published var health: HealthResponse?
     @Published var version: VersionResponse?
     @Published var currentAccount: AccountProfileResponse?
@@ -12,15 +15,23 @@ final class AppModel: ObservableObject {
     @Published var selectedChatID: UUID?
     @Published var selectedChatDetail: ChatDetailResponse?
     @Published var selectedChatHistory: [MessageEnvelope] = []
+    @Published var outgoingLinkIntent: DeviceLinkIntentState?
+    @Published var pendingApprovalPayload: String?
+    @Published var hasAccountRootKey = false
     @Published var isRefreshingStatus = false
     @Published var isCreatingAccount = false
+    @Published var isCreatingLinkIntent = false
+    @Published var isCompletingLink = false
     @Published var isRestoringSession = false
     @Published var isRefreshingWorkspace = false
     @Published var isLoadingSelectedChat = false
+    @Published var isApprovingPendingDevice = false
+    @Published var revokingDeviceIDs: Set<UUID> = []
     @Published var lastErrorMessage: String?
 
     private let sessionStore: SessionStore
     private let keychainStore: KeychainStore
+    private let defaultDeviceName: String
     private var persistedSession: PersistedSession?
     private var accessToken: String?
     private var didStart = false
@@ -33,8 +44,10 @@ final class AppModel: ObservableObject {
         self.keychainStore = keychainStore
 
         let defaultDeviceName = Host.current().localizedName ?? "This Mac"
+        self.defaultDeviceName = defaultDeviceName
         self.serverBaseURLString = "http://127.0.0.1:8080"
         self.draft = OnboardingDraft(deviceDisplayName: defaultDeviceName)
+        self.linkDraft = LinkDeviceDraft(deviceDisplayName: defaultDeviceName)
     }
 
     var isAuthenticated: Bool {
@@ -45,14 +58,34 @@ final class AppModel: ObservableObject {
         persistedSession != nil
     }
 
+    var isAwaitingLinkApproval: Bool {
+        !isAuthenticated && persistedSession?.deviceStatus == .pending
+    }
+
     var showsWorkspace: Bool {
-        isAuthenticated || hasPersistedSession
+        isAuthenticated || (persistedSession?.deviceStatus == .active && hasPersistedSession)
     }
 
     var canCreateAccount: Bool {
         draft.profileName.nonEmptyTrimmed != nil &&
             draft.deviceDisplayName.nonEmptyTrimmed != nil &&
             ServerEndpoint.normalizedURL(from: serverBaseURLString) != nil
+    }
+
+    var canCompleteLink: Bool {
+        linkDraft.linkPayload.nonEmptyTrimmed != nil &&
+            linkDraft.deviceDisplayName.nonEmptyTrimmed != nil
+    }
+
+    var canApprovePendingDevice: Bool {
+        isAuthenticated &&
+            hasAccountRootKey &&
+            approvalDraft.payload.nonEmptyTrimmed != nil &&
+            !isApprovingPendingDevice
+    }
+
+    var currentDeviceID: UUID? {
+        currentAccount?.deviceId ?? persistedSession?.deviceId
     }
 
     var selectedChatSummary: ChatSummary? {
@@ -76,11 +109,14 @@ final class AppModel: ObservableObject {
                 draft.profileName = session.profileName
                 draft.handle = session.handle ?? ""
                 draft.deviceDisplayName = session.deviceDisplayName
+                linkDraft.deviceDisplayName = session.deviceDisplayName
+                onboardingMode = session.deviceStatus == .pending ? .linkExisting : .createAccount
             }
         } catch {
             lastErrorMessage = error.userFacingMessage
         }
 
+        refreshLocalIdentityState(reportErrors: true)
         await refreshServerStatus()
 
         if persistedSession != nil {
@@ -154,12 +190,87 @@ final class AppModel: ObservableObject {
                 accountSyncChatId: created.accountSyncChatId,
                 profileName: profileName,
                 handle: handle,
-                deviceDisplayName: deviceDisplayName
+                deviceDisplayName: deviceDisplayName,
+                deviceStatus: .active
             )
 
             try save(identity: identity, authSession: authSession, persistedSession: session)
             try await loadWorkspace(client: client, accessToken: authSession.accessToken)
             await refreshServerStatus()
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    func createLinkIntent() async {
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
+
+        isCreatingLinkIntent = true
+        lastErrorMessage = nil
+        defer { isCreatingLinkIntent = false }
+
+        do {
+            let response = try await client.createLinkIntent(accessToken: token)
+            outgoingLinkIntent = DeviceLinkIntentState(
+                payload: response.qrPayload,
+                expiresAt: Date(timeIntervalSince1970: TimeInterval(response.expiresAtUnix))
+            )
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    func completeLink() async {
+        guard let deviceDisplayName = linkDraft.deviceDisplayName.nonEmptyTrimmed else {
+            lastErrorMessage = "Укажи имя устройства для link flow."
+            return
+        }
+
+        isCompletingLink = true
+        lastErrorMessage = nil
+        defer { isCompletingLink = false }
+
+        do {
+            let payload = try decodeLinkIntentPayload(linkDraft.linkPayload)
+            guard let client = makeClient(baseURLString: payload.baseURL) else {
+                return
+            }
+
+            let identity = try DeviceIdentityMaterial.makeLinkedDevice(
+                deviceDisplayName: deviceDisplayName,
+                platform: DeviceIdentityMaterial.platform
+            )
+            let response = try await client.completeLinkIntent(
+                linkIntentId: payload.linkIntentId,
+                request: identity.makeCompleteLinkIntentRequest(
+                    linkToken: payload.linkToken,
+                    deviceDisplayName: deviceDisplayName
+                )
+            )
+
+            serverBaseURLString = payload.baseURL
+            draft.deviceDisplayName = deviceDisplayName
+
+            let session = PersistedSession(
+                baseURLString: payload.baseURL,
+                accountId: response.accountId,
+                deviceId: response.pendingDeviceId,
+                accountSyncChatId: nil,
+                profileName: "Linked Account",
+                handle: nil,
+                deviceDisplayName: deviceDisplayName,
+                deviceStatus: response.deviceStatus
+            )
+
+            try save(identity: identity, authSession: nil, persistedSession: session)
+            clearWorkspaceData()
+            outgoingLinkIntent = nil
         } catch {
             lastErrorMessage = error.userFacingMessage
         }
@@ -184,20 +295,28 @@ final class AppModel: ObservableObject {
                 deviceId: session.deviceId,
                 identity: identity
             )
-            accessToken = authSession.accessToken
-            try keychainStore.save(
-                Data(authSession.accessToken.utf8),
-                for: .accessToken
-            )
+
+            var updatedSession = session
+            updatedSession.deviceStatus = authSession.deviceStatus
+
+            try save(identity: identity, authSession: authSession, persistedSession: updatedSession)
             try await loadWorkspace(client: client, accessToken: authSession.accessToken)
         } catch let error as TrixAPIError {
             if error.isCredentialFailure {
-                try? clearSession()
-                serverBaseURLString = session.baseURLString
-                draft.profileName = session.profileName
-                draft.handle = session.handle ?? ""
-                draft.deviceDisplayName = session.deviceDisplayName
-                lastErrorMessage = "Сохранённая сессия больше невалидна. Создай устройство заново."
+                if session.deviceStatus == .pending {
+                    accessToken = nil
+                    clearWorkspaceData()
+                    refreshLocalIdentityState(reportErrors: false)
+                    lastErrorMessage = "This device is still pending approval. Approve it from an active root-capable device, then reconnect."
+                } else {
+                    try? clearSession()
+                    serverBaseURLString = session.baseURLString
+                    draft.profileName = session.profileName
+                    draft.handle = session.handle ?? ""
+                    draft.deviceDisplayName = session.deviceDisplayName
+                    linkDraft.deviceDisplayName = session.deviceDisplayName
+                    lastErrorMessage = "Сохранённая сессия больше невалидна. Создай устройство заново."
+                }
             } else {
                 lastErrorMessage = error.userFacingMessage
             }
@@ -228,6 +347,100 @@ final class AppModel: ObservableObject {
             } else {
                 lastErrorMessage = error.userFacingMessage
             }
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    func approvePendingDevice() async {
+        guard canApprovePendingDevice else {
+            return
+        }
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+
+        isApprovingPendingDevice = true
+        lastErrorMessage = nil
+        defer { isApprovingPendingDevice = false }
+
+        do {
+            let payload = try decodeDeviceApprovalPayload(approvalDraft.payload)
+            guard payload.accountId == currentAccount?.accountId else {
+                throw TrixAPIError.invalidPayload("Approval payload относится к другому аккаунту.")
+            }
+            guard let client = makeClient(baseURLString: payload.baseURL) else {
+                return
+            }
+
+            let identity = try loadStoredIdentity(requireAccountRoot: true)
+            guard
+                let transportPublicKey = Data(base64Encoded: payload.transportPubkeyB64),
+                let credentialIdentity = Data(base64Encoded: payload.credentialIdentityB64)
+            else {
+                throw TrixAPIError.invalidPayload("Approval payload содержит невалидный base64.")
+            }
+
+            let signatureB64 = try identity.accountBootstrapSignatureB64(
+                transportPublicKey: transportPublicKey,
+                credentialIdentity: credentialIdentity
+            )
+            _ = try await client.approveDevice(
+                accessToken: token,
+                deviceId: payload.pendingDeviceId,
+                request: ApproveDeviceRequest(accountRootSignatureB64: signatureB64)
+            )
+
+            approvalDraft.payload = ""
+            await refreshWorkspace()
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    func revokeDevice(_ device: DeviceSummary) async {
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+        guard hasAccountRootKey else {
+            lastErrorMessage = "Revoke доступен только на root-capable устройстве."
+            return
+        }
+        guard currentDeviceID != device.deviceId else {
+            lastErrorMessage = "Текущее устройство нельзя отозвать из этого же сеанса."
+            return
+        }
+
+        revokingDeviceIDs.insert(device.deviceId)
+        lastErrorMessage = nil
+        defer { revokingDeviceIDs.remove(device.deviceId) }
+
+        do {
+            let identity = try loadStoredIdentity(requireAccountRoot: true)
+            let reason = device.deviceStatus == .pending
+                ? "pending link rejected from macOS alpha client"
+                : "device revoked from macOS alpha client"
+            let signatureB64 = try identity.revokeSignatureB64(
+                deviceID: device.deviceId,
+                reason: reason
+            )
+
+            guard let client = makeClient() else {
+                return
+            }
+
+            _ = try await client.revokeDevice(
+                accessToken: token,
+                deviceId: device.deviceId,
+                request: RevokeDeviceRequest(
+                    reason: reason,
+                    accountRootSignatureB64: signatureB64
+                )
+            )
+
+            await refreshWorkspace()
         } catch {
             lastErrorMessage = error.userFacingMessage
         }
@@ -325,6 +538,9 @@ final class AppModel: ObservableObject {
         }
         self.chats = sortedChats
 
+        try updatePersistedSessionProfile(from: loadedProfile)
+        refreshLocalIdentityState(reportErrors: false)
+
         if let preferredChatID = preferredChatSelection(from: sortedChats) {
             try await loadSelectedChat(
                 client: client,
@@ -359,28 +575,43 @@ final class AppModel: ObservableObject {
 
     private func save(
         identity: DeviceIdentityMaterial,
-        authSession: AuthSessionResponse,
+        authSession: AuthSessionResponse?,
         persistedSession: PersistedSession
     ) throws {
         let storedIdentity = identity.storedIdentity
 
-        try keychainStore.save(storedIdentity.accountRootSeed, for: .accountRootSeed)
+        if let accountRootSeed = storedIdentity.accountRootSeed {
+            try keychainStore.save(accountRootSeed, for: .accountRootSeed)
+        } else {
+            try keychainStore.removeValue(for: .accountRootSeed)
+        }
         try keychainStore.save(storedIdentity.transportSeed, for: .transportSeed)
         try keychainStore.save(storedIdentity.credentialIdentity, for: .credentialIdentity)
-        try keychainStore.save(Data(authSession.accessToken.utf8), for: .accessToken)
-        try sessionStore.save(persistedSession)
 
+        if let authSession {
+            try keychainStore.save(Data(authSession.accessToken.utf8), for: .accessToken)
+            accessToken = authSession.accessToken
+        } else {
+            try keychainStore.removeValue(for: .accessToken)
+            accessToken = nil
+        }
+
+        try sessionStore.save(persistedSession)
         self.persistedSession = persistedSession
-        self.accessToken = authSession.accessToken
+        refreshLocalIdentityState(reportErrors: true)
     }
 
-    private func loadStoredIdentity() throws -> DeviceIdentityMaterial {
+    private func loadStoredIdentity(requireAccountRoot: Bool = false) throws -> DeviceIdentityMaterial {
         guard
-            let accountRootSeed = try keychainStore.loadData(for: .accountRootSeed),
             let transportSeed = try keychainStore.loadData(for: .transportSeed),
             let credentialIdentity = try keychainStore.loadData(for: .credentialIdentity)
         else {
             throw TrixAPIError.invalidPayload("Не удалось загрузить ключи устройства из Keychain.")
+        }
+
+        let accountRootSeed = try keychainStore.loadData(for: .accountRootSeed)
+        if requireAccountRoot && accountRootSeed == nil {
+            throw TrixAPIError.invalidPayload("На этом устройстве нет account-root ключа.")
         }
 
         return try DeviceIdentityMaterial(
@@ -401,10 +632,99 @@ final class AppModel: ObservableObject {
 
         persistedSession = nil
         accessToken = nil
+        clearWorkspaceData()
+        outgoingLinkIntent = nil
+        pendingApprovalPayload = nil
+        approvalDraft = DeviceApprovalDraft()
+        hasAccountRootKey = false
+        onboardingMode = .createAccount
+        linkDraft = LinkDeviceDraft(deviceDisplayName: defaultDeviceName)
+    }
+
+    private func clearWorkspaceData() {
         currentAccount = nil
         devices = []
         chats = []
         clearSelectedChat()
+    }
+
+    private func refreshLocalIdentityState(reportErrors: Bool) {
+        do {
+            hasAccountRootKey = try keychainStore.loadData(for: .accountRootSeed) != nil
+            pendingApprovalPayload = try makePendingApprovalPayload()
+        } catch {
+            hasAccountRootKey = false
+            pendingApprovalPayload = nil
+            if reportErrors {
+                lastErrorMessage = error.userFacingMessage
+            }
+        }
+    }
+
+    private func makePendingApprovalPayload() throws -> String? {
+        guard let session = persistedSession, session.deviceStatus == .pending else {
+            return nil
+        }
+
+        let identity = try loadStoredIdentity()
+        let payload = DeviceApprovalPayload(
+            version: 1,
+            baseURL: session.baseURLString,
+            accountId: session.accountId,
+            pendingDeviceId: session.deviceId,
+            deviceDisplayName: session.deviceDisplayName,
+            platform: DeviceIdentityMaterial.platform,
+            credentialIdentityB64: identity.credentialIdentityB64,
+            transportPubkeyB64: identity.transportPublicKeyB64
+        )
+        return try encodeLocalJSON(payload)
+    }
+
+    private func updatePersistedSessionProfile(from profile: AccountProfileResponse) throws {
+        guard var session = persistedSession else {
+            return
+        }
+
+        session.profileName = profile.profileName
+        session.handle = profile.handle
+        session.deviceId = profile.deviceId
+        session.deviceStatus = profile.deviceStatus
+
+        try sessionStore.save(session)
+        persistedSession = session
+    }
+
+    private func decodeLinkIntentPayload(_ rawValue: String) throws -> LinkIntentPayload {
+        guard let data = rawValue.nonEmptyTrimmed?.data(using: .utf8) else {
+            throw TrixAPIError.invalidPayload("Вставь link payload от активного устройства.")
+        }
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(LinkIntentPayload.self, from: data)
+    }
+
+    private func decodeDeviceApprovalPayload(_ rawValue: String) throws -> DeviceApprovalPayload {
+        guard let data = rawValue.nonEmptyTrimmed?.data(using: .utf8) else {
+            throw TrixAPIError.invalidPayload("Вставь approval payload с нового устройства.")
+        }
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(DeviceApprovalPayload.self, from: data)
+    }
+
+    private func encodeLocalJSON<Value: Encodable>(_ value: Value) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(value)
+
+        guard let string = String(data: data, encoding: .utf8) else {
+            throw TrixAPIError.invalidPayload("Не удалось собрать локальный JSON payload.")
+        }
+
+        return string
     }
 
     private func chatSort(lhs: ChatSummary, rhs: ChatSummary) -> Bool {
@@ -433,11 +753,40 @@ final class AppModel: ObservableObject {
     }
 }
 
+enum OnboardingMode: String {
+    case createAccount
+    case linkExisting
+
+    var title: String {
+        switch self {
+        case .createAccount:
+            return "Create First Account"
+        case .linkExisting:
+            return "Link Existing Account"
+        }
+    }
+}
+
 struct OnboardingDraft {
     var profileName = ""
     var handle = ""
     var profileBio = ""
     var deviceDisplayName: String
+}
+
+struct LinkDeviceDraft {
+    var linkPayload = ""
+    var deviceDisplayName: String
+}
+
+struct DeviceApprovalDraft {
+    var payload = ""
+}
+
+struct DeviceLinkIntentState: Identifiable {
+    let id = UUID()
+    let payload: String
+    let expiresAt: Date
 }
 
 private extension String {

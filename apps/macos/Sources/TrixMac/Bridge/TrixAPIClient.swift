@@ -99,6 +99,48 @@ struct TrixAPIClient {
         try await get("v0/devices", accessToken: accessToken)
     }
 
+    func createLinkIntent(accessToken: String) async throws -> CreateLinkIntentResponse {
+        try await post(
+            "v0/devices/link-intents",
+            body: Optional<String>.none,
+            accessToken: accessToken
+        )
+    }
+
+    func completeLinkIntent(
+        linkIntentId: UUID,
+        request: CompleteLinkIntentRequest
+    ) async throws -> CompleteLinkIntentResponse {
+        try await post(
+            "v0/devices/link-intents/\(linkIntentId.uuidString)/complete",
+            body: request
+        )
+    }
+
+    func approveDevice(
+        accessToken: String,
+        deviceId: UUID,
+        request: ApproveDeviceRequest
+    ) async throws -> ApproveDeviceResponse {
+        try await post(
+            "v0/devices/\(deviceId.uuidString)/approve",
+            body: request,
+            accessToken: accessToken
+        )
+    }
+
+    func revokeDevice(
+        accessToken: String,
+        deviceId: UUID,
+        request: RevokeDeviceRequest
+    ) async throws -> RevokeDeviceResponse {
+        try await post(
+            "v0/devices/\(deviceId.uuidString)/revoke",
+            body: request,
+            accessToken: accessToken
+        )
+    }
+
     func fetchChats(accessToken: String) async throws -> ChatListResponse {
         try await get("v0/chats", accessToken: accessToken)
     }
@@ -138,6 +180,20 @@ struct TrixAPIClient {
     private func post<Body: Encodable, Response: Decodable>(
         _ path: String,
         body: Body,
+        accessToken: String? = nil
+    ) async throws -> Response {
+        try await perform(
+            path: path,
+            queryItems: [],
+            method: "POST",
+            body: body,
+            accessToken: accessToken
+        )
+    }
+
+    private func post<Response: Decodable>(
+        _ path: String,
+        body: String?,
         accessToken: String? = nil
     ) async throws -> Response {
         try await perform(
