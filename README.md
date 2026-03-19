@@ -12,6 +12,7 @@
 
 - `apps/trixd` backend binary
 - `apps/macos` macOS app scaffold and integration notes
+- `apps/ios` iOS app scaffold and baseline client
 - `crates/trix-core` shared client core scaffold
 - `crates/trix-server` backend server library scaffold
 - `crates/trix-types` shared domain and API types
@@ -30,6 +31,8 @@
 The repository currently contains a compile-ready scaffold plus the first working backend vertical slice:
 
 - workspace and crate layout
+- initial Apple client scaffolds for `macOS` and `iOS`
+- `iOS` PoC flow for account bootstrap, device auth, and authenticated profile/device reads
 - backend HTTP router with health and version endpoints
 - `PostgreSQL` bootstrap and automatic migrations on startup
 - working `create account`, `auth challenge`, `auth session`, `accounts/me`, and `devices` endpoints
@@ -43,4 +46,4 @@ The repository currently contains a compile-ready scaffold plus the first workin
 - add `OpenMLS` group state management into `trix-core`
 - implement device linking and revocation flows
 - implement chat creation and encrypted message append paths
-- generate `UniFFI` bindings for the future `macOS` app
+- generate `UniFFI` bindings for the future Apple clients

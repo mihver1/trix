@@ -5,4 +5,7 @@
 .env
 blobs/
 postgres-data/
-
+DerivedData/
+*.xcuserdata/
+*.xccheckout
+*.xcscmblueprint
