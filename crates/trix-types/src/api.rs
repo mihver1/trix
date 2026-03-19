@@ -154,6 +154,7 @@ pub struct DeviceApprovePayloadResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApproveDeviceRequest {
     pub account_root_signature_b64: String,
+    pub transfer_bundle_b64: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -161,6 +162,14 @@ pub struct ApproveDeviceResponse {
     pub account_id: AccountId,
     pub device_id: DeviceId,
     pub device_status: DeviceStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceTransferBundleResponse {
+    pub account_id: AccountId,
+    pub device_id: DeviceId,
+    pub transfer_bundle_b64: String,
+    pub uploaded_at_unix: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -20,7 +20,8 @@ use crate::{
 use trix_types::{
     ApproveDeviceRequest, ApproveDeviceResponse, CompleteLinkIntentRequest,
     CompleteLinkIntentResponse, CreateLinkIntentResponse, DeviceApprovePayloadResponse, DeviceId,
-    DeviceListResponse, DeviceSummary, RevokeDeviceRequest, RevokeDeviceResponse,
+    DeviceListResponse, DeviceSummary, DeviceTransferBundleResponse, RevokeDeviceRequest,
+    RevokeDeviceResponse,
 };
 
 pub fn router() -> Router<AppState> {
@@ -31,6 +32,7 @@ pub fn router() -> Router<AppState> {
             "/link-intents/{link_intent_id}/complete",
             post(complete_link_intent),
         )
+        .route("/{device_id}/transfer-bundle", get(get_transfer_bundle))
         .route("/{device_id}/approve-payload", get(get_approve_payload))
         .route("/{device_id}/approve", post(approve_device))
         .route("/{device_id}/revoke", post(revoke_device))
@@ -168,6 +170,32 @@ async fn get_approve_payload(
     Ok(Json(pending_bootstrap_to_api(bootstrap)))
 }
 
+async fn get_transfer_bundle(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(device_id): Path<DeviceId>,
+) -> Result<Json<DeviceTransferBundleResponse>, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+    if principal.device_id != device_id.0 {
+        return Err(AppError::unauthorized(
+            "transfer bundle can only be fetched by the target device",
+        ));
+    }
+
+    let bundle = state
+        .db
+        .get_device_transfer_bundle(principal.account_id, principal.device_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("transfer bundle not found"))?;
+
+    Ok(Json(DeviceTransferBundleResponse {
+        account_id: trix_types::AccountId(bundle.account_id),
+        device_id: DeviceId(bundle.device_id),
+        transfer_bundle_b64: general_purpose::STANDARD.encode(bundle.transfer_bundle_ciphertext),
+        uploaded_at_unix: bundle.uploaded_at_unix,
+    }))
+}
+
 async fn approve_device(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -191,6 +219,11 @@ async fn approve_device(
     }
 
     let account_root_signature = decode_b64(&request.account_root_signature_b64)?;
+    let transfer_bundle_ciphertext = request
+        .transfer_bundle_b64
+        .as_deref()
+        .map(decode_b64)
+        .transpose()?;
     verify_account_bootstrap_signature(
         &bootstrap.account_root_pubkey,
         &account_root_signature,
@@ -205,6 +238,7 @@ async fn approve_device(
             actor_device_id: principal.device_id,
             target_device_id: device_id.0,
             account_root_signature,
+            transfer_bundle_ciphertext,
         })
         .await?;
 
