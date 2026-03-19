@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.weight
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -24,17 +25,28 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import chat.trix.android.BuildConfig
 import chat.trix.android.R
+import chat.trix.android.core.auth.AuthBootstrapCoordinator
+import chat.trix.android.core.auth.AuthenticatedSession
+import chat.trix.android.core.auth.BootstrapInput
+import chat.trix.android.core.auth.StoredDeviceSummary
 import chat.trix.android.designsystem.theme.TrixTheme
+import chat.trix.android.feature.bootstrap.BootstrapScreen
 import chat.trix.android.feature.chats.ChatsScreen
 import chat.trix.android.feature.devices.DevicesScreen
 import chat.trix.android.feature.settings.SettingsScreen
@@ -42,36 +54,175 @@ import chat.trix.android.ui.adaptive.TrixAdaptiveInfo
 import chat.trix.android.ui.adaptive.TrixNavigationLayout
 import chat.trix.android.ui.adaptive.rememberTrixAdaptiveInfo
 import chat.trix.android.ui.navigation.TrixDestination
+import java.io.IOException
+import kotlinx.coroutines.launch
 
 @Composable
 fun TrixApp() {
     TrixTheme {
+        val context = LocalContext.current.applicationContext
         val windowInfo = rememberTrixAdaptiveInfo()
+        val authCoordinator = remember(context) {
+            AuthBootstrapCoordinator(
+                context = context,
+                baseUrl = BuildConfig.TRIX_BASE_URL,
+            )
+        }
+        val coroutineScope = rememberCoroutineScope()
         var destination by rememberSaveable { mutableStateOf(TrixDestination.Chats) }
+        var reloadSignal by rememberSaveable { mutableIntStateOf(0) }
+        var authState by remember { mutableStateOf<TrixAuthState>(TrixAuthState.Loading("Restoring local device")) }
+
+        LaunchedEffect(authCoordinator, reloadSignal) {
+            authState = TrixAuthState.Loading("Restoring local device")
+            authState = loadInitialAuthState(authCoordinator)
+        }
 
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background,
         ) {
-            when (windowInfo.navigationLayout) {
-                TrixNavigationLayout.BottomBar -> BottomBarLayout(
-                    destination = destination,
-                    onDestinationChange = { destination = it },
-                    windowInfo = windowInfo,
+            when (val state = authState) {
+                is TrixAuthState.Loading -> LoadingScreen(message = state.message)
+                is TrixAuthState.SignedOut -> BootstrapScreen(
+                    baseUrl = BuildConfig.TRIX_BASE_URL,
+                    storedDevice = state.storedDevice,
+                    busyMessage = null,
+                    errorMessage = state.errorMessage,
+                    onCreateAccount = { input ->
+                        coroutineScope.launch {
+                            authState = TrixAuthState.Loading("Creating account")
+                            authState = createAccountState(authCoordinator, input)
+                        }
+                    },
+                    onReconnectStoredDevice = if (state.storedDevice != null) {
+                        {
+                            coroutineScope.launch {
+                                authState = TrixAuthState.Loading("Restoring device session")
+                                authState = restoreSessionState(authCoordinator, state.storedDevice)
+                            }
+                        }
+                    } else {
+                        null
+                    },
+                    onForgetStoredDevice = if (state.storedDevice != null) {
+                        {
+                            coroutineScope.launch {
+                                authCoordinator.clearStoredDevice()
+                                reloadSignal += 1
+                            }
+                        }
+                    } else {
+                        null
+                    },
                 )
-                TrixNavigationLayout.NavigationRail -> RailLayout(
-                    destination = destination,
-                    onDestinationChange = { destination = it },
-                    windowInfo = windowInfo,
-                )
-                TrixNavigationLayout.PermanentDrawer -> DrawerLayout(
-                    destination = destination,
-                    onDestinationChange = { destination = it },
-                    windowInfo = windowInfo,
-                )
+                is TrixAuthState.SignedIn -> {
+                    when (windowInfo.navigationLayout) {
+                        TrixNavigationLayout.BottomBar -> BottomBarLayout(
+                            destination = destination,
+                            onDestinationChange = { destination = it },
+                            windowInfo = windowInfo,
+                            session = state.session,
+                        )
+                        TrixNavigationLayout.NavigationRail -> RailLayout(
+                            destination = destination,
+                            onDestinationChange = { destination = it },
+                            windowInfo = windowInfo,
+                            session = state.session,
+                        )
+                        TrixNavigationLayout.PermanentDrawer -> DrawerLayout(
+                            destination = destination,
+                            onDestinationChange = { destination = it },
+                            windowInfo = windowInfo,
+                            session = state.session,
+                        )
+                    }
+                }
             }
         }
     }
+}
+
+private suspend fun createAccountState(
+    authCoordinator: AuthBootstrapCoordinator,
+    input: BootstrapInput,
+): TrixAuthState {
+    return try {
+        TrixAuthState.SignedIn(authCoordinator.createAccount(input))
+    } catch (error: IOException) {
+        TrixAuthState.SignedOut(
+            storedDevice = safePeekStoredDevice(authCoordinator),
+            errorMessage = error.message ?: "Account bootstrap failed",
+        )
+    }
+}
+
+private suspend fun restoreSessionState(
+    authCoordinator: AuthBootstrapCoordinator,
+    storedDevice: StoredDeviceSummary,
+): TrixAuthState {
+    return try {
+        TrixAuthState.SignedIn(authCoordinator.restoreSession())
+    } catch (error: IOException) {
+        TrixAuthState.SignedOut(
+            storedDevice = storedDevice,
+            errorMessage = error.message ?: "Session restore failed",
+        )
+    }
+}
+
+private suspend fun loadInitialAuthState(
+    authCoordinator: AuthBootstrapCoordinator,
+): TrixAuthState {
+    val storedDevice = safePeekStoredDevice(authCoordinator)
+    if (storedDevice == null) {
+        return TrixAuthState.SignedOut(
+            storedDevice = null,
+            errorMessage = null,
+        )
+    }
+
+    return restoreSessionState(authCoordinator, storedDevice)
+}
+
+private suspend fun safePeekStoredDevice(
+    authCoordinator: AuthBootstrapCoordinator,
+): StoredDeviceSummary? {
+    return try {
+        authCoordinator.peekStoredDevice()
+    } catch (_: IOException) {
+        null
+    }
+}
+
+@Composable
+private fun LoadingScreen(message: String) {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            CircularProgressIndicator()
+            Text(
+                text = message,
+                style = MaterialTheme.typography.titleMedium,
+            )
+        }
+    }
+}
+
+private sealed interface TrixAuthState {
+    data class Loading(val message: String) : TrixAuthState
+
+    data class SignedOut(
+        val storedDevice: StoredDeviceSummary?,
+        val errorMessage: String?,
+    ) : TrixAuthState
+
+    data class SignedIn(val session: AuthenticatedSession) : TrixAuthState
 }
 
 @Composable
@@ -79,6 +230,7 @@ private fun BottomBarLayout(
     destination: TrixDestination,
     onDestinationChange: (TrixDestination) -> Unit,
     windowInfo: TrixAdaptiveInfo,
+    session: AuthenticatedSession,
 ) {
     androidx.compose.material3.Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -103,6 +255,7 @@ private fun BottomBarLayout(
         DestinationContent(
             destination = destination,
             windowInfo = windowInfo,
+            session = session,
             modifier = Modifier.padding(innerPadding),
         )
     }
@@ -113,6 +266,7 @@ private fun RailLayout(
     destination: TrixDestination,
     onDestinationChange: (TrixDestination) -> Unit,
     windowInfo: TrixAdaptiveInfo,
+    session: AuthenticatedSession,
 ) {
     Row(
         modifier = Modifier
@@ -139,6 +293,7 @@ private fun RailLayout(
         DestinationContent(
             destination = destination,
             windowInfo = windowInfo,
+            session = session,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxSize(),
@@ -151,6 +306,7 @@ private fun DrawerLayout(
     destination: TrixDestination,
     onDestinationChange: (TrixDestination) -> Unit,
     windowInfo: TrixAdaptiveInfo,
+    session: AuthenticatedSession,
 ) {
     PermanentNavigationDrawer(
         drawerContent = {
@@ -171,7 +327,7 @@ private fun DrawerLayout(
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "Android adaptive client scaffold",
+                        text = "${session.accountProfile.profileName} on ${session.localState.deviceDisplayName}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -201,6 +357,7 @@ private fun DrawerLayout(
             DestinationContent(
                 destination = destination,
                 windowInfo = windowInfo,
+                session = session,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -211,6 +368,7 @@ private fun DrawerLayout(
 private fun DestinationContent(
     destination: TrixDestination,
     windowInfo: TrixAdaptiveInfo,
+    session: AuthenticatedSession,
     modifier: Modifier = Modifier,
 ) {
     when (destination) {
@@ -224,6 +382,7 @@ private fun DestinationContent(
         )
         TrixDestination.Settings -> SettingsScreen(
             windowInfo = windowInfo,
+            session = session,
             modifier = modifier,
         )
     }

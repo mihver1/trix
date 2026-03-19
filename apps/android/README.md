@@ -33,10 +33,18 @@ The repository has a `trix-core` crate, but it does not yet provide real sync, s
 
 ## Next Android Tasks
 
-- implement account bootstrap and device session flows
-- add secure local persistence for session state
 - introduce thread caching and message timeline syncing
 - decide where Android-specific storage ends and shared Rust begins
+- implement device linking and trusted-device approval flows
+
+## Current Live Flow
+
+- create a new account from Android
+- generate local `account root` and `transport` Ed25519 key material
+- sign the bootstrap payload expected by the backend
+- open an auth challenge/session for the stored device
+- persist bootstrap state locally in an encrypted file protected by Android Keystore
+- restore a saved device session on app launch
 
 ## Local Backend Wiring
 

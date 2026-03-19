@@ -1,9 +1,9 @@
 package chat.trix.android.feature.settings
 
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.item
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ElevatedAssistChip
@@ -31,8 +32,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import chat.trix.android.BuildConfig
 import chat.trix.android.R
+import chat.trix.android.core.auth.AuthenticatedSession
 import chat.trix.android.core.system.ServiceStatus
 import chat.trix.android.core.system.SystemApiClient
 import chat.trix.android.core.system.SystemSnapshot
@@ -43,6 +44,7 @@ import java.io.IOException
 @Composable
 fun SettingsScreen(
     windowInfo: TrixAdaptiveInfo,
+    session: AuthenticatedSession,
     modifier: Modifier = Modifier,
 ) {
     Scaffold(
@@ -63,13 +65,16 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item(span = { GridItemSpan(maxLineSpan) }) {
+                SessionCard(session = session)
+            }
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                BackendDiagnosticsCard(baseUrl = session.baseUrl)
+            }
+            item(span = { GridItemSpan(maxLineSpan) }) {
                 SettingsCard(
                     title = "Android direction",
                     body = "Kotlin + Compose first, canonical adaptive layouts, fold-aware posture handling, and no shared FFI until trix-core becomes meaningful on the client side.",
                 )
-            }
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                BackendDiagnosticsCard()
             }
             item {
                 SettingsCard(
@@ -80,13 +85,13 @@ fun SettingsScreen(
             item {
                 SettingsCard(
                     title = "Security posture",
-                    body = "Android backup is disabled in the manifest so keystore material and encrypted local state are not pushed into cloud backup by default.",
+                    body = "Bootstrap state is encrypted at rest with Android Keystore-backed AES-GCM. Ed25519 bootstrap material stays local to the device.",
                 )
             }
             item {
                 SettingsCard(
                     title = "Backend wiring",
-                    body = "The first live backend slice is wired through system health/version. The next step is account bootstrap and device session flows on top of the same base URL setup.",
+                    body = "The Android client now runs through create account, auth challenge, auth session, and accounts/me against the live backend.",
                 )
             }
             item {
@@ -98,7 +103,7 @@ fun SettingsScreen(
             item {
                 SettingsCard(
                     title = "Next build-out",
-                    body = "Add a small repository layer, secure token storage via Android Keystore, and offline thread caching before touching MLS state sync.",
+                    body = "Add device linking, secure token rotation, and thread caching before moving MLS state through a shared Rust boundary.",
                 )
             }
         }
@@ -106,10 +111,37 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun BackendDiagnosticsCard() {
-    val apiClient = remember(BuildConfig.TRIX_BASE_URL) {
-        SystemApiClient(BuildConfig.TRIX_BASE_URL)
+private fun SessionCard(session: AuthenticatedSession) {
+    Surface(
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.primaryContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = "Active session",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = "${session.accountProfile.profileName} on ${session.localState.deviceDisplayName}",
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Text(
+                text = "Account ${session.accountProfile.accountId}\nDevice ${session.accountProfile.deviceId}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+        }
     }
+}
+
+@Composable
+private fun BackendDiagnosticsCard(baseUrl: String) {
+    val apiClient = remember(baseUrl) { SystemApiClient(baseUrl) }
     var refreshTick by rememberSaveable { mutableIntStateOf(0) }
     val probeState by produceState<BackendProbeState>(
         initialValue = BackendProbeState.Loading,
@@ -121,8 +153,6 @@ private fun BackendDiagnosticsCard() {
             BackendProbeState.Ready(apiClient.fetchSnapshot())
         } catch (error: IOException) {
             BackendProbeState.Failed(error.message ?: "Unknown network error")
-        } catch (error: IllegalStateException) {
-            BackendProbeState.Failed(error.message ?: "Unexpected client state")
         }
     }
 
@@ -149,7 +179,7 @@ private fun BackendDiagnosticsCard() {
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "Debug builds use ${BuildConfig.TRIX_BASE_URL}. In the emulator that should point at host `trixd` through `10.0.2.2`.",
+                        text = "The app is currently bound to $baseUrl. In the emulator that should point at host `trixd` through `10.0.2.2`.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -208,7 +238,7 @@ private fun BackendSnapshotContent(snapshot: SystemSnapshot) {
                     color = onStatusColor,
                 )
             },
-            colors = androidx.compose.material3.AssistChipDefaults.elevatedAssistChipColors(
+            colors = AssistChipDefaults.elevatedAssistChipColors(
                 containerColor = statusColor,
                 labelColor = onStatusColor,
             ),
