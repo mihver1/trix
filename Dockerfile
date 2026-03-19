@@ -2,8 +2,10 @@ FROM rust:1.89-bookworm AS builder
 WORKDIR /app
 
 COPY Cargo.toml ./
+COPY Cargo.lock ./
 COPY apps ./apps
 COPY crates ./crates
+COPY migrations ./migrations
 
 RUN cargo build --release -p trixd
 
@@ -19,4 +21,3 @@ ENV TRIX_BIND_ADDR=0.0.0.0:8080
 EXPOSE 8080
 
 CMD ["trixd"]
-
