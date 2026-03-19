@@ -28,6 +28,7 @@ services:
       TRIX_PUBLIC_BASE_URL: http://localhost:8080
       TRIX_DATABASE_URL: postgres://trix:trix@postgres:5432/trix
       TRIX_BLOB_ROOT: /var/lib/trix/blobs
+      TRIX_BLOB_MAX_UPLOAD_BYTES: 26214400
       TRIX_LOG: info,trix_server=debug
       TRIX_JWT_SIGNING_KEY: replace-me
     ports:
@@ -38,4 +39,3 @@ services:
 volumes:
   postgres-data:
   blob-data:
-

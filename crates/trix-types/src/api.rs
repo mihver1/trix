@@ -13,6 +13,13 @@ pub enum ServiceStatus {
     Degraded,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlobUploadStatus {
+    PendingUpload,
+    Available,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HealthResponse {
     pub service: String,
@@ -103,6 +110,43 @@ pub struct DeviceSummary {
 pub struct DeviceListResponse {
     pub account_id: AccountId,
     pub devices: Vec<DeviceSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateLinkIntentResponse {
+    pub link_intent_id: String,
+    pub qr_payload: String,
+    pub expires_at_unix: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompleteLinkIntentRequest {
+    pub link_token: String,
+    pub device_display_name: String,
+    pub platform: String,
+    pub credential_identity_b64: String,
+    pub transport_pubkey_b64: String,
+    #[serde(default)]
+    pub key_packages: Vec<PublishKeyPackageItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompleteLinkIntentResponse {
+    pub account_id: AccountId,
+    pub pending_device_id: DeviceId,
+    pub device_status: DeviceStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApproveDeviceRequest {
+    pub account_root_signature_b64: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApproveDeviceResponse {
+    pub account_id: AccountId,
+    pub device_id: DeviceId,
+    pub device_status: DeviceStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -271,4 +315,31 @@ pub struct AckInboxRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AckInboxResponse {
     pub acked_inbox_ids: Vec<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateBlobUploadRequest {
+    pub chat_id: ChatId,
+    pub mime_type: String,
+    pub size_bytes: u64,
+    pub sha256_b64: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateBlobUploadResponse {
+    pub blob_id: String,
+    pub upload_url: String,
+    pub upload_status: BlobUploadStatus,
+    pub needs_upload: bool,
+    pub max_upload_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlobMetadataResponse {
+    pub blob_id: String,
+    pub mime_type: String,
+    pub size_bytes: u64,
+    pub sha256_b64: String,
+    pub upload_status: BlobUploadStatus,
+    pub created_by_device_id: DeviceId,
 }

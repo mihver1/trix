@@ -28,7 +28,7 @@ async fn get_inbox(
     headers: HeaderMap,
     Query(query): Query<InboxQuery>,
 ) -> Result<Json<InboxResponse>, AppError> {
-    let principal = state.auth.authenticate_headers(&headers)?;
+    let principal = state.authenticate_active_headers(&headers).await?;
     let items = state
         .db
         .get_inbox_for_device(principal.device_id, query.limit)
@@ -50,7 +50,7 @@ async fn ack_inbox(
     headers: HeaderMap,
     Json(request): Json<AckInboxRequest>,
 ) -> Result<Json<AckInboxResponse>, AppError> {
-    let principal = state.auth.authenticate_headers(&headers)?;
+    let principal = state.authenticate_active_headers(&headers).await?;
     let inbox_ids = request
         .inbox_ids
         .into_iter()

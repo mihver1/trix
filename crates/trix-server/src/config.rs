@@ -8,6 +8,7 @@ pub struct AppConfig {
     pub public_base_url: String,
     pub database_url: String,
     pub blob_root: PathBuf,
+    pub blob_max_upload_bytes: u64,
     pub log_filter: String,
     pub jwt_signing_key: String,
 }
@@ -26,6 +27,9 @@ impl AppConfig {
                 "postgres://trix:trix@localhost:5432/trix",
             )?,
             blob_root: PathBuf::from(env_or("TRIX_BLOB_ROOT", "./blobs")?),
+            blob_max_upload_bytes: env_or("TRIX_BLOB_MAX_UPLOAD_BYTES", "26214400")?
+                .parse()
+                .with_context(|| "invalid TRIX_BLOB_MAX_UPLOAD_BYTES")?,
             log_filter: env_or("TRIX_LOG", "info,trix_server=debug")?,
             jwt_signing_key: env_or("TRIX_JWT_SIGNING_KEY", "replace-me")?,
         })

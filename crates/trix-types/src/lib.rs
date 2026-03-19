@@ -4,14 +4,16 @@ pub mod model;
 
 pub use api::{
     AccountKeyPackagesResponse, AccountProfileResponse, AckInboxRequest, AckInboxResponse,
-    AuthChallengeRequest, AuthChallengeResponse, AuthSessionRequest, AuthSessionResponse,
+    ApproveDeviceRequest, ApproveDeviceResponse, AuthChallengeRequest, AuthChallengeResponse,
+    AuthSessionRequest, AuthSessionResponse, BlobMetadataResponse, BlobUploadStatus,
     ChatDetailResponse, ChatHistoryResponse, ChatListResponse, ChatMemberSummary, ChatSummary,
-    ControlMessageInput, CreateAccountRequest, CreateAccountResponse, CreateChatRequest,
-    CreateChatResponse, CreateMessageRequest, CreateMessageResponse, DeviceListResponse,
-    DeviceSummary, ErrorResponse, HealthResponse, InboxItem, InboxResponse, MessageEnvelope,
-    ModifyChatMembersRequest, ModifyChatMembersResponse, PublishKeyPackageItem,
-    PublishKeyPackagesRequest, PublishKeyPackagesResponse, PublishedKeyPackage, ReservedKeyPackage,
-    ServiceStatus, VersionResponse,
+    CompleteLinkIntentRequest, CompleteLinkIntentResponse, ControlMessageInput,
+    CreateAccountRequest, CreateAccountResponse, CreateBlobUploadRequest, CreateBlobUploadResponse,
+    CreateChatRequest, CreateChatResponse, CreateLinkIntentResponse, CreateMessageRequest,
+    CreateMessageResponse, DeviceListResponse, DeviceSummary, ErrorResponse, HealthResponse,
+    InboxItem, InboxResponse, MessageEnvelope, ModifyChatMembersRequest, ModifyChatMembersResponse,
+    PublishKeyPackageItem, PublishKeyPackagesRequest, PublishKeyPackagesResponse,
+    PublishedKeyPackage, ReservedKeyPackage, ServiceStatus, VersionResponse,
 };
 pub use ids::{AccountId, ChatId, DeviceId, MessageId};
 pub use model::{ChatType, ContentType, DeviceStatus, MessageKind};

@@ -239,6 +239,24 @@ Fields:
 - `reserved_at`, optional
 - `consumed_at`, optional
 
+### Device Link Intent
+
+Tracks a trusted-device-approved bootstrap for adding a new device to an existing account.
+
+Fields:
+
+- `link_intent_id` `uuid`
+- `account_id`
+- `created_by_device_id`
+- `link_token` `uuid`
+- `pending_device_id`, optional
+- `status` enum: `open`, `pending_approval`, `completed`, `expired`, `canceled`
+- `expires_at`
+- `created_at`
+- `completed_at`, optional
+- `approved_by_device_id`, optional
+- `approved_at`, optional
+
 ### Message
 
 Server-stored encrypted message envelope for a chat.
@@ -293,8 +311,20 @@ Fields:
 - `sha256` `bytea`
 - `mime_type` `text`
 - `created_by_device_id`
+- `upload_status` enum: `pending_upload`, `available`
+- `upload_completed_at`, optional
 - `created_at`
 - `deleted_at`, optional
+
+### Attachment Blob Chat Ref
+
+Authorizes a stored encrypted blob for one or more chats.
+
+Fields:
+
+- `blob_id`
+- `chat_id`
+- `created_at`
 
 ### History Sync Job
 
@@ -325,9 +355,11 @@ Fields:
 - `chat_device_members`
 - `mls_group_states`
 - `device_key_packages`
+- `device_link_intents`
 - `messages`
 - `device_inbox`
 - `attachment_blobs`
+- `attachment_blob_chat_refs`
 - `history_sync_jobs`
 - `idempotency_keys`
 - `auth_challenges`
@@ -371,6 +403,14 @@ Fields:
 - index on `(device_id, status)`
 - index on `(status, published_at)`
 
+### device_link_intents
+
+- unique index on `link_intent_id`
+- unique index on `link_token`
+- unique partial index on `pending_device_id` where not null
+- index on `(account_id, status)`
+- index on `(expires_at)`
+
 ### messages
 
 - unique index on `message_id`
@@ -386,6 +426,12 @@ Fields:
 ### attachment_blobs
 
 - unique index on `blob_id`
+- index on `(upload_status, created_at)`
+
+### attachment_blob_chat_refs
+
+- unique index on `(blob_id, chat_id)`
+- index on `(chat_id)`
 
 ### history_sync_jobs
 
@@ -720,11 +766,11 @@ This endpoint is only for active chat members and returns server ciphertext only
 
 ### `POST /v0/blobs/uploads`
 
-Creates an upload slot and returns upload constraints.
+Creates or reuses an upload slot scoped to a chat and returns upload constraints.
 
 ### `PUT /v0/blobs/{blob_id}`
 
-Streams an encrypted attachment blob.
+Stores the encrypted attachment blob and marks it available for download.
 
 ### `GET /v0/blobs/{blob_id}`
 
@@ -732,7 +778,7 @@ Streams the encrypted blob to an authenticated device that is authorized by chat
 
 ### `HEAD /v0/blobs/{blob_id}`
 
-Returns blob metadata.
+Returns blob metadata as headers.
 
 ## WebSocket Session
 

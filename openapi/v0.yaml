@@ -131,6 +131,74 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeviceListResponse'
+  /v0/devices/link-intents:
+    post:
+      operationId: createLinkIntent
+      tags: [devices]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Pending device link intent created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateLinkIntentResponse'
+  /v0/devices/link-intents/{link_intent_id}/complete:
+    post:
+      operationId: completeLinkIntent
+      tags: [devices]
+      parameters:
+        - $ref: '#/components/parameters/LinkIntentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteLinkIntentRequest'
+      responses:
+        '200':
+          description: Pending device created and waiting for approval
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompleteLinkIntentResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v0/devices/{device_id}/approve:
+    post:
+      operationId: approveDevice
+      tags: [devices]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveDeviceRequest'
+      responses:
+        '200':
+          description: Pending device approved and activated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApproveDeviceResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v0/devices/{device_id}/revoke:
+    post:
+      operationId: revokeDevice
+      tags: [devices]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
   /v0/key-packages:publish:
     post:
       operationId: publishKeyPackages
@@ -352,9 +420,109 @@ paths:
       tags: [blobs]
       security:
         - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBlobUploadRequest'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Blob upload slot created or reused
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateBlobUploadResponse'
+  /v0/blobs/{blob_id}:
+    put:
+      operationId: putBlob
+      tags: [blobs]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BlobId'
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Blob stored and marked available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlobMetadataResponse'
+    get:
+      operationId: getBlob
+      tags: [blobs]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BlobId'
+      responses:
+        '200':
+          description: Encrypted blob bytes
+          headers:
+            ETag:
+              schema:
+                type: string
+            X-Trix-Blob-Id:
+              schema:
+                type: string
+            X-Trix-Blob-Mime-Type:
+              schema:
+                type: string
+            X-Trix-Blob-Sha256-B64:
+              schema:
+                type: string
+            X-Trix-Blob-Upload-Status:
+              schema:
+                $ref: '#/components/schemas/BlobUploadStatus'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+    head:
+      operationId: headBlob
+      tags: [blobs]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BlobId'
+      responses:
+        '200':
+          description: Blob metadata as headers
+          headers:
+            Content-Length:
+              schema:
+                type: integer
+                format: int64
+            Content-Type:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+            X-Trix-Blob-Id:
+              schema:
+                type: string
+            X-Trix-Blob-Mime-Type:
+              schema:
+                type: string
+            X-Trix-Blob-Sha256-B64:
+              schema:
+                type: string
+            X-Trix-Blob-Upload-Status:
+              schema:
+                $ref: '#/components/schemas/BlobUploadStatus'
+        '404':
+          $ref: '#/components/responses/NotFound'
 components:
   securitySchemes:
     bearerAuth:
@@ -372,6 +540,26 @@ components:
     ChatId:
       in: path
       name: chat_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    BlobId:
+      in: path
+      name: blob_id
+      required: true
+      schema:
+        type: string
+    DeviceId:
+      in: path
+      name: device_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    LinkIntentId:
+      in: path
+      name: link_intent_id
       required: true
       schema:
         type: string
@@ -405,6 +593,9 @@ components:
     DeviceStatus:
       type: string
       enum: [pending, active, revoked]
+    BlobUploadStatus:
+      type: string
+      enum: [pending_upload, available]
     ChatType:
       type: string
       enum: [dm, group, account_sync]
@@ -569,6 +760,68 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DeviceSummary'
+    CreateLinkIntentResponse:
+      type: object
+      required: [link_intent_id, qr_payload, expires_at_unix]
+      properties:
+        link_intent_id:
+          type: string
+          format: uuid
+        qr_payload:
+          type: string
+        expires_at_unix:
+          type: integer
+          format: int64
+    CompleteLinkIntentRequest:
+      type: object
+      required:
+        - link_token
+        - device_display_name
+        - platform
+        - credential_identity_b64
+        - transport_pubkey_b64
+      properties:
+        link_token:
+          type: string
+          format: uuid
+        device_display_name:
+          type: string
+        platform:
+          type: string
+        credential_identity_b64:
+          type: string
+        transport_pubkey_b64:
+          type: string
+        key_packages:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublishKeyPackageItem'
+    CompleteLinkIntentResponse:
+      type: object
+      required: [account_id, pending_device_id, device_status]
+      properties:
+        account_id:
+          $ref: '#/components/schemas/Uuid'
+        pending_device_id:
+          $ref: '#/components/schemas/Uuid'
+        device_status:
+          $ref: '#/components/schemas/DeviceStatus'
+    ApproveDeviceRequest:
+      type: object
+      required: [account_root_signature_b64]
+      properties:
+        account_root_signature_b64:
+          type: string
+    ApproveDeviceResponse:
+      type: object
+      required: [account_id, device_id, device_status]
+      properties:
+        account_id:
+          $ref: '#/components/schemas/Uuid'
+        device_id:
+          $ref: '#/components/schemas/Uuid'
+        device_status:
+          $ref: '#/components/schemas/DeviceStatus'
     PublishKeyPackageItem:
       type: object
       required: [cipher_suite, key_package_b64]
@@ -874,3 +1127,48 @@ components:
           items:
             type: integer
             format: int64
+    CreateBlobUploadRequest:
+      type: object
+      required: [chat_id, mime_type, size_bytes, sha256_b64]
+      properties:
+        chat_id:
+          $ref: '#/components/schemas/Uuid'
+        mime_type:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+        sha256_b64:
+          type: string
+    CreateBlobUploadResponse:
+      type: object
+      required: [blob_id, upload_url, upload_status, needs_upload, max_upload_bytes]
+      properties:
+        blob_id:
+          type: string
+        upload_url:
+          type: string
+        upload_status:
+          $ref: '#/components/schemas/BlobUploadStatus'
+        needs_upload:
+          type: boolean
+        max_upload_bytes:
+          type: integer
+          format: int64
+    BlobMetadataResponse:
+      type: object
+      required: [blob_id, mime_type, size_bytes, sha256_b64, upload_status, created_by_device_id]
+      properties:
+        blob_id:
+          type: string
+        mime_type:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+        sha256_b64:
+          type: string
+        upload_status:
+          $ref: '#/components/schemas/BlobUploadStatus'
+        created_by_device_id:
+          $ref: '#/components/schemas/Uuid'

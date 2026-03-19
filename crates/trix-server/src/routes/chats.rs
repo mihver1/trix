@@ -41,7 +41,7 @@ async fn list_chats(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<ChatListResponse>, AppError> {
-    let principal = state.auth.authenticate_headers(&headers)?;
+    let principal = state.authenticate_active_headers(&headers).await?;
     let chats = state
         .db
         .list_chats_for_device(principal.account_id, principal.device_id)
@@ -65,7 +65,7 @@ async fn create_chat(
     headers: HeaderMap,
     Json(request): Json<CreateChatRequest>,
 ) -> Result<Json<CreateChatResponse>, AppError> {
-    let principal = state.auth.authenticate_headers(&headers)?;
+    let principal = state.authenticate_active_headers(&headers).await?;
     let reserved_key_package_ids = parse_uuid_list(&request.reserved_key_package_ids)?;
     let created = state
         .db
@@ -103,7 +103,7 @@ async fn get_chat(
     headers: HeaderMap,
     Path(chat_id): Path<trix_types::ChatId>,
 ) -> Result<Json<ChatDetailResponse>, AppError> {
-    let principal = state.auth.authenticate_headers(&headers)?;
+    let principal = state.authenticate_active_headers(&headers).await?;
     let chat = state
         .db
         .get_chat_detail_for_device(chat_id.0, principal.device_id)
@@ -135,7 +135,7 @@ async fn create_message(
     Path(chat_id): Path<trix_types::ChatId>,
     Json(request): Json<CreateMessageRequest>,
 ) -> Result<Json<CreateMessageResponse>, AppError> {
-    let principal = state.auth.authenticate_headers(&headers)?;
+    let principal = state.authenticate_active_headers(&headers).await?;
     let ciphertext = decode_b64(&request.ciphertext_b64)?;
     let created = state
         .db
@@ -164,7 +164,7 @@ async fn get_history(
     Path(chat_id): Path<trix_types::ChatId>,
     Query(query): Query<HistoryQuery>,
 ) -> Result<Json<ChatHistoryResponse>, AppError> {
-    let principal = state.auth.authenticate_headers(&headers)?;
+    let principal = state.authenticate_active_headers(&headers).await?;
     let messages = state
         .db
         .get_chat_history_for_device(
@@ -188,7 +188,7 @@ async fn add_members(
     Path(chat_id): Path<trix_types::ChatId>,
     Json(request): Json<ModifyChatMembersRequest>,
 ) -> Result<Json<ModifyChatMembersResponse>, AppError> {
-    let principal = state.auth.authenticate_headers(&headers)?;
+    let principal = state.authenticate_active_headers(&headers).await?;
     let reserved_key_package_ids = parse_uuid_list(&request.reserved_key_package_ids)?;
     let updated = state
         .db
@@ -231,7 +231,7 @@ async fn remove_members(
     Path(chat_id): Path<trix_types::ChatId>,
     Json(request): Json<ModifyChatMembersRequest>,
 ) -> Result<Json<ModifyChatMembersResponse>, AppError> {
-    let principal = state.auth.authenticate_headers(&headers)?;
+    let principal = state.authenticate_active_headers(&headers).await?;
     let reserved_key_package_ids = parse_uuid_list(&request.reserved_key_package_ids)?;
     let updated = state
         .db

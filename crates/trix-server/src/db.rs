@@ -6,12 +6,13 @@ use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use uuid::Uuid;
 
 use crate::error::AppError;
-use trix_types::{ChatType, ContentType, DeviceStatus, MessageKind};
+use trix_types::{BlobUploadStatus, ChatType, ContentType, DeviceStatus, MessageKind};
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./../../migrations");
 
 const AUTH_CHALLENGE_TTL_SECONDS: i32 = 5 * 60;
 const KEY_PACKAGE_RESERVATION_TTL_SECONDS: i32 = 15 * 60;
+const LINK_INTENT_TTL_SECONDS: i32 = 10 * 60;
 const DEFAULT_HISTORY_LIMIT: usize = 100;
 const MAX_HISTORY_LIMIT: usize = 500;
 const DEFAULT_INBOX_LIMIT: usize = 100;
@@ -77,8 +78,64 @@ pub struct DeviceSummaryRow {
 }
 
 #[derive(Debug)]
+pub struct CreateLinkIntentOutput {
+    pub link_intent_id: Uuid,
+    pub link_token: Uuid,
+    pub account_id: Uuid,
+    pub expires_at_unix: u64,
+}
+
+#[derive(Debug)]
+pub struct CompleteLinkIntentInput {
+    pub link_intent_id: Uuid,
+    pub link_token: Uuid,
+    pub device_display_name: String,
+    pub platform: String,
+    pub credential_identity: Vec<u8>,
+    pub transport_pubkey: Vec<u8>,
+    pub key_packages: Vec<KeyPackageBytesInput>,
+}
+
+#[derive(Debug)]
+pub struct CompleteLinkIntentOutput {
+    pub account_id: Uuid,
+    pub pending_device_id: Uuid,
+    pub device_status: DeviceStatus,
+}
+
+#[derive(Debug)]
+pub struct ApprovePendingDeviceInput {
+    pub actor_account_id: Uuid,
+    pub actor_device_id: Uuid,
+    pub target_device_id: Uuid,
+    pub account_root_signature: Vec<u8>,
+}
+
+#[derive(Debug)]
+pub struct ApprovePendingDeviceOutput {
+    pub account_id: Uuid,
+    pub device_id: Uuid,
+    pub device_status: DeviceStatus,
+}
+
+#[derive(Debug)]
+pub struct PendingDeviceBootstrapRow {
+    pub account_id: Uuid,
+    pub credential_identity: Vec<u8>,
+    pub transport_pubkey: Vec<u8>,
+    pub account_root_pubkey: Vec<u8>,
+    pub device_status: DeviceStatus,
+}
+
+#[derive(Debug)]
 pub struct PublishKeyPackageInput {
     pub device_id: Uuid,
+    pub cipher_suite: String,
+    pub key_package_bytes: Vec<u8>,
+}
+
+#[derive(Debug)]
+pub struct KeyPackageBytesInput {
     pub cipher_suite: String,
     pub key_package_bytes: Vec<u8>,
 }
@@ -206,6 +263,35 @@ pub struct MessageEnvelopeRow {
 pub struct InboxItemRow {
     pub inbox_id: u64,
     pub message: MessageEnvelopeRow,
+}
+
+#[derive(Debug)]
+pub struct CreateBlobUploadInput {
+    pub chat_id: Uuid,
+    pub creator_account_id: Uuid,
+    pub creator_device_id: Uuid,
+    pub blob_id: String,
+    pub relative_path: String,
+    pub size_bytes: u64,
+    pub sha256: Vec<u8>,
+    pub mime_type: String,
+}
+
+#[derive(Debug)]
+pub struct CreateBlobUploadOutput {
+    pub blob_id: String,
+    pub upload_status: BlobUploadStatus,
+}
+
+#[derive(Debug)]
+pub struct BlobMetadataRow {
+    pub blob_id: String,
+    pub mime_type: String,
+    pub size_bytes: u64,
+    pub sha256: Vec<u8>,
+    pub upload_status: BlobUploadStatus,
+    pub created_by_device_id: Uuid,
+    pub relative_path: String,
 }
 
 impl Database {
@@ -474,6 +560,36 @@ impl Database {
         }))
     }
 
+    pub async fn ensure_active_device_session(
+        &self,
+        account_id: Uuid,
+        device_id: Uuid,
+    ) -> Result<(), AppError> {
+        let row = sqlx::query(
+            r#"
+            SELECT 1
+            FROM devices d
+            JOIN accounts a
+              ON a.account_id = d.account_id
+            WHERE d.account_id = $1
+              AND d.device_id = $2
+              AND d.device_status = 'active'::device_status
+              AND a.deleted_at IS NULL
+            "#,
+        )
+        .bind(account_id)
+        .bind(device_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        if row.is_none() {
+            return Err(AppError::unauthorized("device session is no longer active"));
+        }
+
+        Ok(())
+    }
+
     pub async fn list_devices_for_account(
         &self,
         account_id: Uuid,
@@ -505,6 +621,338 @@ impl Database {
                 })
             })
             .collect()
+    }
+
+    pub async fn create_link_intent(
+        &self,
+        account_id: Uuid,
+        device_id: Uuid,
+    ) -> Result<CreateLinkIntentOutput, AppError> {
+        let link_token = Uuid::new_v4();
+        let row = sqlx::query(
+            r#"
+            INSERT INTO device_link_intents (
+                account_id,
+                created_by_device_id,
+                link_token,
+                status,
+                expires_at
+            )
+            SELECT
+                d.account_id,
+                d.device_id,
+                $3,
+                'open'::link_intent_status,
+                now() + make_interval(secs => $4)
+            FROM devices d
+            WHERE d.account_id = $1
+              AND d.device_id = $2
+              AND d.device_status = 'active'::device_status
+            RETURNING
+                link_intent_id,
+                account_id,
+                link_token,
+                extract(epoch from expires_at)::bigint AS expires_at_unix
+            "#,
+        )
+        .bind(account_id)
+        .bind(device_id)
+        .bind(link_token)
+        .bind(LINK_INTENT_TTL_SECONDS)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(row) = row else {
+            return Err(AppError::not_found("active device not found"));
+        };
+
+        Ok(CreateLinkIntentOutput {
+            link_intent_id: row_uuid(&row, "link_intent_id")?,
+            account_id: row_uuid(&row, "account_id")?,
+            link_token: row_uuid(&row, "link_token")?,
+            expires_at_unix: row_u64_from_i64(&row, "expires_at_unix")?,
+        })
+    }
+
+    pub async fn complete_link_intent(
+        &self,
+        input: CompleteLinkIntentInput,
+    ) -> Result<CompleteLinkIntentOutput, AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
+        let intent_row = sqlx::query(
+            r#"
+            SELECT
+                account_id,
+                status::text AS status,
+                pending_device_id
+            FROM device_link_intents
+            WHERE link_intent_id = $1
+              AND link_token = $2
+              AND expires_at > now()
+            FOR UPDATE
+            "#,
+        )
+        .bind(input.link_intent_id)
+        .bind(input.link_token)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        let Some(intent_row) = intent_row else {
+            return Err(AppError::not_found("active link intent not found"));
+        };
+
+        let status = row_text(&intent_row, "status")?;
+        if status != "open" {
+            return Err(AppError::conflict(
+                "link intent is no longer accepting a new device",
+            ));
+        }
+        if row_optional_uuid(&intent_row, "pending_device_id")?.is_some() {
+            return Err(AppError::conflict(
+                "link intent already has a pending device",
+            ));
+        }
+        let account_id = row_uuid(&intent_row, "account_id")?;
+
+        let device_row = sqlx::query(
+            r#"
+            INSERT INTO devices (
+                account_id,
+                display_name,
+                platform,
+                device_status,
+                credential_identity,
+                account_root_signature,
+                transport_pubkey
+            )
+            VALUES (
+                $1,
+                $2,
+                $3,
+                'pending'::device_status,
+                $4,
+                $5,
+                $6
+            )
+            RETURNING device_id
+            "#,
+        )
+        .bind(account_id)
+        .bind(&input.device_display_name)
+        .bind(&input.platform)
+        .bind(&input.credential_identity)
+        .bind(Vec::<u8>::new())
+        .bind(&input.transport_pubkey)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        let pending_device_id = row_uuid(&device_row, "device_id")?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO device_log (account_id, event_type, subject_device_id, actor_device_id, payload_json)
+            VALUES ($1, 'device_added'::device_log_event_type, $2, NULL, '{}'::jsonb)
+            "#,
+        )
+        .bind(account_id)
+        .bind(pending_device_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        insert_device_key_packages_tx(&mut tx, pending_device_id, &input.key_packages).await?;
+
+        sqlx::query(
+            r#"
+            UPDATE device_link_intents
+            SET pending_device_id = $2,
+                status = 'pending_approval'::link_intent_status,
+                completed_at = now()
+            WHERE link_intent_id = $1
+            "#,
+        )
+        .bind(input.link_intent_id)
+        .bind(pending_device_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        tx.commit()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
+
+        Ok(CompleteLinkIntentOutput {
+            account_id,
+            pending_device_id,
+            device_status: DeviceStatus::Pending,
+        })
+    }
+
+    pub async fn get_pending_device_bootstrap(
+        &self,
+        target_device_id: Uuid,
+    ) -> Result<Option<PendingDeviceBootstrapRow>, AppError> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                d.account_id,
+                d.credential_identity,
+                d.transport_pubkey,
+                d.device_status::text AS device_status,
+                a.account_root_pubkey
+            FROM devices d
+            JOIN accounts a
+              ON a.account_id = d.account_id
+            WHERE d.device_id = $1
+            "#,
+        )
+        .bind(target_device_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        Ok(Some(PendingDeviceBootstrapRow {
+            account_id: row_uuid(&row, "account_id")?,
+            credential_identity: row_bytes(&row, "credential_identity")?,
+            transport_pubkey: row_bytes(&row, "transport_pubkey")?,
+            account_root_pubkey: row_bytes(&row, "account_root_pubkey")?,
+            device_status: parse_device_status(&row_text(&row, "device_status")?)?,
+        }))
+    }
+
+    pub async fn approve_pending_device(
+        &self,
+        input: ApprovePendingDeviceInput,
+    ) -> Result<ApprovePendingDeviceOutput, AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
+        let target_row = sqlx::query(
+            r#"
+            SELECT
+                d.account_id,
+                d.device_status::text AS device_status
+            FROM devices d
+            WHERE d.device_id = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(input.target_device_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        let Some(target_row) = target_row else {
+            return Err(AppError::not_found("target device not found"));
+        };
+
+        let target_account_id = row_uuid(&target_row, "account_id")?;
+        if target_account_id != input.actor_account_id {
+            return Err(AppError::unauthorized(
+                "target device does not belong to the authenticated account",
+            ));
+        }
+
+        if parse_device_status(&row_text(&target_row, "device_status")?)? != DeviceStatus::Pending {
+            return Err(AppError::conflict("device is not pending approval"));
+        }
+
+        let actor_row = sqlx::query(
+            r#"
+            SELECT 1
+            FROM devices
+            WHERE device_id = $1
+              AND account_id = $2
+              AND device_status = 'active'::device_status
+            "#,
+        )
+        .bind(input.actor_device_id)
+        .bind(input.actor_account_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        if actor_row.is_none() {
+            return Err(AppError::unauthorized("active approving device not found"));
+        }
+
+        let intent_row = sqlx::query(
+            r#"
+            UPDATE device_link_intents
+            SET status = 'completed'::link_intent_status,
+                approved_by_device_id = $2,
+                approved_at = now()
+            WHERE pending_device_id = $1
+              AND status = 'pending_approval'::link_intent_status
+            RETURNING account_id
+            "#,
+        )
+        .bind(input.target_device_id)
+        .bind(input.actor_device_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        let Some(intent_row) = intent_row else {
+            return Err(AppError::conflict(
+                "device does not have a pending link approval",
+            ));
+        };
+
+        let intent_account_id = row_uuid(&intent_row, "account_id")?;
+        if intent_account_id != input.actor_account_id {
+            return Err(AppError::unauthorized(
+                "link intent does not belong to the authenticated account",
+            ));
+        }
+
+        sqlx::query(
+            r#"
+            UPDATE devices
+            SET device_status = 'active'::device_status,
+                account_root_signature = $2,
+                activated_at = now()
+            WHERE device_id = $1
+            "#,
+        )
+        .bind(input.target_device_id)
+        .bind(&input.account_root_signature)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO device_log (account_id, event_type, subject_device_id, actor_device_id, payload_json)
+            VALUES ($1, 'device_activated'::device_log_event_type, $2, $3, '{}'::jsonb)
+            "#,
+        )
+        .bind(input.actor_account_id)
+        .bind(input.target_device_id)
+        .bind(input.actor_device_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        tx.commit()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
+
+        Ok(ApprovePendingDeviceOutput {
+            account_id: input.actor_account_id,
+            device_id: input.target_device_id,
+            device_status: DeviceStatus::Active,
+        })
     }
 
     pub async fn publish_key_packages(
@@ -675,6 +1123,286 @@ impl Database {
             .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
 
         Ok(reserved)
+    }
+
+    pub async fn create_blob_upload(
+        &self,
+        input: CreateBlobUploadInput,
+    ) -> Result<CreateBlobUploadOutput, AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
+        let membership_row = sqlx::query(
+            r#"
+            SELECT 1
+            FROM chat_device_members cdm
+            JOIN devices d
+              ON d.device_id = cdm.device_id
+            WHERE cdm.chat_id = $1
+              AND cdm.device_id = $2
+              AND cdm.membership_status = 'active'::device_membership_status
+              AND d.account_id = $3
+              AND d.device_status = 'active'::device_status
+            "#,
+        )
+        .bind(input.chat_id)
+        .bind(input.creator_device_id)
+        .bind(input.creator_account_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        if membership_row.is_none() {
+            return Err(AppError::not_found("active chat membership not found"));
+        }
+
+        sqlx::query(
+            r#"
+            INSERT INTO attachment_blobs (
+                blob_id,
+                storage_backend,
+                relative_path,
+                size_bytes,
+                sha256,
+                mime_type,
+                created_by_device_id,
+                upload_status
+            )
+            VALUES (
+                $1,
+                'local_fs'::storage_backend,
+                $2,
+                $3,
+                $4,
+                $5,
+                $6,
+                'pending_upload'::blob_upload_status
+            )
+            ON CONFLICT (blob_id) DO NOTHING
+            "#,
+        )
+        .bind(&input.blob_id)
+        .bind(&input.relative_path)
+        .bind(u64_to_i64(input.size_bytes, "size_bytes")?)
+        .bind(&input.sha256)
+        .bind(&input.mime_type)
+        .bind(input.creator_device_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        let blob_row = sqlx::query(
+            r#"
+            SELECT
+                blob_id,
+                relative_path,
+                size_bytes,
+                sha256,
+                mime_type,
+                created_by_device_id,
+                upload_status::text AS upload_status
+            FROM attachment_blobs
+            WHERE blob_id = $1
+              AND deleted_at IS NULL
+            FOR UPDATE
+            "#,
+        )
+        .bind(&input.blob_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        let existing_size_bytes = row_u64_from_i64(&blob_row, "size_bytes")?;
+        let existing_sha256 = row_bytes(&blob_row, "sha256")?;
+        let existing_mime_type = row_text(&blob_row, "mime_type")?;
+        let existing_creator_device_id = row_uuid(&blob_row, "created_by_device_id")?;
+        let upload_status = parse_blob_upload_status(&row_text(&blob_row, "upload_status")?)?;
+        let existing_relative_path = row_text(&blob_row, "relative_path")?;
+
+        if existing_size_bytes != input.size_bytes
+            || existing_sha256 != input.sha256
+            || existing_mime_type != input.mime_type
+        {
+            return Err(AppError::conflict(
+                "blob already exists with different metadata",
+            ));
+        }
+
+        if existing_relative_path != input.relative_path {
+            return Err(AppError::conflict(
+                "blob already exists with different storage layout",
+            ));
+        }
+
+        if upload_status == BlobUploadStatus::PendingUpload
+            && existing_creator_device_id != input.creator_device_id
+        {
+            return Err(AppError::conflict(
+                "blob upload is already owned by another device",
+            ));
+        }
+
+        sqlx::query(
+            r#"
+            INSERT INTO attachment_blob_chat_refs (blob_id, chat_id)
+            VALUES ($1, $2)
+            ON CONFLICT (blob_id, chat_id) DO NOTHING
+            "#,
+        )
+        .bind(&input.blob_id)
+        .bind(input.chat_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        tx.commit()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
+
+        Ok(CreateBlobUploadOutput {
+            blob_id: input.blob_id,
+            upload_status,
+        })
+    }
+
+    pub async fn get_blob_upload_for_writer(
+        &self,
+        blob_id: &str,
+        account_id: Uuid,
+        device_id: Uuid,
+    ) -> Result<Option<BlobMetadataRow>, AppError> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                ab.blob_id,
+                ab.relative_path,
+                ab.size_bytes,
+                ab.sha256,
+                ab.mime_type,
+                ab.created_by_device_id,
+                ab.upload_status::text AS upload_status
+            FROM attachment_blobs ab
+            JOIN devices d
+              ON d.device_id = ab.created_by_device_id
+            WHERE ab.blob_id = $1
+              AND ab.deleted_at IS NULL
+              AND ab.created_by_device_id = $2
+              AND d.account_id = $3
+              AND d.device_status = 'active'::device_status
+              AND EXISTS (
+                  SELECT 1
+                  FROM attachment_blob_chat_refs ref
+                  JOIN chat_device_members cdm
+                    ON cdm.chat_id = ref.chat_id
+                  WHERE ref.blob_id = ab.blob_id
+                    AND cdm.device_id = $2
+                    AND cdm.membership_status = 'active'::device_membership_status
+              )
+            LIMIT 1
+            "#,
+        )
+        .bind(blob_id)
+        .bind(device_id)
+        .bind(account_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        row.map(blob_metadata_row_from_db).transpose()
+    }
+
+    pub async fn mark_blob_upload_available(
+        &self,
+        blob_id: &str,
+        account_id: Uuid,
+        device_id: Uuid,
+    ) -> Result<Option<BlobMetadataRow>, AppError> {
+        let row = sqlx::query(
+            r#"
+            UPDATE attachment_blobs ab
+            SET upload_status = 'available'::blob_upload_status,
+                upload_completed_at = COALESCE(ab.upload_completed_at, now())
+            WHERE ab.blob_id = $1
+              AND ab.deleted_at IS NULL
+              AND ab.created_by_device_id = $2
+              AND EXISTS (
+                  SELECT 1
+                  FROM devices d
+                  WHERE d.device_id = ab.created_by_device_id
+                    AND d.account_id = $3
+                    AND d.device_status = 'active'::device_status
+              )
+              AND EXISTS (
+                  SELECT 1
+                  FROM attachment_blob_chat_refs ref
+                  JOIN chat_device_members cdm
+                    ON cdm.chat_id = ref.chat_id
+                  WHERE ref.blob_id = ab.blob_id
+                    AND cdm.device_id = $2
+                    AND cdm.membership_status = 'active'::device_membership_status
+              )
+            RETURNING
+                ab.blob_id,
+                ab.relative_path,
+                ab.size_bytes,
+                ab.sha256,
+                ab.mime_type,
+                ab.created_by_device_id,
+                ab.upload_status::text AS upload_status
+            "#,
+        )
+        .bind(blob_id)
+        .bind(device_id)
+        .bind(account_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        row.map(blob_metadata_row_from_db).transpose()
+    }
+
+    pub async fn get_blob_metadata_for_device(
+        &self,
+        blob_id: &str,
+        account_id: Uuid,
+        device_id: Uuid,
+    ) -> Result<Option<BlobMetadataRow>, AppError> {
+        let row = sqlx::query(
+            r#"
+            SELECT DISTINCT ON (ab.blob_id)
+                ab.blob_id,
+                ab.relative_path,
+                ab.size_bytes,
+                ab.sha256,
+                ab.mime_type,
+                ab.created_by_device_id,
+                ab.upload_status::text AS upload_status
+            FROM attachment_blobs ab
+            JOIN attachment_blob_chat_refs ref
+              ON ref.blob_id = ab.blob_id
+            JOIN chat_device_members cdm
+              ON cdm.chat_id = ref.chat_id
+            JOIN devices d
+              ON d.device_id = cdm.device_id
+            WHERE ab.blob_id = $1
+              AND ab.deleted_at IS NULL
+              AND ab.upload_status = 'available'::blob_upload_status
+              AND cdm.device_id = $2
+              AND cdm.membership_status = 'active'::device_membership_status
+              AND d.account_id = $3
+              AND d.device_status = 'active'::device_status
+            "#,
+        )
+        .bind(blob_id)
+        .bind(device_id)
+        .bind(account_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        row.map(blob_metadata_row_from_db).transpose()
     }
 
     pub async fn list_chats_for_device(
@@ -1774,6 +2502,29 @@ impl Database {
     }
 }
 
+async fn insert_device_key_packages_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    device_id: Uuid,
+    packages: &[KeyPackageBytesInput],
+) -> Result<(), AppError> {
+    for package in packages {
+        sqlx::query(
+            r#"
+            INSERT INTO device_key_packages (device_id, cipher_suite, key_package_bytes, status)
+            VALUES ($1, $2, $3, 'available'::key_package_status)
+            "#,
+        )
+        .bind(device_id)
+        .bind(&package.cipher_suite)
+        .bind(&package.key_package_bytes)
+        .execute(&mut **tx)
+        .await
+        .map_err(map_db_error)?;
+    }
+
+    Ok(())
+}
+
 async fn active_chat_device_ids_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     chat_id: Uuid,
@@ -2083,6 +2834,16 @@ fn parse_message_kind(value: &str) -> Result<MessageKind, AppError> {
     }
 }
 
+fn parse_blob_upload_status(value: &str) -> Result<BlobUploadStatus, AppError> {
+    match value {
+        "pending_upload" => Ok(BlobUploadStatus::PendingUpload),
+        "available" => Ok(BlobUploadStatus::Available),
+        other => Err(AppError::internal(format!(
+            "unknown blob upload status from database: {other}"
+        ))),
+    }
+}
+
 fn parse_content_type(value: &str) -> Result<ContentType, AppError> {
     match value {
         "text" => Ok(ContentType::Text),
@@ -2177,6 +2938,18 @@ fn row_u64_from_i64(row: &sqlx::postgres::PgRow, column: &str) -> Result<u64, Ap
 fn row_i32(row: &sqlx::postgres::PgRow, column: &str) -> Result<i32, AppError> {
     row.try_get(column)
         .map_err(|err| AppError::internal(format!("failed to read {column}: {err}")))
+}
+
+fn blob_metadata_row_from_db(row: sqlx::postgres::PgRow) -> Result<BlobMetadataRow, AppError> {
+    Ok(BlobMetadataRow {
+        blob_id: row_text(&row, "blob_id")?,
+        mime_type: row_text(&row, "mime_type")?,
+        size_bytes: row_u64_from_i64(&row, "size_bytes")?,
+        sha256: row_bytes(&row, "sha256")?,
+        upload_status: parse_blob_upload_status(&row_text(&row, "upload_status")?)?,
+        created_by_device_id: row_uuid(&row, "created_by_device_id")?,
+        relative_path: row_text(&row, "relative_path")?,
+    })
 }
 
 fn message_row_from_db(row: sqlx::postgres::PgRow) -> Result<MessageEnvelopeRow, AppError> {

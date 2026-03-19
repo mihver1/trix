@@ -15,7 +15,7 @@ async fn publish_key_packages(
     headers: HeaderMap,
     Json(request): Json<PublishKeyPackagesRequest>,
 ) -> Result<Json<PublishKeyPackagesResponse>, AppError> {
-    let principal = state.auth.authenticate_headers(&headers)?;
+    let principal = state.authenticate_active_headers(&headers).await?;
     let packages = request
         .packages
         .into_iter()

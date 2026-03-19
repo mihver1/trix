@@ -1,7 +1,14 @@
 use std::{sync::Arc, time::Instant};
 
+use axum::http::HeaderMap;
+
 use crate::{
-    auth::AuthManager, blobs::LocalBlobStore, build::BuildInfo, config::AppConfig, db::Database,
+    auth::{AuthManager, SessionPrincipal},
+    blobs::LocalBlobStore,
+    build::BuildInfo,
+    config::AppConfig,
+    db::Database,
+    error::AppError,
 };
 
 #[derive(Clone)]
@@ -30,5 +37,16 @@ impl AppState {
             auth: Arc::new(auth),
             blob_store: Arc::new(blob_store),
         }
+    }
+
+    pub async fn authenticate_active_headers(
+        &self,
+        headers: &HeaderMap,
+    ) -> Result<SessionPrincipal, AppError> {
+        let principal = self.auth.authenticate_headers(headers)?;
+        self.db
+            .ensure_active_device_session(principal.account_id, principal.device_id)
+            .await?;
+        Ok(principal)
     }
 }
