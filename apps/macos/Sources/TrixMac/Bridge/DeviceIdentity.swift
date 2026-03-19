@@ -136,16 +136,24 @@ struct DeviceIdentityMaterial {
         transportPublicKey: Data,
         credentialIdentity: Data
     ) throws -> String {
-        guard let accountRootPrivateKey else {
-            throw TrixAPIError.invalidPayload("Approve доступен только на root-capable устройстве.")
-        }
-
-        let signature = try accountRootPrivateKey.signature(
+        try accountRootSignatureB64(
             for: Self.bootstrapMessage(
                 transportPublicKey: transportPublicKey,
                 credentialIdentity: credentialIdentity
-            )
+            ),
+            errorMessage: "Approve доступен только на root-capable устройстве."
         )
+    }
+
+    func accountRootSignatureB64(
+        for payload: Data,
+        errorMessage: String = "У этого устройства нет account-root ключа."
+    ) throws -> String {
+        guard let accountRootPrivateKey else {
+            throw TrixAPIError.invalidPayload(errorMessage)
+        }
+
+        let signature = try accountRootPrivateKey.signature(for: payload)
         return signature.base64EncodedString()
     }
 

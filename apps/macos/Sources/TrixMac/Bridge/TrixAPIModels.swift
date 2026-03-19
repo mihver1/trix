@@ -114,6 +114,18 @@ struct CompleteLinkIntentResponse: Codable {
     let accountId: UUID
     let pendingDeviceId: UUID
     let deviceStatus: DeviceStatus
+    let bootstrapPayloadB64: String
+}
+
+struct DeviceApprovePayloadResponse: Codable {
+    let accountId: UUID
+    let deviceId: UUID
+    let deviceDisplayName: String
+    let platform: String
+    let deviceStatus: DeviceStatus
+    let credentialIdentityB64: String
+    let transportPubkeyB64: String
+    let bootstrapPayloadB64: String
 }
 
 struct ApproveDeviceRequest: Codable {
@@ -142,6 +154,41 @@ struct PublishKeyPackageItem: Codable {
     let keyPackageB64: String
 }
 
+struct PublishKeyPackagesRequest: Codable {
+    let packages: [PublishKeyPackageItem]
+}
+
+struct PublishedKeyPackage: Codable, Identifiable {
+    let keyPackageId: String
+    let cipherSuite: String
+
+    var id: String { keyPackageId }
+}
+
+struct PublishKeyPackagesResponse: Codable {
+    let deviceId: UUID
+    let packages: [PublishedKeyPackage]
+}
+
+struct ReserveKeyPackagesRequest: Codable {
+    let accountId: UUID
+    let deviceIds: [UUID]
+}
+
+struct ReservedKeyPackage: Codable, Identifiable {
+    let keyPackageId: String
+    let deviceId: UUID
+    let cipherSuite: String
+    let keyPackageB64: String
+
+    var id: String { keyPackageId }
+}
+
+struct AccountKeyPackagesResponse: Codable {
+    let accountId: UUID
+    let packages: [ReservedKeyPackage]
+}
+
 struct DeviceSummary: Codable, Identifiable {
     let deviceId: UUID
     let displayName: String
@@ -164,28 +211,6 @@ struct LinkIntentPayload: Codable {
         case accountId = "account_id"
         case linkIntentId = "link_intent_id"
         case linkToken = "link_token"
-    }
-}
-
-struct DeviceApprovalPayload: Codable {
-    let version: Int
-    let baseURL: String
-    let accountId: UUID
-    let pendingDeviceId: UUID
-    let deviceDisplayName: String
-    let platform: String
-    let credentialIdentityB64: String
-    let transportPubkeyB64: String
-
-    enum CodingKeys: String, CodingKey {
-        case version
-        case baseURL = "base_url"
-        case accountId = "account_id"
-        case pendingDeviceId = "pending_device_id"
-        case deviceDisplayName = "device_display_name"
-        case platform
-        case credentialIdentityB64 = "credential_identity_b64"
-        case transportPubkeyB64 = "transport_pubkey_b64"
     }
 }
 

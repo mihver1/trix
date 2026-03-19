@@ -99,6 +99,38 @@ struct TrixAPIClient {
         try await get("v0/devices", accessToken: accessToken)
     }
 
+    func fetchAccountKeyPackages(
+        accessToken: String,
+        accountId: UUID
+    ) async throws -> AccountKeyPackagesResponse {
+        try await get(
+            "v0/accounts/\(accountId.uuidString)/key-packages",
+            accessToken: accessToken
+        )
+    }
+
+    func publishKeyPackages(
+        accessToken: String,
+        request: PublishKeyPackagesRequest
+    ) async throws -> PublishKeyPackagesResponse {
+        try await post(
+            "v0/key-packages:publish",
+            body: request,
+            accessToken: accessToken
+        )
+    }
+
+    func reserveKeyPackages(
+        accessToken: String,
+        request: ReserveKeyPackagesRequest
+    ) async throws -> AccountKeyPackagesResponse {
+        try await post(
+            "v0/key-packages:reserve",
+            body: request,
+            accessToken: accessToken
+        )
+    }
+
     func createLinkIntent(accessToken: String) async throws -> CreateLinkIntentResponse {
         try await post(
             "v0/devices/link-intents",
@@ -125,6 +157,16 @@ struct TrixAPIClient {
         try await post(
             "v0/devices/\(deviceId.uuidString)/approve",
             body: request,
+            accessToken: accessToken
+        )
+    }
+
+    func fetchDeviceApprovePayload(
+        accessToken: String,
+        deviceId: UUID
+    ) async throws -> DeviceApprovePayloadResponse {
+        try await get(
+            "v0/devices/\(deviceId.uuidString)/approve-payload",
             accessToken: accessToken
         )
     }

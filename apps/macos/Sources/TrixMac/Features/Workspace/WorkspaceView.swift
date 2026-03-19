@@ -95,8 +95,8 @@ struct WorkspaceView: View {
             TrixPanel(
                 title: "Device Linking",
                 subtitle: model.hasAccountRootKey
-                    ? "Create a link intent here, then approve the resulting payload once the new Mac registers itself."
-                    : "This device can create link intents, but approval must happen on a root-capable device."
+                    ? "Create a link intent here, then approve the pending Mac directly from the device directory once it registers."
+                    : "This device can create link intents, but approval must happen on another root-capable trusted device."
             ) {
                 VStack(alignment: .leading, spacing: 16) {
                     Button {
@@ -136,35 +136,120 @@ struct WorkspaceView: View {
                 }
             }
 
-            if model.hasAccountRootKey {
-                TrixPanel(
-                    title: "Approve Pending Device",
-                    subtitle: "Paste the approval payload emitted by the new Mac. The account-root signature is generated locally on this device."
-                ) {
-                    VStack(alignment: .leading, spacing: 16) {
-                        TrixInputBlock(
-                            "Approval Payload",
-                            hint: "This compensates for the current API gap: active devices cannot fetch pending bootstrap data directly."
+            TrixPanel(
+                title: "Key Packages",
+                subtitle: "Manual publish and reserve tooling until native MLS package generation lands in the Mac client."
+            ) {
+                VStack(alignment: .leading, spacing: 18) {
+                    OperationalSectionLabel("Publish For Current Device")
+
+                    TrixInputBlock(
+                        "Packages JSON",
+                        hint: "Paste a JSON array of `{ cipher_suite, key_package_b64 }` objects."
+                    ) {
+                        TextEditor(text: $model.keyPackagePublishDraft.packagesJSON)
+                            .scrollContentBackground(.hidden)
+                            .frame(minHeight: 138)
+                            .font(.system(.footnote, design: .monospaced))
+                            .trixInputChrome()
+                    }
+
+                    Button {
+                        Task {
+                            await model.publishKeyPackages()
+                        }
+                    } label: {
+                        Label(
+                            model.isPublishingKeyPackages ? "Publishing Packages…" : "Publish Packages",
+                            systemImage: "arrow.up.circle"
+                        )
+                    }
+                    .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                    .disabled(!model.canPublishKeyPackages)
+
+                    if !model.publishedKeyPackages.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(model.publishedKeyPackages) { package in
+                                PublishedKeyPackageRow(package: package)
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    OperationalSectionLabel("Reserve For Account")
+
+                    HStack(spacing: 10) {
+                        KeyPackageReserveModeButton(
+                            title: KeyPackageReserveMode.allActiveDevices.title,
+                            isSelected: model.keyPackageReserveDraft.mode == .allActiveDevices
                         ) {
-                            TextEditor(text: $model.approvalDraft.payload)
+                            model.keyPackageReserveDraft.mode = .allActiveDevices
+                        }
+
+                        KeyPackageReserveModeButton(
+                            title: KeyPackageReserveMode.selectedDevices.title,
+                            isSelected: model.keyPackageReserveDraft.mode == .selectedDevices
+                        ) {
+                            model.keyPackageReserveDraft.mode = .selectedDevices
+                        }
+                    }
+
+                    TrixInputBlock(
+                        "Account ID",
+                        hint: "Target account whose active devices should contribute reserved key packages."
+                    ) {
+                        TextField("account uuid", text: $model.keyPackageReserveDraft.accountID)
+                            .textFieldStyle(.plain)
+                            .font(.system(.body, design: .monospaced))
+                            .trixInputChrome()
+                    }
+
+                    if model.keyPackageReserveDraft.mode == .selectedDevices {
+                        TrixInputBlock(
+                            "Device IDs",
+                            hint: "One UUID per line, or comma-separated."
+                        ) {
+                            TextEditor(text: $model.keyPackageReserveDraft.selectedDeviceIDs)
                                 .scrollContentBackground(.hidden)
-                                .frame(minHeight: 148)
-                                .font(.system(.body, design: .monospaced))
+                                .frame(minHeight: 110)
+                                .font(.system(.footnote, design: .monospaced))
                                 .trixInputChrome()
                         }
 
                         Button {
-                            Task {
-                                await model.approvePendingDevice()
-                            }
+                            model.useVisibleActiveDeviceIDsForReserve()
                         } label: {
-                            Label(
-                                model.isApprovingPendingDevice ? "Approving Device…" : "Approve Device",
-                                systemImage: "checkmark.seal.fill"
-                            )
+                            Label("Use Visible Active Devices", systemImage: "list.bullet.rectangle")
                         }
-                        .buttonStyle(TrixActionButtonStyle(tone: .primary))
-                        .disabled(!model.canApprovePendingDevice)
+                        .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                    }
+
+                    Button {
+                        Task {
+                            await model.reserveKeyPackages()
+                        }
+                    } label: {
+                        Label(
+                            model.isReservingKeyPackages ? "Reserving Packages…" : "Reserve Packages",
+                            systemImage: "arrow.down.circle"
+                        )
+                    }
+                    .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                    .disabled(!model.canReserveKeyPackages)
+
+                    if !model.reservedKeyPackages.isEmpty {
+                        if let accountID = model.reservedKeyPackagesAccountID {
+                            Text("reserved for \(shortID(accountID))")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(colors.inkMuted)
+                        }
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(model.reservedKeyPackages) { package in
+                                ReservedKeyPackageRow(package: package)
+                            }
+                        }
                     }
                 }
             }
@@ -219,13 +304,23 @@ struct WorkspaceView: View {
                             DeviceRow(
                                 device: device,
                                 isCurrentDevice: device.deviceId == model.currentDeviceID,
+                                canApprove: model.hasAccountRootKey &&
+                                    device.deviceStatus == .pending &&
+                                    device.deviceId != model.currentDeviceID,
+                                isApproving: model.approvingDeviceIDs.contains(device.deviceId),
                                 canRevoke: model.hasAccountRootKey && device.deviceId != model.currentDeviceID,
-                                isRevoking: model.revokingDeviceIDs.contains(device.deviceId)
-                            ) {
-                                Task {
-                                    await model.revokeDevice(device)
+                                isRevoking: model.revokingDeviceIDs.contains(device.deviceId),
+                                approve: {
+                                    Task {
+                                        await model.approvePendingDevice(device)
+                                    }
+                                },
+                                revoke: {
+                                    Task {
+                                        await model.revokeDevice(device)
+                                    }
                                 }
-                            }
+                            )
                         }
                     }
                 }
@@ -368,6 +463,123 @@ struct WorkspaceView: View {
     }()
 }
 
+private struct PublishedKeyPackageRow: View {
+    @Environment(\.trixColors) private var colors
+    let package: PublishedKeyPackage
+
+    var body: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(package.cipherSuite)
+                    .font(.headline)
+                    .foregroundStyle(colors.ink)
+                Text(package.keyPackageId)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(colors.inkMuted)
+                    .textSelection(.enabled)
+            }
+            Spacer()
+            Button {
+                copyStringToPasteboard(package.keyPackageId)
+            } label: {
+                Label("Copy ID", systemImage: "doc.on.doc")
+            }
+            .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+            .frame(maxWidth: 140)
+        }
+        .padding(14)
+        .background(colors.tileFill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(colors.outline, lineWidth: 1)
+        }
+    }
+}
+
+private struct ReservedKeyPackageRow: View {
+    @Environment(\.trixColors) private var colors
+    let package: ReservedKeyPackage
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(package.cipherSuite)
+                        .font(.headline)
+                        .foregroundStyle(colors.ink)
+                    Text("device \(shortID(package.deviceId)) • package \(package.keyPackageId)")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(colors.inkMuted)
+                        .textSelection(.enabled)
+                }
+                Spacer()
+                Button {
+                    copyStringToPasteboard(package.keyPackageB64)
+                } label: {
+                    Label("Copy B64", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+                .frame(maxWidth: 148)
+            }
+
+            TrixPayloadBox(payload: package.keyPackageB64, minHeight: 74)
+        }
+        .padding(14)
+        .background(colors.tileFill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(colors.outline, lineWidth: 1)
+        }
+    }
+
+    private func shortID(_ uuid: UUID) -> String {
+        String(uuid.uuidString.prefix(8)).lowercased()
+    }
+}
+
+private struct KeyPackageReserveModeButton: View {
+    @Environment(\.trixColors) private var colors
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity)
+                .background(
+                    isSelected ? colors.accent.opacity(0.92) : colors.tileFill,
+                    in: Capsule()
+                )
+                .foregroundStyle(isSelected ? Color.white : colors.ink)
+                .overlay {
+                    Capsule()
+                        .stroke(isSelected ? colors.accent.opacity(0.16) : colors.outline, lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct OperationalSectionLabel: View {
+    @Environment(\.trixColors) private var colors
+    let title: String
+
+    init(_ title: String) {
+        self.title = title
+    }
+
+    var body: some View {
+        Text(title.uppercased())
+            .font(.caption.weight(.bold))
+            .tracking(1.1)
+            .foregroundStyle(colors.inkMuted)
+    }
+}
+
 private struct HistorySyncJobRow: View {
     @Environment(\.trixColors) private var colors
     let job: HistorySyncJobSummary
@@ -475,8 +687,11 @@ private struct DeviceRow: View {
     @Environment(\.trixColors) private var colors
     let device: DeviceSummary
     let isCurrentDevice: Bool
+    let canApprove: Bool
+    let isApproving: Bool
     let canRevoke: Bool
     let isRevoking: Bool
+    let approve: () -> Void
     let revoke: () -> Void
 
     var body: some View {
@@ -504,15 +719,30 @@ private struct DeviceRow: View {
                 }
             }
 
-            if canRevoke {
-                Button(role: .destructive, action: revoke) {
-                    Label(
-                        isRevoking ? (device.deviceStatus == .pending ? "Rejecting…" : "Revoking…") : (device.deviceStatus == .pending ? "Reject Pending Device" : "Revoke Device"),
-                        systemImage: "xmark.shield"
-                    )
+            if canApprove || canRevoke {
+                HStack(spacing: 10) {
+                    if canApprove {
+                        Button(action: approve) {
+                            Label(
+                                isApproving ? "Approving…" : "Approve Device",
+                                systemImage: "checkmark.seal.fill"
+                            )
+                        }
+                        .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                        .disabled(isApproving || isRevoking)
+                    }
+
+                    if canRevoke {
+                        Button(role: .destructive, action: revoke) {
+                            Label(
+                                isRevoking ? (device.deviceStatus == .pending ? "Rejecting…" : "Revoking…") : (device.deviceStatus == .pending ? "Reject Pending Device" : "Revoke Device"),
+                                systemImage: "xmark.shield"
+                            )
+                        }
+                        .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+                        .disabled(isApproving || isRevoking)
+                    }
                 }
-                .buttonStyle(TrixActionButtonStyle(tone: .ghost))
-                .disabled(isRevoking)
             }
         }
         .padding(16)

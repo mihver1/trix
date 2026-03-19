@@ -5,7 +5,6 @@ final class AppModel: ObservableObject {
     @Published var serverBaseURLString: String
     @Published var draft: OnboardingDraft
     @Published var linkDraft: LinkDeviceDraft
-    @Published var approvalDraft = DeviceApprovalDraft()
     @Published var onboardingMode: OnboardingMode = .createAccount
     @Published var health: HealthResponse?
     @Published var version: VersionResponse?
@@ -14,22 +13,28 @@ final class AppModel: ObservableObject {
     @Published var chats: [ChatSummary] = []
     @Published var historySyncJobs: [HistorySyncJobSummary] = []
     @Published var historySyncCursorDrafts: [UUID: String] = [:]
+    @Published var keyPackagePublishDraft = KeyPackagePublishDraft()
+    @Published var keyPackageReserveDraft = KeyPackageReserveDraft()
+    @Published var publishedKeyPackages: [PublishedKeyPackage] = []
+    @Published var reservedKeyPackages: [ReservedKeyPackage] = []
+    @Published var reservedKeyPackagesAccountID: UUID?
     @Published var selectedChatID: UUID?
     @Published var selectedChatDetail: ChatDetailResponse?
     @Published var selectedChatHistory: [MessageEnvelope] = []
     @Published var outgoingLinkIntent: DeviceLinkIntentState?
-    @Published var pendingApprovalPayload: String?
     @Published var hasAccountRootKey = false
     @Published var isRefreshingStatus = false
     @Published var isCreatingAccount = false
     @Published var isCreatingLinkIntent = false
     @Published var isCompletingLink = false
+    @Published var isPublishingKeyPackages = false
+    @Published var isReservingKeyPackages = false
     @Published var isRestoringSession = false
     @Published var isRefreshingWorkspace = false
     @Published var isRefreshingHistorySyncJobs = false
     @Published var isLoadingSelectedChat = false
-    @Published var isApprovingPendingDevice = false
     @Published var revokingDeviceIDs: Set<UUID> = []
+    @Published var approvingDeviceIDs: Set<UUID> = []
     @Published var completingHistorySyncJobIDs: Set<UUID> = []
     @Published var lastErrorMessage: String?
 
@@ -81,15 +86,28 @@ final class AppModel: ObservableObject {
             linkDraft.deviceDisplayName.nonEmptyTrimmed != nil
     }
 
-    var canApprovePendingDevice: Bool {
-        isAuthenticated &&
-            hasAccountRootKey &&
-            approvalDraft.payload.nonEmptyTrimmed != nil &&
-            !isApprovingPendingDevice
+    var canPublishKeyPackages: Bool {
+        keyPackagePublishDraft.packagesJSON.nonEmptyTrimmed != nil && !isPublishingKeyPackages
+    }
+
+    var canReserveKeyPackages: Bool {
+        guard keyPackageReserveDraft.accountID.nonEmptyTrimmed != nil else {
+            return false
+        }
+
+        if keyPackageReserveDraft.mode == .selectedDevices {
+            return keyPackageReserveDraft.selectedDeviceIDs.nonEmptyTrimmed != nil && !isReservingKeyPackages
+        }
+
+        return !isReservingKeyPackages
     }
 
     var currentDeviceID: UUID? {
         currentAccount?.deviceId ?? persistedSession?.deviceId
+    }
+
+    var pendingLinkedDeviceID: UUID? {
+        isAwaitingLinkApproval ? persistedSession?.deviceId : nil
     }
 
     var selectedChatSummary: ChatSummary? {
@@ -311,7 +329,7 @@ final class AppModel: ObservableObject {
                     accessToken = nil
                     clearWorkspaceData()
                     refreshLocalIdentityState(reportErrors: false)
-                    lastErrorMessage = "This device is still pending approval. Approve it from an active root-capable device, then reconnect."
+                    lastErrorMessage = "This device is still pending approval. Approve it from any active trusted device in the device directory, then reconnect."
                 } else {
                     try? clearSession()
                     serverBaseURLString = session.baseURLString
@@ -382,6 +400,100 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func publishKeyPackages() async {
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
+
+        isPublishingKeyPackages = true
+        lastErrorMessage = nil
+        defer { isPublishingKeyPackages = false }
+
+        do {
+            let packages = try decodePublishKeyPackageItems(keyPackagePublishDraft.packagesJSON)
+            let response = try await client.publishKeyPackages(
+                accessToken: token,
+                request: PublishKeyPackagesRequest(packages: packages)
+            )
+
+            publishedKeyPackages = response.packages
+        } catch let error as TrixAPIError {
+            if error.isCredentialFailure {
+                accessToken = nil
+                await restoreSession()
+            } else {
+                lastErrorMessage = error.userFacingMessage
+            }
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    func reserveKeyPackages() async {
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
+        guard let accountID = try? decodeUUID(keyPackageReserveDraft.accountID, label: "account id") else {
+            lastErrorMessage = "Укажи валидный account id."
+            return
+        }
+
+        isReservingKeyPackages = true
+        lastErrorMessage = nil
+        defer { isReservingKeyPackages = false }
+
+        do {
+            let response: AccountKeyPackagesResponse
+            switch keyPackageReserveDraft.mode {
+            case .allActiveDevices:
+                response = try await client.fetchAccountKeyPackages(
+                    accessToken: token,
+                    accountId: accountID
+                )
+            case .selectedDevices:
+                let deviceIDs = try decodeUUIDList(
+                    keyPackageReserveDraft.selectedDeviceIDs,
+                    label: "device ids"
+                )
+                response = try await client.reserveKeyPackages(
+                    accessToken: token,
+                    request: ReserveKeyPackagesRequest(
+                        accountId: accountID,
+                        deviceIds: deviceIDs
+                    )
+                )
+            }
+
+            reservedKeyPackagesAccountID = response.accountId
+            reservedKeyPackages = response.packages
+        } catch let error as TrixAPIError {
+            if error.isCredentialFailure {
+                accessToken = nil
+                await restoreSession()
+            } else {
+                lastErrorMessage = error.userFacingMessage
+            }
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    func useVisibleActiveDeviceIDsForReserve() {
+        let deviceIDs = devices
+            .filter { $0.deviceStatus == .active }
+            .map(\.deviceId.uuidString)
+            .joined(separator: "\n")
+        keyPackageReserveDraft.selectedDeviceIDs = deviceIDs
+    }
+
     func completeHistorySyncJob(_ jobID: UUID) async {
         guard let token = accessToken else {
             await restoreSession()
@@ -414,47 +526,57 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func approvePendingDevice() async {
-        guard canApprovePendingDevice else {
-            return
-        }
+    func approvePendingDevice(_ device: DeviceSummary) async {
         guard let token = accessToken else {
             await restoreSession()
             return
         }
+        guard hasAccountRootKey else {
+            lastErrorMessage = "Approve доступен только на root-capable устройстве."
+            return
+        }
+        guard device.deviceStatus == .pending else {
+            lastErrorMessage = "Only pending devices can be approved."
+            return
+        }
+        guard currentDeviceID != device.deviceId else {
+            lastErrorMessage = "Текущее устройство нельзя approve из этого же сеанса."
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
 
-        isApprovingPendingDevice = true
+        approvingDeviceIDs.insert(device.deviceId)
         lastErrorMessage = nil
-        defer { isApprovingPendingDevice = false }
+        defer { approvingDeviceIDs.remove(device.deviceId) }
 
         do {
-            let payload = try decodeDeviceApprovalPayload(approvalDraft.payload)
+            let payload = try await client.fetchDeviceApprovePayload(
+                accessToken: token,
+                deviceId: device.deviceId
+            )
             guard payload.accountId == currentAccount?.accountId else {
-                throw TrixAPIError.invalidPayload("Approval payload относится к другому аккаунту.")
-            }
-            guard let client = makeClient(baseURLString: payload.baseURL) else {
-                return
+                throw TrixAPIError.invalidPayload("Approve payload относится к другому аккаунту.")
             }
 
             let identity = try loadStoredIdentity(requireAccountRoot: true)
             guard
-                let transportPublicKey = Data(base64Encoded: payload.transportPubkeyB64),
-                let credentialIdentity = Data(base64Encoded: payload.credentialIdentityB64)
+                let bootstrapPayload = Data(base64Encoded: payload.bootstrapPayloadB64)
             else {
-                throw TrixAPIError.invalidPayload("Approval payload содержит невалидный base64.")
+                throw TrixAPIError.invalidPayload("Сервер вернул невалидный approve payload.")
             }
 
-            let signatureB64 = try identity.accountBootstrapSignatureB64(
-                transportPublicKey: transportPublicKey,
-                credentialIdentity: credentialIdentity
+            let signatureB64 = try identity.accountRootSignatureB64(
+                for: bootstrapPayload,
+                errorMessage: "Approve доступен только на root-capable устройстве."
             )
             _ = try await client.approveDevice(
                 accessToken: token,
-                deviceId: payload.pendingDeviceId,
+                deviceId: payload.deviceId,
                 request: ApproveDeviceRequest(accountRootSignatureB64: signatureB64)
             )
 
-            approvalDraft.payload = ""
             await refreshWorkspace()
         } catch {
             lastErrorMessage = error.userFacingMessage
@@ -602,6 +724,7 @@ final class AppModel: ObservableObject {
 
         try updatePersistedSessionProfile(from: loadedProfile)
         refreshLocalIdentityState(reportErrors: false)
+        syncKeyPackageDrafts(with: loadedProfile)
         try await loadHistorySyncJobs(client: client, accessToken: accessToken)
 
         if let preferredChatID = preferredChatSelection(from: sortedChats) {
@@ -697,8 +820,8 @@ final class AppModel: ObservableObject {
         accessToken = nil
         clearWorkspaceData()
         outgoingLinkIntent = nil
-        pendingApprovalPayload = nil
-        approvalDraft = DeviceApprovalDraft()
+        keyPackagePublishDraft = KeyPackagePublishDraft()
+        keyPackageReserveDraft = KeyPackageReserveDraft()
         hasAccountRootKey = false
         onboardingMode = .createAccount
         linkDraft = LinkDeviceDraft(deviceDisplayName: defaultDeviceName)
@@ -710,39 +833,22 @@ final class AppModel: ObservableObject {
         chats = []
         historySyncJobs = []
         historySyncCursorDrafts = [:]
+        approvingDeviceIDs = []
+        publishedKeyPackages = []
+        reservedKeyPackages = []
+        reservedKeyPackagesAccountID = nil
         clearSelectedChat()
     }
 
     private func refreshLocalIdentityState(reportErrors: Bool) {
         do {
             hasAccountRootKey = try keychainStore.loadData(for: .accountRootSeed) != nil
-            pendingApprovalPayload = try makePendingApprovalPayload()
         } catch {
             hasAccountRootKey = false
-            pendingApprovalPayload = nil
             if reportErrors {
                 lastErrorMessage = error.userFacingMessage
             }
         }
-    }
-
-    private func makePendingApprovalPayload() throws -> String? {
-        guard let session = persistedSession, session.deviceStatus == .pending else {
-            return nil
-        }
-
-        let identity = try loadStoredIdentity()
-        let payload = DeviceApprovalPayload(
-            version: 1,
-            baseURL: session.baseURLString,
-            accountId: session.accountId,
-            pendingDeviceId: session.deviceId,
-            deviceDisplayName: session.deviceDisplayName,
-            platform: DeviceIdentityMaterial.platform,
-            credentialIdentityB64: identity.credentialIdentityB64,
-            transportPubkeyB64: identity.transportPublicKeyB64
-        )
-        return try encodeLocalJSON(payload)
     }
 
     private func updatePersistedSessionProfile(from profile: AccountProfileResponse) throws {
@@ -757,6 +863,12 @@ final class AppModel: ObservableObject {
 
         try sessionStore.save(session)
         persistedSession = session
+    }
+
+    private func syncKeyPackageDrafts(with profile: AccountProfileResponse) {
+        if keyPackageReserveDraft.accountID.nonEmptyTrimmed == nil {
+            keyPackageReserveDraft.accountID = profile.accountId.uuidString
+        }
     }
 
     private func loadHistorySyncJobs(
@@ -782,29 +894,6 @@ final class AppModel: ObservableObject {
         return try decoder.decode(LinkIntentPayload.self, from: data)
     }
 
-    private func decodeDeviceApprovalPayload(_ rawValue: String) throws -> DeviceApprovalPayload {
-        guard let data = rawValue.nonEmptyTrimmed?.data(using: .utf8) else {
-            throw TrixAPIError.invalidPayload("Вставь approval payload с нового устройства.")
-        }
-
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return try decoder.decode(DeviceApprovalPayload.self, from: data)
-    }
-
-    private func encodeLocalJSON<Value: Encodable>(_ value: Value) throws -> String {
-        let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        let data = try encoder.encode(value)
-
-        guard let string = String(data: data, encoding: .utf8) else {
-            throw TrixAPIError.invalidPayload("Не удалось собрать локальный JSON payload.")
-        }
-
-        return string
-    }
-
     private func decodeCursorJSON(_ rawValue: String?) throws -> JSONValue? {
         guard let rawValue = rawValue?.nonEmptyTrimmed else {
             return nil
@@ -826,6 +915,44 @@ final class AppModel: ObservableObject {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         let data = try encoder.encode(value)
         return String(data: data, encoding: .utf8)
+    }
+
+    private func decodePublishKeyPackageItems(_ rawValue: String) throws -> [PublishKeyPackageItem] {
+        guard let data = rawValue.nonEmptyTrimmed?.data(using: .utf8) else {
+            throw TrixAPIError.invalidPayload("Вставь JSON массив key packages.")
+        }
+
+        let packages = try JSONDecoder().decode([PublishKeyPackageItem].self, from: data)
+        guard !packages.isEmpty else {
+            throw TrixAPIError.invalidPayload("JSON массив key packages не должен быть пустым.")
+        }
+
+        return packages
+    }
+
+    private func decodeUUID(_ rawValue: String, label: String) throws -> UUID {
+        guard let trimmed = rawValue.nonEmptyTrimmed, let uuid = UUID(uuidString: trimmed) else {
+            throw TrixAPIError.invalidPayload("Не удалось разобрать \(label).")
+        }
+        return uuid
+    }
+
+    private func decodeUUIDList(_ rawValue: String, label: String) throws -> [UUID] {
+        let parts = rawValue
+            .split { $0 == "," || $0 == "\n" || $0 == "\t" || $0 == " " }
+            .map(String.init)
+            .filter { !$0.isEmpty }
+
+        guard !parts.isEmpty else {
+            throw TrixAPIError.invalidPayload("Укажи хотя бы один \(label).")
+        }
+
+        return try parts.map { value in
+            guard let uuid = UUID(uuidString: value) else {
+                throw TrixAPIError.invalidPayload("Не удалось разобрать \(label).")
+            }
+            return uuid
+        }
     }
 
     private func chatSort(lhs: ChatSummary, rhs: ChatSummary) -> Bool {
@@ -880,8 +1007,35 @@ struct LinkDeviceDraft {
     var deviceDisplayName: String
 }
 
-struct DeviceApprovalDraft {
-    var payload = ""
+enum KeyPackageReserveMode: String {
+    case allActiveDevices
+    case selectedDevices
+
+    var title: String {
+        switch self {
+        case .allActiveDevices:
+            return "All Active Devices"
+        case .selectedDevices:
+            return "Selected Devices"
+        }
+    }
+}
+
+struct KeyPackagePublishDraft {
+    var packagesJSON = """
+    [
+      {
+        "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+        "key_package_b64": ""
+      }
+    ]
+    """
+}
+
+struct KeyPackageReserveDraft {
+    var accountID = ""
+    var selectedDeviceIDs = ""
+    var mode: KeyPackageReserveMode = .allActiveDevices
 }
 
 struct DeviceLinkIntentState: Identifiable {

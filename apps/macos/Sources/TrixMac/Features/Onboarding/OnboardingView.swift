@@ -64,10 +64,10 @@ struct OnboardingView: View {
 
     private var modeSummaryPanel: some View {
         TrixPanel(
-            title: model.onboardingMode == .createAccount ? "Mac-First Bootstrap" : "Manual Device Linking",
+            title: model.onboardingMode == .createAccount ? "Mac-First Bootstrap" : "Device Linking",
             subtitle: model.onboardingMode == .createAccount
                 ? "The first device flow should feel like a launch console, not a settings screen."
-                : "Linking rides on copy/paste payloads until QR scanning and MLS key packages land."
+                : "Linking still starts from a payload, but approval now happens directly from the trusted device directory."
             ,
             tone: .inverted
         ) {
@@ -91,7 +91,7 @@ struct OnboardingView: View {
                     OnboardingFeature(
                         symbol: "link.badge.plus",
                         title: "Next slice is live",
-                        detail: "Current build already supports link intent creation, pending-device completion and explicit approval payloads."
+                        detail: "Current build already supports link intent creation, pending-device completion and server-backed approval."
                     )
                 } else {
                     OnboardingFeature(
@@ -106,8 +106,8 @@ struct OnboardingView: View {
                     )
                     OnboardingFeature(
                         symbol: "lock.shield",
-                        title: "Approval stays explicit",
-                        detail: "The new device emits a separate approval payload that a root-capable device signs."
+                        title: "Approval is directory-backed",
+                        detail: "Once this Mac registers as pending, another active trusted device can approve it directly from the device list."
                     )
                     OnboardingFeature(
                         symbol: "arrow.clockwise.circle",
@@ -301,7 +301,7 @@ struct OnboardingView: View {
                     }
                 }
 
-                Text("This Mac will not receive the account-root key. After registration it emits a separate approval payload for another trusted device to sign.")
+                Text("This Mac will not receive the account-root key. After registration it appears as a pending device, and another trusted device can approve it directly from the workspace.")
                     .font(.footnote)
                     .foregroundStyle(colors.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -312,7 +312,7 @@ struct OnboardingView: View {
     private var pendingStatusPanel: some View {
         TrixPanel(
             title: "Pending Approval",
-            subtitle: "This Mac has already registered a pending device record and is waiting for another trusted device to sign it.",
+            subtitle: "This Mac has already registered a pending device record and is waiting for another trusted device to approve it from the device directory.",
             tone: .inverted
         ) {
             VStack(alignment: .leading, spacing: 14) {
@@ -322,9 +322,9 @@ struct OnboardingView: View {
                     detail: "Challenge/session auth will start working as soon as the pending device flips to active."
                 )
                 OnboardingFeature(
-                    symbol: "square.and.arrow.up",
-                    title: "Approval payload is below",
-                    detail: "Copy it to a root-capable device and submit it via the workspace approval panel."
+                    symbol: "list.bullet.rectangle",
+                    title: "Look for this Mac in Devices",
+                    detail: "Another active trusted device can now approve or reject this pending record directly from its device list."
                 )
                 OnboardingFeature(
                     symbol: "arrow.clockwise.circle",
@@ -337,26 +337,26 @@ struct OnboardingView: View {
 
     private var pendingApprovalColumn: some View {
         TrixPanel(
-            title: "Hand Off The Approval Payload",
-            subtitle: "The server knows about this Mac, but it is still `pending`. Another active device must sign the bootstrap payload.",
+            title: "Waiting For Approval",
+            subtitle: "The server knows about this Mac, but it is still `pending`. Another active trusted device must approve it from the workspace device directory.",
             tone: .strong
         ) {
             VStack(alignment: .leading, spacing: 16) {
-                if let payload = model.pendingApprovalPayload {
+                if let deviceID = model.pendingLinkedDeviceID {
                     TrixInputBlock(
-                        "Approval Payload",
-                        hint: "Copy this JSON to a root-capable device and paste it into the workspace approval panel."
+                        "Pending Device ID",
+                        hint: "Use this to identify the Mac inside the trusted device directory on another active device."
                     ) {
-                        TrixPayloadBox(payload: payload, minHeight: 180)
+                        TrixPayloadBox(payload: deviceID.uuidString, minHeight: 84)
                     }
 
                     Group {
                         if prefersSingleColumn {
                             VStack(spacing: 12) {
                                 Button {
-                                    copyStringToPasteboard(payload)
+                                    copyStringToPasteboard(deviceID.uuidString)
                                 } label: {
-                                    Label("Copy Payload", systemImage: "doc.on.doc")
+                                    Label("Copy Device ID", systemImage: "doc.on.doc")
                                 }
                                 .buttonStyle(TrixActionButtonStyle(tone: .secondary))
                                 .frame(maxWidth: 220)
@@ -378,9 +378,9 @@ struct OnboardingView: View {
                         } else {
                             HStack(spacing: 12) {
                                 Button {
-                                    copyStringToPasteboard(payload)
+                                    copyStringToPasteboard(deviceID.uuidString)
                                 } label: {
-                                    Label("Copy Payload", systemImage: "doc.on.doc")
+                                    Label("Copy Device ID", systemImage: "doc.on.doc")
                                 }
                                 .buttonStyle(TrixActionButtonStyle(tone: .secondary))
                                 .frame(maxWidth: 220)
@@ -402,10 +402,10 @@ struct OnboardingView: View {
                         }
                     }
                 } else {
-                    EmptyWorkspaceLabel("The local approval payload could not be reconstructed from Keychain. Re-link the device if this persists.")
+                    EmptyWorkspaceLabel("The pending device ID is missing from local session state. Re-link the device if this persists.")
                 }
 
-                Text("Current API does not expose pending-device bootstrap data back to active devices, so approval stays explicit: the new Mac must hand over this payload out-of-band.")
+                Text("Another active trusted device can now fetch the canonical approval payload directly from the server. No manual JSON handoff is required anymore.")
                     .font(.footnote)
                     .foregroundStyle(colors.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
