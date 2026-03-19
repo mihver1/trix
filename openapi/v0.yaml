@@ -183,6 +183,23 @@ paths:
                 $ref: '#/components/schemas/DeviceApprovePayloadResponse'
         '409':
           $ref: '#/components/responses/Conflict'
+  /v0/devices/{device_id}/transfer-bundle:
+    get:
+      operationId: getDeviceTransferBundle
+      tags: [devices]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '200':
+          description: Encrypted transfer bundle for the authenticated device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceTransferBundleResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v0/devices/{device_id}/approve:
     post:
       operationId: approveDevice
@@ -1016,6 +1033,8 @@ components:
       properties:
         account_root_signature_b64:
           type: string
+        transfer_bundle_b64:
+          type: string
     ApproveDeviceResponse:
       type: object
       required: [account_id, device_id, device_status]
@@ -1026,6 +1045,19 @@ components:
           $ref: '#/components/schemas/Uuid'
         device_status:
           $ref: '#/components/schemas/DeviceStatus'
+    DeviceTransferBundleResponse:
+      type: object
+      required: [account_id, device_id, transfer_bundle_b64, uploaded_at_unix]
+      properties:
+        account_id:
+          $ref: '#/components/schemas/Uuid'
+        device_id:
+          $ref: '#/components/schemas/Uuid'
+        transfer_bundle_b64:
+          type: string
+        uploaded_at_unix:
+          type: integer
+          format: int64
     RevokeDeviceRequest:
       type: object
       required: [reason, account_root_signature_b64]

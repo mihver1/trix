@@ -116,6 +116,7 @@ pub struct ApprovePendingDeviceInput {
     pub actor_device_id: Uuid,
     pub target_device_id: Uuid,
     pub account_root_signature: Vec<u8>,
+    pub transfer_bundle_ciphertext: Option<Vec<u8>>,
 }
 
 #[derive(Debug)]
@@ -135,6 +136,14 @@ pub struct PendingDeviceBootstrapRow {
     pub transport_pubkey: Vec<u8>,
     pub account_root_pubkey: Vec<u8>,
     pub device_status: DeviceStatus,
+}
+
+#[derive(Debug)]
+pub struct DeviceTransferBundleRow {
+    pub account_id: Uuid,
+    pub device_id: Uuid,
+    pub transfer_bundle_ciphertext: Vec<u8>,
+    pub uploaded_at_unix: u64,
 }
 
 #[derive(Debug)]
@@ -1011,6 +1020,44 @@ impl Database {
         }))
     }
 
+    pub async fn get_device_transfer_bundle(
+        &self,
+        account_id: Uuid,
+        device_id: Uuid,
+    ) -> Result<Option<DeviceTransferBundleRow>, AppError> {
+        let row = sqlx::query(
+            r#"
+            UPDATE device_link_intents
+            SET transfer_bundle_fetched_at = COALESCE(transfer_bundle_fetched_at, now())
+            WHERE pending_device_id = $1
+              AND account_id = $2
+              AND status = 'completed'::link_intent_status
+              AND transfer_bundle_ciphertext IS NOT NULL
+            RETURNING
+                account_id,
+                pending_device_id AS device_id,
+                transfer_bundle_ciphertext,
+                extract(epoch from transfer_bundle_uploaded_at)::bigint AS uploaded_at_unix
+            "#,
+        )
+        .bind(device_id)
+        .bind(account_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        Ok(Some(DeviceTransferBundleRow {
+            account_id: row_uuid(&row, "account_id")?,
+            device_id: row_uuid(&row, "device_id")?,
+            transfer_bundle_ciphertext: row_bytes(&row, "transfer_bundle_ciphertext")?,
+            uploaded_at_unix: row_u64_from_i64(&row, "uploaded_at_unix")?,
+        }))
+    }
+
     pub async fn get_device_revoke_context(
         &self,
         target_device_id: Uuid,
@@ -1105,7 +1152,12 @@ impl Database {
             UPDATE device_link_intents
             SET status = 'completed'::link_intent_status,
                 approved_by_device_id = $2,
-                approved_at = now()
+                approved_at = now(),
+                transfer_bundle_ciphertext = $3,
+                transfer_bundle_uploaded_at = CASE
+                    WHEN $3 IS NULL THEN transfer_bundle_uploaded_at
+                    ELSE now()
+                END
             WHERE pending_device_id = $1
               AND status = 'pending_approval'::link_intent_status
             RETURNING account_id
@@ -1113,6 +1165,7 @@ impl Database {
         )
         .bind(input.target_device_id)
         .bind(input.actor_device_id)
+        .bind(&input.transfer_bundle_ciphertext)
         .fetch_optional(&mut *tx)
         .await
         .map_err(map_db_error)?;
@@ -4510,6 +4563,7 @@ mod tests {
             actor_device_id: alice.device_id,
             target_device_id: completed.pending_device_id,
             account_root_signature: vec![99; 64],
+            transfer_bundle_ciphertext: None,
         })
         .await
         .expect("approve secondary device");
@@ -4746,6 +4800,62 @@ mod tests {
             .await
             .expect("list remaining inbox items");
         assert!(remaining.is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn smoke_persists_transfer_bundle_on_device_approval() {
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [51; 32],
+                [52; 32],
+            ))
+            .await
+            .expect("create alice account");
+
+        let intent = db
+            .create_link_intent(alice.account_id, alice.device_id)
+            .await
+            .expect("create link intent");
+        let completed = db
+            .complete_link_intent(CompleteLinkIntentInput {
+                link_intent_id: intent.link_intent_id,
+                link_token: intent.link_token,
+                device_display_name: "Alice Secondary".to_owned(),
+                platform: "ios".to_owned(),
+                credential_identity: b"alice-secondary-credential".to_vec(),
+                transport_pubkey: vec![61; 32],
+                key_packages: Vec::new(),
+            })
+            .await
+            .expect("complete link intent");
+
+        let transfer_bundle = b"encrypted-transfer-bundle".to_vec();
+        db.approve_pending_device(ApprovePendingDeviceInput {
+            actor_account_id: alice.account_id,
+            actor_device_id: alice.device_id,
+            target_device_id: completed.pending_device_id,
+            account_root_signature: vec![88; 64],
+            transfer_bundle_ciphertext: Some(transfer_bundle.clone()),
+        })
+        .await
+        .expect("approve pending device with transfer bundle");
+
+        let stored_bundle = db
+            .get_device_transfer_bundle(alice.account_id, completed.pending_device_id)
+            .await
+            .expect("load stored transfer bundle")
+            .expect("transfer bundle should exist");
+
+        assert_eq!(stored_bundle.account_id, alice.account_id);
+        assert_eq!(stored_bundle.device_id, completed.pending_device_id);
+        assert_eq!(stored_bundle.transfer_bundle_ciphertext, transfer_bundle);
+        assert!(stored_bundle.uploaded_at_unix > 0);
     }
 
     async fn connect_test_db() -> Database {
