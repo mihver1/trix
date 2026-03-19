@@ -9,7 +9,12 @@ struct RootView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if model.hasProvisionedIdentity {
+                if model.isAwaitingApproval {
+                    PendingApprovalView(
+                        serverBaseURL: $serverBaseURL,
+                        model: model
+                    )
+                } else if model.hasProvisionedIdentity {
                     DashboardView(
                         serverBaseURL: $serverBaseURL,
                         model: model

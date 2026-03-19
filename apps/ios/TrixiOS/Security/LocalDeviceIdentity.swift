@@ -2,15 +2,56 @@ import CryptoKit
 import Foundation
 import Security
 
+enum LocalDeviceTrustState: String, Codable {
+    case active
+    case pendingApproval
+}
+
 struct LocalDeviceIdentity: Codable {
     let accountId: String
     let deviceId: String
-    let accountSyncChatId: String
+    let accountSyncChatId: String?
     let deviceDisplayName: String
     let platform: String
     let credentialIdentity: Data
-    let accountRootPrivateKeyRaw: Data
+    let accountRootPrivateKeyRaw: Data?
     let transportPrivateKeyRaw: Data
+    let trustState: LocalDeviceTrustState
+
+    init(
+        accountId: String,
+        deviceId: String,
+        accountSyncChatId: String?,
+        deviceDisplayName: String,
+        platform: String,
+        credentialIdentity: Data,
+        accountRootPrivateKeyRaw: Data?,
+        transportPrivateKeyRaw: Data,
+        trustState: LocalDeviceTrustState
+    ) {
+        self.accountId = accountId
+        self.deviceId = deviceId
+        self.accountSyncChatId = accountSyncChatId
+        self.deviceDisplayName = deviceDisplayName
+        self.platform = platform
+        self.credentialIdentity = credentialIdentity
+        self.accountRootPrivateKeyRaw = accountRootPrivateKeyRaw
+        self.transportPrivateKeyRaw = transportPrivateKeyRaw
+        self.trustState = trustState
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        accountId = try container.decode(String.self, forKey: .accountId)
+        deviceId = try container.decode(String.self, forKey: .deviceId)
+        accountSyncChatId = try container.decodeIfPresent(String.self, forKey: .accountSyncChatId)
+        deviceDisplayName = try container.decode(String.self, forKey: .deviceDisplayName)
+        platform = try container.decode(String.self, forKey: .platform)
+        credentialIdentity = try container.decode(Data.self, forKey: .credentialIdentity)
+        accountRootPrivateKeyRaw = try container.decodeIfPresent(Data.self, forKey: .accountRootPrivateKeyRaw)
+        transportPrivateKeyRaw = try container.decode(Data.self, forKey: .transportPrivateKeyRaw)
+        trustState = try container.decodeIfPresent(LocalDeviceTrustState.self, forKey: .trustState) ?? .active
+    }
 }
 
 struct DeviceBootstrapMaterial {
@@ -63,6 +104,26 @@ struct DeviceBootstrapMaterial {
         )
     }
 
+    func makeCompleteLinkIntentRequest(
+        linkToken: String,
+        deviceDisplayName: String,
+        platform: String
+    ) throws -> CompleteLinkIntentRequest {
+        let transportPrivateKey = try Curve25519.Signing.PrivateKey(
+            rawRepresentation: transportPrivateKeyRaw
+        )
+        let transportPublicKey = transportPrivateKey.publicKey.rawRepresentation
+
+        return CompleteLinkIntentRequest(
+            linkToken: linkToken,
+            deviceDisplayName: deviceDisplayName,
+            platform: platform,
+            credentialIdentityB64: credentialIdentity.base64EncodedString(),
+            transportPubkeyB64: transportPublicKey.base64EncodedString(),
+            keyPackages: []
+        )
+    }
+
     func makeLocalIdentity(
         accountId: String,
         deviceId: String,
@@ -78,7 +139,27 @@ struct DeviceBootstrapMaterial {
             platform: platform,
             credentialIdentity: credentialIdentity,
             accountRootPrivateKeyRaw: accountRootPrivateKeyRaw,
-            transportPrivateKeyRaw: transportPrivateKeyRaw
+            transportPrivateKeyRaw: transportPrivateKeyRaw,
+            trustState: .active
+        )
+    }
+
+    func makeLinkedLocalIdentity(
+        accountId: String,
+        deviceId: String,
+        deviceDisplayName: String,
+        platform: String
+    ) -> LocalDeviceIdentity {
+        LocalDeviceIdentity(
+            accountId: accountId,
+            deviceId: deviceId,
+            accountSyncChatId: nil,
+            deviceDisplayName: deviceDisplayName,
+            platform: platform,
+            credentialIdentity: credentialIdentity,
+            accountRootPrivateKeyRaw: nil,
+            transportPrivateKeyRaw: transportPrivateKeyRaw,
+            trustState: .pendingApproval
         )
     }
 
@@ -122,12 +203,15 @@ struct LocalDeviceIdentityStore {
 }
 
 enum LocalDeviceIdentityError: LocalizedError {
+    case accountRootKeyUnavailable
     case invalidPrivateKeyMaterial
     case invalidChallengeEncoding
     case randomGenerationFailed(OSStatus)
 
     var errorDescription: String? {
         switch self {
+        case .accountRootKeyUnavailable:
+            return "This device does not have shared account root key material yet."
         case .invalidPrivateKeyMaterial:
             return "Stored device key material is invalid."
         case .invalidChallengeEncoding:
@@ -139,11 +223,54 @@ enum LocalDeviceIdentityError: LocalizedError {
 }
 
 extension LocalDeviceIdentity {
+    var hasAccountRootKey: Bool {
+        accountRootPrivateKeyRaw != nil
+    }
+
     func signChallenge(_ challengeBytes: Data) throws -> Data {
         let transportPrivateKey = try Curve25519.Signing.PrivateKey(
             rawRepresentation: transportPrivateKeyRaw
         )
         return try transportPrivateKey.signature(for: challengeBytes)
+    }
+
+    func signDeviceRevoke(deviceId: String, reason: String) throws -> Data {
+        guard let accountRootPrivateKeyRaw else {
+            throw LocalDeviceIdentityError.accountRootKeyUnavailable
+        }
+
+        let accountRootPrivateKey = try Curve25519.Signing.PrivateKey(
+            rawRepresentation: accountRootPrivateKeyRaw
+        )
+        return try accountRootPrivateKey.signature(
+            for: Self.revokeMessage(deviceId: deviceId, reason: reason)
+        )
+    }
+
+    func markingActive() -> LocalDeviceIdentity {
+        LocalDeviceIdentity(
+            accountId: accountId,
+            deviceId: deviceId,
+            accountSyncChatId: accountSyncChatId,
+            deviceDisplayName: deviceDisplayName,
+            platform: platform,
+            credentialIdentity: credentialIdentity,
+            accountRootPrivateKeyRaw: accountRootPrivateKeyRaw,
+            transportPrivateKeyRaw: transportPrivateKeyRaw,
+            trustState: .active
+        )
+    }
+
+    private static func revokeMessage(deviceId: String, reason: String) -> Data {
+        let deviceIdData = Data(deviceId.utf8)
+        let reasonData = Data(reason.utf8)
+
+        var message = Data("trix-device-revoke:v1".utf8)
+        message.append(trix_bigEndianLength(deviceIdData.count))
+        message.append(deviceIdData)
+        message.append(trix_bigEndianLength(reasonData.count))
+        message.append(reasonData)
+        return message
     }
 }
 

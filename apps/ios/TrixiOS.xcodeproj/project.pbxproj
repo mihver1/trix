@@ -14,6 +14,7 @@
 		7DA8A99622CCCA79A97EE7BF /* CreateAccountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB561F04E1C44D1888D73336 /* CreateAccountView.swift */; };
 		9B911226C1B996C30814B35F /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 658A7042AB73BF905B248D96 /* DashboardView.swift */; };
 		A3F584F628831CED1241968D /* SystemModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B39C56B87A0D7373CCAF305 /* SystemModels.swift */; };
+		B44143903FCFD7AC94B12123 /* PendingApprovalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C76457452D572429031461CC /* PendingApprovalView.swift */; };
 		BD87D15AEFAF56495250E94C /* TrixiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E99B20CD4D5A31B630CCE43 /* TrixiOSApp.swift */; };
 		D5B3D522018E2EDCC239D6B3 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 229E4FE51C86DFFFFBEDA5BF /* KeychainStore.swift */; };
 		D8728BF5E7629A0B84E4CAB4 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B9EE7D8E7C908B372176F97 /* RootView.swift */; };
@@ -34,6 +35,7 @@
 		9D76E826883729659D5B0DF4 /* APIError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIError.swift; sourceTree = "<group>"; };
 		9E99B20CD4D5A31B630CCE43 /* TrixiOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixiOSApp.swift; sourceTree = "<group>"; };
 		BD786FA5598DD8B41A0444FE /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		C76457452D572429031461CC /* PendingApprovalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingApprovalView.swift; sourceTree = "<group>"; };
 		C81238E1EC57CFBB2B333A7A /* LocalDeviceIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDeviceIdentity.swift; sourceTree = "<group>"; };
 		CBCD0355F29849AC8FC65507 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
 		FB561F04E1C44D1888D73336 /* CreateAccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateAccountView.swift; sourceTree = "<group>"; };
@@ -99,6 +101,7 @@
 			isa = PBXGroup;
 			children = (
 				FB561F04E1C44D1888D73336 /* CreateAccountView.swift */,
+				C76457452D572429031461CC /* PendingApprovalView.swift */,
 			);
 			path = Onboarding;
 			sourceTree = "<group>";
@@ -214,6 +217,7 @@
 				9B911226C1B996C30814B35F /* DashboardView.swift in Sources */,
 				D5B3D522018E2EDCC239D6B3 /* KeychainStore.swift in Sources */,
 				0C59311F8E54EDC1AD82DE2A /* LocalDeviceIdentity.swift in Sources */,
+				B44143903FCFD7AC94B12123 /* PendingApprovalView.swift in Sources */,
 				D8728BF5E7629A0B84E4CAB4 /* RootView.swift in Sources */,
 				E4F971691AB2F86D7BACBBB2 /* ServerConfiguration.swift in Sources */,
 				A3F584F628831CED1241968D /* SystemModels.swift in Sources */,

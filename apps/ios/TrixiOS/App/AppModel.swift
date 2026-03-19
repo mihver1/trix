@@ -13,10 +13,21 @@ struct CreateAccountForm {
     }
 }
 
+struct LinkExistingAccountForm {
+    var linkPayload = ""
+    var deviceDisplayName = UIDevice.current.name
+    let platform = "ios"
+
+    var canSubmit: Bool {
+        !linkPayload.trix_trimmed().isEmpty && !deviceDisplayName.trix_trimmed().isEmpty
+    }
+}
+
 struct DashboardData {
     let session: AuthSessionResponse
     let profile: AccountProfileResponse
     let devices: [DeviceSummary]
+    let historySyncJobs: [HistorySyncJobSummary]
 
     var sessionExpirationDate: Date {
         Date(timeIntervalSince1970: TimeInterval(session.expiresAtUnix))
@@ -31,6 +42,7 @@ struct DashboardData {
 final class AppModel: ObservableObject {
     @Published private(set) var localIdentity: LocalDeviceIdentity?
     @Published private(set) var dashboard: DashboardData?
+    @Published private(set) var activeLinkIntent: CreateLinkIntentResponse?
     @Published private(set) var systemSnapshot: ServerSnapshot?
     @Published private(set) var lastUpdatedAt: Date?
     @Published private(set) var isLoading = false
@@ -45,6 +57,14 @@ final class AppModel: ObservableObject {
 
     var hasProvisionedIdentity: Bool {
         localIdentity != nil
+    }
+
+    var isAwaitingApproval: Bool {
+        localIdentity?.trustState == .pendingApproval && dashboard == nil
+    }
+
+    var canManageAccountDevices: Bool {
+        localIdentity?.hasAccountRootKey ?? false
     }
 
     func start(baseURLString: String) async {
@@ -79,7 +99,13 @@ final class AppModel: ObservableObject {
             let client = try APIClient(baseURLString: baseURLString)
 
             if let localIdentity {
-                try await refreshAuthenticatedState(client: client, identity: localIdentity)
+                do {
+                    try await refreshAuthenticatedState(client: client, identity: localIdentity)
+                } catch let error as APIError where isPendingApprovalAuthFailure(error, identity: localIdentity) {
+                    dashboard = nil
+                    systemSnapshot = try? await fetchSystemSnapshot(client: client)
+                    lastUpdatedAt = Date()
+                }
             } else {
                 dashboard = nil
                 systemSnapshot = try await fetchSystemSnapshot(client: client)
@@ -142,12 +168,183 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func completeLinkIntent(
+        baseURLString: String,
+        payload: LinkIntentPayload,
+        form: LinkExistingAccountForm
+    ) async {
+        guard !isLoading else {
+            return
+        }
+
+        let deviceDisplayName = form.deviceDisplayName.trix_trimmed()
+        guard !deviceDisplayName.isEmpty else {
+            errorMessage = "Device name must not be empty."
+            return
+        }
+
+        isLoading = true
+        errorMessage = nil
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            let client = try APIClient(baseURLString: baseURLString)
+            let bootstrapMaterial = try DeviceBootstrapMaterial.generate()
+            let request = try bootstrapMaterial.makeCompleteLinkIntentRequest(
+                linkToken: payload.linkToken,
+                deviceDisplayName: deviceDisplayName,
+                platform: form.platform
+            )
+            let response: CompleteLinkIntentResponse = try await client.post(
+                "/v0/devices/link-intents/\(payload.linkIntentId)/complete",
+                body: request
+            )
+            let localIdentity = bootstrapMaterial.makeLinkedLocalIdentity(
+                accountId: response.accountId,
+                deviceId: response.pendingDeviceId,
+                deviceDisplayName: deviceDisplayName,
+                platform: form.platform
+            )
+
+            try identityStore.save(localIdentity)
+            self.localIdentity = localIdentity
+            dashboard = nil
+            activeLinkIntent = nil
+            systemSnapshot = try await fetchSystemSnapshot(client: client)
+            lastUpdatedAt = Date()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func forgetLocalDevice() {
         do {
             try identityStore.delete()
             localIdentity = nil
             dashboard = nil
+            activeLinkIntent = nil
             errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func createLinkIntent(baseURLString: String) async {
+        guard !isLoading else {
+            return
+        }
+
+        guard let identity = localIdentity else {
+            errorMessage = "Local identity is missing."
+            return
+        }
+
+        isLoading = true
+        errorMessage = nil
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            let client = try APIClient(baseURLString: baseURLString)
+            let session = try await authenticate(client: client, identity: identity)
+            let response: CreateLinkIntentResponse = try await client.post(
+                "/v0/devices/link-intents",
+                body: EmptyRequest(),
+                accessToken: session.accessToken
+            )
+            activeLinkIntent = response
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func dismissActiveLinkIntent() {
+        activeLinkIntent = nil
+    }
+
+    func revokeDevice(
+        baseURLString: String,
+        deviceId: String,
+        reason: String
+    ) async {
+        guard !isLoading else {
+            return
+        }
+
+        let trimmedReason = reason.trix_trimmed()
+        guard !trimmedReason.isEmpty else {
+            errorMessage = "Revoke reason must not be empty."
+            return
+        }
+
+        guard let identity = localIdentity else {
+            errorMessage = "Local identity is missing."
+            return
+        }
+
+        isLoading = true
+        errorMessage = nil
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            let client = try APIClient(baseURLString: baseURLString)
+            let session = try await authenticate(client: client, identity: identity)
+            let signature = try identity.signDeviceRevoke(deviceId: deviceId, reason: trimmedReason)
+
+            let _: RevokeDeviceResponse = try await client.post(
+                "/v0/devices/\(deviceId)/revoke",
+                body: RevokeDeviceRequest(
+                    reason: trimmedReason,
+                    accountRootSignatureB64: signature.base64EncodedString()
+                ),
+                accessToken: session.accessToken
+            )
+
+            try await refreshAuthenticatedState(client: client, identity: identity)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func completeHistorySyncJob(
+        baseURLString: String,
+        jobId: String
+    ) async {
+        guard !isLoading else {
+            return
+        }
+
+        guard let identity = localIdentity else {
+            errorMessage = "Local identity is missing."
+            return
+        }
+
+        isLoading = true
+        errorMessage = nil
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            let client = try APIClient(baseURLString: baseURLString)
+            let session = try await authenticate(client: client, identity: identity)
+
+            let _: CompleteHistorySyncJobResponse = try await client.post(
+                "/v0/history-sync/jobs/\(jobId)/complete",
+                body: CompleteHistorySyncJobRequest(cursorJson: nil),
+                accessToken: session.accessToken
+            )
+
+            try await refreshAuthenticatedState(client: client, identity: identity)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -167,12 +364,23 @@ final class AppModel: ObservableObject {
             "/v0/devices",
             accessToken: session.accessToken
         )
+        async let historySyncJobs: HistorySyncJobListResponse = client.get(
+            "/v0/history-sync/jobs?limit=50",
+            accessToken: session.accessToken
+        )
+
+        if identity.trustState != .active {
+            let activeIdentity = identity.markingActive()
+            try identityStore.save(activeIdentity)
+            localIdentity = activeIdentity
+        }
 
         self.systemSnapshot = try await systemSnapshot
         dashboard = try await DashboardData(
             session: session,
             profile: profile,
-            devices: devices.devices
+            devices: devices.devices,
+            historySyncJobs: historySyncJobs.jobs
         )
         lastUpdatedAt = Date()
     }
@@ -204,6 +412,21 @@ final class AppModel: ObservableObject {
 
         return try await ServerSnapshot(health: health, version: version)
     }
+
+    private func isPendingApprovalAuthFailure(
+        _ error: APIError,
+        identity: LocalDeviceIdentity
+    ) -> Bool {
+        guard identity.trustState == .pendingApproval else {
+            return false
+        }
+
+        if case let .http(statusCode, message) = error {
+            return statusCode == 401 && (message?.contains("device is not active") ?? false)
+        }
+
+        return false
+    }
 }
 
 private extension String {
@@ -216,3 +439,5 @@ private extension String {
         return trimmed.isEmpty ? nil : trimmed
     }
 }
+
+private struct EmptyRequest: Encodable {}
