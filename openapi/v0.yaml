@@ -166,6 +166,23 @@ paths:
                 $ref: '#/components/schemas/CompleteLinkIntentResponse'
         '409':
           $ref: '#/components/responses/Conflict'
+  /v0/devices/{device_id}/approve-payload:
+    get:
+      operationId: getApproveDevicePayload
+      tags: [devices]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '200':
+          description: Canonical bootstrap payload for signing pending device approval
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceApprovePayloadResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v0/devices/{device_id}/approve:
     post:
       operationId: approveDevice
@@ -955,7 +972,7 @@ components:
             $ref: '#/components/schemas/PublishKeyPackageItem'
     CompleteLinkIntentResponse:
       type: object
-      required: [account_id, pending_device_id, device_status]
+      required: [account_id, pending_device_id, device_status, bootstrap_payload_b64]
       properties:
         account_id:
           $ref: '#/components/schemas/Uuid'
@@ -963,6 +980,36 @@ components:
           $ref: '#/components/schemas/Uuid'
         device_status:
           $ref: '#/components/schemas/DeviceStatus'
+        bootstrap_payload_b64:
+          type: string
+    DeviceApprovePayloadResponse:
+      type: object
+      required:
+        - account_id
+        - device_id
+        - device_display_name
+        - platform
+        - device_status
+        - credential_identity_b64
+        - transport_pubkey_b64
+        - bootstrap_payload_b64
+      properties:
+        account_id:
+          $ref: '#/components/schemas/Uuid'
+        device_id:
+          $ref: '#/components/schemas/Uuid'
+        device_display_name:
+          type: string
+        platform:
+          type: string
+        device_status:
+          $ref: '#/components/schemas/DeviceStatus'
+        credential_identity_b64:
+          type: string
+        transport_pubkey_b64:
+          type: string
+        bootstrap_payload_b64:
+          type: string
     ApproveDeviceRequest:
       type: object
       required: [account_root_signature_b64]

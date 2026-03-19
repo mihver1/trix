@@ -136,6 +136,19 @@ pub struct CompleteLinkIntentResponse {
     pub account_id: AccountId,
     pub pending_device_id: DeviceId,
     pub device_status: DeviceStatus,
+    pub bootstrap_payload_b64: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceApprovePayloadResponse {
+    pub account_id: AccountId,
+    pub device_id: DeviceId,
+    pub device_display_name: String,
+    pub platform: String,
+    pub device_status: DeviceStatus,
+    pub credential_identity_b64: String,
+    pub transport_pubkey_b64: String,
+    pub bootstrap_payload_b64: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

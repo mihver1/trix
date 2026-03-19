@@ -623,7 +623,18 @@ Request:
 Response:
 
 - `pending_device_id`
-- bootstrap server info
+- `bootstrap_payload_b64`
+
+### `GET /v0/devices/{device_id}/approve-payload`
+
+Returns the canonical bootstrap payload that must be signed with the account root key in order to approve a pending device.
+
+Response:
+
+- pending device metadata
+- `credential_identity_b64`
+- `transport_pubkey_b64`
+- `bootstrap_payload_b64`
 
 ### `POST /v0/devices/{device_id}/approve`
 
@@ -631,7 +642,7 @@ Called by an already trusted device to activate the pending device.
 
 Request:
 
-- account-root-signed approval payload
+- `account_root_signature_b64` over the canonical `bootstrap_payload_b64`
 - encrypted transfer bundle for the new device
 
 Response:
@@ -900,7 +911,7 @@ Returns blob metadata as headers.
 
 1. Existing trusted device creates a `link_intent`.
 2. New device scans the QR and uploads its device metadata and `KeyPackage` batch.
-3. Existing trusted device approves the pending device using the account root key and sends an encrypted transfer bundle.
+3. Existing trusted device fetches `GET /v0/devices/{device_id}/approve-payload`, signs `bootstrap_payload_b64` with the account root key, and submits `POST /v0/devices/{device_id}/approve`.
 4. Server marks the new device `active` and appends a `device_log` event.
 5. Existing trusted device adds the new device to:
    - the `account sync group`

@@ -128,6 +128,9 @@ pub struct ApprovePendingDeviceOutput {
 #[derive(Debug)]
 pub struct PendingDeviceBootstrapRow {
     pub account_id: Uuid,
+    pub device_id: Uuid,
+    pub device_display_name: String,
+    pub platform: String,
     pub credential_identity: Vec<u8>,
     pub transport_pubkey: Vec<u8>,
     pub account_root_pubkey: Vec<u8>,
@@ -974,6 +977,9 @@ impl Database {
             r#"
             SELECT
                 d.account_id,
+                d.device_id,
+                d.display_name,
+                d.platform,
                 d.credential_identity,
                 d.transport_pubkey,
                 d.device_status::text AS device_status,
@@ -995,6 +1001,9 @@ impl Database {
 
         Ok(Some(PendingDeviceBootstrapRow {
             account_id: row_uuid(&row, "account_id")?,
+            device_id: row_uuid(&row, "device_id")?,
+            device_display_name: row_text(&row, "display_name")?,
+            platform: row_text(&row, "platform")?,
             credential_identity: row_bytes(&row, "credential_identity")?,
             transport_pubkey: row_bytes(&row, "transport_pubkey")?,
             account_root_pubkey: row_bytes(&row, "account_root_pubkey")?,
