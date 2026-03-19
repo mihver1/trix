@@ -8,6 +8,7 @@
         android:label="@string/app_name"
         android:resizeableActivity="true"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.TrixAndroid">
         <activity
             android:name=".MainActivity"

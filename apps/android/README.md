@@ -33,8 +33,15 @@ The repository has a `trix-core` crate, but it does not yet provide real sync, s
 
 ## Next Android Tasks
 
-- add a thin API layer for `system/health` and `system/version`
 - implement account bootstrap and device session flows
 - add secure local persistence for session state
 - introduce thread caching and message timeline syncing
 - decide where Android-specific storage ends and shared Rust begins
+
+## Local Backend Wiring
+
+- default Android `debug` base URL is `http://10.0.2.2:8080`
+- override it when needed with:
+  - `./gradlew installDebug -PtrixBaseUrl=http://10.0.2.2:8080`
+  - or `TRIX_BASE_URL=http://10.0.2.2:8080 ./gradlew installDebug`
+- local cleartext HTTP is enabled in the manifest for development because `trixd` currently runs over plain HTTP in the dev stack

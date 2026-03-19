@@ -3,6 +3,12 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val trixBaseUrl = providers.gradleProperty("trixBaseUrl")
+    .orElse(providers.environmentVariable("TRIX_BASE_URL"))
+    .orElse("http://10.0.2.2:8080")
+    .get()
+    .trimEnd('/')
+
 android {
     namespace = "chat.trix.android"
     compileSdk = 36
@@ -13,6 +19,7 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        buildConfigField("String", "TRIX_BASE_URL", "\"$trixBaseUrl\"")
     }
 
     buildFeatures {
