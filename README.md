@@ -6,11 +6,13 @@
 - `PostgreSQL` for metadata and delivery state
 - local filesystem blob storage for encrypted attachments
 - `OpenMLS` as the planned group-crypto layer
-- `macOS` as the first client platform
+- `macOS` as the first desktop client platform
+- `Android` as the adaptive mobile client track
 
 ## Repository Layout
 
 - `apps/trixd` backend binary
+- `apps/android` Android adaptive client scaffold
 - `apps/macos` macOS app scaffold and integration notes
 - `crates/trix-core` shared client core scaffold
 - `crates/trix-server` backend server library scaffold
@@ -44,3 +46,4 @@ The repository currently contains a compile-ready scaffold plus the first workin
 - implement device linking and revocation flows
 - implement chat creation and encrypted message append paths
 - generate `UniFFI` bindings for the future `macOS` app
+- wire Android health/version and auth/device flows on top of the adaptive scaffold

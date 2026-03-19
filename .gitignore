@@ -3,6 +3,9 @@
 /.idea
 /.vscode
 .env
+/.gradle
+/apps/android/.gradle
+/apps/android/local.properties
+**/build/
 blobs/
 postgres-data/
-
