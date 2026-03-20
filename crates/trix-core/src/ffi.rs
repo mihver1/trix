@@ -11,7 +11,8 @@ use crate::{
     CompletedLinkIntentMaterial, CreateAccountParams, DeviceApprovePayloadMaterial,
     DeviceKeyMaterial, DeviceTransferBundleMaterial, HistorySyncChunkMaterial, MlsCommitBundle,
     MlsFacade, MlsMemberIdentity, MlsProcessResult, PublishKeyPackageMaterial,
-    ReservedKeyPackageMaterial, ServerApiClient,
+    ReservedKeyPackageMaterial, ServerApiClient, SyncChatCursor, SyncCoordinator,
+    SyncStateSnapshot,
 };
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -86,6 +87,12 @@ pub enum FfiBlobUploadStatus {
 }
 
 #[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum FfiServiceStatus {
+    Ok,
+    Degraded,
+}
+
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
 pub enum FfiMlsProcessKind {
     ApplicationMessage,
     ProposalQueued,
@@ -110,6 +117,21 @@ pub struct FfiCreateAccountResponse {
     pub account_id: String,
     pub device_id: String,
     pub account_sync_chat_id: String,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiHealthResponse {
+    pub service: String,
+    pub status: FfiServiceStatus,
+    pub version: String,
+    pub uptime_ms: u64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiVersionResponse {
+    pub service: String,
+    pub version: String,
+    pub git_sha: Option<String>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -423,6 +445,19 @@ pub struct FfiAckInboxResponse {
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiSyncChatCursor {
+    pub chat_id: String,
+    pub last_server_seq: u64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiSyncStateSnapshot {
+    pub lease_owner: String,
+    pub last_acked_inbox_id: Option<u64>,
+    pub chat_cursors: Vec<FfiSyncChatCursor>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct FfiCreateBlobUploadResponse {
     pub blob_id: String,
     pub upload_url: String,
@@ -495,6 +530,12 @@ pub struct FfiMlsFacade {
 }
 
 #[derive(uniffi::Object)]
+pub struct FfiSyncCoordinator {
+    inner: Mutex<SyncCoordinator>,
+    runtime: Runtime,
+}
+
+#[derive(uniffi::Object)]
 pub struct FfiMlsConversation {
     inner: Mutex<crate::MlsConversation>,
 }
@@ -551,6 +592,27 @@ impl FfiServerApiClient {
             account_id: response.account_id.0.to_string(),
             device_id: response.device_id.0.to_string(),
             account_sync_chat_id: response.account_sync_chat_id.0.to_string(),
+        })
+    }
+
+    pub fn get_health(&self) -> Result<FfiHealthResponse, TrixFfiError> {
+        let client = clone_server_api_client(&self.inner)?;
+        let response = self.runtime.block_on(client.get_health())?;
+        Ok(FfiHealthResponse {
+            service: response.service,
+            status: response.status.into(),
+            version: response.version,
+            uptime_ms: response.uptime_ms,
+        })
+    }
+
+    pub fn get_version(&self) -> Result<FfiVersionResponse, TrixFfiError> {
+        let client = clone_server_api_client(&self.inner)?;
+        let response = self.runtime.block_on(client.get_version())?;
+        Ok(FfiVersionResponse {
+            service: response.service,
+            version: response.version,
+            git_sha: response.git_sha,
         })
     }
 
@@ -1219,6 +1281,119 @@ impl FfiDeviceKeyMaterial {
 }
 
 #[uniffi::export]
+impl FfiSyncCoordinator {
+    #[uniffi::constructor]
+    pub fn new() -> Result<Arc<Self>, TrixFfiError> {
+        Ok(Arc::new(Self {
+            inner: Mutex::new(SyncCoordinator::new()),
+            runtime: build_runtime()?,
+        }))
+    }
+
+    #[uniffi::constructor]
+    pub fn new_persistent(state_path: String) -> Result<Arc<Self>, TrixFfiError> {
+        Ok(Arc::new(Self {
+            inner: Mutex::new(SyncCoordinator::new_persistent(state_path).map_err(ffi_error)?),
+            runtime: build_runtime()?,
+        }))
+    }
+
+    pub fn save_state(&self) -> Result<(), TrixFfiError> {
+        lock(&self.inner)?.save_state().map_err(ffi_error)
+    }
+
+    pub fn state_path(&self) -> Result<Option<String>, TrixFfiError> {
+        Ok(lock(&self.inner)?
+            .state_path()
+            .map(|path| path.to_string_lossy().into_owned()))
+    }
+
+    pub fn state_snapshot(&self) -> Result<FfiSyncStateSnapshot, TrixFfiError> {
+        Ok(sync_state_snapshot_to_ffi(
+            lock(&self.inner)?.snapshot().map_err(ffi_error)?,
+        ))
+    }
+
+    pub fn lease_owner(&self) -> Result<String, TrixFfiError> {
+        Ok(lock(&self.inner)?.lease_owner().to_owned())
+    }
+
+    pub fn last_acked_inbox_id(&self) -> Result<Option<u64>, TrixFfiError> {
+        Ok(lock(&self.inner)?.last_acked_inbox_id())
+    }
+
+    pub fn chat_cursor(&self, chat_id: String) -> Result<Option<u64>, TrixFfiError> {
+        Ok(lock(&self.inner)?.chat_cursor(parse_chat_id(&chat_id)?))
+    }
+
+    pub fn record_chat_server_seq(
+        &self,
+        chat_id: String,
+        server_seq: u64,
+    ) -> Result<bool, TrixFfiError> {
+        lock(&self.inner)?
+            .record_chat_server_seq(parse_chat_id(&chat_id)?, server_seq)
+            .map_err(ffi_error)
+    }
+
+    pub fn sync_chat_histories(
+        &self,
+        client: Arc<FfiServerApiClient>,
+        limit_per_chat: u32,
+    ) -> Result<Vec<FfiChatHistory>, TrixFfiError> {
+        let client = clone_server_api_client(&client.inner)?;
+        let histories = {
+            let mut coordinator = lock(&self.inner)?;
+            self.runtime
+                .block_on(coordinator.sync_chat_histories(&client, limit_per_chat as usize))
+                .map_err(ffi_error)?
+        };
+        Ok(histories.into_iter().map(chat_history_to_ffi).collect())
+    }
+
+    pub fn lease_inbox(
+        &self,
+        client: Arc<FfiServerApiClient>,
+        limit: Option<u32>,
+        lease_ttl_seconds: Option<u64>,
+    ) -> Result<FfiLeaseInboxResponse, TrixFfiError> {
+        let client = clone_server_api_client(&client.inner)?;
+        let response = {
+            let coordinator = lock(&self.inner)?;
+            self.runtime
+                .block_on(coordinator.lease_inbox(
+                    &client,
+                    limit.map(|value| value as usize),
+                    lease_ttl_seconds,
+                ))
+                .map_err(ffi_error)?
+        };
+        Ok(FfiLeaseInboxResponse {
+            lease_owner: response.lease_owner,
+            lease_expires_at_unix: response.lease_expires_at_unix,
+            items: response.items.into_iter().map(inbox_item_to_ffi).collect(),
+        })
+    }
+
+    pub fn ack_inbox(
+        &self,
+        client: Arc<FfiServerApiClient>,
+        inbox_ids: Vec<u64>,
+    ) -> Result<FfiAckInboxResponse, TrixFfiError> {
+        let client = clone_server_api_client(&client.inner)?;
+        let response = {
+            let mut coordinator = lock(&self.inner)?;
+            self.runtime
+                .block_on(coordinator.ack_inbox(&client, inbox_ids))
+                .map_err(ffi_error)?
+        };
+        Ok(FfiAckInboxResponse {
+            acked_inbox_ids: response.acked_inbox_ids,
+        })
+    }
+}
+
+#[uniffi::export]
 impl FfiMlsFacade {
     #[uniffi::constructor]
     pub fn new(credential_identity: Vec<u8>) -> Result<Arc<Self>, TrixFfiError> {
@@ -1227,8 +1402,37 @@ impl FfiMlsFacade {
         }))
     }
 
+    #[uniffi::constructor]
+    pub fn new_persistent(
+        credential_identity: Vec<u8>,
+        storage_root: String,
+    ) -> Result<Arc<Self>, TrixFfiError> {
+        Ok(Arc::new(Self {
+            inner: Mutex::new(
+                MlsFacade::new_persistent(credential_identity, storage_root).map_err(ffi_error)?,
+            ),
+        }))
+    }
+
+    #[uniffi::constructor]
+    pub fn load_persistent(storage_root: String) -> Result<Arc<Self>, TrixFfiError> {
+        Ok(Arc::new(Self {
+            inner: Mutex::new(MlsFacade::load_persistent(storage_root).map_err(ffi_error)?),
+        }))
+    }
+
     pub fn ciphersuite_label(&self) -> Result<String, TrixFfiError> {
         Ok(lock(&self.inner)?.ciphersuite_label())
+    }
+
+    pub fn storage_root(&self) -> Result<Option<String>, TrixFfiError> {
+        Ok(lock(&self.inner)?
+            .storage_root()
+            .map(|path| path.to_string_lossy().into_owned()))
+    }
+
+    pub fn save_state(&self) -> Result<(), TrixFfiError> {
+        lock(&self.inner)?.save_state().map_err(ffi_error)
     }
 
     pub fn credential_identity(&self) -> Result<Vec<u8>, TrixFfiError> {
@@ -1255,6 +1459,18 @@ impl FfiMlsFacade {
             .map_err(ffi_error)?;
         Ok(Arc::new(FfiMlsConversation {
             inner: Mutex::new(conversation),
+        }))
+    }
+
+    pub fn load_group(
+        &self,
+        group_id: Vec<u8>,
+    ) -> Result<Option<Arc<FfiMlsConversation>>, TrixFfiError> {
+        let conversation = lock(&self.inner)?.load_group(group_id).map_err(ffi_error)?;
+        Ok(conversation.map(|conversation| {
+            Arc::new(FfiMlsConversation {
+                inner: Mutex::new(conversation),
+            })
         }))
     }
 
@@ -1576,6 +1792,17 @@ fn chat_detail_to_ffi(value: trix_types::ChatDetailResponse) -> FfiChatDetail {
     }
 }
 
+fn chat_history_to_ffi(value: trix_types::ChatHistoryResponse) -> FfiChatHistory {
+    FfiChatHistory {
+        chat_id: value.chat_id.0.to_string(),
+        messages: value
+            .messages
+            .into_iter()
+            .map(message_envelope_to_ffi)
+            .collect(),
+    }
+}
+
 fn modify_chat_members_response_to_ffi(
     value: trix_types::ModifyChatMembersResponse,
 ) -> FfiModifyChatMembersResponse {
@@ -1625,6 +1852,25 @@ fn inbox_item_to_ffi(value: trix_types::InboxItem) -> FfiInboxItem {
     FfiInboxItem {
         inbox_id: value.inbox_id,
         message: message_envelope_to_ffi(value.message),
+    }
+}
+
+fn sync_chat_cursor_to_ffi(value: SyncChatCursor) -> FfiSyncChatCursor {
+    FfiSyncChatCursor {
+        chat_id: value.chat_id.0.to_string(),
+        last_server_seq: value.last_server_seq,
+    }
+}
+
+fn sync_state_snapshot_to_ffi(value: SyncStateSnapshot) -> FfiSyncStateSnapshot {
+    FfiSyncStateSnapshot {
+        lease_owner: value.lease_owner,
+        last_acked_inbox_id: value.last_acked_inbox_id,
+        chat_cursors: value
+            .chat_cursors
+            .into_iter()
+            .map(sync_chat_cursor_to_ffi)
+            .collect(),
     }
 }
 
@@ -1811,6 +2057,15 @@ impl From<trix_types::BlobUploadStatus> for FfiBlobUploadStatus {
         match value {
             trix_types::BlobUploadStatus::PendingUpload => Self::PendingUpload,
             trix_types::BlobUploadStatus::Available => Self::Available,
+        }
+    }
+}
+
+impl From<trix_types::ServiceStatus> for FfiServiceStatus {
+    fn from(value: trix_types::ServiceStatus) -> Self {
+        match value {
+            trix_types::ServiceStatus::Ok => Self::Ok,
+            trix_types::ServiceStatus::Degraded => Self::Degraded,
         }
     }
 }

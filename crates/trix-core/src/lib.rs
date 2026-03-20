@@ -13,8 +13,8 @@ pub use crypto::{
     MlsFacade, MlsMemberIdentity, MlsProcessResult,
 };
 pub use ffi::*;
-pub use storage::{AttachmentStore, LocalHistoryStore};
-pub use sync::{CoreEvent, CoreEventSink, SyncCoordinator};
+pub use storage::{AttachmentStore, LocalHistoryStore, MlsStateStore, SyncStateStore};
+pub use sync::{CoreEvent, CoreEventSink, SyncChatCursor, SyncCoordinator, SyncStateSnapshot};
 pub use transport::{
     AuthChallengeMaterial, BlobHeadMaterial, BlobMetadataMaterial, CompleteLinkIntentParams,
     CompletedLinkIntentMaterial, CreateAccountParams, DeviceApprovePayloadMaterial,

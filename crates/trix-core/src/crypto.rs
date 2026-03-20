@@ -1,3 +1,8 @@
+use std::{
+    fs::{self, File},
+    path::{Path, PathBuf},
+};
+
 use anyhow::{Context, Result, anyhow};
 use ed25519_dalek::{Signature, Signer as _, SigningKey, Verifier as _, VerifyingKey};
 use openmls::prelude::{
@@ -6,12 +11,53 @@ use openmls::prelude::{
     ProcessedMessageContent, ProtocolMessage, ProtocolVersion, RatchetTreeIn, StagedWelcome,
 };
 use openmls_basic_credential::SignatureKeyPair;
-use openmls_rust_crypto::OpenMlsRustCrypto;
+use openmls_memory_storage::MemoryStorage;
+use openmls_rust_crypto::RustCrypto;
 use openmls_traits::{OpenMlsProvider as _, types::Ciphersuite};
+use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 use tls_codec::{Deserialize, Serialize};
 
 pub const DEFAULT_CIPHERSUITE: Ciphersuite =
     Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
+
+#[derive(Debug, Default)]
+struct TrixOpenMlsProvider {
+    crypto: RustCrypto,
+    key_store: MemoryStorage,
+}
+
+impl openmls_traits::OpenMlsProvider for TrixOpenMlsProvider {
+    type CryptoProvider = RustCrypto;
+    type RandProvider = RustCrypto;
+    type StorageProvider = MemoryStorage;
+
+    fn storage(&self) -> &Self::StorageProvider {
+        &self.key_store
+    }
+
+    fn crypto(&self) -> &Self::CryptoProvider {
+        &self.crypto
+    }
+
+    fn rand(&self) -> &Self::RandProvider {
+        &self.crypto
+    }
+}
+
+#[derive(Debug, Clone)]
+struct MlsPersistencePaths {
+    root: PathBuf,
+    storage_file: PathBuf,
+    metadata_file: PathBuf,
+}
+
+#[derive(Debug, Clone, SerdeSerialize, SerdeDeserialize)]
+struct PersistedMlsMetadata {
+    version: u32,
+    credential_identity: Vec<u8>,
+    ciphersuite: u16,
+    signature_public_key: Vec<u8>,
+}
 
 #[derive(Debug, Clone)]
 pub struct AccountRootMaterial {
@@ -88,11 +134,12 @@ impl DeviceKeyMaterial {
 }
 
 pub struct MlsFacade {
-    provider: OpenMlsRustCrypto,
+    provider: TrixOpenMlsProvider,
     signer: SignatureKeyPair,
     credential_with_key: CredentialWithKey,
     credential_identity: Vec<u8>,
     ciphersuite: Ciphersuite,
+    persistence: Option<MlsPersistencePaths>,
 }
 
 pub struct MlsConversation {
@@ -126,18 +173,162 @@ impl MlsFacade {
         Self::with_ciphersuite(credential_identity, DEFAULT_CIPHERSUITE)
     }
 
+    pub fn new_persistent(
+        credential_identity: impl Into<Vec<u8>>,
+        storage_root: impl Into<PathBuf>,
+    ) -> Result<Self> {
+        Self::with_ciphersuite_and_storage(credential_identity, DEFAULT_CIPHERSUITE, storage_root)
+    }
+
     pub fn with_ciphersuite(
         credential_identity: impl Into<Vec<u8>>,
         ciphersuite: Ciphersuite,
     ) -> Result<Self> {
         let credential_identity = credential_identity.into();
-        let provider = OpenMlsRustCrypto::default();
+        let provider = TrixOpenMlsProvider::default();
         let signer = SignatureKeyPair::new(ciphersuite.signature_algorithm())
             .context("failed to generate MLS signature key pair")?;
         signer
             .store(provider.storage())
             .context("failed to store MLS signer in key store")?;
 
+        Self::build(provider, signer, credential_identity, ciphersuite, None)
+    }
+
+    pub fn with_ciphersuite_and_storage(
+        credential_identity: impl Into<Vec<u8>>,
+        ciphersuite: Ciphersuite,
+        storage_root: impl Into<PathBuf>,
+    ) -> Result<Self> {
+        let storage_root = storage_root.into();
+        let paths = MlsPersistencePaths::new(storage_root);
+        if paths.metadata_file.exists() || paths.storage_file.exists() {
+            return Err(anyhow!(
+                "MLS persistent state already exists at {}",
+                paths.root.display()
+            ));
+        }
+
+        let credential_identity = credential_identity.into();
+        let provider = TrixOpenMlsProvider::default();
+        let signer = SignatureKeyPair::new(ciphersuite.signature_algorithm())
+            .context("failed to generate MLS signature key pair")?;
+        signer
+            .store(provider.storage())
+            .context("failed to store MLS signer in key store")?;
+
+        let facade = Self::build(
+            provider,
+            signer,
+            credential_identity,
+            ciphersuite,
+            Some(paths),
+        )?;
+        facade.save_state()?;
+        Ok(facade)
+    }
+
+    pub fn load_persistent(storage_root: impl Into<PathBuf>) -> Result<Self> {
+        let paths = MlsPersistencePaths::new(storage_root.into());
+        let metadata = load_persisted_metadata(&paths)?;
+        let mut storage = MemoryStorage::default();
+        let storage_file = File::open(&paths.storage_file).with_context(|| {
+            format!(
+                "failed to open MLS storage snapshot at {}",
+                paths.storage_file.display()
+            )
+        })?;
+        storage
+            .load_from_file(&storage_file)
+            .map_err(|err| anyhow!("failed to load MLS storage snapshot: {err}"))?;
+        let provider = TrixOpenMlsProvider {
+            crypto: RustCrypto::default(),
+            key_store: storage,
+        };
+        let ciphersuite = Ciphersuite::try_from(metadata.ciphersuite)
+            .map_err(|err| anyhow!("invalid persisted MLS ciphersuite: {err}"))?;
+        let signer = SignatureKeyPair::read(
+            provider.storage(),
+            &metadata.signature_public_key,
+            ciphersuite.signature_algorithm(),
+        )
+        .ok_or_else(|| anyhow!("persisted MLS signer is missing from storage"))?;
+
+        Self::build(
+            provider,
+            signer,
+            metadata.credential_identity,
+            ciphersuite,
+            Some(paths),
+        )
+    }
+
+    pub fn storage_root(&self) -> Option<&Path> {
+        self.persistence.as_ref().map(|paths| paths.root.as_path())
+    }
+
+    pub fn save_state(&self) -> Result<()> {
+        let Some(paths) = &self.persistence else {
+            return Ok(());
+        };
+
+        paths.ensure_root()?;
+        let storage_tmp = paths.storage_tmp_file();
+        let metadata_tmp = paths.metadata_tmp_file();
+
+        {
+            let output_file = File::create(&storage_tmp).with_context(|| {
+                format!(
+                    "failed to create temporary MLS storage snapshot at {}",
+                    storage_tmp.display()
+                )
+            })?;
+            self.provider
+                .storage()
+                .save_to_file(&output_file)
+                .map_err(|err| anyhow!("failed to write MLS storage snapshot: {err}"))?;
+        }
+
+        let metadata = PersistedMlsMetadata {
+            version: 1,
+            credential_identity: self.credential_identity.clone(),
+            ciphersuite: self.ciphersuite.into(),
+            signature_public_key: self.signature_public_key().to_vec(),
+        };
+        {
+            let output_file = File::create(&metadata_tmp).with_context(|| {
+                format!(
+                    "failed to create temporary MLS metadata snapshot at {}",
+                    metadata_tmp.display()
+                )
+            })?;
+            serde_json::to_writer_pretty(output_file, &metadata)
+                .context("failed to write MLS metadata snapshot")?;
+        }
+
+        fs::rename(&storage_tmp, &paths.storage_file).with_context(|| {
+            format!(
+                "failed to replace MLS storage snapshot at {}",
+                paths.storage_file.display()
+            )
+        })?;
+        fs::rename(&metadata_tmp, &paths.metadata_file).with_context(|| {
+            format!(
+                "failed to replace MLS metadata snapshot at {}",
+                paths.metadata_file.display()
+            )
+        })?;
+
+        Ok(())
+    }
+
+    fn build(
+        provider: TrixOpenMlsProvider,
+        signer: SignatureKeyPair,
+        credential_identity: Vec<u8>,
+        ciphersuite: Ciphersuite,
+        persistence: Option<MlsPersistencePaths>,
+    ) -> Result<Self> {
         let credential = BasicCredential::new(credential_identity.clone());
         let credential_with_key = CredentialWithKey {
             credential: credential.into(),
@@ -150,7 +341,12 @@ impl MlsFacade {
             credential_with_key,
             credential_identity,
             ciphersuite,
+            persistence,
         })
+    }
+
+    fn persist_if_needed(&self) -> Result<()> {
+        self.save_state()
     }
 
     pub fn ciphersuite(&self) -> Ciphersuite {
@@ -178,11 +374,12 @@ impl MlsFacade {
                 self.credential_with_key.clone(),
             )
             .context("failed to build MLS key package")?;
-
-        bundle
+        let key_package = bundle
             .key_package()
             .tls_serialize_detached()
-            .context("failed to serialize MLS key package")
+            .context("failed to serialize MLS key package")?;
+        self.persist_if_needed()?;
+        Ok(key_package)
     }
 
     pub fn generate_key_packages(&self, count: usize) -> Result<Vec<Vec<u8>>> {
@@ -199,7 +396,7 @@ impl MlsFacade {
             self.credential_with_key.clone(),
         )
         .context("failed to create MLS group")?;
-
+        self.persist_if_needed()?;
         Ok(MlsConversation { group })
     }
 
@@ -234,7 +431,7 @@ impl MlsFacade {
                 .context("failed to stage MLS welcome")?
                 .into_group(&self.provider)
                 .context("failed to create MLS group from welcome")?;
-
+        self.persist_if_needed()?;
         Ok(MlsConversation { group })
     }
 
@@ -256,6 +453,7 @@ impl MlsFacade {
             .group
             .merge_pending_commit(&self.provider)
             .context("failed to merge local add-members commit")?;
+        self.persist_if_needed()?;
 
         Ok(MlsCommitBundle {
             commit_message: commit.to_bytes().context("failed to serialize commit")?,
@@ -286,6 +484,7 @@ impl MlsFacade {
             .group
             .merge_pending_commit(&self.provider)
             .context("failed to merge local remove-members commit")?;
+        self.persist_if_needed()?;
 
         Ok(MlsCommitBundle {
             commit_message: commit.to_bytes().context("failed to serialize commit")?,
@@ -305,6 +504,7 @@ impl MlsFacade {
             .group
             .merge_pending_commit(&self.provider)
             .context("failed to merge local self-update commit")?;
+        self.persist_if_needed()?;
 
         Ok(MlsCommitBundle {
             commit_message: commit.to_bytes().context("failed to serialize commit")?,
@@ -319,12 +519,14 @@ impl MlsFacade {
         conversation: &mut MlsConversation,
         plaintext: &[u8],
     ) -> Result<Vec<u8>> {
-        conversation
+        let message = conversation
             .group
             .create_message(&self.provider, &self.signer, plaintext)
             .context("failed to create MLS application message")?
             .to_bytes()
-            .context("failed to serialize MLS application message")
+            .context("failed to serialize MLS application message")?;
+        self.persist_if_needed()?;
+        Ok(message)
     }
 
     pub fn process_message(
@@ -344,34 +546,36 @@ impl MlsFacade {
             .process_message(&self.provider, protocol_message)
             .context("failed to process MLS message")?;
 
-        match processed.into_content() {
+        let result = match processed.into_content() {
             ProcessedMessageContent::ApplicationMessage(message) => {
-                Ok(MlsProcessResult::ApplicationMessage(message.into_bytes()))
+                MlsProcessResult::ApplicationMessage(message.into_bytes())
             }
             ProcessedMessageContent::ProposalMessage(proposal) => {
                 conversation
                     .group
                     .store_pending_proposal(self.provider.storage(), *proposal)
                     .context("failed to store MLS proposal")?;
-                Ok(MlsProcessResult::ProposalQueued)
+                MlsProcessResult::ProposalQueued
             }
             ProcessedMessageContent::ExternalJoinProposalMessage(proposal) => {
                 conversation
                     .group
                     .store_pending_proposal(self.provider.storage(), *proposal)
                     .context("failed to store external MLS join proposal")?;
-                Ok(MlsProcessResult::ProposalQueued)
+                MlsProcessResult::ProposalQueued
             }
             ProcessedMessageContent::StagedCommitMessage(staged_commit) => {
                 conversation
                     .group
                     .merge_staged_commit(&self.provider, *staged_commit)
                     .context("failed to merge staged MLS commit")?;
-                Ok(MlsProcessResult::CommitMerged {
+                MlsProcessResult::CommitMerged {
                     epoch: conversation.group.epoch().as_u64(),
-                })
+                }
             }
-        }
+        };
+        self.persist_if_needed()?;
+        Ok(result)
     }
 
     pub fn export_secret(
@@ -418,6 +622,47 @@ impl MlsConversation {
     }
 }
 
+impl MlsPersistencePaths {
+    fn new(root: PathBuf) -> Self {
+        Self {
+            storage_file: root.join("storage.json"),
+            metadata_file: root.join("metadata.json"),
+            root,
+        }
+    }
+
+    fn ensure_root(&self) -> Result<()> {
+        fs::create_dir_all(&self.root)
+            .with_context(|| format!("failed to create MLS storage root {}", self.root.display()))
+    }
+
+    fn storage_tmp_file(&self) -> PathBuf {
+        self.root.join("storage.json.tmp")
+    }
+
+    fn metadata_tmp_file(&self) -> PathBuf {
+        self.root.join("metadata.json.tmp")
+    }
+}
+
+fn load_persisted_metadata(paths: &MlsPersistencePaths) -> Result<PersistedMlsMetadata> {
+    let input_file = File::open(&paths.metadata_file).with_context(|| {
+        format!(
+            "failed to open MLS metadata snapshot at {}",
+            paths.metadata_file.display()
+        )
+    })?;
+    let metadata: PersistedMlsMetadata =
+        serde_json::from_reader(input_file).context("failed to parse MLS metadata snapshot")?;
+    if metadata.version != 1 {
+        return Err(anyhow!(
+            "unsupported MLS metadata snapshot version {}",
+            metadata.version
+        ));
+    }
+    Ok(metadata)
+}
+
 fn default_group_create_config(ciphersuite: Ciphersuite) -> MlsGroupCreateConfig {
     MlsGroupCreateConfig::builder()
         .ciphersuite(ciphersuite)
@@ -432,7 +677,7 @@ fn default_group_join_config() -> MlsGroupJoinConfig {
 }
 
 fn deserialize_key_package(
-    provider: &OpenMlsRustCrypto,
+    provider: &TrixOpenMlsProvider,
     bytes: &[u8],
 ) -> Result<openmls::prelude::KeyPackage> {
     let key_package_in = KeyPackageIn::tls_deserialize_exact(bytes)
@@ -473,6 +718,10 @@ fn verify_ed25519_signature(
 
 #[cfg(test)]
 mod tests {
+    use std::{env, fs};
+
+    use uuid::Uuid;
+
     use super::{AccountRootMaterial, DeviceKeyMaterial, MlsFacade, MlsProcessResult};
 
     #[test]
@@ -540,5 +789,41 @@ mod tests {
                 .iter()
                 .any(|member| member.credential_identity == b"bob-device".to_vec())
         );
+    }
+
+    #[test]
+    fn mls_facade_persists_state_across_restart() {
+        let storage_root = env::temp_dir().join(format!("trix-mls-{}", Uuid::new_v4()));
+        let bob = MlsFacade::new(b"bob-device".to_vec()).unwrap();
+        let alice = MlsFacade::new_persistent(b"alice-device".to_vec(), &storage_root).unwrap();
+
+        let bob_key_package = bob.generate_key_package().unwrap();
+        let mut alice_group = alice.create_group(b"chat-persist".as_slice()).unwrap();
+        let add_bundle = alice
+            .add_members(&mut alice_group, &[bob_key_package])
+            .unwrap();
+        let mut bob_group = bob
+            .join_group_from_welcome(
+                add_bundle.welcome_message.as_ref().unwrap(),
+                add_bundle.ratchet_tree.as_deref(),
+            )
+            .unwrap();
+
+        let restored_alice = MlsFacade::load_persistent(&storage_root).unwrap();
+        let mut restored_group = restored_alice
+            .load_group(b"chat-persist".as_slice())
+            .unwrap()
+            .expect("persisted group should be present");
+
+        let ciphertext = restored_alice
+            .create_application_message(&mut restored_group, b"after restart")
+            .unwrap();
+        let processed = bob.process_message(&mut bob_group, &ciphertext).unwrap();
+        assert_eq!(
+            processed,
+            MlsProcessResult::ApplicationMessage(b"after restart".to_vec())
+        );
+
+        fs::remove_dir_all(storage_root).ok();
     }
 }
