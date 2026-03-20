@@ -102,6 +102,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AccountProfileResponse'
+    patch:
+      operationId: updateCurrentAccount
+      tags: [accounts]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAccountProfileRequest'
+      responses:
+        '200':
+          description: Updated authenticated account profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountProfileResponse'
   /v0/accounts/directory:
     get:
       operationId: searchAccountDirectory
@@ -133,6 +151,23 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AccountDirectoryResponse'
+  /v0/accounts/{account_id}:
+    get:
+      operationId: getAccount
+      tags: [accounts]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      responses:
+        '200':
+          description: Public account summary for an active account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DirectoryAccountSummary'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v0/accounts/{account_id}/key-packages:
     get:
       operationId: reserveAccountKeyPackages
@@ -1022,6 +1057,20 @@ components:
         profile_bio:
           type: string
           nullable: true
+    ChatParticipantProfileSummary:
+      type: object
+      required: [account_id, profile_name]
+      properties:
+        account_id:
+          $ref: '#/components/schemas/Uuid'
+        handle:
+          type: string
+          nullable: true
+        profile_name:
+          type: string
+        profile_bio:
+          type: string
+          nullable: true
     AccountDirectoryResponse:
       type: object
       required: [accounts]
@@ -1030,6 +1079,18 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DirectoryAccountSummary'
+    UpdateAccountProfileRequest:
+      type: object
+      required: [profile_name]
+      properties:
+        handle:
+          type: string
+          nullable: true
+        profile_name:
+          type: string
+        profile_bio:
+          type: string
+          nullable: true
     DeviceSummary:
       type: object
       required: [device_id, display_name, platform, device_status]
@@ -1397,7 +1458,7 @@ components:
           format: int64
     ChatSummary:
       type: object
-      required: [chat_id, chat_type, last_server_seq]
+      required: [chat_id, chat_type, last_server_seq, participant_profiles]
       properties:
         chat_id:
           $ref: '#/components/schemas/Uuid'
@@ -1409,6 +1470,10 @@ components:
         last_server_seq:
           type: integer
           format: int64
+        participant_profiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatParticipantProfileSummary'
     ChatListResponse:
       type: object
       required: [chats]
@@ -1446,7 +1511,7 @@ components:
           type: string
     ChatDetailResponse:
       type: object
-      required: [chat_id, chat_type, last_server_seq, epoch, members, device_members]
+      required: [chat_id, chat_type, last_server_seq, epoch, participant_profiles, members, device_members]
       properties:
         chat_id:
           $ref: '#/components/schemas/Uuid'
@@ -1464,6 +1529,10 @@ components:
         last_commit_message_id:
           $ref: '#/components/schemas/Uuid'
           nullable: true
+        participant_profiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatParticipantProfileSummary'
         members:
           type: array
           items:
