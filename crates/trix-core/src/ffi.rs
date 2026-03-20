@@ -325,6 +325,15 @@ pub struct FfiChatSummary {
     pub chat_type: FfiChatType,
     pub title: Option<String>,
     pub last_server_seq: u64,
+    pub participant_profiles: Vec<FfiChatParticipantProfile>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiChatParticipantProfile {
+    pub account_id: String,
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -352,6 +361,7 @@ pub struct FfiChatDetail {
     pub last_server_seq: u64,
     pub epoch: u64,
     pub last_commit_message_id: Option<String>,
+    pub participant_profiles: Vec<FfiChatParticipantProfile>,
     pub members: Vec<FfiChatMember>,
     pub device_members: Vec<FfiChatDeviceMember>,
 }
@@ -2454,6 +2464,11 @@ fn chat_summary_to_ffi(value: trix_types::ChatSummary) -> FfiChatSummary {
         chat_type: value.chat_type.into(),
         title: value.title,
         last_server_seq: value.last_server_seq,
+        participant_profiles: value
+            .participant_profiles
+            .into_iter()
+            .map(chat_participant_profile_to_ffi)
+            .collect(),
     }
 }
 
@@ -2467,6 +2482,11 @@ fn chat_detail_to_ffi(value: trix_types::ChatDetailResponse) -> FfiChatDetail {
         last_commit_message_id: value
             .last_commit_message_id
             .map(|message_id| message_id.0.to_string()),
+        participant_profiles: value
+            .participant_profiles
+            .into_iter()
+            .map(chat_participant_profile_to_ffi)
+            .collect(),
         members: value
             .members
             .into_iter()
@@ -2492,6 +2512,17 @@ fn chat_detail_to_ffi(value: trix_types::ChatDetailResponse) -> FfiChatDetail {
                 .unwrap_or_default(),
             })
             .collect(),
+    }
+}
+
+fn chat_participant_profile_to_ffi(
+    value: trix_types::ChatParticipantProfileSummary,
+) -> FfiChatParticipantProfile {
+    FfiChatParticipantProfile {
+        account_id: value.account_id.0.to_string(),
+        handle: value.handle,
+        profile_name: value.profile_name,
+        profile_bio: value.profile_bio,
     }
 }
 

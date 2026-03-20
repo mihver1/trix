@@ -1,4 +1,7 @@
-use std::{collections::BTreeSet, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -80,6 +83,14 @@ pub struct AccountProfile {
 
 #[derive(Debug)]
 pub struct DirectoryAccountRow {
+    pub account_id: Uuid,
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChatParticipantProfileRow {
     pub account_id: Uuid,
     pub handle: Option<String>,
     pub profile_name: String,
@@ -248,6 +259,7 @@ pub struct ChatSummaryRow {
     pub chat_type: ChatType,
     pub title: Option<String>,
     pub last_server_seq: u64,
+    pub participant_profiles: Vec<ChatParticipantProfileRow>,
 }
 
 #[derive(Debug)]
@@ -275,6 +287,7 @@ pub struct ChatDetail {
     pub last_server_seq: u64,
     pub epoch: u64,
     pub last_commit_message_id: Option<Uuid>,
+    pub participant_profiles: Vec<ChatParticipantProfileRow>,
     pub members: Vec<ChatMemberRow>,
     pub device_members: Vec<ChatDeviceRow>,
 }
@@ -2290,16 +2303,66 @@ impl Database {
         .await
         .map_err(map_db_error)?;
 
-        rows.into_iter()
+        let mut chats = rows
+            .into_iter()
             .map(|row| {
                 Ok(ChatSummaryRow {
                     chat_id: row_uuid(&row, "chat_id")?,
                     chat_type: parse_chat_type(&row_text(&row, "chat_type")?)?,
                     title: row_optional_text(&row, "title")?,
                     last_server_seq: row_u64_from_i64(&row, "last_server_seq")?,
+                    participant_profiles: Vec::new(),
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>, AppError>>()?;
+
+        if chats.is_empty() {
+            return Ok(chats);
+        }
+
+        let chat_ids = chats.iter().map(|chat| chat.chat_id).collect::<Vec<_>>();
+        let participant_rows = sqlx::query(
+            r#"
+            SELECT
+                cam.chat_id,
+                a.account_id,
+                a.handle,
+                a.profile_name,
+                a.profile_bio
+            FROM chat_account_members cam
+            JOIN accounts a
+              ON a.account_id = cam.account_id
+            WHERE cam.chat_id = ANY($1)
+              AND cam.membership_status = 'active'::membership_status
+            ORDER BY cam.chat_id ASC, cam.joined_at ASC, cam.account_id ASC
+            "#,
+        )
+        .bind(&chat_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let mut profiles_by_chat = BTreeMap::<Uuid, Vec<ChatParticipantProfileRow>>::new();
+        for row in participant_rows {
+            let chat_id = row_uuid(&row, "chat_id")?;
+            profiles_by_chat
+                .entry(chat_id)
+                .or_default()
+                .push(ChatParticipantProfileRow {
+                    account_id: row_uuid(&row, "account_id")?,
+                    handle: row_optional_text(&row, "handle")?,
+                    profile_name: row_text(&row, "profile_name")?,
+                    profile_bio: row_optional_text(&row, "profile_bio")?,
+                });
+        }
+
+        for chat in &mut chats {
+            if let Some(participant_profiles) = profiles_by_chat.remove(&chat.chat_id) {
+                chat.participant_profiles = participant_profiles;
+            }
+        }
+
+        Ok(chats)
     }
 
     pub async fn create_chat(&self, input: CreateChatInput) -> Result<CreateChatOutput, AppError> {
@@ -3474,13 +3537,18 @@ impl Database {
         let member_rows = sqlx::query(
             r#"
             SELECT
-                account_id,
-                role::text AS role,
-                membership_status::text AS membership_status
-            FROM chat_account_members
-            WHERE chat_id = $1
-              AND membership_status = 'active'::membership_status
-            ORDER BY joined_at ASC, account_id ASC
+                cam.account_id,
+                cam.role::text AS role,
+                cam.membership_status::text AS membership_status,
+                a.handle,
+                a.profile_name,
+                a.profile_bio
+            FROM chat_account_members cam
+            JOIN accounts a
+              ON a.account_id = cam.account_id
+            WHERE cam.chat_id = $1
+              AND cam.membership_status = 'active'::membership_status
+            ORDER BY cam.joined_at ASC, cam.account_id ASC
             "#,
         )
         .bind(chat_id)
@@ -3488,9 +3556,16 @@ impl Database {
         .await
         .map_err(map_db_error)?;
 
+        let mut participant_profiles = Vec::with_capacity(member_rows.len());
         let members = member_rows
             .into_iter()
             .map(|member_row| {
+                participant_profiles.push(ChatParticipantProfileRow {
+                    account_id: row_uuid(&member_row, "account_id")?,
+                    handle: row_optional_text(&member_row, "handle")?,
+                    profile_name: row_text(&member_row, "profile_name")?,
+                    profile_bio: row_optional_text(&member_row, "profile_bio")?,
+                });
                 Ok(ChatMemberRow {
                     account_id: row_uuid(&member_row, "account_id")?,
                     role: row_text(&member_row, "role")?,
@@ -3543,6 +3618,7 @@ impl Database {
             last_server_seq: row_u64_from_i64(&row, "last_server_seq")?,
             epoch: row_u64_from_i64(&row, "epoch")?,
             last_commit_message_id: row_optional_uuid(&row, "last_commit_message_id")?,
+            participant_profiles,
             members,
             device_members,
         }))
@@ -5649,6 +5725,96 @@ mod tests {
         assert_eq!(lookup.handle.as_deref(), Some("alice-updated"));
         assert_eq!(lookup.profile_name, "Alice Updated");
         assert_eq!(lookup.profile_bio.as_deref(), Some("new bio"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn smoke_includes_participant_profiles_in_chat_list_and_detail() {
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [103; 32],
+                [104; 32],
+            ))
+            .await
+            .expect("create alice");
+        let bob = db
+            .create_account(make_account_input(
+                "bob",
+                "Bob Primary",
+                [105; 32],
+                [106; 32],
+            ))
+            .await
+            .expect("create bob");
+
+        db.publish_key_packages(
+            bob.device_id,
+            vec![PublishKeyPackageInput {
+                device_id: bob.device_id,
+                cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                key_package_bytes: b"bob-primary-kp".to_vec(),
+            }],
+        )
+        .await
+        .expect("publish bob key package");
+
+        let bob_reserved = db
+            .reserve_key_packages_for_account(alice.account_id, bob.account_id)
+            .await
+            .expect("reserve bob key package");
+        let created = db
+            .create_chat(CreateChatInput {
+                creator_account_id: alice.account_id,
+                creator_device_id: alice.device_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                participant_account_ids: vec![bob.account_id],
+                reserved_key_package_ids: bob_reserved
+                    .iter()
+                    .map(|package| package.key_package_id)
+                    .collect(),
+                initial_commit: Some(make_control_message("dm-create-commit")),
+                welcome_message: Some(make_control_message("dm-create-welcome")),
+            })
+            .await
+            .expect("create dm");
+
+        let chats = db
+            .list_chats_for_device(alice.account_id, alice.device_id)
+            .await
+            .expect("list chats");
+        assert_eq!(chats.len(), 1);
+        assert_eq!(chats[0].chat_id, created.chat_id);
+        assert_eq!(chats[0].participant_profiles.len(), 2);
+        assert_eq!(
+            chats[0]
+                .participant_profiles
+                .iter()
+                .map(|profile| profile.handle.as_deref().unwrap_or_default())
+                .collect::<Vec<_>>(),
+            vec!["alice", "bob"]
+        );
+
+        let detail = db
+            .get_chat_detail_for_device(created.chat_id, alice.device_id)
+            .await
+            .expect("get chat detail")
+            .expect("chat detail must exist");
+        assert_eq!(detail.participant_profiles.len(), 2);
+        assert_eq!(
+            detail
+                .participant_profiles
+                .iter()
+                .map(|profile| profile.profile_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alice", "bob"]
+        );
+        assert_eq!(detail.members.len(), 2);
     }
 
     async fn connect_test_db() -> Database {
