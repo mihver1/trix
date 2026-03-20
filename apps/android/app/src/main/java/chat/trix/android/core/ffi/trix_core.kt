@@ -638,9 +638,15 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
-    external fun uniffi_trix_core_checksum_func_ffi_default_ciphersuite_label(
+    external fun uniffi_trix_core_checksum_func_ffi_build_attachment_message_body(
+): Short
+external fun uniffi_trix_core_checksum_func_ffi_decrypt_attachment_payload(
+): Short
+external fun uniffi_trix_core_checksum_func_ffi_default_ciphersuite_label(
 ): Short
 external fun uniffi_trix_core_checksum_func_ffi_parse_message_body(
+): Short
+external fun uniffi_trix_core_checksum_func_ffi_prepare_attachment_upload(
 ): Short
 external fun uniffi_trix_core_checksum_func_ffi_serialize_message_body(
 ): Short
@@ -778,6 +784,8 @@ external fun uniffi_trix_core_checksum_method_ffiserverapiclient_create_link_int
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_create_message(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffiserverapiclient_download_attachment(
+): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_download_blob(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_get_account(
@@ -827,6 +835,8 @@ external fun uniffi_trix_core_checksum_method_ffiserverapiclient_search_account_
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_set_access_token(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_update_account_profile(
+): Short
+external fun uniffi_trix_core_checksum_method_ffiserverapiclient_upload_attachment(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_upload_blob(
 ): Short
@@ -1086,6 +1096,8 @@ external fun uniffi_trix_core_fn_method_ffiserverapiclient_create_link_intent(`p
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_create_message(`ptr`: Long,`chatId`: RustBuffer.ByValue,`params`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffiserverapiclient_download_attachment(`ptr`: Long,`body`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_download_blob(`ptr`: Long,`blobId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_get_account(`ptr`: Long,`accountId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1136,6 +1148,8 @@ external fun uniffi_trix_core_fn_method_ffiserverapiclient_set_access_token(`ptr
 ): Unit
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_update_account_profile(`ptr`: Long,`params`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffiserverapiclient_upload_attachment(`ptr`: Long,`chatId`: RustBuffer.ByValue,`payload`: RustBuffer.ByValue,`params`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_upload_blob(`ptr`: Long,`blobId`: RustBuffer.ByValue,`payload`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_clone_ffisynccoordinator(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -1182,9 +1196,15 @@ external fun uniffi_trix_core_fn_method_ffisynccoordinator_sync_chat_histories(`
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffisynccoordinator_sync_chat_histories_into_store(`ptr`: Long,`client`: Long,`store`: Long,`limitPerChat`: Int,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_func_ffi_build_attachment_message_body(`blobId`: RustBuffer.ByValue,`prepared`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_func_ffi_decrypt_attachment_payload(`body`: RustBuffer.ByValue,`encryptedPayload`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_func_ffi_default_ciphersuite_label(uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_func_ffi_parse_message_body(`contentType`: RustBuffer.ByValue,`payload`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_func_ffi_prepare_attachment_upload(`payload`: RustBuffer.ByValue,`params`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_func_ffi_serialize_message_body(`body`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1307,10 +1327,19 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
+    if (lib.uniffi_trix_core_checksum_func_ffi_build_attachment_message_body() != 56761.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_func_ffi_decrypt_attachment_payload() != 49747.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_func_ffi_default_ciphersuite_label() != 38150.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_func_ffi_parse_message_body() != 17067.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_func_ffi_prepare_attachment_upload() != 25649.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_func_ffi_serialize_message_body() != 25632.toShort()) {
@@ -1517,6 +1546,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_create_message() != 38461.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_download_attachment() != 65126.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_download_blob() != 62802.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1590,6 +1622,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_update_account_profile() != 3765.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_upload_attachment() != 12583.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_upload_blob() != 30342.toShort()) {
@@ -4188,6 +4223,8 @@ public interface FfiServerApiClientInterface {
     
     fun `createMessage`(`chatId`: kotlin.String, `params`: FfiCreateMessageParams): FfiCreateMessageResponse
     
+    fun `downloadAttachment`(`body`: FfiMessageBody): FfiDownloadedAttachment
+    
     fun `downloadBlob`(`blobId`: kotlin.String): kotlin.ByteArray
     
     fun `getAccount`(`accountId`: kotlin.String): FfiDirectoryAccount
@@ -4237,6 +4274,8 @@ public interface FfiServerApiClientInterface {
     fun `setAccessToken`(`accessToken`: kotlin.String)
     
     fun `updateAccountProfile`(`params`: FfiUpdateAccountProfileParams): FfiAccountProfile
+    
+    fun `uploadAttachment`(`chatId`: kotlin.String, `payload`: kotlin.ByteArray, `params`: FfiAttachmentUploadParams): FfiUploadedAttachment
     
     fun `uploadBlob`(`blobId`: kotlin.String, `payload`: kotlin.ByteArray): FfiBlobMetadata
     
@@ -4564,6 +4603,20 @@ open class FfiServerApiClient: Disposable, AutoCloseable, FfiServerApiClientInte
     UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_create_message(
         it,
         FfiConverterString.lower(`chatId`),FfiConverterTypeFfiCreateMessageParams.lower(`params`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `downloadAttachment`(`body`: FfiMessageBody): FfiDownloadedAttachment {
+            return FfiConverterTypeFfiDownloadedAttachment.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_download_attachment(
+        it,
+        FfiConverterTypeFfiMessageBody.lower(`body`),_status)
 }
     }
     )
@@ -4913,6 +4966,20 @@ open class FfiServerApiClient: Disposable, AutoCloseable, FfiServerApiClientInte
     UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_update_account_profile(
         it,
         FfiConverterTypeFfiUpdateAccountProfileParams.lower(`params`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `uploadAttachment`(`chatId`: kotlin.String, `payload`: kotlin.ByteArray, `params`: FfiAttachmentUploadParams): FfiUploadedAttachment {
+            return FfiConverterTypeFfiUploadedAttachment.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_upload_attachment(
+        it,
+        FfiConverterString.lower(`chatId`),FfiConverterByteArray.lower(`payload`),FfiConverterTypeFfiAttachmentUploadParams.lower(`params`),_status)
 }
     }
     )
@@ -5718,6 +5785,54 @@ public object FfiConverterTypeFfiApproveDeviceResponse: FfiConverterRustBuffer<F
             FfiConverterString.write(value.`accountId`, buf)
             FfiConverterString.write(value.`deviceId`, buf)
             FfiConverterTypeFfiDeviceStatus.write(value.`deviceStatus`, buf)
+    }
+}
+
+
+
+data class FfiAttachmentUploadParams (
+    var `mimeType`: kotlin.String
+    , 
+    var `fileName`: kotlin.String?
+    , 
+    var `widthPx`: kotlin.UInt?
+    , 
+    var `heightPx`: kotlin.UInt?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiAttachmentUploadParams: FfiConverterRustBuffer<FfiAttachmentUploadParams> {
+    override fun read(buf: ByteBuffer): FfiAttachmentUploadParams {
+        return FfiAttachmentUploadParams(
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiAttachmentUploadParams) = (
+            FfiConverterString.allocationSize(value.`mimeType`) +
+            FfiConverterOptionalString.allocationSize(value.`fileName`) +
+            FfiConverterOptionalUInt.allocationSize(value.`widthPx`) +
+            FfiConverterOptionalUInt.allocationSize(value.`heightPx`)
+    )
+
+    override fun write(value: FfiAttachmentUploadParams, buf: ByteBuffer) {
+            FfiConverterString.write(value.`mimeType`, buf)
+            FfiConverterOptionalString.write(value.`fileName`, buf)
+            FfiConverterOptionalUInt.write(value.`widthPx`, buf)
+            FfiConverterOptionalUInt.write(value.`heightPx`, buf)
     }
 }
 
@@ -7230,6 +7345,44 @@ public object FfiConverterTypeFfiDirectoryAccount: FfiConverterRustBuffer<FfiDir
             FfiConverterOptionalString.write(value.`handle`, buf)
             FfiConverterString.write(value.`profileName`, buf)
             FfiConverterOptionalString.write(value.`profileBio`, buf)
+    }
+}
+
+
+
+data class FfiDownloadedAttachment (
+    var `body`: FfiMessageBody
+    , 
+    var `plaintext`: kotlin.ByteArray
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiDownloadedAttachment: FfiConverterRustBuffer<FfiDownloadedAttachment> {
+    override fun read(buf: ByteBuffer): FfiDownloadedAttachment {
+        return FfiDownloadedAttachment(
+            FfiConverterTypeFfiMessageBody.read(buf),
+            FfiConverterByteArray.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiDownloadedAttachment) = (
+            FfiConverterTypeFfiMessageBody.allocationSize(value.`body`) +
+            FfiConverterByteArray.allocationSize(value.`plaintext`)
+    )
+
+    override fun write(value: FfiDownloadedAttachment, buf: ByteBuffer) {
+            FfiConverterTypeFfiMessageBody.write(value.`body`, buf)
+            FfiConverterByteArray.write(value.`plaintext`, buf)
     }
 }
 
@@ -8801,6 +8954,84 @@ public object FfiConverterTypeFfiModifyChatMembersResponse: FfiConverterRustBuff
 
 
 
+data class FfiPreparedAttachmentUpload (
+    var `mimeType`: kotlin.String
+    , 
+    var `fileName`: kotlin.String?
+    , 
+    var `widthPx`: kotlin.UInt?
+    , 
+    var `heightPx`: kotlin.UInt?
+    , 
+    var `plaintextSizeBytes`: kotlin.ULong
+    , 
+    var `encryptedSizeBytes`: kotlin.ULong
+    , 
+    var `encryptedPayload`: kotlin.ByteArray
+    , 
+    var `encryptedSha256`: kotlin.ByteArray
+    , 
+    var `fileKey`: kotlin.ByteArray
+    , 
+    var `nonce`: kotlin.ByteArray
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiPreparedAttachmentUpload: FfiConverterRustBuffer<FfiPreparedAttachmentUpload> {
+    override fun read(buf: ByteBuffer): FfiPreparedAttachmentUpload {
+        return FfiPreparedAttachmentUpload(
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterByteArray.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiPreparedAttachmentUpload) = (
+            FfiConverterString.allocationSize(value.`mimeType`) +
+            FfiConverterOptionalString.allocationSize(value.`fileName`) +
+            FfiConverterOptionalUInt.allocationSize(value.`widthPx`) +
+            FfiConverterOptionalUInt.allocationSize(value.`heightPx`) +
+            FfiConverterULong.allocationSize(value.`plaintextSizeBytes`) +
+            FfiConverterULong.allocationSize(value.`encryptedSizeBytes`) +
+            FfiConverterByteArray.allocationSize(value.`encryptedPayload`) +
+            FfiConverterByteArray.allocationSize(value.`encryptedSha256`) +
+            FfiConverterByteArray.allocationSize(value.`fileKey`) +
+            FfiConverterByteArray.allocationSize(value.`nonce`)
+    )
+
+    override fun write(value: FfiPreparedAttachmentUpload, buf: ByteBuffer) {
+            FfiConverterString.write(value.`mimeType`, buf)
+            FfiConverterOptionalString.write(value.`fileName`, buf)
+            FfiConverterOptionalUInt.write(value.`widthPx`, buf)
+            FfiConverterOptionalUInt.write(value.`heightPx`, buf)
+            FfiConverterULong.write(value.`plaintextSizeBytes`, buf)
+            FfiConverterULong.write(value.`encryptedSizeBytes`, buf)
+            FfiConverterByteArray.write(value.`encryptedPayload`, buf)
+            FfiConverterByteArray.write(value.`encryptedSha256`, buf)
+            FfiConverterByteArray.write(value.`fileKey`, buf)
+            FfiConverterByteArray.write(value.`nonce`, buf)
+    }
+}
+
+
+
 data class FfiPublishKeyPackage (
     var `cipherSuite`: kotlin.String
     , 
@@ -9236,6 +9467,64 @@ public object FfiConverterTypeFfiUpdateAccountProfileParams: FfiConverterRustBuf
             FfiConverterOptionalString.write(value.`handle`, buf)
             FfiConverterString.write(value.`profileName`, buf)
             FfiConverterOptionalString.write(value.`profileBio`, buf)
+    }
+}
+
+
+
+data class FfiUploadedAttachment (
+    var `body`: FfiMessageBody
+    , 
+    var `blobId`: kotlin.String
+    , 
+    var `uploadStatus`: FfiBlobUploadStatus
+    , 
+    var `plaintextSizeBytes`: kotlin.ULong
+    , 
+    var `encryptedSizeBytes`: kotlin.ULong
+    , 
+    var `encryptedSha256`: kotlin.ByteArray
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiUploadedAttachment: FfiConverterRustBuffer<FfiUploadedAttachment> {
+    override fun read(buf: ByteBuffer): FfiUploadedAttachment {
+        return FfiUploadedAttachment(
+            FfiConverterTypeFfiMessageBody.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterTypeFfiBlobUploadStatus.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterByteArray.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiUploadedAttachment) = (
+            FfiConverterTypeFfiMessageBody.allocationSize(value.`body`) +
+            FfiConverterString.allocationSize(value.`blobId`) +
+            FfiConverterTypeFfiBlobUploadStatus.allocationSize(value.`uploadStatus`) +
+            FfiConverterULong.allocationSize(value.`plaintextSizeBytes`) +
+            FfiConverterULong.allocationSize(value.`encryptedSizeBytes`) +
+            FfiConverterByteArray.allocationSize(value.`encryptedSha256`)
+    )
+
+    override fun write(value: FfiUploadedAttachment, buf: ByteBuffer) {
+            FfiConverterTypeFfiMessageBody.write(value.`body`, buf)
+            FfiConverterString.write(value.`blobId`, buf)
+            FfiConverterTypeFfiBlobUploadStatus.write(value.`uploadStatus`, buf)
+            FfiConverterULong.write(value.`plaintextSizeBytes`, buf)
+            FfiConverterULong.write(value.`encryptedSizeBytes`, buf)
+            FfiConverterByteArray.write(value.`encryptedSha256`, buf)
     }
 }
 
@@ -11020,7 +11309,29 @@ public object FfiConverterSequenceTypeFfiSyncChatCursor: FfiConverterRustBuffer<
             FfiConverterTypeFfiSyncChatCursor.write(it, buf)
         }
     }
-} fun `ffiDefaultCiphersuiteLabel`(): kotlin.String {
+}
+    @Throws(TrixFfiException::class) fun `ffiBuildAttachmentMessageBody`(`blobId`: kotlin.String, `prepared`: FfiPreparedAttachmentUpload): FfiMessageBody {
+            return FfiConverterTypeFfiMessageBody.lift(
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_func_ffi_build_attachment_message_body(
+    
+        FfiConverterString.lower(`blobId`),FfiConverterTypeFfiPreparedAttachmentUpload.lower(`prepared`),_status)
+}
+    )
+    }
+    
+
+    @Throws(TrixFfiException::class) fun `ffiDecryptAttachmentPayload`(`body`: FfiMessageBody, `encryptedPayload`: kotlin.ByteArray): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_func_ffi_decrypt_attachment_payload(
+    
+        FfiConverterTypeFfiMessageBody.lower(`body`),FfiConverterByteArray.lower(`encryptedPayload`),_status)
+}
+    )
+    }
+    
+ fun `ffiDefaultCiphersuiteLabel`(): kotlin.String {
             return FfiConverterString.lift(
     uniffiRustCall() { _status ->
     UniffiLib.uniffi_trix_core_fn_func_ffi_default_ciphersuite_label(
@@ -11037,6 +11348,17 @@ public object FfiConverterSequenceTypeFfiSyncChatCursor: FfiConverterRustBuffer<
     UniffiLib.uniffi_trix_core_fn_func_ffi_parse_message_body(
     
         FfiConverterTypeFfiContentType.lower(`contentType`),FfiConverterByteArray.lower(`payload`),_status)
+}
+    )
+    }
+    
+
+    @Throws(TrixFfiException::class) fun `ffiPrepareAttachmentUpload`(`payload`: kotlin.ByteArray, `params`: FfiAttachmentUploadParams): FfiPreparedAttachmentUpload {
+            return FfiConverterTypeFfiPreparedAttachmentUpload.lift(
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_func_ffi_prepare_attachment_upload(
+    
+        FfiConverterByteArray.lower(`payload`),FfiConverterTypeFfiAttachmentUploadParams.lower(`params`),_status)
 }
     )
     }
