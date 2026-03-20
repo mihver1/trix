@@ -1,5 +1,6 @@
 package chat.trix.android.ui
 
+import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,7 +45,10 @@ import chat.trix.android.core.auth.AuthBootstrapCoordinator
 import chat.trix.android.core.auth.AuthenticatedSession
 import chat.trix.android.core.auth.BootstrapInput
 import chat.trix.android.core.auth.AccountProfile
+import chat.trix.android.core.auth.LinkDeviceInput
+import chat.trix.android.core.auth.LinkExistingAccountInput
 import chat.trix.android.core.auth.LocalAuthStateStore
+import chat.trix.android.core.auth.parseLinkIntentPayload
 import chat.trix.android.core.auth.StoredDeviceSummary
 import chat.trix.android.core.system.BackendConfigStore
 import chat.trix.android.designsystem.theme.TrixTheme
@@ -120,6 +124,22 @@ fun TrixApp() {
                             backendConfigError = null
                             authState = TrixAuthState.Loading("Creating account")
                             authState = createAccountState(authCoordinator, input)
+                        }
+                    },
+                    onCompleteLinkIntent = { input ->
+                        coroutineScope.launch {
+                            backendConfigError = null
+                            authState = TrixAuthState.Loading("Linking device")
+                            val outcome = completeLinkState(
+                                context = context,
+                                fallbackBaseUrl = configuredBaseUrl,
+                                backendConfigStore = backendConfigStore,
+                                input = input,
+                            )
+                            if (outcome.configuredBaseUrl != null) {
+                                configuredBaseUrl = outcome.configuredBaseUrl
+                            }
+                            authState = outcome.authState
                         }
                     },
                     onReconnectStoredDevice = if (state.storedDevice != null) {
@@ -238,7 +258,47 @@ private suspend fun restoreSessionState(
     } catch (error: IOException) {
         TrixAuthState.SignedOut(
             storedDevice = storedDevice,
-            errorMessage = error.message ?: "Session restore failed",
+            errorMessage = restoreSessionErrorMessage(storedDevice, error),
+        )
+    }
+}
+
+private suspend fun completeLinkState(
+    context: Context,
+    fallbackBaseUrl: String,
+    backendConfigStore: BackendConfigStore,
+    input: LinkExistingAccountInput,
+): LinkCompletionOutcome {
+    return try {
+        val parsedPayload = parseLinkIntentPayload(
+            rawPayload = input.rawPayload,
+            fallbackBaseUrl = fallbackBaseUrl,
+        )
+        val authCoordinator = AuthBootstrapCoordinator(
+            context = context,
+            baseUrl = parsedPayload.baseUrl,
+        )
+        val storedDevice = authCoordinator.completeLinkDevice(
+            LinkDeviceInput(
+                linkIntent = parsedPayload,
+                deviceDisplayName = input.deviceDisplayName,
+            ),
+        )
+        backendConfigStore.writeBaseUrl(parsedPayload.baseUrl)
+        LinkCompletionOutcome(
+            authState = TrixAuthState.SignedOut(
+                storedDevice = storedDevice,
+                errorMessage = null,
+            ),
+            configuredBaseUrl = parsedPayload.baseUrl,
+        )
+    } catch (error: IOException) {
+        LinkCompletionOutcome(
+            authState = TrixAuthState.SignedOut(
+                storedDevice = null,
+                errorMessage = error.message ?: "Device link failed",
+            ),
+            configuredBaseUrl = null,
         )
     }
 }
@@ -286,6 +346,17 @@ private fun normalizeBaseUrl(value: String): String {
     return normalized
 }
 
+private fun restoreSessionErrorMessage(
+    storedDevice: StoredDeviceSummary,
+    error: IOException,
+): String {
+    if (storedDevice.deviceStatus == "pending" || error.message?.contains("device is not active") == true) {
+        return "This device is still pending approval. Approve it from a trusted device, then tap Check Approval."
+    }
+
+    return error.message ?: "Session restore failed"
+}
+
 @Composable
 private fun LoadingScreen(message: String) {
     Box(
@@ -315,6 +386,11 @@ private sealed interface TrixAuthState {
 
     data class SignedIn(val session: AuthenticatedSession) : TrixAuthState
 }
+
+private data class LinkCompletionOutcome(
+    val authState: TrixAuthState,
+    val configuredBaseUrl: String?,
+)
 
 @Composable
 private fun BottomBarLayout(
@@ -477,6 +553,7 @@ private fun DestinationContent(
         )
         TrixDestination.Devices -> DevicesScreen(
             windowInfo = windowInfo,
+            session = session,
             modifier = modifier,
         )
         TrixDestination.Settings -> SettingsScreen(

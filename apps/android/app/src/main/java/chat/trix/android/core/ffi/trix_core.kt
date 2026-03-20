@@ -638,11 +638,15 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
-    external fun uniffi_trix_core_checksum_func_ffi_build_attachment_message_body(
+    external fun uniffi_trix_core_checksum_func_ffi_account_bootstrap_payload(
+): Short
+external fun uniffi_trix_core_checksum_func_ffi_build_attachment_message_body(
 ): Short
 external fun uniffi_trix_core_checksum_func_ffi_decrypt_attachment_payload(
 ): Short
 external fun uniffi_trix_core_checksum_func_ffi_default_ciphersuite_label(
+): Short
+external fun uniffi_trix_core_checksum_func_ffi_device_revoke_payload(
 ): Short
 external fun uniffi_trix_core_checksum_func_ffi_parse_message_body(
 ): Short
@@ -650,11 +654,19 @@ external fun uniffi_trix_core_checksum_func_ffi_prepare_attachment_upload(
 ): Short
 external fun uniffi_trix_core_checksum_func_ffi_serialize_message_body(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffiaccountrootmaterial_account_bootstrap_payload(
+): Short
+external fun uniffi_trix_core_checksum_method_ffiaccountrootmaterial_device_revoke_payload(
+): Short
 external fun uniffi_trix_core_checksum_method_ffiaccountrootmaterial_private_key_bytes(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiaccountrootmaterial_public_key_bytes(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiaccountrootmaterial_sign(
+): Short
+external fun uniffi_trix_core_checksum_method_ffiaccountrootmaterial_sign_account_bootstrap(
+): Short
+external fun uniffi_trix_core_checksum_method_ffiaccountrootmaterial_sign_device_revoke(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiaccountrootmaterial_verify(
 ): Short
@@ -663,6 +675,8 @@ external fun uniffi_trix_core_checksum_method_ffidevicekeymaterial_private_key_b
 external fun uniffi_trix_core_checksum_method_ffidevicekeymaterial_public_key_bytes(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffidevicekeymaterial_sign(
+): Short
+external fun uniffi_trix_core_checksum_method_ffidevicekeymaterial_sign_auth_challenge(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffidevicekeymaterial_verify(
 ): Short
@@ -734,6 +748,8 @@ external fun uniffi_trix_core_checksum_method_ffimlsfacade_generate_key_package(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimlsfacade_generate_key_packages(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffimlsfacade_generate_publish_key_packages(
+): Short
 external fun uniffi_trix_core_checksum_method_ffimlsfacade_join_group_from_welcome(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimlsfacade_load_group(
@@ -764,13 +780,21 @@ external fun uniffi_trix_core_checksum_method_ffiserverapiclient_append_history_
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_approve_device(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffiserverapiclient_approve_device_with_account_root(
+): Short
+external fun uniffi_trix_core_checksum_method_ffiserverapiclient_authenticate_with_device_key(
+): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_clear_access_token(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_complete_history_sync_job(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_complete_link_intent(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffiserverapiclient_complete_link_intent_with_device_key(
+): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_create_account(
+): Short
+external fun uniffi_trix_core_checksum_method_ffiserverapiclient_create_account_with_materials(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_create_auth_challenge(
 ): Short
@@ -829,6 +853,8 @@ external fun uniffi_trix_core_checksum_method_ffiserverapiclient_remove_chat_mem
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_reserve_key_packages(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_revoke_device(
+): Short
+external fun uniffi_trix_core_checksum_method_ffiserverapiclient_revoke_device_with_account_root(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_search_account_directory(
 ): Short
@@ -926,11 +952,19 @@ external fun uniffi_trix_core_fn_constructor_ffiaccountrootmaterial_from_private
 ): Long
 external fun uniffi_trix_core_fn_constructor_ffiaccountrootmaterial_generate(uniffi_out_err: UniffiRustCallStatus, 
 ): Long
+external fun uniffi_trix_core_fn_method_ffiaccountrootmaterial_account_bootstrap_payload(`ptr`: Long,`transportPubkey`: RustBuffer.ByValue,`credentialIdentity`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffiaccountrootmaterial_device_revoke_payload(`ptr`: Long,`deviceId`: RustBuffer.ByValue,`reason`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiaccountrootmaterial_private_key_bytes(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiaccountrootmaterial_public_key_bytes(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiaccountrootmaterial_sign(`ptr`: Long,`payload`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffiaccountrootmaterial_sign_account_bootstrap(`ptr`: Long,`transportPubkey`: RustBuffer.ByValue,`credentialIdentity`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffiaccountrootmaterial_sign_device_revoke(`ptr`: Long,`deviceId`: RustBuffer.ByValue,`reason`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiaccountrootmaterial_verify(`ptr`: Long,`payload`: RustBuffer.ByValue,`signature`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
@@ -947,6 +981,8 @@ external fun uniffi_trix_core_fn_method_ffidevicekeymaterial_private_key_bytes(`
 external fun uniffi_trix_core_fn_method_ffidevicekeymaterial_public_key_bytes(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffidevicekeymaterial_sign(`ptr`: Long,`payload`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffidevicekeymaterial_sign_auth_challenge(`ptr`: Long,`challenge`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffidevicekeymaterial_verify(`ptr`: Long,`payload`: RustBuffer.ByValue,`signature`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
@@ -1040,6 +1076,8 @@ external fun uniffi_trix_core_fn_method_ffimlsfacade_generate_key_package(`ptr`:
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimlsfacade_generate_key_packages(`ptr`: Long,`count`: Int,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimlsfacade_generate_publish_key_packages(`ptr`: Long,`count`: Int,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimlsfacade_join_group_from_welcome(`ptr`: Long,`welcomeMessage`: RustBuffer.ByValue,`ratchetTree`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Long
 external fun uniffi_trix_core_fn_method_ffimlsfacade_load_group(`ptr`: Long,`groupId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1076,13 +1114,21 @@ external fun uniffi_trix_core_fn_method_ffiserverapiclient_append_history_sync_c
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_approve_device(`ptr`: Long,`deviceId`: RustBuffer.ByValue,`accountRootSignature`: RustBuffer.ByValue,`transferBundle`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffiserverapiclient_approve_device_with_account_root(`ptr`: Long,`deviceId`: RustBuffer.ByValue,`accountRoot`: Long,`transferBundle`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffiserverapiclient_authenticate_with_device_key(`ptr`: Long,`deviceId`: RustBuffer.ByValue,`deviceKeys`: Long,`setAccessToken`: Byte,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_clear_access_token(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_complete_history_sync_job(`ptr`: Long,`jobId`: RustBuffer.ByValue,`cursorJson`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_complete_link_intent(`ptr`: Long,`linkIntentId`: RustBuffer.ByValue,`params`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffiserverapiclient_complete_link_intent_with_device_key(`ptr`: Long,`linkIntentId`: RustBuffer.ByValue,`params`: RustBuffer.ByValue,`deviceKeys`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_create_account(`ptr`: Long,`params`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffiserverapiclient_create_account_with_materials(`ptr`: Long,`params`: RustBuffer.ByValue,`accountRoot`: Long,`deviceKeys`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_create_auth_challenge(`ptr`: Long,`deviceId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1142,6 +1188,8 @@ external fun uniffi_trix_core_fn_method_ffiserverapiclient_reserve_key_packages(
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_revoke_device(`ptr`: Long,`deviceId`: RustBuffer.ByValue,`reason`: RustBuffer.ByValue,`accountRootSignature`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffiserverapiclient_revoke_device_with_account_root(`ptr`: Long,`deviceId`: RustBuffer.ByValue,`reason`: RustBuffer.ByValue,`accountRoot`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_search_account_directory(`ptr`: Long,`query`: RustBuffer.ByValue,`limit`: RustBuffer.ByValue,`excludeSelf`: Byte,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_set_access_token(`ptr`: Long,`accessToken`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1196,11 +1244,15 @@ external fun uniffi_trix_core_fn_method_ffisynccoordinator_sync_chat_histories(`
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffisynccoordinator_sync_chat_histories_into_store(`ptr`: Long,`client`: Long,`store`: Long,`limitPerChat`: Int,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_func_ffi_account_bootstrap_payload(`transportPubkey`: RustBuffer.ByValue,`credentialIdentity`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_func_ffi_build_attachment_message_body(`blobId`: RustBuffer.ByValue,`prepared`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_func_ffi_decrypt_attachment_payload(`body`: RustBuffer.ByValue,`encryptedPayload`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_func_ffi_default_ciphersuite_label(uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_func_ffi_device_revoke_payload(`deviceId`: RustBuffer.ByValue,`reason`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_func_ffi_parse_message_body(`contentType`: RustBuffer.ByValue,`payload`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1327,6 +1379,9 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
+    if (lib.uniffi_trix_core_checksum_func_ffi_account_bootstrap_payload() != 22684.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_func_ffi_build_attachment_message_body() != 56761.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1334,6 +1389,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_func_ffi_default_ciphersuite_label() != 38150.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_func_ffi_device_revoke_payload() != 8012.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_func_ffi_parse_message_body() != 17067.toShort()) {
@@ -1345,6 +1403,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_func_ffi_serialize_message_body() != 25632.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffiaccountrootmaterial_account_bootstrap_payload() != 37556.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffiaccountrootmaterial_device_revoke_payload() != 52349.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffiaccountrootmaterial_private_key_bytes() != 60131.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1352,6 +1416,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffiaccountrootmaterial_sign() != 31791.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffiaccountrootmaterial_sign_account_bootstrap() != 5035.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffiaccountrootmaterial_sign_device_revoke() != 43154.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffiaccountrootmaterial_verify() != 58382.toShort()) {
@@ -1364,6 +1434,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffidevicekeymaterial_sign() != 33953.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffidevicekeymaterial_sign_auth_challenge() != 30922.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffidevicekeymaterial_verify() != 11630.toShort()) {
@@ -1471,6 +1544,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffimlsfacade_generate_key_packages() != 21785.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffimlsfacade_generate_publish_key_packages() != 47759.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffimlsfacade_join_group_from_welcome() != 58030.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1516,6 +1592,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_approve_device() != 44538.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_approve_device_with_account_root() != 10325.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_authenticate_with_device_key() != 5287.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_clear_access_token() != 39273.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1525,7 +1607,13 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_complete_link_intent() != 28798.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_complete_link_intent_with_device_key() != 64940.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_create_account() != 56.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_create_account_with_materials() != 17444.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_create_auth_challenge() != 42397.toShort()) {
@@ -1613,6 +1701,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_revoke_device() != 52459.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_revoke_device_with_account_root() != 27622.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_search_account_directory() != 53650.toShort()) {
@@ -2120,11 +2211,19 @@ public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
 
 public interface FfiAccountRootMaterialInterface {
     
+    fun `accountBootstrapPayload`(`transportPubkey`: kotlin.ByteArray, `credentialIdentity`: kotlin.ByteArray): kotlin.ByteArray
+    
+    fun `deviceRevokePayload`(`deviceId`: kotlin.String, `reason`: kotlin.String): kotlin.ByteArray
+    
     fun `privateKeyBytes`(): kotlin.ByteArray
     
     fun `publicKeyBytes`(): kotlin.ByteArray
     
     fun `sign`(`payload`: kotlin.ByteArray): kotlin.ByteArray
+    
+    fun `signAccountBootstrap`(`transportPubkey`: kotlin.ByteArray, `credentialIdentity`: kotlin.ByteArray): kotlin.ByteArray
+    
+    fun `signDeviceRevoke`(`deviceId`: kotlin.String, `reason`: kotlin.String): kotlin.ByteArray
     
     fun `verify`(`payload`: kotlin.ByteArray, `signature`: kotlin.ByteArray)
     
@@ -2227,6 +2326,33 @@ open class FfiAccountRootMaterial: Disposable, AutoCloseable, FfiAccountRootMate
         }
     }
 
+    override fun `accountBootstrapPayload`(`transportPubkey`: kotlin.ByteArray, `credentialIdentity`: kotlin.ByteArray): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiaccountrootmaterial_account_bootstrap_payload(
+        it,
+        FfiConverterByteArray.lower(`transportPubkey`),FfiConverterByteArray.lower(`credentialIdentity`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `deviceRevokePayload`(`deviceId`: kotlin.String, `reason`: kotlin.String): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiaccountrootmaterial_device_revoke_payload(
+        it,
+        FfiConverterString.lower(`deviceId`),FfiConverterString.lower(`reason`),_status)
+}
+    }
+    )
+    }
+    
+
     override fun `privateKeyBytes`(): kotlin.ByteArray {
             return FfiConverterByteArray.lift(
     callWithHandle {
@@ -2260,6 +2386,33 @@ open class FfiAccountRootMaterial: Disposable, AutoCloseable, FfiAccountRootMate
     UniffiLib.uniffi_trix_core_fn_method_ffiaccountrootmaterial_sign(
         it,
         FfiConverterByteArray.lower(`payload`),_status)
+}
+    }
+    )
+    }
+    
+
+    override fun `signAccountBootstrap`(`transportPubkey`: kotlin.ByteArray, `credentialIdentity`: kotlin.ByteArray): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiaccountrootmaterial_sign_account_bootstrap(
+        it,
+        FfiConverterByteArray.lower(`transportPubkey`),FfiConverterByteArray.lower(`credentialIdentity`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `signDeviceRevoke`(`deviceId`: kotlin.String, `reason`: kotlin.String): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiaccountrootmaterial_sign_device_revoke(
+        it,
+        FfiConverterString.lower(`deviceId`),FfiConverterString.lower(`reason`),_status)
 }
     }
     )
@@ -2442,6 +2595,8 @@ public interface FfiDeviceKeyMaterialInterface {
     
     fun `sign`(`payload`: kotlin.ByteArray): kotlin.ByteArray
     
+    fun `signAuthChallenge`(`challenge`: kotlin.ByteArray): kotlin.ByteArray
+    
     fun `verify`(`payload`: kotlin.ByteArray, `signature`: kotlin.ByteArray)
     
     companion object
@@ -2576,6 +2731,19 @@ open class FfiDeviceKeyMaterial: Disposable, AutoCloseable, FfiDeviceKeyMaterial
     UniffiLib.uniffi_trix_core_fn_method_ffidevicekeymaterial_sign(
         it,
         FfiConverterByteArray.lower(`payload`),_status)
+}
+    }
+    )
+    }
+    
+
+    override fun `signAuthChallenge`(`challenge`: kotlin.ByteArray): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffidevicekeymaterial_sign_auth_challenge(
+        it,
+        FfiConverterByteArray.lower(`challenge`),_status)
 }
     }
     )
@@ -3671,6 +3839,8 @@ public interface FfiMlsFacadeInterface {
     
     fun `generateKeyPackages`(`count`: kotlin.UInt): List<kotlin.ByteArray>
     
+    fun `generatePublishKeyPackages`(`count`: kotlin.UInt): List<FfiPublishKeyPackage>
+    
     fun `joinGroupFromWelcome`(`welcomeMessage`: kotlin.ByteArray, `ratchetTree`: kotlin.ByteArray?): FfiMlsConversation
     
     fun `loadGroup`(`groupId`: kotlin.ByteArray): FfiMlsConversation?
@@ -3900,6 +4070,20 @@ open class FfiMlsFacade: Disposable, AutoCloseable, FfiMlsFacadeInterface
     callWithHandle {
     uniffiRustCallWithError(TrixFfiException) { _status ->
     UniffiLib.uniffi_trix_core_fn_method_ffimlsfacade_generate_key_packages(
+        it,
+        FfiConverterUInt.lower(`count`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `generatePublishKeyPackages`(`count`: kotlin.UInt): List<FfiPublishKeyPackage> {
+            return FfiConverterSequenceTypeFfiPublishKeyPackage.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimlsfacade_generate_publish_key_packages(
         it,
         FfiConverterUInt.lower(`count`),_status)
 }
@@ -4203,13 +4387,21 @@ public interface FfiServerApiClientInterface {
     
     fun `approveDevice`(`deviceId`: kotlin.String, `accountRootSignature`: kotlin.ByteArray, `transferBundle`: kotlin.ByteArray?): FfiApproveDeviceResponse
     
+    fun `approveDeviceWithAccountRoot`(`deviceId`: kotlin.String, `accountRoot`: FfiAccountRootMaterial, `transferBundle`: kotlin.ByteArray?): FfiApproveDeviceResponse
+    
+    fun `authenticateWithDeviceKey`(`deviceId`: kotlin.String, `deviceKeys`: FfiDeviceKeyMaterial, `setAccessToken`: kotlin.Boolean): FfiAuthSession
+    
     fun `clearAccessToken`()
     
     fun `completeHistorySyncJob`(`jobId`: kotlin.String, `cursorJson`: kotlin.String?): FfiCompleteHistorySyncJobResponse
     
     fun `completeLinkIntent`(`linkIntentId`: kotlin.String, `params`: FfiCompleteLinkIntentParams): FfiCompletedLinkIntent
     
+    fun `completeLinkIntentWithDeviceKey`(`linkIntentId`: kotlin.String, `params`: FfiCompleteLinkIntentWithDeviceKeyParams, `deviceKeys`: FfiDeviceKeyMaterial): FfiCompletedLinkIntent
+    
     fun `createAccount`(`params`: FfiCreateAccountParams): FfiCreateAccountResponse
+    
+    fun `createAccountWithMaterials`(`params`: FfiCreateAccountWithMaterialsParams, `accountRoot`: FfiAccountRootMaterial, `deviceKeys`: FfiDeviceKeyMaterial): FfiCreateAccountResponse
     
     fun `createAuthChallenge`(`deviceId`: kotlin.String): FfiAuthChallenge
     
@@ -4268,6 +4460,8 @@ public interface FfiServerApiClientInterface {
     fun `reserveKeyPackages`(`accountId`: kotlin.String, `deviceIds`: List<kotlin.String>): List<FfiReservedKeyPackage>
     
     fun `revokeDevice`(`deviceId`: kotlin.String, `reason`: kotlin.String, `accountRootSignature`: kotlin.ByteArray): FfiRevokeDeviceResponse
+    
+    fun `revokeDeviceWithAccountRoot`(`deviceId`: kotlin.String, `reason`: kotlin.String, `accountRoot`: FfiAccountRootMaterial): FfiRevokeDeviceResponse
     
     fun `searchAccountDirectory`(`query`: kotlin.String?, `limit`: kotlin.UInt?, `excludeSelf`: kotlin.Boolean): FfiAccountDirectory
     
@@ -4471,6 +4665,34 @@ open class FfiServerApiClient: Disposable, AutoCloseable, FfiServerApiClientInte
     
 
     
+    @Throws(TrixFfiException::class)override fun `approveDeviceWithAccountRoot`(`deviceId`: kotlin.String, `accountRoot`: FfiAccountRootMaterial, `transferBundle`: kotlin.ByteArray?): FfiApproveDeviceResponse {
+            return FfiConverterTypeFfiApproveDeviceResponse.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_approve_device_with_account_root(
+        it,
+        FfiConverterString.lower(`deviceId`),FfiConverterTypeFfiAccountRootMaterial.lower(`accountRoot`),FfiConverterOptionalByteArray.lower(`transferBundle`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `authenticateWithDeviceKey`(`deviceId`: kotlin.String, `deviceKeys`: FfiDeviceKeyMaterial, `setAccessToken`: kotlin.Boolean): FfiAuthSession {
+            return FfiConverterTypeFfiAuthSession.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_authenticate_with_device_key(
+        it,
+        FfiConverterString.lower(`deviceId`),FfiConverterTypeFfiDeviceKeyMaterial.lower(`deviceKeys`),FfiConverterBoolean.lower(`setAccessToken`),_status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(TrixFfiException::class)override fun `clearAccessToken`()
         = 
     callWithHandle {
@@ -4512,6 +4734,20 @@ open class FfiServerApiClient: Disposable, AutoCloseable, FfiServerApiClientInte
     
 
     
+    @Throws(TrixFfiException::class)override fun `completeLinkIntentWithDeviceKey`(`linkIntentId`: kotlin.String, `params`: FfiCompleteLinkIntentWithDeviceKeyParams, `deviceKeys`: FfiDeviceKeyMaterial): FfiCompletedLinkIntent {
+            return FfiConverterTypeFfiCompletedLinkIntent.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_complete_link_intent_with_device_key(
+        it,
+        FfiConverterString.lower(`linkIntentId`),FfiConverterTypeFfiCompleteLinkIntentWithDeviceKeyParams.lower(`params`),FfiConverterTypeFfiDeviceKeyMaterial.lower(`deviceKeys`),_status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(TrixFfiException::class)override fun `createAccount`(`params`: FfiCreateAccountParams): FfiCreateAccountResponse {
             return FfiConverterTypeFfiCreateAccountResponse.lift(
     callWithHandle {
@@ -4519,6 +4755,20 @@ open class FfiServerApiClient: Disposable, AutoCloseable, FfiServerApiClientInte
     UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_create_account(
         it,
         FfiConverterTypeFfiCreateAccountParams.lower(`params`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `createAccountWithMaterials`(`params`: FfiCreateAccountWithMaterialsParams, `accountRoot`: FfiAccountRootMaterial, `deviceKeys`: FfiDeviceKeyMaterial): FfiCreateAccountResponse {
+            return FfiConverterTypeFfiCreateAccountResponse.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_create_account_with_materials(
+        it,
+        FfiConverterTypeFfiCreateAccountWithMaterialsParams.lower(`params`),FfiConverterTypeFfiAccountRootMaterial.lower(`accountRoot`),FfiConverterTypeFfiDeviceKeyMaterial.lower(`deviceKeys`),_status)
 }
     }
     )
@@ -4925,6 +5175,20 @@ open class FfiServerApiClient: Disposable, AutoCloseable, FfiServerApiClientInte
     UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_revoke_device(
         it,
         FfiConverterString.lower(`deviceId`),FfiConverterString.lower(`reason`),FfiConverterByteArray.lower(`accountRootSignature`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `revokeDeviceWithAccountRoot`(`deviceId`: kotlin.String, `reason`: kotlin.String, `accountRoot`: FfiAccountRootMaterial): FfiRevokeDeviceResponse {
+            return FfiConverterTypeFfiRevokeDeviceResponse.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_revoke_device_with_account_root(
+        it,
+        FfiConverterString.lower(`deviceId`),FfiConverterString.lower(`reason`),FfiConverterTypeFfiAccountRootMaterial.lower(`accountRoot`),_status)
 }
     }
     )
@@ -6474,6 +6738,59 @@ public object FfiConverterTypeFfiCompleteLinkIntentParams: FfiConverterRustBuffe
 
 
 
+data class FfiCompleteLinkIntentWithDeviceKeyParams (
+    var `linkToken`: kotlin.String
+    , 
+    var `deviceDisplayName`: kotlin.String
+    , 
+    var `platform`: kotlin.String
+    , 
+    var `credentialIdentity`: kotlin.ByteArray
+    , 
+    var `keyPackages`: List<FfiPublishKeyPackage>
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiCompleteLinkIntentWithDeviceKeyParams: FfiConverterRustBuffer<FfiCompleteLinkIntentWithDeviceKeyParams> {
+    override fun read(buf: ByteBuffer): FfiCompleteLinkIntentWithDeviceKeyParams {
+        return FfiCompleteLinkIntentWithDeviceKeyParams(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterSequenceTypeFfiPublishKeyPackage.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiCompleteLinkIntentWithDeviceKeyParams) = (
+            FfiConverterString.allocationSize(value.`linkToken`) +
+            FfiConverterString.allocationSize(value.`deviceDisplayName`) +
+            FfiConverterString.allocationSize(value.`platform`) +
+            FfiConverterByteArray.allocationSize(value.`credentialIdentity`) +
+            FfiConverterSequenceTypeFfiPublishKeyPackage.allocationSize(value.`keyPackages`)
+    )
+
+    override fun write(value: FfiCompleteLinkIntentWithDeviceKeyParams, buf: ByteBuffer) {
+            FfiConverterString.write(value.`linkToken`, buf)
+            FfiConverterString.write(value.`deviceDisplayName`, buf)
+            FfiConverterString.write(value.`platform`, buf)
+            FfiConverterByteArray.write(value.`credentialIdentity`, buf)
+            FfiConverterSequenceTypeFfiPublishKeyPackage.write(value.`keyPackages`, buf)
+    }
+}
+
+
+
 data class FfiCompletedLinkIntent (
     var `accountId`: kotlin.String
     , 
@@ -6676,6 +6993,64 @@ public object FfiConverterTypeFfiCreateAccountResponse: FfiConverterRustBuffer<F
             FfiConverterString.write(value.`accountId`, buf)
             FfiConverterString.write(value.`deviceId`, buf)
             FfiConverterString.write(value.`accountSyncChatId`, buf)
+    }
+}
+
+
+
+data class FfiCreateAccountWithMaterialsParams (
+    var `handle`: kotlin.String?
+    , 
+    var `profileName`: kotlin.String
+    , 
+    var `profileBio`: kotlin.String?
+    , 
+    var `deviceDisplayName`: kotlin.String
+    , 
+    var `platform`: kotlin.String
+    , 
+    var `credentialIdentity`: kotlin.ByteArray
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiCreateAccountWithMaterialsParams: FfiConverterRustBuffer<FfiCreateAccountWithMaterialsParams> {
+    override fun read(buf: ByteBuffer): FfiCreateAccountWithMaterialsParams {
+        return FfiCreateAccountWithMaterialsParams(
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterByteArray.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiCreateAccountWithMaterialsParams) = (
+            FfiConverterOptionalString.allocationSize(value.`handle`) +
+            FfiConverterString.allocationSize(value.`profileName`) +
+            FfiConverterOptionalString.allocationSize(value.`profileBio`) +
+            FfiConverterString.allocationSize(value.`deviceDisplayName`) +
+            FfiConverterString.allocationSize(value.`platform`) +
+            FfiConverterByteArray.allocationSize(value.`credentialIdentity`)
+    )
+
+    override fun write(value: FfiCreateAccountWithMaterialsParams, buf: ByteBuffer) {
+            FfiConverterOptionalString.write(value.`handle`, buf)
+            FfiConverterString.write(value.`profileName`, buf)
+            FfiConverterOptionalString.write(value.`profileBio`, buf)
+            FfiConverterString.write(value.`deviceDisplayName`, buf)
+            FfiConverterString.write(value.`platform`, buf)
+            FfiConverterByteArray.write(value.`credentialIdentity`, buf)
     }
 }
 
@@ -11309,7 +11684,17 @@ public object FfiConverterSequenceTypeFfiSyncChatCursor: FfiConverterRustBuffer<
             FfiConverterTypeFfiSyncChatCursor.write(it, buf)
         }
     }
+} fun `ffiAccountBootstrapPayload`(`transportPubkey`: kotlin.ByteArray, `credentialIdentity`: kotlin.ByteArray): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_trix_core_fn_func_ffi_account_bootstrap_payload(
+    
+        FfiConverterByteArray.lower(`transportPubkey`),FfiConverterByteArray.lower(`credentialIdentity`),_status)
 }
+    )
+    }
+    
+
     @Throws(TrixFfiException::class) fun `ffiBuildAttachmentMessageBody`(`blobId`: kotlin.String, `prepared`: FfiPreparedAttachmentUpload): FfiMessageBody {
             return FfiConverterTypeFfiMessageBody.lift(
     uniffiRustCallWithError(TrixFfiException) { _status ->
@@ -11337,6 +11722,17 @@ public object FfiConverterSequenceTypeFfiSyncChatCursor: FfiConverterRustBuffer<
     UniffiLib.uniffi_trix_core_fn_func_ffi_default_ciphersuite_label(
     
         _status)
+}
+    )
+    }
+    
+
+    @Throws(TrixFfiException::class) fun `ffiDeviceRevokePayload`(`deviceId`: kotlin.String, `reason`: kotlin.String): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_func_ffi_device_revoke_payload(
+    
+        FfiConverterString.lower(`deviceId`),FfiConverterString.lower(`reason`),_status)
 }
     )
     }

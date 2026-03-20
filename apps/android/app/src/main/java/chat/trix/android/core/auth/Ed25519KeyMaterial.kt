@@ -9,6 +9,14 @@ class Ed25519KeyMaterial private constructor(
     private val accountRootMaterial: FfiAccountRootMaterial?,
     private val deviceMaterial: FfiDeviceKeyMaterial?,
 ) {
+    internal fun requireAccountRootMaterial(): FfiAccountRootMaterial {
+        return accountRootMaterial ?: error("Missing account root key material")
+    }
+
+    internal fun requireDeviceMaterial(): FfiDeviceKeyMaterial {
+        return deviceMaterial ?: error("Missing device key material")
+    }
+
     val privateSeed: ByteArray
         get() = runCryptoFfi("Failed to read private key material") {
             when {

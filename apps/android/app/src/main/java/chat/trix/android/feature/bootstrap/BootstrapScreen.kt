@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import chat.trix.android.core.auth.BootstrapInput
+import chat.trix.android.core.auth.LinkExistingAccountInput
 import chat.trix.android.core.auth.StoredDeviceSummary
 
 @Composable
@@ -43,6 +44,7 @@ fun BootstrapScreen(
     backendErrorMessage: String?,
     onUpdateBaseUrl: (String) -> Unit,
     onCreateAccount: (BootstrapInput) -> Unit,
+    onCompleteLinkIntent: (LinkExistingAccountInput) -> Unit,
     onReconnectStoredDevice: (() -> Unit)?,
     onForgetStoredDevice: (() -> Unit)?,
     modifier: Modifier = Modifier,
@@ -51,6 +53,8 @@ fun BootstrapScreen(
     var handle by rememberSaveable { mutableStateOf("") }
     var profileBio by rememberSaveable { mutableStateOf("") }
     var deviceDisplayName by rememberSaveable { mutableStateOf(defaultDeviceName()) }
+    var linkPayload by rememberSaveable { mutableStateOf("") }
+    var linkDeviceDisplayName by rememberSaveable { mutableStateOf(defaultDeviceName()) }
     var editableBaseUrl by rememberSaveable(baseUrl) { mutableStateOf(baseUrl) }
     val isBusy = busyMessage != null
 
@@ -84,7 +88,7 @@ fun BootstrapScreen(
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "This client now performs a real account bootstrap and device session handshake against `trixd`, while keeping device state encrypted at rest through Android Keystore.",
+                        text = "This client now performs real account bootstrap, linked-device onboarding, and device session handshakes against `trixd`, while keeping local state encrypted at rest through Android Keystore.",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                     )
@@ -119,7 +123,6 @@ fun BootstrapScreen(
                     onProfileBioChange = { profileBio = it },
                     deviceDisplayName = deviceDisplayName,
                     onDeviceDisplayNameChange = { deviceDisplayName = it },
-                    errorMessage = errorMessage,
                     isBusy = isBusy,
                     busyMessage = busyMessage,
                     onCreateAccount = {
@@ -133,6 +136,38 @@ fun BootstrapScreen(
                         )
                     },
                 )
+
+                LinkExistingAccountCard(
+                    linkPayload = linkPayload,
+                    onLinkPayloadChange = { linkPayload = it },
+                    deviceDisplayName = linkDeviceDisplayName,
+                    onDeviceDisplayNameChange = { linkDeviceDisplayName = it },
+                    isBusy = isBusy,
+                    busyMessage = busyMessage,
+                    onCompleteLinkIntent = {
+                        onCompleteLinkIntent(
+                            LinkExistingAccountInput(
+                                rawPayload = linkPayload,
+                                deviceDisplayName = linkDeviceDisplayName,
+                            ),
+                        )
+                    },
+                )
+
+                if (!errorMessage.isNullOrBlank()) {
+                    Surface(
+                        shape = RoundedCornerShape(24.dp),
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            text = errorMessage,
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                }
             }
 
             Surface(
@@ -150,7 +185,7 @@ fun BootstrapScreen(
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "Create account, challenge the transport key, open a device session, and persist bootstrap state locally. Device linking and MLS stay out of this slice.",
+                        text = "Create a fresh account, import a raw device-link payload from another client, persist local bootstrap state, and reconnect once the trusted device approves the link.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -257,6 +292,21 @@ private fun StoredDeviceCard(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            storedDevice.deviceStatus?.let { deviceStatus ->
+                ElevatedAssistChip(
+                    onClick = {},
+                    label = { Text("Status ${deviceStatus.labelForBootstrap()}") },
+                )
+            }
+            Text(
+                text = if (storedDevice.deviceStatus == "pending") {
+                    "This device has finished the link handshake and is waiting for approval from a trusted device. After approval, use reconnect to open the real session."
+                } else {
+                    "A locally encrypted device state already exists on this Android client. You can reconnect it or forget it and start over."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             if (!errorMessage.isNullOrBlank()) {
                 Text(
                     text = errorMessage,
@@ -269,7 +319,7 @@ private fun StoredDeviceCard(
                     onClick = { onReconnectStoredDevice?.invoke() },
                     enabled = !isBusy && onReconnectStoredDevice != null,
                 ) {
-                    Text("Reconnect")
+                    Text(if (storedDevice.deviceStatus == "pending") "Check Approval" else "Reconnect")
                 }
                 TextButton(
                     onClick = { onForgetStoredDevice?.invoke() },
@@ -301,7 +351,6 @@ private fun CreateAccountCard(
     onProfileBioChange: (String) -> Unit,
     deviceDisplayName: String,
     onDeviceDisplayNameChange: (String) -> Unit,
-    errorMessage: String?,
     isBusy: Boolean,
     busyMessage: String?,
     onCreateAccount: () -> Unit,
@@ -353,13 +402,6 @@ private fun CreateAccountCard(
                 singleLine = true,
                 enabled = !isBusy,
             )
-            if (!errorMessage.isNullOrBlank()) {
-                Text(
-                    text = errorMessage,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
             Button(
                 onClick = onCreateAccount,
                 enabled = !isBusy && profileName.isNotBlank() && deviceDisplayName.isNotBlank(),
@@ -380,6 +422,72 @@ private fun CreateAccountCard(
     }
 }
 
+@Composable
+private fun LinkExistingAccountCard(
+    linkPayload: String,
+    onLinkPayloadChange: (String) -> Unit,
+    deviceDisplayName: String,
+    onDeviceDisplayNameChange: (String) -> Unit,
+    isBusy: Boolean,
+    busyMessage: String?,
+    onCompleteLinkIntent: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text(
+                text = "Link existing account",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = "Paste the raw link payload created on a trusted device. If the payload carries a different backend URL, Android will adopt it automatically after a successful import.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = linkPayload,
+                onValueChange = onLinkPayloadChange,
+                label = { Text("Raw link payload JSON") },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 4,
+                maxLines = 8,
+                enabled = !isBusy,
+            )
+            OutlinedTextField(
+                value = deviceDisplayName,
+                onValueChange = onDeviceDisplayNameChange,
+                label = { Text("Device name") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                enabled = !isBusy,
+            )
+            Button(
+                onClick = onCompleteLinkIntent,
+                enabled = !isBusy && linkPayload.isNotBlank() && deviceDisplayName.isNotBlank(),
+            ) {
+                if (isBusy) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        CircularProgressIndicator()
+                        Text(busyMessage ?: "Linking")
+                    }
+                } else {
+                    Text("Link Existing Account")
+                }
+            }
+        }
+    }
+}
+
 private fun defaultDeviceName(): String {
     val manufacturer = Build.MANUFACTURER?.trim().orEmpty()
     val model = Build.MODEL?.trim().orEmpty()
@@ -387,4 +495,13 @@ private fun defaultDeviceName(): String {
         .filter { it.isNotBlank() }
         .joinToString(separator = " ")
         .ifBlank { "Android device" }
+}
+
+private fun String.labelForBootstrap(): String {
+    return when (this.lowercase()) {
+        "pending" -> "Pending approval"
+        "active" -> "Active"
+        "revoked" -> "Revoked"
+        else -> this
+    }
 }

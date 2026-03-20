@@ -107,24 +107,29 @@ data class LocalAuthState(
     val accountId: String,
     val deviceId: String,
     val accountSyncChatId: String?,
+    val deviceStatus: String?,
     val handle: String?,
     val profileName: String,
     val profileBio: String?,
     val deviceDisplayName: String,
     val credentialIdentity: ByteArray,
-    val accountRootPrivateSeed: ByteArray,
-    val accountRootPublicKey: ByteArray,
+    val accountRootPrivateSeed: ByteArray?,
+    val accountRootPublicKey: ByteArray?,
     val transportPrivateSeed: ByteArray,
     val transportPublicKey: ByteArray,
     val accessToken: String?,
     val accessTokenExpiresAtUnix: Long?,
 ) {
+    val hasAccountRootMaterial: Boolean
+        get() = accountRootPrivateSeed != null && accountRootPublicKey != null
+
     fun toSummary(): StoredDeviceSummary {
         return StoredDeviceSummary(
             accountId = accountId,
             deviceId = deviceId,
             profileName = profileName,
             deviceDisplayName = deviceDisplayName,
+            deviceStatus = deviceStatus,
         )
     }
 
@@ -133,13 +138,14 @@ data class LocalAuthState(
             put("account_id", accountId)
             put("device_id", deviceId)
             put("account_sync_chat_id", accountSyncChatId)
+            put("device_status", deviceStatus)
             put("handle", handle)
             put("profile_name", profileName)
             put("profile_bio", profileBio)
             put("device_display_name", deviceDisplayName)
             put("credential_identity_b64", credentialIdentity.encodeBase64())
-            put("account_root_private_seed_b64", accountRootPrivateSeed.encodeBase64())
-            put("account_root_public_key_b64", accountRootPublicKey.encodeBase64())
+            put("account_root_private_seed_b64", accountRootPrivateSeed?.encodeBase64())
+            put("account_root_public_key_b64", accountRootPublicKey?.encodeBase64())
             put("transport_private_seed_b64", transportPrivateSeed.encodeBase64())
             put("transport_public_key_b64", transportPublicKey.encodeBase64())
             put("access_token", accessToken)
@@ -153,13 +159,14 @@ data class LocalAuthState(
                 accountId = json.getString("account_id"),
                 deviceId = json.getString("device_id"),
                 accountSyncChatId = json.optNullableString("account_sync_chat_id"),
+                deviceStatus = json.optNullableString("device_status"),
                 handle = json.optNullableString("handle"),
                 profileName = json.getString("profile_name"),
                 profileBio = json.optNullableString("profile_bio"),
                 deviceDisplayName = json.getString("device_display_name"),
                 credentialIdentity = json.requireBase64("credential_identity_b64"),
-                accountRootPrivateSeed = json.requireBase64("account_root_private_seed_b64"),
-                accountRootPublicKey = json.requireBase64("account_root_public_key_b64"),
+                accountRootPrivateSeed = json.optNullableBase64("account_root_private_seed_b64"),
+                accountRootPublicKey = json.optNullableBase64("account_root_public_key_b64"),
                 transportPrivateSeed = json.requireBase64("transport_private_seed_b64"),
                 transportPublicKey = json.requireBase64("transport_public_key_b64"),
                 accessToken = json.optNullableString("access_token"),
@@ -174,6 +181,7 @@ data class StoredDeviceSummary(
     val deviceId: String,
     val profileName: String,
     val deviceDisplayName: String,
+    val deviceStatus: String?,
 )
 
 private fun JSONObject.optNullableString(key: String): String? {
@@ -191,6 +199,15 @@ private fun JSONObject.optNullableLong(key: String): Long? {
 
 private fun JSONObject.requireBase64(key: String): ByteArray {
     val value = getString(key)
+    return runCatching {
+        Base64.decode(value, Base64.DEFAULT)
+    }.getOrElse { error ->
+        throw IOException("Invalid base64 payload for $key", error)
+    }
+}
+
+private fun JSONObject.optNullableBase64(key: String): ByteArray? {
+    val value = optNullableString(key) ?: return null
     return runCatching {
         Base64.decode(value, Base64.DEFAULT)
     }.getOrElse { error ->

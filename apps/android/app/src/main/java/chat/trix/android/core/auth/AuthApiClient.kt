@@ -1,8 +1,11 @@
 package chat.trix.android.core.auth
 
 import chat.trix.android.core.ffi.FfiAccountProfile
+import chat.trix.android.core.ffi.FfiCompleteLinkIntentWithDeviceKeyParams
 import chat.trix.android.core.ffi.FfiCreateAccountParams
+import chat.trix.android.core.ffi.FfiCreateAccountWithMaterialsParams
 import chat.trix.android.core.ffi.FfiDeviceStatus
+import chat.trix.android.core.ffi.FfiPublishKeyPackage
 import chat.trix.android.core.ffi.FfiServerApiClient
 import chat.trix.android.core.ffi.TrixFfiException
 import chat.trix.android.core.ffi.FfiUpdateAccountProfileParams
@@ -18,20 +21,23 @@ class AuthApiClient(
         FfiServerApiClient(baseUrl)
     }
 
-    suspend fun createAccount(request: CreateAccountPayload): CreateAccountResult = withContext(Dispatchers.IO) {
+    suspend fun createAccount(
+        request: CreateAccountPayload,
+        accountRootKey: Ed25519KeyMaterial,
+        transportKey: Ed25519KeyMaterial,
+    ): CreateAccountResult = withContext(Dispatchers.IO) {
         runFfi("Failed to create account") {
-            val response = ffiClient.createAccount(
-                FfiCreateAccountParams(
+            val response = ffiClient.createAccountWithMaterials(
+                FfiCreateAccountWithMaterialsParams(
                     handle = request.handle,
                     profileName = request.profileName,
                     profileBio = request.profileBio,
                     deviceDisplayName = request.deviceDisplayName,
                     platform = request.platform,
                     credentialIdentity = request.credentialIdentity,
-                    accountRootPubkey = request.accountRootPubkey,
-                    accountRootSignature = request.accountRootSignature,
-                    transportPubkey = request.transportPubkey,
                 ),
+                accountRootKey.requireAccountRootMaterial(),
+                transportKey.requireDeviceMaterial(),
             )
             CreateAccountResult(
                 accountId = response.accountId,
@@ -68,6 +74,52 @@ class AuthApiClient(
                 expiresAtUnix = response.expiresAtUnix.toLong(),
                 accountId = response.accountId,
                 deviceStatus = response.deviceStatus.asApiString(),
+            )
+        }
+    }
+
+    suspend fun authenticateWithDeviceKey(
+        deviceId: String,
+        deviceKey: Ed25519KeyMaterial,
+        setAccessToken: Boolean = true,
+    ): AuthSessionResult = withContext(Dispatchers.IO) {
+        runFfi("Failed to authenticate with device key") {
+            val response = ffiClient.authenticateWithDeviceKey(
+                deviceId = deviceId,
+                deviceKeys = deviceKey.requireDeviceMaterial(),
+                setAccessToken = setAccessToken,
+            )
+            AuthSessionResult(
+                accessToken = response.accessToken,
+                expiresAtUnix = response.expiresAtUnix.toLong(),
+                accountId = response.accountId,
+                deviceStatus = response.deviceStatus.asApiString(),
+            )
+        }
+    }
+
+    suspend fun completeLinkIntentWithDeviceKey(
+        linkIntentId: String,
+        request: CompleteLinkIntentPayload,
+        deviceKey: Ed25519KeyMaterial,
+    ): CompletedLinkIntentResult = withContext(Dispatchers.IO) {
+        runFfi("Failed to complete device link intent") {
+            val response = ffiClient.completeLinkIntentWithDeviceKey(
+                linkIntentId = linkIntentId,
+                params = FfiCompleteLinkIntentWithDeviceKeyParams(
+                    linkToken = request.linkToken,
+                    deviceDisplayName = request.deviceDisplayName,
+                    platform = request.platform,
+                    credentialIdentity = request.credentialIdentity,
+                    keyPackages = request.keyPackages,
+                ),
+                deviceKeys = deviceKey.requireDeviceMaterial(),
+            )
+            CompletedLinkIntentResult(
+                accountId = response.accountId,
+                pendingDeviceId = response.pendingDeviceId,
+                deviceStatus = response.deviceStatus.asApiString(),
+                bootstrapPayload = response.bootstrapPayload,
             )
         }
     }
@@ -135,9 +187,6 @@ data class CreateAccountPayload(
     val deviceDisplayName: String,
     val platform: String,
     val credentialIdentity: ByteArray,
-    val accountRootPubkey: ByteArray,
-    val accountRootSignature: ByteArray,
-    val transportPubkey: ByteArray,
 )
 
 data class CreateAccountResult(
@@ -157,6 +206,21 @@ data class AuthSessionResult(
     val expiresAtUnix: Long,
     val accountId: String,
     val deviceStatus: String,
+)
+
+data class CompleteLinkIntentPayload(
+    val linkToken: String,
+    val deviceDisplayName: String,
+    val platform: String,
+    val credentialIdentity: ByteArray,
+    val keyPackages: List<FfiPublishKeyPackage>,
+)
+
+data class CompletedLinkIntentResult(
+    val accountId: String,
+    val pendingDeviceId: String,
+    val deviceStatus: String,
+    val bootstrapPayload: ByteArray,
 )
 
 data class AccountProfile(
