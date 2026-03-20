@@ -519,6 +519,41 @@ extension ChatParticipantProfileSummary {
     }
 }
 
+extension LocalChatListItem {
+    init(ffiValue: FfiLocalChatListItem) throws {
+        self.init(
+            chatId: try TrixCoreCodec.uuid(ffiValue.chatId, label: "chat_id"),
+            chatType: ChatType(ffiValue.chatType),
+            title: ffiValue.title,
+            displayTitle: ffiValue.displayTitle,
+            lastServerSeq: ffiValue.lastServerSeq,
+            pendingMessageCount: ffiValue.pendingMessageCount,
+            unreadCount: ffiValue.unreadCount,
+            previewText: ffiValue.previewText,
+            previewSenderAccountId: try ffiValue.previewSenderAccountId.map {
+                try TrixCoreCodec.uuid($0, label: "preview_sender_account_id")
+            },
+            previewSenderDisplayName: ffiValue.previewSenderDisplayName,
+            previewIsOutgoing: ffiValue.previewIsOutgoing,
+            previewServerSeq: ffiValue.previewServerSeq,
+            previewCreatedAtUnix: ffiValue.previewCreatedAtUnix,
+            participantProfiles: try ffiValue.participantProfiles.map {
+                try ChatParticipantProfileSummary(ffiValue: $0)
+            }
+        )
+    }
+}
+
+extension LocalChatReadState {
+    init(ffiValue: FfiLocalChatReadState) throws {
+        self.init(
+            chatId: try TrixCoreCodec.uuid(ffiValue.chatId, label: "chat_id"),
+            readCursorServerSeq: ffiValue.readCursorServerSeq,
+            unreadCount: ffiValue.unreadCount
+        )
+    }
+}
+
 extension ChatDeviceSummary {
     init(ffiValue: FfiChatDeviceMember) throws {
         self.init(
@@ -718,6 +753,28 @@ extension LocalProjectedMessage {
             payloadB64: ffiValue.payload?.base64EncodedString(),
             body: try ffiValue.body.map { try TypedMessageBody(ffiValue: $0) },
             bodyParseError: ffiValue.bodyParseError,
+            mergedEpoch: ffiValue.mergedEpoch,
+            createdAtUnix: ffiValue.createdAtUnix
+        )
+    }
+}
+
+extension LocalTimelineItem {
+    init(ffiValue: FfiLocalTimelineItem) throws {
+        self.init(
+            serverSeq: ffiValue.serverSeq,
+            messageId: try TrixCoreCodec.uuid(ffiValue.messageId, label: "message_id"),
+            senderAccountId: try TrixCoreCodec.uuid(ffiValue.senderAccountId, label: "sender_account_id"),
+            senderDeviceId: try TrixCoreCodec.uuid(ffiValue.senderDeviceId, label: "sender_device_id"),
+            senderDisplayName: ffiValue.senderDisplayName,
+            isOutgoing: ffiValue.isOutgoing,
+            epoch: ffiValue.epoch,
+            messageKind: MessageKind(ffiValue.messageKind),
+            contentType: ContentType(ffiValue.contentType),
+            projectionKind: LocalProjectionKind(ffiValue.projectionKind),
+            body: try ffiValue.body.map { try TypedMessageBody(ffiValue: $0) },
+            bodyParseError: ffiValue.bodyParseError,
+            previewText: ffiValue.previewText,
             mergedEpoch: ffiValue.mergedEpoch,
             createdAtUnix: ffiValue.createdAtUnix
         )

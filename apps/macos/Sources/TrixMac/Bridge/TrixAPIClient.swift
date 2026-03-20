@@ -693,6 +693,36 @@ struct TrixAPIClient {
         }
     }
 
+    func fetchLocalChatListItems(
+        databasePath: URL,
+        selfAccountId: UUID?
+    ) async throws -> [LocalChatListItem] {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            return try store.listLocalChatListItems(
+                selfAccountId: selfAccountId?.uuidString
+            ).map { try LocalChatListItem(ffiValue: $0) }
+        }
+    }
+
+    func fetchLocalChatListItem(
+        databasePath: URL,
+        chatId: UUID,
+        selfAccountId: UUID?
+    ) async throws -> LocalChatListItem? {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            guard let item = try store.getLocalChatListItem(
+                chatId: chatId.uuidString,
+                selfAccountId: selfAccountId?.uuidString
+            ) else {
+                return nil
+            }
+
+            return try LocalChatListItem(ffiValue: item)
+        }
+    }
+
     func fetchLocalChatDetail(
         databasePath: URL,
         chatId: UUID
@@ -719,6 +749,60 @@ struct TrixAPIClient {
                     chatId: chatId.uuidString,
                     afterServerSeq: nil,
                     limit: try TrixCoreCodec.uint32(limit, label: "local chat history limit")
+                )
+            )
+        }
+    }
+
+    func fetchLocalTimelineItems(
+        databasePath: URL,
+        chatId: UUID,
+        selfAccountId: UUID?,
+        afterServerSeq: UInt64? = nil,
+        limit: Int = 200
+    ) async throws -> [LocalTimelineItem] {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            return try store.getLocalTimelineItems(
+                chatId: chatId.uuidString,
+                selfAccountId: selfAccountId?.uuidString,
+                afterServerSeq: afterServerSeq,
+                limit: try TrixCoreCodec.uint32(limit, label: "local timeline limit")
+            ).map { try LocalTimelineItem(ffiValue: $0) }
+        }
+    }
+
+    func fetchLocalChatReadState(
+        databasePath: URL,
+        chatId: UUID,
+        selfAccountId: UUID?
+    ) async throws -> LocalChatReadState? {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            guard let state = try store.getChatReadState(
+                chatId: chatId.uuidString,
+                selfAccountId: selfAccountId?.uuidString
+            ) else {
+                return nil
+            }
+
+            return try LocalChatReadState(ffiValue: state)
+        }
+    }
+
+    func markLocalChatRead(
+        databasePath: URL,
+        chatId: UUID,
+        throughServerSeq: UInt64?,
+        selfAccountId: UUID?
+    ) async throws -> LocalChatReadState {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            return try LocalChatReadState(
+                ffiValue: store.markChatRead(
+                    chatId: chatId.uuidString,
+                    throughServerSeq: throughServerSeq,
+                    selfAccountId: selfAccountId?.uuidString
                 )
             )
         }

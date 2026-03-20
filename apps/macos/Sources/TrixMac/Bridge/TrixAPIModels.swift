@@ -380,6 +380,82 @@ struct LocalInboxAckResult: Sendable {
     let syncState: SyncStateSnapshot
 }
 
+struct LocalChatReadState: Identifiable, Sendable {
+    let chatId: UUID
+    let readCursorServerSeq: UInt64
+    let unreadCount: UInt64
+
+    var id: UUID { chatId }
+
+    var hasUnread: Bool {
+        unreadCount > 0
+    }
+}
+
+struct LocalChatListItem: Identifiable, Sendable {
+    let chatId: UUID
+    let chatType: ChatType
+    let title: String?
+    let displayTitle: String
+    let lastServerSeq: UInt64
+    let pendingMessageCount: UInt64
+    let unreadCount: UInt64
+    let previewText: String?
+    let previewSenderAccountId: UUID?
+    let previewSenderDisplayName: String?
+    let previewIsOutgoing: Bool?
+    let previewServerSeq: UInt64?
+    let previewCreatedAtUnix: UInt64?
+    let participantProfiles: [ChatParticipantProfileSummary]
+
+    var id: UUID { chatId }
+
+    var previewCreatedAt: Date? {
+        guard let previewCreatedAtUnix else {
+            return nil
+        }
+
+        return Date(timeIntervalSince1970: TimeInterval(previewCreatedAtUnix))
+    }
+
+    var hasUnread: Bool {
+        unreadCount > 0
+    }
+
+    func participantSubtitle(for currentAccountID: UUID?) -> String {
+        chatSummary.subtitle(for: currentAccountID)
+    }
+
+    func sidebarPreview(for currentAccountID: UUID?) -> String {
+        if let previewText = previewText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !previewText.isEmpty {
+            if previewIsOutgoing == true {
+                return "You: \(previewText)"
+            }
+
+            if let previewSenderDisplayName,
+               !previewSenderDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               chatType != .dm {
+                return "\(previewSenderDisplayName): \(previewText)"
+            }
+
+            return previewText
+        }
+
+        return participantSubtitle(for: currentAccountID)
+    }
+
+    private var chatSummary: ChatSummary {
+        ChatSummary(
+            chatId: chatId,
+            chatType: chatType,
+            title: title,
+            lastServerSeq: lastServerSeq,
+            participantProfiles: participantProfiles
+        )
+    }
+}
+
 struct ChatParticipantProfileSummary: Codable, Identifiable, Hashable {
     let accountId: UUID
     let handle: String?
@@ -732,6 +808,43 @@ struct LocalProjectedMessage: Identifiable, Sendable {
         }
 
         return Data(base64Encoded: payloadB64)?.count ?? 0
+    }
+}
+
+struct LocalTimelineItem: Identifiable, Sendable {
+    let serverSeq: UInt64
+    let messageId: UUID
+    let senderAccountId: UUID
+    let senderDeviceId: UUID
+    let senderDisplayName: String
+    let isOutgoing: Bool
+    let epoch: UInt64
+    let messageKind: MessageKind
+    let contentType: ContentType
+    let projectionKind: LocalProjectionKind
+    let body: TypedMessageBody?
+    let bodyParseError: String?
+    let previewText: String
+    let mergedEpoch: UInt64?
+    let createdAtUnix: UInt64
+
+    var id: UUID { messageId }
+
+    var createdAt: Date {
+        Date(timeIntervalSince1970: TimeInterval(createdAtUnix))
+    }
+
+    var bodySummary: String {
+        if let body {
+            return body.summary
+        }
+
+        if let bodyParseError,
+           !bodyParseError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return bodyParseError
+        }
+
+        return previewText
     }
 }
 

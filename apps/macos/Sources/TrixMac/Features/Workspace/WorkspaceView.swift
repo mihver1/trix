@@ -46,26 +46,16 @@ struct WorkspaceView: View {
         availableSize.width < 1380 || availableSize.height < 860
     }
 
-    private var timelineUsesProjectedData: Bool {
-        !model.selectedChatProjectedMessages.isEmpty
+    private var timelineUsesLocalData: Bool {
+        !model.selectedChatTimelineItems.isEmpty
     }
 
     private var timelineUsesEncryptedFallback: Bool {
-        model.selectedChatProjectedMessages.isEmpty && !model.selectedChatHistory.isEmpty
+        model.selectedChatTimelineItems.isEmpty && !model.selectedChatHistory.isEmpty
     }
 
     private var presentationAccountID: UUID? {
         model.chatPresentationAccountID
-    }
-
-    private var selectedChatNeedsRecreation: Bool {
-        guard let detail = model.selectedChatDetail else {
-            return false
-        }
-
-        return detail.epoch == 0 &&
-            model.selectedChatProjectedMessages.isEmpty &&
-            model.selectedChatHistory.isEmpty
     }
 
     var body: some View {
@@ -164,6 +154,10 @@ struct WorkspaceView: View {
             return "Linking, sync and diagnostics stay secondary."
         }
 
+        if let selectedChatListItem = model.selectedChatListItem {
+            return selectedChatListItem.participantSubtitle(for: presentationAccountID)
+        }
+
         if let selectedChatSummary = model.selectedChatSummary {
             return selectedChatSummary.subtitle(for: presentationAccountID)
         }
@@ -195,20 +189,20 @@ struct WorkspaceView: View {
 
     @ViewBuilder
     private func conversationPanel(_ currentAccount: AccountProfileResponse) -> some View {
-        if let summary = model.selectedChatSummary {
+        if let selectedChatListItem = model.selectedChatListItem ?? fallbackSelectedChatListItem(currentAccountID: currentAccount.accountId) {
             TrixPanel(
-                title: summary.displayTitle(for: currentAccount.accountId),
-                subtitle: summary.subtitle(for: currentAccount.accountId)
+                title: selectedChatListItem.displayTitle,
+                subtitle: selectedChatListItem.participantSubtitle(for: currentAccount.accountId)
             ) {
                 VStack(alignment: .leading, spacing: 18) {
                     HStack(spacing: 10) {
                         TrixToneBadge(
-                            label: summary.chatType.label,
+                            label: selectedChatListItem.chatType.label,
                             tint: colors.accent
                         )
 
-                        if timelineUsesProjectedData {
-                            TrixToneBadge(label: "Projected timeline", tint: colors.success)
+                        if timelineUsesLocalData {
+                            TrixToneBadge(label: "Local timeline", tint: colors.success)
                         } else if timelineUsesEncryptedFallback {
                             TrixToneBadge(label: "Encrypted fallback", tint: colors.warning)
                         } else {
@@ -224,8 +218,8 @@ struct WorkspaceView: View {
                         conversationMetadata(detail)
                     }
 
-                    conversationTimeline(currentAccountID: currentAccount.accountId)
-                    composerPanel(for: summary)
+                    conversationTimeline()
+                    composerPanel(chatTitle: selectedChatListItem.displayTitle)
                 }
             }
         } else {
@@ -753,9 +747,10 @@ struct WorkspaceView: View {
                 ConversationMetaChip(label: "Members", value: "\(detail.members.count)")
                 ConversationMetaChip(label: "Epoch", value: "\(detail.epoch)")
                 ConversationMetaChip(label: "Server", value: "seq \(detail.lastServerSeq)")
+                ConversationMetaChip(label: "Unread", value: "\(model.selectedChatReadState?.unreadCount ?? 0)")
                 ConversationMetaChip(
                     label: "Timeline",
-                    value: timelineUsesProjectedData ? "projected" : (timelineUsesEncryptedFallback ? "encrypted fallback" : "empty")
+                    value: timelineUsesLocalData ? "local" : (timelineUsesEncryptedFallback ? "encrypted fallback" : "empty")
                 )
             }
 
@@ -768,7 +763,7 @@ struct WorkspaceView: View {
         }
     }
 
-    private func conversationTimeline(currentAccountID: UUID) -> some View {
+    private func conversationTimeline() -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .center) {
                 Text("Timeline")
@@ -779,28 +774,28 @@ struct WorkspaceView: View {
 
                 TrixToneBadge(
                     label: timelineBadgeLabel,
-                    tint: timelineUsesProjectedData ? colors.success : (timelineUsesEncryptedFallback ? colors.warning : colors.inkMuted)
+                    tint: timelineUsesLocalData ? colors.success : (timelineUsesEncryptedFallback ? colors.warning : colors.inkMuted)
                 )
             }
 
-            if model.isLoadingSelectedChat && model.selectedChatProjectedMessages.isEmpty && model.selectedChatHistory.isEmpty {
+            if model.isLoadingSelectedChat && model.selectedChatTimelineItems.isEmpty && model.selectedChatHistory.isEmpty {
                 HStack(spacing: 12) {
                     ProgressView()
                     Text("Loading conversation…")
                         .foregroundStyle(colors.inkMuted)
                 }
-            } else if timelineUsesProjectedData {
+            } else if timelineUsesLocalData {
                 VStack(alignment: .leading, spacing: 12) {
-                    ForEach(model.selectedChatProjectedMessages) { message in
-                        ProjectedMessageRow(
+                    ForEach(model.selectedChatTimelineItems) { message in
+                        LocalTimelineMessageRow(
                             message: message,
-                            isOutgoing: message.senderAccountId == currentAccountID
+                            isOutgoing: message.isOutgoing
                         )
                     }
                 }
             } else if timelineUsesEncryptedFallback {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("The Mac already has the encrypted envelopes for this chat. Message bodies will replace this view once MLS conversation restore is wired in.")
+                    Text("Encrypted envelopes are stored locally, but this conversation still needs a projected local timeline on this Mac.")
                         .font(.footnote)
                         .foregroundStyle(colors.inkMuted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -808,7 +803,7 @@ struct WorkspaceView: View {
                     ForEach(model.selectedChatHistory) { message in
                         MessageHistoryRow(
                             message: message,
-                            isOutgoing: message.senderAccountId == currentAccountID
+                            isOutgoing: presentationAccountID.map { $0 == message.senderAccountId } ?? false
                         )
                     }
                 }
@@ -824,18 +819,14 @@ struct WorkspaceView: View {
         }
     }
 
-    private func composerPanel(for summary: ChatSummary) -> some View {
+    private func composerPanel(chatTitle: String) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Composer")
                         .font(.headline)
                         .foregroundStyle(colors.ink)
-                    Text(
-                        selectedChatNeedsRecreation
-                            ? "Этот чат был создан без локального MLS control flow. Для отправки создай новый чат в текущей сборке."
-                            : "Messages now send through the local MLS state when this Mac has the chat conversation material."
-                    )
+                    Text("Messages send through the local MLS state for this conversation.")
                         .font(.footnote)
                         .foregroundStyle(colors.inkMuted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -844,14 +835,14 @@ struct WorkspaceView: View {
                 Spacer()
 
                 TrixToneBadge(
-                    label: selectedChatNeedsRecreation ? "Legacy chat" : (model.isSendingMessage ? "Sending…" : "MLS send"),
-                    tint: selectedChatNeedsRecreation ? colors.warning : (model.isSendingMessage ? colors.warning : colors.success)
+                    label: model.isSendingMessage ? "Sending…" : "Ready to send",
+                    tint: model.isSendingMessage ? colors.warning : colors.success
                 )
             }
 
             ZStack(alignment: .topLeading) {
                 if composerDraft.isEmpty {
-                    Text("Write a reply to \(summary.displayTitle(for: presentationAccountID))…")
+                    Text("Write a reply to \(chatTitle)…")
                         .font(.body)
                         .foregroundStyle(colors.inkMuted)
                         .padding(.horizontal, 14)
@@ -889,8 +880,7 @@ struct WorkspaceView: View {
                 .buttonStyle(TrixActionButtonStyle(tone: .primary))
                 .disabled(
                     composerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                        model.isSendingMessage ||
-                        selectedChatNeedsRecreation
+                        model.isSendingMessage
                 )
             }
         }
@@ -903,13 +893,36 @@ struct WorkspaceView: View {
     }
 
     private var timelineBadgeLabel: String {
-        if timelineUsesProjectedData {
-            return "\(model.selectedChatProjectedMessages.count) projected"
+        if timelineUsesLocalData {
+            return "\(model.selectedChatTimelineItems.count) messages"
         }
         if timelineUsesEncryptedFallback {
             return "\(model.selectedChatHistory.count) encrypted"
         }
         return "No messages yet"
+    }
+
+    private func fallbackSelectedChatListItem(currentAccountID: UUID) -> LocalChatListItem? {
+        guard let summary = model.selectedChatSummary else {
+            return nil
+        }
+
+        return LocalChatListItem(
+            chatId: summary.chatId,
+            chatType: summary.chatType,
+            title: summary.title,
+            displayTitle: summary.displayTitle(for: currentAccountID),
+            lastServerSeq: summary.lastServerSeq,
+            pendingMessageCount: 0,
+            unreadCount: model.selectedChatReadState?.unreadCount ?? 0,
+            previewText: model.selectedChatTimelineItems.last?.previewText,
+            previewSenderAccountId: model.selectedChatTimelineItems.last?.senderAccountId,
+            previewSenderDisplayName: model.selectedChatTimelineItems.last?.senderDisplayName,
+            previewIsOutgoing: model.selectedChatTimelineItems.last?.isOutgoing,
+            previewServerSeq: model.selectedChatTimelineItems.last?.serverSeq,
+            previewCreatedAtUnix: model.selectedChatTimelineItems.last?.createdAtUnix,
+            participantProfiles: summary.participantProfiles
+        )
     }
 
     private func shortID(_ uuid: UUID) -> String {
@@ -2013,6 +2026,94 @@ private struct ProjectedMessageRow: View {
 
     private var bubbleBorder: Color {
         isOutgoing ? colors.accent.opacity(0.28) : colors.outline
+    }
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter
+    }()
+}
+
+private struct LocalTimelineMessageRow: View {
+    @Environment(\.trixColors) private var colors
+    let message: LocalTimelineItem
+    let isOutgoing: Bool
+
+    init(message: LocalTimelineItem, isOutgoing: Bool = false) {
+        self.message = message
+        self.isOutgoing = isOutgoing
+    }
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 0) {
+            if isOutgoing {
+                Spacer(minLength: 64)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(senderLabel)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(colors.ink)
+
+                    Spacer()
+
+                    Text(Self.relativeFormatter.localizedString(for: message.createdAt, relativeTo: .now))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(colors.inkMuted)
+                }
+
+                Text(message.bodySummary)
+                    .font(.body)
+                    .foregroundStyle(message.bodyParseError == nil ? colors.ink : colors.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 10) {
+                    InlineMeta(label: message.projectionKind.label)
+                    InlineMeta(label: message.contentType.label)
+                    if let body = message.body {
+                        InlineMeta(label: body.kind.label)
+                    }
+                    if let mergedEpoch = message.mergedEpoch {
+                        InlineMeta(label: "merged \(mergedEpoch)")
+                    }
+                    InlineMeta(label: "seq \(message.serverSeq)")
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: 620, alignment: .leading)
+            .background(bubbleFill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(bubbleBorder, lineWidth: 1)
+            }
+
+            if !isOutgoing {
+                Spacer(minLength: 64)
+            }
+        }
+    }
+
+    private var senderLabel: String {
+        if isOutgoing {
+            return "You"
+        }
+
+        let trimmed = message.senderDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? shortID(message.senderAccountId) : trimmed
+    }
+
+    private var bubbleFill: Color {
+        isOutgoing ? colors.accent.opacity(0.14) : colors.tileFill
+    }
+
+    private var bubbleBorder: Color {
+        isOutgoing ? colors.accent.opacity(0.28) : colors.outline
+    }
+
+    private func shortID(_ uuid: UUID) -> String {
+        String(uuid.uuidString.prefix(8)).lowercased()
     }
 
     private static let relativeFormatter: RelativeDateTimeFormatter = {

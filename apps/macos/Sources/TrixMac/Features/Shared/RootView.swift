@@ -106,7 +106,7 @@ private struct WorkspaceSidebarView: View {
             .buttonStyle(TrixActionButtonStyle(tone: .sidebar))
             .disabled(model.isRefreshingWorkspace)
 
-            if model.chats.isEmpty {
+            if model.localChatListItems.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("No conversations yet")
                         .font(.headline)
@@ -126,7 +126,7 @@ private struct WorkspaceSidebarView: View {
                 }
             } else {
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(model.chats) { chat in
+                    ForEach(model.localChatListItems) { chat in
                         WorkspaceSidebarChatRow(
                             chat: chat,
                             currentAccountID: model.chatPresentationAccountID,
@@ -317,7 +317,7 @@ private struct SidebarView: View {
 
 private struct WorkspaceSidebarChatRow: View {
     @Environment(\.trixColors) private var colors
-    let chat: ChatSummary
+    let chat: LocalChatListItem
     let currentAccountID: UUID?
     let isSelected: Bool
     let isLoading: Bool
@@ -337,21 +337,36 @@ private struct WorkspaceSidebarChatRow: View {
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(chat.displayTitle(for: currentAccountID))
+                    Text(chat.displayTitle)
                         .font(.headline)
                         .foregroundStyle(colors.inverseInk)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Text(chat.subtitle(for: currentAccountID))
+                    Text(chat.sidebarPreview(for: currentAccountID))
                         .font(.subheadline)
                         .foregroundStyle(colors.inverseInkMuted)
                         .lineLimit(2)
                 }
 
-                if isLoading {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(colors.accentSoft)
+                VStack(alignment: .trailing, spacing: 8) {
+                    if chat.hasUnread {
+                        Text(chat.unreadCount > 99 ? "99+" : "\(chat.unreadCount)")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Color.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(colors.accent, in: Capsule())
+                    } else if let previewCreatedAt = chat.previewCreatedAt {
+                        Text(Self.relativeFormatter.localizedString(for: previewCreatedAt, relativeTo: .now))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(colors.inverseInkMuted)
+                    }
+
+                    if isLoading {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(colors.accentSoft)
+                    }
                 }
             }
             .padding(14)
@@ -378,6 +393,12 @@ private struct WorkspaceSidebarChatRow: View {
             return "arrow.triangle.2.circlepath"
         }
     }
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter
+    }()
 }
 
 private struct ContentHeader: View {

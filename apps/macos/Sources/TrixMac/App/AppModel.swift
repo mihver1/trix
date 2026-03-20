@@ -28,7 +28,10 @@ final class AppModel: ObservableObject {
     @Published var reservedKeyPackages: [ReservedKeyPackage] = []
     @Published var reservedKeyPackagesAccountID: UUID?
     @Published var selectedChatID: UUID?
+    @Published var localChatListItems: [LocalChatListItem] = []
     @Published var selectedChatDetail: ChatDetailResponse?
+    @Published var selectedChatReadState: LocalChatReadState?
+    @Published var selectedChatTimelineItems: [LocalTimelineItem] = []
     @Published var selectedChatProjectedCursor: UInt64?
     @Published var selectedChatProjectedMessages: [LocalProjectedMessage] = []
     @Published var selectedChatHistory: [MessageEnvelope] = []
@@ -157,6 +160,14 @@ final class AppModel: ObservableObject {
         }
 
         return chats.first { $0.chatId == selectedChatID }
+    }
+
+    var selectedChatListItem: LocalChatListItem? {
+        guard let selectedChatID else {
+            return nil
+        }
+
+        return localChatListItems.first { $0.chatId == selectedChatID }
     }
 
     var hasProjectedTimelineData: Bool {
@@ -711,6 +722,9 @@ final class AppModel: ObservableObject {
             )
             mergeInboxItems(response.items, autoAdvanceCursor: true)
             applyLocalStoreSnapshot(chats: response.chats, syncState: response.syncState)
+            if let accountId = currentAccount?.accountId ?? persistedSession?.accountId {
+                try await refreshLocalMessengerState(client: client, accountId: accountId)
+            }
         } catch let error as TrixAPIError {
             if error.isCredentialFailure {
                 accessToken = nil
@@ -754,6 +768,9 @@ final class AppModel: ObservableObject {
             )
             mergeInboxItems(response.lease.items, autoAdvanceCursor: true)
             applyLocalStoreSnapshot(chats: response.chats, syncState: response.syncState)
+            if let accountId = currentAccount?.accountId ?? persistedSession?.accountId {
+                try await refreshLocalMessengerState(client: client, accountId: accountId)
+            }
         } catch let error as TrixAPIError {
             if error.isCredentialFailure {
                 accessToken = nil
@@ -1038,7 +1055,11 @@ final class AppModel: ObservableObject {
         guard let client = makeClient() else {
             return
         }
-        guard selectedChatID != chatId || selectedChatDetail == nil || selectedChatHistory.isEmpty else {
+        guard
+            selectedChatID != chatId ||
+                selectedChatDetail == nil ||
+                (selectedChatTimelineItems.isEmpty && selectedChatHistory.isEmpty)
+        else {
             return
         }
 
@@ -1125,7 +1146,7 @@ final class AppModel: ObservableObject {
             accountId: loadedProfile.accountId
         )
 
-        if let preferredChatID = preferredChatSelection(from: self.chats) {
+        if let preferredChatID = preferredLocalChatSelection(from: localChatListItems) ?? preferredChatSelection(from: self.chats) {
             try await loadSelectedChat(
                 client: client,
                 accessToken: accessToken,
@@ -1143,6 +1164,8 @@ final class AppModel: ObservableObject {
     ) async throws {
         selectedChatID = chatId
         selectedChatDetail = nil
+        selectedChatReadState = nil
+        selectedChatTimelineItems = []
         selectedChatProjectedCursor = nil
         selectedChatProjectedMessages = []
         selectedChatHistory = []
@@ -1154,6 +1177,22 @@ final class AppModel: ObservableObject {
 
         do {
             let storePaths = try workspaceStorePaths()
+            let selfAccountId = chatPresentationAccountID
+            async let localChatListItem = client.fetchLocalChatListItem(
+                databasePath: storePaths.localHistoryURL,
+                chatId: chatId,
+                selfAccountId: selfAccountId
+            )
+            async let localTimelineItems = client.fetchLocalTimelineItems(
+                databasePath: storePaths.localHistoryURL,
+                chatId: chatId,
+                selfAccountId: selfAccountId
+            )
+            async let localReadState = client.fetchLocalChatReadState(
+                databasePath: storePaths.localHistoryURL,
+                chatId: chatId,
+                selfAccountId: selfAccountId
+            )
             async let localHistory = client.fetchLocalChatHistory(
                 databasePath: storePaths.localHistoryURL,
                 chatId: chatId
@@ -1167,10 +1206,18 @@ final class AppModel: ObservableObject {
                 chatId: chatId
             )
 
+            let loadedLocalChatListItem = try await localChatListItem
+            let loadedLocalTimelineItems = try await localTimelineItems
+            let loadedLocalReadState = try await localReadState
             let loadedProjectedCursor = try await projectedCursor
             let loadedProjectedMessages = try await projectedMessages
             let loadedLocalHistory = try await localHistory
 
+            if let loadedLocalChatListItem {
+                upsertLocalChatListItem(loadedLocalChatListItem)
+            }
+            selectedChatTimelineItems = loadedLocalTimelineItems
+            selectedChatReadState = loadedLocalReadState
             selectedChatProjectedCursor = loadedProjectedCursor
             selectedChatProjectedMessages = loadedProjectedMessages
 
@@ -1182,6 +1229,15 @@ final class AppModel: ObservableObject {
                 selectedChatHistory = remoteHistory.messages
             } else {
                 selectedChatHistory = loadedLocalHistory.messages
+            }
+
+            if let selfAccountId {
+                try await markSelectedChatReadIfNeeded(
+                    client: client,
+                    accountId: selfAccountId,
+                    chatId: chatId,
+                    timelineItems: loadedLocalTimelineItems
+                )
             }
         } catch {
             let remoteHistory = try await client.fetchChatHistory(
@@ -1265,6 +1321,7 @@ final class AppModel: ObservableObject {
         currentAccount = nil
         devices = []
         chats = []
+        localChatListItems = []
         accountDirectoryResults = []
         inboxItems = []
         activeInboxLease = nil
@@ -1344,6 +1401,7 @@ final class AppModel: ObservableObject {
                 statePath: storePaths.syncStateURL
             )
             applyLocalStoreSnapshot(chats: localResult.chats, syncState: localResult.syncState)
+            try await refreshLocalMessengerState(client: client, accountId: accountId)
         } catch {
             lastErrorMessage = error.userFacingMessage
         }
@@ -1364,6 +1422,23 @@ final class AppModel: ObservableObject {
         }
 
         applySyncStateSnapshot(syncState)
+    }
+
+    private func refreshLocalMessengerState(
+        client: TrixAPIClient,
+        accountId: UUID
+    ) async throws {
+        let storePaths = try workspaceStorePaths(for: accountId)
+        localChatListItems = try await client.fetchLocalChatListItems(
+            databasePath: storePaths.localHistoryURL,
+            selfAccountId: accountId
+        )
+
+        if let selectedChatID,
+           !localChatListItems.contains(where: { $0.chatId == selectedChatID }),
+           !localChatListItems.isEmpty {
+            self.selectedChatID = localChatListItems.first?.chatId
+        }
     }
 
     private func applySyncStateSnapshot(_ syncState: SyncStateSnapshot) {
@@ -1534,12 +1609,82 @@ final class AppModel: ObservableObject {
         return chats.first?.chatId
     }
 
+    private func preferredLocalChatSelection(from chats: [LocalChatListItem]) -> UUID? {
+        if let selectedChatID,
+           chats.contains(where: { $0.chatId == selectedChatID }) {
+            return selectedChatID
+        }
+
+        return chats.first?.chatId
+    }
+
     private func clearSelectedChat() {
         selectedChatID = nil
         selectedChatDetail = nil
+        selectedChatReadState = nil
+        selectedChatTimelineItems = []
         selectedChatProjectedCursor = nil
         selectedChatProjectedMessages = []
         selectedChatHistory = []
+    }
+
+    private func upsertLocalChatListItem(_ item: LocalChatListItem) {
+        if let existingIndex = localChatListItems.firstIndex(where: { $0.chatId == item.chatId }) {
+            localChatListItems[existingIndex] = item
+            return
+        }
+
+        localChatListItems.append(item)
+        localChatListItems.sort {
+            $0.lastServerSeq > $1.lastServerSeq ||
+                ($0.lastServerSeq == $1.lastServerSeq && $0.chatId.uuidString < $1.chatId.uuidString)
+        }
+    }
+
+    private func markSelectedChatReadIfNeeded(
+        client: TrixAPIClient,
+        accountId: UUID,
+        chatId: UUID,
+        timelineItems: [LocalTimelineItem]
+    ) async throws {
+        guard let latestServerSeq = timelineItems.last?.serverSeq else {
+            return
+        }
+
+        if let selectedChatReadState,
+           selectedChatReadState.unreadCount == 0,
+           selectedChatReadState.readCursorServerSeq >= latestServerSeq {
+            return
+        }
+
+        let storePaths = try workspaceStorePaths(for: accountId)
+        let updatedReadState = try await client.markLocalChatRead(
+            databasePath: storePaths.localHistoryURL,
+            chatId: chatId,
+            throughServerSeq: latestServerSeq,
+            selfAccountId: accountId
+        )
+        selectedChatReadState = updatedReadState
+
+        if let existingIndex = localChatListItems.firstIndex(where: { $0.chatId == chatId }) {
+            let existingItem = localChatListItems[existingIndex]
+            localChatListItems[existingIndex] = LocalChatListItem(
+                chatId: existingItem.chatId,
+                chatType: existingItem.chatType,
+                title: existingItem.title,
+                displayTitle: existingItem.displayTitle,
+                lastServerSeq: existingItem.lastServerSeq,
+                pendingMessageCount: existingItem.pendingMessageCount,
+                unreadCount: updatedReadState.unreadCount,
+                previewText: existingItem.previewText,
+                previewSenderAccountId: existingItem.previewSenderAccountId,
+                previewSenderDisplayName: existingItem.previewSenderDisplayName,
+                previewIsOutgoing: existingItem.previewIsOutgoing,
+                previewServerSeq: existingItem.previewServerSeq,
+                previewCreatedAtUnix: existingItem.previewCreatedAtUnix,
+                participantProfiles: existingItem.participantProfiles
+            )
+        }
     }
 
     private func mergeInboxItems(_ newItems: [InboxItem], autoAdvanceCursor: Bool) {
