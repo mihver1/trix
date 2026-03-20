@@ -113,6 +113,9 @@ struct PersistedChatState {
     chat_type: ChatType,
     title: Option<String>,
     last_server_seq: u64,
+    #[serde(default)]
+    pending_message_count: u64,
+    last_message: Option<MessageEnvelope>,
     epoch: u64,
     last_commit_message_id: Option<MessageId>,
     #[serde(default)]
@@ -206,6 +209,8 @@ impl LocalHistoryStore {
                     chat_type: state.chat_type,
                     title: state.title.clone(),
                     last_server_seq: state.last_server_seq,
+                    pending_message_count: state.pending_message_count,
+                    last_message: state.last_message.clone(),
                     participant_profiles: state.participant_profiles.clone(),
                 })
             })
@@ -226,8 +231,10 @@ impl LocalHistoryStore {
             chat_type: state.chat_type,
             title: state.title.clone(),
             last_server_seq: state.last_server_seq,
+            pending_message_count: state.pending_message_count,
             epoch: state.epoch,
             last_commit_message_id: state.last_commit_message_id,
+            last_message: state.last_message.clone(),
             participant_profiles: state.participant_profiles.clone(),
             members: state.members.clone(),
             device_members: state.device_members.clone(),
@@ -287,6 +294,8 @@ impl LocalHistoryStore {
                 chat_type: ChatType::Dm,
                 title: None,
                 last_server_seq: 0,
+                pending_message_count: 0,
+                last_message: None,
                 epoch: 0,
                 last_commit_message_id: None,
                 participant_profiles: Vec::new(),
@@ -456,6 +465,8 @@ impl LocalHistoryStore {
                     chat_type: chat.chat_type,
                     title: chat.title.clone(),
                     last_server_seq: 0,
+                    pending_message_count: chat.pending_message_count,
+                    last_message: chat.last_message.clone(),
                     epoch: 0,
                     last_commit_message_id: None,
                     participant_profiles: chat.participant_profiles.clone(),
@@ -478,6 +489,14 @@ impl LocalHistoryStore {
             }
             if chat.last_server_seq > entry.last_server_seq {
                 entry.last_server_seq = chat.last_server_seq;
+                changed = true;
+            }
+            if entry.pending_message_count != chat.pending_message_count {
+                entry.pending_message_count = chat.pending_message_count;
+                changed = true;
+            }
+            if entry.last_message != chat.last_message {
+                entry.last_message = chat.last_message.clone();
                 changed = true;
             }
             if entry.participant_profiles != chat.participant_profiles {
@@ -514,6 +533,8 @@ impl LocalHistoryStore {
                 chat_type: detail.chat_type,
                 title: detail.title.clone(),
                 last_server_seq: detail.last_server_seq,
+                pending_message_count: detail.pending_message_count,
+                last_message: detail.last_message.clone(),
                 epoch: detail.epoch,
                 last_commit_message_id: detail.last_commit_message_id,
                 participant_profiles: detail.participant_profiles.clone(),
@@ -538,12 +559,20 @@ impl LocalHistoryStore {
             entry.last_server_seq = detail.last_server_seq;
             changed = true;
         }
+        if entry.pending_message_count != detail.pending_message_count {
+            entry.pending_message_count = detail.pending_message_count;
+            changed = true;
+        }
         if entry.epoch != detail.epoch {
             entry.epoch = detail.epoch;
             changed = true;
         }
         if entry.last_commit_message_id != detail.last_commit_message_id {
             entry.last_commit_message_id = detail.last_commit_message_id;
+            changed = true;
+        }
+        if entry.last_message != detail.last_message {
+            entry.last_message = detail.last_message.clone();
             changed = true;
         }
         if entry.participant_profiles != detail.participant_profiles {
@@ -586,6 +615,8 @@ impl LocalHistoryStore {
                 chat_type: ChatType::Dm,
                 title: None,
                 last_server_seq: 0,
+                pending_message_count: 0,
+                last_message: None,
                 epoch: 0,
                 last_commit_message_id: None,
                 participant_profiles: Vec::new(),
@@ -618,6 +649,16 @@ impl LocalHistoryStore {
             }
             if message.server_seq > entry.last_server_seq {
                 entry.last_server_seq = message.server_seq;
+                chat_changed = true;
+            }
+            if entry
+                .last_message
+                .as_ref()
+                .map(|last_message| message.server_seq >= last_message.server_seq)
+                .unwrap_or(true)
+                && entry.last_message.as_ref() != Some(message)
+            {
+                entry.last_message = Some(message.clone());
                 chat_changed = true;
             }
             if message.epoch > entry.epoch {
@@ -916,6 +957,8 @@ mod tests {
                     chat_type: ChatType::Group,
                     title: Some("chat".to_owned()),
                     last_server_seq: 2,
+                    pending_message_count: 1,
+                    last_message: Some(second_message.clone()),
                     participant_profiles: vec![ChatParticipantProfileSummary {
                         account_id: AccountId(Uuid::new_v4()),
                         handle: Some("alice".to_owned()),
@@ -939,10 +982,15 @@ mod tests {
         let chat = restored.get_chat(chat_id).unwrap();
         assert_eq!(chat.chat_type, ChatType::Group);
         assert_eq!(chat.last_server_seq, 2);
+        assert_eq!(chat.pending_message_count, 1);
         assert_eq!(chat.participant_profiles.len(), 1);
         assert_eq!(
             chat.participant_profiles[0].handle.as_deref(),
             Some("alice")
+        );
+        assert_eq!(
+            chat.last_message.as_ref().map(|message| message.server_seq),
+            Some(2)
         );
 
         let history = restored.get_chat_history(chat_id, Some(1), Some(10));

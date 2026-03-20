@@ -325,6 +325,8 @@ pub struct FfiChatSummary {
     pub chat_type: FfiChatType,
     pub title: Option<String>,
     pub last_server_seq: u64,
+    pub pending_message_count: u64,
+    pub last_message: Option<FfiMessageEnvelope>,
     pub participant_profiles: Vec<FfiChatParticipantProfile>,
 }
 
@@ -359,8 +361,10 @@ pub struct FfiChatDetail {
     pub chat_type: FfiChatType,
     pub title: Option<String>,
     pub last_server_seq: u64,
+    pub pending_message_count: u64,
     pub epoch: u64,
     pub last_commit_message_id: Option<String>,
+    pub last_message: Option<FfiMessageEnvelope>,
     pub participant_profiles: Vec<FfiChatParticipantProfile>,
     pub members: Vec<FfiChatMember>,
     pub device_members: Vec<FfiChatDeviceMember>,
@@ -2464,6 +2468,8 @@ fn chat_summary_to_ffi(value: trix_types::ChatSummary) -> FfiChatSummary {
         chat_type: value.chat_type.into(),
         title: value.title,
         last_server_seq: value.last_server_seq,
+        pending_message_count: value.pending_message_count,
+        last_message: value.last_message.map(message_envelope_to_ffi),
         participant_profiles: value
             .participant_profiles
             .into_iter()
@@ -2478,10 +2484,12 @@ fn chat_detail_to_ffi(value: trix_types::ChatDetailResponse) -> FfiChatDetail {
         chat_type: value.chat_type.into(),
         title: value.title,
         last_server_seq: value.last_server_seq,
+        pending_message_count: value.pending_message_count,
         epoch: value.epoch,
         last_commit_message_id: value
             .last_commit_message_id
             .map(|message_id| message_id.0.to_string()),
+        last_message: value.last_message.map(message_envelope_to_ffi),
         participant_profiles: value
             .participant_profiles
             .into_iter()

@@ -801,6 +801,8 @@ Response includes per-chat:
 - chat identity and type
 - optional explicit `title`
 - `last_server_seq`
+- `pending_message_count` for the authenticated device's unacked inbox backlog in that chat
+- optional `last_message` envelope
 - `participant_profiles` with `account_id`, `handle`, `profile_name`, `profile_bio`
 
 ### `GET /v0/chats/{chat_id}`
@@ -809,6 +811,8 @@ Returns chat metadata, membership, and the latest group epoch metadata.
 
 Response includes:
 
+- `pending_message_count` for the authenticated device's unacked inbox backlog in that chat
+- optional `last_message` envelope
 - `participant_profiles` for active account members
 - account-level members
 - active device-level members with `device_id`
