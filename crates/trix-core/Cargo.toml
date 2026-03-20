@@ -14,6 +14,7 @@ base64.workspace = true
 ed25519-dalek.workspace = true
 openmls.workspace = true
 openmls_basic_credential.workspace = true
+openmls_memory_storage.workspace = true
 openmls_rust_crypto.workspace = true
 openmls_traits.workspace = true
 rand.workspace = true

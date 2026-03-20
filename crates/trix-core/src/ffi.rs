@@ -86,6 +86,12 @@ pub enum FfiBlobUploadStatus {
 }
 
 #[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum FfiServiceStatus {
+    Ok,
+    Degraded,
+}
+
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
 pub enum FfiMlsProcessKind {
     ApplicationMessage,
     ProposalQueued,
@@ -110,6 +116,21 @@ pub struct FfiCreateAccountResponse {
     pub account_id: String,
     pub device_id: String,
     pub account_sync_chat_id: String,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiHealthResponse {
+    pub service: String,
+    pub status: FfiServiceStatus,
+    pub version: String,
+    pub uptime_ms: u64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiVersionResponse {
+    pub service: String,
+    pub version: String,
+    pub git_sha: Option<String>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -551,6 +572,27 @@ impl FfiServerApiClient {
             account_id: response.account_id.0.to_string(),
             device_id: response.device_id.0.to_string(),
             account_sync_chat_id: response.account_sync_chat_id.0.to_string(),
+        })
+    }
+
+    pub fn get_health(&self) -> Result<FfiHealthResponse, TrixFfiError> {
+        let client = clone_server_api_client(&self.inner)?;
+        let response = self.runtime.block_on(client.get_health())?;
+        Ok(FfiHealthResponse {
+            service: response.service,
+            status: response.status.into(),
+            version: response.version,
+            uptime_ms: response.uptime_ms,
+        })
+    }
+
+    pub fn get_version(&self) -> Result<FfiVersionResponse, TrixFfiError> {
+        let client = clone_server_api_client(&self.inner)?;
+        let response = self.runtime.block_on(client.get_version())?;
+        Ok(FfiVersionResponse {
+            service: response.service,
+            version: response.version,
+            git_sha: response.git_sha,
         })
     }
 
@@ -1227,8 +1269,37 @@ impl FfiMlsFacade {
         }))
     }
 
+    #[uniffi::constructor]
+    pub fn new_persistent(
+        credential_identity: Vec<u8>,
+        storage_root: String,
+    ) -> Result<Arc<Self>, TrixFfiError> {
+        Ok(Arc::new(Self {
+            inner: Mutex::new(
+                MlsFacade::new_persistent(credential_identity, storage_root).map_err(ffi_error)?,
+            ),
+        }))
+    }
+
+    #[uniffi::constructor]
+    pub fn load_persistent(storage_root: String) -> Result<Arc<Self>, TrixFfiError> {
+        Ok(Arc::new(Self {
+            inner: Mutex::new(MlsFacade::load_persistent(storage_root).map_err(ffi_error)?),
+        }))
+    }
+
     pub fn ciphersuite_label(&self) -> Result<String, TrixFfiError> {
         Ok(lock(&self.inner)?.ciphersuite_label())
+    }
+
+    pub fn storage_root(&self) -> Result<Option<String>, TrixFfiError> {
+        Ok(lock(&self.inner)?
+            .storage_root()
+            .map(|path| path.to_string_lossy().into_owned()))
+    }
+
+    pub fn save_state(&self) -> Result<(), TrixFfiError> {
+        lock(&self.inner)?.save_state().map_err(ffi_error)
     }
 
     pub fn credential_identity(&self) -> Result<Vec<u8>, TrixFfiError> {
@@ -1255,6 +1326,18 @@ impl FfiMlsFacade {
             .map_err(ffi_error)?;
         Ok(Arc::new(FfiMlsConversation {
             inner: Mutex::new(conversation),
+        }))
+    }
+
+    pub fn load_group(
+        &self,
+        group_id: Vec<u8>,
+    ) -> Result<Option<Arc<FfiMlsConversation>>, TrixFfiError> {
+        let conversation = lock(&self.inner)?.load_group(group_id).map_err(ffi_error)?;
+        Ok(conversation.map(|conversation| {
+            Arc::new(FfiMlsConversation {
+                inner: Mutex::new(conversation),
+            })
         }))
     }
 
@@ -1811,6 +1894,15 @@ impl From<trix_types::BlobUploadStatus> for FfiBlobUploadStatus {
         match value {
             trix_types::BlobUploadStatus::PendingUpload => Self::PendingUpload,
             trix_types::BlobUploadStatus::Available => Self::Available,
+        }
+    }
+}
+
+impl From<trix_types::ServiceStatus> for FfiServiceStatus {
+    fn from(value: trix_types::ServiceStatus) -> Self {
+        match value {
+            trix_types::ServiceStatus::Ok => Self::Ok,
+            trix_types::ServiceStatus::Degraded => Self::Degraded,
         }
     }
 }
