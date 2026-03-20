@@ -19,7 +19,8 @@ pub use api::{
     MessageEnvelope, ModifyChatDevicesRequest, ModifyChatDevicesResponse, ModifyChatMembersRequest,
     ModifyChatMembersResponse, PublishKeyPackageItem, PublishKeyPackagesRequest,
     PublishKeyPackagesResponse, PublishedKeyPackage, ReserveKeyPackagesRequest, ReservedKeyPackage,
-    RevokeDeviceRequest, RevokeDeviceResponse, ServiceStatus, VersionResponse,
+    RevokeDeviceRequest, RevokeDeviceResponse, ServiceStatus, UpdateAccountProfileRequest,
+    VersionResponse,
 };
 pub use ids::{AccountId, ChatId, DeviceId, MessageId};
 pub use model::{
