@@ -70,6 +70,15 @@ make ffi-bindings OUT=/tmp/trix-bindings
 - `FfiServerApiClient` also exposes `get_account(account_id)` and `update_account_profile(...)`.
 - `FfiChatSummary` and `FfiChatDetail` now include `participant_profiles`, so clients can render chat lists and membership UIs without extra directory round-trips.
 - `FfiChatSummary` and `FfiChatDetail` also include `pending_message_count` and optional `last_message`, so list UIs can show transport backlog and latest encrypted envelope without extra history calls.
+- `pending_message_count` is intentionally transport-level backlog, not user-read state.
+- `FfiLocalHistoryStore` now exposes local read-state APIs:
+  - `chat_read_cursor()`
+  - `chat_unread_count(self_account_id?)`
+  - `get_chat_read_state(self_account_id?)`
+  - `list_chat_read_states(self_account_id?)`
+  - `mark_chat_read()`
+  - `set_chat_read_cursor()`
+- Local unread is derived from the projected timeline, excludes MLS control traffic and receipt payloads, and can optionally exclude messages sent by the current account.
 - `FfiLocalProjectedMessage` now includes parsed `body` and `body_parse_error`, so clients can render typed text/reaction/receipt/attachment/chat-event items directly from the projected timeline.
 - `FfiSyncCoordinator` now also exposes `send_message_body()`, which performs `MessageBody -> MLS encrypt -> POST /messages -> local store -> projected timeline` in one core call.
 - `FfiChatDetail` now includes `device_members` with `device_id`, `account_id`, `leaf_index`, and `credential_identity`, so clients can resolve removals against MLS leaf indices without a parallel side channel.

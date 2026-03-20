@@ -804,6 +804,7 @@ Response includes per-chat:
 - `pending_message_count` for the authenticated device's unacked inbox backlog in that chat
 - optional `last_message` envelope
 - `participant_profiles` with `account_id`, `handle`, `profile_name`, `profile_bio`
+- true user-read/unread state remains client-local in `trix-core` and is derived from the projected timeline, not from server transport acks
 
 ### `GET /v0/chats/{chat_id}`
 
@@ -818,6 +819,7 @@ Response includes:
 - active device-level members with `device_id`
 - `leaf_index` for each active device
 - `credential_identity_b64` for MLS/member mapping on clients
+- true user-read/unread state remains client-local in `trix-core` and is derived from the projected timeline, not from server transport acks
 
 ### `POST /v0/chats/{chat_id}/members:add`
 
