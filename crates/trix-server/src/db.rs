@@ -87,6 +87,14 @@ pub struct DirectoryAccountRow {
 }
 
 #[derive(Debug)]
+pub struct UpdateAccountProfileInput {
+    pub account_id: Uuid,
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
+}
+
+#[derive(Debug)]
 pub struct DeviceSummaryRow {
     pub device_id: Uuid,
     pub display_name: String,
@@ -749,6 +757,71 @@ impl Database {
                 })
             })
             .collect()
+    }
+
+    pub async fn get_account_directory_entry(
+        &self,
+        account_id: Uuid,
+    ) -> Result<Option<DirectoryAccountRow>, AppError> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                a.account_id,
+                a.handle,
+                a.profile_name,
+                a.profile_bio
+            FROM accounts a
+            WHERE a.account_id = $1
+              AND a.deleted_at IS NULL
+              AND EXISTS (
+                    SELECT 1
+                    FROM devices d
+                    WHERE d.account_id = a.account_id
+                      AND d.device_status = 'active'::device_status
+                )
+            "#,
+        )
+        .bind(account_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        Ok(Some(DirectoryAccountRow {
+            account_id: row_uuid(&row, "account_id")?,
+            handle: row_optional_text(&row, "handle")?,
+            profile_name: row_text(&row, "profile_name")?,
+            profile_bio: row_optional_text(&row, "profile_bio")?,
+        }))
+    }
+
+    pub async fn update_account_profile(
+        &self,
+        input: UpdateAccountProfileInput,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            r#"
+            UPDATE accounts
+            SET
+                handle = $2,
+                profile_name = $3,
+                profile_bio = $4
+            WHERE account_id = $1
+              AND deleted_at IS NULL
+            "#,
+        )
+        .bind(input.account_id)
+        .bind(input.handle.as_deref())
+        .bind(&input.profile_name)
+        .bind(input.profile_bio.as_deref())
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(result.rows_affected() > 0)
     }
 
     pub async fn ensure_active_device_session(
@@ -4890,6 +4963,7 @@ mod tests {
         ApprovePendingDeviceInput, CompleteLinkIntentInput, ContentType, CreateAccountInput,
         CreateChatInput, CreateMessageInput, Database, KeyPackageBytesInput, MessageKind,
         ModifyChatDevicesInput, PendingControlMessage, PublishKeyPackageInput,
+        UpdateAccountProfileInput,
     };
     use trix_types::{ChatType, HistorySyncJobStatus, HistorySyncJobType};
 
@@ -5529,6 +5603,52 @@ mod tests {
             .expect("search self by handle");
         assert_eq!(self_result.len(), 1);
         assert_eq!(self_result[0].handle.as_deref(), Some("alice"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn smoke_updates_account_profile_and_fetches_lookup_entry() {
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [101; 32],
+                [102; 32],
+            ))
+            .await
+            .expect("create alice");
+
+        let updated = db
+            .update_account_profile(UpdateAccountProfileInput {
+                account_id: alice.account_id,
+                handle: Some("alice-updated".to_owned()),
+                profile_name: "Alice Updated".to_owned(),
+                profile_bio: Some("new bio".to_owned()),
+            })
+            .await
+            .expect("update profile");
+        assert!(updated);
+
+        let profile = db
+            .get_account_profile(alice.account_id, alice.device_id)
+            .await
+            .expect("get account profile")
+            .expect("profile must exist");
+        assert_eq!(profile.handle.as_deref(), Some("alice-updated"));
+        assert_eq!(profile.profile_name, "Alice Updated");
+        assert_eq!(profile.profile_bio.as_deref(), Some("new bio"));
+
+        let lookup = db
+            .get_account_directory_entry(alice.account_id)
+            .await
+            .expect("lookup account")
+            .expect("lookup must exist");
+        assert_eq!(lookup.handle.as_deref(), Some("alice-updated"));
+        assert_eq!(lookup.profile_name, "Alice Updated");
+        assert_eq!(lookup.profile_bio.as_deref(), Some("new bio"));
     }
 
     async fn connect_test_db() -> Database {

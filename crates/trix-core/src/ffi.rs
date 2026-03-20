@@ -17,7 +17,7 @@ use crate::{
     ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
     ModifyChatMembersControlOutcome, PublishKeyPackageMaterial, ReactionAction, ReceiptType,
     ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient, SyncChatCursor,
-    SyncCoordinator, SyncStateSnapshot,
+    SyncCoordinator, SyncStateSnapshot, UpdateAccountProfileParams,
 };
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -175,6 +175,13 @@ pub struct FfiDirectoryAccount {
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct FfiAccountDirectory {
     pub accounts: Vec<FfiDirectoryAccount>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiUpdateAccountProfileParams {
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -889,6 +896,29 @@ impl FfiServerApiClient {
         Ok(FfiAccountDirectory {
             accounts: response.into_iter().map(directory_account_to_ffi).collect(),
         })
+    }
+
+    pub fn get_account(&self, account_id: String) -> Result<FfiDirectoryAccount, TrixFfiError> {
+        let client = clone_server_api_client(&self.inner)?;
+        let response = self
+            .runtime
+            .block_on(client.get_account(parse_account_id(&account_id)?))?;
+        Ok(directory_account_to_ffi(response))
+    }
+
+    pub fn update_account_profile(
+        &self,
+        params: FfiUpdateAccountProfileParams,
+    ) -> Result<FfiAccountProfile, TrixFfiError> {
+        let client = clone_server_api_client(&self.inner)?;
+        let response =
+            self.runtime
+                .block_on(client.update_account_profile(UpdateAccountProfileParams {
+                    handle: params.handle,
+                    profile_name: params.profile_name,
+                    profile_bio: params.profile_bio,
+                }))?;
+        Ok(account_profile_to_ffi(response))
     }
 
     pub fn list_devices(&self) -> Result<FfiDeviceList, TrixFfiError> {
