@@ -11,13 +11,13 @@ use crate::{
     CompletedLinkIntentMaterial, CreateAccountParams, CreateChatControlInput,
     CreateChatControlOutcome, DeviceApprovePayloadMaterial, DeviceKeyMaterial,
     DeviceTransferBundleMaterial, DirectoryAccountMaterial, HistorySyncChunkMaterial,
-    InboxApplyOutcome, LocalChatReadState, LocalHistoryStore, LocalProjectedMessage,
-    LocalProjectionApplyReport, LocalProjectionKind, LocalStoreApplyReport, MessageBody,
-    MlsCommitBundle, MlsFacade, MlsMemberIdentity, MlsProcessResult, ModifyChatDevicesControlInput,
-    ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
-    ModifyChatMembersControlOutcome, PublishKeyPackageMaterial, ReactionAction, ReceiptType,
-    ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient, SyncChatCursor,
-    SyncCoordinator, SyncStateSnapshot, UpdateAccountProfileParams,
+    InboxApplyOutcome, LocalChatListItem, LocalChatReadState, LocalHistoryStore,
+    LocalProjectedMessage, LocalProjectionApplyReport, LocalProjectionKind, LocalStoreApplyReport,
+    LocalTimelineItem, MessageBody, MlsCommitBundle, MlsFacade, MlsMemberIdentity,
+    MlsProcessResult, ModifyChatDevicesControlInput, ModifyChatDevicesControlOutcome,
+    ModifyChatMembersControlInput, ModifyChatMembersControlOutcome, PublishKeyPackageMaterial,
+    ReactionAction, ReceiptType, ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient,
+    SyncChatCursor, SyncCoordinator, SyncStateSnapshot, UpdateAccountProfileParams,
 };
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -521,6 +521,24 @@ pub struct FfiLocalChatReadState {
     pub unread_count: u64,
 }
 
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiLocalChatListItem {
+    pub chat_id: String,
+    pub chat_type: FfiChatType,
+    pub title: Option<String>,
+    pub display_title: String,
+    pub last_server_seq: u64,
+    pub pending_message_count: u64,
+    pub unread_count: u64,
+    pub preview_text: Option<String>,
+    pub preview_sender_account_id: Option<String>,
+    pub preview_sender_display_name: Option<String>,
+    pub preview_is_outgoing: Option<bool>,
+    pub preview_server_seq: Option<u64>,
+    pub preview_created_at_unix: Option<u64>,
+    pub participant_profiles: Vec<FfiChatParticipantProfile>,
+}
+
 #[derive(Debug, Clone, Copy, uniffi::Enum)]
 pub enum FfiLocalProjectionKind {
     ApplicationMessage,
@@ -586,6 +604,25 @@ pub struct FfiLocalProjectedMessage {
     pub payload: Option<Vec<u8>>,
     pub body: Option<FfiMessageBody>,
     pub body_parse_error: Option<String>,
+    pub merged_epoch: Option<u64>,
+    pub created_at_unix: u64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiLocalTimelineItem {
+    pub server_seq: u64,
+    pub message_id: String,
+    pub sender_account_id: String,
+    pub sender_device_id: String,
+    pub sender_display_name: String,
+    pub is_outgoing: bool,
+    pub epoch: u64,
+    pub message_kind: FfiMessageKind,
+    pub content_type: FfiContentType,
+    pub projection_kind: FfiLocalProjectionKind,
+    pub body: Option<FfiMessageBody>,
+    pub body_parse_error: Option<String>,
+    pub preview_text: String,
     pub merged_epoch: Option<u64>,
     pub created_at_unix: u64,
 }
@@ -1603,6 +1640,38 @@ impl FfiLocalHistoryStore {
             .collect())
     }
 
+    pub fn list_local_chat_list_items(
+        &self,
+        self_account_id: Option<String>,
+    ) -> Result<Vec<FfiLocalChatListItem>, TrixFfiError> {
+        Ok(lock(&self.inner)?
+            .list_local_chat_list_items(
+                self_account_id
+                    .as_deref()
+                    .map(parse_account_id)
+                    .transpose()?,
+            )
+            .into_iter()
+            .map(local_chat_list_item_to_ffi)
+            .collect())
+    }
+
+    pub fn get_local_chat_list_item(
+        &self,
+        chat_id: String,
+        self_account_id: Option<String>,
+    ) -> Result<Option<FfiLocalChatListItem>, TrixFfiError> {
+        Ok(lock(&self.inner)?
+            .get_local_chat_list_item(
+                parse_chat_id(&chat_id)?,
+                self_account_id
+                    .as_deref()
+                    .map(parse_account_id)
+                    .transpose()?,
+            )
+            .map(local_chat_list_item_to_ffi))
+    }
+
     pub fn get_chat(&self, chat_id: String) -> Result<Option<FfiChatDetail>, TrixFfiError> {
         Ok(lock(&self.inner)?
             .get_chat(parse_chat_id(&chat_id)?)
@@ -1687,6 +1756,28 @@ impl FfiLocalHistoryStore {
                 )
                 .map_err(ffi_error)?,
         ))
+    }
+
+    pub fn get_local_timeline_items(
+        &self,
+        chat_id: String,
+        self_account_id: Option<String>,
+        after_server_seq: Option<u64>,
+        limit: Option<u32>,
+    ) -> Result<Vec<FfiLocalTimelineItem>, TrixFfiError> {
+        Ok(lock(&self.inner)?
+            .get_local_timeline_items(
+                parse_chat_id(&chat_id)?,
+                self_account_id
+                    .as_deref()
+                    .map(parse_account_id)
+                    .transpose()?,
+                after_server_seq,
+                limit.map(|value| value as usize),
+            )
+            .into_iter()
+            .map(local_timeline_item_to_ffi)
+            .collect())
     }
 
     pub fn chat_read_cursor(&self, chat_id: String) -> Result<Option<u64>, TrixFfiError> {
@@ -3048,6 +3139,31 @@ fn local_chat_read_state_to_ffi(value: LocalChatReadState) -> FfiLocalChatReadSt
     }
 }
 
+fn local_chat_list_item_to_ffi(value: LocalChatListItem) -> FfiLocalChatListItem {
+    FfiLocalChatListItem {
+        chat_id: value.chat_id.0.to_string(),
+        chat_type: value.chat_type.into(),
+        title: value.title,
+        display_title: value.display_title,
+        last_server_seq: value.last_server_seq,
+        pending_message_count: value.pending_message_count,
+        unread_count: value.unread_count,
+        preview_text: value.preview_text,
+        preview_sender_account_id: value
+            .preview_sender_account_id
+            .map(|account_id| account_id.0.to_string()),
+        preview_sender_display_name: value.preview_sender_display_name,
+        preview_is_outgoing: value.preview_is_outgoing,
+        preview_server_seq: value.preview_server_seq,
+        preview_created_at_unix: value.preview_created_at_unix,
+        participant_profiles: value
+            .participant_profiles
+            .into_iter()
+            .map(chat_participant_profile_to_ffi)
+            .collect(),
+    }
+}
+
 fn local_projected_message_to_ffi(value: LocalProjectedMessage) -> FfiLocalProjectedMessage {
     let (body, body_parse_error) = match value.parse_body() {
         Ok(body) => (body.map(message_body_to_ffi), None),
@@ -3065,6 +3181,26 @@ fn local_projected_message_to_ffi(value: LocalProjectedMessage) -> FfiLocalProje
         payload: value.payload,
         body,
         body_parse_error,
+        merged_epoch: value.merged_epoch,
+        created_at_unix: value.created_at_unix,
+    }
+}
+
+fn local_timeline_item_to_ffi(value: LocalTimelineItem) -> FfiLocalTimelineItem {
+    FfiLocalTimelineItem {
+        server_seq: value.server_seq,
+        message_id: value.message_id.0.to_string(),
+        sender_account_id: value.sender_account_id.0.to_string(),
+        sender_device_id: value.sender_device_id.0.to_string(),
+        sender_display_name: value.sender_display_name,
+        is_outgoing: value.is_outgoing,
+        epoch: value.epoch,
+        message_kind: value.message_kind.into(),
+        content_type: value.content_type.into(),
+        projection_kind: value.projection_kind.into(),
+        body: value.body.map(message_body_to_ffi),
+        body_parse_error: value.body_parse_error,
+        preview_text: value.preview_text,
         merged_epoch: value.merged_epoch,
         created_at_unix: value.created_at_unix,
     }
