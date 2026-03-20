@@ -68,12 +68,15 @@ Methods:
 - `bot.v1.list_chats`
 - `bot.v1.get_timeline`
 - `bot.v1.send_text`
+- `bot.v1.send_file`
+- `bot.v1.download_file`
 - `bot.v1.publish_key_packages`
 
 Notifications:
 
 - `bot.v1.ready`
 - `bot.v1.text_message`
+- `bot.v1.file_message`
 - `bot.v1.connection_changed`
 - `bot.v1.unsupported_message`
 - `bot.v1.error`
