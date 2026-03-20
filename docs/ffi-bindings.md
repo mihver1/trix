@@ -95,6 +95,24 @@ make ffi-bindings OUT=/tmp/trix-bindings
 - `upload_attachment(...)` performs client-side attachment encryption, computes encrypted blob sha256, creates/uploads the blob, and returns a ready-to-send attachment `FfiMessageBody`.
 - `download_attachment(...)` downloads the encrypted blob and decrypts it locally using the attachment descriptor fields from the message body.
 - In the attachment descriptor, `size_bytes` is the plaintext file size; blob upload size and `sha256` are derived from the encrypted payload.
+- Onboarding/auth helpers are also exposed so clients do not need to hand-roll canonical payloads and signatures:
+  - low-level free functions:
+    - `ffi_account_bootstrap_payload(transport_pubkey, credential_identity)`
+    - `ffi_device_revoke_payload(device_id, reason)`
+  - `FfiAccountRootMaterial`:
+    - `account_bootstrap_payload(...)`
+    - `sign_account_bootstrap(...)`
+    - `device_revoke_payload(...)`
+    - `sign_device_revoke(...)`
+  - `FfiDeviceKeyMaterial`:
+    - `sign_auth_challenge(challenge)`
+  - high-level server helpers on `FfiServerApiClient`:
+    - `create_account_with_materials(...)`
+    - `authenticate_with_device_key(...)`
+    - `complete_link_intent_with_device_key(...)`
+    - `approve_device_with_account_root(...)`
+    - `revoke_device_with_account_root(...)`
+- `FfiMlsFacade.generate_publish_key_packages(count)` returns `FfiPublishKeyPackage` values already shaped for `publish_key_packages(...)` and `complete_link_intent(...)`, including the current MLS ciphersuite label.
 - `FfiLocalProjectedMessage` now includes parsed `body` and `body_parse_error`, so clients can render typed text/reaction/receipt/attachment/chat-event items directly from the projected timeline.
 - `FfiSyncCoordinator` now also exposes `send_message_body()`, which performs `MessageBody -> MLS encrypt -> POST /messages -> local store -> projected timeline` in one core call.
 - `FfiChatDetail` now includes `device_members` with `device_id`, `account_id`, `leaf_index`, and `credential_identity`, so clients can resolve removals against MLS leaf indices without a parallel side channel.
