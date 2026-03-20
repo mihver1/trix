@@ -1,3 +1,4 @@
+pub mod attachments;
 pub mod config;
 pub mod crypto;
 pub mod ffi;
@@ -8,6 +9,10 @@ pub mod transport;
 
 uniffi::setup_scaffolding!();
 
+pub use attachments::{
+    ATTACHMENT_FILE_KEY_BYTES, ATTACHMENT_NONCE_BYTES, PreparedAttachmentUpload,
+    decrypt_attachment_payload, prepare_attachment_upload,
+};
 pub use config::CoreConfig;
 pub use crypto::{
     AccountRootMaterial, DEFAULT_CIPHERSUITE, DeviceKeyMaterial, MlsCommitBundle, MlsConversation,
@@ -19,9 +24,9 @@ pub use message::{
     ReceiptMessageBody, ReceiptType, TextMessageBody,
 };
 pub use storage::{
-    AttachmentStore, LocalHistoryStore, LocalOutgoingMessageApplyOutcome, LocalProjectedMessage,
-    LocalProjectionApplyReport, LocalProjectionKind, LocalStoreApplyReport, MlsStateStore,
-    SyncStateStore,
+    AttachmentStore, LocalChatListItem, LocalChatReadState, LocalHistoryStore,
+    LocalOutgoingMessageApplyOutcome, LocalProjectedMessage, LocalProjectionApplyReport,
+    LocalProjectionKind, LocalStoreApplyReport, LocalTimelineItem, MlsStateStore, SyncStateStore,
 };
 pub use sync::{
     CoreEvent, CoreEventSink, CreateChatControlInput, CreateChatControlOutcome, InboxApplyOutcome,

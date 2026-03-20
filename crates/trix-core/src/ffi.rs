@@ -11,13 +11,14 @@ use crate::{
     CompletedLinkIntentMaterial, CreateAccountParams, CreateChatControlInput,
     CreateChatControlOutcome, DeviceApprovePayloadMaterial, DeviceKeyMaterial,
     DeviceTransferBundleMaterial, DirectoryAccountMaterial, HistorySyncChunkMaterial,
-    InboxApplyOutcome, LocalHistoryStore, LocalProjectedMessage, LocalProjectionApplyReport,
-    LocalProjectionKind, LocalStoreApplyReport, MessageBody, MlsCommitBundle, MlsFacade,
-    MlsMemberIdentity, MlsProcessResult, ModifyChatDevicesControlInput,
-    ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
-    ModifyChatMembersControlOutcome, PublishKeyPackageMaterial, ReactionAction, ReceiptType,
-    ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient, SyncChatCursor,
-    SyncCoordinator, SyncStateSnapshot, UpdateAccountProfileParams,
+    InboxApplyOutcome, LocalChatListItem, LocalChatReadState, LocalHistoryStore,
+    LocalProjectedMessage, LocalProjectionApplyReport, LocalProjectionKind, LocalStoreApplyReport,
+    LocalTimelineItem, MessageBody, MlsCommitBundle, MlsFacade, MlsMemberIdentity,
+    MlsProcessResult, ModifyChatDevicesControlInput, ModifyChatDevicesControlOutcome,
+    ModifyChatMembersControlInput, ModifyChatMembersControlOutcome, PreparedAttachmentUpload,
+    PublishKeyPackageMaterial, ReactionAction, ReceiptType, ReservedKeyPackageMaterial,
+    SendMessageOutcome, ServerApiClient, SyncChatCursor, SyncCoordinator, SyncStateSnapshot,
+    UpdateAccountProfileParams, decrypt_attachment_payload, prepare_attachment_upload,
 };
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -325,6 +326,8 @@ pub struct FfiChatSummary {
     pub chat_type: FfiChatType,
     pub title: Option<String>,
     pub last_server_seq: u64,
+    pub pending_message_count: u64,
+    pub last_message: Option<FfiMessageEnvelope>,
     pub participant_profiles: Vec<FfiChatParticipantProfile>,
 }
 
@@ -359,8 +362,10 @@ pub struct FfiChatDetail {
     pub chat_type: FfiChatType,
     pub title: Option<String>,
     pub last_server_seq: u64,
+    pub pending_message_count: u64,
     pub epoch: u64,
     pub last_commit_message_id: Option<String>,
+    pub last_message: Option<FfiMessageEnvelope>,
     pub participant_profiles: Vec<FfiChatParticipantProfile>,
     pub members: Vec<FfiChatMember>,
     pub device_members: Vec<FfiChatDeviceMember>,
@@ -510,6 +515,31 @@ pub struct FfiLocalStoreApplyReport {
     pub changed_chat_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiLocalChatReadState {
+    pub chat_id: String,
+    pub read_cursor_server_seq: u64,
+    pub unread_count: u64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiLocalChatListItem {
+    pub chat_id: String,
+    pub chat_type: FfiChatType,
+    pub title: Option<String>,
+    pub display_title: String,
+    pub last_server_seq: u64,
+    pub pending_message_count: u64,
+    pub unread_count: u64,
+    pub preview_text: Option<String>,
+    pub preview_sender_account_id: Option<String>,
+    pub preview_sender_display_name: Option<String>,
+    pub preview_is_outgoing: Option<bool>,
+    pub preview_server_seq: Option<u64>,
+    pub preview_created_at_unix: Option<u64>,
+    pub participant_profiles: Vec<FfiChatParticipantProfile>,
+}
+
 #[derive(Debug, Clone, Copy, uniffi::Enum)]
 pub enum FfiLocalProjectionKind {
     ApplicationMessage,
@@ -575,6 +605,25 @@ pub struct FfiLocalProjectedMessage {
     pub payload: Option<Vec<u8>>,
     pub body: Option<FfiMessageBody>,
     pub body_parse_error: Option<String>,
+    pub merged_epoch: Option<u64>,
+    pub created_at_unix: u64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiLocalTimelineItem {
+    pub server_seq: u64,
+    pub message_id: String,
+    pub sender_account_id: String,
+    pub sender_device_id: String,
+    pub sender_display_name: String,
+    pub is_outgoing: bool,
+    pub epoch: u64,
+    pub message_kind: FfiMessageKind,
+    pub content_type: FfiContentType,
+    pub projection_kind: FfiLocalProjectionKind,
+    pub body: Option<FfiMessageBody>,
+    pub body_parse_error: Option<String>,
+    pub preview_text: String,
     pub merged_epoch: Option<u64>,
     pub created_at_unix: u64,
 }
@@ -704,6 +753,44 @@ pub struct FfiBlobHead {
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiAttachmentUploadParams {
+    pub mime_type: String,
+    pub file_name: Option<String>,
+    pub width_px: Option<u32>,
+    pub height_px: Option<u32>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiPreparedAttachmentUpload {
+    pub mime_type: String,
+    pub file_name: Option<String>,
+    pub width_px: Option<u32>,
+    pub height_px: Option<u32>,
+    pub plaintext_size_bytes: u64,
+    pub encrypted_size_bytes: u64,
+    pub encrypted_payload: Vec<u8>,
+    pub encrypted_sha256: Vec<u8>,
+    pub file_key: Vec<u8>,
+    pub nonce: Vec<u8>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiUploadedAttachment {
+    pub body: FfiMessageBody,
+    pub blob_id: String,
+    pub upload_status: FfiBlobUploadStatus,
+    pub plaintext_size_bytes: u64,
+    pub encrypted_size_bytes: u64,
+    pub encrypted_sha256: Vec<u8>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiDownloadedAttachment {
+    pub body: FfiMessageBody,
+    pub plaintext: Vec<u8>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct FfiMlsCommitBundle {
     pub commit_message: Vec<u8>,
     pub welcome_message: Option<Vec<u8>>,
@@ -780,6 +867,47 @@ fn ffi_parse_message_body(
     Ok(message_body_to_ffi(
         MessageBody::from_bytes(content_type.into(), &payload).map_err(ffi_error)?,
     ))
+}
+
+#[uniffi::export]
+fn ffi_prepare_attachment_upload(
+    payload: Vec<u8>,
+    params: FfiAttachmentUploadParams,
+) -> Result<FfiPreparedAttachmentUpload, TrixFfiError> {
+    Ok(prepared_attachment_upload_to_ffi(
+        prepare_attachment_upload(
+            &payload,
+            params.mime_type,
+            params.file_name,
+            params.width_px,
+            params.height_px,
+        )
+        .map_err(ffi_error)?,
+    ))
+}
+
+#[uniffi::export]
+fn ffi_build_attachment_message_body(
+    blob_id: String,
+    prepared: FfiPreparedAttachmentUpload,
+) -> Result<FfiMessageBody, TrixFfiError> {
+    Ok(message_body_to_ffi(MessageBody::Attachment(
+        prepared_attachment_upload_from_ffi(prepared)?.into_message_body(blob_id),
+    )))
+}
+
+#[uniffi::export]
+fn ffi_decrypt_attachment_payload(
+    body: FfiMessageBody,
+    encrypted_payload: Vec<u8>,
+) -> Result<Vec<u8>, TrixFfiError> {
+    let body = message_body_from_ffi(body)?;
+    let MessageBody::Attachment(body) = body else {
+        return Err(TrixFfiError::Message(
+            "attachment decryption requires an attachment message body".to_owned(),
+        ));
+    };
+    decrypt_attachment_payload(&body, &encrypted_payload).map_err(ffi_error)
 }
 
 #[uniffi::export]
@@ -1464,6 +1592,52 @@ impl FfiServerApiClient {
         })
     }
 
+    pub fn upload_attachment(
+        &self,
+        chat_id: String,
+        payload: Vec<u8>,
+        params: FfiAttachmentUploadParams,
+    ) -> Result<FfiUploadedAttachment, TrixFfiError> {
+        let client = clone_server_api_client(&self.inner)?;
+        let prepared = prepare_attachment_upload(
+            &payload,
+            params.mime_type,
+            params.file_name,
+            params.width_px,
+            params.height_px,
+        )
+        .map_err(ffi_error)?;
+
+        let create = self.runtime.block_on(client.create_blob_upload(
+            parse_chat_id(&chat_id)?,
+            prepared.mime_type.clone(),
+            prepared.encrypted_size_bytes,
+            &prepared.encrypted_sha256,
+        ))?;
+
+        let upload_status = if create.needs_upload {
+            self.runtime
+                .block_on(client.upload_blob(create.blob_id.clone(), &prepared.encrypted_payload))?
+                .upload_status
+        } else {
+            self.runtime
+                .block_on(client.head_blob(create.blob_id.clone()))?
+                .upload_status
+        };
+
+        let blob_id = create.blob_id;
+        Ok(FfiUploadedAttachment {
+            body: message_body_to_ffi(MessageBody::Attachment(
+                prepared.clone().into_message_body(blob_id.clone()),
+            )),
+            blob_id,
+            upload_status: upload_status.into(),
+            plaintext_size_bytes: prepared.plaintext_size_bytes,
+            encrypted_size_bytes: prepared.encrypted_size_bytes,
+            encrypted_sha256: prepared.encrypted_sha256,
+        })
+    }
+
     pub fn upload_blob(
         &self,
         blob_id: String,
@@ -1487,6 +1661,30 @@ impl FfiServerApiClient {
         self.runtime
             .block_on(client.download_blob(blob_id))
             .map_err(Into::into)
+    }
+
+    pub fn download_attachment(
+        &self,
+        body: FfiMessageBody,
+    ) -> Result<FfiDownloadedAttachment, TrixFfiError> {
+        let body = message_body_from_ffi(body)?;
+        let MessageBody::Attachment(body) = body else {
+            return Err(TrixFfiError::Message(
+                "attachment download requires an attachment message body".to_owned(),
+            ));
+        };
+
+        let client = clone_server_api_client(&self.inner)?;
+        let encrypted_payload = self
+            .runtime
+            .block_on(client.download_blob(body.blob_id.clone()))
+            .map_err(ffi_error)?;
+        let plaintext = decrypt_attachment_payload(&body, &encrypted_payload).map_err(ffi_error)?;
+
+        Ok(FfiDownloadedAttachment {
+            body: message_body_to_ffi(MessageBody::Attachment(body)),
+            plaintext,
+        })
     }
 }
 
@@ -1592,6 +1790,38 @@ impl FfiLocalHistoryStore {
             .collect())
     }
 
+    pub fn list_local_chat_list_items(
+        &self,
+        self_account_id: Option<String>,
+    ) -> Result<Vec<FfiLocalChatListItem>, TrixFfiError> {
+        Ok(lock(&self.inner)?
+            .list_local_chat_list_items(
+                self_account_id
+                    .as_deref()
+                    .map(parse_account_id)
+                    .transpose()?,
+            )
+            .into_iter()
+            .map(local_chat_list_item_to_ffi)
+            .collect())
+    }
+
+    pub fn get_local_chat_list_item(
+        &self,
+        chat_id: String,
+        self_account_id: Option<String>,
+    ) -> Result<Option<FfiLocalChatListItem>, TrixFfiError> {
+        Ok(lock(&self.inner)?
+            .get_local_chat_list_item(
+                parse_chat_id(&chat_id)?,
+                self_account_id
+                    .as_deref()
+                    .map(parse_account_id)
+                    .transpose()?,
+            )
+            .map(local_chat_list_item_to_ffi))
+    }
+
     pub fn get_chat(&self, chat_id: String) -> Result<Option<FfiChatDetail>, TrixFfiError> {
         Ok(lock(&self.inner)?
             .get_chat(parse_chat_id(&chat_id)?)
@@ -1644,6 +1874,118 @@ impl FfiLocalHistoryStore {
             .into_iter()
             .map(local_projected_message_to_ffi)
             .collect())
+    }
+
+    pub fn get_local_timeline_items(
+        &self,
+        chat_id: String,
+        self_account_id: Option<String>,
+        after_server_seq: Option<u64>,
+        limit: Option<u32>,
+    ) -> Result<Vec<FfiLocalTimelineItem>, TrixFfiError> {
+        Ok(lock(&self.inner)?
+            .get_local_timeline_items(
+                parse_chat_id(&chat_id)?,
+                self_account_id
+                    .as_deref()
+                    .map(parse_account_id)
+                    .transpose()?,
+                after_server_seq,
+                limit.map(|value| value as usize),
+            )
+            .into_iter()
+            .map(local_timeline_item_to_ffi)
+            .collect())
+    }
+
+    pub fn chat_read_cursor(&self, chat_id: String) -> Result<Option<u64>, TrixFfiError> {
+        Ok(lock(&self.inner)?.chat_read_cursor(parse_chat_id(&chat_id)?))
+    }
+
+    pub fn chat_unread_count(
+        &self,
+        chat_id: String,
+        self_account_id: Option<String>,
+    ) -> Result<Option<u64>, TrixFfiError> {
+        Ok(lock(&self.inner)?.chat_unread_count(
+            parse_chat_id(&chat_id)?,
+            self_account_id
+                .as_deref()
+                .map(parse_account_id)
+                .transpose()?,
+        ))
+    }
+
+    pub fn get_chat_read_state(
+        &self,
+        chat_id: String,
+        self_account_id: Option<String>,
+    ) -> Result<Option<FfiLocalChatReadState>, TrixFfiError> {
+        Ok(lock(&self.inner)?
+            .get_chat_read_state(
+                parse_chat_id(&chat_id)?,
+                self_account_id
+                    .as_deref()
+                    .map(parse_account_id)
+                    .transpose()?,
+            )
+            .map(local_chat_read_state_to_ffi))
+    }
+
+    pub fn list_chat_read_states(
+        &self,
+        self_account_id: Option<String>,
+    ) -> Result<Vec<FfiLocalChatReadState>, TrixFfiError> {
+        Ok(lock(&self.inner)?
+            .list_chat_read_states(
+                self_account_id
+                    .as_deref()
+                    .map(parse_account_id)
+                    .transpose()?,
+            )
+            .into_iter()
+            .map(local_chat_read_state_to_ffi)
+            .collect())
+    }
+
+    pub fn mark_chat_read(
+        &self,
+        chat_id: String,
+        through_server_seq: Option<u64>,
+        self_account_id: Option<String>,
+    ) -> Result<FfiLocalChatReadState, TrixFfiError> {
+        Ok(local_chat_read_state_to_ffi(
+            lock(&self.inner)?
+                .mark_chat_read(
+                    parse_chat_id(&chat_id)?,
+                    through_server_seq,
+                    self_account_id
+                        .as_deref()
+                        .map(parse_account_id)
+                        .transpose()?,
+                )
+                .map_err(ffi_error)?,
+        ))
+    }
+
+    pub fn set_chat_read_cursor(
+        &self,
+        chat_id: String,
+        read_cursor_server_seq: Option<u64>,
+        self_account_id: Option<String>,
+    ) -> Result<FfiLocalChatReadState, TrixFfiError> {
+        Ok(local_chat_read_state_to_ffi(
+            lock(&self.inner)?
+                .set_chat_read_cursor(
+                    parse_chat_id(&chat_id)?,
+                    read_cursor_server_seq,
+                    self_account_id
+                        .as_deref()
+                        .map(parse_account_id)
+                        .transpose()?,
+                )
+                .map_err(ffi_error)?,
+        ))
     }
 
     pub fn apply_chat_history(
@@ -2330,14 +2672,47 @@ fn parse_message_id(value: &str) -> Result<MessageId, TrixFfiError> {
 fn parse_optional_json(value: Option<String>) -> Result<Option<Value>, TrixFfiError> {
     value
         .map(|json| {
-            serde_json::from_str(&json)
-                .map_err(|err| TrixFfiError::Message(format!("invalid json payload: {err}")))
+            let trimmed = json.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            let parsed: Value = serde_json::from_str(trimmed)
+                .map_err(|err| TrixFfiError::Message(format!("invalid json payload: {err}")))?;
+            Ok(if parsed.is_null() { None } else { Some(parsed) })
         })
         .transpose()
+        .map(|value| value.flatten())
 }
 
 fn json_to_string(value: Value) -> String {
     value.to_string()
+}
+
+fn empty_json_object() -> Value {
+    Value::Object(Default::default())
+}
+
+fn normalize_aad_json(value: Value) -> Value {
+    if value.is_null() {
+        empty_json_object()
+    } else {
+        value
+    }
+}
+
+fn aad_json_to_string(value: Value) -> String {
+    json_to_string(normalize_aad_json(value))
+}
+
+fn parse_aad_json_string(value: &str) -> Result<Value, TrixFfiError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(empty_json_object());
+    }
+
+    let parsed: Value = serde_json::from_str(trimmed)
+        .map_err(|err| TrixFfiError::Message(format!("invalid aad_json: {err}")))?;
+    Ok(normalize_aad_json(parsed))
 }
 
 fn control_message_from_ffi(
@@ -2464,6 +2839,8 @@ fn chat_summary_to_ffi(value: trix_types::ChatSummary) -> FfiChatSummary {
         chat_type: value.chat_type.into(),
         title: value.title,
         last_server_seq: value.last_server_seq,
+        pending_message_count: value.pending_message_count,
+        last_message: value.last_message.map(message_envelope_to_ffi),
         participant_profiles: value
             .participant_profiles
             .into_iter()
@@ -2478,10 +2855,12 @@ fn chat_detail_to_ffi(value: trix_types::ChatDetailResponse) -> FfiChatDetail {
         chat_type: value.chat_type.into(),
         title: value.title,
         last_server_seq: value.last_server_seq,
+        pending_message_count: value.pending_message_count,
         epoch: value.epoch,
         last_commit_message_id: value
             .last_commit_message_id
             .map(|message_id| message_id.0.to_string()),
+        last_message: value.last_message.map(message_envelope_to_ffi),
         participant_profiles: value
             .participant_profiles
             .into_iter()
@@ -2590,7 +2969,7 @@ fn message_envelope_to_ffi(value: trix_types::MessageEnvelope) -> FfiMessageEnve
         content_type: value.content_type.into(),
         ciphertext: crate::decode_b64_field("ciphertext_b64", &value.ciphertext_b64)
             .unwrap_or_default(),
-        aad_json: json_to_string(value.aad_json),
+        aad_json: aad_json_to_string(value.aad_json),
         created_at_unix: value.created_at_unix,
     }
 }
@@ -2622,8 +3001,7 @@ fn ffi_message_envelope_to_api(
         message_kind: message_kind_from_ffi(value.message_kind),
         content_type: content_type_from_ffi(value.content_type),
         ciphertext_b64: crate::encode_b64(&value.ciphertext),
-        aad_json: serde_json::from_str(&value.aad_json)
-            .map_err(|err| TrixFfiError::Message(format!("invalid aad_json: {err}")))?,
+        aad_json: parse_aad_json_string(&value.aad_json)?,
         created_at_unix: value.created_at_unix,
     })
 }
@@ -2813,6 +3191,39 @@ fn local_store_apply_report_to_ffi(value: LocalStoreApplyReport) -> FfiLocalStor
     }
 }
 
+fn local_chat_read_state_to_ffi(value: LocalChatReadState) -> FfiLocalChatReadState {
+    FfiLocalChatReadState {
+        chat_id: value.chat_id.0.to_string(),
+        read_cursor_server_seq: value.read_cursor_server_seq,
+        unread_count: value.unread_count,
+    }
+}
+
+fn local_chat_list_item_to_ffi(value: LocalChatListItem) -> FfiLocalChatListItem {
+    FfiLocalChatListItem {
+        chat_id: value.chat_id.0.to_string(),
+        chat_type: value.chat_type.into(),
+        title: value.title,
+        display_title: value.display_title,
+        last_server_seq: value.last_server_seq,
+        pending_message_count: value.pending_message_count,
+        unread_count: value.unread_count,
+        preview_text: value.preview_text,
+        preview_sender_account_id: value
+            .preview_sender_account_id
+            .map(|account_id| account_id.0.to_string()),
+        preview_sender_display_name: value.preview_sender_display_name,
+        preview_is_outgoing: value.preview_is_outgoing,
+        preview_server_seq: value.preview_server_seq,
+        preview_created_at_unix: value.preview_created_at_unix,
+        participant_profiles: value
+            .participant_profiles
+            .into_iter()
+            .map(chat_participant_profile_to_ffi)
+            .collect(),
+    }
+}
+
 fn local_projected_message_to_ffi(value: LocalProjectedMessage) -> FfiLocalProjectedMessage {
     let (body, body_parse_error) = match value.parse_body() {
         Ok(body) => (body.map(message_body_to_ffi), None),
@@ -2830,6 +3241,26 @@ fn local_projected_message_to_ffi(value: LocalProjectedMessage) -> FfiLocalProje
         payload: value.payload,
         body,
         body_parse_error,
+        merged_epoch: value.merged_epoch,
+        created_at_unix: value.created_at_unix,
+    }
+}
+
+fn local_timeline_item_to_ffi(value: LocalTimelineItem) -> FfiLocalTimelineItem {
+    FfiLocalTimelineItem {
+        server_seq: value.server_seq,
+        message_id: value.message_id.0.to_string(),
+        sender_account_id: value.sender_account_id.0.to_string(),
+        sender_device_id: value.sender_device_id.0.to_string(),
+        sender_display_name: value.sender_display_name,
+        is_outgoing: value.is_outgoing,
+        epoch: value.epoch,
+        message_kind: value.message_kind.into(),
+        content_type: value.content_type.into(),
+        projection_kind: value.projection_kind.into(),
+        body: value.body.map(message_body_to_ffi),
+        body_parse_error: value.body_parse_error,
+        preview_text: value.preview_text,
         merged_epoch: value.merged_epoch,
         created_at_unix: value.created_at_unix,
     }
@@ -2961,6 +3392,40 @@ fn blob_head_to_ffi(value: crate::BlobHeadMaterial) -> FfiBlobHead {
         upload_status: value.upload_status.into(),
         etag: value.etag,
     }
+}
+
+fn prepared_attachment_upload_to_ffi(
+    value: PreparedAttachmentUpload,
+) -> FfiPreparedAttachmentUpload {
+    FfiPreparedAttachmentUpload {
+        mime_type: value.mime_type,
+        file_name: value.file_name,
+        width_px: value.width_px,
+        height_px: value.height_px,
+        plaintext_size_bytes: value.plaintext_size_bytes,
+        encrypted_size_bytes: value.encrypted_size_bytes,
+        encrypted_payload: value.encrypted_payload,
+        encrypted_sha256: value.encrypted_sha256,
+        file_key: value.file_key,
+        nonce: value.nonce,
+    }
+}
+
+fn prepared_attachment_upload_from_ffi(
+    value: FfiPreparedAttachmentUpload,
+) -> Result<PreparedAttachmentUpload, TrixFfiError> {
+    Ok(PreparedAttachmentUpload {
+        mime_type: value.mime_type,
+        file_name: value.file_name,
+        width_px: value.width_px,
+        height_px: value.height_px,
+        plaintext_size_bytes: value.plaintext_size_bytes,
+        encrypted_size_bytes: value.encrypted_size_bytes,
+        encrypted_payload: value.encrypted_payload,
+        encrypted_sha256: value.encrypted_sha256,
+        file_key: value.file_key,
+        nonce: value.nonce,
+    })
 }
 
 fn commit_bundle_to_ffi(value: MlsCommitBundle) -> FfiMlsCommitBundle {
@@ -3200,6 +3665,72 @@ impl From<trix_types::ServiceStatus> for FfiServiceStatus {
         match value {
             trix_types::ServiceStatus::Ok => Self::Ok,
             trix_types::ServiceStatus::Degraded => Self::Degraded,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn parse_optional_json_accepts_empty_and_null_as_absent() {
+        assert_eq!(parse_optional_json(None).unwrap(), None);
+        assert_eq!(parse_optional_json(Some(String::new())).unwrap(), None);
+        assert_eq!(parse_optional_json(Some("null".to_owned())).unwrap(), None);
+        assert_eq!(
+            parse_optional_json(Some("{\"k\":\"v\"}".to_owned())).unwrap(),
+            Some(json!({"k":"v"}))
+        );
+    }
+
+    #[test]
+    fn aad_json_helpers_normalize_nullish_values_to_object() {
+        assert_eq!(aad_json_to_string(Value::Null), "{}");
+        assert_eq!(parse_aad_json_string("").unwrap(), json!({}));
+        assert_eq!(parse_aad_json_string("null").unwrap(), json!({}));
+        assert_eq!(
+            parse_aad_json_string("{\"preview\":\"hello\"}").unwrap(),
+            json!({"preview":"hello"})
+        );
+    }
+
+    #[test]
+    fn attachment_helpers_prepare_build_and_decrypt_round_trip() {
+        let prepared = ffi_prepare_attachment_upload(
+            b"hello attachment".to_vec(),
+            FfiAttachmentUploadParams {
+                mime_type: "image/jpeg".to_owned(),
+                file_name: Some("photo.jpg".to_owned()),
+                width_px: Some(320),
+                height_px: Some(240),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(prepared.mime_type, "image/jpeg");
+        assert_eq!(prepared.file_name.as_deref(), Some("photo.jpg"));
+        assert!(prepared.encrypted_size_bytes >= prepared.plaintext_size_bytes);
+
+        let body =
+            ffi_build_attachment_message_body("blob-1".to_owned(), prepared.clone()).unwrap();
+        let decrypted =
+            ffi_decrypt_attachment_payload(body.clone(), prepared.encrypted_payload).unwrap();
+        assert_eq!(decrypted, b"hello attachment");
+
+        match body {
+            FfiMessageBody {
+                kind: FfiMessageBodyKind::Attachment,
+                blob_id,
+                size_bytes,
+                ..
+            } => {
+                assert_eq!(blob_id.as_deref(), Some("blob-1"));
+                assert_eq!(size_bytes, Some(16));
+            }
+            other => panic!("expected attachment body, got {other:?}"),
         }
     }
 }

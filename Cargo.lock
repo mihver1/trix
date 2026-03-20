@@ -3499,9 +3499,11 @@ dependencies = [
 name = "trix-core"
 version = "0.1.0"
 dependencies = [
+ "aead",
  "anyhow",
  "axum",
  "base64",
+ "chacha20poly1305",
  "ed25519-dalek",
  "openmls",
  "openmls_basic_credential",
@@ -3512,6 +3514,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "thiserror",
  "tls_codec",
