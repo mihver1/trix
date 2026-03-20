@@ -8,7 +8,8 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use trix_types::{
     ChatDetailResponse, ChatDeviceSummary, ChatHistoryResponse, ChatId, ChatListResponse,
-    ChatMemberSummary, ChatSummary, ChatType, InboxItem, MessageEnvelope, MessageId,
+    ChatMemberSummary, ChatParticipantProfileSummary, ChatSummary, ChatType, InboxItem,
+    MessageEnvelope, MessageId,
 };
 use uuid::Uuid;
 
@@ -114,6 +115,8 @@ struct PersistedChatState {
     last_server_seq: u64,
     epoch: u64,
     last_commit_message_id: Option<MessageId>,
+    #[serde(default)]
+    participant_profiles: Vec<ChatParticipantProfileSummary>,
     members: Vec<ChatMemberSummary>,
     #[serde(default)]
     device_members: Vec<ChatDeviceSummary>,
@@ -203,6 +206,7 @@ impl LocalHistoryStore {
                     chat_type: state.chat_type,
                     title: state.title.clone(),
                     last_server_seq: state.last_server_seq,
+                    participant_profiles: state.participant_profiles.clone(),
                 })
             })
             .collect::<Vec<_>>();
@@ -224,6 +228,7 @@ impl LocalHistoryStore {
             last_server_seq: state.last_server_seq,
             epoch: state.epoch,
             last_commit_message_id: state.last_commit_message_id,
+            participant_profiles: state.participant_profiles.clone(),
             members: state.members.clone(),
             device_members: state.device_members.clone(),
         })
@@ -284,6 +289,7 @@ impl LocalHistoryStore {
                 last_server_seq: 0,
                 epoch: 0,
                 last_commit_message_id: None,
+                participant_profiles: Vec::new(),
                 members: Vec::new(),
                 device_members: Vec::new(),
                 mls_group_id_b64: None,
@@ -452,6 +458,7 @@ impl LocalHistoryStore {
                     last_server_seq: 0,
                     epoch: 0,
                     last_commit_message_id: None,
+                    participant_profiles: chat.participant_profiles.clone(),
                     members: Vec::new(),
                     device_members: Vec::new(),
                     mls_group_id_b64: None,
@@ -471,6 +478,10 @@ impl LocalHistoryStore {
             }
             if chat.last_server_seq > entry.last_server_seq {
                 entry.last_server_seq = chat.last_server_seq;
+                changed = true;
+            }
+            if entry.participant_profiles != chat.participant_profiles {
+                entry.participant_profiles = chat.participant_profiles.clone();
                 changed = true;
             }
 
@@ -505,6 +516,7 @@ impl LocalHistoryStore {
                 last_server_seq: detail.last_server_seq,
                 epoch: detail.epoch,
                 last_commit_message_id: detail.last_commit_message_id,
+                participant_profiles: detail.participant_profiles.clone(),
                 members: detail.members.clone(),
                 device_members: detail.device_members.clone(),
                 mls_group_id_b64: None,
@@ -532,6 +544,10 @@ impl LocalHistoryStore {
         }
         if entry.last_commit_message_id != detail.last_commit_message_id {
             entry.last_commit_message_id = detail.last_commit_message_id;
+            changed = true;
+        }
+        if entry.participant_profiles != detail.participant_profiles {
+            entry.participant_profiles = detail.participant_profiles.clone();
             changed = true;
         }
         if entry.members != detail.members {
@@ -572,6 +588,7 @@ impl LocalHistoryStore {
                 last_server_seq: 0,
                 epoch: 0,
                 last_commit_message_id: None,
+                participant_profiles: Vec::new(),
                 members: Vec::new(),
                 device_members: Vec::new(),
                 mls_group_id_b64: None,
@@ -899,6 +916,12 @@ mod tests {
                     chat_type: ChatType::Group,
                     title: Some("chat".to_owned()),
                     last_server_seq: 2,
+                    participant_profiles: vec![ChatParticipantProfileSummary {
+                        account_id: AccountId(Uuid::new_v4()),
+                        handle: Some("alice".to_owned()),
+                        profile_name: "Alice".to_owned(),
+                        profile_bio: Some("bio".to_owned()),
+                    }],
                 }],
             })
             .unwrap();
@@ -916,6 +939,11 @@ mod tests {
         let chat = restored.get_chat(chat_id).unwrap();
         assert_eq!(chat.chat_type, ChatType::Group);
         assert_eq!(chat.last_server_seq, 2);
+        assert_eq!(chat.participant_profiles.len(), 1);
+        assert_eq!(
+            chat.participant_profiles[0].handle.as_deref(),
+            Some("alice")
+        );
 
         let history = restored.get_chat_history(chat_id, Some(1), Some(10));
         assert_eq!(history.messages, vec![second_message]);

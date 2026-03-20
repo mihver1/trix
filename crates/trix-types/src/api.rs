@@ -108,6 +108,14 @@ pub struct DirectoryAccountSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatParticipantProfileSummary {
+    pub account_id: AccountId,
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountDirectoryResponse {
     pub accounts: Vec<DirectoryAccountSummary>,
 }
@@ -272,6 +280,8 @@ pub struct ChatSummary {
     pub chat_type: ChatType,
     pub title: Option<String>,
     pub last_server_seq: u64,
+    #[serde(default)]
+    pub participant_profiles: Vec<ChatParticipantProfileSummary>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -304,6 +314,8 @@ pub struct ChatDetailResponse {
     pub last_server_seq: u64,
     pub epoch: u64,
     pub last_commit_message_id: Option<MessageId>,
+    #[serde(default)]
+    pub participant_profiles: Vec<ChatParticipantProfileSummary>,
     pub members: Vec<ChatMemberSummary>,
     #[serde(default)]
     pub device_members: Vec<ChatDeviceSummary>,

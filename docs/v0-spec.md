@@ -796,12 +796,20 @@ Response:
 
 Lists chats visible to the authenticated device.
 
+Response includes per-chat:
+
+- chat identity and type
+- optional explicit `title`
+- `last_server_seq`
+- `participant_profiles` with `account_id`, `handle`, `profile_name`, `profile_bio`
+
 ### `GET /v0/chats/{chat_id}`
 
 Returns chat metadata, membership, and the latest group epoch metadata.
 
 Response includes:
 
+- `participant_profiles` for active account members
 - account-level members
 - active device-level members with `device_id`
 - `leaf_index` for each active device
