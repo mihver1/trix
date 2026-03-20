@@ -1146,9 +1146,10 @@ final class AppModel: ObservableObject {
                 chatId: chatId,
                 messages: serverHistory.messages
             )
-            _ = try? TrixCorePersistentBridge.projectChatMessagesIfPossible(
+            _ = try? TrixCorePersistentBridge.recoverConversationProjectionIfNeeded(
                 identity: context.identity,
-                chatId: chatId
+                chatId: chatId,
+                historyMessages: serverHistory.messages
             )
 
             localTimelineItems = try TrixCorePersistentBridge.loadLocalTimeline(

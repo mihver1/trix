@@ -2079,6 +2079,22 @@ impl FfiLocalHistoryStore {
             .collect())
     }
 
+    pub fn apply_projected_messages(
+        &self,
+        chat_id: String,
+        projected_messages: Vec<FfiLocalProjectedMessage>,
+    ) -> Result<FfiLocalProjectionApplyReport, TrixFfiError> {
+        let projected_messages = projected_messages
+            .into_iter()
+            .map(ffi_local_projected_message_to_storage)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(local_projection_apply_report_to_ffi(
+            lock(&self.inner)?
+                .apply_projected_messages(parse_chat_id(&chat_id)?, &projected_messages)
+                .map_err(ffi_error)?,
+        ))
+    }
+
     pub fn get_local_timeline_items(
         &self,
         chat_id: String,
@@ -3554,6 +3570,32 @@ fn local_projected_message_to_ffi(value: LocalProjectedMessage) -> FfiLocalProje
     }
 }
 
+fn ffi_local_projected_message_to_storage(
+    value: FfiLocalProjectedMessage,
+) -> Result<LocalProjectedMessage, TrixFfiError> {
+    let projection_kind = match value.projection_kind {
+        FfiLocalProjectionKind::ApplicationMessage => LocalProjectionKind::ApplicationMessage,
+        FfiLocalProjectionKind::ProposalQueued => LocalProjectionKind::ProposalQueued,
+        FfiLocalProjectionKind::CommitMerged => LocalProjectionKind::CommitMerged,
+        FfiLocalProjectionKind::WelcomeRef => LocalProjectionKind::WelcomeRef,
+        FfiLocalProjectionKind::System => LocalProjectionKind::System,
+    };
+
+    Ok(LocalProjectedMessage {
+        server_seq: value.server_seq,
+        message_id: parse_message_id(&value.message_id)?,
+        sender_account_id: parse_account_id(&value.sender_account_id)?,
+        sender_device_id: parse_device_id(&value.sender_device_id)?,
+        epoch: value.epoch,
+        message_kind: value.message_kind.into(),
+        content_type: value.content_type.into(),
+        projection_kind,
+        payload: value.payload,
+        merged_epoch: value.merged_epoch,
+        created_at_unix: value.created_at_unix,
+    })
+}
+
 fn local_timeline_item_to_ffi(value: LocalTimelineItem) -> FfiLocalTimelineItem {
     FfiLocalTimelineItem {
         server_seq: value.server_seq,
@@ -3928,6 +3970,18 @@ impl From<LocalProjectionKind> for FfiLocalProjectionKind {
             LocalProjectionKind::CommitMerged => Self::CommitMerged,
             LocalProjectionKind::WelcomeRef => Self::WelcomeRef,
             LocalProjectionKind::System => Self::System,
+        }
+    }
+}
+
+impl From<FfiLocalProjectionKind> for LocalProjectionKind {
+    fn from(value: FfiLocalProjectionKind) -> Self {
+        match value {
+            FfiLocalProjectionKind::ApplicationMessage => Self::ApplicationMessage,
+            FfiLocalProjectionKind::ProposalQueued => Self::ProposalQueued,
+            FfiLocalProjectionKind::CommitMerged => Self::CommitMerged,
+            FfiLocalProjectionKind::WelcomeRef => Self::WelcomeRef,
+            FfiLocalProjectionKind::System => Self::System,
         }
     }
 }

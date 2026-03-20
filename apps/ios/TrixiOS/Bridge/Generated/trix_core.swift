@@ -947,6 +947,8 @@ public protocol FfiLocalHistoryStoreProtocol: AnyObject, Sendable {
     
     func applyLeasedInbox(lease: FfiLeaseInboxResponse) throws  -> FfiLocalStoreApplyReport
     
+    func applyProjectedMessages(chatId: String, projectedMessages: [FfiLocalProjectedMessage]) throws  -> FfiLocalProjectionApplyReport
+    
     func chatMlsGroupId(chatId: String) throws  -> Data?
     
     func chatReadCursor(chatId: String) throws  -> UInt64?
@@ -1086,6 +1088,16 @@ open func applyLeasedInbox(lease: FfiLeaseInboxResponse)throws  -> FfiLocalStore
     uniffi_trix_core_fn_method_ffilocalhistorystore_apply_leased_inbox(
             self.uniffiCloneHandle(),
         FfiConverterTypeFfiLeaseInboxResponse_lower(lease),$0
+    )
+})
+}
+    
+open func applyProjectedMessages(chatId: String, projectedMessages: [FfiLocalProjectedMessage])throws  -> FfiLocalProjectionApplyReport  {
+    return try  FfiConverterTypeFfiLocalProjectionApplyReport_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffilocalhistorystore_apply_projected_messages(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(chatId),
+        FfiConverterSequenceTypeFfiLocalProjectedMessage.lower(projectedMessages),$0
     )
 })
 }
@@ -10220,6 +10232,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffilocalhistorystore_apply_leased_inbox() != 20144) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffilocalhistorystore_apply_projected_messages() != 2456) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffilocalhistorystore_chat_mls_group_id() != 10675) {

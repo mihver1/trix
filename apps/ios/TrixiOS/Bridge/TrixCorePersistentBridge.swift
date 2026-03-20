@@ -492,6 +492,34 @@ enum TrixCorePersistentBridge {
         return true
     }
 
+    @discardableResult
+    static func recoverConversationProjectionIfNeeded(
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        historyMessages: [MessageEnvelope],
+        limit: Int = 200
+    ) throws -> Bool {
+        let context = try loadOrCreateContext(identity: identity)
+
+        if let groupId = try context.historyStore.chatMlsGroupId(chatId: chatId),
+           let conversation = try context.mlsFacade.loadGroup(groupId: groupId) {
+            _ = try context.historyStore.projectChatMessages(
+                chatId: chatId,
+                facade: context.mlsFacade,
+                conversation: conversation,
+                limit: UInt32(min(max(limit, 1), 500))
+            )
+            try saveContextState(context)
+            return true
+        }
+
+        return try rebuildConversationProjectionFromHistory(
+            context: context,
+            chatId: chatId,
+            historyMessages: historyMessages
+        )
+    }
+
     static func markChatRead(
         identity: LocalDeviceIdentity,
         chatId: String,
@@ -702,6 +730,159 @@ private extension TrixCorePersistentBridge {
         try context.historyStore.saveState()
         try context.mlsFacade.saveState()
         try context.syncCoordinator.saveState()
+    }
+
+    static func rebuildConversationProjectionFromHistory(
+        context: PersistentCoreContext,
+        chatId: String,
+        historyMessages: [MessageEnvelope]
+    ) throws -> Bool {
+        let sortedMessages = historyMessages.sorted {
+            if $0.serverSeq == $1.serverSeq {
+                return $0.createdAtUnix < $1.createdAtUnix
+            }
+            return $0.serverSeq < $1.serverSeq
+        }
+        let welcomeCandidates = sortedMessages
+            .filter { $0.messageKind == .welcomeRef }
+            .sorted { $0.serverSeq > $1.serverSeq }
+
+        guard !welcomeCandidates.isEmpty else {
+            return false
+        }
+
+        for welcomeMessage in welcomeCandidates {
+            do {
+                let conversation = try context.mlsFacade.joinGroupFromWelcome(
+                    welcomeMessage: try welcomeMessage.ciphertextB64.trix_decodedBase64(fieldName: "ciphertext_b64"),
+                    ratchetTree: nil
+                )
+                let groupId = try conversation.groupId()
+                _ = try context.historyStore.setChatMlsGroupId(chatId: chatId, groupId: groupId)
+
+                let projectedMessages = try buildProjectedMessagesFromWelcome(
+                    welcomeMessage: welcomeMessage,
+                    allMessages: sortedMessages,
+                    facade: context.mlsFacade,
+                    conversation: conversation
+                )
+
+                guard !projectedMessages.isEmpty else {
+                    continue
+                }
+
+                _ = try context.historyStore.applyProjectedMessages(
+                    chatId: chatId,
+                    projectedMessages: projectedMessages
+                )
+                try saveContextState(context)
+                return true
+            } catch {
+                continue
+            }
+        }
+
+        return false
+    }
+
+    static func buildProjectedMessagesFromWelcome(
+        welcomeMessage: MessageEnvelope,
+        allMessages: [MessageEnvelope],
+        facade: FfiMlsFacade,
+        conversation: FfiMlsConversation
+    ) throws -> [FfiLocalProjectedMessage] {
+        var projectedMessages: [FfiLocalProjectedMessage] = [
+            try makeProjectedMessage(
+                from: welcomeMessage,
+                projectionKind: .welcomeRef,
+                payload: welcomeMessage.ciphertextB64.trix_decodedBase64(fieldName: "ciphertext_b64"),
+                mergedEpoch: nil
+            )
+        ]
+
+        for message in allMessages where message.serverSeq > welcomeMessage.serverSeq {
+            let ciphertext = try message.ciphertextB64.trix_decodedBase64(fieldName: "ciphertext_b64")
+
+            switch message.messageKind {
+            case .application, .commit:
+                let result = try facade.processMessage(
+                    conversation: conversation,
+                    messageBytes: ciphertext
+                )
+                switch result.kind {
+                case .applicationMessage:
+                    projectedMessages.append(
+                        try makeProjectedMessage(
+                            from: message,
+                            projectionKind: .applicationMessage,
+                            payload: result.applicationMessage,
+                            mergedEpoch: nil
+                        )
+                    )
+                case .proposalQueued:
+                    projectedMessages.append(
+                        try makeProjectedMessage(
+                            from: message,
+                            projectionKind: .proposalQueued,
+                            payload: nil,
+                            mergedEpoch: nil
+                        )
+                    )
+                case .commitMerged:
+                    projectedMessages.append(
+                        try makeProjectedMessage(
+                            from: message,
+                            projectionKind: .commitMerged,
+                            payload: nil,
+                            mergedEpoch: result.epoch
+                        )
+                    )
+                }
+            case .welcomeRef:
+                projectedMessages.append(
+                    try makeProjectedMessage(
+                        from: message,
+                        projectionKind: .welcomeRef,
+                        payload: ciphertext,
+                        mergedEpoch: nil
+                    )
+                )
+            case .system:
+                projectedMessages.append(
+                    try makeProjectedMessage(
+                        from: message,
+                        projectionKind: .system,
+                        payload: ciphertext,
+                        mergedEpoch: nil
+                    )
+                )
+            }
+        }
+
+        return projectedMessages
+    }
+
+    static func makeProjectedMessage(
+        from message: MessageEnvelope,
+        projectionKind: FfiLocalProjectionKind,
+        payload: Data?,
+        mergedEpoch: UInt64?
+    ) throws -> FfiLocalProjectedMessage {
+        FfiLocalProjectedMessage(
+            serverSeq: message.serverSeq,
+            messageId: message.messageId,
+            senderAccountId: message.senderAccountId,
+            senderDeviceId: message.senderDeviceId,
+            epoch: message.epoch,
+            messageKind: message.messageKind.trix_ffiMessageKind,
+            contentType: message.contentType.trix_ffiContentType,
+            projectionKind: projectionKind,
+            payload: payload,
+            body: nil,
+            bodyParseError: nil,
+            mergedEpoch: mergedEpoch,
+            createdAtUnix: message.createdAtUnix
+        )
     }
 }
 
