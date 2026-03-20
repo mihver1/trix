@@ -15,9 +15,10 @@ use crate::{
     LocalProjectedMessage, LocalProjectionApplyReport, LocalProjectionKind, LocalStoreApplyReport,
     LocalTimelineItem, MessageBody, MlsCommitBundle, MlsFacade, MlsMemberIdentity,
     MlsProcessResult, ModifyChatDevicesControlInput, ModifyChatDevicesControlOutcome,
-    ModifyChatMembersControlInput, ModifyChatMembersControlOutcome, PublishKeyPackageMaterial,
-    ReactionAction, ReceiptType, ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient,
-    SyncChatCursor, SyncCoordinator, SyncStateSnapshot, UpdateAccountProfileParams,
+    ModifyChatMembersControlInput, ModifyChatMembersControlOutcome, PreparedAttachmentUpload,
+    PublishKeyPackageMaterial, ReactionAction, ReceiptType, ReservedKeyPackageMaterial,
+    SendMessageOutcome, ServerApiClient, SyncChatCursor, SyncCoordinator, SyncStateSnapshot,
+    UpdateAccountProfileParams, decrypt_attachment_payload, prepare_attachment_upload,
 };
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -752,6 +753,44 @@ pub struct FfiBlobHead {
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiAttachmentUploadParams {
+    pub mime_type: String,
+    pub file_name: Option<String>,
+    pub width_px: Option<u32>,
+    pub height_px: Option<u32>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiPreparedAttachmentUpload {
+    pub mime_type: String,
+    pub file_name: Option<String>,
+    pub width_px: Option<u32>,
+    pub height_px: Option<u32>,
+    pub plaintext_size_bytes: u64,
+    pub encrypted_size_bytes: u64,
+    pub encrypted_payload: Vec<u8>,
+    pub encrypted_sha256: Vec<u8>,
+    pub file_key: Vec<u8>,
+    pub nonce: Vec<u8>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiUploadedAttachment {
+    pub body: FfiMessageBody,
+    pub blob_id: String,
+    pub upload_status: FfiBlobUploadStatus,
+    pub plaintext_size_bytes: u64,
+    pub encrypted_size_bytes: u64,
+    pub encrypted_sha256: Vec<u8>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiDownloadedAttachment {
+    pub body: FfiMessageBody,
+    pub plaintext: Vec<u8>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct FfiMlsCommitBundle {
     pub commit_message: Vec<u8>,
     pub welcome_message: Option<Vec<u8>>,
@@ -828,6 +867,47 @@ fn ffi_parse_message_body(
     Ok(message_body_to_ffi(
         MessageBody::from_bytes(content_type.into(), &payload).map_err(ffi_error)?,
     ))
+}
+
+#[uniffi::export]
+fn ffi_prepare_attachment_upload(
+    payload: Vec<u8>,
+    params: FfiAttachmentUploadParams,
+) -> Result<FfiPreparedAttachmentUpload, TrixFfiError> {
+    Ok(prepared_attachment_upload_to_ffi(
+        prepare_attachment_upload(
+            &payload,
+            params.mime_type,
+            params.file_name,
+            params.width_px,
+            params.height_px,
+        )
+        .map_err(ffi_error)?,
+    ))
+}
+
+#[uniffi::export]
+fn ffi_build_attachment_message_body(
+    blob_id: String,
+    prepared: FfiPreparedAttachmentUpload,
+) -> Result<FfiMessageBody, TrixFfiError> {
+    Ok(message_body_to_ffi(MessageBody::Attachment(
+        prepared_attachment_upload_from_ffi(prepared)?.into_message_body(blob_id),
+    )))
+}
+
+#[uniffi::export]
+fn ffi_decrypt_attachment_payload(
+    body: FfiMessageBody,
+    encrypted_payload: Vec<u8>,
+) -> Result<Vec<u8>, TrixFfiError> {
+    let body = message_body_from_ffi(body)?;
+    let MessageBody::Attachment(body) = body else {
+        return Err(TrixFfiError::Message(
+            "attachment decryption requires an attachment message body".to_owned(),
+        ));
+    };
+    decrypt_attachment_payload(&body, &encrypted_payload).map_err(ffi_error)
 }
 
 #[uniffi::export]
@@ -1512,6 +1592,52 @@ impl FfiServerApiClient {
         })
     }
 
+    pub fn upload_attachment(
+        &self,
+        chat_id: String,
+        payload: Vec<u8>,
+        params: FfiAttachmentUploadParams,
+    ) -> Result<FfiUploadedAttachment, TrixFfiError> {
+        let client = clone_server_api_client(&self.inner)?;
+        let prepared = prepare_attachment_upload(
+            &payload,
+            params.mime_type,
+            params.file_name,
+            params.width_px,
+            params.height_px,
+        )
+        .map_err(ffi_error)?;
+
+        let create = self.runtime.block_on(client.create_blob_upload(
+            parse_chat_id(&chat_id)?,
+            prepared.mime_type.clone(),
+            prepared.encrypted_size_bytes,
+            &prepared.encrypted_sha256,
+        ))?;
+
+        let upload_status = if create.needs_upload {
+            self.runtime
+                .block_on(client.upload_blob(create.blob_id.clone(), &prepared.encrypted_payload))?
+                .upload_status
+        } else {
+            self.runtime
+                .block_on(client.head_blob(create.blob_id.clone()))?
+                .upload_status
+        };
+
+        let blob_id = create.blob_id;
+        Ok(FfiUploadedAttachment {
+            body: message_body_to_ffi(MessageBody::Attachment(
+                prepared.clone().into_message_body(blob_id.clone()),
+            )),
+            blob_id,
+            upload_status: upload_status.into(),
+            plaintext_size_bytes: prepared.plaintext_size_bytes,
+            encrypted_size_bytes: prepared.encrypted_size_bytes,
+            encrypted_sha256: prepared.encrypted_sha256,
+        })
+    }
+
     pub fn upload_blob(
         &self,
         blob_id: String,
@@ -1535,6 +1661,30 @@ impl FfiServerApiClient {
         self.runtime
             .block_on(client.download_blob(blob_id))
             .map_err(Into::into)
+    }
+
+    pub fn download_attachment(
+        &self,
+        body: FfiMessageBody,
+    ) -> Result<FfiDownloadedAttachment, TrixFfiError> {
+        let body = message_body_from_ffi(body)?;
+        let MessageBody::Attachment(body) = body else {
+            return Err(TrixFfiError::Message(
+                "attachment download requires an attachment message body".to_owned(),
+            ));
+        };
+
+        let client = clone_server_api_client(&self.inner)?;
+        let encrypted_payload = self
+            .runtime
+            .block_on(client.download_blob(body.blob_id.clone()))
+            .map_err(ffi_error)?;
+        let plaintext = decrypt_attachment_payload(&body, &encrypted_payload).map_err(ffi_error)?;
+
+        Ok(FfiDownloadedAttachment {
+            body: message_body_to_ffi(MessageBody::Attachment(body)),
+            plaintext,
+        })
     }
 }
 
@@ -3244,6 +3394,40 @@ fn blob_head_to_ffi(value: crate::BlobHeadMaterial) -> FfiBlobHead {
     }
 }
 
+fn prepared_attachment_upload_to_ffi(
+    value: PreparedAttachmentUpload,
+) -> FfiPreparedAttachmentUpload {
+    FfiPreparedAttachmentUpload {
+        mime_type: value.mime_type,
+        file_name: value.file_name,
+        width_px: value.width_px,
+        height_px: value.height_px,
+        plaintext_size_bytes: value.plaintext_size_bytes,
+        encrypted_size_bytes: value.encrypted_size_bytes,
+        encrypted_payload: value.encrypted_payload,
+        encrypted_sha256: value.encrypted_sha256,
+        file_key: value.file_key,
+        nonce: value.nonce,
+    }
+}
+
+fn prepared_attachment_upload_from_ffi(
+    value: FfiPreparedAttachmentUpload,
+) -> Result<PreparedAttachmentUpload, TrixFfiError> {
+    Ok(PreparedAttachmentUpload {
+        mime_type: value.mime_type,
+        file_name: value.file_name,
+        width_px: value.width_px,
+        height_px: value.height_px,
+        plaintext_size_bytes: value.plaintext_size_bytes,
+        encrypted_size_bytes: value.encrypted_size_bytes,
+        encrypted_payload: value.encrypted_payload,
+        encrypted_sha256: value.encrypted_sha256,
+        file_key: value.file_key,
+        nonce: value.nonce,
+    })
+}
+
 fn commit_bundle_to_ffi(value: MlsCommitBundle) -> FfiMlsCommitBundle {
     FfiMlsCommitBundle {
         commit_message: value.commit_message,
@@ -3511,5 +3695,42 @@ mod tests {
             parse_aad_json_string("{\"preview\":\"hello\"}").unwrap(),
             json!({"preview":"hello"})
         );
+    }
+
+    #[test]
+    fn attachment_helpers_prepare_build_and_decrypt_round_trip() {
+        let prepared = ffi_prepare_attachment_upload(
+            b"hello attachment".to_vec(),
+            FfiAttachmentUploadParams {
+                mime_type: "image/jpeg".to_owned(),
+                file_name: Some("photo.jpg".to_owned()),
+                width_px: Some(320),
+                height_px: Some(240),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(prepared.mime_type, "image/jpeg");
+        assert_eq!(prepared.file_name.as_deref(), Some("photo.jpg"));
+        assert!(prepared.encrypted_size_bytes >= prepared.plaintext_size_bytes);
+
+        let body =
+            ffi_build_attachment_message_body("blob-1".to_owned(), prepared.clone()).unwrap();
+        let decrypted =
+            ffi_decrypt_attachment_payload(body.clone(), prepared.encrypted_payload).unwrap();
+        assert_eq!(decrypted, b"hello attachment");
+
+        match body {
+            FfiMessageBody {
+                kind: FfiMessageBodyKind::Attachment,
+                blob_id,
+                size_bytes,
+                ..
+            } => {
+                assert_eq!(blob_id.as_deref(), Some("blob-1"));
+                assert_eq!(size_bytes, Some(16));
+            }
+            other => panic!("expected attachment body, got {other:?}"),
+        }
     }
 }
