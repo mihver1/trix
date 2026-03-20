@@ -90,6 +90,10 @@ struct DownloadedAttachmentFile: Identifiable {
     var id: String { fileURL.absoluteString }
 }
 
+private struct ChatHistoryBackfillResult {
+    let recentMessages: [MessageEnvelope]
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var localIdentity: LocalDeviceIdentity?
@@ -1132,24 +1136,20 @@ final class AppModel: ObservableObject {
         )
 
         let localServerSeq = localHistory?.messages.map(\.serverSeq).max() ?? 0
+        let needsProjectionBootstrap = localTimelineItems.isEmpty
         let shouldBackfillFromServer = localHistory == nil
             || localServerSeq < detail.lastServerSeq
-            || localTimelineItems.isEmpty
+            || needsProjectionBootstrap
 
         if shouldBackfillFromServer {
-            let serverHistory: ChatHistoryResponse = try await context.client.get(
-                "/v0/chats/\(chatId)/history?limit=100",
-                accessToken: context.session.accessToken
-            )
-            _ = try? TrixCorePersistentBridge.applyChatHistory(
+            let backfillResult = try await backfillChatHistoryFromServer(
+                client: context.client,
+                accessToken: context.session.accessToken,
                 identity: context.identity,
                 chatId: chatId,
-                messages: serverHistory.messages
-            )
-            _ = try? TrixCorePersistentBridge.recoverConversationProjectionIfNeeded(
-                identity: context.identity,
-                chatId: chatId,
-                historyMessages: serverHistory.messages
+                targetLastServerSeq: detail.lastServerSeq,
+                startAfterServerSeq: needsProjectionBootstrap ? 0 : localServerSeq,
+                bootstrapProjection: needsProjectionBootstrap
             )
 
             localTimelineItems = try TrixCorePersistentBridge.loadLocalTimeline(
@@ -1162,11 +1162,12 @@ final class AppModel: ObservableObject {
                 chatId: chatId,
                 limit: 100
             )
+            updateLocalCoreStateSnapshot(identity: context.identity)
 
-            if let localHistory {
+            if !localTimelineItems.isEmpty || backfillResult.recentMessages.isEmpty {
                 return ChatSnapshot(
                     detail: detail,
-                    history: localHistory.messages,
+                    history: localHistory?.messages ?? [],
                     localTimelineItems: localTimelineItems,
                     historySource: .localStore
                 )
@@ -1174,7 +1175,7 @@ final class AppModel: ObservableObject {
 
             return ChatSnapshot(
                 detail: detail,
-                history: serverHistory.messages,
+                history: backfillResult.recentMessages,
                 localTimelineItems: localTimelineItems,
                 historySource: .server
             )
@@ -1186,6 +1187,110 @@ final class AppModel: ObservableObject {
             localTimelineItems: localTimelineItems,
             historySource: .localStore
         )
+    }
+
+    private func backfillChatHistoryFromServer(
+        client: APIClient,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        targetLastServerSeq: UInt64,
+        startAfterServerSeq: UInt64,
+        bootstrapProjection: Bool,
+        pageLimit: Int = 500,
+        recentWindowLimit: Int = 150
+    ) async throws -> ChatHistoryBackfillResult {
+        var afterServerSeq = startAfterServerSeq
+        var bootstrapHistoryMessages: [MessageEnvelope] = []
+        var recentMessages: [MessageEnvelope] = []
+        var hasRecoveredProjection = !bootstrapProjection
+
+        while afterServerSeq < targetLastServerSeq {
+            let page: ChatHistoryResponse = try await client.get(
+                makeChatHistoryPath(
+                    chatId: chatId,
+                    afterServerSeq: afterServerSeq,
+                    limit: pageLimit
+                ),
+                accessToken: accessToken
+            )
+
+            guard !page.messages.isEmpty else {
+                break
+            }
+
+            _ = try? TrixCorePersistentBridge.applyChatHistory(
+                identity: identity,
+                chatId: chatId,
+                messages: page.messages
+            )
+            appendRecentHistoryMessages(
+                page.messages,
+                into: &recentMessages,
+                limit: recentWindowLimit
+            )
+
+            if !hasRecoveredProjection {
+                bootstrapHistoryMessages.append(contentsOf: page.messages)
+                hasRecoveredProjection = (try? TrixCorePersistentBridge.recoverConversationProjectionIfNeeded(
+                    identity: identity,
+                    chatId: chatId,
+                    historyMessages: bootstrapHistoryMessages,
+                    limit: pageLimit
+                )) ?? false
+            }
+
+            if hasRecoveredProjection {
+                _ = try? TrixCorePersistentBridge.projectChatMessagesIfPossible(
+                    identity: identity,
+                    chatId: chatId,
+                    limit: pageLimit
+                )
+            }
+
+            guard let lastServerSeq = page.messages.map(\.serverSeq).max(),
+                  lastServerSeq > afterServerSeq
+            else {
+                break
+            }
+
+            afterServerSeq = lastServerSeq
+
+            if page.messages.count < pageLimit {
+                break
+            }
+        }
+
+        return ChatHistoryBackfillResult(recentMessages: recentMessages)
+    }
+
+    private func makeChatHistoryPath(
+        chatId: String,
+        afterServerSeq: UInt64,
+        limit: Int
+    ) -> String {
+        let clampedLimit = min(max(limit, 1), 500)
+        if afterServerSeq > 0 {
+            return "/v0/chats/\(chatId)/history?after_server_seq=\(afterServerSeq)&limit=\(clampedLimit)"
+        }
+
+        return "/v0/chats/\(chatId)/history?limit=\(clampedLimit)"
+    }
+
+    private func appendRecentHistoryMessages(
+        _ messages: [MessageEnvelope],
+        into window: inout [MessageEnvelope],
+        limit: Int
+    ) {
+        guard limit > 0 else {
+            window = []
+            return
+        }
+
+        window.append(contentsOf: messages)
+        if window.count > limit {
+            window.removeFirst(window.count - limit)
+        }
     }
 
     @discardableResult
@@ -1309,6 +1414,7 @@ final class AppModel: ObservableObject {
             chats: resolvedChats.chats,
             inboxItems: resolvedInbox.items
         )
+        updateLocalCoreStateSnapshot(identity: effectiveIdentity)
 
         self.systemSnapshot = resolvedSystemSnapshot
         let dashboard = DashboardData(
@@ -1332,12 +1438,12 @@ final class AppModel: ObservableObject {
             seedDirectoryAccountCache(with: chat.participantProfiles)
         }
         self.dashboard = dashboard
-        updateLocalCoreStateSnapshot(identity: effectiveIdentity)
         lastUpdatedAt = Date()
 
         await startRealtimeConnection(
             baseURLString: try client.baseURLString(),
-            accessToken: session.accessToken
+            accessToken: session.accessToken,
+            identity: effectiveIdentity
         )
     }
 
@@ -1453,7 +1559,8 @@ final class AppModel: ObservableObject {
 
     private func startRealtimeConnection(
         baseURLString: String,
-        accessToken: String
+        accessToken: String,
+        identity: LocalDeviceIdentity
     ) async {
         await stopRealtimeConnection()
 
@@ -1464,8 +1571,9 @@ final class AppModel: ObservableObject {
             let client = try RealtimeWebSocketClient(
                 baseURLString: baseURLString,
                 accessToken: accessToken,
-                onFrame: { [weak self] frame in
-                    await self?.handleRealtimeFrame(frame, connectionID: connectionID)
+                identity: identity,
+                onEvent: { [weak self] update in
+                    await self?.handleRealtimeUpdate(update, connectionID: connectionID)
                 },
                 onDisconnect: { [weak self] reason in
                     await self?.handleRealtimeDisconnect(reason, connectionID: connectionID)
@@ -1497,42 +1605,39 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func handleRealtimeFrame(
-        _ frame: WebSocketServerFrame,
+    private func handleRealtimeUpdate(
+        _ update: RealtimeConnectionUpdate,
         connectionID: UUID
     ) async {
         guard realtimeConnectionID == connectionID else {
             return
         }
 
-        switch frame {
+        if let localIdentity,
+           update.event.report != nil || update.event.kind == .acked {
+            updateLocalCoreStateSnapshot(identity: localIdentity)
+        }
+
+        switch update.event.kind {
         case .hello:
             lastUpdatedAt = Date()
-        case let .inboxItems(payload):
-            if let localIdentity {
-                do {
-                    _ = try TrixCorePersistentBridge.applyInboxItems(
-                        identity: localIdentity,
-                        items: payload.items,
-                        leaseOwner: payload.leaseOwner,
-                        leaseExpiresAtUnix: payload.leaseExpiresAtUnix
-                    )
-                    updateLocalCoreStateSnapshot(identity: localIdentity)
-                } catch {
-                    scheduleBackgroundRefresh(delayNanoseconds: 300_000_000)
-                }
-            }
-            updateDashboardInboxItems(payload.items, scheduleRefreshForUnknownChats: true)
-            await acknowledgeRealtimeInboxItems(payload.items)
-        case let .acked(payload):
-            removeDashboardInboxItems(payload.ackedInboxIds)
+        case .inboxItems:
+            updateDashboardInboxItems(update.inboxItems, scheduleRefreshForUnknownChats: true)
+        case .acked:
+            removeDashboardInboxItems(update.event.serverAckedInboxIds)
         case .pong:
             break
         case .sessionReplaced:
             disconnectRealtimeConnection()
+            if let reason = update.event.sessionReplacedReason?.trix_trimmedOrNil() {
+                errorMessage = reason
+            }
             scheduleBackgroundRefresh(delayNanoseconds: 300_000_000)
-        case let .error(payload):
-            errorMessage = payload.message
+        case .error:
+            errorMessage = update.event.errorMessage ?? "Realtime transport error."
+        case .disconnected:
+            disconnectRealtimeConnection()
+            scheduleBackgroundRefresh(delayNanoseconds: 300_000_000)
         }
     }
 
@@ -1572,13 +1677,89 @@ final class AppModel: ObservableObject {
                 try? await Task.sleep(nanoseconds: delayNanoseconds)
             }
 
-            await self.refresh(baseURLString: baseURLString)
+            guard !self.isLoading else {
+                self.finishBackgroundRefresh()
+                return
+            }
+
+            let recovered = await self.runIncrementalBackgroundRecovery(
+                baseURLString: baseURLString
+            )
+            if !recovered {
+                await self.refresh(baseURLString: baseURLString)
+            }
             self.finishBackgroundRefresh()
         }
     }
 
     private func finishBackgroundRefresh() {
         hasScheduledBackgroundRefresh = false
+    }
+
+    private func runIncrementalBackgroundRecovery(baseURLString: String) async -> Bool {
+        guard dashboard != nil else {
+            return false
+        }
+
+        do {
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            let effectiveIdentity = try reconcileAuthenticatedIdentity(
+                baseURLString: try context.client.baseURLString(),
+                accessToken: context.session.accessToken,
+                identity: context.identity
+            )
+            let result = try TrixCorePersistentBridge.pollRealtimeOnce(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: effectiveIdentity
+            )
+            updateLocalCoreStateSnapshot(identity: effectiveIdentity)
+            let applied = applyLocalCoreStateOverlay(
+                session: context.session,
+                ackedInboxIds: result.ackedInboxIds,
+                changedChatIds: result.report.changedChatIds
+            )
+            if applied {
+                await startRealtimeConnection(
+                    baseURLString: baseURLString,
+                    accessToken: context.session.accessToken,
+                    identity: effectiveIdentity
+                )
+            }
+            return applied
+        } catch {
+            return false
+        }
+    }
+
+    private func applyLocalCoreStateOverlay(
+        session: AuthSessionResponse,
+        ackedInboxIds: [UInt64],
+        changedChatIds: [String]
+    ) -> Bool {
+        guard let dashboard else {
+            return false
+        }
+
+        let acknowledgedSet = Set(ackedInboxIds)
+        let remainingInboxItems = dashboard.inboxItems.filter { !acknowledgedSet.contains($0.inboxId) }
+        let mergedChats = mergeDashboardChatsWithLocalState(existing: dashboard.chats)
+        let mergedChatIds = Set(mergedChats.map(\.chatId))
+
+        self.dashboard = DashboardData(
+            session: session,
+            profile: dashboard.profile,
+            devices: dashboard.devices,
+            historySyncJobs: dashboard.historySyncJobs,
+            chats: mergeChatSummaries(
+                existing: mergedChats,
+                inboxItems: remainingInboxItems
+            ),
+            inboxItems: remainingInboxItems
+        )
+        lastUpdatedAt = Date()
+
+        return Set(changedChatIds).isSubset(of: mergedChatIds)
     }
 
     private func updateDashboardInboxItems(
@@ -1611,19 +1792,6 @@ final class AppModel: ObservableObject {
         if scheduleRefreshForUnknownChats,
            !incomingChatIds.subtracting(knownChatIds).isEmpty {
             scheduleBackgroundRefresh(delayNanoseconds: 300_000_000)
-        }
-    }
-
-    private func acknowledgeRealtimeInboxItems(_ items: [InboxItem]) async {
-        let inboxIds = Array(Set(items.map(\.inboxId))).sorted()
-        guard !inboxIds.isEmpty else {
-            return
-        }
-
-        do {
-            try await realtimeClient?.sendAck(inboxIds: inboxIds)
-        } catch {
-            scheduleBackgroundRefresh(delayNanoseconds: 750_000_000)
         }
     }
 
@@ -1694,7 +1862,7 @@ final class AppModel: ObservableObject {
                     participantProfiles: chat.participantProfiles
                 )
             }
-            .sorted(by: chatSummarySortComparator)
+            .sorted(by: sortDashboardChatSummaries)
     }
 
     private func resolvedLatestMessage(
@@ -1726,6 +1894,72 @@ final class AppModel: ObservableObject {
         }
 
         return lhs.chatId < rhs.chatId
+    }
+
+    private func mergeDashboardChatsWithLocalState(existing: [ChatSummary]) -> [ChatSummary] {
+        guard let localCoreState else {
+            return existing.sorted(by: sortDashboardChatSummaries)
+        }
+
+        var chatsById = Dictionary(uniqueKeysWithValues: existing.map { ($0.chatId, $0) })
+        for localChat in localCoreState.localChats {
+            chatsById[localChat.chatId] = mergedChatSummary(
+                existing: chatsById[localChat.chatId],
+                local: localChat
+            )
+        }
+
+        return chatsById
+            .values
+            .sorted(by: sortDashboardChatSummaries)
+    }
+
+    private func mergedChatSummary(
+        existing: ChatSummary?,
+        local: ChatSummary
+    ) -> ChatSummary {
+        ChatSummary(
+            chatId: local.chatId,
+            chatType: local.chatType,
+            title: local.title?.trix_trimmedOrNil() ?? existing?.title?.trix_trimmedOrNil(),
+            lastServerSeq: max(local.lastServerSeq, existing?.lastServerSeq ?? 0),
+            epoch: max(local.epoch, existing?.epoch ?? 0),
+            pendingMessageCount: max(local.pendingMessageCount, existing?.pendingMessageCount ?? 0),
+            lastMessage: resolvedLatestMessage(
+                current: existing?.lastMessage,
+                incoming: local.lastMessage
+            ),
+            participantProfiles: local.participantProfiles.isEmpty
+                ? (existing?.participantProfiles ?? [])
+                : local.participantProfiles
+        )
+    }
+
+    private func sortDashboardChatSummaries(lhs: ChatSummary, rhs: ChatSummary) -> Bool {
+        let lhsLocalItem = localCoreState?.chatListItem(for: lhs.chatId)
+        let rhsLocalItem = localCoreState?.chatListItem(for: rhs.chatId)
+
+        let lhsDate = lhsLocalItem?.previewDate ?? lhs.lastMessage?.createdAtDate ?? .distantPast
+        let rhsDate = rhsLocalItem?.previewDate ?? rhs.lastMessage?.createdAtDate ?? .distantPast
+
+        if lhsDate != rhsDate {
+            return lhsDate > rhsDate
+        }
+
+        let lhsSeq = max(
+            lhsLocalItem?.previewServerSeq ?? 0,
+            max(lhsLocalItem?.lastServerSeq ?? 0, lhs.lastServerSeq)
+        )
+        let rhsSeq = max(
+            rhsLocalItem?.previewServerSeq ?? 0,
+            max(rhsLocalItem?.lastServerSeq ?? 0, rhs.lastServerSeq)
+        )
+
+        if lhsSeq != rhsSeq {
+            return lhsSeq > rhsSeq
+        }
+
+        return chatSummarySortComparator(lhs: lhs, rhs: rhs)
     }
 
     private func seedDirectoryAccountCache(with participantProfiles: [ChatParticipantProfileSummary]) {

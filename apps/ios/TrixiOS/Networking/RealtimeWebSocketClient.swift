@@ -1,31 +1,20 @@
 import Foundation
 
-enum RealtimeWebSocketClientError: LocalizedError {
-    case invalidBaseURL(String)
-    case unsupportedScheme(String)
-    case invalidFrameEncoding
-
-    var errorDescription: String? {
-        switch self {
-        case let .invalidBaseURL(value):
-            return "Invalid base URL for websocket transport: \(value)"
-        case let .unsupportedScheme(value):
-            return "Unsupported websocket base scheme: \(value)"
-        case .invalidFrameEncoding:
-            return "Failed to encode websocket frame payload."
-        }
-    }
+struct RealtimeConnectionUpdate {
+    let frame: FfiWebSocketServerFrame
+    let event: FfiRealtimeEvent
+    let inboxItems: [InboxItem]
 }
 
 actor RealtimeWebSocketClient {
-    typealias FrameHandler = @Sendable (WebSocketServerFrame) async -> Void
+    typealias EventHandler = @Sendable (RealtimeConnectionUpdate) async -> Void
     typealias DisconnectHandler = @Sendable (String?) async -> Void
 
-    private let session: URLSession
-    private let task: URLSessionWebSocketTask
-    private let decoder: JSONDecoder
-    private let encoder: JSONEncoder
-    private let onFrame: FrameHandler
+    private let websocket: FfiServerWebSocketClient
+    private let realtimeDriver: FfiRealtimeDriver
+    private let historyDatabasePath: String
+    private let syncStatePath: String
+    private let onEvent: EventHandler
     private let onDisconnect: DisconnectHandler
 
     private var receiveLoopTask: Task<Void, Never>?
@@ -35,26 +24,20 @@ actor RealtimeWebSocketClient {
     init(
         baseURLString: String,
         accessToken: String,
-        onFrame: @escaping FrameHandler,
+        identity: LocalDeviceIdentity,
+        onEvent: @escaping EventHandler,
         onDisconnect: @escaping DisconnectHandler
     ) throws {
-        let configuration = URLSessionConfiguration.default
-        configuration.waitsForConnectivity = true
-        session = URLSession(configuration: configuration)
-
-        var request = URLRequest(url: try Self.websocketURL(baseURLString: baseURLString))
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        task = session.webSocketTask(with: request)
-
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        self.decoder = decoder
-
-        let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        self.encoder = encoder
-
-        self.onFrame = onFrame
+        let bindings = try TrixCorePersistentBridge.makeRealtimeBindings(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        )
+        websocket = bindings.websocket
+        realtimeDriver = bindings.realtimeDriver
+        historyDatabasePath = bindings.historyDatabasePath
+        syncStatePath = bindings.syncStatePath
+        self.onEvent = onEvent
         self.onDisconnect = onDisconnect
     }
 
@@ -64,7 +47,6 @@ actor RealtimeWebSocketClient {
         }
 
         isRunning = true
-        task.resume()
 
         receiveLoopTask = Task {
             await receiveLoop()
@@ -78,31 +60,35 @@ actor RealtimeWebSocketClient {
         await shutdown(notifyDisconnect: false, reason: nil)
     }
 
-    func sendAck(inboxIds: [UInt64]) async throws {
-        guard !inboxIds.isEmpty else {
-            return
-        }
-
-        try await send(WebSocketAckClientFrame(inboxIds: inboxIds))
-    }
-
     private func receiveLoop() async {
         while isRunning, !Task.isCancelled {
             do {
-                let message = try await task.receive()
-                switch message {
-                case let .string(text):
-                    try await handleIncomingPayload(Data(text.utf8))
-                case let .data(data):
-                    try await handleIncomingPayload(data)
-                @unknown default:
-                    continue
+                guard let frame = try websocket.nextFrame() else {
+                    await shutdown(notifyDisconnect: isRunning, reason: "Realtime websocket closed.")
+                    return
                 }
-            } catch {
-                await shutdown(
-                    notifyDisconnect: isRunning,
-                    reason: Self.disconnectReason(for: task, fallback: error.localizedDescription)
+
+                let coordinator = try FfiSyncCoordinator.newPersistent(statePath: syncStatePath)
+                let store = try FfiLocalHistoryStore.newPersistent(databasePath: historyDatabasePath)
+                let event = try realtimeDriver.processWebsocketFrame(
+                    coordinator: coordinator,
+                    store: store,
+                    frame: frame
                 )
+
+                if !event.outboundAckInboxIds.isEmpty {
+                    try websocket.sendAck(inboxIds: event.outboundAckInboxIds)
+                }
+
+                await onEvent(
+                    RealtimeConnectionUpdate(
+                        frame: frame,
+                        event: event,
+                        inboxItems: frame.trix_inboxItems
+                    )
+                )
+            } catch {
+                await shutdown(notifyDisconnect: isRunning, reason: error.localizedDescription)
                 return
             }
         }
@@ -117,33 +103,12 @@ actor RealtimeWebSocketClient {
             }
 
             do {
-                try await send(WebSocketPresencePingClientFrame(nonce: nil))
+                try websocket.sendPresencePing(nonce: nil)
             } catch {
-                await shutdown(
-                    notifyDisconnect: isRunning,
-                    reason: Self.disconnectReason(for: task, fallback: error.localizedDescription)
-                )
+                await shutdown(notifyDisconnect: isRunning, reason: error.localizedDescription)
                 return
             }
         }
-    }
-
-    private func handleIncomingPayload(_ payload: Data) async throws {
-        let frame = try decoder.decode(WebSocketServerFrame.self, from: payload)
-        await onFrame(frame)
-    }
-
-    private func send<Frame: Encodable>(_ frame: Frame) async throws {
-        guard isRunning else {
-            return
-        }
-
-        let payload = try encoder.encode(frame)
-        guard let text = String(data: payload, encoding: .utf8) else {
-            throw RealtimeWebSocketClientError.invalidFrameEncoding
-        }
-
-        try await task.send(.string(text))
     }
 
     private func shutdown(notifyDisconnect: Bool, reason: String?) async {
@@ -155,62 +120,85 @@ actor RealtimeWebSocketClient {
         heartbeatTask?.cancel()
         heartbeatTask = nil
 
-        task.cancel(with: .goingAway, reason: reason?.data(using: .utf8))
-        session.invalidateAndCancel()
+        try? websocket.close()
 
         if shouldNotify {
             await onDisconnect(reason)
         }
     }
+}
 
-    private static func websocketURL(baseURLString: String) throws -> URL {
-        let trimmed = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalized = trimmed.hasSuffix("/") ? trimmed : "\(trimmed)/"
-
-        guard let baseURL = URL(string: normalized), baseURL.scheme != nil, baseURL.host != nil else {
-            throw RealtimeWebSocketClientError.invalidBaseURL(baseURLString)
-        }
-
-        guard let httpURL = URL(string: "v0/ws", relativeTo: baseURL)?.absoluteURL,
-              var components = URLComponents(url: httpURL, resolvingAgainstBaseURL: true)
-        else {
-            throw RealtimeWebSocketClientError.invalidBaseURL(baseURLString)
-        }
-
-        switch components.scheme?.lowercased() {
-        case "http":
-            components.scheme = "ws"
-        case "https":
-            components.scheme = "wss"
-        case "ws", "wss":
-            break
-        case let .some(value):
-            throw RealtimeWebSocketClientError.unsupportedScheme(value)
-        case .none:
-            throw RealtimeWebSocketClientError.invalidBaseURL(baseURLString)
-        }
-
-        guard let websocketURL = components.url else {
-            throw RealtimeWebSocketClientError.invalidBaseURL(baseURLString)
-        }
-
-        return websocketURL
+private extension FfiWebSocketServerFrame {
+    var trix_inboxItems: [InboxItem] {
+        inbox?.items.map(\.trix_inboxItem) ?? []
     }
+}
 
-    private static func disconnectReason(
-        for task: URLSessionWebSocketTask,
-        fallback: String
-    ) -> String {
-        if let closeReason = task.closeReason,
-           let closeReasonString = String(data: closeReason, encoding: .utf8),
-           !closeReasonString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return closeReasonString
+private extension FfiInboxItem {
+    var trix_inboxItem: InboxItem {
+        InboxItem(
+            inboxId: inboxId,
+            message: message.trix_messageEnvelope
+        )
+    }
+}
+
+private extension FfiMessageEnvelope {
+    var trix_messageEnvelope: MessageEnvelope {
+        MessageEnvelope(
+            messageId: messageId,
+            chatId: chatId,
+            serverSeq: serverSeq,
+            senderAccountId: senderAccountId,
+            senderDeviceId: senderDeviceId,
+            epoch: epoch,
+            messageKind: messageKind.trix_messageKind,
+            contentType: contentType.trix_contentType,
+            ciphertextB64: ciphertext.base64EncodedString(),
+            aadJson: aadJson.trix_jsonValue,
+            createdAtUnix: createdAtUnix
+        )
+    }
+}
+
+private extension FfiMessageKind {
+    var trix_messageKind: MessageKind {
+        switch self {
+        case .application:
+            return .application
+        case .commit:
+            return .commit
+        case .welcomeRef:
+            return .welcomeRef
+        case .system:
+            return .system
+        }
+    }
+}
+
+private extension FfiContentType {
+    var trix_contentType: ContentType {
+        switch self {
+        case .text:
+            return .text
+        case .reaction:
+            return .reaction
+        case .receipt:
+            return .receipt
+        case .attachment:
+            return .attachment
+        case .chatEvent:
+            return .chatEvent
+        }
+    }
+}
+
+private extension String {
+    var trix_jsonValue: JSONValue {
+        guard let data = data(using: .utf8) else {
+            return .string(self)
         }
 
-        if task.closeCode != .invalid {
-            return "Websocket closed with code \(task.closeCode.rawValue)."
-        }
-
-        return fallback
+        return (try? JSONDecoder().decode(JSONValue.self, from: data)) ?? .string(self)
     }
 }

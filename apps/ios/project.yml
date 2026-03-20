@@ -25,12 +25,13 @@ targets:
         embed: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.trix.ios
+        PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trixapp
         PRODUCT_NAME: Trix
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: TrixiOS/Resources/Info.plist
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: HGY33KYKQ2
         DEVELOPMENT_ASSET_PATHS: "\"TrixiOS/Resources\""
     scheme:
       gatherCoverageData: false

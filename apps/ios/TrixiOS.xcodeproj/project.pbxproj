@@ -257,6 +257,7 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					35A2EFCE0CF914C97292DC9D = {
+						DevelopmentTeam = HGY33KYKQ2;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -330,6 +331,7 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_ASSET_PATHS = "\"TrixiOS/Resources\"";
+				DEVELOPMENT_TEAM = HGY33KYKQ2;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\"Vendor\"",
@@ -341,7 +343,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = dev.trix.ios;
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixapp;
 				PRODUCT_NAME = Trix;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -420,6 +422,7 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_ASSET_PATHS = "\"TrixiOS/Resources\"";
+				DEVELOPMENT_TEAM = HGY33KYKQ2;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\"Vendor\"",
@@ -431,7 +434,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = dev.trix.ios;
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixapp;
 				PRODUCT_NAME = Trix;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
