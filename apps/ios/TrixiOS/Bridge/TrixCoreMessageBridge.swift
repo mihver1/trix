@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import UniformTypeIdentifiers
 
@@ -90,14 +89,9 @@ struct MessageBodyPreview {
     let detail: String?
 }
 
-struct PreparedAttachmentUpload {
-    let fileName: String?
-    let mimeType: String
-    let encryptedPayload: Data
-    let sizeBytes: UInt64
-    let sha256: Data
-    let fileKey: Data
-    let nonce: Data
+struct AttachmentUploadMaterial {
+    let payload: Data
+    let params: FfiAttachmentUploadParams
 }
 
 enum TrixCoreMessageBridge {
@@ -121,7 +115,7 @@ enum TrixCoreMessageBridge {
         )
     }
 
-    static func prepareAttachmentUpload(fileURL: URL) throws -> PreparedAttachmentUpload {
+    static func readAttachmentUploadMaterial(fileURL: URL) throws -> AttachmentUploadMaterial {
         let didAccessScopedResource = fileURL.startAccessingSecurityScopedResource()
         defer {
             if didAccessScopedResource {
@@ -130,54 +124,35 @@ enum TrixCoreMessageBridge {
         }
 
         let plaintext = try Data(contentsOf: fileURL)
-        let fileKey = try Data.trix_random(count: 32)
-        let nonce = try Data.trix_random(count: 12)
-        let symmetricKey = SymmetricKey(data: fileKey)
-        let aesNonce = try AES.GCM.Nonce(data: nonce)
-
-        // The server stores encrypted blobs; the descriptor carries the symmetric key material.
-        let sealedBox = try AES.GCM.seal(plaintext, using: symmetricKey, nonce: aesNonce)
-        let encryptedPayload = sealedBox.ciphertext + sealedBox.tag
-        let sha256 = Data(SHA256.hash(data: encryptedPayload))
         let fileName = fileURL.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        return PreparedAttachmentUpload(
-            fileName: fileName.isEmpty ? nil : fileName,
-            mimeType: attachmentMimeType(for: fileURL),
-            encryptedPayload: encryptedPayload,
-            sizeBytes: UInt64(encryptedPayload.count),
-            sha256: sha256,
-            fileKey: fileKey,
-            nonce: nonce
+        return AttachmentUploadMaterial(
+            payload: plaintext,
+            params: FfiAttachmentUploadParams(
+                mimeType: attachmentMimeType(for: fileURL),
+                fileName: fileName.isEmpty ? nil : fileName,
+                widthPx: nil,
+                heightPx: nil
+            )
         )
     }
 
     static func makeAttachmentCreateMessageRequest(
         epoch: UInt64,
-        blobId: String,
-        preparedUpload: PreparedAttachmentUpload
+        body: FfiMessageBody
     ) throws -> CreateMessageRequest {
-        let body = FfiMessageBody(
-            kind: .attachment,
-            text: nil,
-            targetMessageId: nil,
-            emoji: nil,
-            reactionAction: nil,
-            receiptType: nil,
-            receiptAtUnix: nil,
-            blobId: blobId,
-            mimeType: preparedUpload.mimeType,
-            sizeBytes: preparedUpload.sizeBytes,
-            sha256: preparedUpload.sha256,
-            fileName: preparedUpload.fileName,
-            widthPx: nil,
-            heightPx: nil,
-            fileKey: preparedUpload.fileKey,
-            nonce: preparedUpload.nonce,
-            eventType: nil,
-            eventJson: nil
-        )
+        guard body.kind == .attachment else {
+            throw TrixCoreMessageBridgeError.invalidAttachmentBody
+        }
+
         let payload = try ffiSerializeMessageBody(body: body)
+        var aadFields: [String: JSONValue] = [
+            "encoding": .string("trix_core_message_body_v1"),
+            "source": .string("ios_attachment_poc"),
+        ]
+        if let blobId = body.blobId {
+            aadFields["blob_id"] = .string(blobId)
+        }
 
         return CreateMessageRequest(
             messageId: UUID().uuidString.lowercased(),
@@ -185,27 +160,48 @@ enum TrixCoreMessageBridge {
             messageKind: .application,
             contentType: .attachment,
             ciphertextB64: payload.base64EncodedString(),
-            aadJson: .object([
-                "encoding": .string("trix_core_message_body_v1"),
-                "source": .string("ios_attachment_poc"),
-                "blob_id": .string(blobId)
-            ])
+            aadJson: .object(aadFields)
         )
     }
 
-    static func preview(for message: MessageEnvelope) -> MessageBodyPreview? {
+    static func parsedBody(for message: MessageEnvelope) -> FfiMessageBody? {
         guard let payload = Data(base64Encoded: message.ciphertextB64) else {
             return nil
         }
 
-        guard let parsedBody = try? ffiParseMessageBody(
+        return try? ffiParseMessageBody(
             contentType: message.contentType.trix_ffiContentType,
             payload: payload
-        ) else {
+        )
+    }
+
+    static func preview(for message: MessageEnvelope) -> MessageBodyPreview? {
+        guard let parsedBody = parsedBody(for: message) else {
             return nil
         }
-
         return parsedBody.trix_preview
+    }
+
+    static func attachmentBody(for message: MessageEnvelope) -> FfiMessageBody? {
+        guard let parsedBody = parsedBody(for: message), parsedBody.kind == .attachment else {
+            return nil
+        }
+        return parsedBody
+    }
+
+    static func suggestedAttachmentFileName(for body: FfiMessageBody) -> String {
+        if let fileName = sanitizedAttachmentFileName(body.fileName) {
+            return fileName
+        }
+
+        let baseName = sanitizedAttachmentFileName(body.blobId) ?? "Attachment"
+        if let mimeType = body.mimeType,
+           let fileExtension = UTType(mimeType: mimeType)?.preferredFilenameExtension,
+           !fileExtension.isEmpty {
+            return "\(baseName).\(fileExtension)"
+        }
+
+        return baseName
     }
 
     private static func messageBody(for draft: DebugMessageDraft) throws -> FfiMessageBody {
@@ -359,11 +355,26 @@ enum TrixCoreMessageBridge {
 
         return "application/octet-stream"
     }
+
+    private static func sanitizedAttachmentFileName(_ value: String?) -> String? {
+        guard let value else {
+            return nil
+        }
+
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        let candidate = URL(fileURLWithPath: trimmed).lastPathComponent
+        return candidate.isEmpty ? nil : candidate
+    }
 }
 
 private enum TrixCoreMessageBridgeError: LocalizedError {
     case invalidTextBody
     case attachmentRequiresUploadFlow
+    case invalidAttachmentBody
     case invalidReactionBody
     case invalidReceiptBody
     case invalidReceiptTimestamp
@@ -376,6 +387,8 @@ private enum TrixCoreMessageBridgeError: LocalizedError {
             return "Text messages must not be empty."
         case .attachmentRequiresUploadFlow:
             return "Attachment messages must be sent through the attachment upload flow."
+        case .invalidAttachmentBody:
+            return "Attachment flow expected an attachment message body."
         case .invalidReactionBody:
             return "Reaction messages require both target message ID and emoji."
         case .invalidReceiptBody:

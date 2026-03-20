@@ -62,6 +62,7 @@ struct LocalTimelineItemSnapshot: Identifiable {
     let messageKind: MessageKind
     let contentType: ContentType
     let projectionKind: LocalProjectionKindSnapshot
+    let messageBody: FfiMessageBody?
     let previewText: String
     let bodyPreview: MessageBodyPreview?
     let bodyParseError: String?
@@ -463,6 +464,7 @@ private extension FfiLocalTimelineItem {
             messageKind: messageKind.trix_messageKind,
             contentType: contentType.trix_contentType,
             projectionKind: projectionKind.trix_localProjectionKindSnapshot,
+            messageBody: body,
             previewText: previewText,
             bodyPreview: body?.trix_messageBodyPreview,
             bodyParseError: bodyParseError,

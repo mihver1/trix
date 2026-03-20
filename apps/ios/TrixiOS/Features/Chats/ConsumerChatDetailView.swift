@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 private let consumerChatAccent = Color(red: 0.14, green: 0.55, blue: 0.98)
@@ -40,6 +41,7 @@ private struct ConsumerRenderedMessage: Identifiable {
     let createdAtDate: Date
     let isOutgoing: Bool
     let senderName: String?
+    let attachmentBody: FfiMessageBody?
     let primaryText: String
     let secondaryText: String?
     let clusterPosition: ConsumerMessageClusterPosition
@@ -59,6 +61,8 @@ struct ConsumerChatDetailView: View {
     @State private var isImportingAttachment = false
     @State private var localErrorMessage: String?
     @State private var activityMessage: String?
+    @State private var downloadedAttachment: DownloadedAttachmentFile?
+    @State private var downloadingAttachmentMessageId: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -122,6 +126,9 @@ struct ConsumerChatDetailView: View {
         ) { result in
             handleAttachmentImport(result)
         }
+        .sheet(item: $downloadedAttachment) { downloadedAttachment in
+            AttachmentActivitySheet(items: [downloadedAttachment.fileURL])
+        }
     }
 
     private func conversationTimeline(for snapshot: ChatSnapshot) -> some View {
@@ -139,7 +146,11 @@ struct ConsumerChatDetailView: View {
                         .padding(.top, 96)
                     } else {
                         ForEach(timelineItems) { item in
-                            ConsumerTimelineRow(item: item)
+                            ConsumerTimelineRow(
+                                item: item,
+                                downloadingAttachmentMessageId: downloadingAttachmentMessageId,
+                                onOpenAttachment: openAttachment
+                            )
                         }
                     }
 
@@ -386,6 +397,31 @@ struct ConsumerChatDetailView: View {
         }
     }
 
+    private func openAttachment(_ message: ConsumerRenderedMessage) {
+        guard let attachmentBody = message.attachmentBody else {
+            return
+        }
+
+        downloadingAttachmentMessageId = message.id
+        localErrorMessage = nil
+        activityMessage = "Downloading \(message.primaryText)"
+
+        Task {
+            if let downloadedAttachment = await model.downloadAttachment(
+                baseURLString: serverBaseURL,
+                body: attachmentBody
+            ) {
+                self.downloadedAttachment = downloadedAttachment
+                activityMessage = "Ready to share \(downloadedAttachment.fileName)"
+            } else {
+                localErrorMessage = model.errorMessage
+                activityMessage = nil
+            }
+
+            downloadingAttachmentMessageId = nil
+        }
+    }
+
     private func makeTimelineItems(for snapshot: ChatSnapshot) -> [ConsumerTimelineItem] {
         if !snapshot.localTimelineItems.isEmpty {
             return makeProjectedTimelineItems(
@@ -450,6 +486,7 @@ struct ConsumerChatDetailView: View {
                         createdAtDate: message.createdAtDate,
                         isOutgoing: isOutgoing,
                         senderName: shouldShowSender ? senderName : nil,
+                        attachmentBody: TrixCoreMessageBridge.attachmentBody(for: message),
                         primaryText: TrixCoreMessageBridge.preview(for: message)?.title ?? message.debugPreview,
                         secondaryText: TrixCoreMessageBridge.preview(for: message)?.detail ?? message.debugDetail,
                         clusterPosition: clusterPosition,
@@ -520,6 +557,7 @@ struct ConsumerChatDetailView: View {
                         createdAtDate: item.createdAtDate,
                         isOutgoing: item.isOutgoing,
                         senderName: shouldShowSender ? item.senderDisplayName : nil,
+                        attachmentBody: item.contentType == .attachment ? item.messageBody : nil,
                         primaryText: item.bodyPreview?.title ?? item.previewText,
                         secondaryText: item.bodyPreview?.detail,
                         clusterPosition: clusterPosition,
@@ -645,6 +683,8 @@ private struct ConsumerChatBackdrop: View {
 
 private struct ConsumerTimelineRow: View {
     let item: ConsumerTimelineItem
+    let downloadingAttachmentMessageId: String?
+    let onOpenAttachment: (ConsumerRenderedMessage) -> Void
 
     var body: some View {
         switch item {
@@ -654,7 +694,11 @@ private struct ConsumerTimelineRow: View {
             if message.usesCenteredEventStyle {
                 ConsumerSystemEventRow(message: message)
             } else {
-                ConsumerBubbleRow(message: message)
+                ConsumerBubbleRow(
+                    message: message,
+                    isDownloadingAttachment: downloadingAttachmentMessageId == message.id,
+                    onOpenAttachment: onOpenAttachment
+                )
             }
         }
     }
@@ -682,6 +726,8 @@ private struct ConsumerDaySeparator: View {
 
 private struct ConsumerBubbleRow: View {
     let message: ConsumerRenderedMessage
+    let isDownloadingAttachment: Bool
+    let onOpenAttachment: (ConsumerRenderedMessage) -> Void
 
     var body: some View {
         HStack {
@@ -697,7 +743,11 @@ private struct ConsumerBubbleRow: View {
                         .padding(.horizontal, 8)
                 }
 
-                ConsumerMessageBubble(message: message)
+                ConsumerMessageBubble(
+                    message: message,
+                    isDownloadingAttachment: isDownloadingAttachment,
+                    onOpenAttachment: onOpenAttachment
+                )
             }
             .frame(maxWidth: .infinity, alignment: message.isOutgoing ? .trailing : .leading)
 
@@ -711,6 +761,8 @@ private struct ConsumerBubbleRow: View {
 
 private struct ConsumerMessageBubble: View {
     let message: ConsumerRenderedMessage
+    let isDownloadingAttachment: Bool
+    let onOpenAttachment: (ConsumerRenderedMessage) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -721,7 +773,11 @@ private struct ConsumerMessageBubble: View {
                     .foregroundStyle(message.isOutgoing ? .white : .primary)
                     .textSelection(.enabled)
             case .attachment:
-                ConsumerAttachmentBubbleContent(message: message)
+                ConsumerAttachmentBubbleContent(
+                    message: message,
+                    isDownloading: isDownloadingAttachment,
+                    onOpenAttachment: onOpenAttachment
+                )
             case .reaction, .receipt, .chatEvent:
                 EmptyView()
             }
@@ -760,32 +816,44 @@ private struct ConsumerMessageBubble: View {
 
 private struct ConsumerAttachmentBubbleContent: View {
     let message: ConsumerRenderedMessage
+    let isDownloading: Bool
+    let onOpenAttachment: (ConsumerRenderedMessage) -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(message.isOutgoing ? Color.white.opacity(0.18) : consumerChatAccent.opacity(0.12))
-                .frame(width: 42, height: 42)
-                .overlay {
-                    Image(systemName: attachmentIconName)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(message.isOutgoing ? .white : consumerChatAccent)
-                }
+        Button {
+            onOpenAttachment(message)
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(message.isOutgoing ? Color.white.opacity(0.18) : consumerChatAccent.opacity(0.12))
+                    .frame(width: 42, height: 42)
+                    .overlay {
+                        if isDownloading {
+                            ProgressView()
+                                .tint(message.isOutgoing ? .white : consumerChatAccent)
+                        } else {
+                            Image(systemName: attachmentIconName)
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(message.isOutgoing ? .white : consumerChatAccent)
+                        }
+                    }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(message.primaryText)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(message.isOutgoing ? .white : .primary)
-                    .lineLimit(2)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(message.primaryText)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(message.isOutgoing ? .white : .primary)
+                        .lineLimit(2)
 
-                if let secondaryText = message.secondaryText {
-                    Text(secondaryText)
+                    Text(isDownloading ? "Decrypting secure attachment..." : (message.secondaryText ?? "Tap to open"))
                         .font(.caption)
                         .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
                         .lineLimit(2)
                 }
             }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .disabled(message.attachmentBody == nil || isDownloading)
     }
 
     private var attachmentIconName: String {
@@ -825,6 +893,16 @@ private struct ConsumerSystemEventRow: View {
         .frame(maxWidth: .infinity)
         .padding(.top, message.topSpacing)
     }
+}
+
+private struct AttachmentActivitySheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
 private extension ContentType {

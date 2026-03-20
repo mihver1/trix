@@ -1715,6 +1715,8 @@ public protocol FfiServerApiClientProtocol: AnyObject, Sendable {
     
     func createMessage(chatId: String, params: FfiCreateMessageParams) throws  -> FfiCreateMessageResponse
     
+    func downloadAttachment(body: FfiMessageBody) throws  -> FfiDownloadedAttachment
+    
     func downloadBlob(blobId: String) throws  -> Data
     
     func getAccount(accountId: String) throws  -> FfiDirectoryAccount
@@ -1764,6 +1766,8 @@ public protocol FfiServerApiClientProtocol: AnyObject, Sendable {
     func setAccessToken(accessToken: String) throws 
     
     func updateAccountProfile(params: FfiUpdateAccountProfileParams) throws  -> FfiAccountProfile
+    
+    func uploadAttachment(chatId: String, payload: Data, params: FfiAttachmentUploadParams) throws  -> FfiUploadedAttachment
     
     func uploadBlob(blobId: String, payload: Data) throws  -> FfiBlobMetadata
     
@@ -1981,6 +1985,15 @@ open func createMessage(chatId: String, params: FfiCreateMessageParams)throws  -
             self.uniffiCloneHandle(),
         FfiConverterString.lower(chatId),
         FfiConverterTypeFfiCreateMessageParams_lower(params),$0
+    )
+})
+}
+    
+open func downloadAttachment(body: FfiMessageBody)throws  -> FfiDownloadedAttachment  {
+    return try  FfiConverterTypeFfiDownloadedAttachment_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverapiclient_download_attachment(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiMessageBody_lower(body),$0
     )
 })
 }
@@ -2212,6 +2225,17 @@ open func updateAccountProfile(params: FfiUpdateAccountProfileParams)throws  -> 
     uniffi_trix_core_fn_method_ffiserverapiclient_update_account_profile(
             self.uniffiCloneHandle(),
         FfiConverterTypeFfiUpdateAccountProfileParams_lower(params),$0
+    )
+})
+}
+    
+open func uploadAttachment(chatId: String, payload: Data, params: FfiAttachmentUploadParams)throws  -> FfiUploadedAttachment  {
+    return try  FfiConverterTypeFfiUploadedAttachment_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverapiclient_upload_attachment(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(chatId),
+        FfiConverterData.lower(payload),
+        FfiConverterTypeFfiAttachmentUploadParams_lower(params),$0
     )
 })
 }
@@ -2899,6 +2923,68 @@ public func FfiConverterTypeFfiApproveDeviceResponse_lift(_ buf: RustBuffer) thr
 #endif
 public func FfiConverterTypeFfiApproveDeviceResponse_lower(_ value: FfiApproveDeviceResponse) -> RustBuffer {
     return FfiConverterTypeFfiApproveDeviceResponse.lower(value)
+}
+
+
+public struct FfiAttachmentUploadParams: Equatable, Hashable {
+    public var mimeType: String
+    public var fileName: String?
+    public var widthPx: UInt32?
+    public var heightPx: UInt32?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(mimeType: String, fileName: String?, widthPx: UInt32?, heightPx: UInt32?) {
+        self.mimeType = mimeType
+        self.fileName = fileName
+        self.widthPx = widthPx
+        self.heightPx = heightPx
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiAttachmentUploadParams: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiAttachmentUploadParams: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiAttachmentUploadParams {
+        return
+            try FfiAttachmentUploadParams(
+                mimeType: FfiConverterString.read(from: &buf), 
+                fileName: FfiConverterOptionString.read(from: &buf), 
+                widthPx: FfiConverterOptionUInt32.read(from: &buf), 
+                heightPx: FfiConverterOptionUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiAttachmentUploadParams, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.mimeType, into: &buf)
+        FfiConverterOptionString.write(value.fileName, into: &buf)
+        FfiConverterOptionUInt32.write(value.widthPx, into: &buf)
+        FfiConverterOptionUInt32.write(value.heightPx, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAttachmentUploadParams_lift(_ buf: RustBuffer) throws -> FfiAttachmentUploadParams {
+    return try FfiConverterTypeFfiAttachmentUploadParams.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAttachmentUploadParams_lower(_ value: FfiAttachmentUploadParams) -> RustBuffer {
+    return FfiConverterTypeFfiAttachmentUploadParams.lower(value)
 }
 
 
@@ -4796,6 +4882,60 @@ public func FfiConverterTypeFfiDirectoryAccount_lower(_ value: FfiDirectoryAccou
 }
 
 
+public struct FfiDownloadedAttachment: Equatable, Hashable {
+    public var body: FfiMessageBody
+    public var plaintext: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(body: FfiMessageBody, plaintext: Data) {
+        self.body = body
+        self.plaintext = plaintext
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiDownloadedAttachment: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiDownloadedAttachment: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDownloadedAttachment {
+        return
+            try FfiDownloadedAttachment(
+                body: FfiConverterTypeFfiMessageBody.read(from: &buf), 
+                plaintext: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiDownloadedAttachment, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiMessageBody.write(value.body, into: &buf)
+        FfiConverterData.write(value.plaintext, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDownloadedAttachment_lift(_ buf: RustBuffer) throws -> FfiDownloadedAttachment {
+    return try FfiConverterTypeFfiDownloadedAttachment.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDownloadedAttachment_lower(_ value: FfiDownloadedAttachment) -> RustBuffer {
+    return FfiConverterTypeFfiDownloadedAttachment.lower(value)
+}
+
+
 public struct FfiHealthResponse: Equatable, Hashable {
     public var service: String
     public var status: FfiServiceStatus
@@ -6686,6 +6826,92 @@ public func FfiConverterTypeFfiModifyChatMembersResponse_lower(_ value: FfiModif
 }
 
 
+public struct FfiPreparedAttachmentUpload: Equatable, Hashable {
+    public var mimeType: String
+    public var fileName: String?
+    public var widthPx: UInt32?
+    public var heightPx: UInt32?
+    public var plaintextSizeBytes: UInt64
+    public var encryptedSizeBytes: UInt64
+    public var encryptedPayload: Data
+    public var encryptedSha256: Data
+    public var fileKey: Data
+    public var nonce: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(mimeType: String, fileName: String?, widthPx: UInt32?, heightPx: UInt32?, plaintextSizeBytes: UInt64, encryptedSizeBytes: UInt64, encryptedPayload: Data, encryptedSha256: Data, fileKey: Data, nonce: Data) {
+        self.mimeType = mimeType
+        self.fileName = fileName
+        self.widthPx = widthPx
+        self.heightPx = heightPx
+        self.plaintextSizeBytes = plaintextSizeBytes
+        self.encryptedSizeBytes = encryptedSizeBytes
+        self.encryptedPayload = encryptedPayload
+        self.encryptedSha256 = encryptedSha256
+        self.fileKey = fileKey
+        self.nonce = nonce
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPreparedAttachmentUpload: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPreparedAttachmentUpload: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPreparedAttachmentUpload {
+        return
+            try FfiPreparedAttachmentUpload(
+                mimeType: FfiConverterString.read(from: &buf), 
+                fileName: FfiConverterOptionString.read(from: &buf), 
+                widthPx: FfiConverterOptionUInt32.read(from: &buf), 
+                heightPx: FfiConverterOptionUInt32.read(from: &buf), 
+                plaintextSizeBytes: FfiConverterUInt64.read(from: &buf), 
+                encryptedSizeBytes: FfiConverterUInt64.read(from: &buf), 
+                encryptedPayload: FfiConverterData.read(from: &buf), 
+                encryptedSha256: FfiConverterData.read(from: &buf), 
+                fileKey: FfiConverterData.read(from: &buf), 
+                nonce: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPreparedAttachmentUpload, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.mimeType, into: &buf)
+        FfiConverterOptionString.write(value.fileName, into: &buf)
+        FfiConverterOptionUInt32.write(value.widthPx, into: &buf)
+        FfiConverterOptionUInt32.write(value.heightPx, into: &buf)
+        FfiConverterUInt64.write(value.plaintextSizeBytes, into: &buf)
+        FfiConverterUInt64.write(value.encryptedSizeBytes, into: &buf)
+        FfiConverterData.write(value.encryptedPayload, into: &buf)
+        FfiConverterData.write(value.encryptedSha256, into: &buf)
+        FfiConverterData.write(value.fileKey, into: &buf)
+        FfiConverterData.write(value.nonce, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPreparedAttachmentUpload_lift(_ buf: RustBuffer) throws -> FfiPreparedAttachmentUpload {
+    return try FfiConverterTypeFfiPreparedAttachmentUpload.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPreparedAttachmentUpload_lower(_ value: FfiPreparedAttachmentUpload) -> RustBuffer {
+    return FfiConverterTypeFfiPreparedAttachmentUpload.lower(value)
+}
+
+
 public struct FfiPublishKeyPackage: Equatable, Hashable {
     public var cipherSuite: String
     public var keyPackage: Data
@@ -7271,6 +7497,76 @@ public func FfiConverterTypeFfiUpdateAccountProfileParams_lift(_ buf: RustBuffer
 #endif
 public func FfiConverterTypeFfiUpdateAccountProfileParams_lower(_ value: FfiUpdateAccountProfileParams) -> RustBuffer {
     return FfiConverterTypeFfiUpdateAccountProfileParams.lower(value)
+}
+
+
+public struct FfiUploadedAttachment: Equatable, Hashable {
+    public var body: FfiMessageBody
+    public var blobId: String
+    public var uploadStatus: FfiBlobUploadStatus
+    public var plaintextSizeBytes: UInt64
+    public var encryptedSizeBytes: UInt64
+    public var encryptedSha256: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(body: FfiMessageBody, blobId: String, uploadStatus: FfiBlobUploadStatus, plaintextSizeBytes: UInt64, encryptedSizeBytes: UInt64, encryptedSha256: Data) {
+        self.body = body
+        self.blobId = blobId
+        self.uploadStatus = uploadStatus
+        self.plaintextSizeBytes = plaintextSizeBytes
+        self.encryptedSizeBytes = encryptedSizeBytes
+        self.encryptedSha256 = encryptedSha256
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiUploadedAttachment: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiUploadedAttachment: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiUploadedAttachment {
+        return
+            try FfiUploadedAttachment(
+                body: FfiConverterTypeFfiMessageBody.read(from: &buf), 
+                blobId: FfiConverterString.read(from: &buf), 
+                uploadStatus: FfiConverterTypeFfiBlobUploadStatus.read(from: &buf), 
+                plaintextSizeBytes: FfiConverterUInt64.read(from: &buf), 
+                encryptedSizeBytes: FfiConverterUInt64.read(from: &buf), 
+                encryptedSha256: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiUploadedAttachment, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiMessageBody.write(value.body, into: &buf)
+        FfiConverterString.write(value.blobId, into: &buf)
+        FfiConverterTypeFfiBlobUploadStatus.write(value.uploadStatus, into: &buf)
+        FfiConverterUInt64.write(value.plaintextSizeBytes, into: &buf)
+        FfiConverterUInt64.write(value.encryptedSizeBytes, into: &buf)
+        FfiConverterData.write(value.encryptedSha256, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUploadedAttachment_lift(_ buf: RustBuffer) throws -> FfiUploadedAttachment {
+    return try FfiConverterTypeFfiUploadedAttachment.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUploadedAttachment_lower(_ value: FfiUploadedAttachment) -> RustBuffer {
+    return FfiConverterTypeFfiUploadedAttachment.lower(value)
 }
 
 
@@ -9452,6 +9748,22 @@ fileprivate struct FfiConverterSequenceTypeFfiSyncChatCursor: FfiConverterRustBu
         return seq
     }
 }
+public func ffiBuildAttachmentMessageBody(blobId: String, prepared: FfiPreparedAttachmentUpload)throws  -> FfiMessageBody  {
+    return try  FfiConverterTypeFfiMessageBody_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_func_ffi_build_attachment_message_body(
+        FfiConverterString.lower(blobId),
+        FfiConverterTypeFfiPreparedAttachmentUpload_lower(prepared),$0
+    )
+})
+}
+public func ffiDecryptAttachmentPayload(body: FfiMessageBody, encryptedPayload: Data)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_func_ffi_decrypt_attachment_payload(
+        FfiConverterTypeFfiMessageBody_lower(body),
+        FfiConverterData.lower(encryptedPayload),$0
+    )
+})
+}
 public func ffiDefaultCiphersuiteLabel() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_trix_core_fn_func_ffi_default_ciphersuite_label($0
@@ -9463,6 +9775,14 @@ public func ffiParseMessageBody(contentType: FfiContentType, payload: Data)throw
     uniffi_trix_core_fn_func_ffi_parse_message_body(
         FfiConverterTypeFfiContentType_lower(contentType),
         FfiConverterData.lower(payload),$0
+    )
+})
+}
+public func ffiPrepareAttachmentUpload(payload: Data, params: FfiAttachmentUploadParams)throws  -> FfiPreparedAttachmentUpload  {
+    return try  FfiConverterTypeFfiPreparedAttachmentUpload_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_func_ffi_prepare_attachment_upload(
+        FfiConverterData.lower(payload),
+        FfiConverterTypeFfiAttachmentUploadParams_lower(params),$0
     )
 })
 }
@@ -9489,10 +9809,19 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_trix_core_checksum_func_ffi_build_attachment_message_body() != 56761) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_func_ffi_decrypt_attachment_payload() != 49747) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_func_ffi_default_ciphersuite_label() != 38150) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_func_ffi_parse_message_body() != 17067) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_func_ffi_prepare_attachment_upload() != 25649) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_func_ffi_serialize_message_body() != 25632) {
@@ -9693,6 +10022,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_create_message() != 38461) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffiserverapiclient_download_attachment() != 65126) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_download_blob() != 62802) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -9766,6 +10098,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_update_account_profile() != 3765) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffiserverapiclient_upload_attachment() != 12583) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_upload_blob() != 30342) {

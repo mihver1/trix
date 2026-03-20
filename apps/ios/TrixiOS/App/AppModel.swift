@@ -82,6 +82,14 @@ struct DebugAttachmentSendOutcome {
     let fileName: String?
 }
 
+struct DownloadedAttachmentFile: Identifiable {
+    let fileURL: URL
+    let fileName: String
+    let mimeType: String?
+
+    var id: String { fileURL.absoluteString }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var localIdentity: LocalDeviceIdentity?
@@ -818,35 +826,20 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let preparedUpload = try TrixCoreMessageBridge.prepareAttachmentUpload(fileURL: fileURL)
+            let attachmentUpload = try TrixCoreMessageBridge.readAttachmentUploadMaterial(fileURL: fileURL)
             let blobClient = try FfiServerApiClient(
                 baseUrl: baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
             )
             try blobClient.setAccessToken(accessToken: context.session.accessToken)
 
-            let blobUpload = try blobClient.createBlobUpload(
+            let uploadedAttachment = try blobClient.uploadAttachment(
                 chatId: chatId,
-                mimeType: preparedUpload.mimeType,
-                sizeBytes: preparedUpload.sizeBytes,
-                sha256: preparedUpload.sha256
+                payload: attachmentUpload.payload,
+                params: attachmentUpload.params
             )
-            if blobUpload.needsUpload, preparedUpload.sizeBytes > blobUpload.maxUploadBytes {
-                throw AppModelError.attachmentExceedsServerLimit(
-                    actualBytes: preparedUpload.sizeBytes,
-                    maxBytes: blobUpload.maxUploadBytes
-                )
-            }
-            if blobUpload.needsUpload {
-                let _: FfiBlobMetadata = try blobClient.uploadBlob(
-                    blobId: blobUpload.blobId,
-                    payload: preparedUpload.encryptedPayload
-                )
-            }
-
             let request = try TrixCoreMessageBridge.makeAttachmentCreateMessageRequest(
                 epoch: epoch,
-                blobId: blobUpload.blobId,
-                preparedUpload: preparedUpload
+                body: uploadedAttachment.body
             )
             let response: CreateMessageResponse = try await context.client.post(
                 "/v0/chats/\(chatId)/messages",
@@ -857,8 +850,60 @@ final class AppModel: ObservableObject {
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
             return DebugAttachmentSendOutcome(
                 createMessage: response,
-                blobId: blobUpload.blobId,
-                fileName: preparedUpload.fileName
+                blobId: uploadedAttachment.blobId,
+                fileName: uploadedAttachment.body.fileName
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    @discardableResult
+    func downloadAttachment(
+        baseURLString: String,
+        body: FfiMessageBody
+    ) async -> DownloadedAttachmentFile? {
+        guard !isLoading else {
+            return nil
+        }
+
+        isLoading = true
+        errorMessage = nil
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            let blobClient = try FfiServerApiClient(
+                baseUrl: baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            try blobClient.setAccessToken(accessToken: context.session.accessToken)
+
+            let downloadedAttachment = try blobClient.downloadAttachment(body: body)
+            let fileName = TrixCoreMessageBridge.suggestedAttachmentFileName(for: downloadedAttachment.body)
+            let downloadsDirectory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("TrixAttachments", isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: downloadsDirectory,
+                withIntermediateDirectories: true
+            )
+
+            let destinationURL = downloadsDirectory
+                .appendingPathComponent(UUID().uuidString, isDirectory: true)
+                .appendingPathComponent(fileName)
+            try FileManager.default.createDirectory(
+                at: destinationURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try downloadedAttachment.plaintext.write(to: destinationURL, options: .atomic)
+
+            return DownloadedAttachmentFile(
+                fileURL: destinationURL,
+                fileName: fileName,
+                mimeType: downloadedAttachment.body.mimeType
             )
         } catch {
             errorMessage = error.localizedDescription
@@ -1489,14 +1534,11 @@ private struct AuthenticatedContext {
 
 private enum AppModelError: LocalizedError {
     case localIdentityMissing
-    case attachmentExceedsServerLimit(actualBytes: UInt64, maxBytes: UInt64)
 
     var errorDescription: String? {
         switch self {
         case .localIdentityMissing:
             return "Local identity is missing."
-        case let .attachmentExceedsServerLimit(actualBytes, maxBytes):
-            return "Attachment is \(ByteCountFormatter.string(fromByteCount: Int64(actualBytes), countStyle: .file)), which exceeds the current server upload limit of \(ByteCountFormatter.string(fromByteCount: Int64(maxBytes), countStyle: .file))."
         }
     }
 }
