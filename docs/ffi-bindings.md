@@ -63,9 +63,19 @@ make ffi-bindings OUT=/tmp/trix-bindings
 - `FfiLocalHistoryStore` now supports persistent local encrypted-envelope history via `new_persistent(database_path)`, plus `list_chats()`, `get_chat()`, `get_chat_history()`, `apply_chat_history()`, and `apply_leased_inbox()`.
 - `FfiSyncCoordinator` also exposes high-level convenience flows: `sync_chat_histories_into_store()` and `lease_inbox_into_store()`.
 - `FfiLocalHistoryStore` now also exposes projected local timeline APIs: `projected_cursor()`, `project_chat_messages()`, and `get_projected_messages()`.
+- `FfiLocalHistoryStore` also persists optional `chat -> MLS group_id` mapping and exposes `chat_mls_group_id()` / `set_chat_mls_group_id()`.
 - The projection layer persists decrypted/application results separately from raw encrypted envelopes, so clients can build timeline UIs without replaying MLS on every screen load.
 - `trix-core` now exposes a typed message body model through `ffi_serialize_message_body()` and `ffi_parse_message_body()`.
+- `FfiServerApiClient` now exposes `search_account_directory(query, limit, exclude_self)` for authenticated handle/profile discovery.
 - `FfiLocalProjectedMessage` now includes parsed `body` and `body_parse_error`, so clients can render typed text/reaction/receipt/attachment/chat-event items directly from the projected timeline.
 - `FfiSyncCoordinator` now also exposes `send_message_body()`, which performs `MessageBody -> MLS encrypt -> POST /messages -> local store -> projected timeline` in one core call.
+- `FfiChatDetail` now includes `device_members` with `device_id`, `account_id`, `leaf_index`, and `credential_identity`, so clients can resolve removals against MLS leaf indices without a parallel side channel.
+- `FfiSyncCoordinator` now also exposes high-level control-plane flows:
+  - `create_chat_control()`
+  - `add_chat_members_control()`
+  - `remove_chat_members_control()`
+  - `add_chat_devices_control()`
+  - `remove_chat_devices_control()`
+- These control flows reserve key packages, generate MLS commit/welcome payloads, call the server, refresh local store state, and synthesize projected control events for locally-originated commits.
 - Kotlin generation works without `ktlint`, but UniFFI will print a non-fatal formatting warning if `ktlint` is not installed.
 - Kotlin sources are generated under `bindings/uniffi/trix_core/`.

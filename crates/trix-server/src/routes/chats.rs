@@ -16,10 +16,10 @@ use crate::{
     state::AppState,
 };
 use trix_types::{
-    ChatDetailResponse, ChatHistoryResponse, ChatListResponse, ChatMemberSummary, ChatSummary,
-    ControlMessageInput, CreateChatRequest, CreateChatResponse, CreateMessageRequest,
-    CreateMessageResponse, MessageEnvelope, ModifyChatDevicesRequest, ModifyChatDevicesResponse,
-    ModifyChatMembersRequest, ModifyChatMembersResponse,
+    ChatDetailResponse, ChatDeviceSummary, ChatHistoryResponse, ChatListResponse,
+    ChatMemberSummary, ChatSummary, ControlMessageInput, CreateChatRequest, CreateChatResponse,
+    CreateMessageRequest, CreateMessageResponse, MessageEnvelope, ModifyChatDevicesRequest,
+    ModifyChatDevicesResponse, ModifyChatMembersRequest, ModifyChatMembersResponse,
 };
 
 pub fn router() -> Router<AppState> {
@@ -127,6 +127,19 @@ async fn get_chat(
                 account_id: trix_types::AccountId(member.account_id),
                 role: member.role,
                 membership_status: member.membership_status,
+            })
+            .collect(),
+        device_members: chat
+            .device_members
+            .into_iter()
+            .map(|member| ChatDeviceSummary {
+                device_id: trix_types::DeviceId(member.device_id),
+                account_id: trix_types::AccountId(member.account_id),
+                display_name: member.display_name,
+                platform: member.platform,
+                leaf_index: member.leaf_index,
+                credential_identity_b64: general_purpose::STANDARD
+                    .encode(member.credential_identity),
             })
             .collect(),
     }))

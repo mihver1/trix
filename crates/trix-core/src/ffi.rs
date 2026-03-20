@@ -8,11 +8,14 @@ use uuid::Uuid;
 
 use crate::{
     AccountRootMaterial, AuthChallengeMaterial, CompleteLinkIntentParams,
-    CompletedLinkIntentMaterial, CreateAccountParams, DeviceApprovePayloadMaterial,
-    DeviceKeyMaterial, DeviceTransferBundleMaterial, HistorySyncChunkMaterial, InboxApplyOutcome,
-    LocalHistoryStore, LocalProjectedMessage, LocalProjectionApplyReport, LocalProjectionKind,
-    LocalStoreApplyReport, MessageBody, MlsCommitBundle, MlsFacade, MlsMemberIdentity,
-    MlsProcessResult, PublishKeyPackageMaterial, ReactionAction, ReceiptType,
+    CompletedLinkIntentMaterial, CreateAccountParams, CreateChatControlInput,
+    CreateChatControlOutcome, DeviceApprovePayloadMaterial, DeviceKeyMaterial,
+    DeviceTransferBundleMaterial, DirectoryAccountMaterial, HistorySyncChunkMaterial,
+    InboxApplyOutcome, LocalHistoryStore, LocalProjectedMessage, LocalProjectionApplyReport,
+    LocalProjectionKind, LocalStoreApplyReport, MessageBody, MlsCommitBundle, MlsFacade,
+    MlsMemberIdentity, MlsProcessResult, ModifyChatDevicesControlInput,
+    ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
+    ModifyChatMembersControlOutcome, PublishKeyPackageMaterial, ReactionAction, ReceiptType,
     ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient, SyncChatCursor,
     SyncCoordinator, SyncStateSnapshot,
 };
@@ -159,6 +162,19 @@ pub struct FfiAccountProfile {
     pub profile_bio: Option<String>,
     pub device_id: String,
     pub device_status: FfiDeviceStatus,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiDirectoryAccount {
+    pub account_id: String,
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiAccountDirectory {
+    pub accounts: Vec<FfiDirectoryAccount>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -312,6 +328,16 @@ pub struct FfiChatMember {
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiChatDeviceMember {
+    pub device_id: String,
+    pub account_id: String,
+    pub display_name: String,
+    pub platform: String,
+    pub leaf_index: u32,
+    pub credential_identity: Vec<u8>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct FfiChatDetail {
     pub chat_id: String,
     pub chat_type: FfiChatType,
@@ -320,6 +346,7 @@ pub struct FfiChatDetail {
     pub epoch: u64,
     pub last_commit_message_id: Option<String>,
     pub members: Vec<FfiChatMember>,
+    pub device_members: Vec<FfiChatDeviceMember>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -571,6 +598,66 @@ pub struct FfiSendMessageOutcome {
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiCreateChatControlInput {
+    pub creator_account_id: String,
+    pub creator_device_id: String,
+    pub chat_type: FfiChatType,
+    pub title: Option<String>,
+    pub participant_account_ids: Vec<String>,
+    pub group_id: Option<Vec<u8>>,
+    pub commit_aad_json: Option<String>,
+    pub welcome_aad_json: Option<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiCreateChatControlOutcome {
+    pub chat_id: String,
+    pub chat_type: FfiChatType,
+    pub epoch: u64,
+    pub mls_group_id: Vec<u8>,
+    pub report: FfiLocalStoreApplyReport,
+    pub projected_messages: Vec<FfiLocalProjectedMessage>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiModifyChatMembersControlInput {
+    pub actor_account_id: String,
+    pub actor_device_id: String,
+    pub chat_id: String,
+    pub participant_account_ids: Vec<String>,
+    pub commit_aad_json: Option<String>,
+    pub welcome_aad_json: Option<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiModifyChatMembersControlOutcome {
+    pub chat_id: String,
+    pub epoch: u64,
+    pub changed_account_ids: Vec<String>,
+    pub report: FfiLocalStoreApplyReport,
+    pub projected_messages: Vec<FfiLocalProjectedMessage>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiModifyChatDevicesControlInput {
+    pub actor_account_id: String,
+    pub actor_device_id: String,
+    pub chat_id: String,
+    pub device_ids: Vec<String>,
+    pub commit_aad_json: Option<String>,
+    pub welcome_aad_json: Option<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiModifyChatDevicesControlOutcome {
+    pub chat_id: String,
+    pub epoch: u64,
+    pub changed_device_ids: Vec<String>,
+    pub report: FfiLocalStoreApplyReport,
+    pub projected_messages: Vec<FfiLocalProjectedMessage>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct FfiCreateBlobUploadResponse {
     pub blob_id: String,
     pub upload_url: String,
@@ -784,6 +871,24 @@ impl FfiServerApiClient {
         let client = clone_server_api_client(&self.inner)?;
         let response = self.runtime.block_on(client.get_me())?;
         Ok(account_profile_to_ffi(response))
+    }
+
+    pub fn search_account_directory(
+        &self,
+        query: Option<String>,
+        limit: Option<u32>,
+        exclude_self: bool,
+    ) -> Result<FfiAccountDirectory, TrixFfiError> {
+        let client = clone_server_api_client(&self.inner)?;
+        let response = self.runtime.block_on(client.search_account_directory(
+            query,
+            limit.map(|value| value as usize),
+            exclude_self,
+        ))?;
+
+        Ok(FfiAccountDirectory {
+            accounts: response.into_iter().map(directory_account_to_ffi).collect(),
+        })
     }
 
     pub fn list_devices(&self) -> Result<FfiDeviceList, TrixFfiError> {
@@ -1470,6 +1575,20 @@ impl FfiLocalHistoryStore {
         Ok(lock(&self.inner)?.projected_cursor(parse_chat_id(&chat_id)?))
     }
 
+    pub fn chat_mls_group_id(&self, chat_id: String) -> Result<Option<Vec<u8>>, TrixFfiError> {
+        Ok(lock(&self.inner)?.chat_mls_group_id(parse_chat_id(&chat_id)?))
+    }
+
+    pub fn set_chat_mls_group_id(
+        &self,
+        chat_id: String,
+        group_id: Vec<u8>,
+    ) -> Result<bool, TrixFfiError> {
+        lock(&self.inner)?
+            .set_chat_mls_group_id(parse_chat_id(&chat_id)?, &group_id)
+            .map_err(ffi_error)
+    }
+
     pub fn get_projected_messages(
         &self,
         chat_id: String,
@@ -1732,6 +1851,193 @@ impl FfiSyncCoordinator {
                 .map_err(ffi_error)?
         };
         Ok(send_message_outcome_to_ffi(outcome))
+    }
+
+    pub fn create_chat_control(
+        &self,
+        client: Arc<FfiServerApiClient>,
+        store: Arc<FfiLocalHistoryStore>,
+        facade: Arc<FfiMlsFacade>,
+        input: FfiCreateChatControlInput,
+    ) -> Result<FfiCreateChatControlOutcome, TrixFfiError> {
+        let client = clone_server_api_client(&client.inner)?;
+        let outcome = {
+            let mut coordinator = lock(&self.inner)?;
+            let mut store = lock(&store.inner)?;
+            let mut facade = lock(&facade.inner)?;
+            self.runtime
+                .block_on(
+                    coordinator.create_chat_control(
+                        &client,
+                        &mut store,
+                        &mut facade,
+                        CreateChatControlInput {
+                            creator_account_id: parse_account_id(&input.creator_account_id)?,
+                            creator_device_id: parse_device_id(&input.creator_device_id)?,
+                            chat_type: input.chat_type.into(),
+                            title: input.title,
+                            participant_account_ids: input
+                                .participant_account_ids
+                                .iter()
+                                .map(|account_id| parse_account_id(account_id))
+                                .collect::<Result<Vec<_>, _>>()?,
+                            group_id: input.group_id,
+                            commit_aad_json: parse_optional_json(input.commit_aad_json)?,
+                            welcome_aad_json: parse_optional_json(input.welcome_aad_json)?,
+                        },
+                    ),
+                )
+                .map_err(ffi_error)?
+        };
+        Ok(create_chat_control_outcome_to_ffi(outcome))
+    }
+
+    pub fn add_chat_members_control(
+        &self,
+        client: Arc<FfiServerApiClient>,
+        store: Arc<FfiLocalHistoryStore>,
+        facade: Arc<FfiMlsFacade>,
+        input: FfiModifyChatMembersControlInput,
+    ) -> Result<FfiModifyChatMembersControlOutcome, TrixFfiError> {
+        let client = clone_server_api_client(&client.inner)?;
+        let outcome = {
+            let mut coordinator = lock(&self.inner)?;
+            let mut store = lock(&store.inner)?;
+            let mut facade = lock(&facade.inner)?;
+            self.runtime
+                .block_on(
+                    coordinator.add_chat_members_control(
+                        &client,
+                        &mut store,
+                        &mut facade,
+                        ModifyChatMembersControlInput {
+                            actor_account_id: parse_account_id(&input.actor_account_id)?,
+                            actor_device_id: parse_device_id(&input.actor_device_id)?,
+                            chat_id: parse_chat_id(&input.chat_id)?,
+                            participant_account_ids: input
+                                .participant_account_ids
+                                .iter()
+                                .map(|account_id| parse_account_id(account_id))
+                                .collect::<Result<Vec<_>, _>>()?,
+                            commit_aad_json: parse_optional_json(input.commit_aad_json)?,
+                            welcome_aad_json: parse_optional_json(input.welcome_aad_json)?,
+                        },
+                    ),
+                )
+                .map_err(ffi_error)?
+        };
+        Ok(modify_chat_members_control_outcome_to_ffi(outcome))
+    }
+
+    pub fn remove_chat_members_control(
+        &self,
+        client: Arc<FfiServerApiClient>,
+        store: Arc<FfiLocalHistoryStore>,
+        facade: Arc<FfiMlsFacade>,
+        input: FfiModifyChatMembersControlInput,
+    ) -> Result<FfiModifyChatMembersControlOutcome, TrixFfiError> {
+        let client = clone_server_api_client(&client.inner)?;
+        let outcome = {
+            let mut coordinator = lock(&self.inner)?;
+            let mut store = lock(&store.inner)?;
+            let mut facade = lock(&facade.inner)?;
+            self.runtime
+                .block_on(
+                    coordinator.remove_chat_members_control(
+                        &client,
+                        &mut store,
+                        &mut facade,
+                        ModifyChatMembersControlInput {
+                            actor_account_id: parse_account_id(&input.actor_account_id)?,
+                            actor_device_id: parse_device_id(&input.actor_device_id)?,
+                            chat_id: parse_chat_id(&input.chat_id)?,
+                            participant_account_ids: input
+                                .participant_account_ids
+                                .iter()
+                                .map(|account_id| parse_account_id(account_id))
+                                .collect::<Result<Vec<_>, _>>()?,
+                            commit_aad_json: parse_optional_json(input.commit_aad_json)?,
+                            welcome_aad_json: parse_optional_json(input.welcome_aad_json)?,
+                        },
+                    ),
+                )
+                .map_err(ffi_error)?
+        };
+        Ok(modify_chat_members_control_outcome_to_ffi(outcome))
+    }
+
+    pub fn add_chat_devices_control(
+        &self,
+        client: Arc<FfiServerApiClient>,
+        store: Arc<FfiLocalHistoryStore>,
+        facade: Arc<FfiMlsFacade>,
+        input: FfiModifyChatDevicesControlInput,
+    ) -> Result<FfiModifyChatDevicesControlOutcome, TrixFfiError> {
+        let client = clone_server_api_client(&client.inner)?;
+        let outcome = {
+            let mut coordinator = lock(&self.inner)?;
+            let mut store = lock(&store.inner)?;
+            let mut facade = lock(&facade.inner)?;
+            self.runtime
+                .block_on(
+                    coordinator.add_chat_devices_control(
+                        &client,
+                        &mut store,
+                        &mut facade,
+                        ModifyChatDevicesControlInput {
+                            actor_account_id: parse_account_id(&input.actor_account_id)?,
+                            actor_device_id: parse_device_id(&input.actor_device_id)?,
+                            chat_id: parse_chat_id(&input.chat_id)?,
+                            device_ids: input
+                                .device_ids
+                                .iter()
+                                .map(|device_id| parse_device_id(device_id))
+                                .collect::<Result<Vec<_>, _>>()?,
+                            commit_aad_json: parse_optional_json(input.commit_aad_json)?,
+                            welcome_aad_json: parse_optional_json(input.welcome_aad_json)?,
+                        },
+                    ),
+                )
+                .map_err(ffi_error)?
+        };
+        Ok(modify_chat_devices_control_outcome_to_ffi(outcome))
+    }
+
+    pub fn remove_chat_devices_control(
+        &self,
+        client: Arc<FfiServerApiClient>,
+        store: Arc<FfiLocalHistoryStore>,
+        facade: Arc<FfiMlsFacade>,
+        input: FfiModifyChatDevicesControlInput,
+    ) -> Result<FfiModifyChatDevicesControlOutcome, TrixFfiError> {
+        let client = clone_server_api_client(&client.inner)?;
+        let outcome = {
+            let mut coordinator = lock(&self.inner)?;
+            let mut store = lock(&store.inner)?;
+            let mut facade = lock(&facade.inner)?;
+            self.runtime
+                .block_on(
+                    coordinator.remove_chat_devices_control(
+                        &client,
+                        &mut store,
+                        &mut facade,
+                        ModifyChatDevicesControlInput {
+                            actor_account_id: parse_account_id(&input.actor_account_id)?,
+                            actor_device_id: parse_device_id(&input.actor_device_id)?,
+                            chat_id: parse_chat_id(&input.chat_id)?,
+                            device_ids: input
+                                .device_ids
+                                .iter()
+                                .map(|device_id| parse_device_id(device_id))
+                                .collect::<Result<Vec<_>, _>>()?,
+                            commit_aad_json: parse_optional_json(input.commit_aad_json)?,
+                            welcome_aad_json: parse_optional_json(input.welcome_aad_json)?,
+                        },
+                    ),
+                )
+                .map_err(ffi_error)?
+        };
+        Ok(modify_chat_devices_control_outcome_to_ffi(outcome))
     }
 }
 
@@ -2029,6 +2335,15 @@ fn account_profile_to_ffi(value: trix_types::AccountProfileResponse) -> FfiAccou
     }
 }
 
+fn directory_account_to_ffi(value: DirectoryAccountMaterial) -> FfiDirectoryAccount {
+    FfiDirectoryAccount {
+        account_id: value.account_id.0.to_string(),
+        handle: value.handle,
+        profile_name: value.profile_name,
+        profile_bio: value.profile_bio,
+    }
+}
+
 fn device_summary_to_ffi(value: trix_types::DeviceSummary) -> FfiDeviceSummary {
     FfiDeviceSummary {
         device_id: value.device_id.0.to_string(),
@@ -2129,6 +2444,22 @@ fn chat_detail_to_ffi(value: trix_types::ChatDetailResponse) -> FfiChatDetail {
                 account_id: member.account_id.0.to_string(),
                 role: member.role,
                 membership_status: member.membership_status,
+            })
+            .collect(),
+        device_members: value
+            .device_members
+            .into_iter()
+            .map(|member| FfiChatDeviceMember {
+                device_id: member.device_id.0.to_string(),
+                account_id: member.account_id.0.to_string(),
+                display_name: member.display_name,
+                platform: member.platform,
+                leaf_index: member.leaf_index,
+                credential_identity: crate::decode_b64_field(
+                    "credential_identity_b64",
+                    &member.credential_identity_b64,
+                )
+                .unwrap_or_default(),
             })
             .collect(),
     }
@@ -2470,6 +2801,63 @@ fn send_message_outcome_to_ffi(value: SendMessageOutcome) -> FfiSendMessageOutco
         server_seq: value.server_seq,
         report: local_store_apply_report_to_ffi(value.report),
         projected_message: local_projected_message_to_ffi(value.projected_message),
+    }
+}
+
+fn create_chat_control_outcome_to_ffi(
+    value: CreateChatControlOutcome,
+) -> FfiCreateChatControlOutcome {
+    FfiCreateChatControlOutcome {
+        chat_id: value.chat_id.0.to_string(),
+        chat_type: value.chat_type.into(),
+        epoch: value.epoch,
+        mls_group_id: value.mls_group_id,
+        report: local_store_apply_report_to_ffi(value.report),
+        projected_messages: value
+            .projected_messages
+            .into_iter()
+            .map(local_projected_message_to_ffi)
+            .collect(),
+    }
+}
+
+fn modify_chat_members_control_outcome_to_ffi(
+    value: ModifyChatMembersControlOutcome,
+) -> FfiModifyChatMembersControlOutcome {
+    FfiModifyChatMembersControlOutcome {
+        chat_id: value.chat_id.0.to_string(),
+        epoch: value.epoch,
+        changed_account_ids: value
+            .changed_account_ids
+            .into_iter()
+            .map(|account_id| account_id.0.to_string())
+            .collect(),
+        report: local_store_apply_report_to_ffi(value.report),
+        projected_messages: value
+            .projected_messages
+            .into_iter()
+            .map(local_projected_message_to_ffi)
+            .collect(),
+    }
+}
+
+fn modify_chat_devices_control_outcome_to_ffi(
+    value: ModifyChatDevicesControlOutcome,
+) -> FfiModifyChatDevicesControlOutcome {
+    FfiModifyChatDevicesControlOutcome {
+        chat_id: value.chat_id.0.to_string(),
+        epoch: value.epoch,
+        changed_device_ids: value
+            .changed_device_ids
+            .into_iter()
+            .map(|device_id| device_id.0.to_string())
+            .collect(),
+        report: local_store_apply_report_to_ffi(value.report),
+        projected_messages: value
+            .projected_messages
+            .into_iter()
+            .map(local_projected_message_to_ffi)
+            .collect(),
     }
 }
 

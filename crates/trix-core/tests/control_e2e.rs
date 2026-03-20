@@ -1,0 +1,294 @@
+use std::{env, fs, path::PathBuf, time::Duration};
+
+use anyhow::{Context, Result, anyhow};
+use sqlx::postgres::PgPoolOptions;
+use tokio::{net::TcpListener, task::JoinHandle, time::sleep};
+use trix_core::{
+    AccountRootMaterial, CreateAccountParams, CreateChatControlInput, DeviceKeyMaterial,
+    LocalHistoryStore, LocalProjectionKind, MlsFacade, ModifyChatMembersControlInput,
+    PublishKeyPackageMaterial, ServerApiClient, SyncCoordinator,
+};
+use trix_server::{
+    auth::AuthManager, blobs::LocalBlobStore, build::BuildInfo, config::AppConfig, db::Database,
+    signatures::account_bootstrap_message, state::AppState,
+};
+use trix_types::{AccountId, ChatType, DeviceId, MessageId};
+use uuid::Uuid;
+
+const DEFAULT_TEST_DATABASE_URL: &str = "postgres://trix:trix@localhost:5432/trix";
+
+struct TestServer {
+    base_url: String,
+    database_url: String,
+    blob_root: PathBuf,
+    task: JoinHandle<()>,
+}
+
+struct TestIdentity {
+    account_id: AccountId,
+    device_id: DeviceId,
+    client: ServerApiClient,
+    facade: MlsFacade,
+}
+
+#[tokio::test]
+#[ignore = "requires local postgres"]
+async fn smoke_create_chat_control_and_rollback_invalid_member_remove() -> Result<()> {
+    let server = spawn_test_server().await?;
+
+    let mut alice = create_authenticated_identity(&server.base_url, "alice").await?;
+    let bob = create_authenticated_identity(&server.base_url, "bob").await?;
+
+    bob.client
+        .publish_key_packages(vec![PublishKeyPackageMaterial {
+            cipher_suite: bob.facade.ciphersuite_label(),
+            key_package: bob.facade.generate_key_package()?,
+        }])
+        .await?;
+
+    let mut alice_store = LocalHistoryStore::new();
+    let mut alice_sync = SyncCoordinator::new();
+    let create_outcome = alice_sync
+        .create_chat_control(
+            &alice.client,
+            &mut alice_store,
+            &mut alice.facade,
+            CreateChatControlInput {
+                creator_account_id: alice.account_id,
+                creator_device_id: alice.device_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                participant_account_ids: vec![bob.account_id],
+                group_id: None,
+                commit_aad_json: None,
+                welcome_aad_json: None,
+            },
+        )
+        .await?;
+
+    assert_eq!(create_outcome.chat_type, ChatType::Dm);
+    assert_eq!(
+        alice_store.chat_mls_group_id(create_outcome.chat_id),
+        Some(create_outcome.mls_group_id.clone())
+    );
+
+    let local_chat = alice_store
+        .get_chat(create_outcome.chat_id)
+        .ok_or_else(|| anyhow!("local chat should exist after create_chat_control"))?;
+    assert_eq!(local_chat.members.len(), 2);
+    assert_eq!(local_chat.device_members.len(), 2);
+
+    let projected = alice_store.get_projected_messages(create_outcome.chat_id, None, Some(10));
+    assert_eq!(projected.len(), 2);
+    assert!(projected.iter().any(|message| {
+        matches!(message.projection_kind, LocalProjectionKind::CommitMerged)
+            && message.merged_epoch == Some(1)
+    }));
+    assert!(projected.iter().any(|message| {
+        matches!(message.projection_kind, LocalProjectionKind::WelcomeRef)
+            && message.payload.as_ref().is_some()
+    }));
+
+    let bob_chats = bob.client.list_chats().await?;
+    assert!(
+        bob_chats
+            .chats
+            .iter()
+            .any(|chat| chat.chat_id == create_outcome.chat_id)
+    );
+    let bob_inbox = bob.client.get_inbox(None, Some(10)).await?;
+    assert_eq!(bob_inbox.items.len(), 2);
+    assert!(bob_inbox.items.iter().any(|item| {
+        item.message.message_kind == trix_types::MessageKind::Commit
+            && item.message.chat_id == create_outcome.chat_id
+    }));
+    assert!(bob_inbox.items.iter().any(|item| {
+        item.message.message_kind == trix_types::MessageKind::WelcomeRef
+            && item.message.chat_id == create_outcome.chat_id
+    }));
+
+    let group_before = alice
+        .facade
+        .load_group(&create_outcome.mls_group_id)?
+        .ok_or_else(|| anyhow!("alice group should exist after create_chat_control"))?;
+    let members_before = alice.facade.members(&group_before)?;
+    assert_eq!(members_before.len(), 2);
+    assert!(
+        members_before
+            .iter()
+            .any(|member| member.credential_identity == b"alice-credential")
+    );
+    assert!(
+        members_before
+            .iter()
+            .any(|member| member.credential_identity == b"bob-credential")
+    );
+
+    let failed_message_id = MessageId::new();
+    let error = alice_sync
+        .remove_chat_members_control(
+            &alice.client,
+            &mut alice_store,
+            &mut alice.facade,
+            ModifyChatMembersControlInput {
+                actor_account_id: alice.account_id,
+                actor_device_id: alice.device_id,
+                chat_id: create_outcome.chat_id,
+                participant_account_ids: vec![bob.account_id],
+                commit_aad_json: Some(serde_json::json!({ "message_id": failed_message_id.0 })),
+                welcome_aad_json: None,
+            },
+        )
+        .await
+        .expect_err("dm member removal should fail on server and trigger rollback");
+    assert!(
+        error
+            .to_string()
+            .contains("member changes are only supported for group chats")
+            || error.to_string().contains("bad_request")
+    );
+
+    let group_after = alice
+        .facade
+        .load_group(&create_outcome.mls_group_id)?
+        .ok_or_else(|| anyhow!("alice group should still exist after rollback"))?;
+    let members_after = alice.facade.members(&group_after)?;
+    assert_eq!(members_after.len(), 2);
+    assert_eq!(
+        members_after
+            .iter()
+            .map(|member| member.credential_identity.clone())
+            .collect::<Vec<_>>(),
+        members_before
+            .iter()
+            .map(|member| member.credential_identity.clone())
+            .collect::<Vec<_>>()
+    );
+
+    server.shutdown().await?;
+    Ok(())
+}
+
+async fn spawn_test_server() -> Result<TestServer> {
+    let database_url =
+        env::var("TRIX_TEST_DATABASE_URL").unwrap_or_else(|_| DEFAULT_TEST_DATABASE_URL.to_owned());
+    reset_test_database(&database_url).await?;
+
+    let blob_root = env::temp_dir().join(format!("trix-core-e2e-blobs-{}", Uuid::new_v4()));
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let base_url = format!("http://{}", addr);
+
+    let config = AppConfig {
+        bind_addr: addr,
+        public_base_url: base_url.clone(),
+        database_url: database_url.clone(),
+        blob_root: blob_root.clone(),
+        blob_max_upload_bytes: 25 * 1024 * 1024,
+        log_filter: "error".to_owned(),
+        jwt_signing_key: "trix-core-e2e-test-key".to_owned(),
+    };
+
+    let db = Database::connect(&config.database_url).await?;
+    let blob_store = LocalBlobStore::new(&config.blob_root)?;
+    let auth = AuthManager::new(&config.jwt_signing_key);
+    let state = AppState::new(config, BuildInfo::current(), db, auth, blob_store);
+    let router = trix_server::app::build_router(state);
+
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router)
+            .await
+            .expect("test server should stay up");
+    });
+
+    let health_client = ServerApiClient::new(&base_url)?;
+    wait_for_server(&health_client).await?;
+
+    Ok(TestServer {
+        base_url,
+        database_url,
+        blob_root,
+        task,
+    })
+}
+
+async fn create_authenticated_identity(base_url: &str, handle: &str) -> Result<TestIdentity> {
+    let credential_identity = format!("{handle}-credential").into_bytes();
+    let account_root = AccountRootMaterial::generate();
+    let device_keys = DeviceKeyMaterial::generate();
+    let transport_pubkey = device_keys.public_key_bytes();
+    let bootstrap_payload = account_bootstrap_message(&transport_pubkey, &credential_identity);
+
+    let mut client = ServerApiClient::new(base_url)?;
+    let created = client
+        .create_account(CreateAccountParams {
+            handle: Some(handle.to_owned()),
+            profile_name: handle.to_owned(),
+            profile_bio: None,
+            device_display_name: format!("{handle}-mac"),
+            platform: "macos".to_owned(),
+            credential_identity: credential_identity.clone(),
+            account_root_pubkey: account_root.public_key_bytes(),
+            account_root_signature: account_root.sign(&bootstrap_payload),
+            transport_pubkey,
+        })
+        .await?;
+
+    let challenge = client.create_auth_challenge(created.device_id).await?;
+    let session = client
+        .create_auth_session(
+            created.device_id,
+            challenge.challenge_id,
+            &device_keys.sign(&challenge.challenge),
+        )
+        .await?;
+    client.set_access_token(session.access_token);
+
+    Ok(TestIdentity {
+        account_id: created.account_id,
+        device_id: created.device_id,
+        client,
+        facade: MlsFacade::new(credential_identity)?,
+    })
+}
+
+async fn wait_for_server(client: &ServerApiClient) -> Result<()> {
+    let mut last_error = None;
+    for _ in 0..20 {
+        match client.get_health().await {
+            Ok(response) if response.status == trix_types::ServiceStatus::Ok => return Ok(()),
+            Ok(response) => {
+                last_error = Some(anyhow!("unexpected health status {:?}", response.status));
+            }
+            Err(err) => {
+                last_error = Some(err.into());
+            }
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    Err(last_error.unwrap_or_else(|| anyhow!("server did not become healthy in time")))
+}
+
+async fn reset_test_database(database_url: &str) -> Result<()> {
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(database_url)
+        .await
+        .with_context(|| "failed to connect to test postgres")?;
+    sqlx::query("TRUNCATE TABLE accounts CASCADE")
+        .execute(&pool)
+        .await
+        .with_context(|| "failed to truncate test database")?;
+    pool.close().await;
+    Ok(())
+}
+
+impl TestServer {
+    async fn shutdown(self) -> Result<()> {
+        self.task.abort();
+        let _ = self.task.await;
+        reset_test_database(&self.database_url).await?;
+        fs::remove_dir_all(&self.blob_root).ok();
+        Ok(())
+    }
+}
