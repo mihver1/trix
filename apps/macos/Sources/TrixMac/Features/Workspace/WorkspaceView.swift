@@ -38,12 +38,17 @@ struct WorkspaceView: View {
                             TrixMetricTile(
                                 label: "Chats",
                                 value: "\(model.chats.count)",
-                                footnote: "Sorted from live server metadata"
+                                footnote: "Backed by persistent local history cache"
                             )
                             TrixMetricTile(
                                 label: "Inbox",
                                 value: "\(model.inboxItems.count)",
                                 footnote: model.lastInboxCursor.map { "cursor \($0)" } ?? "No inbox batch loaded yet"
+                            )
+                            TrixMetricTile(
+                                label: "Sync Cursors",
+                                value: "\(model.syncStateSnapshot?.chatCursors.count ?? 0)",
+                                footnote: model.syncStateSnapshot?.lastAckedInboxId.map { "acked \($0)" } ?? "No persisted sync state yet"
                             )
                             TrixMetricTile(
                                 label: "Sync Jobs",
@@ -261,7 +266,7 @@ struct WorkspaceView: View {
 
             TrixPanel(
                 title: "Inbox Polling",
-                subtitle: "Incremental inbox inspection, temporary leasing and explicit ack for this device."
+                subtitle: "Incremental inbox inspection with local cache ingest and persisted sync cursors for this device."
             ) {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack(spacing: 12) {
@@ -413,7 +418,7 @@ struct WorkspaceView: View {
 
             TrixPanel(
                 title: "Chats",
-                subtitle: "Choose a chat to inspect current members and encrypted history metadata."
+                subtitle: "Choose a chat to inspect current members and encrypted history persisted on this Mac."
             ) {
                 if model.chats.isEmpty {
                     EmptyWorkspaceLabel("No chats are visible yet. Create another account or use the API to open the first DM or group.")
@@ -501,7 +506,7 @@ struct WorkspaceView: View {
 
                 TrixPanel(
                     title: "Encrypted History",
-                    subtitle: "Raw metadata only for now. Message decryption and compose flow come next."
+                    subtitle: "Raw encrypted metadata persisted through the local history store. Message decryption and compose flow come next."
                 ) {
                     if model.isLoadingSelectedChat && model.selectedChatHistory.isEmpty {
                         HStack(spacing: 12) {

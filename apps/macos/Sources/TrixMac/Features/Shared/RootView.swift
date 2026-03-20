@@ -96,6 +96,10 @@ private struct SidebarView: View {
                         SidebarValue(label: "Devices", value: "\(model.devices.count)")
                         SidebarValue(label: "Chats", value: "\(model.chats.count)")
                         SidebarValue(label: "Inbox", value: "\(model.inboxItems.count)")
+                        SidebarValue(
+                            label: "Cursors",
+                            value: "\(model.syncStateSnapshot?.chatCursors.count ?? 0)"
+                        )
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 10) {
@@ -106,6 +110,7 @@ private struct SidebarView: View {
                         SidebarBullet("manual key-package publish + reserve")
                         SidebarBullet("history sync job inspector")
                         SidebarBullet("challenge/session auth restore")
+                        SidebarBullet("persistent local history + sync cursors")
                         SidebarBullet("chat metadata + encrypted history browser")
                     }
                 }
@@ -167,7 +172,7 @@ private struct SidebarView: View {
 
             Spacer()
 
-            Text("Local keys. Server-assisted coordination. Message crypto next.")
+            Text("Local keys, persistent history cache, server-assisted coordination.")
                 .font(.footnote)
                 .foregroundStyle(colors.inverseInkMuted.opacity(0.8))
                 .fixedSize(horizontal: false, vertical: true)

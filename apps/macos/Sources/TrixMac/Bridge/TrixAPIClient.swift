@@ -327,6 +327,176 @@ struct TrixAPIClient {
         }
     }
 
+    func syncChatHistoriesIntoLocalStore(
+        accessToken: String,
+        databasePath: URL,
+        statePath: URL,
+        limitPerChat: Int = 200
+    ) async throws -> LocalHistorySyncResult {
+        try await callFFI(accessToken: accessToken) { client in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
+            let report = try LocalStoreApplyReport(
+                ffiValue: coordinator.syncChatHistoriesIntoStore(
+                    client: client,
+                    store: store,
+                    limitPerChat: try TrixCoreCodec.uint32(limitPerChat, label: "local history sync limit")
+                )
+            )
+            let syncState = try SyncStateSnapshot(ffiValue: coordinator.stateSnapshot())
+            let chats = try ChatListResponse(ffiValues: store.listChats()).chats
+
+            return LocalHistorySyncResult(
+                report: report,
+                syncState: syncState,
+                chats: chats
+            )
+        }
+    }
+
+    func fetchInboxIntoLocalStore(
+        accessToken: String,
+        databasePath: URL,
+        statePath: URL,
+        afterInboxId: UInt64? = nil,
+        limit: Int = 50
+    ) async throws -> LocalInboxPollResult {
+        try await callFFI(accessToken: accessToken) { client in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
+            let inbox = try client.getInbox(
+                afterInboxId: afterInboxId,
+                limit: try TrixCoreCodec.uint32(limit, label: "local inbox poll limit")
+            )
+            let lease = FfiLeaseInboxResponse(
+                leaseOwner: try coordinator.leaseOwner(),
+                leaseExpiresAtUnix: 0,
+                items: inbox.items
+            )
+            let report = try LocalStoreApplyReport(ffiValue: store.applyLeasedInbox(lease: lease))
+
+            for item in inbox.items {
+                _ = try coordinator.recordChatServerSeq(
+                    chatId: item.message.chatId,
+                    serverSeq: item.message.serverSeq
+                )
+            }
+
+            let syncState = try SyncStateSnapshot(ffiValue: coordinator.stateSnapshot())
+            let chats = try ChatListResponse(ffiValues: store.listChats()).chats
+
+            return LocalInboxPollResult(
+                items: try InboxResponse(ffiValue: inbox).items,
+                report: report,
+                syncState: syncState,
+                chats: chats
+            )
+        }
+    }
+
+    func leaseInboxIntoLocalStore(
+        accessToken: String,
+        databasePath: URL,
+        statePath: URL,
+        leaseOwner: String?,
+        limit: Int?,
+        afterInboxId: UInt64?,
+        leaseTtlSeconds: UInt64?
+    ) async throws -> LocalInboxLeaseResult {
+        try await callFFI(accessToken: accessToken) { client in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
+            let lease = try client.leaseInbox(
+                params: FfiLeaseInboxParams(
+                    leaseOwner: leaseOwner ?? coordinator.leaseOwner(),
+                    limit: try limit.map { try TrixCoreCodec.uint32($0, label: "local inbox lease limit") },
+                    afterInboxId: afterInboxId,
+                    leaseTtlSeconds: leaseTtlSeconds
+                )
+            )
+            let report = try LocalStoreApplyReport(ffiValue: store.applyLeasedInbox(lease: lease))
+
+            for item in lease.items {
+                _ = try coordinator.recordChatServerSeq(
+                    chatId: item.message.chatId,
+                    serverSeq: item.message.serverSeq
+                )
+            }
+
+            let syncState = try SyncStateSnapshot(ffiValue: coordinator.stateSnapshot())
+            let chats = try ChatListResponse(ffiValues: store.listChats()).chats
+
+            return LocalInboxLeaseResult(
+                lease: try LeaseInboxResponse(ffiValue: lease),
+                ackedInboxIds: [],
+                report: report,
+                syncState: syncState,
+                chats: chats
+            )
+        }
+    }
+
+    func ackInboxIntoSyncState(
+        accessToken: String,
+        statePath: URL,
+        inboxIds: [UInt64]
+    ) async throws -> LocalInboxAckResult {
+        try await callFFI(accessToken: accessToken) { client in
+            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
+            let response = try coordinator.ackInbox(client: client, inboxIds: inboxIds)
+
+            return try LocalInboxAckResult(
+                ackedInboxIds: response.ackedInboxIds.sorted(),
+                syncState: SyncStateSnapshot(ffiValue: coordinator.stateSnapshot())
+            )
+        }
+    }
+
+    func fetchLocalChats(databasePath: URL) async throws -> ChatListResponse {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            return try ChatListResponse(ffiValues: store.listChats())
+        }
+    }
+
+    func fetchLocalChatDetail(
+        databasePath: URL,
+        chatId: UUID
+    ) async throws -> ChatDetailResponse? {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            guard let detail = try store.getChat(chatId: chatId.uuidString) else {
+                return nil
+            }
+
+            return try ChatDetailResponse(ffiValue: detail)
+        }
+    }
+
+    func fetchLocalChatHistory(
+        databasePath: URL,
+        chatId: UUID,
+        limit: Int = 100
+    ) async throws -> ChatHistoryResponse {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            return try ChatHistoryResponse(
+                ffiValue: store.getChatHistory(
+                    chatId: chatId.uuidString,
+                    afterServerSeq: nil,
+                    limit: try TrixCoreCodec.uint32(limit, label: "local chat history limit")
+                )
+            )
+        }
+    }
+
+    func fetchSyncStateSnapshot(statePath: URL) async throws -> SyncStateSnapshot {
+        try await callFFI { _ in
+            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
+            return try SyncStateSnapshot(ffiValue: coordinator.stateSnapshot())
+        }
+    }
+
     private func systemGet<Response: Decodable>(_ path: String) async throws -> Response {
         let url = baseURL.appendingPathComponent(path)
         let request = URLRequest(url: url)
@@ -364,6 +534,14 @@ struct TrixAPIClient {
                 }
             }
         }
+    }
+
+    private static func makeLocalHistoryStore(databasePath: URL) throws -> FfiLocalHistoryStore {
+        try FfiLocalHistoryStore.newPersistent(databasePath: databasePath.path)
+    }
+
+    private static func makeSyncCoordinator(statePath: URL) throws -> FfiSyncCoordinator {
+        try FfiSyncCoordinator.newPersistent(statePath: statePath.path)
     }
 
     private func decode<Response: Decodable>(data: Data, response: URLResponse) throws -> Response {

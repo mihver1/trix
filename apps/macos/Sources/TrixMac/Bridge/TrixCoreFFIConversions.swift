@@ -439,6 +439,37 @@ extension HistorySyncJobListResponse {
     }
 }
 
+extension LocalStoreApplyReport {
+    init(ffiValue: FfiLocalStoreApplyReport) throws {
+        self.init(
+            chatsUpserted: try TrixCoreCodec.int(ffiValue.chatsUpserted, label: "chats_upserted"),
+            messagesUpserted: try TrixCoreCodec.int(ffiValue.messagesUpserted, label: "messages_upserted"),
+            changedChatIDs: try ffiValue.changedChatIds.map {
+                try TrixCoreCodec.uuid($0, label: "changed_chat_id")
+            }
+        )
+    }
+}
+
+extension SyncChatCursor {
+    init(ffiValue: FfiSyncChatCursor) throws {
+        self.init(
+            chatId: try TrixCoreCodec.uuid(ffiValue.chatId, label: "chat_id"),
+            lastServerSeq: ffiValue.lastServerSeq
+        )
+    }
+}
+
+extension SyncStateSnapshot {
+    init(ffiValue: FfiSyncStateSnapshot) throws {
+        self.init(
+            leaseOwner: ffiValue.leaseOwner,
+            lastAckedInboxId: ffiValue.lastAckedInboxId,
+            chatCursors: try ffiValue.chatCursors.map { try SyncChatCursor(ffiValue: $0) }
+        )
+    }
+}
+
 extension CompleteHistorySyncJobResponse {
     init(ffiValue: FfiCompleteHistorySyncJobResponse) throws {
         self.init(
@@ -468,6 +499,14 @@ enum TrixCoreCodec {
     static func uint32(_ value: Int, label: String) throws -> UInt32 {
         guard let converted = UInt32(exactly: value) else {
             throw TrixAPIError.invalidPayload("\(label) exceeds supported range.")
+        }
+
+        return converted
+    }
+
+    static func int(_ value: UInt64, label: String) throws -> Int {
+        guard let converted = Int(exactly: value) else {
+            throw TrixAPIError.invalidPayload("FFI returned invalid \(label).")
         }
 
         return converted

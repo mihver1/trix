@@ -10,6 +10,7 @@
 - challenge/session sign-in using `trix-core` UniFFI key material and transport client
 - local session persistence in `Application Support`
 - secret material persisted in `Keychain`
+- persistent local history store and sync cursor state under `Application Support/TrixMac/workspaces/<account-id>/`
 - post-auth snapshot for `/v0/accounts/me`, `/v0/devices`, `/v0/chats`, inbox, key packages, and history sync jobs
 
 ## Layout
@@ -50,7 +51,8 @@ To regenerate them, follow [docs/ffi-bindings.md](/Users/m.verhovyh/.codex/workt
 
 ## Next Steps
 
-- move message creation, MLS state, and decrypt flow behind `trix-core`
+- move persistent MLS facade and conversation restore behind `trix-core`
+- project encrypted local history into typed timeline items through the new projected-message APIs
 - add real transfer-bundle handling during device approval
 - replace manual operational panels with user-facing chat and sync UX
 - add a release build path for shipping `trix-core` artifacts outside local debug workflows

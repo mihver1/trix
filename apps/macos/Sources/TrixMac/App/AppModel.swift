@@ -16,6 +16,7 @@ final class AppModel: ObservableObject {
     @Published var activeInboxLease: InboxLeaseState?
     @Published var lastInboxCursor: UInt64?
     @Published var lastAckedInboxIDs: [UInt64] = []
+    @Published var syncStateSnapshot: SyncStateSnapshot?
     @Published var historySyncJobs: [HistorySyncJobSummary] = []
     @Published var historySyncCursorDrafts: [UUID: String] = [:]
     @Published var keyPackagePublishDraft = KeyPackagePublishDraft()
@@ -427,12 +428,16 @@ final class AppModel: ObservableObject {
 
         do {
             let parameters = try decodeInboxPollParameters()
-            let response = try await client.fetchInbox(
+            let storePaths = try workspaceStorePaths()
+            let response = try await client.fetchInboxIntoLocalStore(
                 accessToken: token,
+                databasePath: storePaths.localHistoryURL,
+                statePath: storePaths.syncStateURL,
                 afterInboxId: parameters.afterInboxId,
                 limit: parameters.limit
             )
             mergeInboxItems(response.items, autoAdvanceCursor: true)
+            applyLocalStoreSnapshot(chats: response.chats, syncState: response.syncState)
         } catch let error as TrixAPIError {
             if error.isCredentialFailure {
                 accessToken = nil
@@ -460,20 +465,22 @@ final class AppModel: ObservableObject {
 
         do {
             let parameters = try decodeInboxPollParameters()
-            let response = try await client.leaseInbox(
+            let storePaths = try workspaceStorePaths()
+            let response = try await client.leaseInboxIntoLocalStore(
                 accessToken: token,
-                request: LeaseInboxRequest(
-                    leaseOwner: parameters.leaseOwner,
-                    limit: parameters.limit,
-                    afterInboxId: parameters.afterInboxId,
-                    leaseTtlSeconds: parameters.leaseTtlSeconds
-                )
+                databasePath: storePaths.localHistoryURL,
+                statePath: storePaths.syncStateURL,
+                leaseOwner: parameters.leaseOwner,
+                limit: parameters.limit,
+                afterInboxId: parameters.afterInboxId,
+                leaseTtlSeconds: parameters.leaseTtlSeconds
             )
             activeInboxLease = InboxLeaseState(
-                owner: response.leaseOwner,
-                expiresAt: response.leaseExpiresAt
+                owner: response.lease.leaseOwner,
+                expiresAt: response.lease.leaseExpiresAt
             )
-            mergeInboxItems(response.items, autoAdvanceCursor: true)
+            mergeInboxItems(response.lease.items, autoAdvanceCursor: true)
+            applyLocalStoreSnapshot(chats: response.chats, syncState: response.syncState)
         } catch let error as TrixAPIError {
             if error.isCredentialFailure {
                 accessToken = nil
@@ -504,18 +511,17 @@ final class AppModel: ObservableObject {
 
         do {
             let inboxIds = inboxItems.map(\.inboxId)
-            let response = try await client.ackInbox(
+            let storePaths = try workspaceStorePaths()
+            let response = try await client.ackInboxIntoSyncState(
                 accessToken: token,
-                request: AckInboxRequest(inboxIds: inboxIds)
+                statePath: storePaths.syncStateURL,
+                inboxIds: inboxIds
             )
 
             let acked = Set(response.ackedInboxIds)
             inboxItems.removeAll { acked.contains($0.inboxId) }
             lastAckedInboxIDs = response.ackedInboxIds.sorted()
-
-            if let maxAcked = response.ackedInboxIds.max() {
-                lastInboxCursor = max(lastInboxCursor ?? 0, maxAcked)
-            }
+            applySyncStateSnapshot(response.syncState)
         } catch let error as TrixAPIError {
             if error.isCredentialFailure {
                 accessToken = nil
@@ -877,8 +883,13 @@ final class AppModel: ObservableObject {
         syncKeyPackageDrafts(with: loadedProfile)
         syncInboxDrafts(with: loadedProfile)
         try await loadHistorySyncJobs(client: client, accessToken: accessToken)
+        await refreshLocalWorkspaceCache(
+            client: client,
+            accessToken: accessToken,
+            accountId: loadedProfile.accountId
+        )
 
-        if let preferredChatID = preferredChatSelection(from: sortedChats) {
+        if let preferredChatID = preferredChatSelection(from: self.chats) {
             try await loadSelectedChat(
                 client: client,
                 accessToken: accessToken,
@@ -900,14 +911,31 @@ final class AppModel: ObservableObject {
         isLoadingSelectedChat = true
         defer { isLoadingSelectedChat = false }
 
-        async let detail = client.fetchChatDetail(accessToken: accessToken, chatId: chatId)
-        async let history = client.fetchChatHistory(accessToken: accessToken, chatId: chatId)
-
-        let loadedDetail = try await detail
-        let loadedHistory = try await history
-
+        let loadedDetail = try await client.fetchChatDetail(accessToken: accessToken, chatId: chatId)
         selectedChatDetail = loadedDetail
-        selectedChatHistory = loadedHistory.messages
+
+        do {
+            let storePaths = try workspaceStorePaths()
+            let localHistory = try await client.fetchLocalChatHistory(
+                databasePath: storePaths.localHistoryURL,
+                chatId: chatId
+            )
+            if localHistory.messages.isEmpty && loadedDetail.lastServerSeq > 0 {
+                let remoteHistory = try await client.fetchChatHistory(
+                    accessToken: accessToken,
+                    chatId: chatId
+                )
+                selectedChatHistory = remoteHistory.messages
+            } else {
+                selectedChatHistory = localHistory.messages
+            }
+        } catch {
+            let remoteHistory = try await client.fetchChatHistory(
+                accessToken: accessToken,
+                chatId: chatId
+            )
+            selectedChatHistory = remoteHistory.messages
+        }
     }
 
     private func save(
@@ -987,6 +1015,7 @@ final class AppModel: ObservableObject {
         activeInboxLease = nil
         lastInboxCursor = nil
         lastAckedInboxIDs = []
+        syncStateSnapshot = nil
         historySyncJobs = []
         historySyncCursorDrafts = [:]
         approvingDeviceIDs = []
@@ -1042,6 +1071,56 @@ final class AppModel: ObservableObject {
         for job in loadedJobs.jobs {
             if historySyncCursorDrafts[job.jobId] == nil {
                 historySyncCursorDrafts[job.jobId] = try encodeCursorJSON(job.cursorJson) ?? ""
+            }
+        }
+    }
+
+    private func refreshLocalWorkspaceCache(
+        client: TrixAPIClient,
+        accessToken: String,
+        accountId: UUID
+    ) async {
+        do {
+            let storePaths = try workspaceStorePaths(for: accountId)
+            let localResult = try await client.syncChatHistoriesIntoLocalStore(
+                accessToken: accessToken,
+                databasePath: storePaths.localHistoryURL,
+                statePath: storePaths.syncStateURL
+            )
+            applyLocalStoreSnapshot(chats: localResult.chats, syncState: localResult.syncState)
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    private func workspaceStorePaths(for accountId: UUID? = nil) throws -> WorkspaceStorePaths {
+        let resolvedAccountID = accountId ?? currentAccount?.accountId ?? persistedSession?.accountId
+        guard let resolvedAccountID else {
+            throw TrixAPIError.invalidPayload("Локальный workspace store ещё не инициализирован.")
+        }
+
+        return try WorkspaceStorePaths.forAccount(resolvedAccountID)
+    }
+
+    private func applyLocalStoreSnapshot(chats: [ChatSummary], syncState: SyncStateSnapshot) {
+        if !chats.isEmpty {
+            self.chats = chats.sorted(by: chatSort)
+        }
+
+        applySyncStateSnapshot(syncState)
+    }
+
+    private func applySyncStateSnapshot(_ syncState: SyncStateSnapshot) {
+        syncStateSnapshot = syncState
+
+        if inboxLeaseDraft.leaseOwner.nonEmptyTrimmed == nil {
+            inboxLeaseDraft.leaseOwner = syncState.leaseOwner
+        }
+
+        if let lastAckedInboxId = syncState.lastAckedInboxId {
+            lastInboxCursor = max(lastInboxCursor ?? 0, lastAckedInboxId)
+            if inboxLeaseDraft.afterInboxID.nonEmptyTrimmed == nil {
+                inboxLeaseDraft.afterInboxID = String(lastAckedInboxId)
             }
         }
     }

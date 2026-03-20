@@ -259,6 +259,51 @@ struct ChatListResponse: Codable {
     let chats: [ChatSummary]
 }
 
+struct LocalStoreApplyReport: Sendable {
+    let chatsUpserted: Int
+    let messagesUpserted: Int
+    let changedChatIDs: [UUID]
+}
+
+struct SyncChatCursor: Identifiable, Sendable {
+    let chatId: UUID
+    let lastServerSeq: UInt64
+
+    var id: UUID { chatId }
+}
+
+struct SyncStateSnapshot: Sendable {
+    let leaseOwner: String
+    let lastAckedInboxId: UInt64?
+    let chatCursors: [SyncChatCursor]
+}
+
+struct LocalHistorySyncResult: Sendable {
+    let report: LocalStoreApplyReport
+    let syncState: SyncStateSnapshot
+    let chats: [ChatSummary]
+}
+
+struct LocalInboxPollResult: Sendable {
+    let items: [InboxItem]
+    let report: LocalStoreApplyReport
+    let syncState: SyncStateSnapshot
+    let chats: [ChatSummary]
+}
+
+struct LocalInboxLeaseResult: Sendable {
+    let lease: LeaseInboxResponse
+    let ackedInboxIds: [UInt64]
+    let report: LocalStoreApplyReport
+    let syncState: SyncStateSnapshot
+    let chats: [ChatSummary]
+}
+
+struct LocalInboxAckResult: Sendable {
+    let ackedInboxIds: [UInt64]
+    let syncState: SyncStateSnapshot
+}
+
 struct ChatSummary: Codable, Identifiable {
     let chatId: UUID
     let chatType: ChatType
