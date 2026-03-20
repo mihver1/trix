@@ -12,7 +12,7 @@ use trix_types::{
 };
 use uuid::Uuid;
 
-use crate::{MlsConversation, MlsFacade, MlsProcessResult, decode_b64_field};
+use crate::{MessageBody, MlsConversation, MlsFacade, MlsProcessResult, decode_b64_field};
 
 #[derive(Debug, Clone)]
 pub struct AttachmentStore {
@@ -559,6 +559,18 @@ impl LocalHistoryStore {
             self.save_state()?;
         }
         Ok(())
+    }
+}
+
+impl LocalProjectedMessage {
+    pub fn parse_body(&self) -> Result<Option<MessageBody>> {
+        let Some(payload) = &self.payload else {
+            return Ok(None);
+        };
+        if self.projection_kind != LocalProjectionKind::ApplicationMessage {
+            return Ok(None);
+        }
+        Ok(Some(MessageBody::from_bytes(self.content_type, payload)?))
     }
 }
 
