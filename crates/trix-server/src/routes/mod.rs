@@ -10,6 +10,7 @@ pub mod history_sync;
 pub mod inbox;
 pub mod key_packages;
 pub mod system;
+pub mod ws;
 
 pub async fn root() -> Json<Value> {
     Json(json!({
@@ -31,4 +32,5 @@ pub fn v0_router() -> Router<crate::state::AppState> {
         .merge(inbox::router())
         .merge(key_packages::router())
         .nest("/blobs", blobs::router())
+        .merge(ws::router())
 }

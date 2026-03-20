@@ -70,6 +70,7 @@ make ffi-bindings OUT=/tmp/trix-bindings
 - `FfiServerApiClient` also exposes `get_account(account_id)` and `update_account_profile(...)`.
 - `FfiChatSummary` and `FfiChatDetail` now include `participant_profiles`, so clients can render chat lists and membership UIs without extra directory round-trips.
 - `FfiChatSummary` and `FfiChatDetail` also include `pending_message_count` and optional `last_message`, so list UIs can show transport backlog and latest encrypted envelope without extra history calls.
+- `FfiChatSummary` now also includes `epoch`, and `FfiLocalChatListItem` carries the locally known `epoch`, so clients can keep control flows on the current MLS epoch without a separate detail fetch.
 - `pending_message_count` is intentionally transport-level backlog, not user-read state.
 - `FfiLocalHistoryStore` now exposes local read-state APIs:
   - `chat_read_cursor()`

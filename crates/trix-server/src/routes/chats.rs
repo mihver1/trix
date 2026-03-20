@@ -79,6 +79,7 @@ async fn list_chats(
                 chat_type: chat.chat_type,
                 title: chat.title,
                 last_server_seq: chat.last_server_seq,
+                epoch: chat.epoch,
                 pending_message_count: chat.pending_message_count,
                 last_message: chat.last_message.map(message_to_api),
                 participant_profiles: chat
