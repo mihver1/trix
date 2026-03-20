@@ -762,6 +762,8 @@ external fun uniffi_trix_core_checksum_method_ffiserverapiclient_create_message(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_download_blob(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffiserverapiclient_get_account(
+): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_get_account_key_packages(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_get_chat(
@@ -805,6 +807,8 @@ external fun uniffi_trix_core_checksum_method_ffiserverapiclient_revoke_device(
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_search_account_directory(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_set_access_token(
+): Short
+external fun uniffi_trix_core_checksum_method_ffiserverapiclient_update_account_profile(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_upload_blob(
 ): Short
@@ -1048,6 +1052,8 @@ external fun uniffi_trix_core_fn_method_ffiserverapiclient_create_message(`ptr`:
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_download_blob(`ptr`: Long,`blobId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffiserverapiclient_get_account(`ptr`: Long,`accountId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_get_account_key_packages(`ptr`: Long,`accountId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_get_chat(`ptr`: Long,`chatId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1092,6 +1098,8 @@ external fun uniffi_trix_core_fn_method_ffiserverapiclient_search_account_direct
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_set_access_token(`ptr`: Long,`accessToken`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
+external fun uniffi_trix_core_fn_method_ffiserverapiclient_update_account_profile(`ptr`: Long,`params`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_upload_blob(`ptr`: Long,`blobId`: RustBuffer.ByValue,`payload`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_clone_ffisynccoordinator(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -1449,6 +1457,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_download_blob() != 62802.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_get_account() != 32148.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_get_account_key_packages() != 13189.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1513,6 +1524,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_set_access_token() != 60306.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_update_account_profile() != 3765.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_upload_blob() != 30342.toShort()) {
@@ -3969,6 +3983,8 @@ public interface FfiServerApiClientInterface {
     
     fun `downloadBlob`(`blobId`: kotlin.String): kotlin.ByteArray
     
+    fun `getAccount`(`accountId`: kotlin.String): FfiDirectoryAccount
+    
     fun `getAccountKeyPackages`(`accountId`: kotlin.String): List<FfiReservedKeyPackage>
     
     fun `getChat`(`chatId`: kotlin.String): FfiChatDetail
@@ -4012,6 +4028,8 @@ public interface FfiServerApiClientInterface {
     fun `searchAccountDirectory`(`query`: kotlin.String?, `limit`: kotlin.UInt?, `excludeSelf`: kotlin.Boolean): FfiAccountDirectory
     
     fun `setAccessToken`(`accessToken`: kotlin.String)
+    
+    fun `updateAccountProfile`(`params`: FfiUpdateAccountProfileParams): FfiAccountProfile
     
     fun `uploadBlob`(`blobId`: kotlin.String, `payload`: kotlin.ByteArray): FfiBlobMetadata
     
@@ -4360,6 +4378,20 @@ open class FfiServerApiClient: Disposable, AutoCloseable, FfiServerApiClientInte
     
 
     
+    @Throws(TrixFfiException::class)override fun `getAccount`(`accountId`: kotlin.String): FfiDirectoryAccount {
+            return FfiConverterTypeFfiDirectoryAccount.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_get_account(
+        it,
+        FfiConverterString.lower(`accountId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(TrixFfiException::class)override fun `getAccountKeyPackages`(`accountId`: kotlin.String): List<FfiReservedKeyPackage> {
             return FfiConverterSequenceTypeFfiReservedKeyPackage.lift(
     callWithHandle {
@@ -4664,6 +4696,20 @@ open class FfiServerApiClient: Disposable, AutoCloseable, FfiServerApiClientInte
 }
     }
     
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `updateAccountProfile`(`params`: FfiUpdateAccountProfileParams): FfiAccountProfile {
+            return FfiConverterTypeFfiAccountProfile.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_update_account_profile(
+        it,
+        FfiConverterTypeFfiUpdateAccountProfileParams.lower(`params`),_status)
+}
+    }
+    )
+    }
     
 
     
@@ -5690,6 +5736,8 @@ data class FfiChatDetail (
     , 
     var `lastCommitMessageId`: kotlin.String?
     , 
+    var `participantProfiles`: List<FfiChatParticipantProfile>
+    , 
     var `members`: List<FfiChatMember>
     , 
     var `deviceMembers`: List<FfiChatDeviceMember>
@@ -5715,6 +5763,7 @@ public object FfiConverterTypeFfiChatDetail: FfiConverterRustBuffer<FfiChatDetai
             FfiConverterULong.read(buf),
             FfiConverterULong.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterSequenceTypeFfiChatParticipantProfile.read(buf),
             FfiConverterSequenceTypeFfiChatMember.read(buf),
             FfiConverterSequenceTypeFfiChatDeviceMember.read(buf),
         )
@@ -5727,6 +5776,7 @@ public object FfiConverterTypeFfiChatDetail: FfiConverterRustBuffer<FfiChatDetai
             FfiConverterULong.allocationSize(value.`lastServerSeq`) +
             FfiConverterULong.allocationSize(value.`epoch`) +
             FfiConverterOptionalString.allocationSize(value.`lastCommitMessageId`) +
+            FfiConverterSequenceTypeFfiChatParticipantProfile.allocationSize(value.`participantProfiles`) +
             FfiConverterSequenceTypeFfiChatMember.allocationSize(value.`members`) +
             FfiConverterSequenceTypeFfiChatDeviceMember.allocationSize(value.`deviceMembers`)
     )
@@ -5738,6 +5788,7 @@ public object FfiConverterTypeFfiChatDetail: FfiConverterRustBuffer<FfiChatDetai
             FfiConverterULong.write(value.`lastServerSeq`, buf)
             FfiConverterULong.write(value.`epoch`, buf)
             FfiConverterOptionalString.write(value.`lastCommitMessageId`, buf)
+            FfiConverterSequenceTypeFfiChatParticipantProfile.write(value.`participantProfiles`, buf)
             FfiConverterSequenceTypeFfiChatMember.write(value.`members`, buf)
             FfiConverterSequenceTypeFfiChatDeviceMember.write(value.`deviceMembers`, buf)
     }
@@ -5884,6 +5935,54 @@ public object FfiConverterTypeFfiChatMember: FfiConverterRustBuffer<FfiChatMembe
 
 
 
+data class FfiChatParticipantProfile (
+    var `accountId`: kotlin.String
+    , 
+    var `handle`: kotlin.String?
+    , 
+    var `profileName`: kotlin.String
+    , 
+    var `profileBio`: kotlin.String?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiChatParticipantProfile: FfiConverterRustBuffer<FfiChatParticipantProfile> {
+    override fun read(buf: ByteBuffer): FfiChatParticipantProfile {
+        return FfiChatParticipantProfile(
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiChatParticipantProfile) = (
+            FfiConverterString.allocationSize(value.`accountId`) +
+            FfiConverterOptionalString.allocationSize(value.`handle`) +
+            FfiConverterString.allocationSize(value.`profileName`) +
+            FfiConverterOptionalString.allocationSize(value.`profileBio`)
+    )
+
+    override fun write(value: FfiChatParticipantProfile, buf: ByteBuffer) {
+            FfiConverterString.write(value.`accountId`, buf)
+            FfiConverterOptionalString.write(value.`handle`, buf)
+            FfiConverterString.write(value.`profileName`, buf)
+            FfiConverterOptionalString.write(value.`profileBio`, buf)
+    }
+}
+
+
+
 data class FfiChatSummary (
     var `chatId`: kotlin.String
     , 
@@ -5892,6 +5991,8 @@ data class FfiChatSummary (
     var `title`: kotlin.String?
     , 
     var `lastServerSeq`: kotlin.ULong
+    , 
+    var `participantProfiles`: List<FfiChatParticipantProfile>
     
 ){
     
@@ -5912,6 +6013,7 @@ public object FfiConverterTypeFfiChatSummary: FfiConverterRustBuffer<FfiChatSumm
             FfiConverterTypeFfiChatType.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterULong.read(buf),
+            FfiConverterSequenceTypeFfiChatParticipantProfile.read(buf),
         )
     }
 
@@ -5919,7 +6021,8 @@ public object FfiConverterTypeFfiChatSummary: FfiConverterRustBuffer<FfiChatSumm
             FfiConverterString.allocationSize(value.`chatId`) +
             FfiConverterTypeFfiChatType.allocationSize(value.`chatType`) +
             FfiConverterOptionalString.allocationSize(value.`title`) +
-            FfiConverterULong.allocationSize(value.`lastServerSeq`)
+            FfiConverterULong.allocationSize(value.`lastServerSeq`) +
+            FfiConverterSequenceTypeFfiChatParticipantProfile.allocationSize(value.`participantProfiles`)
     )
 
     override fun write(value: FfiChatSummary, buf: ByteBuffer) {
@@ -5927,6 +6030,7 @@ public object FfiConverterTypeFfiChatSummary: FfiConverterRustBuffer<FfiChatSumm
             FfiConverterTypeFfiChatType.write(value.`chatType`, buf)
             FfiConverterOptionalString.write(value.`title`, buf)
             FfiConverterULong.write(value.`lastServerSeq`, buf)
+            FfiConverterSequenceTypeFfiChatParticipantProfile.write(value.`participantProfiles`, buf)
     }
 }
 
@@ -8623,6 +8727,49 @@ public object FfiConverterTypeFfiSyncStateSnapshot: FfiConverterRustBuffer<FfiSy
 
 
 
+data class FfiUpdateAccountProfileParams (
+    var `handle`: kotlin.String?
+    , 
+    var `profileName`: kotlin.String
+    , 
+    var `profileBio`: kotlin.String?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiUpdateAccountProfileParams: FfiConverterRustBuffer<FfiUpdateAccountProfileParams> {
+    override fun read(buf: ByteBuffer): FfiUpdateAccountProfileParams {
+        return FfiUpdateAccountProfileParams(
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiUpdateAccountProfileParams) = (
+            FfiConverterOptionalString.allocationSize(value.`handle`) +
+            FfiConverterString.allocationSize(value.`profileName`) +
+            FfiConverterOptionalString.allocationSize(value.`profileBio`)
+    )
+
+    override fun write(value: FfiUpdateAccountProfileParams, buf: ByteBuffer) {
+            FfiConverterOptionalString.write(value.`handle`, buf)
+            FfiConverterString.write(value.`profileName`, buf)
+            FfiConverterOptionalString.write(value.`profileBio`, buf)
+    }
+}
+
+
+
 data class FfiVersionResponse (
     var `service`: kotlin.String
     , 
@@ -9796,6 +9943,34 @@ public object FfiConverterSequenceTypeFfiChatMember: FfiConverterRustBuffer<List
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeFfiChatMember.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiChatParticipantProfile: FfiConverterRustBuffer<List<FfiChatParticipantProfile>> {
+    override fun read(buf: ByteBuffer): List<FfiChatParticipantProfile> {
+        val len = buf.getInt()
+        return List<FfiChatParticipantProfile>(len) {
+            FfiConverterTypeFfiChatParticipantProfile.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiChatParticipantProfile>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiChatParticipantProfile.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiChatParticipantProfile>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiChatParticipantProfile.write(it, buf)
         }
     }
 }

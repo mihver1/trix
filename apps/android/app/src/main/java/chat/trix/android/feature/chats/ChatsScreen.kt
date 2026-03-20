@@ -29,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.MarkUnreadChatAlt
+import androidx.compose.material.icons.rounded.PersonAddAlt1
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
@@ -42,6 +43,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -73,6 +75,7 @@ import chat.trix.android.R
 import chat.trix.android.core.auth.AuthenticatedSession
 import chat.trix.android.core.chat.ChatConversation
 import chat.trix.android.core.chat.ChatConversationSummary
+import chat.trix.android.core.chat.ChatDirectoryAccount
 import chat.trix.android.core.chat.ChatDiagnostics
 import chat.trix.android.core.chat.ChatOverview
 import chat.trix.android.core.chat.ChatRefreshResult
@@ -81,6 +84,7 @@ import chat.trix.android.core.chat.ChatTimelineMessage
 import chat.trix.android.ui.adaptive.TrixAdaptiveInfo
 import chat.trix.android.ui.adaptive.TrixFoldPosture
 import java.io.IOException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -111,6 +115,9 @@ fun ChatsScreen(
     var overviewState by remember(repository) { mutableStateOf(ChatsOverviewState(isRefreshing = true)) }
     var detailState by remember(repository) { mutableStateOf(ChatsDetailState()) }
     var composerDraft by rememberSaveable(selectedConversationId) { mutableStateOf("") }
+    var isDirectorySheetVisible by rememberSaveable(session.localState.deviceId) { mutableStateOf(false) }
+    var directoryQuery by rememberSaveable(session.localState.deviceId) { mutableStateOf("") }
+    var directoryState by remember(repository) { mutableStateOf(ChatsDirectoryState()) }
 
     suspend fun loadCachedOverview(): ChatOverview? {
         return try {
@@ -199,6 +206,62 @@ fun ChatsScreen(
         }
     }
 
+    suspend fun searchDirectory() {
+        directoryState = directoryState.copy(
+            isLoading = true,
+            errorMessage = null,
+        )
+
+        try {
+            val accounts = repository.searchAccountDirectory(directoryQuery)
+            directoryState = directoryState.copy(
+                accounts = accounts,
+                isLoading = false,
+                errorMessage = null,
+                hasLoaded = true,
+            )
+        } catch (error: IOException) {
+            directoryState = directoryState.copy(
+                isLoading = false,
+                errorMessage = error.message ?: "Directory search failed",
+                hasLoaded = true,
+            )
+        }
+    }
+
+    suspend fun createDirectMessage(targetAccountId: String) {
+        directoryState = directoryState.copy(
+            creatingAccountId = targetAccountId,
+            errorMessage = null,
+        )
+
+        try {
+            val result = repository.createDirectMessage(targetAccountId)
+            overviewState = overviewState.copy(
+                overview = result.overview,
+                errorMessage = null,
+            )
+            overviewVersion += 1
+            selectedConversationId = result.conversation.chatId
+            composerDraft = ""
+            detailState = ChatsDetailState(
+                conversation = result.conversation,
+                isLoading = false,
+                errorMessage = null,
+            )
+            directoryState = directoryState.copy(
+                creatingAccountId = null,
+                errorMessage = null,
+            )
+            isDirectorySheetVisible = false
+        } catch (error: IOException) {
+            directoryState = directoryState.copy(
+                creatingAccountId = null,
+                errorMessage = error.message ?: "Failed to create direct message",
+            )
+        }
+    }
+
     DisposableEffect(repository) {
         onDispose {
             repository.close()
@@ -215,6 +278,15 @@ fun ChatsScreen(
             overviewVersion += 1
         }
         syncChats()
+    }
+
+    LaunchedEffect(repository, isDirectorySheetVisible, directoryQuery) {
+        if (!isDirectorySheetVisible) {
+            return@LaunchedEffect
+        }
+
+        delay(250)
+        searchDirectory()
     }
 
     LaunchedEffect(showTwoPane, overviewVersion) {
@@ -274,6 +346,20 @@ fun ChatsScreen(
         selectedConversationId = null
     }
 
+    if (isDirectorySheetVisible) {
+        DirectoryAccountsSheet(
+            query = directoryQuery,
+            onQueryChange = { directoryQuery = it },
+            state = directoryState,
+            onDismissRequest = { isDirectorySheetVisible = false },
+            onCreateDirectMessage = { accountId ->
+                coroutineScope.launch {
+                    createDirectMessage(accountId)
+                }
+            },
+        )
+    }
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
@@ -295,6 +381,9 @@ fun ChatsScreen(
                         }
                     },
                     actions = {
+                        NewChatAction(
+                            onOpenDirectory = { isDirectorySheetVisible = true },
+                        )
                         RefreshAction(
                             isRefreshing = overviewState.isRefreshing,
                             onRefresh = { coroutineScope.launch { syncChats() } },
@@ -305,6 +394,9 @@ fun ChatsScreen(
                 CenterAlignedTopAppBar(
                     title = { Text(stringResource(R.string.screen_chats)) },
                     actions = {
+                        NewChatAction(
+                            onOpenDirectory = { isDirectorySheetVisible = true },
+                        )
                         RefreshAction(
                             isRefreshing = overviewState.isRefreshing,
                             onRefresh = { coroutineScope.launch { syncChats() } },
@@ -389,6 +481,211 @@ fun ChatsScreen(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun NewChatAction(
+    onOpenDirectory: () -> Unit,
+) {
+    FilledTonalIconButton(onClick = onOpenDirectory) {
+        Icon(
+            imageVector = Icons.Rounded.PersonAddAlt1,
+            contentDescription = "Start direct message",
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DirectoryAccountsSheet(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    state: ChatsDirectoryState,
+    onDismissRequest: () -> Unit,
+    onCreateDirectMessage: (String) -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismissRequest,
+    ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "New direct message",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "Search the account directory and open a DM without leaving the chats surface.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = onQueryChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("Search by name or @handle") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Search),
+                    )
+                }
+            }
+
+            when {
+                state.isLoading && state.accounts.isEmpty() -> {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 24.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator()
+                        }
+                    }
+                }
+
+                state.hasLoaded && state.accounts.isEmpty() && state.errorMessage == null -> {
+                    item {
+                        Surface(
+                            shape = RoundedCornerShape(24.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerLow,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text(
+                                    text = "No accounts found",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    text = "Try a broader name fragment or handle.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            items(state.accounts, key = { it.accountId }) { account ->
+                DirectoryAccountRow(
+                    account = account,
+                    isCreating = state.creatingAccountId == account.accountId,
+                    enabled = state.creatingAccountId == null,
+                    onCreateDirectMessage = { onCreateDirectMessage(account.accountId) },
+                )
+            }
+
+            if (state.errorMessage != null) {
+                item {
+                    Text(
+                        text = state.errorMessage,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DirectoryAccountRow(
+    account: ChatDirectoryAccount,
+    isCreating: Boolean,
+    enabled: Boolean,
+    onCreateDirectMessage: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        ListItem(
+            leadingContent = {
+                ConversationAvatar(name = directoryAccountDisplayName(account))
+            },
+            headlineContent = {
+                Text(
+                    text = directoryAccountDisplayName(account),
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+            supportingContent = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = directoryAccountSecondaryLine(account),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    account.profileBio
+                        ?.takeIf(String::isNotBlank)
+                        ?.let { bio ->
+                            Text(
+                                text = bio,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                }
+            },
+            trailingContent = {
+                Button(
+                    onClick = onCreateDirectMessage,
+                    enabled = enabled && !isCreating,
+                ) {
+                    if (isCreating) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Text("Message")
+                    }
+                }
+            },
+        )
+    }
+}
+
+private fun directoryAccountDisplayName(account: ChatDirectoryAccount): String {
+    return account.profileName.takeIf(String::isNotBlank)
+        ?: account.handle?.takeIf(String::isNotBlank)?.let { "@$it" }
+        ?: account.accountId
+}
+
+private fun directoryAccountSecondaryLine(account: ChatDirectoryAccount): String {
+    return buildString {
+        account.handle
+            ?.takeIf(String::isNotBlank)
+            ?.let {
+                append('@')
+                append(it)
+            }
+        if (isNotEmpty()) {
+            append(" · ")
+        }
+        append(
+            if (account.accountId.length <= 14) {
+                account.accountId
+            } else {
+                "${account.accountId.take(6)}…${account.accountId.takeLast(4)}"
+            },
+        )
     }
 }
 
@@ -1200,6 +1497,14 @@ private data class ChatsDetailState(
     val errorMessage: String? = null,
     val isSending: Boolean = false,
     val sendErrorMessage: String? = null,
+)
+
+private data class ChatsDirectoryState(
+    val accounts: List<ChatDirectoryAccount> = emptyList(),
+    val isLoading: Boolean = false,
+    val errorMessage: String? = null,
+    val creatingAccountId: String? = null,
+    val hasLoaded: Boolean = false,
 )
 
 private fun ChatRefreshResult.toSummary(): String {

@@ -1,12 +1,14 @@
 package chat.trix.android.core.chat
 
 import android.content.Context
+import chat.trix.android.core.ffi.FfiChatParticipantProfile
 import chat.trix.android.core.auth.AuthenticatedSession
 import chat.trix.android.core.ffi.FfiChatDetail
 import chat.trix.android.core.ffi.FfiChatSummary
 import chat.trix.android.core.ffi.FfiChatType
 import chat.trix.android.core.ffi.FfiContentType
-import chat.trix.android.core.ffi.FfiCreateMessageParams
+import chat.trix.android.core.ffi.FfiCreateChatControlInput
+import chat.trix.android.core.ffi.FfiDirectoryAccount
 import chat.trix.android.core.ffi.FfiLocalHistoryStore
 import chat.trix.android.core.ffi.FfiLocalProjectedMessage
 import chat.trix.android.core.ffi.FfiLocalProjectionKind
@@ -16,10 +18,10 @@ import chat.trix.android.core.ffi.FfiMessageEnvelope
 import chat.trix.android.core.ffi.FfiMessageKind
 import chat.trix.android.core.ffi.FfiMlsConversation
 import chat.trix.android.core.ffi.FfiMlsFacade
+import chat.trix.android.core.ffi.FfiSendMessageInput
 import chat.trix.android.core.ffi.FfiServerApiClient
 import chat.trix.android.core.ffi.FfiSyncCoordinator
 import chat.trix.android.core.ffi.TrixFfiException
-import chat.trix.android.core.ffi.ffiSerializeMessageBody
 import java.io.File
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -109,6 +111,52 @@ class ChatRepository(
         }
     }
 
+    suspend fun searchAccountDirectory(query: String): List<ChatDirectoryAccount> = withContext(Dispatchers.IO) {
+        runFfi("Failed to search account directory") {
+            val client = client()
+            client.setAccessToken(session.accessToken)
+            client.searchAccountDirectory(
+                query.trim().takeIf(String::isNotEmpty),
+                DIRECTORY_SEARCH_LIMIT,
+                true,
+            )
+                .accounts
+                .map(::mapDirectoryAccount)
+        }
+    }
+
+    suspend fun createDirectMessage(targetAccountId: String): ChatCreateResult = withContext(Dispatchers.IO) {
+        runFfi("Failed to create direct message") {
+            val client = client()
+            val store = historyStore()
+            val syncCoordinator = syncCoordinator()
+            val facade = mlsFacade()
+
+            client.setAccessToken(session.accessToken)
+            val outcome = syncCoordinator.createChatControl(
+                client = client,
+                store = store,
+                facade = facade,
+                input = FfiCreateChatControlInput(
+                    creatorAccountId = session.localState.accountId,
+                    creatorDeviceId = session.localState.deviceId,
+                    chatType = FfiChatType.DM,
+                    title = null,
+                    participantAccountIds = listOf(targetAccountId),
+                    groupId = null,
+                    commitAadJson = EMPTY_AAD_JSON,
+                    welcomeAadJson = EMPTY_AAD_JSON,
+                ),
+            )
+
+            ChatCreateResult(
+                overview = buildOverview(),
+                conversation = buildConversation(outcome.chatId)
+                    ?: throw IOException("Conversation ${outcome.chatId} is no longer available"),
+            )
+        }
+    }
+
     suspend fun sendTextMessage(chatId: String, draft: String): ChatSendResult = withContext(Dispatchers.IO) {
         val normalizedDraft = draft.trim()
         if (normalizedDraft.isEmpty()) {
@@ -126,58 +174,39 @@ class ChatRepository(
                 ?: throw IOException("Local MLS state is not available for this conversation")
 
             try {
-                val plaintext = ffiSerializeMessageBody(
-                    FfiMessageBody(
-                        kind = FfiMessageBodyKind.TEXT,
-                        text = normalizedDraft,
-                        targetMessageId = null,
-                        emoji = null,
-                        reactionAction = null,
-                        receiptType = null,
-                        receiptAtUnix = null,
-                        blobId = null,
-                        mimeType = null,
-                        sizeBytes = null,
-                        sha256 = null,
-                        fileName = null,
-                        widthPx = null,
-                        heightPx = null,
-                        fileKey = null,
-                        nonce = null,
-                        eventType = null,
-                        eventJson = null,
-                    ),
-                )
-                val messageId = UUID.randomUUID().toString()
-                val epoch = conversation.epoch()
-                val ciphertext = facade.createApplicationMessage(conversation, plaintext)
-                val response = client.createMessage(
-                    chatId,
-                    FfiCreateMessageParams(
-                        messageId = messageId,
-                        epoch = epoch,
-                        messageKind = FfiMessageKind.APPLICATION,
-                        contentType = FfiContentType.TEXT,
-                        ciphertext = ciphertext,
+                syncCoordinator.sendMessageBody(
+                    client = client,
+                    store = store,
+                    facade = facade,
+                    conversation = conversation,
+                    input = FfiSendMessageInput(
+                        senderAccountId = session.localState.accountId,
+                        senderDeviceId = session.localState.deviceId,
+                        chatId = chatId,
+                        messageId = UUID.randomUUID().toString(),
+                        body = FfiMessageBody(
+                            kind = FfiMessageBodyKind.TEXT,
+                            text = normalizedDraft,
+                            targetMessageId = null,
+                            emoji = null,
+                            reactionAction = null,
+                            receiptType = null,
+                            receiptAtUnix = null,
+                            blobId = null,
+                            mimeType = null,
+                            sizeBytes = null,
+                            sha256 = null,
+                            fileName = null,
+                            widthPx = null,
+                            heightPx = null,
+                            fileKey = null,
+                            nonce = null,
+                            eventType = null,
+                            eventJson = null,
+                        ),
                         aadJson = EMPTY_AAD_JSON,
                     ),
                 )
-
-                val envelope = loadJustCreatedEnvelope(
-                    client = client,
-                    chatId = chatId,
-                    messageId = response.messageId,
-                    serverSeq = response.serverSeq,
-                    epoch = epoch,
-                    ciphertext = ciphertext,
-                )
-                store.applyLocalProjection(
-                    envelope = envelope,
-                    projectionKind = FfiLocalProjectionKind.APPLICATION_MESSAGE,
-                    payload = plaintext,
-                    mergedEpoch = null,
-                )
-                syncCoordinator.recordChatServerSeq(chatId, response.serverSeq)
 
                 ChatSendResult(
                     overview = buildOverview(),
@@ -221,7 +250,10 @@ class ChatRepository(
             ChatConversationSummary(
                 chatId = summary.chatId,
                 title = resolveChatTitle(summary, detail),
-                participantsLabel = participantsLabel(detail),
+                participantsLabel = participantsLabel(
+                    summary = summary,
+                    detail = detail,
+                ),
                 lastMessagePreview = latestEntry?.let { entry ->
                     when (entry) {
                         is ChatTimelineEntry.Projected -> {
@@ -302,10 +334,20 @@ class ChatRepository(
                     chatType = detail.chatType,
                     title = detail.title,
                     lastServerSeq = detail.lastServerSeq,
+                    participantProfiles = detail.participantProfiles,
                 ),
                 detail = detail,
             ),
-            participantsLabel = participantsLabel(detail),
+            participantsLabel = participantsLabel(
+                summary = FfiChatSummary(
+                    chatId = detail.chatId,
+                    chatType = detail.chatType,
+                    title = detail.title,
+                    lastServerSeq = detail.lastServerSeq,
+                    participantProfiles = detail.participantProfiles,
+                ),
+                detail = detail,
+            ),
             timelineLabel = when {
                 projectedMessages.isEmpty() -> "Encrypted cache only"
                 projectedMessages.size == mergedTimeline.size -> "Projected timeline"
@@ -378,7 +420,8 @@ class ChatRepository(
         if (chatId != session.localState.accountSyncChatId) {
             return null
         }
-        return mlsFacade().createGroup(stableLocalGroupId(chatId))
+        val groupId = resolveChatGroupId(chatId) ?: return null
+        return mlsFacade().createGroup(groupId)
     }
 
     private fun hasLocalConversation(chatId: String): Boolean {
@@ -388,7 +431,20 @@ class ChatRepository(
     }
 
     private fun loadLocalConversation(chatId: String): FfiMlsConversation? {
-        return mlsFacade().loadGroup(stableLocalGroupId(chatId))
+        val groupId = resolveChatGroupId(chatId) ?: return null
+        return mlsFacade().loadGroup(groupId)
+    }
+
+    private fun resolveChatGroupId(chatId: String): ByteArray? {
+        val store = historyStore()
+        store.chatMlsGroupId(chatId)?.let { return it }
+        if (chatId != session.localState.accountSyncChatId) {
+            return null
+        }
+
+        val fallback = stableLocalGroupId(chatId)
+        store.setChatMlsGroupId(chatId, fallback)
+        return fallback
     }
 
     private fun stableLocalGroupId(chatId: String): ByteArray {
@@ -401,37 +457,6 @@ class ChatRepository(
         }.getOrElse {
             chatId.encodeToByteArray()
         }
-    }
-
-    private fun loadJustCreatedEnvelope(
-        client: FfiServerApiClient,
-        chatId: String,
-        messageId: String,
-        serverSeq: ULong,
-        epoch: ULong,
-        ciphertext: ByteArray,
-    ): FfiMessageEnvelope {
-        val afterServerSeq = if (serverSeq > 0uL) serverSeq - 1uL else null
-        val serverEnvelope = client.getChatHistory(chatId, afterServerSeq, 1u)
-            .messages
-            .firstOrNull { it.messageId == messageId }
-        if (serverEnvelope != null) {
-            return serverEnvelope
-        }
-
-        return FfiMessageEnvelope(
-            messageId = messageId,
-            chatId = chatId,
-            serverSeq = serverSeq,
-            senderAccountId = session.localState.accountId,
-            senderDeviceId = session.localState.deviceId,
-            epoch = epoch,
-            messageKind = FfiMessageKind.APPLICATION,
-            contentType = FfiContentType.TEXT,
-            ciphertext = ciphertext,
-            aadJson = EMPTY_AAD_JSON,
-            createdAtUnix = Instant.now().epochSecond.toULong(),
-        )
     }
 
     private fun client(): FfiServerApiClient = clientDelegate.value
@@ -475,12 +500,16 @@ class ChatRepository(
 
         return when (detail?.chatType ?: summary.chatType) {
             FfiChatType.DM -> {
-                detail?.members
-                    ?.asSequence()
-                    ?.map { it.accountId }
-                    ?.firstOrNull { it != session.localState.accountId }
-                    ?.let(::shortAccountId)
+                participantProfiles(summary, detail)
+                    .firstOrNull { it.accountId != session.localState.accountId }
+                    ?.let(::participantDisplayName)
                     ?.let { "DM with $it" }
+                    ?: detail?.members
+                        ?.asSequence()
+                        ?.map { it.accountId }
+                        ?.firstOrNull { it != session.localState.accountId }
+                        ?.let(::shortAccountId)
+                        ?.let { "DM with $it" }
                     ?: "Direct message"
             }
 
@@ -489,10 +518,26 @@ class ChatRepository(
         }
     }
 
-    private fun participantsLabel(detail: FfiChatDetail?): String {
+    private fun participantsLabel(
+        summary: FfiChatSummary,
+        detail: FfiChatDetail?,
+    ): String {
+        val profiles = participantProfiles(summary, detail)
+        if (profiles.isNotEmpty()) {
+            val visibleMembers = profiles
+                .take(MAX_VISIBLE_MEMBERS)
+                .joinToString(", ", transform = ::participantDisplayName)
+            val remainder = profiles.size - MAX_VISIBLE_MEMBERS
+            return if (remainder > 0) {
+                "$visibleMembers +$remainder"
+            } else {
+                visibleMembers
+            }
+        }
+
         val members = detail?.members.orEmpty()
         if (members.isEmpty()) {
-            return when (detail?.chatType) {
+            return when (detail?.chatType ?: summary.chatType) {
                 FfiChatType.ACCOUNT_SYNC -> "Private cross-device sync channel"
                 FfiChatType.GROUP -> "Member metadata pending"
                 else -> "Member metadata pending"
@@ -516,12 +561,38 @@ class ChatRepository(
         }
     }
 
+    private fun participantProfiles(
+        summary: FfiChatSummary,
+        detail: FfiChatDetail?,
+    ): List<FfiChatParticipantProfile> {
+        return detail?.participantProfiles?.takeIf(List<FfiChatParticipantProfile>::isNotEmpty)
+            ?: summary.participantProfiles
+    }
+
+    private fun participantDisplayName(profile: FfiChatParticipantProfile): String {
+        if (profile.accountId == session.localState.accountId) {
+            return "You"
+        }
+        return profile.profileName.takeIf(String::isNotBlank)
+            ?: profile.handle?.takeIf(String::isNotBlank)?.let { "@$it" }
+            ?: shortAccountId(profile.accountId)
+    }
+
     private fun authorLabel(accountId: String): String {
         return if (accountId == session.localState.accountId) {
             "You"
         } else {
             shortAccountId(accountId)
         }
+    }
+
+    private fun mapDirectoryAccount(account: FfiDirectoryAccount): ChatDirectoryAccount {
+        return ChatDirectoryAccount(
+            accountId = account.accountId,
+            handle = account.handle,
+            profileName = account.profileName,
+            profileBio = account.profileBio,
+        )
     }
 
     private fun projectedMessageBody(message: FfiLocalProjectedMessage): String {
@@ -637,6 +708,7 @@ class ChatRepository(
 
     companion object {
         private const val MAX_VISIBLE_MEMBERS = 3
+        private val DIRECTORY_SEARCH_LIMIT = 20u
         private val HISTORY_SYNC_LIMIT = 200u
         private val INBOX_SYNC_LIMIT = 100u
         private val LEASE_TTL_SECONDS = 60uL
@@ -684,6 +756,18 @@ data class ChatRefreshResult(
 data class ChatSendResult(
     val overview: ChatOverview,
     val conversation: ChatConversation,
+)
+
+data class ChatCreateResult(
+    val overview: ChatOverview,
+    val conversation: ChatConversation,
+)
+
+data class ChatDirectoryAccount(
+    val accountId: String,
+    val handle: String?,
+    val profileName: String,
+    val profileBio: String?,
 )
 
 data class ChatConversationSummary(

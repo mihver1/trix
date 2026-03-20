@@ -2582,6 +2582,18 @@ fn ffi_chat_detail_to_api(
             .last_commit_message_id
             .map(|message_id| parse_message_id(&message_id))
             .transpose()?,
+        participant_profiles: value
+            .participant_profiles
+            .into_iter()
+            .map(|profile| {
+                Ok(trix_types::ChatParticipantProfileSummary {
+                    account_id: parse_account_id(&profile.account_id)?,
+                    handle: profile.handle,
+                    profile_name: profile.profile_name,
+                    profile_bio: profile.profile_bio,
+                })
+            })
+            .collect::<Result<Vec<_>, TrixFfiError>>()?,
         members: value
             .members
             .into_iter()
