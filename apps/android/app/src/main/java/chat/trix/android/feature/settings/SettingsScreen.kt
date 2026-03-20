@@ -102,7 +102,7 @@ fun SettingsScreen(
             item {
                 SettingsCard(
                     title = "Next build-out",
-                    body = "Wire persistent MLS group state and outgoing message creation, then move from read-only cached transcripts to full send, link, and device approval flows.",
+                    body = "Expand from the current local-MLS send path into device linking, trusted-device approval, and proper group-state bridging once the backend exposes canonical MLS group identity to clients.",
                 )
             }
         }

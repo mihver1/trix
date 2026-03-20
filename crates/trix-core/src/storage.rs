@@ -697,6 +697,58 @@ impl LocalHistoryStore {
         })
     }
 
+    pub fn apply_local_projection(
+        &mut self,
+        envelope: &MessageEnvelope,
+        projection_kind: LocalProjectionKind,
+        payload: Option<Vec<u8>>,
+        merged_epoch: Option<u64>,
+    ) -> Result<LocalStoreApplyReport> {
+        let mut report = self.apply_chat_history(&ChatHistoryResponse {
+            chat_id: envelope.chat_id,
+            messages: vec![envelope.clone()],
+        })?;
+
+        let chat = self
+            .state
+            .chats
+            .get_mut(&envelope.chat_id.0.to_string())
+            .ok_or_else(|| anyhow!("chat {} is missing from local store", envelope.chat_id.0))?;
+        let projected = persisted_projected_message_from(LocalProjectedMessage {
+            server_seq: envelope.server_seq,
+            message_id: envelope.message_id,
+            sender_account_id: envelope.sender_account_id,
+            sender_device_id: envelope.sender_device_id,
+            epoch: envelope.epoch,
+            message_kind: envelope.message_kind,
+            content_type: envelope.content_type,
+            projection_kind,
+            payload,
+            merged_epoch,
+            created_at_unix: envelope.created_at_unix,
+        });
+
+        let mut changed = false;
+        let entry_changed = match chat.projected_messages.get(&envelope.server_seq) {
+            Some(existing) => existing != &projected,
+            None => true,
+        };
+        if entry_changed {
+            chat.projected_messages.insert(envelope.server_seq, projected);
+            changed = true;
+        }
+        if envelope.server_seq > chat.projected_cursor_server_seq {
+            chat.projected_cursor_server_seq = envelope.server_seq;
+            changed = true;
+        }
+
+        self.persist_if_needed(changed)?;
+        if changed && !report.changed_chat_ids.contains(&envelope.chat_id) {
+            report.changed_chat_ids.push(envelope.chat_id);
+        }
+        Ok(report)
+    }
+
     fn persist_if_needed(&self, changed: bool) -> Result<()> {
         if changed {
             self.save_state()?;

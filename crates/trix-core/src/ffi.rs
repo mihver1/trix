@@ -1618,6 +1618,26 @@ impl FfiLocalHistoryStore {
         ))
     }
 
+    pub fn apply_local_projection(
+        &self,
+        envelope: FfiMessageEnvelope,
+        projection_kind: FfiLocalProjectionKind,
+        payload: Option<Vec<u8>>,
+        merged_epoch: Option<u64>,
+    ) -> Result<FfiLocalStoreApplyReport, TrixFfiError> {
+        let envelope = ffi_message_envelope_to_api(envelope)?;
+        Ok(local_store_apply_report_to_ffi(
+            lock(&self.inner)?
+                .apply_local_projection(
+                    &envelope,
+                    projection_kind.into(),
+                    payload,
+                    merged_epoch,
+                )
+                .map_err(ffi_error)?,
+        ))
+    }
+
     pub fn apply_chat_history(
         &self,
         history: FfiChatHistory,
@@ -2512,6 +2532,20 @@ fn ffi_chat_detail_to_api(
                 })
             })
             .collect::<Result<Vec<_>, TrixFfiError>>()?,
+        device_members: value
+            .device_members
+            .into_iter()
+            .map(|member| {
+                Ok(trix_types::ChatDeviceSummary {
+                    device_id: parse_device_id(&member.device_id)?,
+                    account_id: parse_account_id(&member.account_id)?,
+                    display_name: member.display_name,
+                    platform: member.platform,
+                    leaf_index: member.leaf_index,
+                    credential_identity_b64: crate::encode_b64(&member.credential_identity),
+                })
+            })
+            .collect::<Result<Vec<_>, TrixFfiError>>()?,
     })
 }
 
@@ -3133,6 +3167,18 @@ impl From<LocalProjectionKind> for FfiLocalProjectionKind {
             LocalProjectionKind::CommitMerged => Self::CommitMerged,
             LocalProjectionKind::WelcomeRef => Self::WelcomeRef,
             LocalProjectionKind::System => Self::System,
+        }
+    }
+}
+
+impl From<FfiLocalProjectionKind> for LocalProjectionKind {
+    fn from(value: FfiLocalProjectionKind) -> Self {
+        match value {
+            FfiLocalProjectionKind::ApplicationMessage => Self::ApplicationMessage,
+            FfiLocalProjectionKind::ProposalQueued => Self::ProposalQueued,
+            FfiLocalProjectionKind::CommitMerged => Self::CommitMerged,
+            FfiLocalProjectionKind::WelcomeRef => Self::WelcomeRef,
+            FfiLocalProjectionKind::System => Self::System,
         }
     }
 }

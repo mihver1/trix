@@ -43,8 +43,8 @@ The better tradeoff for this PoC is still:
 
 ## Next Android Tasks
 
-- introduce thread caching and message timeline syncing
-- persist MLS state and ratchet trees through `FfiMlsFacade`
+- bridge canonical MLS `group_id` from the backend into Android so local state matches cross-device traffic
+- extend the current text send path into attachments, receipts, and commit/welcome handling
 - implement device linking and trusted-device approval flows on top of the FFI server client
 
 ## Current Live Flow
@@ -55,6 +55,9 @@ The better tradeoff for this PoC is still:
 - open an auth challenge/session for the stored device through `FfiServerApiClient`
 - persist bootstrap state locally in an encrypted file protected by Android Keystore
 - restore a saved device session on app launch
+- sync cached chats and inbox items into the local Rust-backed history store
+- project decryptable transcripts through persistent `FfiMlsFacade` state when this device has the group locally
+- send text messages into chats backed by local MLS state, with local projection applied immediately after server accept
 
 ## FFI Build Requirements
 

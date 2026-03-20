@@ -23,8 +23,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.MarkUnreadChatAlt
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.Badge
@@ -39,6 +42,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -61,6 +65,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -105,6 +110,7 @@ fun ChatsScreen(
     var overviewVersion by remember(repository) { mutableIntStateOf(0) }
     var overviewState by remember(repository) { mutableStateOf(ChatsOverviewState(isRefreshing = true)) }
     var detailState by remember(repository) { mutableStateOf(ChatsDetailState()) }
+    var composerDraft by rememberSaveable(selectedConversationId) { mutableStateOf("") }
 
     suspend fun loadCachedOverview(): ChatOverview? {
         return try {
@@ -149,6 +155,47 @@ fun ChatsScreen(
             if (fallbackOverview != null) {
                 overviewVersion += 1
             }
+        }
+    }
+
+    suspend fun sendDraftMessage() {
+        val chatId = selectedConversationId ?: return
+        val conversation = detailState.conversation?.takeIf { it.chatId == chatId } ?: return
+        if (!conversation.canSend || detailState.isSending) {
+            return
+        }
+
+        val draft = composerDraft
+        if (draft.isBlank()) {
+            return
+        }
+
+        detailState = detailState.copy(
+            isSending = true,
+            sendErrorMessage = null,
+            errorMessage = null,
+        )
+
+        try {
+            val result = repository.sendTextMessage(chatId, draft)
+            composerDraft = ""
+            overviewState = overviewState.copy(
+                overview = result.overview,
+                errorMessage = null,
+            )
+            overviewVersion += 1
+            detailState = detailState.copy(
+                conversation = result.conversation,
+                isLoading = false,
+                isSending = false,
+                errorMessage = null,
+                sendErrorMessage = null,
+            )
+        } catch (error: IOException) {
+            detailState = detailState.copy(
+                isSending = false,
+                sendErrorMessage = error.message ?: "Failed to send message",
+            )
         }
     }
 
@@ -198,6 +245,8 @@ fun ChatsScreen(
             conversation = currentConversation,
             isLoading = true,
             errorMessage = null,
+            isSending = false,
+            sendErrorMessage = null,
         )
 
         detailState = try {
@@ -288,6 +337,11 @@ fun ChatsScreen(
                     conversation = selectedConversation,
                     isLoading = detailState.isLoading,
                     errorMessage = detailState.errorMessage,
+                    composerDraft = composerDraft,
+                    onComposerDraftChange = { composerDraft = it },
+                    isSending = detailState.isSending,
+                    sendErrorMessage = detailState.sendErrorMessage,
+                    onSend = { coroutineScope.launch { sendDraftMessage() } },
                     modifier = contentModifier,
                 )
             }
@@ -300,6 +354,11 @@ fun ChatsScreen(
                     detailState = detailState,
                     onConversationClick = { selectedConversationId = it },
                     onRefresh = { coroutineScope.launch { syncChats() } },
+                    composerDraft = composerDraft,
+                    onComposerDraftChange = { composerDraft = it },
+                    isSending = detailState.isSending,
+                    sendErrorMessage = detailState.sendErrorMessage,
+                    onSend = { coroutineScope.launch { sendDraftMessage() } },
                     foldPosture = windowInfo.foldPosture,
                     foldBounds = windowInfo.foldBounds,
                     modifier = contentModifier,
@@ -311,6 +370,11 @@ fun ChatsScreen(
                     conversation = selectedConversation,
                     isLoading = detailState.isLoading,
                     errorMessage = detailState.errorMessage,
+                    composerDraft = composerDraft,
+                    onComposerDraftChange = { composerDraft = it },
+                    isSending = detailState.isSending,
+                    sendErrorMessage = detailState.sendErrorMessage,
+                    onSend = { coroutineScope.launch { sendDraftMessage() } },
                     modifier = contentModifier,
                 )
             }
@@ -437,6 +501,11 @@ private fun WideConversationLayout(
     detailState: ChatsDetailState,
     onConversationClick: (String) -> Unit,
     onRefresh: () -> Unit,
+    composerDraft: String,
+    onComposerDraftChange: (String) -> Unit,
+    isSending: Boolean,
+    sendErrorMessage: String?,
+    onSend: () -> Unit,
     foldPosture: TrixFoldPosture,
     foldBounds: Rect?,
     modifier: Modifier = Modifier,
@@ -481,6 +550,11 @@ private fun WideConversationLayout(
                 conversation = selectedConversation,
                 isLoading = detailState.isLoading,
                 errorMessage = detailState.errorMessage,
+                composerDraft = composerDraft,
+                onComposerDraftChange = onComposerDraftChange,
+                isSending = isSending,
+                sendErrorMessage = sendErrorMessage,
+                onSend = onSend,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight(),
@@ -494,6 +568,11 @@ private fun TabletopConversationLayout(
     conversation: ChatConversation?,
     isLoading: Boolean,
     errorMessage: String?,
+    composerDraft: String,
+    onComposerDraftChange: (String) -> Unit,
+    isSending: Boolean,
+    sendErrorMessage: String?,
+    onSend: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -503,9 +582,15 @@ private fun TabletopConversationLayout(
             conversation = conversation,
             isLoading = isLoading,
             errorMessage = errorMessage,
+            composerDraft = composerDraft,
+            onComposerDraftChange = onComposerDraftChange,
+            isSending = isSending,
+            sendErrorMessage = sendErrorMessage,
+            onSend = onSend,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
+            showComposer = false,
             compactHeader = false,
         )
         HorizontalDivider()
@@ -527,11 +612,27 @@ private fun TabletopConversationLayout(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "The transcript stays above the hinge while refresh and compose diagnostics stay below it.",
+                    text = "The transcript stays above the hinge while the composer and diagnostics stay below it.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                ReadOnlyComposerPane()
+                if (conversation != null) {
+                    ConversationComposerPane(
+                        conversation = conversation,
+                        draftText = composerDraft,
+                        onDraftChange = onComposerDraftChange,
+                        isSending = isSending,
+                        sendErrorMessage = sendErrorMessage,
+                        errorMessage = errorMessage,
+                        onSend = onSend,
+                    )
+                } else if (errorMessage != null) {
+                    Text(
+                        text = errorMessage,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         }
     }
@@ -774,13 +875,24 @@ private fun ConversationDetailPane(
     conversation: ChatConversation?,
     isLoading: Boolean,
     errorMessage: String?,
+    composerDraft: String,
+    onComposerDraftChange: (String) -> Unit,
+    isSending: Boolean,
+    sendErrorMessage: String?,
+    onSend: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     ConversationDetailContent(
         conversation = conversation,
         isLoading = isLoading,
         errorMessage = errorMessage,
+        composerDraft = composerDraft,
+        onComposerDraftChange = onComposerDraftChange,
+        isSending = isSending,
+        sendErrorMessage = sendErrorMessage,
+        onSend = onSend,
         modifier = modifier,
+        showComposer = true,
         compactHeader = true,
     )
 }
@@ -790,7 +902,13 @@ private fun ConversationDetailContent(
     conversation: ChatConversation?,
     isLoading: Boolean,
     errorMessage: String?,
+    composerDraft: String,
+    onComposerDraftChange: (String) -> Unit,
+    isSending: Boolean,
+    sendErrorMessage: String?,
+    onSend: () -> Unit,
     modifier: Modifier = Modifier,
+    showComposer: Boolean,
     compactHeader: Boolean,
 ) {
     Column(
@@ -856,12 +974,20 @@ private fun ConversationDetailContent(
                         .fillMaxWidth(),
                 )
 
-                HorizontalDivider()
+                if (showComposer) {
+                    HorizontalDivider()
 
-                ReadOnlyComposerPane(
-                    errorMessage = errorMessage,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                    ConversationComposerPane(
+                        conversation = conversation,
+                        draftText = composerDraft,
+                        onDraftChange = onComposerDraftChange,
+                        isSending = isSending,
+                        sendErrorMessage = sendErrorMessage,
+                        errorMessage = errorMessage,
+                        onSend = onSend,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         }
     }
@@ -943,8 +1069,14 @@ private fun ConversationTranscript(
 }
 
 @Composable
-private fun ReadOnlyComposerPane(
+private fun ConversationComposerPane(
+    conversation: ChatConversation,
+    draftText: String,
+    onDraftChange: (String) -> Unit,
+    isSending: Boolean,
+    sendErrorMessage: String?,
     errorMessage: String? = null,
+    onSend: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -953,33 +1085,84 @@ private fun ReadOnlyComposerPane(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+        if (conversation.canSend) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.Bottom,
             ) {
-                Text(
-                    text = "Read-only sync preview",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
+                OutlinedTextField(
+                    value = draftText,
+                    onValueChange = onDraftChange,
+                    modifier = Modifier.weight(1f),
+                    enabled = !isSending,
+                    placeholder = { Text(conversation.composerHint) },
+                    minLines = 2,
+                    maxLines = 4,
+                    keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(
+                        onSend = {
+                            if (draftText.isNotBlank() && !isSending) {
+                                onSend()
+                            }
+                        },
+                    ),
                 )
-                Text(
-                    text = "This slice renders the Rust-backed cache and sync coordinator first. Outgoing MLS send turns on after persistent group state and message creation land on Android.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (errorMessage != null) {
+                FilledTonalIconButton(
+                    onClick = onSend,
+                    enabled = !isSending && draftText.isNotBlank(),
+                    modifier = Modifier.size(56.dp),
+                ) {
+                    if (isSending) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.Send,
+                            contentDescription = "Send message",
+                        )
+                    }
+                }
+            }
+        } else {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
                     Text(
-                        text = errorMessage,
+                        text = "Sending unavailable",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = conversation.composerHint,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.error,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
+        }
+
+        if (sendErrorMessage != null) {
+            Text(
+                text = sendErrorMessage,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        if (errorMessage != null) {
+            Text(
+                text = errorMessage,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
         }
     }
 }
@@ -1015,6 +1198,8 @@ private data class ChatsDetailState(
     val conversation: ChatConversation? = null,
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
+    val isSending: Boolean = false,
+    val sendErrorMessage: String? = null,
 )
 
 private fun ChatRefreshResult.toSummary(): String {
@@ -1027,6 +1212,8 @@ private fun ChatRefreshResult.toSummary(): String {
         append(ackedInboxCount)
         append(" inbox ids, hydrated ")
         append(hydratedChatDetails)
-        append(" chat details.")
+        append(" chat details, projected ")
+        append(projectedChatTimelines)
+        append(" local MLS timelines.")
     }
 }

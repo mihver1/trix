@@ -40,6 +40,8 @@ fun BootstrapScreen(
     storedDevice: StoredDeviceSummary?,
     busyMessage: String?,
     errorMessage: String?,
+    backendErrorMessage: String?,
+    onUpdateBaseUrl: (String) -> Unit,
     onCreateAccount: (BootstrapInput) -> Unit,
     onReconnectStoredDevice: (() -> Unit)?,
     onForgetStoredDevice: (() -> Unit)?,
@@ -49,6 +51,7 @@ fun BootstrapScreen(
     var handle by rememberSaveable { mutableStateOf("") }
     var profileBio by rememberSaveable { mutableStateOf("") }
     var deviceDisplayName by rememberSaveable { mutableStateOf(defaultDeviceName()) }
+    var editableBaseUrl by rememberSaveable(baseUrl) { mutableStateOf(baseUrl) }
     val isBusy = busyMessage != null
 
     Box(
@@ -85,12 +88,17 @@ fun BootstrapScreen(
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                     )
-                    ElevatedAssistChip(
-                        onClick = {},
-                        label = { Text("Backend: $baseUrl") },
-                    )
                 }
             }
+
+            BackendServerCard(
+                baseUrl = baseUrl,
+                editableBaseUrl = editableBaseUrl,
+                onEditableBaseUrlChange = { editableBaseUrl = it },
+                errorMessage = backendErrorMessage,
+                isBusy = isBusy,
+                onApplyBaseUrl = { onUpdateBaseUrl(editableBaseUrl) },
+            )
 
             if (storedDevice != null) {
                 StoredDeviceCard(
@@ -147,6 +155,71 @@ fun BootstrapScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BackendServerCard(
+    baseUrl: String,
+    editableBaseUrl: String,
+    onEditableBaseUrlChange: (String) -> Unit,
+    errorMessage: String?,
+    isBusy: Boolean,
+    onApplyBaseUrl: () -> Unit,
+) {
+    val hasPendingChange = editableBaseUrl.trim().trimEnd('/') != baseUrl.trim().trimEnd('/')
+
+    Surface(
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = "Backend server",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = "You can switch the test server directly from Android. In the emulator, your host machine is usually `http://10.0.2.2:8080`.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = editableBaseUrl,
+                onValueChange = onEditableBaseUrlChange,
+                label = { Text("Base URL") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                enabled = !isBusy,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ElevatedAssistChip(
+                    onClick = {},
+                    label = { Text("Current: $baseUrl") },
+                )
+                Button(
+                    onClick = onApplyBaseUrl,
+                    enabled = !isBusy && hasPendingChange && editableBaseUrl.isNotBlank(),
+                ) {
+                    Text("Apply")
+                }
+            }
+            if (!errorMessage.isNullOrBlank()) {
+                Text(
+                    text = errorMessage,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
         }
     }

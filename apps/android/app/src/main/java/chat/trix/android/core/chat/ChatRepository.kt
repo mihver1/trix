@@ -3,10 +3,10 @@ package chat.trix.android.core.chat
 import android.content.Context
 import chat.trix.android.core.auth.AuthenticatedSession
 import chat.trix.android.core.ffi.FfiChatDetail
-import chat.trix.android.core.ffi.FfiChatHistory
 import chat.trix.android.core.ffi.FfiChatSummary
 import chat.trix.android.core.ffi.FfiChatType
 import chat.trix.android.core.ffi.FfiContentType
+import chat.trix.android.core.ffi.FfiCreateMessageParams
 import chat.trix.android.core.ffi.FfiLocalHistoryStore
 import chat.trix.android.core.ffi.FfiLocalProjectedMessage
 import chat.trix.android.core.ffi.FfiLocalProjectionKind
@@ -14,16 +14,21 @@ import chat.trix.android.core.ffi.FfiMessageBody
 import chat.trix.android.core.ffi.FfiMessageBodyKind
 import chat.trix.android.core.ffi.FfiMessageEnvelope
 import chat.trix.android.core.ffi.FfiMessageKind
+import chat.trix.android.core.ffi.FfiMlsConversation
+import chat.trix.android.core.ffi.FfiMlsFacade
 import chat.trix.android.core.ffi.FfiServerApiClient
 import chat.trix.android.core.ffi.FfiSyncCoordinator
 import chat.trix.android.core.ffi.TrixFfiException
+import chat.trix.android.core.ffi.ffiSerializeMessageBody
 import java.io.File
 import java.io.IOException
+import java.nio.ByteBuffer
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -39,6 +44,7 @@ class ChatRepository(
     )
     private val historyStorePath = File(sessionRoot, "history/local-history-v1.json")
     private val syncStatePath = File(sessionRoot, "sync/sync-state-v1.json")
+    private val mlsStorageRoot = File(sessionRoot, "mls")
     private val clientDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         FfiServerApiClient(session.baseUrl)
     }
@@ -47,6 +53,16 @@ class ChatRepository(
     }
     private val syncCoordinatorDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         FfiSyncCoordinator.newPersistent(syncStatePath.absolutePath)
+    }
+    private val mlsFacadeDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        if (mlsMetadataFile().exists() && mlsStorageFile().exists()) {
+            FfiMlsFacade.loadPersistent(mlsStorageRoot.absolutePath)
+        } else {
+            FfiMlsFacade.newPersistent(
+                session.localState.credentialIdentity,
+                mlsStorageRoot.absolutePath,
+            )
+        }
     }
 
     suspend fun loadOverview(): ChatOverview = withContext(Dispatchers.IO) {
@@ -80,6 +96,7 @@ class ChatRepository(
                 leaseTtlSeconds = LEASE_TTL_SECONDS,
             )
             val hydratedChatDetails = hydrateChatDetails(client, store)
+            val projectedChatTimelines = projectChatsWithLocalMlsState(store)
 
             ChatRefreshResult(
                 overview = buildOverview(),
@@ -87,7 +104,89 @@ class ChatRepository(
                 inboxMessagesUpserted = inboxOutcome.report.messagesUpserted.toLong(),
                 ackedInboxCount = inboxOutcome.ackedInboxIds.size,
                 hydratedChatDetails = hydratedChatDetails,
+                projectedChatTimelines = projectedChatTimelines,
             )
+        }
+    }
+
+    suspend fun sendTextMessage(chatId: String, draft: String): ChatSendResult = withContext(Dispatchers.IO) {
+        val normalizedDraft = draft.trim()
+        if (normalizedDraft.isEmpty()) {
+            throw IOException("Message is empty")
+        }
+
+        runFfi("Failed to send message") {
+            val client = client()
+            val store = historyStore()
+            val syncCoordinator = syncCoordinator()
+            val facade = mlsFacade()
+
+            client.setAccessToken(session.accessToken)
+            val conversation = getOrCreateSendConversation(chatId)
+                ?: throw IOException("Local MLS state is not available for this conversation")
+
+            try {
+                val plaintext = ffiSerializeMessageBody(
+                    FfiMessageBody(
+                        kind = FfiMessageBodyKind.TEXT,
+                        text = normalizedDraft,
+                        targetMessageId = null,
+                        emoji = null,
+                        reactionAction = null,
+                        receiptType = null,
+                        receiptAtUnix = null,
+                        blobId = null,
+                        mimeType = null,
+                        sizeBytes = null,
+                        sha256 = null,
+                        fileName = null,
+                        widthPx = null,
+                        heightPx = null,
+                        fileKey = null,
+                        nonce = null,
+                        eventType = null,
+                        eventJson = null,
+                    ),
+                )
+                val messageId = UUID.randomUUID().toString()
+                val epoch = conversation.epoch()
+                val ciphertext = facade.createApplicationMessage(conversation, plaintext)
+                val response = client.createMessage(
+                    chatId,
+                    FfiCreateMessageParams(
+                        messageId = messageId,
+                        epoch = epoch,
+                        messageKind = FfiMessageKind.APPLICATION,
+                        contentType = FfiContentType.TEXT,
+                        ciphertext = ciphertext,
+                        aadJson = EMPTY_AAD_JSON,
+                    ),
+                )
+
+                val envelope = loadJustCreatedEnvelope(
+                    client = client,
+                    chatId = chatId,
+                    messageId = response.messageId,
+                    serverSeq = response.serverSeq,
+                    epoch = epoch,
+                    ciphertext = ciphertext,
+                )
+                store.applyLocalProjection(
+                    envelope = envelope,
+                    projectionKind = FfiLocalProjectionKind.APPLICATION_MESSAGE,
+                    payload = plaintext,
+                    mergedEpoch = null,
+                )
+                syncCoordinator.recordChatServerSeq(chatId, response.serverSeq)
+
+                ChatSendResult(
+                    overview = buildOverview(),
+                    conversation = buildConversation(chatId)
+                        ?: throw IOException("Conversation $chatId is no longer available"),
+                )
+            } finally {
+                conversation.close()
+            }
         }
     }
 
@@ -101,6 +200,9 @@ class ChatRepository(
         if (syncCoordinatorDelegate.isInitialized()) {
             syncCoordinatorDelegate.value.close()
         }
+        if (mlsFacadeDelegate.isInitialized()) {
+            mlsFacadeDelegate.value.close()
+        }
     }
 
     private fun buildOverview(): ChatOverview {
@@ -110,21 +212,36 @@ class ChatRepository(
             val detail = store.getChat(summary.chatId)
             val history = store.getChatHistory(summary.chatId, null, null)
             val projectedMessages = store.getProjectedMessages(summary.chatId, null, null)
-            val latestProjected = projectedMessages.lastOrNull()
-            val latestEnvelope = history.messages.lastOrNull()
+            val mergedTimeline = mergeTimeline(
+                historyMessages = history.messages,
+                projectedMessages = projectedMessages,
+            )
+            val latestEntry = mergedTimeline.lastOrNull()
+
             ChatConversationSummary(
                 chatId = summary.chatId,
                 title = resolveChatTitle(summary, detail),
                 participantsLabel = participantsLabel(detail),
-                lastMessagePreview = previewFor(
-                    projectedMessage = latestProjected,
-                    envelope = latestEnvelope,
-                ),
-                timestampLabel = timestampLabelFor(
-                    projectedMessage = latestProjected,
-                    envelope = latestEnvelope,
-                ),
-                messageCount = maxOf(projectedMessages.size, history.messages.size),
+                lastMessagePreview = latestEntry?.let { entry ->
+                    when (entry) {
+                        is ChatTimelineEntry.Projected -> {
+                            val prefix = authorLabel(entry.projected.senderAccountId)
+                            "$prefix: ${projectedMessageBody(entry.projected)}"
+                        }
+
+                        is ChatTimelineEntry.EncryptedEnvelope -> {
+                            val prefix = authorLabel(entry.envelope.senderAccountId)
+                            "$prefix: ${rawEnvelopeBody(entry.envelope)}"
+                        }
+                    }
+                } ?: "No messages yet",
+                timestampLabel = latestEntry?.let { entry ->
+                    when (entry) {
+                        is ChatTimelineEntry.Projected -> entry.projected.createdAtUnix.toLong().formatChatTimestamp()
+                        is ChatTimelineEntry.EncryptedEnvelope -> entry.envelope.createdAtUnix.toLong().formatChatTimestamp()
+                    }
+                } ?: "Pending",
+                messageCount = mergedTimeline.size,
                 hasProjectedTimeline = projectedMessages.isNotEmpty(),
                 isAccountSyncChat = summary.chatId == session.localState.accountSyncChatId,
             )
@@ -149,25 +266,29 @@ class ChatRepository(
         val detail = store.getChat(chatId) ?: return null
         val history = store.getChatHistory(chatId, null, null)
         val projectedMessages = store.getProjectedMessages(chatId, null, null)
-        val timelineMessages = if (projectedMessages.isNotEmpty()) {
-            projectedMessages.map { projected ->
-                ChatTimelineMessage(
-                    id = projected.messageId,
-                    author = authorLabel(projected.senderAccountId),
-                    body = projectedMessageBody(projected),
-                    timestampLabel = projected.createdAtUnix.toLong().formatChatTimestamp(),
-                    isMine = projected.senderAccountId == session.localState.accountId,
-                    note = projectedMessageNote(projected),
+        val mergedTimeline = mergeTimeline(
+            historyMessages = history.messages,
+            projectedMessages = projectedMessages,
+        )
+        val hasLocalMlsState = hasLocalConversation(chatId)
+        val canSend = detail.chatType == FfiChatType.ACCOUNT_SYNC || hasLocalMlsState
+        val messages = mergedTimeline.map { message ->
+            when (message) {
+                is ChatTimelineEntry.Projected -> ChatTimelineMessage(
+                    id = message.projected.messageId,
+                    author = authorLabel(message.projected.senderAccountId),
+                    body = projectedMessageBody(message.projected),
+                    timestampLabel = message.projected.createdAtUnix.toLong().formatChatTimestamp(),
+                    isMine = message.projected.senderAccountId == session.localState.accountId,
+                    note = projectedMessageNote(message.projected),
                 )
-            }
-        } else {
-            history.messages.map { envelope ->
-                ChatTimelineMessage(
-                    id = envelope.messageId,
-                    author = authorLabel(envelope.senderAccountId),
-                    body = rawEnvelopeBody(envelope),
-                    timestampLabel = envelope.createdAtUnix.toLong().formatChatTimestamp(),
-                    isMine = envelope.senderAccountId == session.localState.accountId,
+
+                is ChatTimelineEntry.EncryptedEnvelope -> ChatTimelineMessage(
+                    id = message.envelope.messageId,
+                    author = authorLabel(message.envelope.senderAccountId),
+                    body = rawEnvelopeBody(message.envelope),
+                    timestampLabel = message.envelope.createdAtUnix.toLong().formatChatTimestamp(),
+                    isMine = message.envelope.senderAccountId == session.localState.accountId,
                     note = "Encrypted envelope cached locally",
                 )
             }
@@ -185,13 +306,22 @@ class ChatRepository(
                 detail = detail,
             ),
             participantsLabel = participantsLabel(detail),
-            timelineLabel = if (projectedMessages.isNotEmpty()) {
-                "Projected timeline"
-            } else {
-                "Encrypted cache only"
+            timelineLabel = when {
+                projectedMessages.isEmpty() -> "Encrypted cache only"
+                projectedMessages.size == mergedTimeline.size -> "Projected timeline"
+                else -> "Mixed local timeline"
             },
             isAccountSyncChat = chatId == session.localState.accountSyncChatId,
-            messages = timelineMessages,
+            canSend = canSend,
+            composerHint = when {
+                detail.chatType == FfiChatType.ACCOUNT_SYNC -> {
+                    "Messages use this device's local MLS state for the account sync thread."
+                }
+
+                canSend -> "Send through the local MLS state already present on this device."
+                else -> "Sending is disabled until this device has local MLS state for this chat."
+            },
+            messages = messages,
         )
     }
 
@@ -207,11 +337,114 @@ class ChatRepository(
         return changedChats
     }
 
+    private fun projectChatsWithLocalMlsState(store: FfiLocalHistoryStore): Int {
+        val facade = mlsFacade()
+        var projectedChatTimelines = 0
+
+        store.listChats().forEach { summary ->
+            val conversation = try {
+                loadLocalConversation(summary.chatId)
+            } catch (_: TrixFfiException) {
+                null
+            }
+
+            if (conversation == null) {
+                return@forEach
+            }
+
+            try {
+                try {
+                    store.projectChatMessages(summary.chatId, facade, conversation, null)
+                } catch (_: TrixFfiException) {
+                    return@forEach
+                }
+
+                if (store.getProjectedMessages(summary.chatId, null, 1u).isNotEmpty()) {
+                    projectedChatTimelines += 1
+                }
+            } finally {
+                conversation.close()
+            }
+        }
+
+        return projectedChatTimelines
+    }
+
+    private fun getOrCreateSendConversation(chatId: String): FfiMlsConversation? {
+        val existing = loadLocalConversation(chatId)
+        if (existing != null) {
+            return existing
+        }
+        if (chatId != session.localState.accountSyncChatId) {
+            return null
+        }
+        return mlsFacade().createGroup(stableLocalGroupId(chatId))
+    }
+
+    private fun hasLocalConversation(chatId: String): Boolean {
+        val conversation = loadLocalConversation(chatId) ?: return false
+        conversation.close()
+        return true
+    }
+
+    private fun loadLocalConversation(chatId: String): FfiMlsConversation? {
+        return mlsFacade().loadGroup(stableLocalGroupId(chatId))
+    }
+
+    private fun stableLocalGroupId(chatId: String): ByteArray {
+        return runCatching {
+            val uuid = UUID.fromString(chatId)
+            ByteBuffer.allocate(16)
+                .putLong(uuid.mostSignificantBits)
+                .putLong(uuid.leastSignificantBits)
+                .array()
+        }.getOrElse {
+            chatId.encodeToByteArray()
+        }
+    }
+
+    private fun loadJustCreatedEnvelope(
+        client: FfiServerApiClient,
+        chatId: String,
+        messageId: String,
+        serverSeq: ULong,
+        epoch: ULong,
+        ciphertext: ByteArray,
+    ): FfiMessageEnvelope {
+        val afterServerSeq = if (serverSeq > 0uL) serverSeq - 1uL else null
+        val serverEnvelope = client.getChatHistory(chatId, afterServerSeq, 1u)
+            .messages
+            .firstOrNull { it.messageId == messageId }
+        if (serverEnvelope != null) {
+            return serverEnvelope
+        }
+
+        return FfiMessageEnvelope(
+            messageId = messageId,
+            chatId = chatId,
+            serverSeq = serverSeq,
+            senderAccountId = session.localState.accountId,
+            senderDeviceId = session.localState.deviceId,
+            epoch = epoch,
+            messageKind = FfiMessageKind.APPLICATION,
+            contentType = FfiContentType.TEXT,
+            ciphertext = ciphertext,
+            aadJson = EMPTY_AAD_JSON,
+            createdAtUnix = Instant.now().epochSecond.toULong(),
+        )
+    }
+
     private fun client(): FfiServerApiClient = clientDelegate.value
 
     private fun historyStore(): FfiLocalHistoryStore = historyStoreDelegate.value
 
     private fun syncCoordinator(): FfiSyncCoordinator = syncCoordinatorDelegate.value
+
+    private fun mlsFacade(): FfiMlsFacade = mlsFacadeDelegate.value
+
+    private fun mlsMetadataFile(): File = File(mlsStorageRoot, "metadata.json")
+
+    private fun mlsStorageFile(): File = File(mlsStorageRoot, "storage.json")
 
     private inline fun <T> runFfi(
         fallbackMessage: String,
@@ -281,34 +514,6 @@ class ChatRepository(
         } else {
             visibleMembers
         }
-    }
-
-    private fun previewFor(
-        projectedMessage: FfiLocalProjectedMessage?,
-        envelope: FfiMessageEnvelope?,
-    ): String {
-        return when {
-            projectedMessage != null -> {
-                val prefix = authorLabel(projectedMessage.senderAccountId)
-                "$prefix: ${projectedMessageBody(projectedMessage)}"
-            }
-
-            envelope != null -> {
-                val prefix = authorLabel(envelope.senderAccountId)
-                "$prefix: ${rawEnvelopeBody(envelope)}"
-            }
-
-            else -> "No messages yet"
-        }
-    }
-
-    private fun timestampLabelFor(
-        projectedMessage: FfiLocalProjectedMessage?,
-        envelope: FfiMessageEnvelope?,
-    ): String {
-        return projectedMessage?.createdAtUnix?.toLong()?.formatChatTimestamp()
-            ?: envelope?.createdAtUnix?.toLong()?.formatChatTimestamp()
-            ?: "Pending"
     }
 
     private fun authorLabel(accountId: String): String {
@@ -416,6 +621,20 @@ class ChatRepository(
         }
     }
 
+    private fun mergeTimeline(
+        historyMessages: List<FfiMessageEnvelope>,
+        projectedMessages: List<FfiLocalProjectedMessage>,
+    ): List<ChatTimelineEntry> {
+        val historyByServerSeq = historyMessages.associateBy { it.serverSeq }
+        val projectedByServerSeq = projectedMessages.associateBy { it.serverSeq }
+        return (historyByServerSeq.keys + projectedByServerSeq.keys)
+            .sorted()
+            .mapNotNull { serverSeq ->
+                projectedByServerSeq[serverSeq]?.let(ChatTimelineEntry::Projected)
+                    ?: historyByServerSeq[serverSeq]?.let(ChatTimelineEntry::EncryptedEnvelope)
+            }
+    }
+
     companion object {
         private const val MAX_VISIBLE_MEMBERS = 3
         private val HISTORY_SYNC_LIMIT = 200u
@@ -424,7 +643,18 @@ class ChatRepository(
         private val TIME_FORMATTER = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
         private val MONTH_DAY_FORMATTER = DateTimeFormatter.ofPattern("MMM d")
         private val DATE_FORMATTER = DateTimeFormatter.ofPattern("MMM d, yyyy")
+        private const val EMPTY_AAD_JSON = "{}"
     }
+}
+
+private sealed interface ChatTimelineEntry {
+    data class Projected(
+        val projected: FfiLocalProjectedMessage,
+    ) : ChatTimelineEntry
+
+    data class EncryptedEnvelope(
+        val envelope: FfiMessageEnvelope,
+    ) : ChatTimelineEntry
 }
 
 data class ChatOverview(
@@ -448,6 +678,12 @@ data class ChatRefreshResult(
     val inboxMessagesUpserted: Long,
     val ackedInboxCount: Int,
     val hydratedChatDetails: Int,
+    val projectedChatTimelines: Int,
+)
+
+data class ChatSendResult(
+    val overview: ChatOverview,
+    val conversation: ChatConversation,
 )
 
 data class ChatConversationSummary(
@@ -467,6 +703,8 @@ data class ChatConversation(
     val participantsLabel: String,
     val timelineLabel: String,
     val isAccountSyncChat: Boolean,
+    val canSend: Boolean,
+    val composerHint: String,
     val messages: List<ChatTimelineMessage>,
 )
 

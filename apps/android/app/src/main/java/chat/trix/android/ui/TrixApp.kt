@@ -44,6 +44,7 @@ import chat.trix.android.core.auth.AuthBootstrapCoordinator
 import chat.trix.android.core.auth.AuthenticatedSession
 import chat.trix.android.core.auth.BootstrapInput
 import chat.trix.android.core.auth.StoredDeviceSummary
+import chat.trix.android.core.system.BackendConfigStore
 import chat.trix.android.designsystem.theme.TrixTheme
 import chat.trix.android.feature.bootstrap.BootstrapScreen
 import chat.trix.android.feature.chats.ChatsScreen
@@ -54,6 +55,7 @@ import chat.trix.android.ui.adaptive.TrixNavigationLayout
 import chat.trix.android.ui.adaptive.rememberTrixAdaptiveInfo
 import chat.trix.android.ui.navigation.TrixDestination
 import java.io.IOException
+import java.net.URI
 import kotlinx.coroutines.launch
 
 @Composable
@@ -61,16 +63,21 @@ fun TrixApp() {
     TrixTheme {
         val context = LocalContext.current.applicationContext
         val windowInfo = rememberTrixAdaptiveInfo()
-        val authCoordinator = remember(context) {
+        val backendConfigStore = remember(context) { BackendConfigStore(context) }
+        var configuredBaseUrl by rememberSaveable {
+            mutableStateOf(backendConfigStore.readBaseUrl() ?: BuildConfig.TRIX_BASE_URL)
+        }
+        val authCoordinator = remember(context, configuredBaseUrl) {
             AuthBootstrapCoordinator(
                 context = context,
-                baseUrl = BuildConfig.TRIX_BASE_URL,
+                baseUrl = configuredBaseUrl,
             )
         }
         val coroutineScope = rememberCoroutineScope()
         var destination by rememberSaveable { mutableStateOf(TrixDestination.Chats) }
         var reloadSignal by rememberSaveable { mutableIntStateOf(0) }
         var authState by remember { mutableStateOf<TrixAuthState>(TrixAuthState.Loading("Restoring local device")) }
+        var backendConfigError by remember { mutableStateOf<String?>(null) }
 
         LaunchedEffect(authCoordinator, reloadSignal) {
             authState = TrixAuthState.Loading("Restoring local device")
@@ -84,12 +91,30 @@ fun TrixApp() {
             when (val state = authState) {
                 is TrixAuthState.Loading -> LoadingScreen(message = state.message)
                 is TrixAuthState.SignedOut -> BootstrapScreen(
-                    baseUrl = BuildConfig.TRIX_BASE_URL,
+                    baseUrl = configuredBaseUrl,
                     storedDevice = state.storedDevice,
                     busyMessage = null,
                     errorMessage = state.errorMessage,
+                    backendErrorMessage = backendConfigError,
+                    onUpdateBaseUrl = { candidateBaseUrl ->
+                        coroutineScope.launch {
+                            try {
+                                val normalizedBaseUrl = normalizeBaseUrl(candidateBaseUrl)
+                                if (normalizedBaseUrl == configuredBaseUrl) {
+                                    return@launch
+                                }
+                                backendConfigStore.writeBaseUrl(normalizedBaseUrl)
+                                backendConfigError = null
+                                authState = TrixAuthState.Loading("Switching backend")
+                                configuredBaseUrl = normalizedBaseUrl
+                            } catch (error: IOException) {
+                                backendConfigError = error.message ?: "Failed to update backend URL"
+                            }
+                        }
+                    },
                     onCreateAccount = { input ->
                         coroutineScope.launch {
+                            backendConfigError = null
                             authState = TrixAuthState.Loading("Creating account")
                             authState = createAccountState(authCoordinator, input)
                         }
@@ -97,6 +122,7 @@ fun TrixApp() {
                     onReconnectStoredDevice = if (state.storedDevice != null) {
                         {
                             coroutineScope.launch {
+                                backendConfigError = null
                                 authState = TrixAuthState.Loading("Restoring device session")
                                 authState = restoreSessionState(authCoordinator, state.storedDevice)
                             }
@@ -107,6 +133,7 @@ fun TrixApp() {
                     onForgetStoredDevice = if (state.storedDevice != null) {
                         {
                             coroutineScope.launch {
+                                backendConfigError = null
                                 authCoordinator.clearStoredDevice()
                                 reloadSignal += 1
                             }
@@ -192,6 +219,25 @@ private suspend fun safePeekStoredDevice(
     } catch (_: IOException) {
         null
     }
+}
+
+private fun normalizeBaseUrl(value: String): String {
+    val normalized = value.trim().trimEnd('/')
+    if (normalized.isEmpty()) {
+        throw IOException("Backend URL cannot be empty")
+    }
+    if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
+        throw IOException("Backend URL must start with http:// or https://")
+    }
+
+    val uri = runCatching { URI(normalized) }.getOrElse { error ->
+        throw IOException("Backend URL is invalid", error)
+    }
+    if (uri.scheme.isNullOrBlank() || uri.host.isNullOrBlank()) {
+        throw IOException("Backend URL must include a host")
+    }
+
+    return normalized
 }
 
 @Composable
