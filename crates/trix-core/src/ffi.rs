@@ -10,9 +10,10 @@ use crate::{
     AccountRootMaterial, AuthChallengeMaterial, CompleteLinkIntentParams,
     CompletedLinkIntentMaterial, CreateAccountParams, DeviceApprovePayloadMaterial,
     DeviceKeyMaterial, DeviceTransferBundleMaterial, HistorySyncChunkMaterial, InboxApplyOutcome,
-    LocalHistoryStore, LocalStoreApplyReport, MlsCommitBundle, MlsFacade, MlsMemberIdentity,
-    MlsProcessResult, PublishKeyPackageMaterial, ReservedKeyPackageMaterial, ServerApiClient,
-    SyncChatCursor, SyncCoordinator, SyncStateSnapshot,
+    LocalHistoryStore, LocalProjectedMessage, LocalProjectionApplyReport, LocalProjectionKind,
+    LocalStoreApplyReport, MlsCommitBundle, MlsFacade, MlsMemberIdentity, MlsProcessResult,
+    PublishKeyPackageMaterial, ReservedKeyPackageMaterial, ServerApiClient, SyncChatCursor,
+    SyncCoordinator, SyncStateSnapshot,
 };
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -462,6 +463,38 @@ pub struct FfiLocalStoreApplyReport {
     pub chats_upserted: u64,
     pub messages_upserted: u64,
     pub changed_chat_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum FfiLocalProjectionKind {
+    ApplicationMessage,
+    ProposalQueued,
+    CommitMerged,
+    WelcomeRef,
+    System,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiLocalProjectedMessage {
+    pub server_seq: u64,
+    pub message_id: String,
+    pub sender_account_id: String,
+    pub sender_device_id: String,
+    pub epoch: u64,
+    pub message_kind: FfiMessageKind,
+    pub content_type: FfiContentType,
+    pub projection_kind: FfiLocalProjectionKind,
+    pub payload: Option<Vec<u8>>,
+    pub merged_epoch: Option<u64>,
+    pub created_at_unix: u64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiLocalProjectionApplyReport {
+    pub chat_id: String,
+    pub processed_messages: u64,
+    pub projected_messages_upserted: u64,
+    pub advanced_to_server_seq: Option<u64>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -1353,6 +1386,27 @@ impl FfiLocalHistoryStore {
         )))
     }
 
+    pub fn projected_cursor(&self, chat_id: String) -> Result<Option<u64>, TrixFfiError> {
+        Ok(lock(&self.inner)?.projected_cursor(parse_chat_id(&chat_id)?))
+    }
+
+    pub fn get_projected_messages(
+        &self,
+        chat_id: String,
+        after_server_seq: Option<u64>,
+        limit: Option<u32>,
+    ) -> Result<Vec<FfiLocalProjectedMessage>, TrixFfiError> {
+        Ok(lock(&self.inner)?
+            .get_projected_messages(
+                parse_chat_id(&chat_id)?,
+                after_server_seq,
+                limit.map(|value| value as usize),
+            )
+            .into_iter()
+            .map(local_projected_message_to_ffi)
+            .collect())
+    }
+
     pub fn apply_chat_history(
         &self,
         history: FfiChatHistory,
@@ -1377,6 +1431,28 @@ impl FfiLocalHistoryStore {
         Ok(local_store_apply_report_to_ffi(
             lock(&self.inner)?
                 .apply_inbox_items(&items)
+                .map_err(ffi_error)?,
+        ))
+    }
+
+    pub fn project_chat_messages(
+        &self,
+        chat_id: String,
+        facade: Arc<FfiMlsFacade>,
+        conversation: Arc<FfiMlsConversation>,
+        limit: Option<u32>,
+    ) -> Result<FfiLocalProjectionApplyReport, TrixFfiError> {
+        let chat_id = parse_chat_id(&chat_id)?;
+        let facade = lock(&facade.inner)?;
+        let mut conversation = lock(&conversation.inner)?;
+        Ok(local_projection_apply_report_to_ffi(
+            lock(&self.inner)?
+                .project_chat_messages(
+                    chat_id,
+                    &facade,
+                    &mut conversation,
+                    limit.map(|value| value as usize),
+                )
                 .map_err(ffi_error)?,
         ))
     }
@@ -2052,6 +2128,33 @@ fn local_store_apply_report_to_ffi(value: LocalStoreApplyReport) -> FfiLocalStor
     }
 }
 
+fn local_projected_message_to_ffi(value: LocalProjectedMessage) -> FfiLocalProjectedMessage {
+    FfiLocalProjectedMessage {
+        server_seq: value.server_seq,
+        message_id: value.message_id.0.to_string(),
+        sender_account_id: value.sender_account_id.0.to_string(),
+        sender_device_id: value.sender_device_id.0.to_string(),
+        epoch: value.epoch,
+        message_kind: value.message_kind.into(),
+        content_type: value.content_type.into(),
+        projection_kind: value.projection_kind.into(),
+        payload: value.payload,
+        merged_epoch: value.merged_epoch,
+        created_at_unix: value.created_at_unix,
+    }
+}
+
+fn local_projection_apply_report_to_ffi(
+    value: LocalProjectionApplyReport,
+) -> FfiLocalProjectionApplyReport {
+    FfiLocalProjectionApplyReport {
+        chat_id: value.chat_id.0.to_string(),
+        processed_messages: value.processed_messages as u64,
+        projected_messages_upserted: value.projected_messages_upserted as u64,
+        advanced_to_server_seq: value.advanced_to_server_seq,
+    }
+}
+
 fn inbox_apply_outcome_to_ffi(value: InboxApplyOutcome) -> FfiInboxApplyOutcome {
     FfiInboxApplyOutcome {
         lease_owner: value.lease_owner,
@@ -2282,6 +2385,18 @@ impl From<trix_types::BlobUploadStatus> for FfiBlobUploadStatus {
         match value {
             trix_types::BlobUploadStatus::PendingUpload => Self::PendingUpload,
             trix_types::BlobUploadStatus::Available => Self::Available,
+        }
+    }
+}
+
+impl From<LocalProjectionKind> for FfiLocalProjectionKind {
+    fn from(value: LocalProjectionKind) -> Self {
+        match value {
+            LocalProjectionKind::ApplicationMessage => Self::ApplicationMessage,
+            LocalProjectionKind::ProposalQueued => Self::ProposalQueued,
+            LocalProjectionKind::CommitMerged => Self::CommitMerged,
+            LocalProjectionKind::WelcomeRef => Self::WelcomeRef,
+            LocalProjectionKind::System => Self::System,
         }
     }
 }

@@ -12,6 +12,8 @@ use trix_types::{
 };
 use uuid::Uuid;
 
+use crate::{MlsConversation, MlsFacade, MlsProcessResult, decode_b64_field};
+
 #[derive(Debug, Clone)]
 pub struct AttachmentStore {
     pub root: PathBuf,
@@ -54,6 +56,39 @@ pub struct LocalStoreApplyReport {
     pub changed_chat_ids: Vec<ChatId>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalProjectionKind {
+    ApplicationMessage,
+    ProposalQueued,
+    CommitMerged,
+    WelcomeRef,
+    System,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalProjectedMessage {
+    pub server_seq: u64,
+    pub message_id: MessageId,
+    pub sender_account_id: trix_types::AccountId,
+    pub sender_device_id: trix_types::DeviceId,
+    pub epoch: u64,
+    pub message_kind: trix_types::MessageKind,
+    pub content_type: trix_types::ContentType,
+    pub projection_kind: LocalProjectionKind,
+    pub payload: Option<Vec<u8>>,
+    pub merged_epoch: Option<u64>,
+    pub created_at_unix: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalProjectionApplyReport {
+    pub chat_id: ChatId,
+    pub processed_messages: usize,
+    pub projected_messages_upserted: usize,
+    pub advanced_to_server_seq: Option<u64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct LocalHistoryStore {
     state: PersistedLocalHistoryState,
@@ -75,6 +110,25 @@ struct PersistedChatState {
     last_commit_message_id: Option<MessageId>,
     members: Vec<ChatMemberSummary>,
     messages: BTreeMap<u64, MessageEnvelope>,
+    #[serde(default)]
+    projected_cursor_server_seq: u64,
+    #[serde(default)]
+    projected_messages: BTreeMap<u64, PersistedProjectedMessage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PersistedProjectedMessage {
+    server_seq: u64,
+    message_id: MessageId,
+    sender_account_id: trix_types::AccountId,
+    sender_device_id: trix_types::DeviceId,
+    epoch: u64,
+    message_kind: trix_types::MessageKind,
+    content_type: trix_types::ContentType,
+    projection_kind: LocalProjectionKind,
+    payload_b64: Option<String>,
+    merged_epoch: Option<u64>,
+    created_at_unix: u64,
 }
 
 impl Default for PersistedLocalHistoryState {
@@ -193,6 +247,98 @@ impl LocalHistoryStore {
         ChatHistoryResponse { chat_id, messages }
     }
 
+    pub fn projected_cursor(&self, chat_id: ChatId) -> Option<u64> {
+        self.state
+            .chats
+            .get(&chat_id.0.to_string())
+            .map(|state| state.projected_cursor_server_seq)
+    }
+
+    pub fn get_projected_messages(
+        &self,
+        chat_id: ChatId,
+        after_server_seq: Option<u64>,
+        limit: Option<usize>,
+    ) -> Vec<LocalProjectedMessage> {
+        let mut messages = self
+            .state
+            .chats
+            .get(&chat_id.0.to_string())
+            .map(|state| {
+                state
+                    .projected_messages
+                    .values()
+                    .filter(|message| {
+                        after_server_seq
+                            .map(|last_seq| message.server_seq > last_seq)
+                            .unwrap_or(true)
+                    })
+                    .cloned()
+                    .map(projected_message_from_persisted)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if let Some(limit) = limit {
+            messages.truncate(limit);
+        }
+        messages
+    }
+
+    pub fn project_chat_messages(
+        &mut self,
+        chat_id: ChatId,
+        facade: &MlsFacade,
+        conversation: &mut MlsConversation,
+        limit: Option<usize>,
+    ) -> Result<LocalProjectionApplyReport> {
+        let chat = self
+            .state
+            .chats
+            .get_mut(&chat_id.0.to_string())
+            .ok_or_else(|| anyhow!("chat {} is missing from local store", chat_id.0))?;
+        let envelopes = chat
+            .messages
+            .values()
+            .filter(|message| message.server_seq > chat.projected_cursor_server_seq)
+            .take(limit.unwrap_or(usize::MAX))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let mut processed_messages = 0usize;
+        let mut projected_messages_upserted = 0usize;
+        let mut advanced_to_server_seq = None;
+        let mut changed = false;
+
+        for envelope in envelopes {
+            let projected = project_envelope(facade, conversation, &envelope)?;
+            let persisted = persisted_projected_message_from(projected);
+            let entry_changed = match chat.projected_messages.get(&envelope.server_seq) {
+                Some(existing) => existing != &persisted,
+                None => true,
+            };
+            if entry_changed {
+                chat.projected_messages
+                    .insert(envelope.server_seq, persisted);
+                projected_messages_upserted += 1;
+                changed = true;
+            }
+            processed_messages += 1;
+            if envelope.server_seq > chat.projected_cursor_server_seq {
+                chat.projected_cursor_server_seq = envelope.server_seq;
+                changed = true;
+            }
+            advanced_to_server_seq = Some(envelope.server_seq);
+        }
+
+        self.persist_if_needed(changed)?;
+        Ok(LocalProjectionApplyReport {
+            chat_id,
+            processed_messages,
+            projected_messages_upserted,
+            advanced_to_server_seq,
+        })
+    }
+
     pub fn apply_chat_list(
         &mut self,
         response: &ChatListResponse,
@@ -213,6 +359,8 @@ impl LocalHistoryStore {
                     last_commit_message_id: None,
                     members: Vec::new(),
                     messages: BTreeMap::new(),
+                    projected_cursor_server_seq: 0,
+                    projected_messages: BTreeMap::new(),
                 });
 
             let mut changed = false;
@@ -262,6 +410,8 @@ impl LocalHistoryStore {
                 last_commit_message_id: detail.last_commit_message_id,
                 members: detail.members.clone(),
                 messages: BTreeMap::new(),
+                projected_cursor_server_seq: 0,
+                projected_messages: BTreeMap::new(),
             });
 
         let mut changed = false;
@@ -321,6 +471,8 @@ impl LocalHistoryStore {
                 last_commit_message_id: None,
                 members: Vec::new(),
                 messages: BTreeMap::new(),
+                projected_cursor_server_seq: 0,
+                projected_messages: BTreeMap::new(),
             });
 
         let mut chat_changed = false;
@@ -407,6 +559,89 @@ impl LocalHistoryStore {
             self.save_state()?;
         }
         Ok(())
+    }
+}
+
+fn project_envelope(
+    facade: &MlsFacade,
+    conversation: &mut MlsConversation,
+    envelope: &MessageEnvelope,
+) -> Result<LocalProjectedMessage> {
+    let payload = decode_b64_field("ciphertext_b64", &envelope.ciphertext_b64).map_err(|err| {
+        anyhow!(
+            "failed to decode ciphertext for {}: {err}",
+            envelope.message_id.0
+        )
+    })?;
+
+    let (projection_kind, projected_payload, merged_epoch) = match envelope.message_kind {
+        trix_types::MessageKind::Application | trix_types::MessageKind::Commit => {
+            match facade.process_message(conversation, &payload)? {
+                MlsProcessResult::ApplicationMessage(plaintext) => (
+                    LocalProjectionKind::ApplicationMessage,
+                    Some(plaintext),
+                    None,
+                ),
+                MlsProcessResult::ProposalQueued => {
+                    (LocalProjectionKind::ProposalQueued, None, None)
+                }
+                MlsProcessResult::CommitMerged { epoch } => {
+                    (LocalProjectionKind::CommitMerged, None, Some(epoch))
+                }
+            }
+        }
+        trix_types::MessageKind::WelcomeRef => {
+            (LocalProjectionKind::WelcomeRef, Some(payload), None)
+        }
+        trix_types::MessageKind::System => (LocalProjectionKind::System, Some(payload), None),
+    };
+
+    Ok(LocalProjectedMessage {
+        server_seq: envelope.server_seq,
+        message_id: envelope.message_id,
+        sender_account_id: envelope.sender_account_id,
+        sender_device_id: envelope.sender_device_id,
+        epoch: envelope.epoch,
+        message_kind: envelope.message_kind,
+        content_type: envelope.content_type,
+        projection_kind,
+        payload: projected_payload,
+        merged_epoch,
+        created_at_unix: envelope.created_at_unix,
+    })
+}
+
+fn projected_message_from_persisted(value: PersistedProjectedMessage) -> LocalProjectedMessage {
+    LocalProjectedMessage {
+        server_seq: value.server_seq,
+        message_id: value.message_id,
+        sender_account_id: value.sender_account_id,
+        sender_device_id: value.sender_device_id,
+        epoch: value.epoch,
+        message_kind: value.message_kind,
+        content_type: value.content_type,
+        projection_kind: value.projection_kind,
+        payload: value
+            .payload_b64
+            .and_then(|payload_b64| decode_b64_field("payload_b64", &payload_b64).ok()),
+        merged_epoch: value.merged_epoch,
+        created_at_unix: value.created_at_unix,
+    }
+}
+
+fn persisted_projected_message_from(value: LocalProjectedMessage) -> PersistedProjectedMessage {
+    PersistedProjectedMessage {
+        server_seq: value.server_seq,
+        message_id: value.message_id,
+        sender_account_id: value.sender_account_id,
+        sender_device_id: value.sender_device_id,
+        epoch: value.epoch,
+        message_kind: value.message_kind,
+        content_type: value.content_type,
+        projection_kind: value.projection_kind,
+        payload_b64: value.payload.map(|payload| crate::encode_b64(&payload)),
+        merged_epoch: value.merged_epoch,
+        created_at_unix: value.created_at_unix,
     }
 }
 
@@ -519,5 +754,70 @@ mod tests {
         assert_eq!(history.messages, vec![second_message]);
 
         fs::remove_file(database_path).ok();
+    }
+
+    #[test]
+    fn local_history_store_projects_application_messages_with_mls() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let alice_account = AccountId(Uuid::new_v4());
+        let alice_device = DeviceId(Uuid::new_v4());
+
+        let alice = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+        let bob = MlsFacade::new(b"bob-device".to_vec()).unwrap();
+
+        let bob_key_package = bob.generate_key_package().unwrap();
+        let mut alice_group = alice.create_group(chat_id.0.as_bytes()).unwrap();
+        let add_bundle = alice
+            .add_members(&mut alice_group, &[bob_key_package])
+            .unwrap();
+        let mut bob_group = bob
+            .join_group_from_welcome(
+                add_bundle.welcome_message.as_ref().unwrap(),
+                add_bundle.ratchet_tree.as_deref(),
+            )
+            .unwrap();
+
+        let ciphertext = alice
+            .create_application_message(&mut alice_group, b"hello from alice")
+            .unwrap();
+
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![MessageEnvelope {
+                    message_id: MessageId(Uuid::new_v4()),
+                    chat_id,
+                    server_seq: 1,
+                    sender_account_id: alice_account,
+                    sender_device_id: alice_device,
+                    epoch: 1,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    ciphertext_b64: crate::encode_b64(&ciphertext),
+                    aad_json: json!({}),
+                    created_at_unix: 10,
+                }],
+            })
+            .unwrap();
+
+        let report = store
+            .project_chat_messages(chat_id, &bob, &mut bob_group, None)
+            .unwrap();
+        assert_eq!(report.processed_messages, 1);
+        assert_eq!(report.projected_messages_upserted, 1);
+        assert_eq!(report.advanced_to_server_seq, Some(1));
+        assert_eq!(store.projected_cursor(chat_id), Some(1));
+
+        let projected = store.get_projected_messages(chat_id, None, Some(10));
+        assert_eq!(projected.len(), 1);
+        assert_eq!(
+            projected[0].payload.as_deref(),
+            Some(b"hello from alice".as_slice())
+        );
+        assert_eq!(
+            projected[0].projection_kind,
+            LocalProjectionKind::ApplicationMessage
+        );
     }
 }

@@ -14,7 +14,8 @@ pub use crypto::{
 };
 pub use ffi::*;
 pub use storage::{
-    AttachmentStore, LocalHistoryStore, LocalStoreApplyReport, MlsStateStore, SyncStateStore,
+    AttachmentStore, LocalHistoryStore, LocalProjectedMessage, LocalProjectionApplyReport,
+    LocalProjectionKind, LocalStoreApplyReport, MlsStateStore, SyncStateStore,
 };
 pub use sync::{
     CoreEvent, CoreEventSink, InboxApplyOutcome, SyncChatCursor, SyncCoordinator, SyncStateSnapshot,

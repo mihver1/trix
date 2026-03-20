@@ -62,5 +62,7 @@ make ffi-bindings OUT=/tmp/trix-bindings
 - Persistent sync state is stored as a JSON snapshot at the provided `state_path`.
 - `FfiLocalHistoryStore` now supports persistent local encrypted-envelope history via `new_persistent(database_path)`, plus `list_chats()`, `get_chat()`, `get_chat_history()`, `apply_chat_history()`, and `apply_leased_inbox()`.
 - `FfiSyncCoordinator` also exposes high-level convenience flows: `sync_chat_histories_into_store()` and `lease_inbox_into_store()`.
+- `FfiLocalHistoryStore` now also exposes projected local timeline APIs: `projected_cursor()`, `project_chat_messages()`, and `get_projected_messages()`.
+- The projection layer persists decrypted/application results separately from raw encrypted envelopes, so clients can build timeline UIs without replaying MLS on every screen load.
 - Kotlin generation works without `ktlint`, but UniFFI will print a non-fatal formatting warning if `ktlint` is not installed.
 - Kotlin sources are generated under `bindings/uniffi/trix_core/`.
