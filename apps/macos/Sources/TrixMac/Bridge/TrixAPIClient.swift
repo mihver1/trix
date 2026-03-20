@@ -305,6 +305,15 @@ struct TrixAPIClient {
         }
     }
 
+    func createChat(
+        accessToken: String,
+        request: CreateChatRequest
+    ) async throws -> CreateChatResponse {
+        try await callFFI(accessToken: accessToken) { client in
+            try CreateChatResponse(ffiValue: client.createChat(params: try request.ffiValue()))
+        }
+    }
+
     func fetchChatDetail(accessToken: String, chatId: UUID) async throws -> ChatDetailResponse {
         try await callFFI(accessToken: accessToken) { client in
             try ChatDetailResponse(ffiValue: client.getChat(chatId: chatId.uuidString))

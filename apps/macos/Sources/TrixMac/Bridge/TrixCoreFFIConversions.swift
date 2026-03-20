@@ -24,6 +24,17 @@ extension ChatType {
             self = .accountSync
         }
     }
+
+    var ffiValue: FfiChatType {
+        switch self {
+        case .dm:
+            return .dm
+        case .group:
+            return .group
+        case .accountSync:
+            return .accountSync
+        }
+    }
 }
 
 extension MessageKind {
@@ -477,6 +488,39 @@ extension ChatSummary {
             chatType: ChatType(ffiValue.chatType),
             title: ffiValue.title,
             lastServerSeq: ffiValue.lastServerSeq
+        )
+    }
+}
+
+extension ControlMessageInput {
+    func ffiValue() throws -> FfiControlMessage {
+        FfiControlMessage(
+            messageId: messageId.uuidString,
+            ciphertext: try TrixCoreCodec.decodeBase64(ciphertextB64, label: "ciphertext_b64"),
+            aadJson: try TrixCoreCodec.encodeJSONString(aadJson)
+        )
+    }
+}
+
+extension CreateChatRequest {
+    func ffiValue() throws -> FfiCreateChatParams {
+        FfiCreateChatParams(
+            chatType: chatType.ffiValue,
+            title: title,
+            participantAccountIds: participantAccountIds.map(\.uuidString),
+            reservedKeyPackageIds: reservedKeyPackageIds,
+            initialCommit: try initialCommit?.ffiValue(),
+            welcomeMessage: try welcomeMessage?.ffiValue()
+        )
+    }
+}
+
+extension CreateChatResponse {
+    init(ffiValue: FfiCreateChatResponse) throws {
+        self.init(
+            chatId: try TrixCoreCodec.uuid(ffiValue.chatId, label: "chat_id"),
+            chatType: ChatType(ffiValue.chatType),
+            epoch: ffiValue.epoch
         )
     }
 }

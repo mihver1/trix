@@ -195,6 +195,12 @@ struct AccountKeyPackagesResponse: Codable {
     let packages: [ReservedKeyPackage]
 }
 
+struct ControlMessageInput: Codable {
+    let messageId: UUID
+    let ciphertextB64: String
+    let aadJson: JSONValue?
+}
+
 struct DeviceSummary: Codable, Identifiable {
     let deviceId: UUID
     let displayName: String
@@ -224,6 +230,32 @@ enum ChatType: String, Codable {
     case dm
     case group
     case accountSync = "account_sync"
+
+    var label: String {
+        switch self {
+        case .dm:
+            return "Direct Message"
+        case .group:
+            return "Group"
+        case .accountSync:
+            return "Account Sync"
+        }
+    }
+}
+
+struct CreateChatRequest: Codable {
+    let chatType: ChatType
+    let title: String?
+    let participantAccountIds: [UUID]
+    let reservedKeyPackageIds: [String]
+    let initialCommit: ControlMessageInput?
+    let welcomeMessage: ControlMessageInput?
+}
+
+struct CreateChatResponse: Codable {
+    let chatId: UUID
+    let chatType: ChatType
+    let epoch: UInt64
 }
 
 enum HistorySyncJobType: String, Codable {

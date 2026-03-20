@@ -21,6 +21,7 @@ final class AppModel: ObservableObject {
     @Published var historySyncCursorDrafts: [UUID: String] = [:]
     @Published var keyPackagePublishDraft = KeyPackagePublishDraft()
     @Published var keyPackageReserveDraft = KeyPackageReserveDraft()
+    @Published var createChatDraft = CreateChatDraft()
     @Published var publishedKeyPackages: [PublishedKeyPackage] = []
     @Published var reservedKeyPackages: [ReservedKeyPackage] = []
     @Published var reservedKeyPackagesAccountID: UUID?
@@ -39,6 +40,7 @@ final class AppModel: ObservableObject {
     @Published var isReservingKeyPackages = false
     @Published var isRestoringSession = false
     @Published var isRefreshingWorkspace = false
+    @Published var isCreatingChat = false
     @Published var isRefreshingInbox = false
     @Published var isLeasingInbox = false
     @Published var isAckingInbox = false
@@ -99,6 +101,10 @@ final class AppModel: ObservableObject {
 
     var canPublishKeyPackages: Bool {
         keyPackagePublishDraft.packagesJSON.nonEmptyTrimmed != nil && !isPublishingKeyPackages
+    }
+
+    var canCreateChat: Bool {
+        createChatDraft.participantAccountIDs.nonEmptyTrimmed != nil && !isCreatingChat
     }
 
     var canReserveKeyPackages: Bool {
@@ -391,6 +397,98 @@ final class AppModel: ObservableObject {
         } catch {
             lastErrorMessage = error.userFacingMessage
         }
+    }
+
+    func createChat() async -> Bool {
+        guard let token = accessToken else {
+            await restoreSession()
+            return false
+        }
+        guard let client = makeClient() else {
+            return false
+        }
+        guard let creatorAccountID = currentAccount?.accountId ?? persistedSession?.accountId else {
+            lastErrorMessage = "Аккаунт ещё не загружен."
+            return false
+        }
+
+        isCreatingChat = true
+        lastErrorMessage = nil
+        defer { isCreatingChat = false }
+
+        do {
+            let participantAccountIDs = try decodeUUIDList(
+                createChatDraft.participantAccountIDs,
+                label: "participant account ids"
+            )
+            var seenParticipantIDs = Set<UUID>()
+            let uniqueParticipants = participantAccountIDs.filter { participantAccountID in
+                guard participantAccountID != creatorAccountID else {
+                    return false
+                }
+
+                return seenParticipantIDs.insert(participantAccountID).inserted
+            }
+
+            switch createChatDraft.chatType {
+            case .dm:
+                guard uniqueParticipants.count == 1 else {
+                    throw TrixAPIError.invalidPayload("Для DM укажи ровно один account id собеседника.")
+                }
+            case .group:
+                guard !uniqueParticipants.isEmpty else {
+                    throw TrixAPIError.invalidPayload("Для группы укажи хотя бы один account id участника.")
+                }
+            case .accountSync:
+                throw TrixAPIError.invalidPayload("Account sync chats создаются только сервером.")
+            }
+
+            var reservedKeyPackageIDs: [String] = []
+            for participantAccountID in uniqueParticipants {
+                let reserved = try await client.fetchAccountKeyPackages(
+                    accessToken: token,
+                    accountId: participantAccountID
+                )
+
+                guard !reserved.packages.isEmpty else {
+                    throw TrixAPIError.invalidPayload("У одного из выбранных аккаунтов нет доступных key packages.")
+                }
+
+                reservedKeyPackageIDs.append(contentsOf: reserved.packages.map(\.keyPackageId))
+            }
+
+            let created = try await client.createChat(
+                accessToken: token,
+                request: CreateChatRequest(
+                    chatType: createChatDraft.chatType,
+                    title: createChatDraft.title.nonEmptyTrimmed,
+                    participantAccountIds: uniqueParticipants,
+                    reservedKeyPackageIds: reservedKeyPackageIDs,
+                    initialCommit: nil,
+                    welcomeMessage: nil
+                )
+            )
+
+            createChatDraft = CreateChatDraft()
+            try await loadWorkspace(client: client, accessToken: token)
+            try await loadSelectedChat(
+                client: client,
+                accessToken: token,
+                chatId: created.chatId
+            )
+            return true
+        } catch let error as TrixAPIError {
+            if error.isCredentialFailure {
+                accessToken = nil
+                await restoreSession()
+            } else {
+                lastErrorMessage = error.userFacingMessage
+            }
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+
+        return false
     }
 
     func refreshHistorySyncJobs() async {
@@ -1360,6 +1458,12 @@ struct OnboardingDraft {
 struct LinkDeviceDraft {
     var linkPayload = ""
     var deviceDisplayName: String
+}
+
+struct CreateChatDraft {
+    var chatType: ChatType = .dm
+    var title = ""
+    var participantAccountIDs = ""
 }
 
 enum KeyPackageReserveMode: String {

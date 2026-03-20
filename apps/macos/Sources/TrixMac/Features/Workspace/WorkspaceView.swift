@@ -1,77 +1,80 @@
 import SwiftUI
 
+private enum WorkspaceSurface: String, CaseIterable, Identifiable {
+    case messages
+    case control
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .messages:
+            return "Messages"
+        case .control:
+            return "Control"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .messages:
+            return "Chats and timeline stay on the primary surface."
+        case .control:
+            return "Linking, sync and diagnostics live behind the scenes."
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .messages:
+            return "bubble.left.and.bubble.right.fill"
+        case .control:
+            return "switch.2"
+        }
+    }
+}
+
 struct WorkspaceView: View {
     @Environment(\.trixColors) private var colors
     @ObservedObject var model: AppModel
     let availableSize: CGSize
+    @State private var activeSurface: WorkspaceSurface = .messages
+    @State private var composerDraft = ""
+    @State private var isPresentingCreateChat = false
 
     private var prefersSingleColumn: Bool {
         availableSize.width < 1380 || availableSize.height < 860
     }
 
+    private var timelineUsesProjectedData: Bool {
+        !model.selectedChatProjectedMessages.isEmpty
+    }
+
+    private var timelineUsesEncryptedFallback: Bool {
+        model.selectedChatProjectedMessages.isEmpty && !model.selectedChatHistory.isEmpty
+    }
+
     var body: some View {
         if let currentAccount = model.currentAccount {
             VStack(alignment: .leading, spacing: 20) {
-                TrixPanel(
-                    title: currentAccount.profileName,
-                    subtitle: currentAccount.handle ?? "No public handle yet.",
-                    tone: .strong
-                ) {
-                    VStack(alignment: .leading, spacing: 18) {
-                        if let profileBio = currentAccount.profileBio, !profileBio.isEmpty {
-                            Text(profileBio)
-                                .font(.body)
-                                .foregroundStyle(colors.inkMuted)
-                        }
+                workspaceToolbar
 
-                        HStack(spacing: 16) {
-                            TrixMetricTile(
-                                label: "Account",
-                                value: shortID(currentAccount.accountId),
-                                footnote: "Authenticated via challenge/session"
-                            )
-                            TrixMetricTile(
-                                label: "Devices",
-                                value: "\(model.devices.count)",
-                                footnote: model.hasAccountRootKey ? "This Mac can sign root-level device actions" : "This Mac cannot sign root-level device actions"
-                            )
-                            TrixMetricTile(
-                                label: "Chats",
-                                value: "\(model.chats.count)",
-                                footnote: "Backed by persistent local history cache"
-                            )
-                            TrixMetricTile(
-                                label: "Inbox",
-                                value: "\(model.inboxItems.count)",
-                                footnote: model.lastInboxCursor.map { "cursor \($0)" } ?? "No inbox batch loaded yet"
-                            )
-                            TrixMetricTile(
-                                label: "Sync Cursors",
-                                value: "\(model.syncStateSnapshot?.chatCursors.count ?? 0)",
-                                footnote: model.syncStateSnapshot?.lastAckedInboxId.map { "acked \($0)" } ?? "No persisted sync state yet"
-                            )
-                            TrixMetricTile(
-                                label: "Sync Jobs",
-                                value: "\(model.historySyncJobs.count)",
-                                footnote: "Visible for this source device"
-                            )
-                        }
-                    }
-                }
-
-                if prefersSingleColumn {
-                    VStack(alignment: .leading, spacing: 20) {
-                        operationsColumn
-                        inspectorColumn
-                    }
+                if activeSurface == .messages {
+                    conversationPanel(currentAccount)
                 } else {
-                    HStack(alignment: .top, spacing: 24) {
-                        operationsColumn
-                            .frame(width: 360)
-
-                        inspectorColumn
-                    }
+                    controlSurface
                 }
+            }
+            .sheet(isPresented: $isPresentingCreateChat) {
+                CreateChatSheet(
+                    model: model,
+                    isPresented: $isPresentingCreateChat
+                ) {
+                    activeSurface = .messages
+                }
+            }
+            .onChange(of: model.selectedChatID, initial: false) { _, _ in
+                composerDraft = ""
             }
         } else {
             TrixPanel(
@@ -96,6 +99,166 @@ struct WorkspaceView: View {
                     .frame(maxWidth: 220)
                     .disabled(model.isRestoringSession)
                 }
+            }
+        }
+    }
+
+    private var workspaceToolbar: some View {
+        HStack(alignment: .top, spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(activeSurface == .messages ? "Messages" : "Control")
+                    .font(.system(size: availableSize.height < 760 ? 32 : 38, weight: .bold, design: .serif))
+                    .foregroundStyle(colors.ink)
+
+                Text(toolbarSubtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(colors.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 20)
+
+            VStack(alignment: .trailing, spacing: 12) {
+                HStack(spacing: 12) {
+                    if activeSurface == .messages {
+                        Button {
+                            isPresentingCreateChat = true
+                        } label: {
+                            Label("New Chat", systemImage: "square.and.pencil")
+                        }
+                        .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                    }
+
+                    HStack(spacing: 8) {
+                        ForEach(WorkspaceSurface.allCases) { surface in
+                            WorkspaceSurfaceButton(
+                                surface: surface,
+                                isSelected: activeSurface == surface
+                            ) {
+                                activeSurface = surface
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var toolbarSubtitle: String {
+        if activeSurface == .control {
+            return "Linking, sync and diagnostics stay secondary."
+        }
+
+        if let selectedChatSummary = model.selectedChatSummary {
+            return selectedChatSummary.chatType.label
+        }
+
+        return "Choose a conversation from the sidebar."
+    }
+
+    private var controlSurface: some View {
+        Group {
+            if prefersSingleColumn {
+                VStack(alignment: .leading, spacing: 20) {
+                    controlSummaryPanel
+                    operationsColumn
+                    controlInspectorColumn
+                }
+            } else {
+                HStack(alignment: .top, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 20) {
+                        controlSummaryPanel
+                        operationsColumn
+                    }
+                    .frame(width: 380)
+
+                    controlInspectorColumn
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func conversationPanel(_ currentAccount: AccountProfileResponse) -> some View {
+        if let summary = model.selectedChatSummary {
+            TrixPanel(
+                title: summary.displayTitle,
+                subtitle: summary.chatType.label
+            ) {
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack(spacing: 10) {
+                        TrixToneBadge(
+                            label: summary.chatType.label,
+                            tint: colors.accent
+                        )
+
+                        if timelineUsesProjectedData {
+                            TrixToneBadge(label: "Projected timeline", tint: colors.success)
+                        } else if timelineUsesEncryptedFallback {
+                            TrixToneBadge(label: "Encrypted fallback", tint: colors.warning)
+                        } else {
+                            TrixToneBadge(label: "No local timeline yet", tint: colors.inkMuted)
+                        }
+
+                        if model.isLoadingSelectedChat {
+                            TrixToneBadge(label: "Refreshing", tint: colors.rust)
+                        }
+                    }
+
+                    if let detail = model.selectedChatDetail {
+                        conversationMetadata(detail)
+                    }
+
+                    conversationTimeline(currentAccountID: currentAccount.accountId)
+                    composerPanel(for: summary)
+                }
+            }
+        } else {
+            TrixPanel(
+                title: "Choose A Conversation",
+                subtitle: "This space should be your timeline, not a dashboard."
+            ) {
+                VStack(alignment: .leading, spacing: 14) {
+                    EmptyWorkspaceLabel("Pick a chat from the left rail or start a new one. The conversation canvas will take over this area once a chat exists.")
+
+                    Button {
+                        isPresentingCreateChat = true
+                    } label: {
+                        Label("Start New Chat", systemImage: "square.and.pencil")
+                    }
+                    .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                    .frame(maxWidth: 220)
+                }
+            }
+        }
+    }
+
+    private var controlSummaryPanel: some View {
+        TrixPanel(
+            title: "Control Room",
+            subtitle: "Operational tooling stays here so the primary workspace can behave like a messenger."
+        ) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: availableSize.width < 1160 ? 180 : 220), spacing: 12)], alignment: .leading, spacing: 12) {
+                WorkspaceSummaryChip(
+                    iconName: "person.crop.circle.badge.checkmark",
+                    label: "\(model.devices.count) device record\(model.devices.count == 1 ? "" : "s")",
+                    tone: .surface
+                )
+                WorkspaceSummaryChip(
+                    iconName: "tray.and.arrow.down.fill",
+                    label: "\(model.inboxItems.count) inbox item\(model.inboxItems.count == 1 ? "" : "s") loaded",
+                    tone: .surface
+                )
+                WorkspaceSummaryChip(
+                    iconName: "arrow.triangle.2.circlepath",
+                    label: "\(model.syncStateSnapshot?.chatCursors.count ?? 0) persisted sync cursor\(model.syncStateSnapshot?.chatCursors.count == 1 ? "" : "s")",
+                    tone: .surface
+                )
+                WorkspaceSummaryChip(
+                    iconName: "clock.badge.checkmark",
+                    label: "\(model.historySyncJobs.count) history sync job\(model.historySyncJobs.count == 1 ? "" : "s")",
+                    tone: .surface
+                )
             }
         }
     }
@@ -418,7 +581,7 @@ struct WorkspaceView: View {
 
             TrixPanel(
                 title: "Chats",
-                subtitle: "Choose a chat to inspect current members and encrypted history persisted on this Mac."
+                subtitle: "Secondary chat picker for the control inspector."
             ) {
                 if model.chats.isEmpty {
                     EmptyWorkspaceLabel("No chats are visible yet. Create another account or use the API to open the first DM or group.")
@@ -441,12 +604,12 @@ struct WorkspaceView: View {
         }
     }
 
-    private var inspectorColumn: some View {
+    private var controlInspectorColumn: some View {
         VStack(alignment: .leading, spacing: 20) {
             if let summary = model.selectedChatSummary {
                 TrixPanel(
-                    title: summary.displayTitle,
-                    subtitle: "\(summary.chatType.rawValue.replacingOccurrences(of: "_", with: " ")) conversation"
+                    title: "Selected Chat Diagnostics",
+                    subtitle: "\(summary.displayTitle) • \(summary.chatType.rawValue.replacingOccurrences(of: "_", with: " "))"
                 ) {
                     VStack(alignment: .leading, spacing: 18) {
                         HStack(spacing: 12) {
@@ -559,12 +722,160 @@ struct WorkspaceView: View {
             } else {
                 TrixPanel(
                     title: "No Chat Selected",
-                    subtitle: "The right-hand inspector still focuses on encrypted history and membership metadata."
+                    subtitle: "Select a chat if you want the control inspector to show membership and timeline diagnostics."
                 ) {
-                    EmptyWorkspaceLabel("Select a chat from the operations rail or create one through the API to continue.")
+                    EmptyWorkspaceLabel("Select a chat from Messages or from the secondary picker in Control to inspect server and local state.")
                 }
             }
         }
+    }
+
+    private func conversationMetadata(_ detail: ChatDetailResponse) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: availableSize.width < 1160 ? 180 : 220), spacing: 12)], alignment: .leading, spacing: 12) {
+                ConversationMetaChip(label: "Members", value: "\(detail.members.count)")
+                ConversationMetaChip(label: "Epoch", value: "\(detail.epoch)")
+                ConversationMetaChip(label: "Server", value: "seq \(detail.lastServerSeq)")
+                ConversationMetaChip(
+                    label: "Timeline",
+                    value: timelineUsesProjectedData ? "projected" : (timelineUsesEncryptedFallback ? "encrypted fallback" : "empty")
+                )
+            }
+
+            if !detail.members.isEmpty {
+                Text(detail.members.prefix(6).map { shortID($0.accountId) }.joined(separator: " · "))
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(colors.inkMuted)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    private func conversationTimeline(currentAccountID: UUID) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center) {
+                Text("Timeline")
+                    .font(.headline)
+                    .foregroundStyle(colors.ink)
+
+                Spacer()
+
+                TrixToneBadge(
+                    label: timelineBadgeLabel,
+                    tint: timelineUsesProjectedData ? colors.success : (timelineUsesEncryptedFallback ? colors.warning : colors.inkMuted)
+                )
+            }
+
+            if model.isLoadingSelectedChat && model.selectedChatProjectedMessages.isEmpty && model.selectedChatHistory.isEmpty {
+                HStack(spacing: 12) {
+                    ProgressView()
+                    Text("Loading conversation…")
+                        .foregroundStyle(colors.inkMuted)
+                }
+            } else if timelineUsesProjectedData {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(model.selectedChatProjectedMessages) { message in
+                        ProjectedMessageRow(
+                            message: message,
+                            isOutgoing: message.senderAccountId == currentAccountID
+                        )
+                    }
+                }
+            } else if timelineUsesEncryptedFallback {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("The Mac already has the encrypted envelopes for this chat. Message bodies will replace this view once MLS conversation restore is wired in.")
+                        .font(.footnote)
+                        .foregroundStyle(colors.inkMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    ForEach(model.selectedChatHistory) { message in
+                        MessageHistoryRow(
+                            message: message,
+                            isOutgoing: message.senderAccountId == currentAccountID
+                        )
+                    }
+                }
+            } else {
+                EmptyWorkspaceLabel("No local messages are stored for this conversation yet.")
+            }
+        }
+        .padding(20)
+        .background(colors.inputFill, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .stroke(colors.outline, lineWidth: 1)
+        }
+    }
+
+    private func composerPanel(for summary: ChatSummary) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Composer")
+                        .font(.headline)
+                        .foregroundStyle(colors.ink)
+                    Text("You can type drafts now. Sending stays disabled until the Mac can restore the MLS conversation for this chat.")
+                        .font(.footnote)
+                        .foregroundStyle(colors.inkMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer()
+
+                TrixToneBadge(label: "Local draft only", tint: colors.warning)
+            }
+
+            ZStack(alignment: .topLeading) {
+                if composerDraft.isEmpty {
+                    Text("Write a reply to \(summary.displayTitle)…")
+                        .font(.body)
+                        .foregroundStyle(colors.inkMuted)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 16)
+                }
+
+                TextEditor(text: $composerDraft)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 120)
+                    .font(.body)
+                    .trixInputChrome()
+            }
+
+            HStack(spacing: 12) {
+                Button {
+                    composerDraft = ""
+                } label: {
+                    Label("Clear Draft", systemImage: "xmark.circle")
+                }
+                .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+                .disabled(composerDraft.isEmpty)
+
+                Spacer()
+
+                Button {
+                } label: {
+                    Label("Send", systemImage: "paperplane.fill")
+                }
+                .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                .disabled(true)
+            }
+        }
+        .padding(20)
+        .background(colors.tileFill, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .stroke(colors.outline, lineWidth: 1)
+        }
+    }
+
+    private var timelineBadgeLabel: String {
+        if timelineUsesProjectedData {
+            return "\(model.selectedChatProjectedMessages.count) projected"
+        }
+        if timelineUsesEncryptedFallback {
+            return "\(model.selectedChatHistory.count) encrypted"
+        }
+        return "No messages yet"
     }
 
     private func shortID(_ uuid: UUID) -> String {
@@ -680,6 +991,208 @@ struct WorkspaceView: View {
         formatter.unitsStyle = .full
         return formatter
     }()
+}
+
+private struct WorkspaceSurfaceButton: View {
+    @Environment(\.trixColors) private var colors
+    let surface: WorkspaceSurface
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: surface.iconName)
+                    .font(.subheadline.weight(.semibold))
+                Text(surface.title)
+                    .font(.subheadline.weight(.semibold))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                isSelected ? colors.accentSoft.opacity(0.8) : colors.panel,
+                in: Capsule()
+            )
+            .overlay {
+                Capsule()
+                    .stroke(isSelected ? colors.accent.opacity(0.24) : colors.outline, lineWidth: 1)
+            }
+            .foregroundStyle(isSelected ? colors.ink : colors.inkMuted)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private enum WorkspaceSummaryChipTone {
+    case surface
+    case inverted
+}
+
+private struct WorkspaceSummaryChip: View {
+    @Environment(\.trixColors) private var colors
+    let iconName: String
+    let label: String
+    let tone: WorkspaceSummaryChipTone
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: iconName)
+                .font(.subheadline.weight(.semibold))
+            Text(label)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .foregroundStyle(foregroundColor)
+        .background(backgroundColor, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(borderColor, lineWidth: 1)
+        }
+    }
+
+    private var foregroundColor: Color {
+        tone == .inverted ? colors.inverseInk : colors.ink
+    }
+
+    private var backgroundColor: Color {
+        tone == .inverted ? colors.inverseInk.opacity(0.08) : colors.tileFill
+    }
+
+    private var borderColor: Color {
+        tone == .inverted ? colors.inverseInk.opacity(0.08) : colors.outline
+    }
+}
+
+private struct ConversationMetaChip: View {
+    @Environment(\.trixColors) private var colors
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label.uppercased())
+                .font(.caption.weight(.bold))
+                .tracking(1)
+                .foregroundStyle(colors.inkMuted)
+            Text(value)
+                .font(.system(.headline, design: .rounded))
+                .foregroundStyle(colors.ink)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(colors.tileFill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(colors.outline, lineWidth: 1)
+        }
+    }
+}
+
+private struct CreateChatSheet: View {
+    @Environment(\.trixColors) private var colors
+    @ObservedObject var model: AppModel
+    @Binding var isPresented: Bool
+    let didCreate: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("New Chat")
+                        .font(.system(size: 28, weight: .bold, design: .serif))
+                        .foregroundStyle(colors.ink)
+                    Text("Minimal first-run flow: paste recipient account ids, create the chat, then land directly in the conversation.")
+                        .font(.subheadline)
+                        .foregroundStyle(colors.inkMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer()
+
+                Button("Close") {
+                    isPresented = false
+                }
+                .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+            }
+
+            Picker("Chat Type", selection: $model.createChatDraft.chatType) {
+                Text("Direct Message").tag(ChatType.dm)
+                Text("Group").tag(ChatType.group)
+            }
+            .pickerStyle(.segmented)
+
+            if model.createChatDraft.chatType == .group {
+                TrixInputBlock(
+                    "Title",
+                    hint: "Optional group name."
+                ) {
+                    TextField("Design review", text: $model.createChatDraft.title)
+                        .textFieldStyle(.plain)
+                        .trixInputChrome()
+                }
+            }
+
+            TrixInputBlock(
+                "Participant Account IDs",
+                hint: participantHint
+            ) {
+                TextEditor(text: $model.createChatDraft.participantAccountIDs)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 136)
+                    .font(.system(.footnote, design: .monospaced))
+                    .trixInputChrome()
+            }
+
+            HStack(alignment: .center, spacing: 12) {
+                Text("Your own account is added automatically. The current create-chat slice still uses account UUIDs because a contact directory does not exist yet.")
+                    .font(.footnote)
+                    .foregroundStyle(colors.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Spacer()
+
+                Button("Cancel") {
+                    isPresented = false
+                }
+                .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+
+                Button {
+                    Task {
+                        let created = await model.createChat()
+                        if created {
+                            didCreate()
+                            isPresented = false
+                        }
+                    }
+                } label: {
+                    Label(
+                        model.isCreatingChat ? "Creating…" : "Create Chat",
+                        systemImage: "plus.bubble.fill"
+                    )
+                }
+                .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                .disabled(!model.canCreateChat)
+            }
+        }
+        .padding(24)
+        .frame(width: 560)
+        .background(colors.panelStrong, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+    }
+
+    private var participantHint: String {
+        switch model.createChatDraft.chatType {
+        case .dm:
+            return "Paste the recipient account UUID."
+        case .group:
+            return "Paste one account UUID per line or comma-separated."
+        case .accountSync:
+            return "Account sync chats are created by the server."
+        }
+    }
 }
 
 private struct PublishedKeyPackageRow: View {
@@ -1090,36 +1603,68 @@ private struct InboxItemRow: View {
 private struct MessageHistoryRow: View {
     @Environment(\.trixColors) private var colors
     let message: MessageEnvelope
+    let isOutgoing: Bool
+
+    init(message: MessageEnvelope, isOutgoing: Bool = false) {
+        self.message = message
+        self.isOutgoing = isOutgoing
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("seq \(message.serverSeq) • \(message.messageKind.label)")
-                        .font(.headline)
-                        .foregroundStyle(colors.ink)
-                    Text("sender \(message.senderShortID) • epoch \(message.epoch)")
-                        .font(.subheadline)
-                        .foregroundStyle(colors.inkMuted)
-                }
-                Spacer()
-                Text(Self.relativeFormatter.localizedString(for: message.createdAt, relativeTo: .now))
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(colors.inkMuted)
+        HStack(alignment: .bottom, spacing: 0) {
+            if isOutgoing {
+                Spacer(minLength: 64)
             }
 
-            HStack(spacing: 10) {
-                InlineMeta(label: message.contentType.label)
-                InlineMeta(label: "\(message.ciphertextSizeBytes) bytes")
-                InlineMeta(label: message.aadSummary)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(isOutgoing ? "You" : message.senderShortID)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(colors.ink)
+
+                    Spacer()
+
+                    Text(Self.relativeFormatter.localizedString(for: message.createdAt, relativeTo: .now))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(colors.inkMuted)
+                }
+
+                Text("Encrypted \(message.messageKind.label.lowercased())")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(colors.ink)
+
+                Text("MLS payload is stored locally, but the projected body is not available for this row yet.")
+                    .font(.subheadline)
+                    .foregroundStyle(colors.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 10) {
+                    InlineMeta(label: "seq \(message.serverSeq)")
+                    InlineMeta(label: message.contentType.label)
+                    InlineMeta(label: "\(message.ciphertextSizeBytes) bytes")
+                    InlineMeta(label: "epoch \(message.epoch)")
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: 560, alignment: .leading)
+            .background(bubbleFill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(bubbleBorder, lineWidth: 1)
+            }
+
+            if !isOutgoing {
+                Spacer(minLength: 64)
             }
         }
-        .padding(16)
-        .background(colors.tileFill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(colors.outline, lineWidth: 1)
-        }
+    }
+
+    private var bubbleFill: Color {
+        isOutgoing ? colors.accent.opacity(0.12) : colors.tileFill
+    }
+
+    private var bubbleBorder: Color {
+        isOutgoing ? colors.accent.opacity(0.26) : colors.outline
     }
 
     private static let relativeFormatter: RelativeDateTimeFormatter = {
@@ -1132,56 +1677,84 @@ private struct MessageHistoryRow: View {
 private struct ProjectedMessageRow: View {
     @Environment(\.trixColors) private var colors
     let message: LocalProjectedMessage
+    let isOutgoing: Bool
+
+    init(message: LocalProjectedMessage, isOutgoing: Bool = false) {
+        self.message = message
+        self.isOutgoing = isOutgoing
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("seq \(message.serverSeq) • \(message.projectionKind.label)")
-                        .font(.headline)
+        HStack(alignment: .bottom, spacing: 0) {
+            if isOutgoing {
+                Spacer(minLength: 64)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(isOutgoing ? "You" : message.senderShortID)
+                        .font(.subheadline.weight(.semibold))
                         .foregroundStyle(colors.ink)
-                    Text("sender \(message.senderShortID) • epoch \(message.epoch)")
-                        .font(.subheadline)
+
+                    Spacer()
+
+                    Text(Self.relativeFormatter.localizedString(for: message.createdAt, relativeTo: .now))
+                        .font(.caption.weight(.semibold))
                         .foregroundStyle(colors.inkMuted)
                 }
-                Spacer()
-                Text(Self.relativeFormatter.localizedString(for: message.createdAt, relativeTo: .now))
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(colors.inkMuted)
-            }
 
-            if let body = message.body {
-                Text(body.summary)
-                    .font(.body)
-                    .foregroundStyle(colors.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if let parseError = message.bodyParseError {
-                Text(parseError)
-                    .font(.subheadline)
-                    .foregroundStyle(colors.warning)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            HStack(spacing: 10) {
-                InlineMeta(label: message.messageKind.label)
-                InlineMeta(label: message.contentType.label)
                 if let body = message.body {
-                    InlineMeta(label: body.kind.label)
+                    Text(body.summary)
+                        .font(.body)
+                        .foregroundStyle(colors.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if let parseError = message.bodyParseError {
+                    Text(parseError)
+                        .font(.subheadline)
+                        .foregroundStyle(colors.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Projected metadata is available, but this entry has no decoded body.")
+                        .font(.subheadline)
+                        .foregroundStyle(colors.inkMuted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                if let mergedEpoch = message.mergedEpoch {
-                    InlineMeta(label: "merged \(mergedEpoch)")
-                }
-                if message.payloadSizeBytes > 0 {
-                    InlineMeta(label: "\(message.payloadSizeBytes) bytes")
+
+                HStack(spacing: 10) {
+                    InlineMeta(label: message.projectionKind.label)
+                    InlineMeta(label: message.contentType.label)
+                    if let body = message.body {
+                        InlineMeta(label: body.kind.label)
+                    }
+                    if let mergedEpoch = message.mergedEpoch {
+                        InlineMeta(label: "merged \(mergedEpoch)")
+                    }
+                    InlineMeta(label: "seq \(message.serverSeq)")
+                    if message.payloadSizeBytes > 0 {
+                        InlineMeta(label: "\(message.payloadSizeBytes) bytes")
+                    }
                 }
             }
+            .padding(16)
+            .frame(maxWidth: 560, alignment: .leading)
+            .background(bubbleFill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(bubbleBorder, lineWidth: 1)
+            }
+
+            if !isOutgoing {
+                Spacer(minLength: 64)
+            }
         }
-        .padding(16)
-        .background(colors.tileFill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(colors.outline, lineWidth: 1)
-        }
+    }
+
+    private var bubbleFill: Color {
+        isOutgoing ? colors.accent.opacity(0.14) : colors.tileFill
+    }
+
+    private var bubbleBorder: Color {
+        isOutgoing ? colors.accent.opacity(0.28) : colors.outline
     }
 
     private static let relativeFormatter: RelativeDateTimeFormatter = {

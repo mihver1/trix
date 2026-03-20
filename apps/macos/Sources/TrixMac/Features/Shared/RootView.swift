@@ -11,10 +11,21 @@ struct RootView: View {
     var body: some View {
         NavigationSplitView {
             ScrollView(.vertical, showsIndicators: false) {
-                SidebarView(model: model)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(20)
+                if model.showsWorkspace {
+                    WorkspaceSidebarView(model: model)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(16)
+                } else {
+                    SidebarView(model: model)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(20)
+                }
             }
+            .navigationSplitViewColumnWidth(
+                min: model.showsWorkspace ? 264 : 228,
+                ideal: model.showsWorkspace ? 304 : 244,
+                max: model.showsWorkspace ? 344 : 272
+            )
             .background(
                 LinearGradient(
                     colors: [colors.sidebarElevated, colors.sidebar],
@@ -29,22 +40,30 @@ struct RootView: View {
                     TrixCanvas()
 
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 20) {
-                            ContentHeader(model: model, size: proxy.size)
-
-                            if let message = model.lastErrorMessage {
-                                ErrorStrip(message: message) {
-                                    model.dismissError()
+                        if model.showsWorkspace {
+                            VStack(alignment: .leading, spacing: 16) {
+                                if let message = model.lastErrorMessage {
+                                    ErrorStrip(message: message) {
+                                        model.dismissError()
+                                    }
                                 }
-                            }
-
-                            if model.showsWorkspace {
                                 WorkspaceView(model: model, availableSize: proxy.size)
-                            } else {
+                            }
+                            .padding(24)
+                        } else {
+                            VStack(alignment: .leading, spacing: 20) {
+                                ContentHeader(model: model, size: proxy.size)
+
+                                if let message = model.lastErrorMessage {
+                                    ErrorStrip(message: message) {
+                                        model.dismissError()
+                                    }
+                                }
+
                                 OnboardingView(model: model, availableSize: proxy.size)
                             }
+                            .padding(24)
                         }
-                        .padding(24)
                     }
                 }
             }
@@ -54,128 +73,219 @@ struct RootView: View {
     }
 }
 
+private struct WorkspaceSidebarView: View {
+    @Environment(\.trixColors) private var colors
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Chats")
+                    .font(.system(size: 28, weight: .bold, design: .serif))
+                    .foregroundStyle(colors.inverseInk)
+
+                Spacer(minLength: 12)
+
+                if model.isRefreshingWorkspace {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(colors.accentSoft)
+                }
+            }
+
+            Button {
+                Task {
+                    await model.refreshWorkspace()
+                }
+            } label: {
+                Label(
+                    model.isRefreshingWorkspace ? "Syncing…" : "Refresh",
+                    systemImage: "arrow.triangle.2.circlepath"
+                )
+            }
+            .buttonStyle(TrixActionButtonStyle(tone: .sidebar))
+            .disabled(model.isRefreshingWorkspace)
+
+            if model.chats.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("No conversations yet")
+                        .font(.headline)
+                        .foregroundStyle(colors.inverseInk)
+
+                    Text("Create the first chat from the main canvas.")
+                        .font(.subheadline)
+                        .foregroundStyle(colors.inverseInkMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(colors.inverseInk.opacity(0.05), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .stroke(colors.inverseInk.opacity(0.06), lineWidth: 1)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(model.chats) { chat in
+                        WorkspaceSidebarChatRow(
+                            chat: chat,
+                            isSelected: chat.chatId == model.selectedChatID,
+                            isLoading: chat.chatId == model.selectedChatID && model.isLoadingSelectedChat
+                        ) {
+                            Task {
+                                await model.selectChat(chat.chatId)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 private struct SidebarView: View {
     @Environment(\.trixColors) private var colors
     @ObservedObject var model: AppModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 10) {
-                TrixToneBadge(label: "alpha / macOS", tint: colors.accentSoft)
+            sidebarBrand
 
-                Text("Trix")
-                    .font(.system(size: 38, weight: .bold, design: .serif))
-                    .foregroundStyle(colors.inverseInk)
-
-                Text("Native encrypted messaging, starting with a Mac-first control room.")
-                    .font(.subheadline)
-                    .foregroundStyle(colors.inverseInkMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            SidebarModule(title: "Runtime") {
-                VStack(alignment: .leading, spacing: 14) {
-                    SidebarValue(label: "Endpoint", value: model.serverBaseURLString)
-                    SidebarValue(
-                        label: "Connection",
-                        value: connectionLabel,
-                        tint: connectionTint
-                    )
-
-                    if let version = model.version {
-                        SidebarValue(label: "Version", value: version.version)
-                    }
-                }
-            }
-
-            SidebarModule(title: model.isAuthenticated ? "Session" : "Current Scope") {
-                if let account = model.currentAccount {
+            if model.showsWorkspace {
+                SidebarModule(title: "Account") {
                     VStack(alignment: .leading, spacing: 14) {
-                        SidebarValue(label: "Profile", value: account.profileName)
-                        SidebarValue(label: "Handle", value: account.handle ?? "not set")
-                        SidebarValue(label: "Devices", value: "\(model.devices.count)")
-                        SidebarValue(label: "Chats", value: "\(model.chats.count)")
-                        SidebarValue(label: "Inbox", value: "\(model.inboxItems.count)")
+                        TrixToneBadge(label: connectionLabel, tint: connectionTint)
+                        if let account = model.currentAccount {
+                            SidebarValue(label: "Profile", value: account.profileName)
+                            SidebarValue(label: "Handle", value: account.handle ?? "not set")
+                            SidebarValue(label: "Chats", value: "\(model.chats.count)")
+                        }
+                        if let version = model.version {
+                            SidebarValue(label: "Version", value: version.version)
+                        }
+                    }
+                }
+
+                sidebarActions
+            } else {
+                SidebarModule(title: "Runtime") {
+                    VStack(alignment: .leading, spacing: 14) {
+                        SidebarValue(label: "Endpoint", value: model.serverBaseURLString)
                         SidebarValue(
-                            label: "Cursors",
-                            value: "\(model.syncStateSnapshot?.chatCursors.count ?? 0)"
+                            label: "Connection",
+                            value: connectionLabel,
+                            tint: connectionTint
                         )
-                    }
-                } else {
-                    VStack(alignment: .leading, spacing: 10) {
-                        SidebarBullet("health and version handshake")
-                        SidebarBullet("first-device bootstrap")
-                        SidebarBullet("device linking + server-backed approval")
-                        SidebarBullet("inbox leasing + incremental polling")
-                        SidebarBullet("manual key-package publish + reserve")
-                        SidebarBullet("history sync job inspector")
-                        SidebarBullet("challenge/session auth restore")
-                        SidebarBullet("persistent local history + sync cursors")
-                        SidebarBullet("chat metadata + encrypted history browser")
-                    }
-                }
-            }
 
-            VStack(alignment: .leading, spacing: 10) {
-                Button {
-                    Task {
-                        await model.refreshServerStatus()
-                    }
-                } label: {
-                    Label(
-                        model.isRefreshingStatus ? "Refreshing Server…" : "Refresh Server",
-                        systemImage: "wave.3.right.circle"
-                    )
-                }
-                .buttonStyle(TrixActionButtonStyle(tone: .sidebar))
-                .disabled(model.isRefreshingStatus)
-
-                if model.hasPersistedSession && !model.isAuthenticated {
-                    Button {
-                        Task {
-                            await model.restoreSession()
+                        if let version = model.version {
+                            SidebarValue(label: "Version", value: version.version)
                         }
-                    } label: {
-                        Label(
-                            model.isRestoringSession ? "Reconnecting…" : "Reconnect Session",
-                            systemImage: "arrow.clockwise.circle"
-                        )
                     }
-                    .buttonStyle(TrixActionButtonStyle(tone: .sidebar))
-                    .disabled(model.isRestoringSession)
                 }
 
-                if model.isAuthenticated {
-                    Button {
-                        Task {
-                            await model.refreshWorkspace()
+                SidebarModule(title: model.isAuthenticated ? "Session" : "Current Scope") {
+                    if let account = model.currentAccount {
+                        VStack(alignment: .leading, spacing: 14) {
+                            SidebarValue(label: "Profile", value: account.profileName)
+                            SidebarValue(label: "Handle", value: account.handle ?? "not set")
+                            SidebarValue(label: "Chats", value: "\(model.chats.count)")
+                            SidebarValue(label: "Device", value: account.deviceStatus.label)
                         }
-                    } label: {
-                        Label(
-                            model.isRefreshingWorkspace ? "Syncing Workspace…" : "Refresh Workspace",
-                            systemImage: "arrow.triangle.2.circlepath"
-                        )
+                    } else {
+                        VStack(alignment: .leading, spacing: 10) {
+                            SidebarBullet("health and version handshake")
+                            SidebarBullet("first-device bootstrap")
+                            SidebarBullet("device linking + server-backed approval")
+                            SidebarBullet("inbox leasing + incremental polling")
+                            SidebarBullet("manual key-package publish + reserve")
+                            SidebarBullet("history sync job inspector")
+                            SidebarBullet("challenge/session auth restore")
+                            SidebarBullet("persistent local history + sync cursors")
+                            SidebarBullet("chat metadata + encrypted history browser")
+                        }
                     }
-                    .buttonStyle(TrixActionButtonStyle(tone: .sidebar))
-                    .disabled(model.isRefreshingWorkspace)
                 }
 
-                if model.showsWorkspace {
-                    Button(role: .destructive) {
-                        model.signOut()
-                    } label: {
-                        Label("Forget This Device", systemImage: "trash")
-                    }
-                    .buttonStyle(TrixActionButtonStyle(tone: .sidebar))
-                }
+                sidebarActions
             }
 
             Spacer()
 
-            Text("Local keys, persistent history cache, server-assisted coordination.")
+            Text("Local keys and a persistent conversation cache stay on this Mac.")
                 .font(.footnote)
                 .foregroundStyle(colors.inverseInkMuted.opacity(0.8))
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var sidebarBrand: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TrixToneBadge(label: "alpha / macOS", tint: colors.accentSoft)
+
+            Text("Trix")
+                .font(.system(size: 38, weight: .bold, design: .serif))
+                .foregroundStyle(colors.inverseInk)
+
+            Text("Native encrypted messaging, with a chat-first Mac client and a separate control surface.")
+                .font(.subheadline)
+                .foregroundStyle(colors.inverseInkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var sidebarActions: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                Task {
+                    await model.refreshServerStatus()
+                }
+            } label: {
+                Label(
+                    model.isRefreshingStatus ? "Refreshing Server…" : "Refresh Server",
+                    systemImage: "wave.3.right.circle"
+                )
+            }
+            .buttonStyle(TrixActionButtonStyle(tone: .sidebar))
+            .disabled(model.isRefreshingStatus)
+
+            if model.hasPersistedSession && !model.isAuthenticated {
+                Button {
+                    Task {
+                        await model.restoreSession()
+                    }
+                } label: {
+                    Label(
+                        model.isRestoringSession ? "Reconnecting…" : "Reconnect Session",
+                        systemImage: "arrow.clockwise.circle"
+                    )
+                }
+                .buttonStyle(TrixActionButtonStyle(tone: .sidebar))
+                .disabled(model.isRestoringSession)
+            }
+
+            if model.isAuthenticated {
+                Button {
+                    Task {
+                        await model.refreshWorkspace()
+                    }
+                } label: {
+                    Label(
+                        model.isRefreshingWorkspace ? "Syncing Workspace…" : "Refresh Workspace",
+                        systemImage: "arrow.triangle.2.circlepath"
+                    )
+                }
+                .buttonStyle(TrixActionButtonStyle(tone: .sidebar))
+                .disabled(model.isRefreshingWorkspace)
+            }
+
+            if model.showsWorkspace {
+                Button(role: .destructive) {
+                    model.signOut()
+                } label: {
+                    Label("Forget This Device", systemImage: "trash")
+                }
+                .buttonStyle(TrixActionButtonStyle(tone: .sidebar))
+            }
         }
     }
 
@@ -204,6 +314,69 @@ private struct SidebarView: View {
     }
 }
 
+private struct WorkspaceSidebarChatRow: View {
+    @Environment(\.trixColors) private var colors
+    let chat: ChatSummary
+    let isSelected: Bool
+    let isLoading: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(isSelected ? colors.accent.opacity(0.22) : colors.inverseInk.opacity(0.07))
+                        .frame(width: 42, height: 42)
+
+                    Image(systemName: iconName)
+                        .font(.headline)
+                        .foregroundStyle(isSelected ? colors.accentSoft : colors.inverseInkMuted)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(chat.displayTitle)
+                        .font(.headline)
+                        .foregroundStyle(colors.inverseInk)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text(chat.chatType.label)
+                        .font(.subheadline)
+                        .foregroundStyle(colors.inverseInkMuted)
+                }
+
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(colors.accentSoft)
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isSelected ? colors.inverseInk.opacity(0.10) : colors.inverseInk.opacity(0.03),
+                in: RoundedRectangle(cornerRadius: 22, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(isSelected ? colors.accentSoft.opacity(0.24) : colors.inverseInk.opacity(0.06), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var iconName: String {
+        switch chat.chatType {
+        case .dm:
+            return "person.crop.circle"
+        case .group:
+            return "person.3"
+        case .accountSync:
+            return "arrow.triangle.2.circlepath"
+        }
+    }
+}
+
 private struct ContentHeader: View {
     @Environment(\.trixColors) private var colors
     @ObservedObject var model: AppModel
@@ -220,7 +393,7 @@ private struct ContentHeader: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: model.showsWorkspace ? 8 : 16) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(headerTitle)
@@ -228,7 +401,7 @@ private struct ContentHeader: View {
                         .foregroundStyle(colors.ink)
 
                     Text(subtitle)
-                        .font(size.height < 760 ? .headline : .title3)
+                        .font(model.showsWorkspace ? .headline : (size.height < 760 ? .headline : .title3))
                         .foregroundStyle(colors.inkMuted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -245,29 +418,31 @@ private struct ContentHeader: View {
                 }
             }
 
-            LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 14) {
-                TrixMetricTile(
-                    label: "Endpoint",
-                    value: endpointValue,
-                    footnote: model.health == nil ? "No successful handshake yet" : "Active development target"
-                )
-                TrixMetricTile(
-                    label: "Mode",
-                    value: model.isAuthenticated ? "Authenticated" : (model.isAwaitingLinkApproval ? "Pending Approval" : (model.hasPersistedSession ? "Reconnectable" : "Bootstrap")),
-                    footnote: model.isAuthenticated ? "Device and chats loaded from the server" : (model.isAwaitingLinkApproval ? "Waiting for another trusted device to sign this Mac" : "Create or restore the first trusted device")
-                )
-                TrixMetricTile(
-                    label: "Scope",
-                    value: model.isAuthenticated ? "\(model.chats.count) chats" : (model.isAwaitingLinkApproval ? "Link handoff" : "Mac alpha"),
-                    footnote: model.isAuthenticated ? "\(model.devices.count) device records visible" : (model.isAwaitingLinkApproval ? "Device-directory approval and reconnect loop" : "First-device onboarding and history inspection")
-                )
+            if !model.showsWorkspace {
+                LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 14) {
+                    TrixMetricTile(
+                        label: "Endpoint",
+                        value: endpointValue,
+                        footnote: model.health == nil ? "No successful handshake yet" : "Active development target"
+                    )
+                    TrixMetricTile(
+                        label: "Mode",
+                        value: model.isAuthenticated ? "Authenticated" : (model.isAwaitingLinkApproval ? "Pending Approval" : (model.hasPersistedSession ? "Reconnectable" : "Bootstrap")),
+                        footnote: model.isAuthenticated ? "Device and chats loaded from the server" : (model.isAwaitingLinkApproval ? "Waiting for another trusted device to sign this Mac" : "Create or restore the first trusted device")
+                    )
+                    TrixMetricTile(
+                        label: "Scope",
+                        value: model.isAuthenticated ? "\(model.chats.count) chats" : (model.isAwaitingLinkApproval ? "Link handoff" : "Mac alpha"),
+                        footnote: model.isAuthenticated ? "\(model.devices.count) device records visible" : (model.isAwaitingLinkApproval ? "Device-directory approval and reconnect loop" : "First-device onboarding and history inspection")
+                    )
+                }
             }
         }
     }
 
     private var subtitle: String {
         model.showsWorkspace
-            ? "A calmer shell for browsing account state, devices, chats and encrypted history."
+            ? "Chat-first workspace for conversations, with device and sync tooling moved behind Control."
             : (model.isAwaitingLinkApproval
                 ? "This Mac is registered as a pending device and is waiting for another trusted device to approve it from the device directory."
                 : "The UI now leads with runtime diagnostics and a cleaner first-device bootstrap flow.")
@@ -275,7 +450,7 @@ private struct ContentHeader: View {
 
     private var headerTitle: String {
         if model.showsWorkspace {
-            return "Workspace"
+            return "Messages"
         }
         if model.isAwaitingLinkApproval {
             return "Finish Linking This Mac"
