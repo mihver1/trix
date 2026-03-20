@@ -259,6 +259,7 @@ pub struct ChatSummaryRow {
     pub chat_type: ChatType,
     pub title: Option<String>,
     pub last_server_seq: u64,
+    pub epoch: u64,
     pub pending_message_count: u64,
     pub last_message: Option<MessageEnvelopeRow>,
     pub participant_profiles: Vec<ChatParticipantProfileRow>,
@@ -2286,8 +2287,11 @@ impl Database {
                 c.chat_id,
                 c.chat_type::text AS chat_type,
                 c.title,
-                c.last_server_seq
+                c.last_server_seq,
+                mgs.epoch
             FROM chats c
+            JOIN mls_group_states mgs
+              ON mgs.chat_id = c.chat_id
             JOIN chat_account_members cam
               ON cam.chat_id = c.chat_id
             JOIN chat_device_members cdm
@@ -2315,6 +2319,7 @@ impl Database {
                     chat_type: parse_chat_type(&row_text(&row, "chat_type")?)?,
                     title: row_optional_text(&row, "title")?,
                     last_server_seq: row_u64_from_i64(&row, "last_server_seq")?,
+                    epoch: row_u64_from_i64(&row, "epoch")?,
                     pending_message_count: 0,
                     last_message: None,
                     participant_profiles: Vec::new(),
@@ -2442,6 +2447,13 @@ impl Database {
                 "account sync chats are created internally",
             ));
         }
+        if input.welcome_message.is_some() && input.initial_commit.is_none() {
+            return Err(AppError::bad_request(
+                "welcome message requires an initial commit",
+            ));
+        }
+
+        let created_epoch = u64::from(input.initial_commit.is_some());
 
         let mut target_account_ids = BTreeSet::new();
         target_account_ids.extend(
@@ -2596,11 +2608,12 @@ impl Database {
         sqlx::query(
             r#"
             INSERT INTO mls_group_states (chat_id, group_id_bytes, epoch, state_status)
-            VALUES ($1, $2, 0, 'active'::group_state_status)
+            VALUES ($1, $2, $3, 'active'::group_state_status)
             "#,
         )
         .bind(chat_id)
         .bind(Uuid::new_v4().as_bytes().to_vec())
+        .bind(u64_to_i64(created_epoch, "created epoch")?)
         .execute(&mut *tx)
         .await
         .map_err(map_db_error)?;
@@ -2623,7 +2636,7 @@ impl Database {
                 chat_id,
                 input.creator_account_id,
                 input.creator_device_id,
-                0,
+                created_epoch,
                 MessageKind::Commit,
                 commit,
                 &recipients,
@@ -2640,7 +2653,7 @@ impl Database {
                 chat_id,
                 input.creator_account_id,
                 input.creator_device_id,
-                0,
+                created_epoch,
                 MessageKind::WelcomeRef,
                 welcome,
                 &recipients,
@@ -2655,7 +2668,7 @@ impl Database {
         Ok(CreateChatOutput {
             chat_id,
             chat_type: input.chat_type,
-            epoch: 0,
+            epoch: created_epoch,
         })
     }
 
@@ -5910,6 +5923,8 @@ mod tests {
             .expect("list chats");
         assert_eq!(chats.len(), 1);
         assert_eq!(chats[0].chat_id, created.chat_id);
+        assert_eq!(created.epoch, 1);
+        assert_eq!(chats[0].epoch, 1);
         assert_eq!(chats[0].participant_profiles.len(), 2);
         assert_eq!(
             chats[0]
@@ -5925,6 +5940,7 @@ mod tests {
             .await
             .expect("get chat detail")
             .expect("chat detail must exist");
+        assert_eq!(detail.epoch, 1);
         assert_eq!(detail.participant_profiles.len(), 2);
         assert_eq!(
             detail
@@ -6028,6 +6044,8 @@ mod tests {
             .await
             .expect("list bob chats");
         assert_eq!(bob_chats.len(), 1);
+        assert_eq!(created.epoch, 1);
+        assert_eq!(bob_chats[0].epoch, 1);
         assert_eq!(bob_chats[0].pending_message_count, 1);
         assert_eq!(
             bob_chats[0]
@@ -6042,6 +6060,7 @@ mod tests {
             .await
             .expect("get bob detail")
             .expect("detail must exist");
+        assert_eq!(bob_detail.epoch, 1);
         assert_eq!(bob_detail.pending_message_count, 1);
         assert_eq!(
             bob_detail
