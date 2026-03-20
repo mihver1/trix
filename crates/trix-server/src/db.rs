@@ -20,6 +20,8 @@ const DEFAULT_HISTORY_LIMIT: usize = 100;
 const MAX_HISTORY_LIMIT: usize = 500;
 const DEFAULT_INBOX_LIMIT: usize = 100;
 const MAX_INBOX_LIMIT: usize = 500;
+const DEFAULT_INBOX_LEASE_TTL_SECONDS: u64 = 30;
+const MAX_INBOX_LEASE_TTL_SECONDS: u64 = 5 * 60;
 const DEFAULT_HISTORY_SYNC_JOB_LIMIT: usize = 100;
 const MAX_HISTORY_SYNC_JOB_LIMIT: usize = 500;
 
@@ -114,6 +116,7 @@ pub struct ApprovePendingDeviceInput {
     pub actor_device_id: Uuid,
     pub target_device_id: Uuid,
     pub account_root_signature: Vec<u8>,
+    pub transfer_bundle_ciphertext: Option<Vec<u8>>,
 }
 
 #[derive(Debug)]
@@ -126,10 +129,21 @@ pub struct ApprovePendingDeviceOutput {
 #[derive(Debug)]
 pub struct PendingDeviceBootstrapRow {
     pub account_id: Uuid,
+    pub device_id: Uuid,
+    pub device_display_name: String,
+    pub platform: String,
     pub credential_identity: Vec<u8>,
     pub transport_pubkey: Vec<u8>,
     pub account_root_pubkey: Vec<u8>,
     pub device_status: DeviceStatus,
+}
+
+#[derive(Debug)]
+pub struct DeviceTransferBundleRow {
+    pub account_id: Uuid,
+    pub device_id: Uuid,
+    pub transfer_bundle_ciphertext: Vec<u8>,
+    pub uploaded_at_unix: u64,
 }
 
 #[derive(Debug)]
@@ -165,6 +179,22 @@ pub struct HistorySyncJobRow {
     pub cursor_json: Value,
     pub created_at_unix: u64,
     pub updated_at_unix: u64,
+}
+
+#[derive(Debug)]
+pub struct HistorySyncChunkRow {
+    pub chunk_id: u64,
+    pub sequence_no: u64,
+    pub payload: Vec<u8>,
+    pub cursor_json: Option<Value>,
+    pub is_final: bool,
+    pub uploaded_at_unix: u64,
+}
+
+#[derive(Debug)]
+pub struct AppendHistorySyncChunkOutput {
+    pub chunk_id: u64,
+    pub job_status: HistorySyncJobStatus,
 }
 
 #[derive(Debug)]
@@ -725,6 +755,243 @@ impl Database {
         rows.into_iter().map(history_sync_job_row_from_db).collect()
     }
 
+    pub async fn list_history_sync_jobs_for_target_device(
+        &self,
+        account_id: Uuid,
+        target_device_id: Uuid,
+        status: Option<HistorySyncJobStatus>,
+        limit: Option<usize>,
+    ) -> Result<Vec<HistorySyncJobRow>, AppError> {
+        let limit = clamp_limit(
+            limit,
+            DEFAULT_HISTORY_SYNC_JOB_LIMIT,
+            MAX_HISTORY_SYNC_JOB_LIMIT,
+        );
+
+        let rows =
+            if let Some(status) = status {
+                sqlx::query(
+                    r#"
+                SELECT
+                    job_id,
+                    job_type::text AS job_type,
+                    job_status::text AS job_status,
+                    source_device_id,
+                    target_device_id,
+                    chat_id,
+                    cursor_json,
+                    extract(epoch from created_at)::bigint AS created_at_unix,
+                    extract(epoch from updated_at)::bigint AS updated_at_unix
+                FROM history_sync_jobs
+                WHERE account_id = $1
+                  AND target_device_id = $2
+                  AND job_status = $3::history_sync_job_status
+                ORDER BY created_at ASC, job_id ASC
+                LIMIT $4
+                "#,
+                )
+                .bind(account_id)
+                .bind(target_device_id)
+                .bind(history_sync_job_status_db(status))
+                .bind(i64::try_from(limit).map_err(|_| {
+                    AppError::bad_request("history sync limit exceeds supported range")
+                })?)
+                .fetch_all(&self.pool)
+                .await
+            } else {
+                sqlx::query(
+                    r#"
+                SELECT
+                    job_id,
+                    job_type::text AS job_type,
+                    job_status::text AS job_status,
+                    source_device_id,
+                    target_device_id,
+                    chat_id,
+                    cursor_json,
+                    extract(epoch from created_at)::bigint AS created_at_unix,
+                    extract(epoch from updated_at)::bigint AS updated_at_unix
+                FROM history_sync_jobs
+                WHERE account_id = $1
+                  AND target_device_id = $2
+                ORDER BY created_at ASC, job_id ASC
+                LIMIT $3
+                "#,
+                )
+                .bind(account_id)
+                .bind(target_device_id)
+                .bind(i64::try_from(limit).map_err(|_| {
+                    AppError::bad_request("history sync limit exceeds supported range")
+                })?)
+                .fetch_all(&self.pool)
+                .await
+            }
+            .map_err(map_db_error)?;
+
+        rows.into_iter().map(history_sync_job_row_from_db).collect()
+    }
+
+    pub async fn append_history_sync_chunk_for_source_device(
+        &self,
+        account_id: Uuid,
+        source_device_id: Uuid,
+        job_id: Uuid,
+        sequence_no: u64,
+        payload: Vec<u8>,
+        cursor_json: Option<Value>,
+        is_final: bool,
+    ) -> Result<Option<AppendHistorySyncChunkOutput>, AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
+        let job_row = sqlx::query(
+            r#"
+            SELECT job_status::text AS job_status
+            FROM history_sync_jobs
+            WHERE job_id = $1
+              AND account_id = $2
+              AND source_device_id = $3
+            FOR UPDATE
+            "#,
+        )
+        .bind(job_id)
+        .bind(account_id)
+        .bind(source_device_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(job_row) = job_row else {
+            return Ok(None);
+        };
+
+        let job_status = parse_history_sync_job_status(&row_text(&job_row, "job_status")?)?;
+        if !matches!(
+            job_status,
+            HistorySyncJobStatus::Pending | HistorySyncJobStatus::Running
+        ) {
+            return Err(AppError::conflict(
+                "history sync job is not accepting more chunks",
+            ));
+        }
+
+        let chunk_row = sqlx::query(
+            r#"
+            INSERT INTO history_sync_chunks (
+                job_id,
+                sequence_no,
+                payload,
+                cursor_json,
+                is_final
+            )
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (job_id, sequence_no) DO UPDATE
+            SET payload = EXCLUDED.payload,
+                cursor_json = EXCLUDED.cursor_json,
+                is_final = EXCLUDED.is_final,
+                uploaded_at = now()
+            RETURNING
+                chunk_id,
+                extract(epoch from uploaded_at)::bigint AS uploaded_at_unix
+            "#,
+        )
+        .bind(job_id)
+        .bind(u64_to_i64(sequence_no, "history sync sequence_no")?)
+        .bind(&payload)
+        .bind(cursor_json.clone())
+        .bind(is_final)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        let updated_job_row = sqlx::query(
+            r#"
+            UPDATE history_sync_jobs
+            SET job_status = CASE
+                    WHEN job_status = 'pending'::history_sync_job_status
+                        THEN 'running'::history_sync_job_status
+                    ELSE job_status
+                END,
+                cursor_json = COALESCE($4, cursor_json),
+                updated_at = now()
+            WHERE job_id = $1
+              AND account_id = $2
+              AND source_device_id = $3
+            RETURNING job_status::text AS job_status
+            "#,
+        )
+        .bind(job_id)
+        .bind(account_id)
+        .bind(source_device_id)
+        .bind(cursor_json)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        tx.commit()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
+
+        Ok(Some(AppendHistorySyncChunkOutput {
+            chunk_id: row_u64_from_i64(&chunk_row, "chunk_id")?,
+            job_status: parse_history_sync_job_status(&row_text(&updated_job_row, "job_status")?)?,
+        }))
+    }
+
+    pub async fn list_history_sync_chunks_for_target_device(
+        &self,
+        account_id: Uuid,
+        target_device_id: Uuid,
+        job_id: Uuid,
+    ) -> Result<Option<Vec<HistorySyncChunkRow>>, AppError> {
+        let job_row = sqlx::query(
+            r#"
+            SELECT 1
+            FROM history_sync_jobs
+            WHERE job_id = $1
+              AND account_id = $2
+              AND target_device_id = $3
+            "#,
+        )
+        .bind(job_id)
+        .bind(account_id)
+        .bind(target_device_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        if job_row.is_none() {
+            return Ok(None);
+        }
+
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                chunk_id,
+                sequence_no,
+                payload,
+                cursor_json,
+                is_final,
+                extract(epoch from uploaded_at)::bigint AS uploaded_at_unix
+            FROM history_sync_chunks
+            WHERE job_id = $1
+            ORDER BY sequence_no ASC, chunk_id ASC
+            "#,
+        )
+        .bind(job_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        rows.into_iter()
+            .map(history_sync_chunk_row_from_db)
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some)
+    }
+
     pub async fn complete_history_sync_job_for_source_device(
         &self,
         account_id: Uuid,
@@ -972,6 +1239,9 @@ impl Database {
             r#"
             SELECT
                 d.account_id,
+                d.device_id,
+                d.display_name,
+                d.platform,
                 d.credential_identity,
                 d.transport_pubkey,
                 d.device_status::text AS device_status,
@@ -993,10 +1263,51 @@ impl Database {
 
         Ok(Some(PendingDeviceBootstrapRow {
             account_id: row_uuid(&row, "account_id")?,
+            device_id: row_uuid(&row, "device_id")?,
+            device_display_name: row_text(&row, "display_name")?,
+            platform: row_text(&row, "platform")?,
             credential_identity: row_bytes(&row, "credential_identity")?,
             transport_pubkey: row_bytes(&row, "transport_pubkey")?,
             account_root_pubkey: row_bytes(&row, "account_root_pubkey")?,
             device_status: parse_device_status(&row_text(&row, "device_status")?)?,
+        }))
+    }
+
+    pub async fn get_device_transfer_bundle(
+        &self,
+        account_id: Uuid,
+        device_id: Uuid,
+    ) -> Result<Option<DeviceTransferBundleRow>, AppError> {
+        let row = sqlx::query(
+            r#"
+            UPDATE device_link_intents
+            SET transfer_bundle_fetched_at = COALESCE(transfer_bundle_fetched_at, now())
+            WHERE pending_device_id = $1
+              AND account_id = $2
+              AND status = 'completed'::link_intent_status
+              AND transfer_bundle_ciphertext IS NOT NULL
+            RETURNING
+                account_id,
+                pending_device_id AS device_id,
+                transfer_bundle_ciphertext,
+                extract(epoch from transfer_bundle_uploaded_at)::bigint AS uploaded_at_unix
+            "#,
+        )
+        .bind(device_id)
+        .bind(account_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        Ok(Some(DeviceTransferBundleRow {
+            account_id: row_uuid(&row, "account_id")?,
+            device_id: row_uuid(&row, "device_id")?,
+            transfer_bundle_ciphertext: row_bytes(&row, "transfer_bundle_ciphertext")?,
+            uploaded_at_unix: row_u64_from_i64(&row, "uploaded_at_unix")?,
         }))
     }
 
@@ -1094,7 +1405,12 @@ impl Database {
             UPDATE device_link_intents
             SET status = 'completed'::link_intent_status,
                 approved_by_device_id = $2,
-                approved_at = now()
+                approved_at = now(),
+                transfer_bundle_ciphertext = $3,
+                transfer_bundle_uploaded_at = CASE
+                    WHEN $3 IS NULL THEN transfer_bundle_uploaded_at
+                    ELSE now()
+                END
             WHERE pending_device_id = $1
               AND status = 'pending_approval'::link_intent_status
             RETURNING account_id
@@ -1102,6 +1418,7 @@ impl Database {
         )
         .bind(input.target_device_id)
         .bind(input.actor_device_id)
+        .bind(&input.transfer_bundle_ciphertext)
         .fetch_optional(&mut *tx)
         .await
         .map_err(map_db_error)?;
@@ -3210,9 +3527,11 @@ impl Database {
     pub async fn get_inbox_for_device(
         &self,
         device_id: Uuid,
+        after_inbox_id: Option<u64>,
         limit: Option<usize>,
     ) -> Result<Vec<InboxItemRow>, AppError> {
         let limit = clamp_limit(limit, DEFAULT_INBOX_LIMIT, MAX_INBOX_LIMIT);
+        let after_inbox_id = u64_to_i64(after_inbox_id.unwrap_or_default(), "after_inbox_id")?;
 
         let rows = sqlx::query(
             r#"
@@ -3235,14 +3554,110 @@ impl Database {
             JOIN devices d
               ON d.device_id = di.device_id
             WHERE di.device_id = $1
-              AND di.delivery_state = 'pending'::delivery_state
+              AND di.inbox_id > $2
+              AND (
+                    di.delivery_state = 'pending'::delivery_state
+                    OR (
+                        di.delivery_state = 'leased'::delivery_state
+                        AND di.lease_expires_at IS NOT NULL
+                        AND di.lease_expires_at <= now()
+                    )
+                  )
               AND d.device_status = 'active'::device_status
             ORDER BY di.inbox_id ASC
-            LIMIT $2
+            LIMIT $3
             "#,
         )
         .bind(device_id)
+        .bind(after_inbox_id)
         .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(InboxItemRow {
+                    inbox_id: row_u64_from_i64(&row, "inbox_id")?,
+                    message: message_row_from_db(row)?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn lease_inbox_for_device(
+        &self,
+        device_id: Uuid,
+        lease_owner: &str,
+        after_inbox_id: Option<u64>,
+        limit: Option<usize>,
+        lease_ttl_seconds: Option<u64>,
+    ) -> Result<Vec<InboxItemRow>, AppError> {
+        let limit = clamp_limit(limit, DEFAULT_INBOX_LIMIT, MAX_INBOX_LIMIT);
+        let after_inbox_id = u64_to_i64(after_inbox_id.unwrap_or_default(), "after_inbox_id")?;
+        let lease_ttl_seconds = clamp_ttl_seconds(
+            lease_ttl_seconds,
+            DEFAULT_INBOX_LEASE_TTL_SECONDS,
+            MAX_INBOX_LEASE_TTL_SECONDS,
+        );
+        let lease_ttl_seconds = u64_to_i64(lease_ttl_seconds, "lease_ttl_seconds")?;
+
+        let rows = sqlx::query(
+            r#"
+            WITH candidates AS (
+                SELECT di.inbox_id, di.message_id
+                FROM device_inbox di
+                JOIN devices d
+                  ON d.device_id = di.device_id
+                WHERE di.device_id = $1
+                  AND di.inbox_id > $2
+                  AND d.device_status = 'active'::device_status
+                  AND (
+                        di.delivery_state = 'pending'::delivery_state
+                        OR (
+                            di.delivery_state = 'leased'::delivery_state
+                            AND di.lease_expires_at IS NOT NULL
+                            AND di.lease_expires_at <= now()
+                        )
+                      )
+                ORDER BY di.inbox_id ASC
+                LIMIT $3
+                FOR UPDATE OF di SKIP LOCKED
+            ),
+            leased AS (
+                UPDATE device_inbox di
+                SET delivery_state = 'leased'::delivery_state,
+                    lease_owner = $4,
+                    lease_expires_at = now() + ($5 * interval '1 second'),
+                    acked_at = NULL
+                FROM candidates c
+                WHERE di.inbox_id = c.inbox_id
+                RETURNING di.inbox_id, di.message_id
+            )
+            SELECT
+                leased.inbox_id,
+                m.message_id,
+                m.chat_id,
+                m.server_seq,
+                m.sender_account_id,
+                m.sender_device_id,
+                m.epoch,
+                m.message_kind::text AS message_kind,
+                m.content_type::text AS content_type,
+                m.ciphertext,
+                m.aad_json,
+                extract(epoch from m.created_at)::bigint AS created_at_unix
+            FROM leased
+            JOIN messages m
+              ON m.message_id = leased.message_id
+            ORDER BY leased.inbox_id ASC
+            "#,
+        )
+        .bind(device_id)
+        .bind(after_inbox_id)
+        .bind(limit as i64)
+        .bind(lease_owner)
+        .bind(lease_ttl_seconds)
         .fetch_all(&self.pool)
         .await
         .map_err(map_db_error)?;
@@ -3270,6 +3685,8 @@ impl Database {
             r#"
             UPDATE device_inbox
             SET delivery_state = 'acked'::delivery_state,
+                lease_owner = NULL,
+                lease_expires_at = NULL,
                 acked_at = COALESCE(acked_at, now())
             WHERE device_id = $1
               AND inbox_id = ANY($2)
@@ -4193,6 +4610,11 @@ fn clamp_limit(requested: Option<usize>, default_limit: usize, max_limit: usize)
     limit.clamp(1, max_limit)
 }
 
+fn clamp_ttl_seconds(requested: Option<u64>, default_ttl: u64, max_ttl: u64) -> u64 {
+    let ttl = requested.unwrap_or(default_ttl);
+    ttl.clamp(1, max_ttl)
+}
+
 fn u64_to_i64(value: u64, field: &str) -> Result<i64, AppError> {
     i64::try_from(value)
         .map_err(|_| AppError::bad_request(format!("{field} exceeds supported range")))
@@ -4270,6 +4692,23 @@ fn history_sync_job_row_from_db(row: sqlx::postgres::PgRow) -> Result<HistorySyn
     })
 }
 
+fn history_sync_chunk_row_from_db(
+    row: sqlx::postgres::PgRow,
+) -> Result<HistorySyncChunkRow, AppError> {
+    Ok(HistorySyncChunkRow {
+        chunk_id: row_u64_from_i64(&row, "chunk_id")?,
+        sequence_no: row_u64_from_i64(&row, "sequence_no")?,
+        payload: row_bytes(&row, "payload")?,
+        cursor_json: row
+            .try_get("cursor_json")
+            .map_err(|err| AppError::internal(format!("failed to read cursor_json: {err}")))?,
+        is_final: row
+            .try_get("is_final")
+            .map_err(|err| AppError::internal(format!("failed to read is_final: {err}")))?,
+        uploaded_at_unix: row_u64_from_i64(&row, "uploaded_at_unix")?,
+    })
+}
+
 fn message_row_from_db(row: sqlx::postgres::PgRow) -> Result<MessageEnvelopeRow, AppError> {
     Ok(MessageEnvelopeRow {
         message_id: row_uuid(&row, "message_id")?,
@@ -4308,10 +4747,11 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        ApprovePendingDeviceInput, ChatType, CompleteLinkIntentInput, CreateAccountInput,
-        CreateChatInput, Database, KeyPackageBytesInput, ModifyChatDevicesInput,
-        PendingControlMessage, PublishKeyPackageInput,
+        ApprovePendingDeviceInput, CompleteLinkIntentInput, ContentType, CreateAccountInput,
+        CreateChatInput, CreateMessageInput, Database, KeyPackageBytesInput, MessageKind,
+        ModifyChatDevicesInput, PendingControlMessage, PublishKeyPackageInput,
     };
+    use trix_types::{ChatType, HistorySyncJobStatus, HistorySyncJobType};
 
     const DEFAULT_TEST_DATABASE_URL: &str = "postgres://trix:trix@localhost:5432/trix";
     const TEST_CIPHER_SUITE: &str = "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519";
@@ -4393,6 +4833,7 @@ mod tests {
             actor_device_id: alice.device_id,
             target_device_id: completed.pending_device_id,
             account_root_signature: vec![99; 64],
+            transfer_bundle_ciphertext: None,
         })
         .await
         .expect("approve secondary device");
@@ -4498,6 +4939,372 @@ mod tests {
                 .is_some(),
             "primary device must keep access after secondary removal"
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn smoke_leases_and_reclaims_expired_inbox_items() {
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [31; 32],
+                [32; 32],
+            ))
+            .await
+            .expect("create alice account");
+        let bob = db
+            .create_account(make_account_input("bob", "Bob Primary", [41; 32], [42; 32]))
+            .await
+            .expect("create bob account");
+
+        db.publish_key_packages(
+            bob.device_id,
+            vec![PublishKeyPackageInput {
+                device_id: bob.device_id,
+                cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                key_package_bytes: b"bob-primary-kp".to_vec(),
+            }],
+        )
+        .await
+        .expect("publish bob key package");
+
+        let bob_reserved = db
+            .reserve_key_packages_for_account(alice.account_id, bob.account_id)
+            .await
+            .expect("reserve bob key package");
+        let dm = db
+            .create_chat(CreateChatInput {
+                creator_account_id: alice.account_id,
+                creator_device_id: alice.device_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                participant_account_ids: vec![bob.account_id],
+                reserved_key_package_ids: bob_reserved
+                    .iter()
+                    .map(|package| package.key_package_id)
+                    .collect(),
+                initial_commit: Some(make_control_message("dm-create-commit")),
+                welcome_message: Some(make_control_message("dm-create-welcome")),
+            })
+            .await
+            .expect("create dm");
+
+        let bootstrap_inbox = db
+            .get_inbox_for_device(bob.device_id, None, Some(10))
+            .await
+            .expect("list bootstrap inbox items");
+        db.ack_inbox_items(
+            bob.device_id,
+            bootstrap_inbox
+                .iter()
+                .map(|item| i64::try_from(item.inbox_id).expect("inbox id fits in i64"))
+                .collect(),
+        )
+        .await
+        .expect("ack bootstrap inbox items");
+
+        let sent = db
+            .append_message(CreateMessageInput {
+                chat_id: dm.chat_id,
+                sender_account_id: alice.account_id,
+                sender_device_id: alice.device_id,
+                message_id: Uuid::new_v4(),
+                epoch: dm.epoch,
+                message_kind: MessageKind::Application,
+                content_type: ContentType::Text,
+                ciphertext: b"hello bob".to_vec(),
+                aad_json: json!({ "kind": "text" }),
+            })
+            .await
+            .expect("append message");
+
+        let leased = db
+            .lease_inbox_for_device(bob.device_id, "lease-1", None, Some(10), Some(30))
+            .await
+            .expect("lease pending inbox item");
+        assert_eq!(leased.len(), 1);
+        assert_eq!(leased[0].message.message_id, sent.message_id);
+
+        let second_attempt = db
+            .lease_inbox_for_device(bob.device_id, "lease-2", None, Some(10), Some(30))
+            .await
+            .expect("lease should skip active lease");
+        assert!(second_attempt.is_empty());
+
+        sqlx::query(
+            r#"
+            UPDATE device_inbox
+            SET lease_expires_at = now() - interval '1 second'
+            WHERE device_id = $1
+              AND inbox_id = $2
+            "#,
+        )
+        .bind(bob.device_id)
+        .bind(i64::try_from(leased[0].inbox_id).expect("inbox id fits in i64"))
+        .execute(&db.pool)
+        .await
+        .expect("expire lease manually");
+
+        let reclaimed = db
+            .lease_inbox_for_device(bob.device_id, "lease-2", None, Some(10), Some(30))
+            .await
+            .expect("reclaim expired lease");
+        assert_eq!(reclaimed.len(), 1);
+        assert_eq!(reclaimed[0].inbox_id, leased[0].inbox_id);
+
+        let acked = db
+            .ack_inbox_items(
+                bob.device_id,
+                vec![i64::try_from(reclaimed[0].inbox_id).expect("inbox id fits in i64")],
+            )
+            .await
+            .expect("ack reclaimed inbox item");
+        assert_eq!(acked, vec![reclaimed[0].inbox_id]);
+
+        let remaining = db
+            .get_inbox_for_device(bob.device_id, None, Some(10))
+            .await
+            .expect("list remaining inbox items");
+        assert!(remaining.is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn smoke_persists_transfer_bundle_on_device_approval() {
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [51; 32],
+                [52; 32],
+            ))
+            .await
+            .expect("create alice account");
+
+        let intent = db
+            .create_link_intent(alice.account_id, alice.device_id)
+            .await
+            .expect("create link intent");
+        let completed = db
+            .complete_link_intent(CompleteLinkIntentInput {
+                link_intent_id: intent.link_intent_id,
+                link_token: intent.link_token,
+                device_display_name: "Alice Secondary".to_owned(),
+                platform: "ios".to_owned(),
+                credential_identity: b"alice-secondary-credential".to_vec(),
+                transport_pubkey: vec![61; 32],
+                key_packages: Vec::new(),
+            })
+            .await
+            .expect("complete link intent");
+
+        let transfer_bundle = b"encrypted-transfer-bundle".to_vec();
+        db.approve_pending_device(ApprovePendingDeviceInput {
+            actor_account_id: alice.account_id,
+            actor_device_id: alice.device_id,
+            target_device_id: completed.pending_device_id,
+            account_root_signature: vec![88; 64],
+            transfer_bundle_ciphertext: Some(transfer_bundle.clone()),
+        })
+        .await
+        .expect("approve pending device with transfer bundle");
+
+        let stored_bundle = db
+            .get_device_transfer_bundle(alice.account_id, completed.pending_device_id)
+            .await
+            .expect("load stored transfer bundle")
+            .expect("transfer bundle should exist");
+
+        assert_eq!(stored_bundle.account_id, alice.account_id);
+        assert_eq!(stored_bundle.device_id, completed.pending_device_id);
+        assert_eq!(stored_bundle.transfer_bundle_ciphertext, transfer_bundle);
+        assert!(stored_bundle.uploaded_at_unix > 0);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn smoke_streams_history_sync_chunks_between_devices() {
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [71; 32],
+                [72; 32],
+            ))
+            .await
+            .expect("create alice account");
+        let bob = db
+            .create_account(make_account_input("bob", "Bob Primary", [81; 32], [82; 32]))
+            .await
+            .expect("create bob account");
+
+        db.publish_key_packages(
+            bob.device_id,
+            vec![PublishKeyPackageInput {
+                device_id: bob.device_id,
+                cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                key_package_bytes: b"bob-primary-kp".to_vec(),
+            }],
+        )
+        .await
+        .expect("publish bob key package");
+
+        let bob_reserved = db
+            .reserve_key_packages_for_account(alice.account_id, bob.account_id)
+            .await
+            .expect("reserve bob key package");
+        db.create_chat(CreateChatInput {
+            creator_account_id: alice.account_id,
+            creator_device_id: alice.device_id,
+            chat_type: ChatType::Dm,
+            title: None,
+            participant_account_ids: vec![bob.account_id],
+            reserved_key_package_ids: bob_reserved
+                .iter()
+                .map(|package| package.key_package_id)
+                .collect(),
+            initial_commit: Some(make_control_message("dm-create-commit")),
+            welcome_message: Some(make_control_message("dm-create-welcome")),
+        })
+        .await
+        .expect("create dm");
+
+        let intent = db
+            .create_link_intent(alice.account_id, alice.device_id)
+            .await
+            .expect("create link intent");
+        let completed = db
+            .complete_link_intent(CompleteLinkIntentInput {
+                link_intent_id: intent.link_intent_id,
+                link_token: intent.link_token,
+                device_display_name: "Alice Secondary".to_owned(),
+                platform: "ios".to_owned(),
+                credential_identity: b"alice-secondary-credential".to_vec(),
+                transport_pubkey: vec![91; 32],
+                key_packages: Vec::new(),
+            })
+            .await
+            .expect("complete link intent");
+
+        db.approve_pending_device(ApprovePendingDeviceInput {
+            actor_account_id: alice.account_id,
+            actor_device_id: alice.device_id,
+            target_device_id: completed.pending_device_id,
+            account_root_signature: vec![93; 64],
+            transfer_bundle_ciphertext: None,
+        })
+        .await
+        .expect("approve secondary device");
+
+        let source_jobs = db
+            .list_history_sync_jobs_for_source_device(
+                alice.account_id,
+                alice.device_id,
+                None,
+                Some(10),
+            )
+            .await
+            .expect("list source jobs");
+        assert_eq!(source_jobs.len(), 2);
+
+        let initial_sync_job = source_jobs
+            .iter()
+            .find(|job| job.job_type == HistorySyncJobType::InitialSync)
+            .expect("initial sync job must exist");
+        assert_eq!(initial_sync_job.job_status, HistorySyncJobStatus::Pending);
+
+        let target_jobs = db
+            .list_history_sync_jobs_for_target_device(
+                alice.account_id,
+                completed.pending_device_id,
+                None,
+                Some(10),
+            )
+            .await
+            .expect("list target jobs");
+        assert_eq!(target_jobs.len(), 2);
+
+        let first_append = db
+            .append_history_sync_chunk_for_source_device(
+                alice.account_id,
+                alice.device_id,
+                initial_sync_job.job_id,
+                0,
+                b"chunk-0".to_vec(),
+                Some(json!({ "cursor": "0" })),
+                false,
+            )
+            .await
+            .expect("append first chunk")
+            .expect("job must exist");
+        assert_eq!(first_append.job_status, HistorySyncJobStatus::Running);
+
+        let second_append = db
+            .append_history_sync_chunk_for_source_device(
+                alice.account_id,
+                alice.device_id,
+                initial_sync_job.job_id,
+                1,
+                b"chunk-1".to_vec(),
+                Some(json!({ "cursor": "1" })),
+                true,
+            )
+            .await
+            .expect("append second chunk")
+            .expect("job must exist");
+        assert!(second_append.chunk_id > first_append.chunk_id);
+        assert_eq!(second_append.job_status, HistorySyncJobStatus::Running);
+
+        let chunks = db
+            .list_history_sync_chunks_for_target_device(
+                alice.account_id,
+                completed.pending_device_id,
+                initial_sync_job.job_id,
+            )
+            .await
+            .expect("list target chunks")
+            .expect("target job must exist");
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].sequence_no, 0);
+        assert_eq!(chunks[0].payload, b"chunk-0".to_vec());
+        assert!(!chunks[0].is_final);
+        assert_eq!(chunks[1].sequence_no, 1);
+        assert_eq!(chunks[1].payload, b"chunk-1".to_vec());
+        assert!(chunks[1].is_final);
+
+        let completed_status = db
+            .complete_history_sync_job_for_source_device(
+                alice.account_id,
+                alice.device_id,
+                initial_sync_job.job_id,
+                Some(json!({ "cursor": "done" })),
+            )
+            .await
+            .expect("complete history sync job")
+            .expect("job must exist");
+        assert_eq!(completed_status, HistorySyncJobStatus::Completed);
+
+        let completed_jobs = db
+            .list_history_sync_jobs_for_target_device(
+                alice.account_id,
+                completed.pending_device_id,
+                Some(HistorySyncJobStatus::Completed),
+                Some(10),
+            )
+            .await
+            .expect("list completed target jobs");
+        assert_eq!(completed_jobs.len(), 1);
+        assert_eq!(completed_jobs[0].job_id, initial_sync_job.job_id);
     }
 
     async fn connect_test_db() -> Database {

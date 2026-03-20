@@ -7,7 +7,9 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
-use crate::{db::CreateAccountInput, error::AppError, state::AppState};
+use crate::{
+    db::CreateAccountInput, error::AppError, signatures::account_bootstrap_message, state::AppState,
+};
 use trix_types::{
     AccountId, AccountKeyPackagesResponse, AccountProfileResponse, CreateAccountRequest,
     CreateAccountResponse, DeviceId, ReservedKeyPackage,
@@ -132,21 +134,9 @@ fn verify_account_bootstrap_signature(
         .map_err(|_| AppError::bad_request("invalid account root public key"))?;
     let signature = Signature::from_slice(account_root_signature)
         .map_err(|_| AppError::bad_request("invalid account root signature length"))?;
-    let message = bootstrap_message(transport_pubkey, credential_identity);
+    let message = account_bootstrap_message(transport_pubkey, credential_identity);
 
     verifying_key
         .verify(&message, &signature)
         .map_err(|_| AppError::bad_request("invalid account bootstrap signature"))
-}
-
-fn bootstrap_message(transport_pubkey: &[u8], credential_identity: &[u8]) -> Vec<u8> {
-    let mut message = Vec::with_capacity(
-        b"trix-account-bootstrap:v1".len() + 8 + transport_pubkey.len() + credential_identity.len(),
-    );
-    message.extend_from_slice(b"trix-account-bootstrap:v1");
-    message.extend_from_slice(&(transport_pubkey.len() as u32).to_be_bytes());
-    message.extend_from_slice(transport_pubkey);
-    message.extend_from_slice(&(credential_identity.len() as u32).to_be_bytes());
-    message.extend_from_slice(credential_identity);
-    message
 }

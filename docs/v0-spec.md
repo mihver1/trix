@@ -623,7 +623,18 @@ Request:
 Response:
 
 - `pending_device_id`
-- bootstrap server info
+- `bootstrap_payload_b64`
+
+### `GET /v0/devices/{device_id}/approve-payload`
+
+Returns the canonical bootstrap payload that must be signed with the account root key in order to approve a pending device.
+
+Response:
+
+- pending device metadata
+- `credential_identity_b64`
+- `transport_pubkey_b64`
+- `bootstrap_payload_b64`
 
 ### `POST /v0/devices/{device_id}/approve`
 
@@ -631,13 +642,22 @@ Called by an already trusted device to activate the pending device.
 
 Request:
 
-- account-root-signed approval payload
-- encrypted transfer bundle for the new device
+- `account_root_signature_b64` over the canonical `bootstrap_payload_b64`
+- optional encrypted `transfer_bundle_b64` for the new device
 
 Response:
 
 - device becomes `active`
 - history sync jobs are scheduled
+
+### `GET /v0/devices/{device_id}/transfer-bundle`
+
+Returns the encrypted transfer bundle previously uploaded during approval.
+
+Rules:
+
+- only the target authenticated device can fetch it
+- payload remains opaque to the server
 
 ### `POST /v0/devices/{device_id}/revoke`
 
@@ -662,7 +682,38 @@ Returns all devices for the authenticated account.
 
 ### `GET /v0/history-sync/jobs`
 
-Returns orchestration jobs assigned to the authenticated source device.
+Returns orchestration jobs assigned to the authenticated device.
+
+Rules:
+
+- `role=source` returns jobs where the current device must produce encrypted history data
+- `role=target` returns jobs where the current device waits for encrypted history data from another trusted device
+
+### `POST /v0/history-sync/jobs/{job_id}/chunks`
+
+Uploads an encrypted history sync chunk for a job owned by the authenticated source device.
+
+Request:
+
+- `sequence_no`
+- opaque `payload_b64`
+- optional `cursor_json`
+- `is_final`
+
+Rules:
+
+- source-side writes are idempotent by `(job_id, sequence_no)`
+- first successful chunk moves the job to `running`
+- server stores only opaque ciphertext and cursor metadata
+
+### `GET /v0/history-sync/jobs/{job_id}/chunks`
+
+Returns encrypted history sync chunks for a job visible to the authenticated target device.
+
+Rules:
+
+- only the target device of the job can read the chunk stream
+- chunks are returned in `sequence_no` order
 
 ### `POST /v0/history-sync/jobs/{job_id}/complete`
 
@@ -783,9 +834,33 @@ Rules:
 
 Poll API for queued messages for the authenticated device.
 
+Rules:
+
+- returns `pending` items plus items whose previous lease has expired
+- does not mutate delivery state on the server
+
 ### `POST /v0/inbox/lease`
 
 Returns a leased batch of inbox items for delivery workers or websocket sessions.
+
+Request:
+
+- optional `lease_owner`
+- optional `after_inbox_id`
+- optional `limit`
+- optional `lease_ttl_seconds`
+
+Response:
+
+- effective `lease_owner`
+- `lease_expires_at_unix`
+- leased inbox items
+
+Rules:
+
+- only `pending` or expired leased items can be claimed
+- lease claim is atomic and uses row-level locking
+- lease ownership is advisory for `v0`; final acceptance still happens through `ack`
 
 ### `POST /v0/inbox/ack`
 
@@ -876,7 +951,7 @@ Returns blob metadata as headers.
 
 1. Existing trusted device creates a `link_intent`.
 2. New device scans the QR and uploads its device metadata and `KeyPackage` batch.
-3. Existing trusted device approves the pending device using the account root key and sends an encrypted transfer bundle.
+3. Existing trusted device fetches `GET /v0/devices/{device_id}/approve-payload`, signs `bootstrap_payload_b64` with the account root key, and submits `POST /v0/devices/{device_id}/approve`.
 4. Server marks the new device `active` and appends a `device_log` event.
 5. Existing trusted device adds the new device to:
    - the `account sync group`

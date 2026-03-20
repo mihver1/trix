@@ -14,12 +14,14 @@ use crate::{
         ApprovePendingDeviceInput, CompleteLinkIntentInput, KeyPackageBytesInput, RevokeDeviceInput,
     },
     error::AppError,
+    signatures::{account_bootstrap_message, device_revoke_message},
     state::AppState,
 };
 use trix_types::{
     ApproveDeviceRequest, ApproveDeviceResponse, CompleteLinkIntentRequest,
-    CompleteLinkIntentResponse, CreateLinkIntentResponse, DeviceId, DeviceListResponse,
-    DeviceSummary, RevokeDeviceRequest, RevokeDeviceResponse,
+    CompleteLinkIntentResponse, CreateLinkIntentResponse, DeviceApprovePayloadResponse, DeviceId,
+    DeviceListResponse, DeviceSummary, DeviceTransferBundleResponse, RevokeDeviceRequest,
+    RevokeDeviceResponse,
 };
 
 pub fn router() -> Router<AppState> {
@@ -30,6 +32,8 @@ pub fn router() -> Router<AppState> {
             "/link-intents/{link_intent_id}/complete",
             post(complete_link_intent),
         )
+        .route("/{device_id}/transfer-bundle", get(get_transfer_bundle))
+        .route("/{device_id}/approve-payload", get(get_approve_payload))
         .route("/{device_id}/approve", post(approve_device))
         .route("/{device_id}/revoke", post(revoke_device))
 }
@@ -105,6 +109,11 @@ async fn complete_link_intent(
         return Err(AppError::bad_request("platform must not be empty"));
     }
 
+    let bootstrap_payload_b64 = general_purpose::STANDARD.encode(account_bootstrap_message(
+        &transport_pubkey,
+        &credential_identity,
+    ));
+
     let key_packages = request
         .key_packages
         .into_iter()
@@ -133,6 +142,57 @@ async fn complete_link_intent(
         account_id: trix_types::AccountId(completed.account_id),
         pending_device_id: DeviceId(completed.pending_device_id),
         device_status: completed.device_status,
+        bootstrap_payload_b64,
+    }))
+}
+
+async fn get_approve_payload(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(device_id): Path<DeviceId>,
+) -> Result<Json<DeviceApprovePayloadResponse>, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+    let bootstrap = state
+        .db
+        .get_pending_device_bootstrap(device_id.0)
+        .await?
+        .ok_or_else(|| AppError::not_found("target device not found"))?;
+
+    if bootstrap.account_id != principal.account_id {
+        return Err(AppError::unauthorized(
+            "target device does not belong to the authenticated account",
+        ));
+    }
+    if bootstrap.device_status != trix_types::DeviceStatus::Pending {
+        return Err(AppError::conflict("device is not pending approval"));
+    }
+
+    Ok(Json(pending_bootstrap_to_api(bootstrap)))
+}
+
+async fn get_transfer_bundle(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(device_id): Path<DeviceId>,
+) -> Result<Json<DeviceTransferBundleResponse>, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+    if principal.device_id != device_id.0 {
+        return Err(AppError::unauthorized(
+            "transfer bundle can only be fetched by the target device",
+        ));
+    }
+
+    let bundle = state
+        .db
+        .get_device_transfer_bundle(principal.account_id, principal.device_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("transfer bundle not found"))?;
+
+    Ok(Json(DeviceTransferBundleResponse {
+        account_id: trix_types::AccountId(bundle.account_id),
+        device_id: DeviceId(bundle.device_id),
+        transfer_bundle_b64: general_purpose::STANDARD.encode(bundle.transfer_bundle_ciphertext),
+        uploaded_at_unix: bundle.uploaded_at_unix,
     }))
 }
 
@@ -159,6 +219,11 @@ async fn approve_device(
     }
 
     let account_root_signature = decode_b64(&request.account_root_signature_b64)?;
+    let transfer_bundle_ciphertext = request
+        .transfer_bundle_b64
+        .as_deref()
+        .map(decode_b64)
+        .transpose()?;
     verify_account_bootstrap_signature(
         &bootstrap.account_root_pubkey,
         &account_root_signature,
@@ -173,6 +238,7 @@ async fn approve_device(
             actor_device_id: principal.device_id,
             target_device_id: device_id.0,
             account_root_signature,
+            transfer_bundle_ciphertext,
         })
         .await?;
 
@@ -211,7 +277,7 @@ async fn revoke_device(
     verify_account_root_signature(
         &revoke_context.account_root_pubkey,
         &account_root_signature,
-        &revoke_message(device_id.0, &reason),
+        &device_revoke_message(device_id.0, &reason),
         "invalid device revoke signature",
     )?;
 
@@ -256,7 +322,7 @@ fn verify_account_bootstrap_signature(
     verify_account_root_signature(
         account_root_pubkey,
         account_root_signature,
-        &bootstrap_message(transport_pubkey, credential_identity),
+        &account_bootstrap_message(transport_pubkey, credential_identity),
         "invalid account bootstrap signature",
     )
 }
@@ -280,29 +346,20 @@ fn verify_account_root_signature(
         .map_err(|_| AppError::bad_request(error_message))
 }
 
-fn bootstrap_message(transport_pubkey: &[u8], credential_identity: &[u8]) -> Vec<u8> {
-    let mut message = Vec::with_capacity(
-        b"trix-account-bootstrap:v1".len() + 8 + transport_pubkey.len() + credential_identity.len(),
-    );
-    message.extend_from_slice(b"trix-account-bootstrap:v1");
-    message.extend_from_slice(&(transport_pubkey.len() as u32).to_be_bytes());
-    message.extend_from_slice(transport_pubkey);
-    message.extend_from_slice(&(credential_identity.len() as u32).to_be_bytes());
-    message.extend_from_slice(credential_identity);
-    message
-}
-
-fn revoke_message(device_id: Uuid, reason: &str) -> Vec<u8> {
-    let device_id = device_id.to_string();
-    let device_id = device_id.as_bytes();
-    let reason = reason.as_bytes();
-
-    let mut message =
-        Vec::with_capacity(b"trix-device-revoke:v1".len() + 8 + device_id.len() + reason.len());
-    message.extend_from_slice(b"trix-device-revoke:v1");
-    message.extend_from_slice(&(device_id.len() as u32).to_be_bytes());
-    message.extend_from_slice(device_id);
-    message.extend_from_slice(&(reason.len() as u32).to_be_bytes());
-    message.extend_from_slice(reason);
-    message
+fn pending_bootstrap_to_api(
+    bootstrap: crate::db::PendingDeviceBootstrapRow,
+) -> DeviceApprovePayloadResponse {
+    DeviceApprovePayloadResponse {
+        account_id: trix_types::AccountId(bootstrap.account_id),
+        device_id: DeviceId(bootstrap.device_id),
+        device_display_name: bootstrap.device_display_name,
+        platform: bootstrap.platform,
+        device_status: bootstrap.device_status,
+        credential_identity_b64: general_purpose::STANDARD.encode(&bootstrap.credential_identity),
+        transport_pubkey_b64: general_purpose::STANDARD.encode(&bootstrap.transport_pubkey),
+        bootstrap_payload_b64: general_purpose::STANDARD.encode(account_bootstrap_message(
+            &bootstrap.transport_pubkey,
+            &bootstrap.credential_identity,
+        )),
+    }
 }

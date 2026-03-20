@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    AccountId, ChatId, ChatType, ContentType, DeviceId, DeviceStatus, HistorySyncJobStatus,
-    HistorySyncJobType, MessageId, MessageKind,
+    AccountId, ChatId, ChatType, ContentType, DeviceId, DeviceStatus, HistorySyncJobRole,
+    HistorySyncJobStatus, HistorySyncJobType, MessageId, MessageKind,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,11 +136,25 @@ pub struct CompleteLinkIntentResponse {
     pub account_id: AccountId,
     pub pending_device_id: DeviceId,
     pub device_status: DeviceStatus,
+    pub bootstrap_payload_b64: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceApprovePayloadResponse {
+    pub account_id: AccountId,
+    pub device_id: DeviceId,
+    pub device_display_name: String,
+    pub platform: String,
+    pub device_status: DeviceStatus,
+    pub credential_identity_b64: String,
+    pub transport_pubkey_b64: String,
+    pub bootstrap_payload_b64: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApproveDeviceRequest {
     pub account_root_signature_b64: String,
+    pub transfer_bundle_b64: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,6 +162,14 @@ pub struct ApproveDeviceResponse {
     pub account_id: AccountId,
     pub device_id: DeviceId,
     pub device_status: DeviceStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceTransferBundleResponse {
+    pub account_id: AccountId,
+    pub device_id: DeviceId,
+    pub transfer_bundle_b64: String,
+    pub uploaded_at_unix: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -344,6 +366,21 @@ pub struct InboxResponse {
     pub items: Vec<InboxItem>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LeaseInboxRequest {
+    pub lease_owner: Option<String>,
+    pub limit: Option<usize>,
+    pub after_inbox_id: Option<u64>,
+    pub lease_ttl_seconds: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LeaseInboxResponse {
+    pub lease_owner: String,
+    pub lease_expires_at_unix: u64,
+    pub items: Vec<InboxItem>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AckInboxRequest {
     pub inbox_ids: Vec<u64>,
@@ -397,6 +434,38 @@ pub struct HistorySyncJobSummary {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HistorySyncJobListResponse {
     pub jobs: Vec<HistorySyncJobSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AppendHistorySyncChunkRequest {
+    pub sequence_no: u64,
+    pub payload_b64: String,
+    pub cursor_json: Option<Value>,
+    pub is_final: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppendHistorySyncChunkResponse {
+    pub job_id: String,
+    pub chunk_id: u64,
+    pub job_status: HistorySyncJobStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistorySyncChunkSummary {
+    pub chunk_id: u64,
+    pub sequence_no: u64,
+    pub payload_b64: String,
+    pub cursor_json: Option<Value>,
+    pub is_final: bool,
+    pub uploaded_at_unix: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistorySyncChunkListResponse {
+    pub job_id: String,
+    pub role: HistorySyncJobRole,
+    pub chunks: Vec<HistorySyncChunkSummary>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

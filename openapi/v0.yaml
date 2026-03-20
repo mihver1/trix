@@ -166,6 +166,40 @@ paths:
                 $ref: '#/components/schemas/CompleteLinkIntentResponse'
         '409':
           $ref: '#/components/responses/Conflict'
+  /v0/devices/{device_id}/approve-payload:
+    get:
+      operationId: getApproveDevicePayload
+      tags: [devices]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '200':
+          description: Canonical bootstrap payload for signing pending device approval
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceApprovePayloadResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v0/devices/{device_id}/transfer-bundle:
+    get:
+      operationId: getDeviceTransferBundle
+      tags: [devices]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '200':
+          description: Encrypted transfer bundle for the authenticated device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceTransferBundleResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v0/devices/{device_id}/approve:
     post:
       operationId: approveDevice
@@ -220,6 +254,10 @@ paths:
         - bearerAuth: []
       parameters:
         - in: query
+          name: role
+          schema:
+            $ref: '#/components/schemas/HistorySyncJobRole'
+        - in: query
           name: status
           schema:
             $ref: '#/components/schemas/HistorySyncJobStatus'
@@ -237,6 +275,47 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HistorySyncJobListResponse'
+  /v0/history-sync/jobs/{job_id}/chunks:
+    get:
+      operationId: listHistorySyncChunks
+      tags: [history_sync]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: History sync chunks visible to the authenticated target device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistorySyncChunkListResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: appendHistorySyncChunk
+      tags: [history_sync]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppendHistorySyncChunkRequest'
+      responses:
+        '200':
+          description: Encrypted history sync chunk stored for the job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppendHistorySyncChunkResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v0/history-sync/jobs/{job_id}/complete:
     post:
       operationId: completeHistorySyncJob
@@ -501,6 +580,12 @@ paths:
         - bearerAuth: []
       parameters:
         - in: query
+          name: after_inbox_id
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - in: query
           name: limit
           schema:
             type: integer
@@ -539,9 +624,19 @@ paths:
       tags: [inbox]
       security:
         - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeaseInboxRequest'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Inbox items leased for temporary delivery ownership
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaseInboxResponse'
   /v0/blobs/uploads:
     post:
       operationId: createBlobUpload
@@ -731,6 +826,9 @@ components:
     HistorySyncJobType:
       type: string
       enum: [initial_sync, chat_backfill, device_rekey]
+    HistorySyncJobRole:
+      type: string
+      enum: [source, target]
     HistorySyncJobStatus:
       type: string
       enum: [pending, running, completed, failed, canceled]
@@ -939,7 +1037,7 @@ components:
             $ref: '#/components/schemas/PublishKeyPackageItem'
     CompleteLinkIntentResponse:
       type: object
-      required: [account_id, pending_device_id, device_status]
+      required: [account_id, pending_device_id, device_status, bootstrap_payload_b64]
       properties:
         account_id:
           $ref: '#/components/schemas/Uuid'
@@ -947,11 +1045,43 @@ components:
           $ref: '#/components/schemas/Uuid'
         device_status:
           $ref: '#/components/schemas/DeviceStatus'
+        bootstrap_payload_b64:
+          type: string
+    DeviceApprovePayloadResponse:
+      type: object
+      required:
+        - account_id
+        - device_id
+        - device_display_name
+        - platform
+        - device_status
+        - credential_identity_b64
+        - transport_pubkey_b64
+        - bootstrap_payload_b64
+      properties:
+        account_id:
+          $ref: '#/components/schemas/Uuid'
+        device_id:
+          $ref: '#/components/schemas/Uuid'
+        device_display_name:
+          type: string
+        platform:
+          type: string
+        device_status:
+          $ref: '#/components/schemas/DeviceStatus'
+        credential_identity_b64:
+          type: string
+        transport_pubkey_b64:
+          type: string
+        bootstrap_payload_b64:
+          type: string
     ApproveDeviceRequest:
       type: object
       required: [account_root_signature_b64]
       properties:
         account_root_signature_b64:
+          type: string
+        transfer_bundle_b64:
           type: string
     ApproveDeviceResponse:
       type: object
@@ -963,6 +1093,19 @@ components:
           $ref: '#/components/schemas/Uuid'
         device_status:
           $ref: '#/components/schemas/DeviceStatus'
+    DeviceTransferBundleResponse:
+      type: object
+      required: [account_id, device_id, transfer_bundle_b64, uploaded_at_unix]
+      properties:
+        account_id:
+          $ref: '#/components/schemas/Uuid'
+        device_id:
+          $ref: '#/components/schemas/Uuid'
+        transfer_bundle_b64:
+          type: string
+        uploaded_at_unix:
+          type: integer
+          format: int64
     RevokeDeviceRequest:
       type: object
       required: [reason, account_root_signature_b64]
@@ -1023,6 +1166,65 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/HistorySyncJobSummary'
+    AppendHistorySyncChunkRequest:
+      type: object
+      required: [sequence_no, payload_b64, is_final]
+      properties:
+        sequence_no:
+          type: integer
+          format: int64
+          minimum: 0
+        payload_b64:
+          type: string
+        cursor_json:
+          type: object
+          nullable: true
+        is_final:
+          type: boolean
+    AppendHistorySyncChunkResponse:
+      type: object
+      required: [job_id, chunk_id, job_status]
+      properties:
+        job_id:
+          $ref: '#/components/schemas/Uuid'
+        chunk_id:
+          type: integer
+          format: int64
+        job_status:
+          $ref: '#/components/schemas/HistorySyncJobStatus'
+    HistorySyncChunkSummary:
+      type: object
+      required: [chunk_id, sequence_no, payload_b64, is_final, uploaded_at_unix]
+      properties:
+        chunk_id:
+          type: integer
+          format: int64
+        sequence_no:
+          type: integer
+          format: int64
+          minimum: 0
+        payload_b64:
+          type: string
+        cursor_json:
+          type: object
+          nullable: true
+        is_final:
+          type: boolean
+        uploaded_at_unix:
+          type: integer
+          format: int64
+    HistorySyncChunkListResponse:
+      type: object
+      required: [job_id, role, chunks]
+      properties:
+        job_id:
+          $ref: '#/components/schemas/Uuid'
+        role:
+          $ref: '#/components/schemas/HistorySyncJobRole'
+        chunks:
+          type: array
+          items:
+            $ref: '#/components/schemas/HistorySyncChunkSummary'
     CompleteHistorySyncJobRequest:
       type: object
       properties:
@@ -1365,6 +1567,38 @@ components:
       type: object
       required: [items]
       properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InboxItem'
+    LeaseInboxRequest:
+      type: object
+      properties:
+        lease_owner:
+          type: string
+        limit:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 500
+        after_inbox_id:
+          type: integer
+          format: int64
+          minimum: 0
+        lease_ttl_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 300
+    LeaseInboxResponse:
+      type: object
+      required: [lease_owner, lease_expires_at_unix, items]
+      properties:
+        lease_owner:
+          type: string
+        lease_expires_at_unix:
+          type: integer
+          format: int64
         items:
           type: array
           items:
