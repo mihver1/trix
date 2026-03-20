@@ -9,10 +9,10 @@ use uuid::Uuid;
 use crate::{
     AccountRootMaterial, AuthChallengeMaterial, CompleteLinkIntentParams,
     CompletedLinkIntentMaterial, CreateAccountParams, DeviceApprovePayloadMaterial,
-    DeviceKeyMaterial, DeviceTransferBundleMaterial, HistorySyncChunkMaterial, MlsCommitBundle,
-    MlsFacade, MlsMemberIdentity, MlsProcessResult, PublishKeyPackageMaterial,
-    ReservedKeyPackageMaterial, ServerApiClient, SyncChatCursor, SyncCoordinator,
-    SyncStateSnapshot,
+    DeviceKeyMaterial, DeviceTransferBundleMaterial, HistorySyncChunkMaterial, InboxApplyOutcome,
+    LocalHistoryStore, LocalStoreApplyReport, MlsCommitBundle, MlsFacade, MlsMemberIdentity,
+    MlsProcessResult, PublishKeyPackageMaterial, ReservedKeyPackageMaterial, ServerApiClient,
+    SyncChatCursor, SyncCoordinator, SyncStateSnapshot,
 };
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -458,6 +458,21 @@ pub struct FfiSyncStateSnapshot {
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiLocalStoreApplyReport {
+    pub chats_upserted: u64,
+    pub messages_upserted: u64,
+    pub changed_chat_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiInboxApplyOutcome {
+    pub lease_owner: String,
+    pub lease_expires_at_unix: u64,
+    pub acked_inbox_ids: Vec<u64>,
+    pub report: FfiLocalStoreApplyReport,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct FfiCreateBlobUploadResponse {
     pub blob_id: String,
     pub upload_url: String,
@@ -527,6 +542,11 @@ pub struct FfiDeviceKeyMaterial {
 #[derive(uniffi::Object)]
 pub struct FfiMlsFacade {
     inner: Mutex<MlsFacade>,
+}
+
+#[derive(uniffi::Object)]
+pub struct FfiLocalHistoryStore {
+    inner: Mutex<LocalHistoryStore>,
 }
 
 #[derive(uniffi::Object)]
@@ -1281,6 +1301,88 @@ impl FfiDeviceKeyMaterial {
 }
 
 #[uniffi::export]
+impl FfiLocalHistoryStore {
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(LocalHistoryStore::new()),
+        })
+    }
+
+    #[uniffi::constructor]
+    pub fn new_persistent(database_path: String) -> Result<Arc<Self>, TrixFfiError> {
+        Ok(Arc::new(Self {
+            inner: Mutex::new(LocalHistoryStore::new_persistent(database_path).map_err(ffi_error)?),
+        }))
+    }
+
+    pub fn save_state(&self) -> Result<(), TrixFfiError> {
+        lock(&self.inner)?.save_state().map_err(ffi_error)
+    }
+
+    pub fn database_path(&self) -> Result<Option<String>, TrixFfiError> {
+        Ok(lock(&self.inner)?
+            .database_path()
+            .map(|path| path.to_string_lossy().into_owned()))
+    }
+
+    pub fn list_chats(&self) -> Result<Vec<FfiChatSummary>, TrixFfiError> {
+        Ok(lock(&self.inner)?
+            .list_chats()
+            .into_iter()
+            .map(chat_summary_to_ffi)
+            .collect())
+    }
+
+    pub fn get_chat(&self, chat_id: String) -> Result<Option<FfiChatDetail>, TrixFfiError> {
+        Ok(lock(&self.inner)?
+            .get_chat(parse_chat_id(&chat_id)?)
+            .map(chat_detail_to_ffi))
+    }
+
+    pub fn get_chat_history(
+        &self,
+        chat_id: String,
+        after_server_seq: Option<u64>,
+        limit: Option<u32>,
+    ) -> Result<FfiChatHistory, TrixFfiError> {
+        Ok(chat_history_to_ffi(lock(&self.inner)?.get_chat_history(
+            parse_chat_id(&chat_id)?,
+            after_server_seq,
+            limit.map(|value| value as usize),
+        )))
+    }
+
+    pub fn apply_chat_history(
+        &self,
+        history: FfiChatHistory,
+    ) -> Result<FfiLocalStoreApplyReport, TrixFfiError> {
+        let history = ffi_chat_history_to_api(history)?;
+        Ok(local_store_apply_report_to_ffi(
+            lock(&self.inner)?
+                .apply_chat_history(&history)
+                .map_err(ffi_error)?,
+        ))
+    }
+
+    pub fn apply_leased_inbox(
+        &self,
+        lease: FfiLeaseInboxResponse,
+    ) -> Result<FfiLocalStoreApplyReport, TrixFfiError> {
+        let items = lease
+            .items
+            .into_iter()
+            .map(ffi_inbox_item_to_api)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(local_store_apply_report_to_ffi(
+            lock(&self.inner)?
+                .apply_inbox_items(&items)
+                .map_err(ffi_error)?,
+        ))
+    }
+}
+
+#[uniffi::export]
 impl FfiSyncCoordinator {
     #[uniffi::constructor]
     pub fn new() -> Result<Arc<Self>, TrixFfiError> {
@@ -1351,6 +1453,27 @@ impl FfiSyncCoordinator {
         Ok(histories.into_iter().map(chat_history_to_ffi).collect())
     }
 
+    pub fn sync_chat_histories_into_store(
+        &self,
+        client: Arc<FfiServerApiClient>,
+        store: Arc<FfiLocalHistoryStore>,
+        limit_per_chat: u32,
+    ) -> Result<FfiLocalStoreApplyReport, TrixFfiError> {
+        let client = clone_server_api_client(&client.inner)?;
+        let report = {
+            let mut coordinator = lock(&self.inner)?;
+            let mut store = lock(&store.inner)?;
+            self.runtime
+                .block_on(coordinator.sync_chat_histories_into_store(
+                    &client,
+                    &mut store,
+                    limit_per_chat as usize,
+                ))
+                .map_err(ffi_error)?
+        };
+        Ok(local_store_apply_report_to_ffi(report))
+    }
+
     pub fn lease_inbox(
         &self,
         client: Arc<FfiServerApiClient>,
@@ -1390,6 +1513,29 @@ impl FfiSyncCoordinator {
         Ok(FfiAckInboxResponse {
             acked_inbox_ids: response.acked_inbox_ids,
         })
+    }
+
+    pub fn lease_inbox_into_store(
+        &self,
+        client: Arc<FfiServerApiClient>,
+        store: Arc<FfiLocalHistoryStore>,
+        limit: Option<u32>,
+        lease_ttl_seconds: Option<u64>,
+    ) -> Result<FfiInboxApplyOutcome, TrixFfiError> {
+        let client = clone_server_api_client(&client.inner)?;
+        let outcome = {
+            let mut coordinator = lock(&self.inner)?;
+            let mut store = lock(&store.inner)?;
+            self.runtime
+                .block_on(coordinator.lease_inbox_into_store(
+                    &client,
+                    &mut store,
+                    limit.map(|value| value as usize),
+                    lease_ttl_seconds,
+                ))
+                .map_err(ffi_error)?
+        };
+        Ok(inbox_apply_outcome_to_ffi(outcome))
     }
 }
 
@@ -1803,6 +1949,19 @@ fn chat_history_to_ffi(value: trix_types::ChatHistoryResponse) -> FfiChatHistory
     }
 }
 
+fn ffi_chat_history_to_api(
+    value: FfiChatHistory,
+) -> Result<trix_types::ChatHistoryResponse, TrixFfiError> {
+    Ok(trix_types::ChatHistoryResponse {
+        chat_id: parse_chat_id(&value.chat_id)?,
+        messages: value
+            .messages
+            .into_iter()
+            .map(ffi_message_envelope_to_api)
+            .collect::<Result<Vec<_>, _>>()?,
+    })
+}
+
 fn modify_chat_members_response_to_ffi(
     value: trix_types::ModifyChatMembersResponse,
 ) -> FfiModifyChatMembersResponse {
@@ -1852,6 +2011,53 @@ fn inbox_item_to_ffi(value: trix_types::InboxItem) -> FfiInboxItem {
     FfiInboxItem {
         inbox_id: value.inbox_id,
         message: message_envelope_to_ffi(value.message),
+    }
+}
+
+fn ffi_inbox_item_to_api(value: FfiInboxItem) -> Result<trix_types::InboxItem, TrixFfiError> {
+    Ok(trix_types::InboxItem {
+        inbox_id: value.inbox_id,
+        message: ffi_message_envelope_to_api(value.message)?,
+    })
+}
+
+fn ffi_message_envelope_to_api(
+    value: FfiMessageEnvelope,
+) -> Result<trix_types::MessageEnvelope, TrixFfiError> {
+    Ok(trix_types::MessageEnvelope {
+        message_id: parse_message_id(&value.message_id)?,
+        chat_id: parse_chat_id(&value.chat_id)?,
+        server_seq: value.server_seq,
+        sender_account_id: parse_account_id(&value.sender_account_id)?,
+        sender_device_id: parse_device_id(&value.sender_device_id)?,
+        epoch: value.epoch,
+        message_kind: message_kind_from_ffi(value.message_kind),
+        content_type: content_type_from_ffi(value.content_type),
+        ciphertext_b64: crate::encode_b64(&value.ciphertext),
+        aad_json: serde_json::from_str(&value.aad_json)
+            .map_err(|err| TrixFfiError::Message(format!("invalid aad_json: {err}")))?,
+        created_at_unix: value.created_at_unix,
+    })
+}
+
+fn local_store_apply_report_to_ffi(value: LocalStoreApplyReport) -> FfiLocalStoreApplyReport {
+    FfiLocalStoreApplyReport {
+        chats_upserted: value.chats_upserted as u64,
+        messages_upserted: value.messages_upserted as u64,
+        changed_chat_ids: value
+            .changed_chat_ids
+            .into_iter()
+            .map(|chat_id| chat_id.0.to_string())
+            .collect(),
+    }
+}
+
+fn inbox_apply_outcome_to_ffi(value: InboxApplyOutcome) -> FfiInboxApplyOutcome {
+    FfiInboxApplyOutcome {
+        lease_owner: value.lease_owner,
+        lease_expires_at_unix: value.lease_expires_at_unix,
+        acked_inbox_ids: value.acked_inbox_ids,
+        report: local_store_apply_report_to_ffi(value.report),
     }
 }
 
@@ -1930,6 +2136,25 @@ fn process_result_to_ffi(value: MlsProcessResult) -> FfiMlsProcessResult {
             application_message: None,
             epoch: Some(epoch),
         },
+    }
+}
+
+fn message_kind_from_ffi(value: FfiMessageKind) -> trix_types::MessageKind {
+    match value {
+        FfiMessageKind::Application => trix_types::MessageKind::Application,
+        FfiMessageKind::Commit => trix_types::MessageKind::Commit,
+        FfiMessageKind::WelcomeRef => trix_types::MessageKind::WelcomeRef,
+        FfiMessageKind::System => trix_types::MessageKind::System,
+    }
+}
+
+fn content_type_from_ffi(value: FfiContentType) -> trix_types::ContentType {
+    match value {
+        FfiContentType::Text => trix_types::ContentType::Text,
+        FfiContentType::Reaction => trix_types::ContentType::Reaction,
+        FfiContentType::Receipt => trix_types::ContentType::Receipt,
+        FfiContentType::Attachment => trix_types::ContentType::Attachment,
+        FfiContentType::ChatEvent => trix_types::ContentType::ChatEvent,
     }
 }
 

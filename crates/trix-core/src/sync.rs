@@ -11,7 +11,7 @@ use trix_types::{
 };
 use uuid::Uuid;
 
-use crate::{ServerApiClient, SyncStateStore};
+use crate::{LocalHistoryStore, LocalStoreApplyReport, ServerApiClient, SyncStateStore};
 
 #[derive(Debug, Clone)]
 pub enum CoreEvent {
@@ -39,6 +39,14 @@ pub struct SyncStateSnapshot {
     pub lease_owner: String,
     pub last_acked_inbox_id: Option<u64>,
     pub chat_cursors: Vec<SyncChatCursor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InboxApplyOutcome {
+    pub lease_owner: String,
+    pub lease_expires_at_unix: u64,
+    pub acked_inbox_ids: Vec<u64>,
+    pub report: LocalStoreApplyReport,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -202,6 +210,44 @@ impl SyncCoordinator {
         Ok(updated_histories)
     }
 
+    pub async fn sync_chat_histories_into_store(
+        &mut self,
+        client: &ServerApiClient,
+        store: &mut LocalHistoryStore,
+        limit_per_chat: usize,
+    ) -> Result<LocalStoreApplyReport> {
+        let chats = client.list_chats().await?;
+        let mut combined = store.apply_chat_list(&chats)?;
+        let mut changed_chat_ids = combined.changed_chat_ids.clone();
+
+        for chat in chats.chats {
+            let history = client
+                .get_chat_history(
+                    chat.chat_id,
+                    self.chat_cursor(chat.chat_id),
+                    Some(limit_per_chat),
+                )
+                .await?;
+            if let Some(last_server_seq) = history
+                .messages
+                .iter()
+                .map(|message| message.server_seq)
+                .max()
+            {
+                self.record_chat_server_seq(history.chat_id, last_server_seq)?;
+            }
+            let report = store.apply_chat_history(&history)?;
+            combined.chats_upserted += report.chats_upserted;
+            combined.messages_upserted += report.messages_upserted;
+            changed_chat_ids.extend(report.changed_chat_ids);
+        }
+
+        changed_chat_ids.sort_by_key(|chat_id| chat_id.0);
+        changed_chat_ids.dedup();
+        combined.changed_chat_ids = changed_chat_ids;
+        Ok(combined)
+    }
+
     pub async fn lease_inbox(
         &self,
         client: &ServerApiClient,
@@ -233,6 +279,37 @@ impl SyncCoordinator {
             }
         }
         Ok(response)
+    }
+
+    pub async fn lease_inbox_into_store(
+        &mut self,
+        client: &ServerApiClient,
+        store: &mut LocalHistoryStore,
+        limit: Option<usize>,
+        lease_ttl_seconds: Option<u64>,
+    ) -> Result<InboxApplyOutcome> {
+        let lease = self.lease_inbox(client, limit, lease_ttl_seconds).await?;
+        let report = store.apply_inbox_items(&lease.items)?;
+        for item in &lease.items {
+            self.record_chat_server_seq(item.message.chat_id, item.message.server_seq)?;
+        }
+        let inbox_ids = lease
+            .items
+            .iter()
+            .map(|item| item.inbox_id)
+            .collect::<Vec<_>>();
+        let acked = if inbox_ids.is_empty() {
+            Vec::new()
+        } else {
+            self.ack_inbox(client, inbox_ids).await?.acked_inbox_ids
+        };
+
+        Ok(InboxApplyOutcome {
+            lease_owner: lease.lease_owner,
+            lease_expires_at_unix: lease.lease_expires_at_unix,
+            acked_inbox_ids: acked,
+            report,
+        })
     }
 }
 
