@@ -2468,6 +2468,7 @@ impl Database {
         participant_account_ids.insert(input.creator_account_id);
         participant_account_ids.extend(target_account_ids.iter().copied());
         let participant_account_ids: Vec<Uuid> = participant_account_ids.into_iter().collect();
+        let created_epoch = u64::from(input.initial_commit.is_some());
 
         match input.chat_type {
             ChatType::Dm if participant_account_ids.len() != 2 => {
@@ -5230,6 +5231,7 @@ mod tests {
             })
             .await
             .expect("create dm");
+        assert_eq!(dm.epoch, 1);
 
         let intent = db
             .create_link_intent(alice.account_id, alice.device_id)
@@ -5306,7 +5308,7 @@ mod tests {
             .await
             .expect("add secondary device to dm");
 
-        assert_eq!(added.epoch, 1);
+        assert_eq!(added.epoch, 2);
         assert_eq!(added.changed_device_ids, vec![completed.pending_device_id]);
         assert!(
             db.get_chat_detail_for_device(dm.chat_id, completed.pending_device_id)
@@ -5343,7 +5345,7 @@ mod tests {
             .await
             .expect("remove secondary device from dm");
 
-        assert_eq!(removed.epoch, 2);
+        assert_eq!(removed.epoch, 3);
         assert_eq!(
             removed.changed_device_ids,
             vec![completed.pending_device_id]
