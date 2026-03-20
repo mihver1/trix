@@ -1,7 +1,10 @@
+import CryptoKit
 import Foundation
+import UniformTypeIdentifiers
 
 enum DebugMessageDraftKind: String, CaseIterable, Identifiable {
     case text
+    case attachment
     case reaction
     case receipt
     case chatEvent
@@ -12,6 +15,8 @@ enum DebugMessageDraftKind: String, CaseIterable, Identifiable {
         switch self {
         case .text:
             return "Text"
+        case .attachment:
+            return "Attachment"
         case .reaction:
             return "Reaction"
         case .receipt:
@@ -25,6 +30,8 @@ enum DebugMessageDraftKind: String, CaseIterable, Identifiable {
         switch self {
         case .text:
             return .text
+        case .attachment:
+            return .attachment
         case .reaction:
             return .reaction
         case .receipt:
@@ -64,6 +71,8 @@ struct DebugMessageDraft {
         switch kind {
         case .text:
             return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .attachment:
+            return false
         case .reaction:
             return !targetMessageId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
                 !emoji.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -79,6 +88,16 @@ struct DebugMessageDraft {
 struct MessageBodyPreview {
     let title: String
     let detail: String?
+}
+
+struct PreparedAttachmentUpload {
+    let fileName: String?
+    let mimeType: String
+    let encryptedPayload: Data
+    let sizeBytes: UInt64
+    let sha256: Data
+    let fileKey: Data
+    let nonce: Data
 }
 
 enum TrixCoreMessageBridge {
@@ -98,6 +117,78 @@ enum TrixCoreMessageBridge {
             aadJson: .object([
                 "encoding": .string("trix_core_message_body_v1"),
                 "source": .string("ios_poc")
+            ])
+        )
+    }
+
+    static func prepareAttachmentUpload(fileURL: URL) throws -> PreparedAttachmentUpload {
+        let didAccessScopedResource = fileURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccessScopedResource {
+                fileURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let plaintext = try Data(contentsOf: fileURL)
+        let fileKey = try Data.trix_random(count: 32)
+        let nonce = try Data.trix_random(count: 12)
+        let symmetricKey = SymmetricKey(data: fileKey)
+        let aesNonce = try AES.GCM.Nonce(data: nonce)
+
+        // The server stores encrypted blobs; the descriptor carries the symmetric key material.
+        let sealedBox = try AES.GCM.seal(plaintext, using: symmetricKey, nonce: aesNonce)
+        let encryptedPayload = sealedBox.ciphertext + sealedBox.tag
+        let sha256 = Data(SHA256.hash(data: encryptedPayload))
+        let fileName = fileURL.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return PreparedAttachmentUpload(
+            fileName: fileName.isEmpty ? nil : fileName,
+            mimeType: attachmentMimeType(for: fileURL),
+            encryptedPayload: encryptedPayload,
+            sizeBytes: UInt64(encryptedPayload.count),
+            sha256: sha256,
+            fileKey: fileKey,
+            nonce: nonce
+        )
+    }
+
+    static func makeAttachmentCreateMessageRequest(
+        epoch: UInt64,
+        blobId: String,
+        preparedUpload: PreparedAttachmentUpload
+    ) throws -> CreateMessageRequest {
+        let body = FfiMessageBody(
+            kind: .attachment,
+            text: nil,
+            targetMessageId: nil,
+            emoji: nil,
+            reactionAction: nil,
+            receiptType: nil,
+            receiptAtUnix: nil,
+            blobId: blobId,
+            mimeType: preparedUpload.mimeType,
+            sizeBytes: preparedUpload.sizeBytes,
+            sha256: preparedUpload.sha256,
+            fileName: preparedUpload.fileName,
+            widthPx: nil,
+            heightPx: nil,
+            fileKey: preparedUpload.fileKey,
+            nonce: preparedUpload.nonce,
+            eventType: nil,
+            eventJson: nil
+        )
+        let payload = try ffiSerializeMessageBody(body: body)
+
+        return CreateMessageRequest(
+            messageId: UUID().uuidString.lowercased(),
+            epoch: epoch,
+            messageKind: .application,
+            contentType: .attachment,
+            ciphertextB64: payload.base64EncodedString(),
+            aadJson: .object([
+                "encoding": .string("trix_core_message_body_v1"),
+                "source": .string("ios_attachment_poc"),
+                "blob_id": .string(blobId)
             ])
         )
     }
@@ -145,6 +236,8 @@ enum TrixCoreMessageBridge {
                 eventType: nil,
                 eventJson: nil
             )
+        case .attachment:
+            throw TrixCoreMessageBridgeError.attachmentRequiresUploadFlow
         case .reaction:
             let targetMessageId = draft.targetMessageId.trimmingCharacters(in: .whitespacesAndNewlines)
             let emoji = draft.emoji.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -251,10 +344,26 @@ enum TrixCoreMessageBridge {
         let normalizedData = try JSONSerialization.data(withJSONObject: object)
         return String(decoding: normalizedData, as: UTF8.self)
     }
+
+    private static func attachmentMimeType(for fileURL: URL) -> String {
+        if let contentType = try? fileURL.resourceValues(forKeys: [.contentTypeKey]).contentType,
+           let preferredMIMEType = contentType.preferredMIMEType {
+            return preferredMIMEType
+        }
+
+        let fileExtension = fileURL.pathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !fileExtension.isEmpty,
+           let preferredMIMEType = UTType(filenameExtension: fileExtension)?.preferredMIMEType {
+            return preferredMIMEType
+        }
+
+        return "application/octet-stream"
+    }
 }
 
 private enum TrixCoreMessageBridgeError: LocalizedError {
     case invalidTextBody
+    case attachmentRequiresUploadFlow
     case invalidReactionBody
     case invalidReceiptBody
     case invalidReceiptTimestamp
@@ -265,6 +374,8 @@ private enum TrixCoreMessageBridgeError: LocalizedError {
         switch self {
         case .invalidTextBody:
             return "Text messages must not be empty."
+        case .attachmentRequiresUploadFlow:
+            return "Attachment messages must be sent through the attachment upload flow."
         case .invalidReactionBody:
             return "Reaction messages require both target message ID and emoji."
         case .invalidReceiptBody:

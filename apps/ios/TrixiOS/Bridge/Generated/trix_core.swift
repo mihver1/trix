@@ -352,7 +352,7 @@ private func uniffiTraitInterfaceCallWithError<T, E>(
         callStatus.pointee.errorBuf = FfiConverterString.lower(String(describing: error))
     }
 }
-// Initial value and increment amount for handles.
+// Initial value and increment amount for handles. 
 // These ensure that SWIFT handles always have the lowest bit set
 fileprivate let UNIFFI_HANDLEMAP_INITIAL: UInt64 = 1
 fileprivate let UNIFFI_HANDLEMAP_DELTA: UInt64 = 2
@@ -535,15 +535,15 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 
 
 public protocol FfiAccountRootMaterialProtocol: AnyObject, Sendable {
-
+    
     func privateKeyBytes()  -> Data
-
+    
     func publicKeyBytes()  -> Data
-
+    
     func sign(payload: Data)  -> Data
-
-    func verify(payload: Data, signature: Data) throws
-
+    
+    func verify(payload: Data, signature: Data) throws 
+    
 }
 open class FfiAccountRootMaterial: FfiAccountRootMaterialProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -595,7 +595,7 @@ open class FfiAccountRootMaterial: FfiAccountRootMaterialProtocol, @unchecked Se
         try! rustCall { uniffi_trix_core_fn_free_ffiaccountrootmaterial(handle, $0) }
     }
 
-
+    
 public static func fromPrivateKey(privateKey: Data)throws  -> FfiAccountRootMaterial  {
     return try  FfiConverterTypeFfiAccountRootMaterial_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_constructor_ffiaccountrootmaterial_from_private_key(
@@ -603,16 +603,16 @@ public static func fromPrivateKey(privateKey: Data)throws  -> FfiAccountRootMate
     )
 })
 }
-
+    
 public static func generate() -> FfiAccountRootMaterial  {
     return try!  FfiConverterTypeFfiAccountRootMaterial_lift(try! rustCall() {
     uniffi_trix_core_fn_constructor_ffiaccountrootmaterial_generate($0
     )
 })
 }
+    
 
-
-
+    
 open func privateKeyBytes() -> Data  {
     return try!  FfiConverterData.lift(try! rustCall() {
     uniffi_trix_core_fn_method_ffiaccountrootmaterial_private_key_bytes(
@@ -620,7 +620,7 @@ open func privateKeyBytes() -> Data  {
     )
 })
 }
-
+    
 open func publicKeyBytes() -> Data  {
     return try!  FfiConverterData.lift(try! rustCall() {
     uniffi_trix_core_fn_method_ffiaccountrootmaterial_public_key_bytes(
@@ -628,7 +628,7 @@ open func publicKeyBytes() -> Data  {
     )
 })
 }
-
+    
 open func sign(payload: Data) -> Data  {
     return try!  FfiConverterData.lift(try! rustCall() {
     uniffi_trix_core_fn_method_ffiaccountrootmaterial_sign(
@@ -637,7 +637,7 @@ open func sign(payload: Data) -> Data  {
     )
 })
 }
-
+    
 open func verify(payload: Data, signature: Data)throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiaccountrootmaterial_verify(
             self.uniffiCloneHandle(),
@@ -646,9 +646,9 @@ open func verify(payload: Data, signature: Data)throws   {try rustCallWithError(
     )
 }
 }
+    
 
-
-
+    
 }
 
 
@@ -698,15 +698,15 @@ public func FfiConverterTypeFfiAccountRootMaterial_lower(_ value: FfiAccountRoot
 
 
 public protocol FfiDeviceKeyMaterialProtocol: AnyObject, Sendable {
-
+    
     func privateKeyBytes()  -> Data
-
+    
     func publicKeyBytes()  -> Data
-
+    
     func sign(payload: Data)  -> Data
-
-    func verify(payload: Data, signature: Data) throws
-
+    
+    func verify(payload: Data, signature: Data) throws 
+    
 }
 open class FfiDeviceKeyMaterial: FfiDeviceKeyMaterialProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -758,7 +758,7 @@ open class FfiDeviceKeyMaterial: FfiDeviceKeyMaterialProtocol, @unchecked Sendab
         try! rustCall { uniffi_trix_core_fn_free_ffidevicekeymaterial(handle, $0) }
     }
 
-
+    
 public static func fromPrivateKey(privateKey: Data)throws  -> FfiDeviceKeyMaterial  {
     return try  FfiConverterTypeFfiDeviceKeyMaterial_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_constructor_ffidevicekeymaterial_from_private_key(
@@ -766,16 +766,16 @@ public static func fromPrivateKey(privateKey: Data)throws  -> FfiDeviceKeyMateri
     )
 })
 }
-
+    
 public static func generate() -> FfiDeviceKeyMaterial  {
     return try!  FfiConverterTypeFfiDeviceKeyMaterial_lift(try! rustCall() {
     uniffi_trix_core_fn_constructor_ffidevicekeymaterial_generate($0
     )
 })
 }
+    
 
-
-
+    
 open func privateKeyBytes() -> Data  {
     return try!  FfiConverterData.lift(try! rustCall() {
     uniffi_trix_core_fn_method_ffidevicekeymaterial_private_key_bytes(
@@ -783,7 +783,7 @@ open func privateKeyBytes() -> Data  {
     )
 })
 }
-
+    
 open func publicKeyBytes() -> Data  {
     return try!  FfiConverterData.lift(try! rustCall() {
     uniffi_trix_core_fn_method_ffidevicekeymaterial_public_key_bytes(
@@ -791,7 +791,7 @@ open func publicKeyBytes() -> Data  {
     )
 })
 }
-
+    
 open func sign(payload: Data) -> Data  {
     return try!  FfiConverterData.lift(try! rustCall() {
     uniffi_trix_core_fn_method_ffidevicekeymaterial_sign(
@@ -800,7 +800,7 @@ open func sign(payload: Data) -> Data  {
     )
 })
 }
-
+    
 open func verify(payload: Data, signature: Data)throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffidevicekeymaterial_verify(
             self.uniffiCloneHandle(),
@@ -809,9 +809,9 @@ open func verify(payload: Data, signature: Data)throws   {try rustCallWithError(
     )
 }
 }
+    
 
-
-
+    
 }
 
 
@@ -861,27 +861,27 @@ public func FfiConverterTypeFfiDeviceKeyMaterial_lower(_ value: FfiDeviceKeyMate
 
 
 public protocol FfiLocalHistoryStoreProtocol: AnyObject, Sendable {
-
+    
     func applyChatHistory(history: FfiChatHistory) throws  -> FfiLocalStoreApplyReport
-
+    
     func applyLeasedInbox(lease: FfiLeaseInboxResponse) throws  -> FfiLocalStoreApplyReport
-
+    
     func databasePath() throws  -> String?
-
+    
     func getChat(chatId: String) throws  -> FfiChatDetail?
-
+    
     func getChatHistory(chatId: String, afterServerSeq: UInt64?, limit: UInt32?) throws  -> FfiChatHistory
-
+    
     func getProjectedMessages(chatId: String, afterServerSeq: UInt64?, limit: UInt32?) throws  -> [FfiLocalProjectedMessage]
-
+    
     func listChats() throws  -> [FfiChatSummary]
-
+    
     func projectChatMessages(chatId: String, facade: FfiMlsFacade, conversation: FfiMlsConversation, limit: UInt32?) throws  -> FfiLocalProjectionApplyReport
-
+    
     func projectedCursor(chatId: String) throws  -> UInt64?
-
-    func saveState() throws
-
+    
+    func saveState() throws 
+    
 }
 open class FfiLocalHistoryStore: FfiLocalHistoryStoreProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -940,7 +940,7 @@ public convenience init() {
         try! rustCall { uniffi_trix_core_fn_free_ffilocalhistorystore(handle, $0) }
     }
 
-
+    
 public static func newPersistent(databasePath: String)throws  -> FfiLocalHistoryStore  {
     return try  FfiConverterTypeFfiLocalHistoryStore_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_constructor_ffilocalhistorystore_new_persistent(
@@ -948,9 +948,9 @@ public static func newPersistent(databasePath: String)throws  -> FfiLocalHistory
     )
 })
 }
+    
 
-
-
+    
 open func applyChatHistory(history: FfiChatHistory)throws  -> FfiLocalStoreApplyReport  {
     return try  FfiConverterTypeFfiLocalStoreApplyReport_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffilocalhistorystore_apply_chat_history(
@@ -959,7 +959,7 @@ open func applyChatHistory(history: FfiChatHistory)throws  -> FfiLocalStoreApply
     )
 })
 }
-
+    
 open func applyLeasedInbox(lease: FfiLeaseInboxResponse)throws  -> FfiLocalStoreApplyReport  {
     return try  FfiConverterTypeFfiLocalStoreApplyReport_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffilocalhistorystore_apply_leased_inbox(
@@ -968,7 +968,7 @@ open func applyLeasedInbox(lease: FfiLeaseInboxResponse)throws  -> FfiLocalStore
     )
 })
 }
-
+    
 open func databasePath()throws  -> String?  {
     return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffilocalhistorystore_database_path(
@@ -976,7 +976,7 @@ open func databasePath()throws  -> String?  {
     )
 })
 }
-
+    
 open func getChat(chatId: String)throws  -> FfiChatDetail?  {
     return try  FfiConverterOptionTypeFfiChatDetail.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffilocalhistorystore_get_chat(
@@ -985,7 +985,7 @@ open func getChat(chatId: String)throws  -> FfiChatDetail?  {
     )
 })
 }
-
+    
 open func getChatHistory(chatId: String, afterServerSeq: UInt64?, limit: UInt32?)throws  -> FfiChatHistory  {
     return try  FfiConverterTypeFfiChatHistory_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffilocalhistorystore_get_chat_history(
@@ -996,7 +996,7 @@ open func getChatHistory(chatId: String, afterServerSeq: UInt64?, limit: UInt32?
     )
 })
 }
-
+    
 open func getProjectedMessages(chatId: String, afterServerSeq: UInt64?, limit: UInt32?)throws  -> [FfiLocalProjectedMessage]  {
     return try  FfiConverterSequenceTypeFfiLocalProjectedMessage.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffilocalhistorystore_get_projected_messages(
@@ -1007,7 +1007,7 @@ open func getProjectedMessages(chatId: String, afterServerSeq: UInt64?, limit: U
     )
 })
 }
-
+    
 open func listChats()throws  -> [FfiChatSummary]  {
     return try  FfiConverterSequenceTypeFfiChatSummary.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffilocalhistorystore_list_chats(
@@ -1015,7 +1015,7 @@ open func listChats()throws  -> [FfiChatSummary]  {
     )
 })
 }
-
+    
 open func projectChatMessages(chatId: String, facade: FfiMlsFacade, conversation: FfiMlsConversation, limit: UInt32?)throws  -> FfiLocalProjectionApplyReport  {
     return try  FfiConverterTypeFfiLocalProjectionApplyReport_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffilocalhistorystore_project_chat_messages(
@@ -1027,7 +1027,7 @@ open func projectChatMessages(chatId: String, facade: FfiMlsFacade, conversation
     )
 })
 }
-
+    
 open func projectedCursor(chatId: String)throws  -> UInt64?  {
     return try  FfiConverterOptionUInt64.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffilocalhistorystore_projected_cursor(
@@ -1036,16 +1036,16 @@ open func projectedCursor(chatId: String)throws  -> UInt64?  {
     )
 })
 }
-
+    
 open func saveState()throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffilocalhistorystore_save_state(
             self.uniffiCloneHandle(),$0
     )
 }
 }
+    
 
-
-
+    
 }
 
 
@@ -1095,13 +1095,13 @@ public func FfiConverterTypeFfiLocalHistoryStore_lower(_ value: FfiLocalHistoryS
 
 
 public protocol FfiMlsConversationProtocol: AnyObject, Sendable {
-
+    
     func epoch() throws  -> UInt64
-
+    
     func exportRatchetTree() throws  -> Data
-
+    
     func groupId() throws  -> Data
-
+    
 }
 open class FfiMlsConversation: FfiMlsConversationProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -1153,9 +1153,9 @@ open class FfiMlsConversation: FfiMlsConversationProtocol, @unchecked Sendable {
         try! rustCall { uniffi_trix_core_fn_free_ffimlsconversation(handle, $0) }
     }
 
+    
 
-
-
+    
 open func epoch()throws  -> UInt64  {
     return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsconversation_epoch(
@@ -1163,7 +1163,7 @@ open func epoch()throws  -> UInt64  {
     )
 })
 }
-
+    
 open func exportRatchetTree()throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsconversation_export_ratchet_tree(
@@ -1171,7 +1171,7 @@ open func exportRatchetTree()throws  -> Data  {
     )
 })
 }
-
+    
 open func groupId()throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsconversation_group_id(
@@ -1179,9 +1179,9 @@ open func groupId()throws  -> Data  {
     )
 })
 }
+    
 
-
-
+    
 }
 
 
@@ -1231,41 +1231,41 @@ public func FfiConverterTypeFfiMlsConversation_lower(_ value: FfiMlsConversation
 
 
 public protocol FfiMlsFacadeProtocol: AnyObject, Sendable {
-
+    
     func addMembers(conversation: FfiMlsConversation, keyPackages: [Data]) throws  -> FfiMlsCommitBundle
-
+    
     func ciphersuiteLabel() throws  -> String
-
+    
     func createApplicationMessage(conversation: FfiMlsConversation, plaintext: Data) throws  -> Data
-
+    
     func createGroup(groupId: Data) throws  -> FfiMlsConversation
-
+    
     func credentialIdentity() throws  -> Data
-
+    
     func exportSecret(conversation: FfiMlsConversation, label: String, context: Data, len: UInt32) throws  -> Data
-
+    
     func generateKeyPackage() throws  -> Data
-
+    
     func generateKeyPackages(count: UInt32) throws  -> [Data]
-
+    
     func joinGroupFromWelcome(welcomeMessage: Data, ratchetTree: Data?) throws  -> FfiMlsConversation
-
+    
     func loadGroup(groupId: Data) throws  -> FfiMlsConversation?
-
+    
     func members(conversation: FfiMlsConversation) throws  -> [FfiMlsMemberIdentity]
-
+    
     func processMessage(conversation: FfiMlsConversation, messageBytes: Data) throws  -> FfiMlsProcessResult
-
+    
     func removeMembers(conversation: FfiMlsConversation, leafIndices: [UInt32]) throws  -> FfiMlsCommitBundle
-
-    func saveState() throws
-
+    
+    func saveState() throws 
+    
     func selfUpdate(conversation: FfiMlsConversation) throws  -> FfiMlsCommitBundle
-
+    
     func signaturePublicKey() throws  -> Data
-
+    
     func storageRoot() throws  -> String?
-
+    
 }
 open class FfiMlsFacade: FfiMlsFacadeProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -1325,7 +1325,7 @@ public convenience init(credentialIdentity: Data)throws  {
         try! rustCall { uniffi_trix_core_fn_free_ffimlsfacade(handle, $0) }
     }
 
-
+    
 public static func loadPersistent(storageRoot: String)throws  -> FfiMlsFacade  {
     return try  FfiConverterTypeFfiMlsFacade_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_constructor_ffimlsfacade_load_persistent(
@@ -1333,7 +1333,7 @@ public static func loadPersistent(storageRoot: String)throws  -> FfiMlsFacade  {
     )
 })
 }
-
+    
 public static func newPersistent(credentialIdentity: Data, storageRoot: String)throws  -> FfiMlsFacade  {
     return try  FfiConverterTypeFfiMlsFacade_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_constructor_ffimlsfacade_new_persistent(
@@ -1342,9 +1342,9 @@ public static func newPersistent(credentialIdentity: Data, storageRoot: String)t
     )
 })
 }
+    
 
-
-
+    
 open func addMembers(conversation: FfiMlsConversation, keyPackages: [Data])throws  -> FfiMlsCommitBundle  {
     return try  FfiConverterTypeFfiMlsCommitBundle_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsfacade_add_members(
@@ -1354,7 +1354,7 @@ open func addMembers(conversation: FfiMlsConversation, keyPackages: [Data])throw
     )
 })
 }
-
+    
 open func ciphersuiteLabel()throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsfacade_ciphersuite_label(
@@ -1362,7 +1362,7 @@ open func ciphersuiteLabel()throws  -> String  {
     )
 })
 }
-
+    
 open func createApplicationMessage(conversation: FfiMlsConversation, plaintext: Data)throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsfacade_create_application_message(
@@ -1372,7 +1372,7 @@ open func createApplicationMessage(conversation: FfiMlsConversation, plaintext: 
     )
 })
 }
-
+    
 open func createGroup(groupId: Data)throws  -> FfiMlsConversation  {
     return try  FfiConverterTypeFfiMlsConversation_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsfacade_create_group(
@@ -1381,7 +1381,7 @@ open func createGroup(groupId: Data)throws  -> FfiMlsConversation  {
     )
 })
 }
-
+    
 open func credentialIdentity()throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsfacade_credential_identity(
@@ -1389,7 +1389,7 @@ open func credentialIdentity()throws  -> Data  {
     )
 })
 }
-
+    
 open func exportSecret(conversation: FfiMlsConversation, label: String, context: Data, len: UInt32)throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsfacade_export_secret(
@@ -1401,7 +1401,7 @@ open func exportSecret(conversation: FfiMlsConversation, label: String, context:
     )
 })
 }
-
+    
 open func generateKeyPackage()throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsfacade_generate_key_package(
@@ -1409,7 +1409,7 @@ open func generateKeyPackage()throws  -> Data  {
     )
 })
 }
-
+    
 open func generateKeyPackages(count: UInt32)throws  -> [Data]  {
     return try  FfiConverterSequenceData.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsfacade_generate_key_packages(
@@ -1418,7 +1418,7 @@ open func generateKeyPackages(count: UInt32)throws  -> [Data]  {
     )
 })
 }
-
+    
 open func joinGroupFromWelcome(welcomeMessage: Data, ratchetTree: Data?)throws  -> FfiMlsConversation  {
     return try  FfiConverterTypeFfiMlsConversation_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsfacade_join_group_from_welcome(
@@ -1428,7 +1428,7 @@ open func joinGroupFromWelcome(welcomeMessage: Data, ratchetTree: Data?)throws  
     )
 })
 }
-
+    
 open func loadGroup(groupId: Data)throws  -> FfiMlsConversation?  {
     return try  FfiConverterOptionTypeFfiMlsConversation.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsfacade_load_group(
@@ -1437,7 +1437,7 @@ open func loadGroup(groupId: Data)throws  -> FfiMlsConversation?  {
     )
 })
 }
-
+    
 open func members(conversation: FfiMlsConversation)throws  -> [FfiMlsMemberIdentity]  {
     return try  FfiConverterSequenceTypeFfiMlsMemberIdentity.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsfacade_members(
@@ -1446,7 +1446,7 @@ open func members(conversation: FfiMlsConversation)throws  -> [FfiMlsMemberIdent
     )
 })
 }
-
+    
 open func processMessage(conversation: FfiMlsConversation, messageBytes: Data)throws  -> FfiMlsProcessResult  {
     return try  FfiConverterTypeFfiMlsProcessResult_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsfacade_process_message(
@@ -1456,7 +1456,7 @@ open func processMessage(conversation: FfiMlsConversation, messageBytes: Data)th
     )
 })
 }
-
+    
 open func removeMembers(conversation: FfiMlsConversation, leafIndices: [UInt32])throws  -> FfiMlsCommitBundle  {
     return try  FfiConverterTypeFfiMlsCommitBundle_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsfacade_remove_members(
@@ -1466,14 +1466,14 @@ open func removeMembers(conversation: FfiMlsConversation, leafIndices: [UInt32])
     )
 })
 }
-
+    
 open func saveState()throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsfacade_save_state(
             self.uniffiCloneHandle(),$0
     )
 }
 }
-
+    
 open func selfUpdate(conversation: FfiMlsConversation)throws  -> FfiMlsCommitBundle  {
     return try  FfiConverterTypeFfiMlsCommitBundle_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsfacade_self_update(
@@ -1482,7 +1482,7 @@ open func selfUpdate(conversation: FfiMlsConversation)throws  -> FfiMlsCommitBun
     )
 })
 }
-
+    
 open func signaturePublicKey()throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsfacade_signature_public_key(
@@ -1490,7 +1490,7 @@ open func signaturePublicKey()throws  -> Data  {
     )
 })
 }
-
+    
 open func storageRoot()throws  -> String?  {
     return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsfacade_storage_root(
@@ -1498,9 +1498,9 @@ open func storageRoot()throws  -> String?  {
     )
 })
 }
+    
 
-
-
+    
 }
 
 
@@ -1550,85 +1550,85 @@ public func FfiConverterTypeFfiMlsFacade_lower(_ value: FfiMlsFacade) -> UInt64 
 
 
 public protocol FfiServerApiClientProtocol: AnyObject, Sendable {
-
+    
     func accessToken() throws  -> String?
-
+    
     func ackInbox(inboxIds: [UInt64]) throws  -> FfiAckInboxResponse
-
+    
     func addChatDevices(chatId: String, params: FfiModifyChatDevicesParams) throws  -> FfiModifyChatDevicesResponse
-
+    
     func addChatMembers(chatId: String, params: FfiModifyChatMembersParams) throws  -> FfiModifyChatMembersResponse
-
+    
     func appendHistorySyncChunk(jobId: String, sequenceNo: UInt64, payload: Data, cursorJson: String?, isFinal: Bool) throws  -> FfiAppendHistorySyncChunkResponse
-
+    
     func approveDevice(deviceId: String, accountRootSignature: Data, transferBundle: Data?) throws  -> FfiApproveDeviceResponse
-
-    func clearAccessToken() throws
-
+    
+    func clearAccessToken() throws 
+    
     func completeHistorySyncJob(jobId: String, cursorJson: String?) throws  -> FfiCompleteHistorySyncJobResponse
-
+    
     func completeLinkIntent(linkIntentId: String, params: FfiCompleteLinkIntentParams) throws  -> FfiCompletedLinkIntent
-
+    
     func createAccount(params: FfiCreateAccountParams) throws  -> FfiCreateAccountResponse
-
+    
     func createAuthChallenge(deviceId: String) throws  -> FfiAuthChallenge
-
+    
     func createAuthSession(deviceId: String, challengeId: String, signature: Data) throws  -> FfiAuthSession
-
+    
     func createBlobUpload(chatId: String, mimeType: String, sizeBytes: UInt64, sha256: Data) throws  -> FfiCreateBlobUploadResponse
-
+    
     func createChat(params: FfiCreateChatParams) throws  -> FfiCreateChatResponse
-
+    
     func createLinkIntent() throws  -> FfiCreateLinkIntentResponse
-
+    
     func createMessage(chatId: String, params: FfiCreateMessageParams) throws  -> FfiCreateMessageResponse
-
+    
     func downloadBlob(blobId: String) throws  -> Data
-
+    
     func getAccountKeyPackages(accountId: String) throws  -> [FfiReservedKeyPackage]
-
+    
     func getChat(chatId: String) throws  -> FfiChatDetail
-
+    
     func getChatHistory(chatId: String, afterServerSeq: UInt64?, limit: UInt32?) throws  -> FfiChatHistory
-
+    
     func getDeviceApprovePayload(deviceId: String) throws  -> FfiDeviceApprovePayload
-
+    
     func getDeviceTransferBundle(deviceId: String) throws  -> FfiDeviceTransferBundle
-
+    
     func getHealth() throws  -> FfiHealthResponse
-
+    
     func getHistorySyncChunks(jobId: String) throws  -> [FfiHistorySyncChunk]
-
+    
     func getInbox(afterInboxId: UInt64?, limit: UInt32?) throws  -> FfiInbox
-
+    
     func getMe() throws  -> FfiAccountProfile
-
+    
     func getVersion() throws  -> FfiVersionResponse
-
+    
     func headBlob(blobId: String) throws  -> FfiBlobHead
-
+    
     func leaseInbox(params: FfiLeaseInboxParams) throws  -> FfiLeaseInboxResponse
-
+    
     func listChats() throws  -> [FfiChatSummary]
-
+    
     func listDevices() throws  -> FfiDeviceList
-
+    
     func listHistorySyncJobs(role: FfiHistorySyncJobRole?, status: FfiHistorySyncJobStatus?, limit: UInt32?) throws  -> [FfiHistorySyncJob]
-
+    
     func publishKeyPackages(packages: [FfiPublishKeyPackage]) throws  -> FfiPublishKeyPackagesResponse
-
+    
     func removeChatDevices(chatId: String, params: FfiModifyChatDevicesParams) throws  -> FfiModifyChatDevicesResponse
-
+    
     func removeChatMembers(chatId: String, params: FfiModifyChatMembersParams) throws  -> FfiModifyChatMembersResponse
-
+    
     func reserveKeyPackages(accountId: String, deviceIds: [String]) throws  -> [FfiReservedKeyPackage]
-
+    
     func revokeDevice(deviceId: String, reason: String, accountRootSignature: Data) throws  -> FfiRevokeDeviceResponse
-
-    func setAccessToken(accessToken: String) throws
-
+    
+    func setAccessToken(accessToken: String) throws 
+    
     func uploadBlob(blobId: String, payload: Data) throws  -> FfiBlobMetadata
-
+    
 }
 open class FfiServerApiClient: FfiServerApiClientProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -1688,9 +1688,9 @@ public convenience init(baseUrl: String)throws  {
         try! rustCall { uniffi_trix_core_fn_free_ffiserverapiclient(handle, $0) }
     }
 
+    
 
-
-
+    
 open func accessToken()throws  -> String?  {
     return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_access_token(
@@ -1698,7 +1698,7 @@ open func accessToken()throws  -> String?  {
     )
 })
 }
-
+    
 open func ackInbox(inboxIds: [UInt64])throws  -> FfiAckInboxResponse  {
     return try  FfiConverterTypeFfiAckInboxResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_ack_inbox(
@@ -1707,7 +1707,7 @@ open func ackInbox(inboxIds: [UInt64])throws  -> FfiAckInboxResponse  {
     )
 })
 }
-
+    
 open func addChatDevices(chatId: String, params: FfiModifyChatDevicesParams)throws  -> FfiModifyChatDevicesResponse  {
     return try  FfiConverterTypeFfiModifyChatDevicesResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_add_chat_devices(
@@ -1717,7 +1717,7 @@ open func addChatDevices(chatId: String, params: FfiModifyChatDevicesParams)thro
     )
 })
 }
-
+    
 open func addChatMembers(chatId: String, params: FfiModifyChatMembersParams)throws  -> FfiModifyChatMembersResponse  {
     return try  FfiConverterTypeFfiModifyChatMembersResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_add_chat_members(
@@ -1727,7 +1727,7 @@ open func addChatMembers(chatId: String, params: FfiModifyChatMembersParams)thro
     )
 })
 }
-
+    
 open func appendHistorySyncChunk(jobId: String, sequenceNo: UInt64, payload: Data, cursorJson: String?, isFinal: Bool)throws  -> FfiAppendHistorySyncChunkResponse  {
     return try  FfiConverterTypeFfiAppendHistorySyncChunkResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_append_history_sync_chunk(
@@ -1740,7 +1740,7 @@ open func appendHistorySyncChunk(jobId: String, sequenceNo: UInt64, payload: Dat
     )
 })
 }
-
+    
 open func approveDevice(deviceId: String, accountRootSignature: Data, transferBundle: Data?)throws  -> FfiApproveDeviceResponse  {
     return try  FfiConverterTypeFfiApproveDeviceResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_approve_device(
@@ -1751,14 +1751,14 @@ open func approveDevice(deviceId: String, accountRootSignature: Data, transferBu
     )
 })
 }
-
+    
 open func clearAccessToken()throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_clear_access_token(
             self.uniffiCloneHandle(),$0
     )
 }
 }
-
+    
 open func completeHistorySyncJob(jobId: String, cursorJson: String?)throws  -> FfiCompleteHistorySyncJobResponse  {
     return try  FfiConverterTypeFfiCompleteHistorySyncJobResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_complete_history_sync_job(
@@ -1768,7 +1768,7 @@ open func completeHistorySyncJob(jobId: String, cursorJson: String?)throws  -> F
     )
 })
 }
-
+    
 open func completeLinkIntent(linkIntentId: String, params: FfiCompleteLinkIntentParams)throws  -> FfiCompletedLinkIntent  {
     return try  FfiConverterTypeFfiCompletedLinkIntent_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_complete_link_intent(
@@ -1778,7 +1778,7 @@ open func completeLinkIntent(linkIntentId: String, params: FfiCompleteLinkIntent
     )
 })
 }
-
+    
 open func createAccount(params: FfiCreateAccountParams)throws  -> FfiCreateAccountResponse  {
     return try  FfiConverterTypeFfiCreateAccountResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_create_account(
@@ -1787,7 +1787,7 @@ open func createAccount(params: FfiCreateAccountParams)throws  -> FfiCreateAccou
     )
 })
 }
-
+    
 open func createAuthChallenge(deviceId: String)throws  -> FfiAuthChallenge  {
     return try  FfiConverterTypeFfiAuthChallenge_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_create_auth_challenge(
@@ -1796,7 +1796,7 @@ open func createAuthChallenge(deviceId: String)throws  -> FfiAuthChallenge  {
     )
 })
 }
-
+    
 open func createAuthSession(deviceId: String, challengeId: String, signature: Data)throws  -> FfiAuthSession  {
     return try  FfiConverterTypeFfiAuthSession_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_create_auth_session(
@@ -1807,7 +1807,7 @@ open func createAuthSession(deviceId: String, challengeId: String, signature: Da
     )
 })
 }
-
+    
 open func createBlobUpload(chatId: String, mimeType: String, sizeBytes: UInt64, sha256: Data)throws  -> FfiCreateBlobUploadResponse  {
     return try  FfiConverterTypeFfiCreateBlobUploadResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_create_blob_upload(
@@ -1819,7 +1819,7 @@ open func createBlobUpload(chatId: String, mimeType: String, sizeBytes: UInt64, 
     )
 })
 }
-
+    
 open func createChat(params: FfiCreateChatParams)throws  -> FfiCreateChatResponse  {
     return try  FfiConverterTypeFfiCreateChatResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_create_chat(
@@ -1828,7 +1828,7 @@ open func createChat(params: FfiCreateChatParams)throws  -> FfiCreateChatRespons
     )
 })
 }
-
+    
 open func createLinkIntent()throws  -> FfiCreateLinkIntentResponse  {
     return try  FfiConverterTypeFfiCreateLinkIntentResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_create_link_intent(
@@ -1836,7 +1836,7 @@ open func createLinkIntent()throws  -> FfiCreateLinkIntentResponse  {
     )
 })
 }
-
+    
 open func createMessage(chatId: String, params: FfiCreateMessageParams)throws  -> FfiCreateMessageResponse  {
     return try  FfiConverterTypeFfiCreateMessageResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_create_message(
@@ -1846,7 +1846,7 @@ open func createMessage(chatId: String, params: FfiCreateMessageParams)throws  -
     )
 })
 }
-
+    
 open func downloadBlob(blobId: String)throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_download_blob(
@@ -1855,7 +1855,7 @@ open func downloadBlob(blobId: String)throws  -> Data  {
     )
 })
 }
-
+    
 open func getAccountKeyPackages(accountId: String)throws  -> [FfiReservedKeyPackage]  {
     return try  FfiConverterSequenceTypeFfiReservedKeyPackage.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_get_account_key_packages(
@@ -1864,7 +1864,7 @@ open func getAccountKeyPackages(accountId: String)throws  -> [FfiReservedKeyPack
     )
 })
 }
-
+    
 open func getChat(chatId: String)throws  -> FfiChatDetail  {
     return try  FfiConverterTypeFfiChatDetail_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_get_chat(
@@ -1873,7 +1873,7 @@ open func getChat(chatId: String)throws  -> FfiChatDetail  {
     )
 })
 }
-
+    
 open func getChatHistory(chatId: String, afterServerSeq: UInt64?, limit: UInt32?)throws  -> FfiChatHistory  {
     return try  FfiConverterTypeFfiChatHistory_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_get_chat_history(
@@ -1884,7 +1884,7 @@ open func getChatHistory(chatId: String, afterServerSeq: UInt64?, limit: UInt32?
     )
 })
 }
-
+    
 open func getDeviceApprovePayload(deviceId: String)throws  -> FfiDeviceApprovePayload  {
     return try  FfiConverterTypeFfiDeviceApprovePayload_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_get_device_approve_payload(
@@ -1893,7 +1893,7 @@ open func getDeviceApprovePayload(deviceId: String)throws  -> FfiDeviceApprovePa
     )
 })
 }
-
+    
 open func getDeviceTransferBundle(deviceId: String)throws  -> FfiDeviceTransferBundle  {
     return try  FfiConverterTypeFfiDeviceTransferBundle_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_get_device_transfer_bundle(
@@ -1902,7 +1902,7 @@ open func getDeviceTransferBundle(deviceId: String)throws  -> FfiDeviceTransferB
     )
 })
 }
-
+    
 open func getHealth()throws  -> FfiHealthResponse  {
     return try  FfiConverterTypeFfiHealthResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_get_health(
@@ -1910,7 +1910,7 @@ open func getHealth()throws  -> FfiHealthResponse  {
     )
 })
 }
-
+    
 open func getHistorySyncChunks(jobId: String)throws  -> [FfiHistorySyncChunk]  {
     return try  FfiConverterSequenceTypeFfiHistorySyncChunk.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_get_history_sync_chunks(
@@ -1919,7 +1919,7 @@ open func getHistorySyncChunks(jobId: String)throws  -> [FfiHistorySyncChunk]  {
     )
 })
 }
-
+    
 open func getInbox(afterInboxId: UInt64?, limit: UInt32?)throws  -> FfiInbox  {
     return try  FfiConverterTypeFfiInbox_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_get_inbox(
@@ -1929,7 +1929,7 @@ open func getInbox(afterInboxId: UInt64?, limit: UInt32?)throws  -> FfiInbox  {
     )
 })
 }
-
+    
 open func getMe()throws  -> FfiAccountProfile  {
     return try  FfiConverterTypeFfiAccountProfile_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_get_me(
@@ -1937,7 +1937,7 @@ open func getMe()throws  -> FfiAccountProfile  {
     )
 })
 }
-
+    
 open func getVersion()throws  -> FfiVersionResponse  {
     return try  FfiConverterTypeFfiVersionResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_get_version(
@@ -1945,7 +1945,7 @@ open func getVersion()throws  -> FfiVersionResponse  {
     )
 })
 }
-
+    
 open func headBlob(blobId: String)throws  -> FfiBlobHead  {
     return try  FfiConverterTypeFfiBlobHead_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_head_blob(
@@ -1954,7 +1954,7 @@ open func headBlob(blobId: String)throws  -> FfiBlobHead  {
     )
 })
 }
-
+    
 open func leaseInbox(params: FfiLeaseInboxParams)throws  -> FfiLeaseInboxResponse  {
     return try  FfiConverterTypeFfiLeaseInboxResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_lease_inbox(
@@ -1963,7 +1963,7 @@ open func leaseInbox(params: FfiLeaseInboxParams)throws  -> FfiLeaseInboxRespons
     )
 })
 }
-
+    
 open func listChats()throws  -> [FfiChatSummary]  {
     return try  FfiConverterSequenceTypeFfiChatSummary.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_list_chats(
@@ -1971,7 +1971,7 @@ open func listChats()throws  -> [FfiChatSummary]  {
     )
 })
 }
-
+    
 open func listDevices()throws  -> FfiDeviceList  {
     return try  FfiConverterTypeFfiDeviceList_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_list_devices(
@@ -1979,7 +1979,7 @@ open func listDevices()throws  -> FfiDeviceList  {
     )
 })
 }
-
+    
 open func listHistorySyncJobs(role: FfiHistorySyncJobRole?, status: FfiHistorySyncJobStatus?, limit: UInt32?)throws  -> [FfiHistorySyncJob]  {
     return try  FfiConverterSequenceTypeFfiHistorySyncJob.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_list_history_sync_jobs(
@@ -1990,7 +1990,7 @@ open func listHistorySyncJobs(role: FfiHistorySyncJobRole?, status: FfiHistorySy
     )
 })
 }
-
+    
 open func publishKeyPackages(packages: [FfiPublishKeyPackage])throws  -> FfiPublishKeyPackagesResponse  {
     return try  FfiConverterTypeFfiPublishKeyPackagesResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_publish_key_packages(
@@ -1999,7 +1999,7 @@ open func publishKeyPackages(packages: [FfiPublishKeyPackage])throws  -> FfiPubl
     )
 })
 }
-
+    
 open func removeChatDevices(chatId: String, params: FfiModifyChatDevicesParams)throws  -> FfiModifyChatDevicesResponse  {
     return try  FfiConverterTypeFfiModifyChatDevicesResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_remove_chat_devices(
@@ -2009,7 +2009,7 @@ open func removeChatDevices(chatId: String, params: FfiModifyChatDevicesParams)t
     )
 })
 }
-
+    
 open func removeChatMembers(chatId: String, params: FfiModifyChatMembersParams)throws  -> FfiModifyChatMembersResponse  {
     return try  FfiConverterTypeFfiModifyChatMembersResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_remove_chat_members(
@@ -2019,7 +2019,7 @@ open func removeChatMembers(chatId: String, params: FfiModifyChatMembersParams)t
     )
 })
 }
-
+    
 open func reserveKeyPackages(accountId: String, deviceIds: [String])throws  -> [FfiReservedKeyPackage]  {
     return try  FfiConverterSequenceTypeFfiReservedKeyPackage.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_reserve_key_packages(
@@ -2029,7 +2029,7 @@ open func reserveKeyPackages(accountId: String, deviceIds: [String])throws  -> [
     )
 })
 }
-
+    
 open func revokeDevice(deviceId: String, reason: String, accountRootSignature: Data)throws  -> FfiRevokeDeviceResponse  {
     return try  FfiConverterTypeFfiRevokeDeviceResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_revoke_device(
@@ -2040,7 +2040,7 @@ open func revokeDevice(deviceId: String, reason: String, accountRootSignature: D
     )
 })
 }
-
+    
 open func setAccessToken(accessToken: String)throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_set_access_token(
             self.uniffiCloneHandle(),
@@ -2048,7 +2048,7 @@ open func setAccessToken(accessToken: String)throws   {try rustCallWithError(Ffi
     )
 }
 }
-
+    
 open func uploadBlob(blobId: String, payload: Data)throws  -> FfiBlobMetadata  {
     return try  FfiConverterTypeFfiBlobMetadata_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_upload_blob(
@@ -2058,9 +2058,9 @@ open func uploadBlob(blobId: String, payload: Data)throws  -> FfiBlobMetadata  {
     )
 })
 }
+    
 
-
-
+    
 }
 
 
@@ -2110,31 +2110,33 @@ public func FfiConverterTypeFfiServerApiClient_lower(_ value: FfiServerApiClient
 
 
 public protocol FfiSyncCoordinatorProtocol: AnyObject, Sendable {
-
+    
     func ackInbox(client: FfiServerApiClient, inboxIds: [UInt64]) throws  -> FfiAckInboxResponse
-
+    
     func chatCursor(chatId: String) throws  -> UInt64?
-
+    
     func lastAckedInboxId() throws  -> UInt64?
-
+    
     func leaseInbox(client: FfiServerApiClient, limit: UInt32?, leaseTtlSeconds: UInt64?) throws  -> FfiLeaseInboxResponse
-
+    
     func leaseInboxIntoStore(client: FfiServerApiClient, store: FfiLocalHistoryStore, limit: UInt32?, leaseTtlSeconds: UInt64?) throws  -> FfiInboxApplyOutcome
-
+    
     func leaseOwner() throws  -> String
-
+    
     func recordChatServerSeq(chatId: String, serverSeq: UInt64) throws  -> Bool
-
-    func saveState() throws
-
+    
+    func saveState() throws 
+    
+    func sendMessageBody(client: FfiServerApiClient, store: FfiLocalHistoryStore, facade: FfiMlsFacade, conversation: FfiMlsConversation, input: FfiSendMessageInput) throws  -> FfiSendMessageOutcome
+    
     func statePath() throws  -> String?
-
+    
     func stateSnapshot() throws  -> FfiSyncStateSnapshot
-
+    
     func syncChatHistories(client: FfiServerApiClient, limitPerChat: UInt32) throws  -> [FfiChatHistory]
-
+    
     func syncChatHistoriesIntoStore(client: FfiServerApiClient, store: FfiLocalHistoryStore, limitPerChat: UInt32) throws  -> FfiLocalStoreApplyReport
-
+    
 }
 open class FfiSyncCoordinator: FfiSyncCoordinatorProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -2193,7 +2195,7 @@ public convenience init()throws  {
         try! rustCall { uniffi_trix_core_fn_free_ffisynccoordinator(handle, $0) }
     }
 
-
+    
 public static func newPersistent(statePath: String)throws  -> FfiSyncCoordinator  {
     return try  FfiConverterTypeFfiSyncCoordinator_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_constructor_ffisynccoordinator_new_persistent(
@@ -2201,9 +2203,9 @@ public static func newPersistent(statePath: String)throws  -> FfiSyncCoordinator
     )
 })
 }
+    
 
-
-
+    
 open func ackInbox(client: FfiServerApiClient, inboxIds: [UInt64])throws  -> FfiAckInboxResponse  {
     return try  FfiConverterTypeFfiAckInboxResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffisynccoordinator_ack_inbox(
@@ -2213,7 +2215,7 @@ open func ackInbox(client: FfiServerApiClient, inboxIds: [UInt64])throws  -> Ffi
     )
 })
 }
-
+    
 open func chatCursor(chatId: String)throws  -> UInt64?  {
     return try  FfiConverterOptionUInt64.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffisynccoordinator_chat_cursor(
@@ -2222,7 +2224,7 @@ open func chatCursor(chatId: String)throws  -> UInt64?  {
     )
 })
 }
-
+    
 open func lastAckedInboxId()throws  -> UInt64?  {
     return try  FfiConverterOptionUInt64.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffisynccoordinator_last_acked_inbox_id(
@@ -2230,7 +2232,7 @@ open func lastAckedInboxId()throws  -> UInt64?  {
     )
 })
 }
-
+    
 open func leaseInbox(client: FfiServerApiClient, limit: UInt32?, leaseTtlSeconds: UInt64?)throws  -> FfiLeaseInboxResponse  {
     return try  FfiConverterTypeFfiLeaseInboxResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffisynccoordinator_lease_inbox(
@@ -2241,7 +2243,7 @@ open func leaseInbox(client: FfiServerApiClient, limit: UInt32?, leaseTtlSeconds
     )
 })
 }
-
+    
 open func leaseInboxIntoStore(client: FfiServerApiClient, store: FfiLocalHistoryStore, limit: UInt32?, leaseTtlSeconds: UInt64?)throws  -> FfiInboxApplyOutcome  {
     return try  FfiConverterTypeFfiInboxApplyOutcome_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffisynccoordinator_lease_inbox_into_store(
@@ -2253,7 +2255,7 @@ open func leaseInboxIntoStore(client: FfiServerApiClient, store: FfiLocalHistory
     )
 })
 }
-
+    
 open func leaseOwner()throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffisynccoordinator_lease_owner(
@@ -2261,7 +2263,7 @@ open func leaseOwner()throws  -> String  {
     )
 })
 }
-
+    
 open func recordChatServerSeq(chatId: String, serverSeq: UInt64)throws  -> Bool  {
     return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffisynccoordinator_record_chat_server_seq(
@@ -2271,14 +2273,27 @@ open func recordChatServerSeq(chatId: String, serverSeq: UInt64)throws  -> Bool 
     )
 })
 }
-
+    
 open func saveState()throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffisynccoordinator_save_state(
             self.uniffiCloneHandle(),$0
     )
 }
 }
-
+    
+open func sendMessageBody(client: FfiServerApiClient, store: FfiLocalHistoryStore, facade: FfiMlsFacade, conversation: FfiMlsConversation, input: FfiSendMessageInput)throws  -> FfiSendMessageOutcome  {
+    return try  FfiConverterTypeFfiSendMessageOutcome_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffisynccoordinator_send_message_body(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiServerApiClient_lower(client),
+        FfiConverterTypeFfiLocalHistoryStore_lower(store),
+        FfiConverterTypeFfiMlsFacade_lower(facade),
+        FfiConverterTypeFfiMlsConversation_lower(conversation),
+        FfiConverterTypeFfiSendMessageInput_lower(input),$0
+    )
+})
+}
+    
 open func statePath()throws  -> String?  {
     return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffisynccoordinator_state_path(
@@ -2286,7 +2301,7 @@ open func statePath()throws  -> String?  {
     )
 })
 }
-
+    
 open func stateSnapshot()throws  -> FfiSyncStateSnapshot  {
     return try  FfiConverterTypeFfiSyncStateSnapshot_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffisynccoordinator_state_snapshot(
@@ -2294,7 +2309,7 @@ open func stateSnapshot()throws  -> FfiSyncStateSnapshot  {
     )
 })
 }
-
+    
 open func syncChatHistories(client: FfiServerApiClient, limitPerChat: UInt32)throws  -> [FfiChatHistory]  {
     return try  FfiConverterSequenceTypeFfiChatHistory.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffisynccoordinator_sync_chat_histories(
@@ -2304,7 +2319,7 @@ open func syncChatHistories(client: FfiServerApiClient, limitPerChat: UInt32)thr
     )
 })
 }
-
+    
 open func syncChatHistoriesIntoStore(client: FfiServerApiClient, store: FfiLocalHistoryStore, limitPerChat: UInt32)throws  -> FfiLocalStoreApplyReport  {
     return try  FfiConverterTypeFfiLocalStoreApplyReport_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffisynccoordinator_sync_chat_histories_into_store(
@@ -2315,9 +2330,9 @@ open func syncChatHistoriesIntoStore(client: FfiServerApiClient, store: FfiLocal
     )
 })
 }
+    
 
-
-
+    
 }
 
 
@@ -2383,9 +2398,9 @@ public struct FfiAccountProfile: Equatable, Hashable {
         self.deviceStatus = deviceStatus
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -2399,11 +2414,11 @@ public struct FfiConverterTypeFfiAccountProfile: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiAccountProfile {
         return
             try FfiAccountProfile(
-                accountId: FfiConverterString.read(from: &buf),
-                handle: FfiConverterOptionString.read(from: &buf),
-                profileName: FfiConverterString.read(from: &buf),
-                profileBio: FfiConverterOptionString.read(from: &buf),
-                deviceId: FfiConverterString.read(from: &buf),
+                accountId: FfiConverterString.read(from: &buf), 
+                handle: FfiConverterOptionString.read(from: &buf), 
+                profileName: FfiConverterString.read(from: &buf), 
+                profileBio: FfiConverterOptionString.read(from: &buf), 
+                deviceId: FfiConverterString.read(from: &buf), 
                 deviceStatus: FfiConverterTypeFfiDeviceStatus.read(from: &buf)
         )
     }
@@ -2443,9 +2458,9 @@ public struct FfiAckInboxResponse: Equatable, Hashable {
         self.ackedInboxIds = ackedInboxIds
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -2497,9 +2512,9 @@ public struct FfiAppendHistorySyncChunkResponse: Equatable, Hashable {
         self.jobStatus = jobStatus
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -2513,8 +2528,8 @@ public struct FfiConverterTypeFfiAppendHistorySyncChunkResponse: FfiConverterRus
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiAppendHistorySyncChunkResponse {
         return
             try FfiAppendHistorySyncChunkResponse(
-                jobId: FfiConverterString.read(from: &buf),
-                chunkId: FfiConverterUInt64.read(from: &buf),
+                jobId: FfiConverterString.read(from: &buf), 
+                chunkId: FfiConverterUInt64.read(from: &buf), 
                 jobStatus: FfiConverterTypeFfiHistorySyncJobStatus.read(from: &buf)
         )
     }
@@ -2555,9 +2570,9 @@ public struct FfiApproveDeviceResponse: Equatable, Hashable {
         self.deviceStatus = deviceStatus
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -2571,8 +2586,8 @@ public struct FfiConverterTypeFfiApproveDeviceResponse: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiApproveDeviceResponse {
         return
             try FfiApproveDeviceResponse(
-                accountId: FfiConverterString.read(from: &buf),
-                deviceId: FfiConverterString.read(from: &buf),
+                accountId: FfiConverterString.read(from: &buf), 
+                deviceId: FfiConverterString.read(from: &buf), 
                 deviceStatus: FfiConverterTypeFfiDeviceStatus.read(from: &buf)
         )
     }
@@ -2613,9 +2628,9 @@ public struct FfiAuthChallenge: Equatable, Hashable {
         self.expiresAtUnix = expiresAtUnix
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -2629,8 +2644,8 @@ public struct FfiConverterTypeFfiAuthChallenge: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiAuthChallenge {
         return
             try FfiAuthChallenge(
-                challengeId: FfiConverterString.read(from: &buf),
-                challenge: FfiConverterData.read(from: &buf),
+                challengeId: FfiConverterString.read(from: &buf), 
+                challenge: FfiConverterData.read(from: &buf), 
                 expiresAtUnix: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -2673,9 +2688,9 @@ public struct FfiAuthSession: Equatable, Hashable {
         self.deviceStatus = deviceStatus
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -2689,9 +2704,9 @@ public struct FfiConverterTypeFfiAuthSession: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiAuthSession {
         return
             try FfiAuthSession(
-                accessToken: FfiConverterString.read(from: &buf),
-                expiresAtUnix: FfiConverterUInt64.read(from: &buf),
-                accountId: FfiConverterString.read(from: &buf),
+                accessToken: FfiConverterString.read(from: &buf), 
+                expiresAtUnix: FfiConverterUInt64.read(from: &buf), 
+                accountId: FfiConverterString.read(from: &buf), 
                 deviceStatus: FfiConverterTypeFfiDeviceStatus.read(from: &buf)
         )
     }
@@ -2739,9 +2754,9 @@ public struct FfiBlobHead: Equatable, Hashable {
         self.etag = etag
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -2755,11 +2770,11 @@ public struct FfiConverterTypeFfiBlobHead: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiBlobHead {
         return
             try FfiBlobHead(
-                blobId: FfiConverterString.read(from: &buf),
-                mimeType: FfiConverterString.read(from: &buf),
-                sizeBytes: FfiConverterUInt64.read(from: &buf),
-                sha256: FfiConverterData.read(from: &buf),
-                uploadStatus: FfiConverterTypeFfiBlobUploadStatus.read(from: &buf),
+                blobId: FfiConverterString.read(from: &buf), 
+                mimeType: FfiConverterString.read(from: &buf), 
+                sizeBytes: FfiConverterUInt64.read(from: &buf), 
+                sha256: FfiConverterData.read(from: &buf), 
+                uploadStatus: FfiConverterTypeFfiBlobUploadStatus.read(from: &buf), 
                 etag: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -2809,9 +2824,9 @@ public struct FfiBlobMetadata: Equatable, Hashable {
         self.createdByDeviceId = createdByDeviceId
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -2825,11 +2840,11 @@ public struct FfiConverterTypeFfiBlobMetadata: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiBlobMetadata {
         return
             try FfiBlobMetadata(
-                blobId: FfiConverterString.read(from: &buf),
-                mimeType: FfiConverterString.read(from: &buf),
-                sizeBytes: FfiConverterUInt64.read(from: &buf),
-                sha256: FfiConverterData.read(from: &buf),
-                uploadStatus: FfiConverterTypeFfiBlobUploadStatus.read(from: &buf),
+                blobId: FfiConverterString.read(from: &buf), 
+                mimeType: FfiConverterString.read(from: &buf), 
+                sizeBytes: FfiConverterUInt64.read(from: &buf), 
+                sha256: FfiConverterData.read(from: &buf), 
+                uploadStatus: FfiConverterTypeFfiBlobUploadStatus.read(from: &buf), 
                 createdByDeviceId: FfiConverterString.read(from: &buf)
         )
     }
@@ -2881,9 +2896,9 @@ public struct FfiChatDetail: Equatable, Hashable {
         self.members = members
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -2897,12 +2912,12 @@ public struct FfiConverterTypeFfiChatDetail: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiChatDetail {
         return
             try FfiChatDetail(
-                chatId: FfiConverterString.read(from: &buf),
-                chatType: FfiConverterTypeFfiChatType.read(from: &buf),
-                title: FfiConverterOptionString.read(from: &buf),
-                lastServerSeq: FfiConverterUInt64.read(from: &buf),
-                epoch: FfiConverterUInt64.read(from: &buf),
-                lastCommitMessageId: FfiConverterOptionString.read(from: &buf),
+                chatId: FfiConverterString.read(from: &buf), 
+                chatType: FfiConverterTypeFfiChatType.read(from: &buf), 
+                title: FfiConverterOptionString.read(from: &buf), 
+                lastServerSeq: FfiConverterUInt64.read(from: &buf), 
+                epoch: FfiConverterUInt64.read(from: &buf), 
+                lastCommitMessageId: FfiConverterOptionString.read(from: &buf), 
                 members: FfiConverterSequenceTypeFfiChatMember.read(from: &buf)
         )
     }
@@ -2945,9 +2960,9 @@ public struct FfiChatHistory: Equatable, Hashable {
         self.messages = messages
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -2961,7 +2976,7 @@ public struct FfiConverterTypeFfiChatHistory: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiChatHistory {
         return
             try FfiChatHistory(
-                chatId: FfiConverterString.read(from: &buf),
+                chatId: FfiConverterString.read(from: &buf), 
                 messages: FfiConverterSequenceTypeFfiMessageEnvelope.read(from: &buf)
         )
     }
@@ -3001,9 +3016,9 @@ public struct FfiChatMember: Equatable, Hashable {
         self.membershipStatus = membershipStatus
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3017,8 +3032,8 @@ public struct FfiConverterTypeFfiChatMember: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiChatMember {
         return
             try FfiChatMember(
-                accountId: FfiConverterString.read(from: &buf),
-                role: FfiConverterString.read(from: &buf),
+                accountId: FfiConverterString.read(from: &buf), 
+                role: FfiConverterString.read(from: &buf), 
                 membershipStatus: FfiConverterString.read(from: &buf)
         )
     }
@@ -3061,9 +3076,9 @@ public struct FfiChatSummary: Equatable, Hashable {
         self.lastServerSeq = lastServerSeq
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3077,9 +3092,9 @@ public struct FfiConverterTypeFfiChatSummary: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiChatSummary {
         return
             try FfiChatSummary(
-                chatId: FfiConverterString.read(from: &buf),
-                chatType: FfiConverterTypeFfiChatType.read(from: &buf),
-                title: FfiConverterOptionString.read(from: &buf),
+                chatId: FfiConverterString.read(from: &buf), 
+                chatType: FfiConverterTypeFfiChatType.read(from: &buf), 
+                title: FfiConverterOptionString.read(from: &buf), 
                 lastServerSeq: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -3119,9 +3134,9 @@ public struct FfiCompleteHistorySyncJobResponse: Equatable, Hashable {
         self.jobStatus = jobStatus
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3135,7 +3150,7 @@ public struct FfiConverterTypeFfiCompleteHistorySyncJobResponse: FfiConverterRus
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCompleteHistorySyncJobResponse {
         return
             try FfiCompleteHistorySyncJobResponse(
-                jobId: FfiConverterString.read(from: &buf),
+                jobId: FfiConverterString.read(from: &buf), 
                 jobStatus: FfiConverterTypeFfiHistorySyncJobStatus.read(from: &buf)
         )
     }
@@ -3181,9 +3196,9 @@ public struct FfiCompleteLinkIntentParams: Equatable, Hashable {
         self.keyPackages = keyPackages
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3197,11 +3212,11 @@ public struct FfiConverterTypeFfiCompleteLinkIntentParams: FfiConverterRustBuffe
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCompleteLinkIntentParams {
         return
             try FfiCompleteLinkIntentParams(
-                linkToken: FfiConverterString.read(from: &buf),
-                deviceDisplayName: FfiConverterString.read(from: &buf),
-                platform: FfiConverterString.read(from: &buf),
-                credentialIdentity: FfiConverterData.read(from: &buf),
-                transportPubkey: FfiConverterData.read(from: &buf),
+                linkToken: FfiConverterString.read(from: &buf), 
+                deviceDisplayName: FfiConverterString.read(from: &buf), 
+                platform: FfiConverterString.read(from: &buf), 
+                credentialIdentity: FfiConverterData.read(from: &buf), 
+                transportPubkey: FfiConverterData.read(from: &buf), 
                 keyPackages: FfiConverterSequenceTypeFfiPublishKeyPackage.read(from: &buf)
         )
     }
@@ -3247,9 +3262,9 @@ public struct FfiCompletedLinkIntent: Equatable, Hashable {
         self.bootstrapPayload = bootstrapPayload
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3263,9 +3278,9 @@ public struct FfiConverterTypeFfiCompletedLinkIntent: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCompletedLinkIntent {
         return
             try FfiCompletedLinkIntent(
-                accountId: FfiConverterString.read(from: &buf),
-                pendingDeviceId: FfiConverterString.read(from: &buf),
-                deviceStatus: FfiConverterTypeFfiDeviceStatus.read(from: &buf),
+                accountId: FfiConverterString.read(from: &buf), 
+                pendingDeviceId: FfiConverterString.read(from: &buf), 
+                deviceStatus: FfiConverterTypeFfiDeviceStatus.read(from: &buf), 
                 bootstrapPayload: FfiConverterData.read(from: &buf)
         )
     }
@@ -3307,9 +3322,9 @@ public struct FfiControlMessage: Equatable, Hashable {
         self.aadJson = aadJson
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3323,8 +3338,8 @@ public struct FfiConverterTypeFfiControlMessage: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiControlMessage {
         return
             try FfiControlMessage(
-                messageId: FfiConverterString.read(from: &buf),
-                ciphertext: FfiConverterData.read(from: &buf),
+                messageId: FfiConverterString.read(from: &buf), 
+                ciphertext: FfiConverterData.read(from: &buf), 
                 aadJson: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -3377,9 +3392,9 @@ public struct FfiCreateAccountParams: Equatable, Hashable {
         self.transportPubkey = transportPubkey
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3393,14 +3408,14 @@ public struct FfiConverterTypeFfiCreateAccountParams: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCreateAccountParams {
         return
             try FfiCreateAccountParams(
-                handle: FfiConverterOptionString.read(from: &buf),
-                profileName: FfiConverterString.read(from: &buf),
-                profileBio: FfiConverterOptionString.read(from: &buf),
-                deviceDisplayName: FfiConverterString.read(from: &buf),
-                platform: FfiConverterString.read(from: &buf),
-                credentialIdentity: FfiConverterData.read(from: &buf),
-                accountRootPubkey: FfiConverterData.read(from: &buf),
-                accountRootSignature: FfiConverterData.read(from: &buf),
+                handle: FfiConverterOptionString.read(from: &buf), 
+                profileName: FfiConverterString.read(from: &buf), 
+                profileBio: FfiConverterOptionString.read(from: &buf), 
+                deviceDisplayName: FfiConverterString.read(from: &buf), 
+                platform: FfiConverterString.read(from: &buf), 
+                credentialIdentity: FfiConverterData.read(from: &buf), 
+                accountRootPubkey: FfiConverterData.read(from: &buf), 
+                accountRootSignature: FfiConverterData.read(from: &buf), 
                 transportPubkey: FfiConverterData.read(from: &buf)
         )
     }
@@ -3447,9 +3462,9 @@ public struct FfiCreateAccountResponse: Equatable, Hashable {
         self.accountSyncChatId = accountSyncChatId
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3463,8 +3478,8 @@ public struct FfiConverterTypeFfiCreateAccountResponse: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCreateAccountResponse {
         return
             try FfiCreateAccountResponse(
-                accountId: FfiConverterString.read(from: &buf),
-                deviceId: FfiConverterString.read(from: &buf),
+                accountId: FfiConverterString.read(from: &buf), 
+                deviceId: FfiConverterString.read(from: &buf), 
                 accountSyncChatId: FfiConverterString.read(from: &buf)
         )
     }
@@ -3509,9 +3524,9 @@ public struct FfiCreateBlobUploadResponse: Equatable, Hashable {
         self.maxUploadBytes = maxUploadBytes
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3525,10 +3540,10 @@ public struct FfiConverterTypeFfiCreateBlobUploadResponse: FfiConverterRustBuffe
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCreateBlobUploadResponse {
         return
             try FfiCreateBlobUploadResponse(
-                blobId: FfiConverterString.read(from: &buf),
-                uploadUrl: FfiConverterString.read(from: &buf),
-                uploadStatus: FfiConverterTypeFfiBlobUploadStatus.read(from: &buf),
-                needsUpload: FfiConverterBool.read(from: &buf),
+                blobId: FfiConverterString.read(from: &buf), 
+                uploadUrl: FfiConverterString.read(from: &buf), 
+                uploadStatus: FfiConverterTypeFfiBlobUploadStatus.read(from: &buf), 
+                needsUpload: FfiConverterBool.read(from: &buf), 
                 maxUploadBytes: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -3577,9 +3592,9 @@ public struct FfiCreateChatParams: Equatable, Hashable {
         self.welcomeMessage = welcomeMessage
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3593,11 +3608,11 @@ public struct FfiConverterTypeFfiCreateChatParams: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCreateChatParams {
         return
             try FfiCreateChatParams(
-                chatType: FfiConverterTypeFfiChatType.read(from: &buf),
-                title: FfiConverterOptionString.read(from: &buf),
-                participantAccountIds: FfiConverterSequenceString.read(from: &buf),
-                reservedKeyPackageIds: FfiConverterSequenceString.read(from: &buf),
-                initialCommit: FfiConverterOptionTypeFfiControlMessage.read(from: &buf),
+                chatType: FfiConverterTypeFfiChatType.read(from: &buf), 
+                title: FfiConverterOptionString.read(from: &buf), 
+                participantAccountIds: FfiConverterSequenceString.read(from: &buf), 
+                reservedKeyPackageIds: FfiConverterSequenceString.read(from: &buf), 
+                initialCommit: FfiConverterOptionTypeFfiControlMessage.read(from: &buf), 
                 welcomeMessage: FfiConverterOptionTypeFfiControlMessage.read(from: &buf)
         )
     }
@@ -3641,9 +3656,9 @@ public struct FfiCreateChatResponse: Equatable, Hashable {
         self.epoch = epoch
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3657,8 +3672,8 @@ public struct FfiConverterTypeFfiCreateChatResponse: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCreateChatResponse {
         return
             try FfiCreateChatResponse(
-                chatId: FfiConverterString.read(from: &buf),
-                chatType: FfiConverterTypeFfiChatType.read(from: &buf),
+                chatId: FfiConverterString.read(from: &buf), 
+                chatType: FfiConverterTypeFfiChatType.read(from: &buf), 
                 epoch: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -3699,9 +3714,9 @@ public struct FfiCreateLinkIntentResponse: Equatable, Hashable {
         self.expiresAtUnix = expiresAtUnix
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3715,8 +3730,8 @@ public struct FfiConverterTypeFfiCreateLinkIntentResponse: FfiConverterRustBuffe
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCreateLinkIntentResponse {
         return
             try FfiCreateLinkIntentResponse(
-                linkIntentId: FfiConverterString.read(from: &buf),
-                qrPayload: FfiConverterString.read(from: &buf),
+                linkIntentId: FfiConverterString.read(from: &buf), 
+                qrPayload: FfiConverterString.read(from: &buf), 
                 expiresAtUnix: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -3763,9 +3778,9 @@ public struct FfiCreateMessageParams: Equatable, Hashable {
         self.aadJson = aadJson
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3779,11 +3794,11 @@ public struct FfiConverterTypeFfiCreateMessageParams: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCreateMessageParams {
         return
             try FfiCreateMessageParams(
-                messageId: FfiConverterString.read(from: &buf),
-                epoch: FfiConverterUInt64.read(from: &buf),
-                messageKind: FfiConverterTypeFfiMessageKind.read(from: &buf),
-                contentType: FfiConverterTypeFfiContentType.read(from: &buf),
-                ciphertext: FfiConverterData.read(from: &buf),
+                messageId: FfiConverterString.read(from: &buf), 
+                epoch: FfiConverterUInt64.read(from: &buf), 
+                messageKind: FfiConverterTypeFfiMessageKind.read(from: &buf), 
+                contentType: FfiConverterTypeFfiContentType.read(from: &buf), 
+                ciphertext: FfiConverterData.read(from: &buf), 
                 aadJson: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -3825,9 +3840,9 @@ public struct FfiCreateMessageResponse: Equatable, Hashable {
         self.serverSeq = serverSeq
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3841,7 +3856,7 @@ public struct FfiConverterTypeFfiCreateMessageResponse: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCreateMessageResponse {
         return
             try FfiCreateMessageResponse(
-                messageId: FfiConverterString.read(from: &buf),
+                messageId: FfiConverterString.read(from: &buf), 
                 serverSeq: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -3891,9 +3906,9 @@ public struct FfiDeviceApprovePayload: Equatable, Hashable {
         self.bootstrapPayload = bootstrapPayload
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3907,13 +3922,13 @@ public struct FfiConverterTypeFfiDeviceApprovePayload: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDeviceApprovePayload {
         return
             try FfiDeviceApprovePayload(
-                accountId: FfiConverterString.read(from: &buf),
-                deviceId: FfiConverterString.read(from: &buf),
-                deviceDisplayName: FfiConverterString.read(from: &buf),
-                platform: FfiConverterString.read(from: &buf),
-                deviceStatus: FfiConverterTypeFfiDeviceStatus.read(from: &buf),
-                credentialIdentity: FfiConverterData.read(from: &buf),
-                transportPubkey: FfiConverterData.read(from: &buf),
+                accountId: FfiConverterString.read(from: &buf), 
+                deviceId: FfiConverterString.read(from: &buf), 
+                deviceDisplayName: FfiConverterString.read(from: &buf), 
+                platform: FfiConverterString.read(from: &buf), 
+                deviceStatus: FfiConverterTypeFfiDeviceStatus.read(from: &buf), 
+                credentialIdentity: FfiConverterData.read(from: &buf), 
+                transportPubkey: FfiConverterData.read(from: &buf), 
                 bootstrapPayload: FfiConverterData.read(from: &buf)
         )
     }
@@ -3957,9 +3972,9 @@ public struct FfiDeviceList: Equatable, Hashable {
         self.devices = devices
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3973,7 +3988,7 @@ public struct FfiConverterTypeFfiDeviceList: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDeviceList {
         return
             try FfiDeviceList(
-                accountId: FfiConverterString.read(from: &buf),
+                accountId: FfiConverterString.read(from: &buf), 
                 devices: FfiConverterSequenceTypeFfiDeviceSummary.read(from: &buf)
         )
     }
@@ -4015,9 +4030,9 @@ public struct FfiDeviceSummary: Equatable, Hashable {
         self.deviceStatus = deviceStatus
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4031,9 +4046,9 @@ public struct FfiConverterTypeFfiDeviceSummary: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDeviceSummary {
         return
             try FfiDeviceSummary(
-                deviceId: FfiConverterString.read(from: &buf),
-                displayName: FfiConverterString.read(from: &buf),
-                platform: FfiConverterString.read(from: &buf),
+                deviceId: FfiConverterString.read(from: &buf), 
+                displayName: FfiConverterString.read(from: &buf), 
+                platform: FfiConverterString.read(from: &buf), 
                 deviceStatus: FfiConverterTypeFfiDeviceStatus.read(from: &buf)
         )
     }
@@ -4077,9 +4092,9 @@ public struct FfiDeviceTransferBundle: Equatable, Hashable {
         self.uploadedAtUnix = uploadedAtUnix
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4093,9 +4108,9 @@ public struct FfiConverterTypeFfiDeviceTransferBundle: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDeviceTransferBundle {
         return
             try FfiDeviceTransferBundle(
-                accountId: FfiConverterString.read(from: &buf),
-                deviceId: FfiConverterString.read(from: &buf),
-                transferBundle: FfiConverterData.read(from: &buf),
+                accountId: FfiConverterString.read(from: &buf), 
+                deviceId: FfiConverterString.read(from: &buf), 
+                transferBundle: FfiConverterData.read(from: &buf), 
                 uploadedAtUnix: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -4139,9 +4154,9 @@ public struct FfiHealthResponse: Equatable, Hashable {
         self.uptimeMs = uptimeMs
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4155,9 +4170,9 @@ public struct FfiConverterTypeFfiHealthResponse: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiHealthResponse {
         return
             try FfiHealthResponse(
-                service: FfiConverterString.read(from: &buf),
-                status: FfiConverterTypeFfiServiceStatus.read(from: &buf),
-                version: FfiConverterString.read(from: &buf),
+                service: FfiConverterString.read(from: &buf), 
+                status: FfiConverterTypeFfiServiceStatus.read(from: &buf), 
+                version: FfiConverterString.read(from: &buf), 
                 uptimeMs: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -4205,9 +4220,9 @@ public struct FfiHistorySyncChunk: Equatable, Hashable {
         self.uploadedAtUnix = uploadedAtUnix
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4221,11 +4236,11 @@ public struct FfiConverterTypeFfiHistorySyncChunk: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiHistorySyncChunk {
         return
             try FfiHistorySyncChunk(
-                chunkId: FfiConverterUInt64.read(from: &buf),
-                sequenceNo: FfiConverterUInt64.read(from: &buf),
-                payload: FfiConverterData.read(from: &buf),
-                cursorJson: FfiConverterOptionString.read(from: &buf),
-                isFinal: FfiConverterBool.read(from: &buf),
+                chunkId: FfiConverterUInt64.read(from: &buf), 
+                sequenceNo: FfiConverterUInt64.read(from: &buf), 
+                payload: FfiConverterData.read(from: &buf), 
+                cursorJson: FfiConverterOptionString.read(from: &buf), 
+                isFinal: FfiConverterBool.read(from: &buf), 
                 uploadedAtUnix: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -4281,9 +4296,9 @@ public struct FfiHistorySyncJob: Equatable, Hashable {
         self.updatedAtUnix = updatedAtUnix
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4297,14 +4312,14 @@ public struct FfiConverterTypeFfiHistorySyncJob: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiHistorySyncJob {
         return
             try FfiHistorySyncJob(
-                jobId: FfiConverterString.read(from: &buf),
-                jobType: FfiConverterTypeFfiHistorySyncJobType.read(from: &buf),
-                jobStatus: FfiConverterTypeFfiHistorySyncJobStatus.read(from: &buf),
-                sourceDeviceId: FfiConverterString.read(from: &buf),
-                targetDeviceId: FfiConverterString.read(from: &buf),
-                chatId: FfiConverterOptionString.read(from: &buf),
-                cursorJson: FfiConverterString.read(from: &buf),
-                createdAtUnix: FfiConverterUInt64.read(from: &buf),
+                jobId: FfiConverterString.read(from: &buf), 
+                jobType: FfiConverterTypeFfiHistorySyncJobType.read(from: &buf), 
+                jobStatus: FfiConverterTypeFfiHistorySyncJobStatus.read(from: &buf), 
+                sourceDeviceId: FfiConverterString.read(from: &buf), 
+                targetDeviceId: FfiConverterString.read(from: &buf), 
+                chatId: FfiConverterOptionString.read(from: &buf), 
+                cursorJson: FfiConverterString.read(from: &buf), 
+                createdAtUnix: FfiConverterUInt64.read(from: &buf), 
                 updatedAtUnix: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -4347,9 +4362,9 @@ public struct FfiInbox: Equatable, Hashable {
         self.items = items
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4403,9 +4418,9 @@ public struct FfiInboxApplyOutcome: Equatable, Hashable {
         self.report = report
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4419,9 +4434,9 @@ public struct FfiConverterTypeFfiInboxApplyOutcome: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiInboxApplyOutcome {
         return
             try FfiInboxApplyOutcome(
-                leaseOwner: FfiConverterString.read(from: &buf),
-                leaseExpiresAtUnix: FfiConverterUInt64.read(from: &buf),
-                ackedInboxIds: FfiConverterSequenceUInt64.read(from: &buf),
+                leaseOwner: FfiConverterString.read(from: &buf), 
+                leaseExpiresAtUnix: FfiConverterUInt64.read(from: &buf), 
+                ackedInboxIds: FfiConverterSequenceUInt64.read(from: &buf), 
                 report: FfiConverterTypeFfiLocalStoreApplyReport.read(from: &buf)
         )
     }
@@ -4461,9 +4476,9 @@ public struct FfiInboxItem: Equatable, Hashable {
         self.message = message
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4477,7 +4492,7 @@ public struct FfiConverterTypeFfiInboxItem: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiInboxItem {
         return
             try FfiInboxItem(
-                inboxId: FfiConverterUInt64.read(from: &buf),
+                inboxId: FfiConverterUInt64.read(from: &buf), 
                 message: FfiConverterTypeFfiMessageEnvelope.read(from: &buf)
         )
     }
@@ -4519,9 +4534,9 @@ public struct FfiLeaseInboxParams: Equatable, Hashable {
         self.leaseTtlSeconds = leaseTtlSeconds
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4535,9 +4550,9 @@ public struct FfiConverterTypeFfiLeaseInboxParams: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiLeaseInboxParams {
         return
             try FfiLeaseInboxParams(
-                leaseOwner: FfiConverterOptionString.read(from: &buf),
-                limit: FfiConverterOptionUInt32.read(from: &buf),
-                afterInboxId: FfiConverterOptionUInt64.read(from: &buf),
+                leaseOwner: FfiConverterOptionString.read(from: &buf), 
+                limit: FfiConverterOptionUInt32.read(from: &buf), 
+                afterInboxId: FfiConverterOptionUInt64.read(from: &buf), 
                 leaseTtlSeconds: FfiConverterOptionUInt64.read(from: &buf)
         )
     }
@@ -4579,9 +4594,9 @@ public struct FfiLeaseInboxResponse: Equatable, Hashable {
         self.items = items
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4595,8 +4610,8 @@ public struct FfiConverterTypeFfiLeaseInboxResponse: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiLeaseInboxResponse {
         return
             try FfiLeaseInboxResponse(
-                leaseOwner: FfiConverterString.read(from: &buf),
-                leaseExpiresAtUnix: FfiConverterUInt64.read(from: &buf),
+                leaseOwner: FfiConverterString.read(from: &buf), 
+                leaseExpiresAtUnix: FfiConverterUInt64.read(from: &buf), 
                 items: FfiConverterSequenceTypeFfiInboxItem.read(from: &buf)
         )
     }
@@ -4657,9 +4672,9 @@ public struct FfiLocalProjectedMessage: Equatable, Hashable {
         self.createdAtUnix = createdAtUnix
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4673,18 +4688,18 @@ public struct FfiConverterTypeFfiLocalProjectedMessage: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiLocalProjectedMessage {
         return
             try FfiLocalProjectedMessage(
-                serverSeq: FfiConverterUInt64.read(from: &buf),
-                messageId: FfiConverterString.read(from: &buf),
-                senderAccountId: FfiConverterString.read(from: &buf),
-                senderDeviceId: FfiConverterString.read(from: &buf),
-                epoch: FfiConverterUInt64.read(from: &buf),
-                messageKind: FfiConverterTypeFfiMessageKind.read(from: &buf),
-                contentType: FfiConverterTypeFfiContentType.read(from: &buf),
-                projectionKind: FfiConverterTypeFfiLocalProjectionKind.read(from: &buf),
-                payload: FfiConverterOptionData.read(from: &buf),
-                body: FfiConverterOptionTypeFfiMessageBody.read(from: &buf),
-                bodyParseError: FfiConverterOptionString.read(from: &buf),
-                mergedEpoch: FfiConverterOptionUInt64.read(from: &buf),
+                serverSeq: FfiConverterUInt64.read(from: &buf), 
+                messageId: FfiConverterString.read(from: &buf), 
+                senderAccountId: FfiConverterString.read(from: &buf), 
+                senderDeviceId: FfiConverterString.read(from: &buf), 
+                epoch: FfiConverterUInt64.read(from: &buf), 
+                messageKind: FfiConverterTypeFfiMessageKind.read(from: &buf), 
+                contentType: FfiConverterTypeFfiContentType.read(from: &buf), 
+                projectionKind: FfiConverterTypeFfiLocalProjectionKind.read(from: &buf), 
+                payload: FfiConverterOptionData.read(from: &buf), 
+                body: FfiConverterOptionTypeFfiMessageBody.read(from: &buf), 
+                bodyParseError: FfiConverterOptionString.read(from: &buf), 
+                mergedEpoch: FfiConverterOptionUInt64.read(from: &buf), 
                 createdAtUnix: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -4737,9 +4752,9 @@ public struct FfiLocalProjectionApplyReport: Equatable, Hashable {
         self.advancedToServerSeq = advancedToServerSeq
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4753,9 +4768,9 @@ public struct FfiConverterTypeFfiLocalProjectionApplyReport: FfiConverterRustBuf
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiLocalProjectionApplyReport {
         return
             try FfiLocalProjectionApplyReport(
-                chatId: FfiConverterString.read(from: &buf),
-                processedMessages: FfiConverterUInt64.read(from: &buf),
-                projectedMessagesUpserted: FfiConverterUInt64.read(from: &buf),
+                chatId: FfiConverterString.read(from: &buf), 
+                processedMessages: FfiConverterUInt64.read(from: &buf), 
+                projectedMessagesUpserted: FfiConverterUInt64.read(from: &buf), 
                 advancedToServerSeq: FfiConverterOptionUInt64.read(from: &buf)
         )
     }
@@ -4797,9 +4812,9 @@ public struct FfiLocalStoreApplyReport: Equatable, Hashable {
         self.changedChatIds = changedChatIds
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4813,8 +4828,8 @@ public struct FfiConverterTypeFfiLocalStoreApplyReport: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiLocalStoreApplyReport {
         return
             try FfiLocalStoreApplyReport(
-                chatsUpserted: FfiConverterUInt64.read(from: &buf),
-                messagesUpserted: FfiConverterUInt64.read(from: &buf),
+                chatsUpserted: FfiConverterUInt64.read(from: &buf), 
+                messagesUpserted: FfiConverterUInt64.read(from: &buf), 
                 changedChatIds: FfiConverterSequenceString.read(from: &buf)
         )
     }
@@ -4885,9 +4900,9 @@ public struct FfiMessageBody: Equatable, Hashable {
         self.eventJson = eventJson
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4901,23 +4916,23 @@ public struct FfiConverterTypeFfiMessageBody: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiMessageBody {
         return
             try FfiMessageBody(
-                kind: FfiConverterTypeFfiMessageBodyKind.read(from: &buf),
-                text: FfiConverterOptionString.read(from: &buf),
-                targetMessageId: FfiConverterOptionString.read(from: &buf),
-                emoji: FfiConverterOptionString.read(from: &buf),
-                reactionAction: FfiConverterOptionTypeFfiReactionAction.read(from: &buf),
-                receiptType: FfiConverterOptionTypeFfiReceiptType.read(from: &buf),
-                receiptAtUnix: FfiConverterOptionUInt64.read(from: &buf),
-                blobId: FfiConverterOptionString.read(from: &buf),
-                mimeType: FfiConverterOptionString.read(from: &buf),
-                sizeBytes: FfiConverterOptionUInt64.read(from: &buf),
-                sha256: FfiConverterOptionData.read(from: &buf),
-                fileName: FfiConverterOptionString.read(from: &buf),
-                widthPx: FfiConverterOptionUInt32.read(from: &buf),
-                heightPx: FfiConverterOptionUInt32.read(from: &buf),
-                fileKey: FfiConverterOptionData.read(from: &buf),
-                nonce: FfiConverterOptionData.read(from: &buf),
-                eventType: FfiConverterOptionString.read(from: &buf),
+                kind: FfiConverterTypeFfiMessageBodyKind.read(from: &buf), 
+                text: FfiConverterOptionString.read(from: &buf), 
+                targetMessageId: FfiConverterOptionString.read(from: &buf), 
+                emoji: FfiConverterOptionString.read(from: &buf), 
+                reactionAction: FfiConverterOptionTypeFfiReactionAction.read(from: &buf), 
+                receiptType: FfiConverterOptionTypeFfiReceiptType.read(from: &buf), 
+                receiptAtUnix: FfiConverterOptionUInt64.read(from: &buf), 
+                blobId: FfiConverterOptionString.read(from: &buf), 
+                mimeType: FfiConverterOptionString.read(from: &buf), 
+                sizeBytes: FfiConverterOptionUInt64.read(from: &buf), 
+                sha256: FfiConverterOptionData.read(from: &buf), 
+                fileName: FfiConverterOptionString.read(from: &buf), 
+                widthPx: FfiConverterOptionUInt32.read(from: &buf), 
+                heightPx: FfiConverterOptionUInt32.read(from: &buf), 
+                fileKey: FfiConverterOptionData.read(from: &buf), 
+                nonce: FfiConverterOptionData.read(from: &buf), 
+                eventType: FfiConverterOptionString.read(from: &buf), 
                 eventJson: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -4989,9 +5004,9 @@ public struct FfiMessageEnvelope: Equatable, Hashable {
         self.createdAtUnix = createdAtUnix
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5005,16 +5020,16 @@ public struct FfiConverterTypeFfiMessageEnvelope: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiMessageEnvelope {
         return
             try FfiMessageEnvelope(
-                messageId: FfiConverterString.read(from: &buf),
-                chatId: FfiConverterString.read(from: &buf),
-                serverSeq: FfiConverterUInt64.read(from: &buf),
-                senderAccountId: FfiConverterString.read(from: &buf),
-                senderDeviceId: FfiConverterString.read(from: &buf),
-                epoch: FfiConverterUInt64.read(from: &buf),
-                messageKind: FfiConverterTypeFfiMessageKind.read(from: &buf),
-                contentType: FfiConverterTypeFfiContentType.read(from: &buf),
-                ciphertext: FfiConverterData.read(from: &buf),
-                aadJson: FfiConverterString.read(from: &buf),
+                messageId: FfiConverterString.read(from: &buf), 
+                chatId: FfiConverterString.read(from: &buf), 
+                serverSeq: FfiConverterUInt64.read(from: &buf), 
+                senderAccountId: FfiConverterString.read(from: &buf), 
+                senderDeviceId: FfiConverterString.read(from: &buf), 
+                epoch: FfiConverterUInt64.read(from: &buf), 
+                messageKind: FfiConverterTypeFfiMessageKind.read(from: &buf), 
+                contentType: FfiConverterTypeFfiContentType.read(from: &buf), 
+                ciphertext: FfiConverterData.read(from: &buf), 
+                aadJson: FfiConverterString.read(from: &buf), 
                 createdAtUnix: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -5065,9 +5080,9 @@ public struct FfiMlsCommitBundle: Equatable, Hashable {
         self.epoch = epoch
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5081,9 +5096,9 @@ public struct FfiConverterTypeFfiMlsCommitBundle: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiMlsCommitBundle {
         return
             try FfiMlsCommitBundle(
-                commitMessage: FfiConverterData.read(from: &buf),
-                welcomeMessage: FfiConverterOptionData.read(from: &buf),
-                ratchetTree: FfiConverterOptionData.read(from: &buf),
+                commitMessage: FfiConverterData.read(from: &buf), 
+                welcomeMessage: FfiConverterOptionData.read(from: &buf), 
+                ratchetTree: FfiConverterOptionData.read(from: &buf), 
                 epoch: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -5125,9 +5140,9 @@ public struct FfiMlsMemberIdentity: Equatable, Hashable {
         self.credentialIdentity = credentialIdentity
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5141,8 +5156,8 @@ public struct FfiConverterTypeFfiMlsMemberIdentity: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiMlsMemberIdentity {
         return
             try FfiMlsMemberIdentity(
-                leafIndex: FfiConverterUInt32.read(from: &buf),
-                signatureKey: FfiConverterData.read(from: &buf),
+                leafIndex: FfiConverterUInt32.read(from: &buf), 
+                signatureKey: FfiConverterData.read(from: &buf), 
                 credentialIdentity: FfiConverterData.read(from: &buf)
         )
     }
@@ -5183,9 +5198,9 @@ public struct FfiMlsProcessResult: Equatable, Hashable {
         self.epoch = epoch
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5199,8 +5214,8 @@ public struct FfiConverterTypeFfiMlsProcessResult: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiMlsProcessResult {
         return
             try FfiMlsProcessResult(
-                kind: FfiConverterTypeFfiMlsProcessKind.read(from: &buf),
-                applicationMessage: FfiConverterOptionData.read(from: &buf),
+                kind: FfiConverterTypeFfiMlsProcessKind.read(from: &buf), 
+                applicationMessage: FfiConverterOptionData.read(from: &buf), 
                 epoch: FfiConverterOptionUInt64.read(from: &buf)
         )
     }
@@ -5245,9 +5260,9 @@ public struct FfiModifyChatDevicesParams: Equatable, Hashable {
         self.welcomeMessage = welcomeMessage
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5261,10 +5276,10 @@ public struct FfiConverterTypeFfiModifyChatDevicesParams: FfiConverterRustBuffer
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiModifyChatDevicesParams {
         return
             try FfiModifyChatDevicesParams(
-                epoch: FfiConverterUInt64.read(from: &buf),
-                deviceIds: FfiConverterSequenceString.read(from: &buf),
-                reservedKeyPackageIds: FfiConverterSequenceString.read(from: &buf),
-                commitMessage: FfiConverterOptionTypeFfiControlMessage.read(from: &buf),
+                epoch: FfiConverterUInt64.read(from: &buf), 
+                deviceIds: FfiConverterSequenceString.read(from: &buf), 
+                reservedKeyPackageIds: FfiConverterSequenceString.read(from: &buf), 
+                commitMessage: FfiConverterOptionTypeFfiControlMessage.read(from: &buf), 
                 welcomeMessage: FfiConverterOptionTypeFfiControlMessage.read(from: &buf)
         )
     }
@@ -5307,9 +5322,9 @@ public struct FfiModifyChatDevicesResponse: Equatable, Hashable {
         self.changedDeviceIds = changedDeviceIds
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5323,8 +5338,8 @@ public struct FfiConverterTypeFfiModifyChatDevicesResponse: FfiConverterRustBuff
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiModifyChatDevicesResponse {
         return
             try FfiModifyChatDevicesResponse(
-                chatId: FfiConverterString.read(from: &buf),
-                epoch: FfiConverterUInt64.read(from: &buf),
+                chatId: FfiConverterString.read(from: &buf), 
+                epoch: FfiConverterUInt64.read(from: &buf), 
                 changedDeviceIds: FfiConverterSequenceString.read(from: &buf)
         )
     }
@@ -5369,9 +5384,9 @@ public struct FfiModifyChatMembersParams: Equatable, Hashable {
         self.welcomeMessage = welcomeMessage
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5385,10 +5400,10 @@ public struct FfiConverterTypeFfiModifyChatMembersParams: FfiConverterRustBuffer
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiModifyChatMembersParams {
         return
             try FfiModifyChatMembersParams(
-                epoch: FfiConverterUInt64.read(from: &buf),
-                participantAccountIds: FfiConverterSequenceString.read(from: &buf),
-                reservedKeyPackageIds: FfiConverterSequenceString.read(from: &buf),
-                commitMessage: FfiConverterOptionTypeFfiControlMessage.read(from: &buf),
+                epoch: FfiConverterUInt64.read(from: &buf), 
+                participantAccountIds: FfiConverterSequenceString.read(from: &buf), 
+                reservedKeyPackageIds: FfiConverterSequenceString.read(from: &buf), 
+                commitMessage: FfiConverterOptionTypeFfiControlMessage.read(from: &buf), 
                 welcomeMessage: FfiConverterOptionTypeFfiControlMessage.read(from: &buf)
         )
     }
@@ -5431,9 +5446,9 @@ public struct FfiModifyChatMembersResponse: Equatable, Hashable {
         self.changedAccountIds = changedAccountIds
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5447,8 +5462,8 @@ public struct FfiConverterTypeFfiModifyChatMembersResponse: FfiConverterRustBuff
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiModifyChatMembersResponse {
         return
             try FfiModifyChatMembersResponse(
-                chatId: FfiConverterString.read(from: &buf),
-                epoch: FfiConverterUInt64.read(from: &buf),
+                chatId: FfiConverterString.read(from: &buf), 
+                epoch: FfiConverterUInt64.read(from: &buf), 
                 changedAccountIds: FfiConverterSequenceString.read(from: &buf)
         )
     }
@@ -5487,9 +5502,9 @@ public struct FfiPublishKeyPackage: Equatable, Hashable {
         self.keyPackage = keyPackage
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5503,7 +5518,7 @@ public struct FfiConverterTypeFfiPublishKeyPackage: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPublishKeyPackage {
         return
             try FfiPublishKeyPackage(
-                cipherSuite: FfiConverterString.read(from: &buf),
+                cipherSuite: FfiConverterString.read(from: &buf), 
                 keyPackage: FfiConverterData.read(from: &buf)
         )
     }
@@ -5541,9 +5556,9 @@ public struct FfiPublishKeyPackagesResponse: Equatable, Hashable {
         self.packages = packages
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5557,7 +5572,7 @@ public struct FfiConverterTypeFfiPublishKeyPackagesResponse: FfiConverterRustBuf
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPublishKeyPackagesResponse {
         return
             try FfiPublishKeyPackagesResponse(
-                deviceId: FfiConverterString.read(from: &buf),
+                deviceId: FfiConverterString.read(from: &buf), 
                 packages: FfiConverterSequenceTypeFfiPublishedKeyPackage.read(from: &buf)
         )
     }
@@ -5595,9 +5610,9 @@ public struct FfiPublishedKeyPackage: Equatable, Hashable {
         self.cipherSuite = cipherSuite
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5611,7 +5626,7 @@ public struct FfiConverterTypeFfiPublishedKeyPackage: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPublishedKeyPackage {
         return
             try FfiPublishedKeyPackage(
-                keyPackageId: FfiConverterString.read(from: &buf),
+                keyPackageId: FfiConverterString.read(from: &buf), 
                 cipherSuite: FfiConverterString.read(from: &buf)
         )
     }
@@ -5653,9 +5668,9 @@ public struct FfiReservedKeyPackage: Equatable, Hashable {
         self.keyPackage = keyPackage
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5669,9 +5684,9 @@ public struct FfiConverterTypeFfiReservedKeyPackage: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiReservedKeyPackage {
         return
             try FfiReservedKeyPackage(
-                keyPackageId: FfiConverterString.read(from: &buf),
-                deviceId: FfiConverterString.read(from: &buf),
-                cipherSuite: FfiConverterString.read(from: &buf),
+                keyPackageId: FfiConverterString.read(from: &buf), 
+                deviceId: FfiConverterString.read(from: &buf), 
+                cipherSuite: FfiConverterString.read(from: &buf), 
                 keyPackage: FfiConverterData.read(from: &buf)
         )
     }
@@ -5713,9 +5728,9 @@ public struct FfiRevokeDeviceResponse: Equatable, Hashable {
         self.deviceStatus = deviceStatus
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5729,8 +5744,8 @@ public struct FfiConverterTypeFfiRevokeDeviceResponse: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRevokeDeviceResponse {
         return
             try FfiRevokeDeviceResponse(
-                accountId: FfiConverterString.read(from: &buf),
-                deviceId: FfiConverterString.read(from: &buf),
+                accountId: FfiConverterString.read(from: &buf), 
+                deviceId: FfiConverterString.read(from: &buf), 
                 deviceStatus: FfiConverterTypeFfiDeviceStatus.read(from: &buf)
         )
     }
@@ -5758,6 +5773,142 @@ public func FfiConverterTypeFfiRevokeDeviceResponse_lower(_ value: FfiRevokeDevi
 }
 
 
+public struct FfiSendMessageInput: Equatable, Hashable {
+    public var senderAccountId: String
+    public var senderDeviceId: String
+    public var chatId: String
+    public var messageId: String?
+    public var body: FfiMessageBody
+    public var aadJson: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(senderAccountId: String, senderDeviceId: String, chatId: String, messageId: String?, body: FfiMessageBody, aadJson: String?) {
+        self.senderAccountId = senderAccountId
+        self.senderDeviceId = senderDeviceId
+        self.chatId = chatId
+        self.messageId = messageId
+        self.body = body
+        self.aadJson = aadJson
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiSendMessageInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSendMessageInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSendMessageInput {
+        return
+            try FfiSendMessageInput(
+                senderAccountId: FfiConverterString.read(from: &buf), 
+                senderDeviceId: FfiConverterString.read(from: &buf), 
+                chatId: FfiConverterString.read(from: &buf), 
+                messageId: FfiConverterOptionString.read(from: &buf), 
+                body: FfiConverterTypeFfiMessageBody.read(from: &buf), 
+                aadJson: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiSendMessageInput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.senderAccountId, into: &buf)
+        FfiConverterString.write(value.senderDeviceId, into: &buf)
+        FfiConverterString.write(value.chatId, into: &buf)
+        FfiConverterOptionString.write(value.messageId, into: &buf)
+        FfiConverterTypeFfiMessageBody.write(value.body, into: &buf)
+        FfiConverterOptionString.write(value.aadJson, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSendMessageInput_lift(_ buf: RustBuffer) throws -> FfiSendMessageInput {
+    return try FfiConverterTypeFfiSendMessageInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSendMessageInput_lower(_ value: FfiSendMessageInput) -> RustBuffer {
+    return FfiConverterTypeFfiSendMessageInput.lower(value)
+}
+
+
+public struct FfiSendMessageOutcome: Equatable, Hashable {
+    public var chatId: String
+    public var messageId: String
+    public var serverSeq: UInt64
+    public var report: FfiLocalStoreApplyReport
+    public var projectedMessage: FfiLocalProjectedMessage
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(chatId: String, messageId: String, serverSeq: UInt64, report: FfiLocalStoreApplyReport, projectedMessage: FfiLocalProjectedMessage) {
+        self.chatId = chatId
+        self.messageId = messageId
+        self.serverSeq = serverSeq
+        self.report = report
+        self.projectedMessage = projectedMessage
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiSendMessageOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSendMessageOutcome: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSendMessageOutcome {
+        return
+            try FfiSendMessageOutcome(
+                chatId: FfiConverterString.read(from: &buf), 
+                messageId: FfiConverterString.read(from: &buf), 
+                serverSeq: FfiConverterUInt64.read(from: &buf), 
+                report: FfiConverterTypeFfiLocalStoreApplyReport.read(from: &buf), 
+                projectedMessage: FfiConverterTypeFfiLocalProjectedMessage.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiSendMessageOutcome, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.chatId, into: &buf)
+        FfiConverterString.write(value.messageId, into: &buf)
+        FfiConverterUInt64.write(value.serverSeq, into: &buf)
+        FfiConverterTypeFfiLocalStoreApplyReport.write(value.report, into: &buf)
+        FfiConverterTypeFfiLocalProjectedMessage.write(value.projectedMessage, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSendMessageOutcome_lift(_ buf: RustBuffer) throws -> FfiSendMessageOutcome {
+    return try FfiConverterTypeFfiSendMessageOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSendMessageOutcome_lower(_ value: FfiSendMessageOutcome) -> RustBuffer {
+    return FfiConverterTypeFfiSendMessageOutcome.lower(value)
+}
+
+
 public struct FfiSyncChatCursor: Equatable, Hashable {
     public var chatId: String
     public var lastServerSeq: UInt64
@@ -5769,9 +5920,9 @@ public struct FfiSyncChatCursor: Equatable, Hashable {
         self.lastServerSeq = lastServerSeq
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5785,7 +5936,7 @@ public struct FfiConverterTypeFfiSyncChatCursor: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSyncChatCursor {
         return
             try FfiSyncChatCursor(
-                chatId: FfiConverterString.read(from: &buf),
+                chatId: FfiConverterString.read(from: &buf), 
                 lastServerSeq: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -5825,9 +5976,9 @@ public struct FfiSyncStateSnapshot: Equatable, Hashable {
         self.chatCursors = chatCursors
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5841,8 +5992,8 @@ public struct FfiConverterTypeFfiSyncStateSnapshot: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSyncStateSnapshot {
         return
             try FfiSyncStateSnapshot(
-                leaseOwner: FfiConverterString.read(from: &buf),
-                lastAckedInboxId: FfiConverterOptionUInt64.read(from: &buf),
+                leaseOwner: FfiConverterString.read(from: &buf), 
+                lastAckedInboxId: FfiConverterOptionUInt64.read(from: &buf), 
                 chatCursors: FfiConverterSequenceTypeFfiSyncChatCursor.read(from: &buf)
         )
     }
@@ -5883,9 +6034,9 @@ public struct FfiVersionResponse: Equatable, Hashable {
         self.gitSha = gitSha
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5899,8 +6050,8 @@ public struct FfiConverterTypeFfiVersionResponse: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiVersionResponse {
         return
             try FfiVersionResponse(
-                service: FfiConverterString.read(from: &buf),
-                version: FfiConverterString.read(from: &buf),
+                service: FfiConverterString.read(from: &buf), 
+                version: FfiConverterString.read(from: &buf), 
                 gitSha: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -5931,7 +6082,7 @@ public func FfiConverterTypeFfiVersionResponse_lower(_ value: FfiVersionResponse
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum FfiBlobUploadStatus: Equatable, Hashable {
-
+    
     case pendingUpload
     case available
 
@@ -5954,26 +6105,26 @@ public struct FfiConverterTypeFfiBlobUploadStatus: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiBlobUploadStatus {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .pendingUpload
-
+        
         case 2: return .available
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: FfiBlobUploadStatus, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .pendingUpload:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .available:
             writeInt(&buf, Int32(2))
-
+        
         }
     }
 }
@@ -5998,7 +6149,7 @@ public func FfiConverterTypeFfiBlobUploadStatus_lower(_ value: FfiBlobUploadStat
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum FfiChatType: Equatable, Hashable {
-
+    
     case dm
     case group
     case accountSync
@@ -6022,32 +6173,32 @@ public struct FfiConverterTypeFfiChatType: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiChatType {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .dm
-
+        
         case 2: return .group
-
+        
         case 3: return .accountSync
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: FfiChatType, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .dm:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .group:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .accountSync:
             writeInt(&buf, Int32(3))
-
+        
         }
     }
 }
@@ -6072,7 +6223,7 @@ public func FfiConverterTypeFfiChatType_lower(_ value: FfiChatType) -> RustBuffe
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum FfiContentType: Equatable, Hashable {
-
+    
     case text
     case reaction
     case receipt
@@ -6098,44 +6249,44 @@ public struct FfiConverterTypeFfiContentType: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiContentType {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .text
-
+        
         case 2: return .reaction
-
+        
         case 3: return .receipt
-
+        
         case 4: return .attachment
-
+        
         case 5: return .chatEvent
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: FfiContentType, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .text:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .reaction:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .receipt:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .attachment:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .chatEvent:
             writeInt(&buf, Int32(5))
-
+        
         }
     }
 }
@@ -6160,7 +6311,7 @@ public func FfiConverterTypeFfiContentType_lower(_ value: FfiContentType) -> Rus
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum FfiDeviceStatus: Equatable, Hashable {
-
+    
     case pending
     case active
     case revoked
@@ -6184,32 +6335,32 @@ public struct FfiConverterTypeFfiDeviceStatus: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDeviceStatus {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .pending
-
+        
         case 2: return .active
-
+        
         case 3: return .revoked
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: FfiDeviceStatus, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .pending:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .active:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .revoked:
             writeInt(&buf, Int32(3))
-
+        
         }
     }
 }
@@ -6234,7 +6385,7 @@ public func FfiConverterTypeFfiDeviceStatus_lower(_ value: FfiDeviceStatus) -> R
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum FfiHistorySyncJobRole: Equatable, Hashable {
-
+    
     case source
     case target
 
@@ -6257,26 +6408,26 @@ public struct FfiConverterTypeFfiHistorySyncJobRole: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiHistorySyncJobRole {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .source
-
+        
         case 2: return .target
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: FfiHistorySyncJobRole, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .source:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .target:
             writeInt(&buf, Int32(2))
-
+        
         }
     }
 }
@@ -6301,7 +6452,7 @@ public func FfiConverterTypeFfiHistorySyncJobRole_lower(_ value: FfiHistorySyncJ
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum FfiHistorySyncJobStatus: Equatable, Hashable {
-
+    
     case pending
     case running
     case completed
@@ -6327,44 +6478,44 @@ public struct FfiConverterTypeFfiHistorySyncJobStatus: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiHistorySyncJobStatus {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .pending
-
+        
         case 2: return .running
-
+        
         case 3: return .completed
-
+        
         case 4: return .failed
-
+        
         case 5: return .canceled
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: FfiHistorySyncJobStatus, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .pending:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .running:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .completed:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .failed:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .canceled:
             writeInt(&buf, Int32(5))
-
+        
         }
     }
 }
@@ -6389,7 +6540,7 @@ public func FfiConverterTypeFfiHistorySyncJobStatus_lower(_ value: FfiHistorySyn
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum FfiHistorySyncJobType: Equatable, Hashable {
-
+    
     case initialSync
     case chatBackfill
     case deviceRekey
@@ -6413,32 +6564,32 @@ public struct FfiConverterTypeFfiHistorySyncJobType: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiHistorySyncJobType {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .initialSync
-
+        
         case 2: return .chatBackfill
-
+        
         case 3: return .deviceRekey
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: FfiHistorySyncJobType, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .initialSync:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .chatBackfill:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .deviceRekey:
             writeInt(&buf, Int32(3))
-
+        
         }
     }
 }
@@ -6463,7 +6614,7 @@ public func FfiConverterTypeFfiHistorySyncJobType_lower(_ value: FfiHistorySyncJ
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum FfiLocalProjectionKind: Equatable, Hashable {
-
+    
     case applicationMessage
     case proposalQueued
     case commitMerged
@@ -6489,44 +6640,44 @@ public struct FfiConverterTypeFfiLocalProjectionKind: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiLocalProjectionKind {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .applicationMessage
-
+        
         case 2: return .proposalQueued
-
+        
         case 3: return .commitMerged
-
+        
         case 4: return .welcomeRef
-
+        
         case 5: return .system
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: FfiLocalProjectionKind, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .applicationMessage:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .proposalQueued:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .commitMerged:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .welcomeRef:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .system:
             writeInt(&buf, Int32(5))
-
+        
         }
     }
 }
@@ -6551,7 +6702,7 @@ public func FfiConverterTypeFfiLocalProjectionKind_lower(_ value: FfiLocalProjec
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum FfiMessageBodyKind: Equatable, Hashable {
-
+    
     case text
     case reaction
     case receipt
@@ -6577,44 +6728,44 @@ public struct FfiConverterTypeFfiMessageBodyKind: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiMessageBodyKind {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .text
-
+        
         case 2: return .reaction
-
+        
         case 3: return .receipt
-
+        
         case 4: return .attachment
-
+        
         case 5: return .chatEvent
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: FfiMessageBodyKind, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .text:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .reaction:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .receipt:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .attachment:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .chatEvent:
             writeInt(&buf, Int32(5))
-
+        
         }
     }
 }
@@ -6639,7 +6790,7 @@ public func FfiConverterTypeFfiMessageBodyKind_lower(_ value: FfiMessageBodyKind
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum FfiMessageKind: Equatable, Hashable {
-
+    
     case application
     case commit
     case welcomeRef
@@ -6664,38 +6815,38 @@ public struct FfiConverterTypeFfiMessageKind: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiMessageKind {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .application
-
+        
         case 2: return .commit
-
+        
         case 3: return .welcomeRef
-
+        
         case 4: return .system
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: FfiMessageKind, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .application:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .commit:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .welcomeRef:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .system:
             writeInt(&buf, Int32(4))
-
+        
         }
     }
 }
@@ -6720,7 +6871,7 @@ public func FfiConverterTypeFfiMessageKind_lower(_ value: FfiMessageKind) -> Rus
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum FfiMlsProcessKind: Equatable, Hashable {
-
+    
     case applicationMessage
     case proposalQueued
     case commitMerged
@@ -6744,32 +6895,32 @@ public struct FfiConverterTypeFfiMlsProcessKind: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiMlsProcessKind {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .applicationMessage
-
+        
         case 2: return .proposalQueued
-
+        
         case 3: return .commitMerged
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: FfiMlsProcessKind, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .applicationMessage:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .proposalQueued:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .commitMerged:
             writeInt(&buf, Int32(3))
-
+        
         }
     }
 }
@@ -6794,7 +6945,7 @@ public func FfiConverterTypeFfiMlsProcessKind_lower(_ value: FfiMlsProcessKind) 
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum FfiReactionAction: Equatable, Hashable {
-
+    
     case add
     case remove
 
@@ -6817,26 +6968,26 @@ public struct FfiConverterTypeFfiReactionAction: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiReactionAction {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .add
-
+        
         case 2: return .remove
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: FfiReactionAction, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .add:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .remove:
             writeInt(&buf, Int32(2))
-
+        
         }
     }
 }
@@ -6861,7 +7012,7 @@ public func FfiConverterTypeFfiReactionAction_lower(_ value: FfiReactionAction) 
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum FfiReceiptType: Equatable, Hashable {
-
+    
     case delivered
     case read
 
@@ -6884,26 +7035,26 @@ public struct FfiConverterTypeFfiReceiptType: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiReceiptType {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .delivered
-
+        
         case 2: return .read
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: FfiReceiptType, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .delivered:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .read:
             writeInt(&buf, Int32(2))
-
+        
         }
     }
 }
@@ -6928,7 +7079,7 @@ public func FfiConverterTypeFfiReceiptType_lower(_ value: FfiReceiptType) -> Rus
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum FfiServiceStatus: Equatable, Hashable {
-
+    
     case ok
     case degraded
 
@@ -6951,26 +7102,26 @@ public struct FfiConverterTypeFfiServiceStatus: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiServiceStatus {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .ok
-
+        
         case 2: return .degraded
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: FfiServiceStatus, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .ok:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .degraded:
             writeInt(&buf, Int32(2))
-
+        
         }
     }
 }
@@ -6994,20 +7145,20 @@ public func FfiConverterTypeFfiServiceStatus_lower(_ value: FfiServiceStatus) ->
 
 public enum TrixFfiError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
 
-
-
+    
+    
     case Message(String
     )
 
+    
 
+    
 
-
-
-
+    
     public var errorDescription: String? {
         String(reflecting: self)
     }
-
+    
 }
 
 #if compiler(>=6)
@@ -7024,9 +7175,9 @@ public struct FfiConverterTypeTrixFfiError: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
+        
 
-
-
+        
         case 1: return .Message(
             try FfiConverterString.read(from: &buf)
             )
@@ -7038,14 +7189,14 @@ public struct FfiConverterTypeTrixFfiError: FfiConverterRustBuffer {
     public static func write(_ value: TrixFfiError, into buf: inout [UInt8]) {
         switch value {
 
+        
 
-
-
-
+        
+        
         case let .Message(v1):
             writeInt(&buf, Int32(1))
             FfiConverterString.write(v1, into: &buf)
-
+            
         }
     }
 }
@@ -8101,6 +8252,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_save_state() != 12201) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffisynccoordinator_send_message_body() != 5920) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_state_path() != 32831) {

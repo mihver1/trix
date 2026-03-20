@@ -7,28 +7,30 @@ struct RootView: View {
     @StateObject private var model = AppModel()
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if model.isAwaitingApproval {
+        Group {
+            if model.isAwaitingApproval {
+                NavigationStack {
                     PendingApprovalView(
                         serverBaseURL: $serverBaseURL,
                         model: model
                     )
-                } else if model.hasProvisionedIdentity {
-                    DashboardView(
-                        serverBaseURL: $serverBaseURL,
-                        model: model
-                    )
-                } else {
+                }
+            } else if model.hasProvisionedIdentity {
+                DashboardView(
+                    serverBaseURL: $serverBaseURL,
+                    model: model
+                )
+            } else {
+                NavigationStack {
                     CreateAccountView(
                         serverBaseURL: $serverBaseURL,
                         model: model
                     )
                 }
             }
-            .task {
-                await model.start(baseURLString: serverBaseURL)
-            }
+        }
+        .task {
+            await model.start(baseURLString: serverBaseURL)
         }
     }
 }

@@ -1,4 +1,11 @@
 import SwiftUI
+import UniformTypeIdentifiers
+
+private struct AttachmentDraftSelection {
+    let fileURL: URL
+    let fileName: String
+    let fileSizeBytes: Int64?
+}
 
 struct ChatDetailView: View {
     let chatSummary: ChatSummary
@@ -10,6 +17,8 @@ struct ChatDetailView: View {
     @State private var localErrorMessage: String?
     @State private var activityMessage: String?
     @State private var messageDraft = DebugMessageDraft()
+    @State private var selectedAttachment: AttachmentDraftSelection?
+    @State private var isImportingAttachment = false
     @State private var addMemberAccountIds = ""
     @State private var removeMemberAccountIds = ""
     @State private var addDeviceAccountId = ""
@@ -97,6 +106,34 @@ struct ChatDetailView: View {
                     case .text:
                         TextField("Text body", text: $messageDraft.text, axis: .vertical)
                             .lineLimit(3, reservesSpace: true)
+                    case .attachment:
+                        if let selectedAttachment {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(selectedAttachment.fileName)
+                                    .font(.subheadline.weight(.medium))
+
+                                if let fileSizeBytes = selectedAttachment.fileSizeBytes {
+                                    Text(ByteCountFormatter.string(fromByteCount: fileSizeBytes, countStyle: .file))
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        } else {
+                            Text("Pick a file to encrypt, upload as a blob, and reference from an attachment message body.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Button(selectedAttachment == nil ? "Choose File" : "Choose Different File") {
+                            isImportingAttachment = true
+                        }
+
+                        if selectedAttachment != nil {
+                            Button("Clear Selection", role: .destructive) {
+                                selectedAttachment = nil
+                            }
+                        }
                     case .reaction:
                         TextField("Target Message ID", text: $messageDraft.targetMessageId)
                             .textInputAutocapitalization(.never)
@@ -136,20 +173,20 @@ struct ChatDetailView: View {
                             .font(.system(.footnote, design: .monospaced))
                     }
 
-                    Button(action: postDebugMessage) {
+                    Button(action: sendSelectedMessage) {
                         if model.isLoading {
                             ProgressView()
                                 .frame(maxWidth: .infinity)
                         } else {
-                            Text("Send Typed Message")
+                            Text(messageDraft.kind == .attachment ? "Upload Attachment" : "Send Typed Message")
                                 .frame(maxWidth: .infinity)
                         }
                     }
-                    .disabled(model.isLoading || !messageDraft.canSubmit)
+                    .disabled(model.isLoading || !canSendSelectedMessage)
                 } header: {
                     Text("Send Message")
                 } footer: {
-                    Text("Payloads are serialized through `trix-core` typed message-body helpers and still sent as debug application payloads until the real MLS conversation bridge is wired.")
+                    Text("Typed bodies are serialized through `trix-core`. Attachment mode also encrypts the file locally, uploads the blob, and sends the descriptor as a debug application payload until the real MLS conversation bridge is wired.")
                 }
 
                 Section {
@@ -303,6 +340,19 @@ struct ChatDetailView: View {
         .refreshable {
             await loadSnapshot()
         }
+        .fileImporter(
+            isPresented: $isImportingAttachment,
+            allowedContentTypes: [.item]
+        ) { result in
+            handleAttachmentImport(result)
+        }
+    }
+
+    private var canSendSelectedMessage: Bool {
+        if messageDraft.kind == .attachment {
+            return selectedAttachment != nil
+        }
+        return messageDraft.canSubmit
     }
 
     private func reload() {
@@ -329,6 +379,14 @@ struct ChatDetailView: View {
         }
     }
 
+    private func sendSelectedMessage() {
+        if messageDraft.kind == .attachment {
+            postAttachmentMessage()
+        } else {
+            postDebugMessage()
+        }
+    }
+
     private func postDebugMessage() {
         guard let snapshot else {
             return
@@ -347,6 +405,31 @@ struct ChatDetailView: View {
             ) {
                 messageDraft = DebugMessageDraft()
                 activityMessage = "Accepted message \(response.messageId) at server sequence \(response.serverSeq)."
+                await loadSnapshot()
+            } else {
+                localErrorMessage = model.errorMessage
+            }
+        }
+    }
+
+    private func postAttachmentMessage() {
+        guard let snapshot, let selectedAttachment else {
+            return
+        }
+
+        activityMessage = nil
+        localErrorMessage = nil
+
+        Task {
+            if let outcome = await model.postDebugAttachment(
+                baseURLString: serverBaseURL,
+                chatId: snapshot.detail.chatId,
+                epoch: snapshot.detail.epoch,
+                fileURL: selectedAttachment.fileURL
+            ) {
+                messageDraft = DebugMessageDraft()
+                self.selectedAttachment = nil
+                activityMessage = "Uploaded \(outcome.fileName ?? "attachment") as blob \(outcome.blobId) and accepted message \(outcome.createMessage.messageId) at server sequence \(outcome.createMessage.serverSeq)."
                 await loadSnapshot()
             } else {
                 localErrorMessage = model.errorMessage
@@ -454,6 +537,23 @@ struct ChatDetailView: View {
             } else {
                 localErrorMessage = model.errorMessage
             }
+        }
+    }
+
+    private func handleAttachmentImport(_ result: Result<URL, Error>) {
+        switch result {
+        case let .success(fileURL):
+            let fileName = fileURL.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+            let fileSizeBytes = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize
+
+            selectedAttachment = AttachmentDraftSelection(
+                fileURL: fileURL,
+                fileName: fileName.isEmpty ? "Attachment" : fileName,
+                fileSizeBytes: fileSizeBytes.map(Int64.init)
+            )
+            localErrorMessage = nil
+        case let .failure(error):
+            localErrorMessage = error.localizedDescription
         }
     }
 }

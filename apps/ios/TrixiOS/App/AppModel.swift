@@ -52,6 +52,12 @@ struct ChatSnapshot {
     let historySource: ChatHistorySource
 }
 
+struct DebugAttachmentSendOutcome {
+    let createMessage: CreateMessageResponse
+    let blobId: String
+    let fileName: String?
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var localIdentity: LocalDeviceIdentity?
@@ -767,6 +773,74 @@ final class AppModel: ObservableObject {
     }
 
     @discardableResult
+    func postDebugAttachment(
+        baseURLString: String,
+        chatId: String,
+        epoch: UInt64,
+        fileURL: URL
+    ) async -> DebugAttachmentSendOutcome? {
+        guard !isLoading else {
+            return nil
+        }
+
+        isLoading = true
+        errorMessage = nil
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            let preparedUpload = try TrixCoreMessageBridge.prepareAttachmentUpload(fileURL: fileURL)
+            let blobClient = try FfiServerApiClient(
+                baseUrl: baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            try blobClient.setAccessToken(accessToken: context.session.accessToken)
+
+            let blobUpload = try blobClient.createBlobUpload(
+                chatId: chatId,
+                mimeType: preparedUpload.mimeType,
+                sizeBytes: preparedUpload.sizeBytes,
+                sha256: preparedUpload.sha256
+            )
+            if blobUpload.needsUpload, preparedUpload.sizeBytes > blobUpload.maxUploadBytes {
+                throw AppModelError.attachmentExceedsServerLimit(
+                    actualBytes: preparedUpload.sizeBytes,
+                    maxBytes: blobUpload.maxUploadBytes
+                )
+            }
+            if blobUpload.needsUpload {
+                let _: FfiBlobMetadata = try blobClient.uploadBlob(
+                    blobId: blobUpload.blobId,
+                    payload: preparedUpload.encryptedPayload
+                )
+            }
+
+            let request = try TrixCoreMessageBridge.makeAttachmentCreateMessageRequest(
+                epoch: epoch,
+                blobId: blobUpload.blobId,
+                preparedUpload: preparedUpload
+            )
+            let response: CreateMessageResponse = try await context.client.post(
+                "/v0/chats/\(chatId)/messages",
+                body: request,
+                accessToken: context.session.accessToken
+            )
+
+            try await refreshAuthenticatedState(client: context.client, identity: context.identity)
+            return DebugAttachmentSendOutcome(
+                createMessage: response,
+                blobId: blobUpload.blobId,
+                fileName: preparedUpload.fileName
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    @discardableResult
     func acknowledgeInbox(
         baseURLString: String,
         inboxIds: [UInt64]
@@ -1212,11 +1286,14 @@ private struct AuthenticatedContext {
 
 private enum AppModelError: LocalizedError {
     case localIdentityMissing
+    case attachmentExceedsServerLimit(actualBytes: UInt64, maxBytes: UInt64)
 
     var errorDescription: String? {
         switch self {
         case .localIdentityMissing:
             return "Local identity is missing."
+        case let .attachmentExceedsServerLimit(actualBytes, maxBytes):
+            return "Attachment is \(ByteCountFormatter.string(fromByteCount: Int64(actualBytes), countStyle: .file)), which exceeds the current server upload limit of \(ByteCountFormatter.string(fromByteCount: Int64(maxBytes), countStyle: .file))."
         }
     }
 }
