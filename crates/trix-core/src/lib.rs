@@ -19,9 +19,9 @@ pub use message::{
     ReceiptMessageBody, ReceiptType, TextMessageBody,
 };
 pub use storage::{
-    AttachmentStore, LocalHistoryStore, LocalOutgoingMessageApplyOutcome, LocalProjectedMessage,
-    LocalProjectionApplyReport, LocalProjectionKind, LocalStoreApplyReport, MlsStateStore,
-    SyncStateStore,
+    AttachmentStore, LocalChatReadState, LocalHistoryStore, LocalOutgoingMessageApplyOutcome,
+    LocalProjectedMessage, LocalProjectionApplyReport, LocalProjectionKind, LocalStoreApplyReport,
+    MlsStateStore, SyncStateStore,
 };
 pub use sync::{
     CoreEvent, CoreEventSink, CreateChatControlInput, CreateChatControlOutcome, InboxApplyOutcome,

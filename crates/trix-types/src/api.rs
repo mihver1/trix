@@ -274,17 +274,20 @@ pub struct CreateChatResponse {
     pub epoch: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatSummary {
     pub chat_id: ChatId,
     pub chat_type: ChatType,
     pub title: Option<String>,
     pub last_server_seq: u64,
     #[serde(default)]
+    pub pending_message_count: u64,
+    pub last_message: Option<MessageEnvelope>,
+    #[serde(default)]
     pub participant_profiles: Vec<ChatParticipantProfileSummary>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatListResponse {
     pub chats: Vec<ChatSummary>,
 }
@@ -306,14 +309,17 @@ pub struct ChatDeviceSummary {
     pub credential_identity_b64: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatDetailResponse {
     pub chat_id: ChatId,
     pub chat_type: ChatType,
     pub title: Option<String>,
     pub last_server_seq: u64,
+    #[serde(default)]
+    pub pending_message_count: u64,
     pub epoch: u64,
     pub last_commit_message_id: Option<MessageId>,
+    pub last_message: Option<MessageEnvelope>,
     #[serde(default)]
     pub participant_profiles: Vec<ChatParticipantProfileSummary>,
     pub members: Vec<ChatMemberSummary>,

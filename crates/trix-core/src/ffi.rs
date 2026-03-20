@@ -11,9 +11,9 @@ use crate::{
     CompletedLinkIntentMaterial, CreateAccountParams, CreateChatControlInput,
     CreateChatControlOutcome, DeviceApprovePayloadMaterial, DeviceKeyMaterial,
     DeviceTransferBundleMaterial, DirectoryAccountMaterial, HistorySyncChunkMaterial,
-    InboxApplyOutcome, LocalHistoryStore, LocalProjectedMessage, LocalProjectionApplyReport,
-    LocalProjectionKind, LocalStoreApplyReport, MessageBody, MlsCommitBundle, MlsFacade,
-    MlsMemberIdentity, MlsProcessResult, ModifyChatDevicesControlInput,
+    InboxApplyOutcome, LocalChatReadState, LocalHistoryStore, LocalProjectedMessage,
+    LocalProjectionApplyReport, LocalProjectionKind, LocalStoreApplyReport, MessageBody,
+    MlsCommitBundle, MlsFacade, MlsMemberIdentity, MlsProcessResult, ModifyChatDevicesControlInput,
     ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
     ModifyChatMembersControlOutcome, PublishKeyPackageMaterial, ReactionAction, ReceiptType,
     ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient, SyncChatCursor,
@@ -325,6 +325,8 @@ pub struct FfiChatSummary {
     pub chat_type: FfiChatType,
     pub title: Option<String>,
     pub last_server_seq: u64,
+    pub pending_message_count: u64,
+    pub last_message: Option<FfiMessageEnvelope>,
     pub participant_profiles: Vec<FfiChatParticipantProfile>,
 }
 
@@ -359,8 +361,10 @@ pub struct FfiChatDetail {
     pub chat_type: FfiChatType,
     pub title: Option<String>,
     pub last_server_seq: u64,
+    pub pending_message_count: u64,
     pub epoch: u64,
     pub last_commit_message_id: Option<String>,
+    pub last_message: Option<FfiMessageEnvelope>,
     pub participant_profiles: Vec<FfiChatParticipantProfile>,
     pub members: Vec<FfiChatMember>,
     pub device_members: Vec<FfiChatDeviceMember>,
@@ -508,6 +512,13 @@ pub struct FfiLocalStoreApplyReport {
     pub chats_upserted: u64,
     pub messages_upserted: u64,
     pub changed_chat_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiLocalChatReadState {
+    pub chat_id: String,
+    pub read_cursor_server_seq: u64,
+    pub unread_count: u64,
 }
 
 #[derive(Debug, Clone, Copy, uniffi::Enum)]
@@ -1678,6 +1689,96 @@ impl FfiLocalHistoryStore {
         ))
     }
 
+    pub fn chat_read_cursor(&self, chat_id: String) -> Result<Option<u64>, TrixFfiError> {
+        Ok(lock(&self.inner)?.chat_read_cursor(parse_chat_id(&chat_id)?))
+    }
+
+    pub fn chat_unread_count(
+        &self,
+        chat_id: String,
+        self_account_id: Option<String>,
+    ) -> Result<Option<u64>, TrixFfiError> {
+        Ok(lock(&self.inner)?.chat_unread_count(
+            parse_chat_id(&chat_id)?,
+            self_account_id
+                .as_deref()
+                .map(parse_account_id)
+                .transpose()?,
+        ))
+    }
+
+    pub fn get_chat_read_state(
+        &self,
+        chat_id: String,
+        self_account_id: Option<String>,
+    ) -> Result<Option<FfiLocalChatReadState>, TrixFfiError> {
+        Ok(lock(&self.inner)?
+            .get_chat_read_state(
+                parse_chat_id(&chat_id)?,
+                self_account_id
+                    .as_deref()
+                    .map(parse_account_id)
+                    .transpose()?,
+            )
+            .map(local_chat_read_state_to_ffi))
+    }
+
+    pub fn list_chat_read_states(
+        &self,
+        self_account_id: Option<String>,
+    ) -> Result<Vec<FfiLocalChatReadState>, TrixFfiError> {
+        Ok(lock(&self.inner)?
+            .list_chat_read_states(
+                self_account_id
+                    .as_deref()
+                    .map(parse_account_id)
+                    .transpose()?,
+            )
+            .into_iter()
+            .map(local_chat_read_state_to_ffi)
+            .collect())
+    }
+
+    pub fn mark_chat_read(
+        &self,
+        chat_id: String,
+        through_server_seq: Option<u64>,
+        self_account_id: Option<String>,
+    ) -> Result<FfiLocalChatReadState, TrixFfiError> {
+        Ok(local_chat_read_state_to_ffi(
+            lock(&self.inner)?
+                .mark_chat_read(
+                    parse_chat_id(&chat_id)?,
+                    through_server_seq,
+                    self_account_id
+                        .as_deref()
+                        .map(parse_account_id)
+                        .transpose()?,
+                )
+                .map_err(ffi_error)?,
+        ))
+    }
+
+    pub fn set_chat_read_cursor(
+        &self,
+        chat_id: String,
+        read_cursor_server_seq: Option<u64>,
+        self_account_id: Option<String>,
+    ) -> Result<FfiLocalChatReadState, TrixFfiError> {
+        Ok(local_chat_read_state_to_ffi(
+            lock(&self.inner)?
+                .set_chat_read_cursor(
+                    parse_chat_id(&chat_id)?,
+                    read_cursor_server_seq,
+                    self_account_id
+                        .as_deref()
+                        .map(parse_account_id)
+                        .transpose()?,
+                )
+                .map_err(ffi_error)?,
+        ))
+    }
+
     pub fn apply_chat_history(
         &self,
         history: FfiChatHistory,
@@ -2496,6 +2597,8 @@ fn chat_summary_to_ffi(value: trix_types::ChatSummary) -> FfiChatSummary {
         chat_type: value.chat_type.into(),
         title: value.title,
         last_server_seq: value.last_server_seq,
+        pending_message_count: value.pending_message_count,
+        last_message: value.last_message.map(message_envelope_to_ffi),
         participant_profiles: value
             .participant_profiles
             .into_iter()
@@ -2510,10 +2613,12 @@ fn chat_detail_to_ffi(value: trix_types::ChatDetailResponse) -> FfiChatDetail {
         chat_type: value.chat_type.into(),
         title: value.title,
         last_server_seq: value.last_server_seq,
+        pending_message_count: value.pending_message_count,
         epoch: value.epoch,
         last_commit_message_id: value
             .last_commit_message_id
             .map(|message_id| message_id.0.to_string()),
+        last_message: value.last_message.map(message_envelope_to_ffi),
         participant_profiles: value
             .participant_profiles
             .into_iter()
@@ -2577,10 +2682,15 @@ fn ffi_chat_detail_to_api(
         chat_type: value.chat_type.into(),
         title: value.title,
         last_server_seq: value.last_server_seq,
+        pending_message_count: value.pending_message_count,
         epoch: value.epoch,
         last_commit_message_id: value
             .last_commit_message_id
             .map(|message_id| parse_message_id(&message_id))
+            .transpose()?,
+        last_message: value
+            .last_message
+            .map(ffi_message_envelope_to_api)
             .transpose()?,
         participant_profiles: value
             .participant_profiles
@@ -2895,6 +3005,14 @@ fn local_store_apply_report_to_ffi(value: LocalStoreApplyReport) -> FfiLocalStor
             .into_iter()
             .map(|chat_id| chat_id.0.to_string())
             .collect(),
+    }
+}
+
+fn local_chat_read_state_to_ffi(value: LocalChatReadState) -> FfiLocalChatReadState {
+    FfiLocalChatReadState {
+        chat_id: value.chat_id.0.to_string(),
+        read_cursor_server_seq: value.read_cursor_server_seq,
+        unread_count: value.unread_count,
     }
 }
 
