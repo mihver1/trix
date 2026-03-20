@@ -371,6 +371,8 @@ struct ChatSummary: Decodable, Identifiable {
     let chatType: ChatType
     let title: String?
     let lastServerSeq: UInt64
+    let pendingMessageCount: UInt64
+    let lastMessage: MessageEnvelope?
     let participantProfiles: [ChatParticipantProfileSummary]
 
     var id: String { chatId }
@@ -413,8 +415,10 @@ struct ChatDetailResponse: Decodable {
     let chatType: ChatType
     let title: String?
     let lastServerSeq: UInt64
+    let pendingMessageCount: UInt64
     let epoch: UInt64
     let lastCommitMessageId: String?
+    let lastMessage: MessageEnvelope?
     let participantProfiles: [ChatParticipantProfileSummary]
     let members: [ChatMemberSummary]
     let deviceMembers: [ChatDeviceSummary]

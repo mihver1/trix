@@ -49,6 +49,8 @@ private struct DashboardCreateChatDraft {
 }
 
 private struct ChatListSnapshot {
+    let title: String
+    let avatarSeedTitle: String
     let previewText: String
     let previewDate: Date?
     let unreadCount: Int
@@ -305,9 +307,11 @@ private struct ChatsHomeView: View {
                                     )
                                 } label: {
                                     ChatListRow(
-                                        chat: chat,
-                                        snapshot: dashboard.chatListSnapshot(for: chat),
-                                        currentAccountId: dashboard.profile.accountId
+                                        snapshot: dashboard.chatListSnapshot(
+                                            for: chat,
+                                            localChatListItem: model.localCoreState?.chatListItem(for: chat.chatId),
+                                            localReadState: model.localCoreState?.chatReadState(for: chat.chatId)
+                                        )
                                     )
                                 }
                             }
@@ -675,17 +679,15 @@ private struct AdvancedConnectionBadge: View {
 }
 
 private struct ChatListRow: View {
-    let chat: ChatSummary
     let snapshot: ChatListSnapshot
-    let currentAccountId: String
 
     var body: some View {
         HStack(spacing: 14) {
-            AccountAvatarView(title: chat.avatarSeedTitle(currentAccountId: currentAccountId), size: 54)
+            AccountAvatarView(title: snapshot.avatarSeedTitle, size: 54)
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text(chat.resolvedTitle(currentAccountId: currentAccountId))
+                    Text(snapshot.title)
                         .font(.body.weight(.semibold))
                         .lineLimit(1)
 
@@ -1077,23 +1079,53 @@ private struct AccountAvatarView: View {
 }
 
 private extension DashboardData {
-    func chatListSnapshot(for chat: ChatSummary) -> ChatListSnapshot {
-        let matchingItems = inboxItems
-            .filter { $0.message.chatId == chat.chatId }
-            .sorted { $0.message.createdAtUnix > $1.message.createdAtUnix }
-
-        let latestItem = matchingItems.first
+    func chatListSnapshot(
+        for chat: ChatSummary,
+        localChatListItem: LocalChatListItemSnapshot?,
+        localReadState: LocalChatReadStateSnapshot?
+    ) -> ChatListSnapshot {
+        let latestMessage = chat.lastMessage ?? latestInboxMessage(for: chat.chatId)
         return ChatListSnapshot(
-            previewText: chatListPreviewText(for: chat, latestItem: latestItem),
-            previewDate: latestItem?.message.createdAtDate,
-            unreadCount: matchingItems.count
+            title: localChatListItem?.displayTitle ?? chat.resolvedTitle(currentAccountId: profile.accountId),
+            avatarSeedTitle: localChatListItem?.displayTitle ?? chat.avatarSeedTitle(currentAccountId: profile.accountId),
+            previewText: chatListPreviewText(
+                for: chat,
+                localChatListItem: localChatListItem,
+                latestMessage: latestMessage
+            ),
+            previewDate: localChatListItem?.previewDate ?? latestMessage?.createdAtDate,
+            unreadCount: resolvedUnreadCount(
+                for: chat,
+                localChatListItem: localChatListItem,
+                localReadState: localReadState
+            )
         )
     }
 
-    private func chatListPreviewText(for chat: ChatSummary, latestItem: InboxItem?) -> String {
-        if let latestItem {
-            let previewBody = latestItem.message.debugPreview
-            if let prefix = senderPrefix(for: latestItem.message, in: chat) {
+    private func latestInboxMessage(for chatId: String) -> MessageEnvelope? {
+        inboxItems
+            .filter { $0.message.chatId == chatId }
+            .sorted { $0.message.createdAtUnix > $1.message.createdAtUnix }
+            .first?
+            .message
+    }
+
+    private func chatListPreviewText(
+        for chat: ChatSummary,
+        localChatListItem: LocalChatListItemSnapshot?,
+        latestMessage: MessageEnvelope?
+    ) -> String {
+        if let localChatListItem,
+           let previewText = sanitizedPreview(localChatListItem.previewText) {
+            if let prefixed = prefixedLocalPreviewText(for: chat, localChatListItem: localChatListItem, previewText: previewText) {
+                return prefixed
+            }
+            return previewText
+        }
+
+        if let latestMessage {
+            let previewBody = latestMessage.debugPreview
+            if let prefix = senderPrefix(for: latestMessage, in: chat) {
                 return "\(prefix): \(previewBody)"
             }
             return previewBody
@@ -1125,6 +1157,40 @@ private extension DashboardData {
         return "Loading recent messages..."
     }
 
+    private func resolvedUnreadCount(
+        for chat: ChatSummary,
+        localChatListItem: LocalChatListItemSnapshot?,
+        localReadState: LocalChatReadStateSnapshot?
+    ) -> Int {
+        if let localChatListItem {
+            let localUnread = min(localChatListItem.unreadCount, UInt64(Int.max))
+            let serverPending = min(localChatListItem.pendingMessageCount, UInt64(Int.max))
+            return Int(max(localUnread, serverPending))
+        }
+
+        let localUnread = localReadState.map { min($0.unreadCount, UInt64(Int.max)) } ?? 0
+        let serverPending = min(chat.pendingMessageCount, UInt64(Int.max))
+        return Int(max(localUnread, serverPending))
+    }
+
+    private func prefixedLocalPreviewText(
+        for chat: ChatSummary,
+        localChatListItem: LocalChatListItemSnapshot,
+        previewText: String
+    ) -> String? {
+        if localChatListItem.previewIsOutgoing == true {
+            return chat.chatType == .dm ? nil : "You: \(previewText)"
+        }
+
+        guard chat.chatType == .group,
+              let senderDisplayName = sanitizedPreview(localChatListItem.previewSenderDisplayName)
+        else {
+            return nil
+        }
+
+        return "\(senderDisplayName): \(previewText)"
+    }
+
     private func senderPrefix(for message: MessageEnvelope, in chat: ChatSummary) -> String? {
         if message.senderAccountId == profile.accountId {
             return "You"
@@ -1137,6 +1203,15 @@ private extension DashboardData {
         return chat.participantProfiles
             .first { $0.accountId == message.senderAccountId }?
             .primaryDisplayName
+    }
+
+    private func sanitizedPreview(_ value: String?) -> String? {
+        guard let value else {
+            return nil
+        }
+
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 

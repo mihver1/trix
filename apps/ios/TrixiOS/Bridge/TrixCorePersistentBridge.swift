@@ -12,6 +12,69 @@ struct LocalChatCursorSnapshot: Identifiable {
     var id: String { chatId }
 }
 
+struct LocalChatReadStateSnapshot: Identifiable {
+    let chatId: String
+    let readCursorServerSeq: UInt64
+    let unreadCount: UInt64
+
+    var id: String { chatId }
+}
+
+struct LocalChatListItemSnapshot: Identifiable {
+    let chatId: String
+    let chatType: ChatType
+    let title: String?
+    let displayTitle: String
+    let lastServerSeq: UInt64
+    let pendingMessageCount: UInt64
+    let unreadCount: UInt64
+    let previewText: String?
+    let previewSenderAccountId: String?
+    let previewSenderDisplayName: String?
+    let previewIsOutgoing: Bool?
+    let previewServerSeq: UInt64?
+    let previewCreatedAtUnix: UInt64?
+    let participantProfiles: [ChatParticipantProfileSummary]
+
+    var id: String { chatId }
+
+    var previewDate: Date? {
+        previewCreatedAtUnix.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+    }
+}
+
+enum LocalProjectionKindSnapshot {
+    case applicationMessage
+    case proposalQueued
+    case commitMerged
+    case welcomeRef
+    case system
+}
+
+struct LocalTimelineItemSnapshot: Identifiable {
+    let serverSeq: UInt64
+    let messageId: String
+    let senderAccountId: String
+    let senderDeviceId: String
+    let senderDisplayName: String
+    let isOutgoing: Bool
+    let epoch: UInt64
+    let messageKind: MessageKind
+    let contentType: ContentType
+    let projectionKind: LocalProjectionKindSnapshot
+    let previewText: String
+    let bodyPreview: MessageBodyPreview?
+    let bodyParseError: String?
+    let mergedEpoch: UInt64?
+    let createdAtUnix: UInt64
+
+    var id: String { messageId }
+
+    var createdAtDate: Date {
+        Date(timeIntervalSince1970: TimeInterval(createdAtUnix))
+    }
+}
+
 struct LocalStoreSyncResult {
     let chatsUpserted: UInt64
     let messagesUpserted: UInt64
@@ -37,7 +100,17 @@ struct LocalCoreStateSnapshot {
     let leaseOwner: String
     let lastAckedInboxId: UInt64?
     let localChats: [ChatSummary]
+    let localChatListItems: [LocalChatListItemSnapshot]
     let chatCursors: [LocalChatCursorSnapshot]
+    let chatReadStates: [LocalChatReadStateSnapshot]
+
+    func chatListItem(for chatId: String) -> LocalChatListItemSnapshot? {
+        localChatListItems.first { $0.chatId == chatId }
+    }
+
+    func chatReadState(for chatId: String) -> LocalChatReadStateSnapshot? {
+        chatReadStates.first { $0.chatId == chatId }
+    }
 }
 
 enum TrixCorePersistentBridge {
@@ -102,10 +175,22 @@ enum TrixCorePersistentBridge {
         let syncState = try context.syncCoordinator.stateSnapshot()
         let chats = try context.historyStore.listChats()
             .map(\.trix_chatSummary)
+        let localChatListItems = try context.historyStore
+            .listLocalChatListItems(selfAccountId: identity.accountId)
+            .map(\.trix_localChatListItemSnapshot)
         let chatCursors = syncState.chatCursors
             .map(\.trix_localChatCursorSnapshot)
             .sorted { left, right in
                 right.lastServerSeq < left.lastServerSeq
+            }
+        let chatReadStates = try context.historyStore
+            .listChatReadStates(selfAccountId: identity.accountId)
+            .map(\.trix_localChatReadStateSnapshot)
+            .sorted { left, right in
+                if left.unreadCount == right.unreadCount {
+                    return left.chatId < right.chatId
+                }
+                return left.unreadCount > right.unreadCount
             }
 
         return LocalCoreStateSnapshot(
@@ -116,8 +201,45 @@ enum TrixCorePersistentBridge {
             leaseOwner: syncState.leaseOwner,
             lastAckedInboxId: syncState.lastAckedInboxId,
             localChats: chats,
-            chatCursors: chatCursors
+            localChatListItems: localChatListItems,
+            chatCursors: chatCursors,
+            chatReadStates: chatReadStates
         )
+    }
+
+    static func markChatRead(
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        throughServerSeq: UInt64?
+    ) throws -> LocalChatReadStateSnapshot {
+        let context = try loadOrCreateContext(identity: identity)
+        return try context.historyStore
+            .markChatRead(
+                chatId: chatId,
+                throughServerSeq: throughServerSeq,
+                selfAccountId: identity.accountId
+            )
+            .trix_localChatReadStateSnapshot
+    }
+
+    static func loadLocalTimeline(
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        limit: Int = 150
+    ) throws -> [LocalTimelineItemSnapshot] {
+        let paths = try PersistentCorePaths(identity: identity)
+        guard FileManager.default.fileExists(atPath: paths.historyDatabasePath.path) else {
+            return []
+        }
+
+        let store = try FfiLocalHistoryStore.newPersistent(databasePath: paths.historyDatabasePath.path)
+        return try store.getLocalTimelineItems(
+            chatId: chatId,
+            selfAccountId: identity.accountId,
+            afterServerSeq: nil,
+            limit: UInt32(min(max(limit, 1), 500))
+        )
+        .map(\.trix_localTimelineItemSnapshot)
     }
 
     static func loadLocalChatHistory(
@@ -297,6 +419,59 @@ private extension FfiSyncChatCursor {
     }
 }
 
+private extension FfiLocalChatReadState {
+    var trix_localChatReadStateSnapshot: LocalChatReadStateSnapshot {
+        LocalChatReadStateSnapshot(
+            chatId: chatId,
+            readCursorServerSeq: readCursorServerSeq,
+            unreadCount: unreadCount
+        )
+    }
+}
+
+private extension FfiLocalChatListItem {
+    var trix_localChatListItemSnapshot: LocalChatListItemSnapshot {
+        LocalChatListItemSnapshot(
+            chatId: chatId,
+            chatType: chatType.trix_chatType,
+            title: title,
+            displayTitle: displayTitle,
+            lastServerSeq: lastServerSeq,
+            pendingMessageCount: pendingMessageCount,
+            unreadCount: unreadCount,
+            previewText: previewText,
+            previewSenderAccountId: previewSenderAccountId,
+            previewSenderDisplayName: previewSenderDisplayName,
+            previewIsOutgoing: previewIsOutgoing,
+            previewServerSeq: previewServerSeq,
+            previewCreatedAtUnix: previewCreatedAtUnix,
+            participantProfiles: participantProfiles.map(\.trix_chatParticipantProfileSummary)
+        )
+    }
+}
+
+private extension FfiLocalTimelineItem {
+    var trix_localTimelineItemSnapshot: LocalTimelineItemSnapshot {
+        LocalTimelineItemSnapshot(
+            serverSeq: serverSeq,
+            messageId: messageId,
+            senderAccountId: senderAccountId,
+            senderDeviceId: senderDeviceId,
+            senderDisplayName: senderDisplayName,
+            isOutgoing: isOutgoing,
+            epoch: epoch,
+            messageKind: messageKind.trix_messageKind,
+            contentType: contentType.trix_contentType,
+            projectionKind: projectionKind.trix_localProjectionKindSnapshot,
+            previewText: previewText,
+            bodyPreview: body?.trix_messageBodyPreview,
+            bodyParseError: bodyParseError,
+            mergedEpoch: mergedEpoch,
+            createdAtUnix: createdAtUnix
+        )
+    }
+}
+
 private extension FfiChatHistory {
     var trix_chatHistoryResponse: ChatHistoryResponse {
         ChatHistoryResponse(
@@ -313,6 +488,8 @@ private extension FfiChatSummary {
             chatType: chatType.trix_chatType,
             title: title,
             lastServerSeq: lastServerSeq,
+            pendingMessageCount: pendingMessageCount,
+            lastMessage: lastMessage?.trix_messageEnvelope,
             participantProfiles: participantProfiles.map(\.trix_chatParticipantProfileSummary)
         )
     }
@@ -388,6 +565,59 @@ private extension FfiContentType {
             return .attachment
         case .chatEvent:
             return .chatEvent
+        }
+    }
+}
+
+private extension FfiLocalProjectionKind {
+    var trix_localProjectionKindSnapshot: LocalProjectionKindSnapshot {
+        switch self {
+        case .applicationMessage:
+            return .applicationMessage
+        case .proposalQueued:
+            return .proposalQueued
+        case .commitMerged:
+            return .commitMerged
+        case .welcomeRef:
+            return .welcomeRef
+        case .system:
+            return .system
+        }
+    }
+}
+
+private extension FfiMessageBody {
+    var trix_messageBodyPreview: MessageBodyPreview {
+        switch kind {
+        case .text:
+            return MessageBodyPreview(
+                title: text ?? "(empty text)",
+                detail: nil
+            )
+        case .reaction:
+            let actionLabel = reactionAction == .remove ? "Removed" : "Reacted"
+            return MessageBodyPreview(
+                title: "\(actionLabel) \(emoji ?? "")",
+                detail: targetMessageId.map { "Target \($0)" }
+            )
+        case .receipt:
+            let receiptLabel = receiptType == .read ? "Read receipt" : "Delivered receipt"
+            return MessageBodyPreview(
+                title: receiptLabel,
+                detail: targetMessageId.map { "Target \($0)" }
+            )
+        case .attachment:
+            let attachmentName = fileName ?? blobId ?? "Attachment"
+            let mimeDescription = mimeType ?? "binary/octet-stream"
+            return MessageBodyPreview(
+                title: attachmentName,
+                detail: "\(mimeDescription), \(sizeBytes ?? 0) bytes"
+            )
+        case .chatEvent:
+            return MessageBodyPreview(
+                title: eventType ?? "Chat event",
+                detail: eventJson
+            )
         }
     }
 }

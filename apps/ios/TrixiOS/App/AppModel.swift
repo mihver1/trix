@@ -68,7 +68,12 @@ struct DashboardData {
 struct ChatSnapshot {
     let detail: ChatDetailResponse
     let history: [MessageEnvelope]
+    let localTimelineItems: [LocalTimelineItemSnapshot]
     let historySource: ChatHistorySource
+
+    var latestTimelineAnchorId: String? {
+        localTimelineItems.last?.id ?? history.last?.id
+    }
 }
 
 struct DebugAttachmentSendOutcome {
@@ -1117,6 +1122,11 @@ final class AppModel: ObservableObject {
             accessToken: context.session.accessToken
         )
         seedDirectoryAccountCache(with: detail.participantProfiles)
+        let localTimelineItems = try TrixCorePersistentBridge.loadLocalTimeline(
+            identity: context.identity,
+            chatId: chatId,
+            limit: 150
+        )
 
         if let localHistory = try TrixCorePersistentBridge.loadLocalChatHistory(
             identity: context.identity,
@@ -1126,6 +1136,7 @@ final class AppModel: ObservableObject {
             return ChatSnapshot(
                 detail: detail,
                 history: localHistory.messages,
+                localTimelineItems: localTimelineItems,
                 historySource: .localStore
             )
         }
@@ -1138,6 +1149,7 @@ final class AppModel: ObservableObject {
         return try await ChatSnapshot(
             detail: detail,
             history: history.messages,
+            localTimelineItems: localTimelineItems,
             historySource: .server
         )
     }
@@ -1300,6 +1312,23 @@ final class AppModel: ObservableObject {
         let client = try APIClient(baseURLString: baseURLString)
         let session = try await authenticate(client: client, identity: identity)
         return AuthenticatedContext(client: client, identity: identity, session: session)
+    }
+
+    func markChatReadLocally(chatId: String, throughServerSeq: UInt64?) {
+        guard let localIdentity else {
+            return
+        }
+
+        do {
+            _ = try TrixCorePersistentBridge.markChatRead(
+                identity: localIdentity,
+                chatId: chatId,
+                throughServerSeq: throughServerSeq
+            )
+            updateLocalCoreStateSnapshot(identity: localIdentity)
+        } catch {
+            // Local read state is opportunistic; network/UI flows should not fail on it.
+        }
     }
 
     private func reserveKeyPackagesForAccounts(
