@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import CoreImage.CIFilterBuiltins
 
 private let dashboardAccent = Color(red: 0.14, green: 0.55, blue: 0.98)
 
@@ -405,53 +406,23 @@ private struct SettingsHomeView: View {
                 }
 
                 Section("Linked Devices") {
-                    Button(action: onCreateLinkIntent) {
-                        if model.isLoading {
-                            ProgressView()
-                                .frame(maxWidth: .infinity)
-                        } else {
-                            Text("Link New Device")
-                                .frame(maxWidth: .infinity)
-                        }
-                    }
-                    .disabled(model.isLoading)
-
-                    ForEach(dashboard.devices) { device in
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(alignment: .firstTextBaseline) {
-                                Text(device.displayName)
-                                    .font(.body.weight(.medium))
-
-                                Spacer()
-
-                                DeviceStatusBadge(status: device.deviceStatus)
-                            }
-
-                            Text(device.platform.capitalized)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-
-                            if device.deviceId == dashboard.profile.deviceId {
-                                Text("This iPhone")
-                                    .font(.caption.weight(.medium))
-                                    .foregroundStyle(dashboardAccent)
-                            } else if model.canManageAccountDevices {
-                                if device.deviceStatus == .pending {
-                                    Button("Approve Device") {
-                                        onApprovePendingDevice(device.deviceId)
-                                    }
-                                    .disabled(model.isLoading)
-                                }
-
-                                if device.deviceStatus == .active {
-                                    Button("Remove Device", role: .destructive) {
-                                        onRevokeDevice(device)
-                                    }
-                                    .disabled(model.isLoading)
-                                }
-                            }
-                        }
-                        .padding(.vertical, 4)
+                    NavigationLink {
+                        LinkedDevicesView(
+                            dashboard: dashboard,
+                            canManageDevices: model.canManageAccountDevices,
+                            isLoading: model.isLoading,
+                            onCreateLinkIntent: onCreateLinkIntent,
+                            onApprovePendingDevice: onApprovePendingDevice,
+                            onRevokeDevice: onRevokeDevice
+                        )
+                    } label: {
+                        SettingsNavigationRow(
+                            icon: "iphone.gen3.badge.plus",
+                            tint: dashboardAccent,
+                            title: "Linked Devices",
+                            subtitle: linkedDevicesSummaryText(for: dashboard),
+                            trailingText: "\(dashboard.devices.count)"
+                        )
                     }
                 }
 
@@ -581,6 +552,20 @@ private struct SettingsHomeView: View {
             }
         }
     }
+
+    private func linkedDevicesSummaryText(for dashboard: DashboardData) -> String {
+        let pendingCount = dashboard.devices.filter { $0.deviceStatus == .pending }.count
+        if pendingCount > 0 {
+            return pendingCount == 1 ? "1 device is waiting for approval" : "\(pendingCount) devices are waiting for approval"
+        }
+
+        let activeCount = dashboard.devices.filter { $0.deviceStatus == .active }.count
+        if activeCount <= 1 {
+            return "This is your only active device"
+        }
+
+        return "\(activeCount) active devices on this account"
+    }
 }
 
 private struct AdvancedSettingsConnectionCard: View {
@@ -675,6 +660,231 @@ private struct AdvancedConnectionBadge: View {
         }
 
         return snapshot.health.status == .ok ? .green : .orange
+    }
+}
+
+private struct LinkedDevicesView: View {
+    let dashboard: DashboardData
+    let canManageDevices: Bool
+    let isLoading: Bool
+    let onCreateLinkIntent: () -> Void
+    let onApprovePendingDevice: (String) -> Void
+    let onRevokeDevice: (DeviceSummary) -> Void
+
+    private var currentDevice: DeviceSummary? {
+        dashboard.currentDevice
+    }
+
+    private var pendingDevices: [DeviceSummary] {
+        dashboard.devices.filter { $0.deviceStatus == .pending }
+    }
+
+    private var otherActiveDevices: [DeviceSummary] {
+        dashboard.devices.filter { device in
+            device.deviceId != dashboard.profile.deviceId && device.deviceStatus == .active
+        }
+    }
+
+    private var revokedDevices: [DeviceSummary] {
+        dashboard.devices.filter { $0.deviceStatus == .revoked }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Bring another phone, tablet, or desktop onto this account without signing out here.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+
+                    Button(action: onCreateLinkIntent) {
+                        if isLoading {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Label("Link New Device", systemImage: "plus.circle.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(dashboardAccent)
+                    .disabled(isLoading)
+                }
+                .padding(.vertical, 6)
+            }
+
+            if let currentDevice {
+                Section("This iPhone") {
+                    LinkedDeviceCard(
+                        device: currentDevice,
+                        subtitle: "Signed in and ready for daily use.",
+                        showApproveAction: false,
+                        showRevokeAction: false,
+                        isLoading: isLoading,
+                        onApprove: {},
+                        onRevoke: {}
+                    )
+                }
+            }
+
+            if !pendingDevices.isEmpty {
+                Section("Waiting for Approval") {
+                    ForEach(pendingDevices) { device in
+                        LinkedDeviceCard(
+                            device: device,
+                            subtitle: "Approve this device from a trusted phone or desktop to finish setup.",
+                            showApproveAction: canManageDevices,
+                            showRevokeAction: false,
+                            isLoading: isLoading,
+                            onApprove: {
+                                onApprovePendingDevice(device.deviceId)
+                            },
+                            onRevoke: {}
+                        )
+                    }
+                }
+            }
+
+            if !otherActiveDevices.isEmpty {
+                Section("Other Devices") {
+                    ForEach(otherActiveDevices) { device in
+                        LinkedDeviceCard(
+                            device: device,
+                            subtitle: "This device can read and send messages on your behalf.",
+                            showApproveAction: false,
+                            showRevokeAction: canManageDevices,
+                            isLoading: isLoading,
+                            onApprove: {},
+                            onRevoke: {
+                                onRevokeDevice(device)
+                            }
+                        )
+                    }
+                }
+            }
+
+            if !revokedDevices.isEmpty {
+                Section("Removed Devices") {
+                    ForEach(revokedDevices) { device in
+                        LinkedDeviceCard(
+                            device: device,
+                            subtitle: "Access has already been revoked.",
+                            showApproveAction: false,
+                            showRevokeAction: false,
+                            isLoading: isLoading,
+                            onApprove: {},
+                            onRevoke: {}
+                        )
+                    }
+                }
+            }
+
+            if !canManageDevices {
+                Section {
+                    Label("Approve and remove actions are available only on a device that still holds the shared account root keys.", systemImage: "lock.shield")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .navigationTitle("Linked Devices")
+        .navigationBarTitleDisplayMode(.inline)
+        .background(Color(uiColor: .systemGroupedBackground))
+    }
+}
+
+private struct LinkedDeviceCard: View {
+    let device: DeviceSummary
+    let subtitle: String
+    let showApproveAction: Bool
+    let showRevokeAction: Bool
+    let isLoading: Bool
+    let onApprove: () -> Void
+    let onRevoke: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                Image(systemName: device.platform.trix_deviceIconName)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(dashboardAccent)
+                    .frame(width: 42, height: 42)
+                    .background(dashboardAccent.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(device.displayName)
+                        .font(.body.weight(.semibold))
+
+                    Text(device.platform.trix_platformLabel)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                DeviceStatusBadge(status: device.deviceStatus)
+            }
+
+            Text(subtitle)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            if showApproveAction || showRevokeAction {
+                HStack(spacing: 10) {
+                    if showApproveAction {
+                        Button("Approve", action: onApprove)
+                            .buttonStyle(.borderedProminent)
+                            .tint(dashboardAccent)
+                    }
+
+                    if showRevokeAction {
+                        Button("Remove", role: .destructive, action: onRevoke)
+                            .buttonStyle(.bordered)
+                    }
+                }
+                .disabled(isLoading)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+}
+
+private struct SettingsNavigationRow: View {
+    let icon: String
+    let tint: Color
+    let title: String
+    let subtitle: String
+    let trailingText: String?
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 38, height: 38)
+                .background(tint.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.body.weight(.medium))
+
+                Text(subtitle)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer()
+
+            if let trailingText {
+                Text(trailingText)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 4)
     }
 }
 
@@ -1078,6 +1288,38 @@ private struct AccountAvatarView: View {
     }
 }
 
+private extension String {
+    var trix_platformLabel: String {
+        switch lowercased() {
+        case let value where value.contains("ios"):
+            return "iPhone"
+        case let value where value.contains("mac"):
+            return "Mac"
+        case let value where value.contains("windows"):
+            return "Windows"
+        case let value where value.contains("linux"):
+            return "Linux"
+        default:
+            return capitalized
+        }
+    }
+
+    var trix_deviceIconName: String {
+        switch lowercased() {
+        case let value where value.contains("ios"):
+            return "iphone.gen3"
+        case let value where value.contains("mac"):
+            return "laptopcomputer"
+        case let value where value.contains("windows"):
+            return "desktopcomputer"
+        case let value where value.contains("linux"):
+            return "desktopcomputer"
+        default:
+            return "ipad.and.iphone"
+        }
+    }
+}
+
 private extension DashboardData {
     func chatListSnapshot(
         for chat: ChatSummary,
@@ -1375,27 +1617,56 @@ private struct RevokeDeviceSheet: View {
 private struct LinkIntentSheet: View {
     let linkIntent: CreateLinkIntentResponse
     let onClose: () -> Void
+    @State private var isShowingRawPayload = false
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    VStack(spacing: 16) {
+                        LinkIntentQRCodeView(payload: linkIntent.qrPayload)
+                            .frame(maxWidth: .infinity)
+
+                        VStack(spacing: 6) {
+                            Text("Share this secure code with the device you want to add.")
+                                .font(.subheadline.weight(.medium))
+                                .multilineTextAlignment(.center)
+
+                            Text("Copy it, share it, or let another Trix client scan the QR code.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+
                 Section("Expires") {
-                    Text(linkIntent.expirationDate.formatted(date: .abbreviated, time: .standard))
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(linkIntent.expirationDate.formatted(date: .abbreviated, time: .standard))
+
+                        Text(linkIntent.expirationDate, style: .relative)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Section {
-                    Text(linkIntent.qrPayload)
-                        .font(.system(.footnote, design: .monospaced))
-                        .textSelection(.enabled)
-                } header: {
-                    Text("Payload")
-                } footer: {
-                    Text("For now the iOS PoC exposes the link payload as JSON so it can be copied into another device manually.")
-                }
+                    ShareLink(item: linkIntent.qrPayload) {
+                        Label("Share Link Code", systemImage: "square.and.arrow.up")
+                    }
 
-                Section {
-                    Button("Copy Payload") {
+                    Button("Copy Link Code") {
                         UIPasteboard.general.string = linkIntent.qrPayload
+                    }
+                }
+
+                Section {
+                    DisclosureGroup("Code Details", isExpanded: $isShowingRawPayload) {
+                        Text(linkIntent.qrPayload)
+                            .font(.system(.footnote, design: .monospaced))
+                            .textSelection(.enabled)
+                            .padding(.top, 8)
                     }
                 }
             }
@@ -1407,6 +1678,47 @@ private struct LinkIntentSheet: View {
                 }
             }
         }
+    }
+}
+
+private struct LinkIntentQRCodeView: View {
+    let payload: String
+    private let context = CIContext()
+    private let filter = CIFilter.qrCodeGenerator()
+
+    var body: some View {
+        Group {
+            if let image = qrImage {
+                Image(uiImage: image)
+                    .interpolation(.none)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 220, height: 220)
+                    .padding(18)
+                    .background(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                    .shadow(color: .black.opacity(0.06), radius: 14, y: 8)
+            } else {
+                ContentUnavailableView("QR Unavailable", systemImage: "qrcode", description: Text("Copy the link code instead."))
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var qrImage: UIImage? {
+        filter.message = Data(payload.utf8)
+        filter.correctionLevel = "M"
+
+        guard let outputImage = filter.outputImage else {
+            return nil
+        }
+
+        let transformed = outputImage.transformed(by: CGAffineTransform(scaleX: 12, y: 12))
+        guard let cgImage = context.createCGImage(transformed, from: transformed.extent) else {
+            return nil
+        }
+
+        return UIImage(cgImage: cgImage)
     }
 }
 

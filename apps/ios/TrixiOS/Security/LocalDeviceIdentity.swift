@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import Security
 
@@ -60,62 +59,22 @@ struct DeviceBootstrapMaterial {
     private let transportPrivateKeyRaw: Data
 
     static func generate() throws -> DeviceBootstrapMaterial {
-        let accountRootPrivateKey = Curve25519.Signing.PrivateKey()
-        let transportPrivateKey = Curve25519.Signing.PrivateKey()
+        let accountRootPrivateKey = FfiAccountRootMaterial.generate()
+        let transportPrivateKey = FfiDeviceKeyMaterial.generate()
 
         return DeviceBootstrapMaterial(
             credentialIdentity: try Data.trix_random(count: 32),
-            accountRootPrivateKeyRaw: accountRootPrivateKey.rawRepresentation,
-            transportPrivateKeyRaw: transportPrivateKey.rawRepresentation
+            accountRootPrivateKeyRaw: accountRootPrivateKey.privateKeyBytes(),
+            transportPrivateKeyRaw: transportPrivateKey.privateKeyBytes()
         )
     }
 
-    func makeCreateAccountRequest(
-        profileName: String,
-        handle: String?,
-        profileBio: String?,
-        deviceDisplayName: String,
-        platform: String
-    ) throws -> CreateAccountRequest {
-        let accountRootPrivateKey = try trix_signingPrivateKey(accountRootPrivateKeyRaw)
-        let transportPrivateKey = try trix_signingPrivateKey(transportPrivateKeyRaw)
-        let transportPublicKey = transportPrivateKey.publicKey.rawRepresentation
-        let accountRootPublicKey = accountRootPrivateKey.publicKey.rawRepresentation
-        let bootstrapMessage = Self.bootstrapMessage(
-            transportPublicKey: transportPublicKey,
-            credentialIdentity: credentialIdentity
-        )
-        let bootstrapSignature = try accountRootPrivateKey.signature(for: bootstrapMessage)
-
-        return CreateAccountRequest(
-            handle: handle,
-            profileName: profileName,
-            profileBio: profileBio,
-            deviceDisplayName: deviceDisplayName,
-            platform: platform,
-            credentialIdentityB64: credentialIdentity.base64EncodedString(),
-            accountRootPubkeyB64: accountRootPublicKey.base64EncodedString(),
-            accountRootSignatureB64: bootstrapSignature.base64EncodedString(),
-            transportPubkeyB64: transportPublicKey.base64EncodedString()
-        )
+    func accountRootMaterial() throws -> FfiAccountRootMaterial {
+        try accountRootPrivateKeyRaw.trix_accountRootMaterial()
     }
 
-    func makeCompleteLinkIntentRequest(
-        linkToken: String,
-        deviceDisplayName: String,
-        platform: String
-    ) throws -> CompleteLinkIntentRequest {
-        let transportPrivateKey = try trix_signingPrivateKey(transportPrivateKeyRaw)
-        let transportPublicKey = transportPrivateKey.publicKey.rawRepresentation
-
-        return CompleteLinkIntentRequest(
-            linkToken: linkToken,
-            deviceDisplayName: deviceDisplayName,
-            platform: platform,
-            credentialIdentityB64: credentialIdentity.base64EncodedString(),
-            transportPubkeyB64: transportPublicKey.base64EncodedString(),
-            keyPackages: []
-        )
+    func deviceKeyMaterial() throws -> FfiDeviceKeyMaterial {
+        try transportPrivateKeyRaw.trix_deviceKeyMaterial()
     }
 
     func makeLocalIdentity(
@@ -157,17 +116,6 @@ struct DeviceBootstrapMaterial {
         )
     }
 
-    private static func bootstrapMessage(
-        transportPublicKey: Data,
-        credentialIdentity: Data
-    ) -> Data {
-        var message = Data("trix-account-bootstrap:v1".utf8)
-        message.append(trix_bigEndianLength(transportPublicKey.count))
-        message.append(transportPublicKey)
-        message.append(trix_bigEndianLength(credentialIdentity.count))
-        message.append(credentialIdentity)
-        return message
-    }
 }
 
 struct LocalDeviceIdentityStore {
@@ -199,7 +147,6 @@ struct LocalDeviceIdentityStore {
 enum LocalDeviceIdentityError: LocalizedError {
     case accountRootKeyUnavailable
     case invalidPrivateKeyMaterial
-    case invalidChallengeEncoding
     case randomGenerationFailed(OSStatus)
 
     var errorDescription: String? {
@@ -208,8 +155,6 @@ enum LocalDeviceIdentityError: LocalizedError {
             return "This device does not have shared account root key material yet."
         case .invalidPrivateKeyMaterial:
             return "Stored device key material is invalid."
-        case .invalidChallengeEncoding:
-            return "Server challenge payload is invalid."
         case let .randomGenerationFailed(status):
             return "Secure random generation failed (\(status))."
         }
@@ -221,28 +166,16 @@ extension LocalDeviceIdentity {
         accountRootPrivateKeyRaw != nil
     }
 
-    func signChallenge(_ challengeBytes: Data) throws -> Data {
-        let transportPrivateKey = try trix_signingPrivateKey(transportPrivateKeyRaw)
-        return try transportPrivateKey.signature(for: challengeBytes)
-    }
-
-    func signDeviceRevoke(deviceId: String, reason: String) throws -> Data {
-        try signAccountRootMessage(
-            Self.revokeMessage(deviceId: deviceId, reason: reason)
-        )
-    }
-
-    func signAccountBootstrapPayload(_ payload: Data) throws -> Data {
-        try signAccountRootMessage(payload)
-    }
-
-    private func signAccountRootMessage(_ message: Data) throws -> Data {
+    func accountRootMaterial() throws -> FfiAccountRootMaterial {
         guard let accountRootPrivateKeyRaw else {
             throw LocalDeviceIdentityError.accountRootKeyUnavailable
         }
 
-        let accountRootPrivateKey = try trix_signingPrivateKey(accountRootPrivateKeyRaw)
-        return try accountRootPrivateKey.signature(for: message)
+        return try accountRootPrivateKeyRaw.trix_accountRootMaterial()
+    }
+
+    func deviceKeyMaterial() throws -> FfiDeviceKeyMaterial {
+        try transportPrivateKeyRaw.trix_deviceKeyMaterial()
     }
 
     func markingActive() -> LocalDeviceIdentity {
@@ -258,31 +191,24 @@ extension LocalDeviceIdentity {
             trustState: .active
         )
     }
-
-    private static func revokeMessage(deviceId: String, reason: String) -> Data {
-        let deviceIdData = Data(deviceId.utf8)
-        let reasonData = Data(reason.utf8)
-
-        var message = Data("trix-device-revoke:v1".utf8)
-        message.append(trix_bigEndianLength(deviceIdData.count))
-        message.append(deviceIdData)
-        message.append(trix_bigEndianLength(reasonData.count))
-        message.append(reasonData)
-        return message
-    }
 }
 
-private func trix_signingPrivateKey(_ rawRepresentation: Data) throws -> Curve25519.Signing.PrivateKey {
-    do {
-        return try Curve25519.Signing.PrivateKey(rawRepresentation: rawRepresentation)
-    } catch {
-        throw LocalDeviceIdentityError.invalidPrivateKeyMaterial
+private extension Data {
+    func trix_accountRootMaterial() throws -> FfiAccountRootMaterial {
+        do {
+            return try FfiAccountRootMaterial.fromPrivateKey(privateKey: self)
+        } catch {
+            throw LocalDeviceIdentityError.invalidPrivateKeyMaterial
+        }
     }
-}
 
-private func trix_bigEndianLength(_ count: Int) -> Data {
-    let value = UInt32(count).bigEndian
-    return withUnsafeBytes(of: value) { Data($0) }
+    func trix_deviceKeyMaterial() throws -> FfiDeviceKeyMaterial {
+        do {
+            return try FfiDeviceKeyMaterial.fromPrivateKey(privateKey: self)
+        } catch {
+            throw LocalDeviceIdentityError.invalidPrivateKeyMaterial
+        }
+    }
 }
 
 extension Data {
@@ -294,14 +220,6 @@ extension Data {
 
         guard status == errSecSuccess else {
             throw LocalDeviceIdentityError.randomGenerationFailed(status)
-        }
-
-        return data
-    }
-
-    static func trix_base64Decoded(_ value: String) throws -> Data {
-        guard let data = Data(base64Encoded: value) else {
-            throw LocalDeviceIdentityError.invalidChallengeEncoding
         }
 
         return data

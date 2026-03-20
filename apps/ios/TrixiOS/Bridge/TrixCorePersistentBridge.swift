@@ -123,16 +123,8 @@ enum TrixCorePersistentBridge {
     ) throws -> PublishKeyPackagesResponse {
         let context = try loadOrCreateContext(identity: identity)
         let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
-        let cipherSuite = try context.mlsFacade.ciphersuiteLabel()
-        let keyPackages = try context.mlsFacade.generateKeyPackages(count: UInt32(count))
-        let response = try client.publishKeyPackages(
-            packages: keyPackages.map {
-                FfiPublishKeyPackage(
-                    cipherSuite: cipherSuite,
-                    keyPackage: $0
-                )
-            }
-        )
+        let keyPackages = try context.mlsFacade.generatePublishKeyPackages(count: UInt32(count))
+        let response = try client.publishKeyPackages(packages: keyPackages)
         try context.mlsFacade.saveState()
         return response.trix_publishKeyPackagesResponse
     }

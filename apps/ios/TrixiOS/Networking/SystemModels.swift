@@ -144,38 +144,10 @@ struct ServerSnapshot: Equatable {
     let version: VersionResponse
 }
 
-struct CreateAccountRequest: Encodable {
-    let handle: String?
-    let profileName: String
-    let profileBio: String?
-    let deviceDisplayName: String
-    let platform: String
-    let credentialIdentityB64: String
-    let accountRootPubkeyB64: String
-    let accountRootSignatureB64: String
-    let transportPubkeyB64: String
-}
-
 struct CreateAccountResponse: Decodable {
     let accountId: String
     let deviceId: String
     let accountSyncChatId: String
-}
-
-struct AuthChallengeRequest: Encodable {
-    let deviceId: String
-}
-
-struct AuthChallengeResponse: Decodable {
-    let challengeId: String
-    let challengeB64: String
-    let expiresAtUnix: UInt64
-}
-
-struct AuthSessionRequest: Encodable {
-    let deviceId: String
-    let challengeId: String
-    let signatureB64: String
 }
 
 struct AuthSessionResponse: Decodable {
@@ -242,15 +214,6 @@ struct LinkIntentPayload: Decodable {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return try decoder.decode(LinkIntentPayload.self, from: data)
     }
-}
-
-struct CompleteLinkIntentRequest: Encodable {
-    let linkToken: String
-    let deviceDisplayName: String
-    let platform: String
-    let credentialIdentityB64: String
-    let transportPubkeyB64: String
-    let keyPackages: [PublishKeyPackageItem]
 }
 
 struct CompleteLinkIntentResponse: Decodable {

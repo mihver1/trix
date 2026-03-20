@@ -536,11 +536,19 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 
 public protocol FfiAccountRootMaterialProtocol: AnyObject, Sendable {
     
+    func accountBootstrapPayload(transportPubkey: Data, credentialIdentity: Data)  -> Data
+    
+    func deviceRevokePayload(deviceId: String, reason: String) throws  -> Data
+    
     func privateKeyBytes()  -> Data
     
     func publicKeyBytes()  -> Data
     
     func sign(payload: Data)  -> Data
+    
+    func signAccountBootstrap(transportPubkey: Data, credentialIdentity: Data)  -> Data
+    
+    func signDeviceRevoke(deviceId: String, reason: String) throws  -> Data
     
     func verify(payload: Data, signature: Data) throws 
     
@@ -613,6 +621,26 @@ public static func generate() -> FfiAccountRootMaterial  {
     
 
     
+open func accountBootstrapPayload(transportPubkey: Data, credentialIdentity: Data) -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+    uniffi_trix_core_fn_method_ffiaccountrootmaterial_account_bootstrap_payload(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(transportPubkey),
+        FfiConverterData.lower(credentialIdentity),$0
+    )
+})
+}
+    
+open func deviceRevokePayload(deviceId: String, reason: String)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiaccountrootmaterial_device_revoke_payload(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(deviceId),
+        FfiConverterString.lower(reason),$0
+    )
+})
+}
+    
 open func privateKeyBytes() -> Data  {
     return try!  FfiConverterData.lift(try! rustCall() {
     uniffi_trix_core_fn_method_ffiaccountrootmaterial_private_key_bytes(
@@ -634,6 +662,26 @@ open func sign(payload: Data) -> Data  {
     uniffi_trix_core_fn_method_ffiaccountrootmaterial_sign(
             self.uniffiCloneHandle(),
         FfiConverterData.lower(payload),$0
+    )
+})
+}
+    
+open func signAccountBootstrap(transportPubkey: Data, credentialIdentity: Data) -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+    uniffi_trix_core_fn_method_ffiaccountrootmaterial_sign_account_bootstrap(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(transportPubkey),
+        FfiConverterData.lower(credentialIdentity),$0
+    )
+})
+}
+    
+open func signDeviceRevoke(deviceId: String, reason: String)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiaccountrootmaterial_sign_device_revoke(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(deviceId),
+        FfiConverterString.lower(reason),$0
     )
 })
 }
@@ -704,6 +752,8 @@ public protocol FfiDeviceKeyMaterialProtocol: AnyObject, Sendable {
     func publicKeyBytes()  -> Data
     
     func sign(payload: Data)  -> Data
+    
+    func signAuthChallenge(challenge: Data)  -> Data
     
     func verify(payload: Data, signature: Data) throws 
     
@@ -797,6 +847,15 @@ open func sign(payload: Data) -> Data  {
     uniffi_trix_core_fn_method_ffidevicekeymaterial_sign(
             self.uniffiCloneHandle(),
         FfiConverterData.lower(payload),$0
+    )
+})
+}
+    
+open func signAuthChallenge(challenge: Data) -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+    uniffi_trix_core_fn_method_ffidevicekeymaterial_sign_auth_challenge(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(challenge),$0
     )
 })
 }
@@ -1380,6 +1439,8 @@ public protocol FfiMlsFacadeProtocol: AnyObject, Sendable {
     
     func generateKeyPackages(count: UInt32) throws  -> [Data]
     
+    func generatePublishKeyPackages(count: UInt32) throws  -> [FfiPublishKeyPackage]
+    
     func joinGroupFromWelcome(welcomeMessage: Data, ratchetTree: Data?) throws  -> FfiMlsConversation
     
     func loadGroup(groupId: Data) throws  -> FfiMlsConversation?
@@ -1551,6 +1612,15 @@ open func generateKeyPackages(count: UInt32)throws  -> [Data]  {
 })
 }
     
+open func generatePublishKeyPackages(count: UInt32)throws  -> [FfiPublishKeyPackage]  {
+    return try  FfiConverterSequenceTypeFfiPublishKeyPackage.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffimlsfacade_generate_publish_key_packages(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(count),$0
+    )
+})
+}
+    
 open func joinGroupFromWelcome(welcomeMessage: Data, ratchetTree: Data?)throws  -> FfiMlsConversation  {
     return try  FfiConverterTypeFfiMlsConversation_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffimlsfacade_join_group_from_welcome(
@@ -1695,13 +1765,21 @@ public protocol FfiServerApiClientProtocol: AnyObject, Sendable {
     
     func approveDevice(deviceId: String, accountRootSignature: Data, transferBundle: Data?) throws  -> FfiApproveDeviceResponse
     
+    func approveDeviceWithAccountRoot(deviceId: String, accountRoot: FfiAccountRootMaterial, transferBundle: Data?) throws  -> FfiApproveDeviceResponse
+    
+    func authenticateWithDeviceKey(deviceId: String, deviceKeys: FfiDeviceKeyMaterial, setAccessToken: Bool) throws  -> FfiAuthSession
+    
     func clearAccessToken() throws 
     
     func completeHistorySyncJob(jobId: String, cursorJson: String?) throws  -> FfiCompleteHistorySyncJobResponse
     
     func completeLinkIntent(linkIntentId: String, params: FfiCompleteLinkIntentParams) throws  -> FfiCompletedLinkIntent
     
+    func completeLinkIntentWithDeviceKey(linkIntentId: String, params: FfiCompleteLinkIntentWithDeviceKeyParams, deviceKeys: FfiDeviceKeyMaterial) throws  -> FfiCompletedLinkIntent
+    
     func createAccount(params: FfiCreateAccountParams) throws  -> FfiCreateAccountResponse
+    
+    func createAccountWithMaterials(params: FfiCreateAccountWithMaterialsParams, accountRoot: FfiAccountRootMaterial, deviceKeys: FfiDeviceKeyMaterial) throws  -> FfiCreateAccountResponse
     
     func createAuthChallenge(deviceId: String) throws  -> FfiAuthChallenge
     
@@ -1760,6 +1838,8 @@ public protocol FfiServerApiClientProtocol: AnyObject, Sendable {
     func reserveKeyPackages(accountId: String, deviceIds: [String]) throws  -> [FfiReservedKeyPackage]
     
     func revokeDevice(deviceId: String, reason: String, accountRootSignature: Data) throws  -> FfiRevokeDeviceResponse
+    
+    func revokeDeviceWithAccountRoot(deviceId: String, reason: String, accountRoot: FfiAccountRootMaterial) throws  -> FfiRevokeDeviceResponse
     
     func searchAccountDirectory(query: String?, limit: UInt32?, excludeSelf: Bool) throws  -> FfiAccountDirectory
     
@@ -1894,6 +1974,28 @@ open func approveDevice(deviceId: String, accountRootSignature: Data, transferBu
 })
 }
     
+open func approveDeviceWithAccountRoot(deviceId: String, accountRoot: FfiAccountRootMaterial, transferBundle: Data?)throws  -> FfiApproveDeviceResponse  {
+    return try  FfiConverterTypeFfiApproveDeviceResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverapiclient_approve_device_with_account_root(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(deviceId),
+        FfiConverterTypeFfiAccountRootMaterial_lower(accountRoot),
+        FfiConverterOptionData.lower(transferBundle),$0
+    )
+})
+}
+    
+open func authenticateWithDeviceKey(deviceId: String, deviceKeys: FfiDeviceKeyMaterial, setAccessToken: Bool)throws  -> FfiAuthSession  {
+    return try  FfiConverterTypeFfiAuthSession_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverapiclient_authenticate_with_device_key(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(deviceId),
+        FfiConverterTypeFfiDeviceKeyMaterial_lower(deviceKeys),
+        FfiConverterBool.lower(setAccessToken),$0
+    )
+})
+}
+    
 open func clearAccessToken()throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_clear_access_token(
             self.uniffiCloneHandle(),$0
@@ -1921,11 +2023,33 @@ open func completeLinkIntent(linkIntentId: String, params: FfiCompleteLinkIntent
 })
 }
     
+open func completeLinkIntentWithDeviceKey(linkIntentId: String, params: FfiCompleteLinkIntentWithDeviceKeyParams, deviceKeys: FfiDeviceKeyMaterial)throws  -> FfiCompletedLinkIntent  {
+    return try  FfiConverterTypeFfiCompletedLinkIntent_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverapiclient_complete_link_intent_with_device_key(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(linkIntentId),
+        FfiConverterTypeFfiCompleteLinkIntentWithDeviceKeyParams_lower(params),
+        FfiConverterTypeFfiDeviceKeyMaterial_lower(deviceKeys),$0
+    )
+})
+}
+    
 open func createAccount(params: FfiCreateAccountParams)throws  -> FfiCreateAccountResponse  {
     return try  FfiConverterTypeFfiCreateAccountResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_create_account(
             self.uniffiCloneHandle(),
         FfiConverterTypeFfiCreateAccountParams_lower(params),$0
+    )
+})
+}
+    
+open func createAccountWithMaterials(params: FfiCreateAccountWithMaterialsParams, accountRoot: FfiAccountRootMaterial, deviceKeys: FfiDeviceKeyMaterial)throws  -> FfiCreateAccountResponse  {
+    return try  FfiConverterTypeFfiCreateAccountResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverapiclient_create_account_with_materials(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiCreateAccountWithMaterialsParams_lower(params),
+        FfiConverterTypeFfiAccountRootMaterial_lower(accountRoot),
+        FfiConverterTypeFfiDeviceKeyMaterial_lower(deviceKeys),$0
     )
 })
 }
@@ -2197,6 +2321,17 @@ open func revokeDevice(deviceId: String, reason: String, accountRootSignature: D
         FfiConverterString.lower(deviceId),
         FfiConverterString.lower(reason),
         FfiConverterData.lower(accountRootSignature),$0
+    )
+})
+}
+    
+open func revokeDeviceWithAccountRoot(deviceId: String, reason: String, accountRoot: FfiAccountRootMaterial)throws  -> FfiRevokeDeviceResponse  {
+    return try  FfiConverterTypeFfiRevokeDeviceResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverapiclient_revoke_device_with_account_root(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(deviceId),
+        FfiConverterString.lower(reason),
+        FfiConverterTypeFfiAccountRootMaterial_lower(accountRoot),$0
     )
 })
 }
@@ -3780,6 +3915,72 @@ public func FfiConverterTypeFfiCompleteLinkIntentParams_lower(_ value: FfiComple
 }
 
 
+public struct FfiCompleteLinkIntentWithDeviceKeyParams: Equatable, Hashable {
+    public var linkToken: String
+    public var deviceDisplayName: String
+    public var platform: String
+    public var credentialIdentity: Data
+    public var keyPackages: [FfiPublishKeyPackage]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(linkToken: String, deviceDisplayName: String, platform: String, credentialIdentity: Data, keyPackages: [FfiPublishKeyPackage]) {
+        self.linkToken = linkToken
+        self.deviceDisplayName = deviceDisplayName
+        self.platform = platform
+        self.credentialIdentity = credentialIdentity
+        self.keyPackages = keyPackages
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiCompleteLinkIntentWithDeviceKeyParams: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiCompleteLinkIntentWithDeviceKeyParams: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCompleteLinkIntentWithDeviceKeyParams {
+        return
+            try FfiCompleteLinkIntentWithDeviceKeyParams(
+                linkToken: FfiConverterString.read(from: &buf), 
+                deviceDisplayName: FfiConverterString.read(from: &buf), 
+                platform: FfiConverterString.read(from: &buf), 
+                credentialIdentity: FfiConverterData.read(from: &buf), 
+                keyPackages: FfiConverterSequenceTypeFfiPublishKeyPackage.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiCompleteLinkIntentWithDeviceKeyParams, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.linkToken, into: &buf)
+        FfiConverterString.write(value.deviceDisplayName, into: &buf)
+        FfiConverterString.write(value.platform, into: &buf)
+        FfiConverterData.write(value.credentialIdentity, into: &buf)
+        FfiConverterSequenceTypeFfiPublishKeyPackage.write(value.keyPackages, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCompleteLinkIntentWithDeviceKeyParams_lift(_ buf: RustBuffer) throws -> FfiCompleteLinkIntentWithDeviceKeyParams {
+    return try FfiConverterTypeFfiCompleteLinkIntentWithDeviceKeyParams.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCompleteLinkIntentWithDeviceKeyParams_lower(_ value: FfiCompleteLinkIntentWithDeviceKeyParams) -> RustBuffer {
+    return FfiConverterTypeFfiCompleteLinkIntentWithDeviceKeyParams.lower(value)
+}
+
+
 public struct FfiCompletedLinkIntent: Equatable, Hashable {
     public var accountId: String
     public var pendingDeviceId: String
@@ -4037,6 +4238,76 @@ public func FfiConverterTypeFfiCreateAccountResponse_lift(_ buf: RustBuffer) thr
 #endif
 public func FfiConverterTypeFfiCreateAccountResponse_lower(_ value: FfiCreateAccountResponse) -> RustBuffer {
     return FfiConverterTypeFfiCreateAccountResponse.lower(value)
+}
+
+
+public struct FfiCreateAccountWithMaterialsParams: Equatable, Hashable {
+    public var handle: String?
+    public var profileName: String
+    public var profileBio: String?
+    public var deviceDisplayName: String
+    public var platform: String
+    public var credentialIdentity: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(handle: String?, profileName: String, profileBio: String?, deviceDisplayName: String, platform: String, credentialIdentity: Data) {
+        self.handle = handle
+        self.profileName = profileName
+        self.profileBio = profileBio
+        self.deviceDisplayName = deviceDisplayName
+        self.platform = platform
+        self.credentialIdentity = credentialIdentity
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiCreateAccountWithMaterialsParams: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiCreateAccountWithMaterialsParams: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCreateAccountWithMaterialsParams {
+        return
+            try FfiCreateAccountWithMaterialsParams(
+                handle: FfiConverterOptionString.read(from: &buf), 
+                profileName: FfiConverterString.read(from: &buf), 
+                profileBio: FfiConverterOptionString.read(from: &buf), 
+                deviceDisplayName: FfiConverterString.read(from: &buf), 
+                platform: FfiConverterString.read(from: &buf), 
+                credentialIdentity: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiCreateAccountWithMaterialsParams, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.handle, into: &buf)
+        FfiConverterString.write(value.profileName, into: &buf)
+        FfiConverterOptionString.write(value.profileBio, into: &buf)
+        FfiConverterString.write(value.deviceDisplayName, into: &buf)
+        FfiConverterString.write(value.platform, into: &buf)
+        FfiConverterData.write(value.credentialIdentity, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCreateAccountWithMaterialsParams_lift(_ buf: RustBuffer) throws -> FfiCreateAccountWithMaterialsParams {
+    return try FfiConverterTypeFfiCreateAccountWithMaterialsParams.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCreateAccountWithMaterialsParams_lower(_ value: FfiCreateAccountWithMaterialsParams) -> RustBuffer {
+    return FfiConverterTypeFfiCreateAccountWithMaterialsParams.lower(value)
 }
 
 
@@ -9748,6 +10019,14 @@ fileprivate struct FfiConverterSequenceTypeFfiSyncChatCursor: FfiConverterRustBu
         return seq
     }
 }
+public func ffiAccountBootstrapPayload(transportPubkey: Data, credentialIdentity: Data) -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+    uniffi_trix_core_fn_func_ffi_account_bootstrap_payload(
+        FfiConverterData.lower(transportPubkey),
+        FfiConverterData.lower(credentialIdentity),$0
+    )
+})
+}
 public func ffiBuildAttachmentMessageBody(blobId: String, prepared: FfiPreparedAttachmentUpload)throws  -> FfiMessageBody  {
     return try  FfiConverterTypeFfiMessageBody_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_func_ffi_build_attachment_message_body(
@@ -9767,6 +10046,14 @@ public func ffiDecryptAttachmentPayload(body: FfiMessageBody, encryptedPayload: 
 public func ffiDefaultCiphersuiteLabel() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_trix_core_fn_func_ffi_default_ciphersuite_label($0
+    )
+})
+}
+public func ffiDeviceRevokePayload(deviceId: String, reason: String)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_func_ffi_device_revoke_payload(
+        FfiConverterString.lower(deviceId),
+        FfiConverterString.lower(reason),$0
     )
 })
 }
@@ -9809,6 +10096,9 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_trix_core_checksum_func_ffi_account_bootstrap_payload() != 22684) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_func_ffi_build_attachment_message_body() != 56761) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -9816,6 +10106,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_func_ffi_default_ciphersuite_label() != 38150) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_func_ffi_device_revoke_payload() != 8012) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_func_ffi_parse_message_body() != 17067) {
@@ -9827,6 +10120,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_func_ffi_serialize_message_body() != 25632) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffiaccountrootmaterial_account_bootstrap_payload() != 37556) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffiaccountrootmaterial_device_revoke_payload() != 52349) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffiaccountrootmaterial_private_key_bytes() != 60131) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -9834,6 +10133,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffiaccountrootmaterial_sign() != 31791) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffiaccountrootmaterial_sign_account_bootstrap() != 5035) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffiaccountrootmaterial_sign_device_revoke() != 43154) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffiaccountrootmaterial_verify() != 58382) {
@@ -9846,6 +10151,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffidevicekeymaterial_sign() != 33953) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffidevicekeymaterial_sign_auth_challenge() != 30922) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffidevicekeymaterial_verify() != 11630) {
@@ -9947,6 +10255,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffimlsfacade_generate_key_packages() != 21785) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffimlsfacade_generate_publish_key_packages() != 47759) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffimlsfacade_join_group_from_welcome() != 58030) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -9992,6 +10303,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_approve_device() != 44538) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffiserverapiclient_approve_device_with_account_root() != 10325) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffiserverapiclient_authenticate_with_device_key() != 5287) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_clear_access_token() != 39273) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -10001,7 +10318,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_complete_link_intent() != 28798) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffiserverapiclient_complete_link_intent_with_device_key() != 64940) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_create_account() != 56) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffiserverapiclient_create_account_with_materials() != 17444) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_create_auth_challenge() != 42397) {
@@ -10089,6 +10412,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_revoke_device() != 52459) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffiserverapiclient_revoke_device_with_account_root() != 27622) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_search_account_directory() != 53650) {

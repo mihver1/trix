@@ -6,26 +6,18 @@ struct TrixCoreServerBridge {
         form: CreateAccountForm,
         bootstrapMaterial: DeviceBootstrapMaterial
     ) throws -> CreateAccountResponse {
-        let request = try bootstrapMaterial.makeCreateAccountRequest(
-            profileName: form.profileName.trix_trimmed(),
-            handle: form.handle.trix_trimmedOrNil(),
-            profileBio: form.profileBio.trix_trimmedOrNil(),
-            deviceDisplayName: form.deviceDisplayName.trix_trimmed(),
-            platform: form.platform
-        )
         let client = try makeClient(baseURLString: baseURLString)
-        let response = try client.createAccount(
-            params: FfiCreateAccountParams(
-                handle: request.handle,
-                profileName: request.profileName,
-                profileBio: request.profileBio,
-                deviceDisplayName: request.deviceDisplayName,
-                platform: request.platform,
-                credentialIdentity: try Data.trix_base64Decoded(request.credentialIdentityB64),
-                accountRootPubkey: try Data.trix_base64Decoded(request.accountRootPubkeyB64),
-                accountRootSignature: try Data.trix_base64Decoded(request.accountRootSignatureB64),
-                transportPubkey: try Data.trix_base64Decoded(request.transportPubkeyB64)
-            )
+        let response = try client.createAccountWithMaterials(
+            params: FfiCreateAccountWithMaterialsParams(
+                handle: form.handle.trix_trimmedOrNil(),
+                profileName: form.profileName.trix_trimmed(),
+                profileBio: form.profileBio.trix_trimmedOrNil(),
+                deviceDisplayName: form.deviceDisplayName.trix_trimmed(),
+                platform: form.platform,
+                credentialIdentity: bootstrapMaterial.credentialIdentity
+            ),
+            accountRoot: try bootstrapMaterial.accountRootMaterial(),
+            deviceKeys: try bootstrapMaterial.deviceKeyMaterial()
         )
 
         return CreateAccountResponse(
@@ -117,27 +109,17 @@ struct TrixCoreServerBridge {
         form: LinkExistingAccountForm,
         bootstrapMaterial: DeviceBootstrapMaterial
     ) throws -> CompleteLinkIntentResponse {
-        let request = try bootstrapMaterial.makeCompleteLinkIntentRequest(
-            linkToken: payload.linkToken,
-            deviceDisplayName: form.deviceDisplayName.trix_trimmed(),
-            platform: form.platform
-        )
         let client = try makeClient(baseURLString: baseURLString)
-        let response = try client.completeLinkIntent(
+        let response = try client.completeLinkIntentWithDeviceKey(
             linkIntentId: payload.linkIntentId,
-            params: FfiCompleteLinkIntentParams(
-                linkToken: request.linkToken,
-                deviceDisplayName: request.deviceDisplayName,
-                platform: request.platform,
-                credentialIdentity: try Data.trix_base64Decoded(request.credentialIdentityB64),
-                transportPubkey: try Data.trix_base64Decoded(request.transportPubkeyB64),
-                keyPackages: try request.keyPackages.map {
-                    FfiPublishKeyPackage(
-                        cipherSuite: $0.cipherSuite,
-                        keyPackage: try Data.trix_base64Decoded($0.keyPackageB64)
-                    )
-                }
-            )
+            params: FfiCompleteLinkIntentWithDeviceKeyParams(
+                linkToken: payload.linkToken,
+                deviceDisplayName: form.deviceDisplayName.trix_trimmed(),
+                platform: form.platform,
+                credentialIdentity: bootstrapMaterial.credentialIdentity,
+                keyPackages: []
+            ),
+            deviceKeys: try bootstrapMaterial.deviceKeyMaterial()
         )
 
         return CompleteLinkIntentResponse(
@@ -153,12 +135,10 @@ struct TrixCoreServerBridge {
         identity: LocalDeviceIdentity
     ) throws -> AuthSessionResponse {
         let client = try makeClient(baseURLString: baseURLString)
-        let challenge = try client.createAuthChallenge(deviceId: identity.deviceId)
-        let signature = try identity.signChallenge(challenge.challenge)
-        let session = try client.createAuthSession(
+        let session = try client.authenticateWithDeviceKey(
             deviceId: identity.deviceId,
-            challengeId: challenge.challengeId,
-            signature: signature
+            deviceKeys: try identity.deviceKeyMaterial(),
+            setAccessToken: false
         )
 
         return AuthSessionResponse(
@@ -176,11 +156,9 @@ struct TrixCoreServerBridge {
         deviceId: String
     ) throws -> ApproveDeviceResponse {
         let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
-        let approvePayload = try client.getDeviceApprovePayload(deviceId: deviceId)
-        let signature = try identity.signAccountBootstrapPayload(approvePayload.bootstrapPayload)
-        let response = try client.approveDevice(
+        let response = try client.approveDeviceWithAccountRoot(
             deviceId: deviceId,
-            accountRootSignature: signature,
+            accountRoot: try identity.accountRootMaterial(),
             transferBundle: nil
         )
 
@@ -199,11 +177,10 @@ struct TrixCoreServerBridge {
         reason: String
     ) throws -> RevokeDeviceResponse {
         let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
-        let signature = try identity.signDeviceRevoke(deviceId: deviceId, reason: reason)
-        let response = try client.revokeDevice(
+        let response = try client.revokeDeviceWithAccountRoot(
             deviceId: deviceId,
             reason: reason,
-            accountRootSignature: signature
+            accountRoot: try identity.accountRootMaterial()
         )
 
         return RevokeDeviceResponse(
