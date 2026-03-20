@@ -670,15 +670,25 @@ external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_apply_local_p
 ): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_chat_mls_group_id(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_chat_read_cursor(
+): Short
+external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_chat_unread_count(
+): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_database_path(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_get_chat(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_get_chat_history(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_get_chat_read_state(
+): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_get_projected_messages(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_list_chat_read_states(
+): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_list_chats(
+): Short
+external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_mark_chat_read(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_project_chat_messages(
 ): Short
@@ -687,6 +697,8 @@ external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_projected_cur
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_save_state(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_set_chat_mls_group_id(
+): Short
+external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_set_chat_read_cursor(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimlsconversation_epoch(
 ): Short
@@ -940,15 +952,25 @@ external fun uniffi_trix_core_fn_method_ffilocalhistorystore_apply_local_project
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_chat_mls_group_id(`ptr`: Long,`chatId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_chat_read_cursor(`ptr`: Long,`chatId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_chat_unread_count(`ptr`: Long,`chatId`: RustBuffer.ByValue,`selfAccountId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_database_path(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_get_chat(`ptr`: Long,`chatId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_get_chat_history(`ptr`: Long,`chatId`: RustBuffer.ByValue,`afterServerSeq`: RustBuffer.ByValue,`limit`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_get_chat_read_state(`ptr`: Long,`chatId`: RustBuffer.ByValue,`selfAccountId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_get_projected_messages(`ptr`: Long,`chatId`: RustBuffer.ByValue,`afterServerSeq`: RustBuffer.ByValue,`limit`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_list_chat_read_states(`ptr`: Long,`selfAccountId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_list_chats(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_mark_chat_read(`ptr`: Long,`chatId`: RustBuffer.ByValue,`throughServerSeq`: RustBuffer.ByValue,`selfAccountId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_project_chat_messages(`ptr`: Long,`chatId`: RustBuffer.ByValue,`facade`: Long,`conversation`: Long,`limit`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -958,6 +980,8 @@ external fun uniffi_trix_core_fn_method_ffilocalhistorystore_save_state(`ptr`: L
 ): Unit
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_set_chat_mls_group_id(`ptr`: Long,`chatId`: RustBuffer.ByValue,`groupId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Byte
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_set_chat_read_cursor(`ptr`: Long,`chatId`: RustBuffer.ByValue,`readCursorServerSeq`: RustBuffer.ByValue,`selfAccountId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_clone_ffimlsconversation(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Long
 external fun uniffi_trix_core_fn_free_ffimlsconversation(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -1319,6 +1343,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_chat_mls_group_id() != 10675.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_chat_read_cursor() != 24383.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_chat_unread_count() != 15308.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_database_path() != 21137.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1328,10 +1358,19 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_get_chat_history() != 45987.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_get_chat_read_state() != 48570.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_get_projected_messages() != 59100.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_list_chat_read_states() != 7477.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_list_chats() != 27009.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_mark_chat_read() != 49850.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_project_chat_messages() != 40538.toShort()) {
@@ -1344,6 +1383,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_set_chat_mls_group_id() != 65425.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_set_chat_read_cursor() != 24367.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimlsconversation_epoch() != 3593.toShort()) {
@@ -2664,15 +2706,25 @@ public interface FfiLocalHistoryStoreInterface {
     
     fun `chatMlsGroupId`(`chatId`: kotlin.String): kotlin.ByteArray?
     
+    fun `chatReadCursor`(`chatId`: kotlin.String): kotlin.ULong?
+    
+    fun `chatUnreadCount`(`chatId`: kotlin.String, `selfAccountId`: kotlin.String?): kotlin.ULong?
+    
     fun `databasePath`(): kotlin.String?
     
     fun `getChat`(`chatId`: kotlin.String): FfiChatDetail?
     
     fun `getChatHistory`(`chatId`: kotlin.String, `afterServerSeq`: kotlin.ULong?, `limit`: kotlin.UInt?): FfiChatHistory
     
+    fun `getChatReadState`(`chatId`: kotlin.String, `selfAccountId`: kotlin.String?): FfiLocalChatReadState?
+    
     fun `getProjectedMessages`(`chatId`: kotlin.String, `afterServerSeq`: kotlin.ULong?, `limit`: kotlin.UInt?): List<FfiLocalProjectedMessage>
     
+    fun `listChatReadStates`(`selfAccountId`: kotlin.String?): List<FfiLocalChatReadState>
+    
     fun `listChats`(): List<FfiChatSummary>
+    
+    fun `markChatRead`(`chatId`: kotlin.String, `throughServerSeq`: kotlin.ULong?, `selfAccountId`: kotlin.String?): FfiLocalChatReadState
     
     fun `projectChatMessages`(`chatId`: kotlin.String, `facade`: FfiMlsFacade, `conversation`: FfiMlsConversation, `limit`: kotlin.UInt?): FfiLocalProjectionApplyReport
     
@@ -2681,6 +2733,8 @@ public interface FfiLocalHistoryStoreInterface {
     fun `saveState`()
     
     fun `setChatMlsGroupId`(`chatId`: kotlin.String, `groupId`: kotlin.ByteArray): kotlin.Boolean
+    
+    fun `setChatReadCursor`(`chatId`: kotlin.String, `readCursorServerSeq`: kotlin.ULong?, `selfAccountId`: kotlin.String?): FfiLocalChatReadState
     
     companion object
 }
@@ -2860,6 +2914,34 @@ open class FfiLocalHistoryStore: Disposable, AutoCloseable, FfiLocalHistoryStore
     
 
     
+    @Throws(TrixFfiException::class)override fun `chatReadCursor`(`chatId`: kotlin.String): kotlin.ULong? {
+            return FfiConverterOptionalULong.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_chat_read_cursor(
+        it,
+        FfiConverterString.lower(`chatId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `chatUnreadCount`(`chatId`: kotlin.String, `selfAccountId`: kotlin.String?): kotlin.ULong? {
+            return FfiConverterOptionalULong.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_chat_unread_count(
+        it,
+        FfiConverterString.lower(`chatId`),FfiConverterOptionalString.lower(`selfAccountId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(TrixFfiException::class)override fun `databasePath`(): kotlin.String? {
             return FfiConverterOptionalString.lift(
     callWithHandle {
@@ -2902,6 +2984,20 @@ open class FfiLocalHistoryStore: Disposable, AutoCloseable, FfiLocalHistoryStore
     
 
     
+    @Throws(TrixFfiException::class)override fun `getChatReadState`(`chatId`: kotlin.String, `selfAccountId`: kotlin.String?): FfiLocalChatReadState? {
+            return FfiConverterOptionalTypeFfiLocalChatReadState.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_get_chat_read_state(
+        it,
+        FfiConverterString.lower(`chatId`),FfiConverterOptionalString.lower(`selfAccountId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(TrixFfiException::class)override fun `getProjectedMessages`(`chatId`: kotlin.String, `afterServerSeq`: kotlin.ULong?, `limit`: kotlin.UInt?): List<FfiLocalProjectedMessage> {
             return FfiConverterSequenceTypeFfiLocalProjectedMessage.lift(
     callWithHandle {
@@ -2916,6 +3012,20 @@ open class FfiLocalHistoryStore: Disposable, AutoCloseable, FfiLocalHistoryStore
     
 
     
+    @Throws(TrixFfiException::class)override fun `listChatReadStates`(`selfAccountId`: kotlin.String?): List<FfiLocalChatReadState> {
+            return FfiConverterSequenceTypeFfiLocalChatReadState.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_list_chat_read_states(
+        it,
+        FfiConverterOptionalString.lower(`selfAccountId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(TrixFfiException::class)override fun `listChats`(): List<FfiChatSummary> {
             return FfiConverterSequenceTypeFfiChatSummary.lift(
     callWithHandle {
@@ -2923,6 +3033,20 @@ open class FfiLocalHistoryStore: Disposable, AutoCloseable, FfiLocalHistoryStore
     UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_list_chats(
         it,
         _status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `markChatRead`(`chatId`: kotlin.String, `throughServerSeq`: kotlin.ULong?, `selfAccountId`: kotlin.String?): FfiLocalChatReadState {
+            return FfiConverterTypeFfiLocalChatReadState.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_mark_chat_read(
+        it,
+        FfiConverterString.lower(`chatId`),FfiConverterOptionalULong.lower(`throughServerSeq`),FfiConverterOptionalString.lower(`selfAccountId`),_status)
 }
     }
     )
@@ -2978,6 +3102,20 @@ open class FfiLocalHistoryStore: Disposable, AutoCloseable, FfiLocalHistoryStore
     UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_set_chat_mls_group_id(
         it,
         FfiConverterString.lower(`chatId`),FfiConverterByteArray.lower(`groupId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `setChatReadCursor`(`chatId`: kotlin.String, `readCursorServerSeq`: kotlin.ULong?, `selfAccountId`: kotlin.String?): FfiLocalChatReadState {
+            return FfiConverterTypeFfiLocalChatReadState.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_set_chat_read_cursor(
+        it,
+        FfiConverterString.lower(`chatId`),FfiConverterOptionalULong.lower(`readCursorServerSeq`),FfiConverterOptionalString.lower(`selfAccountId`),_status)
 }
     }
     )
@@ -5732,9 +5870,13 @@ data class FfiChatDetail (
     , 
     var `lastServerSeq`: kotlin.ULong
     , 
+    var `pendingMessageCount`: kotlin.ULong
+    , 
     var `epoch`: kotlin.ULong
     , 
     var `lastCommitMessageId`: kotlin.String?
+    , 
+    var `lastMessage`: FfiMessageEnvelope?
     , 
     var `participantProfiles`: List<FfiChatParticipantProfile>
     , 
@@ -5762,7 +5904,9 @@ public object FfiConverterTypeFfiChatDetail: FfiConverterRustBuffer<FfiChatDetai
             FfiConverterOptionalString.read(buf),
             FfiConverterULong.read(buf),
             FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalTypeFfiMessageEnvelope.read(buf),
             FfiConverterSequenceTypeFfiChatParticipantProfile.read(buf),
             FfiConverterSequenceTypeFfiChatMember.read(buf),
             FfiConverterSequenceTypeFfiChatDeviceMember.read(buf),
@@ -5774,8 +5918,10 @@ public object FfiConverterTypeFfiChatDetail: FfiConverterRustBuffer<FfiChatDetai
             FfiConverterTypeFfiChatType.allocationSize(value.`chatType`) +
             FfiConverterOptionalString.allocationSize(value.`title`) +
             FfiConverterULong.allocationSize(value.`lastServerSeq`) +
+            FfiConverterULong.allocationSize(value.`pendingMessageCount`) +
             FfiConverterULong.allocationSize(value.`epoch`) +
             FfiConverterOptionalString.allocationSize(value.`lastCommitMessageId`) +
+            FfiConverterOptionalTypeFfiMessageEnvelope.allocationSize(value.`lastMessage`) +
             FfiConverterSequenceTypeFfiChatParticipantProfile.allocationSize(value.`participantProfiles`) +
             FfiConverterSequenceTypeFfiChatMember.allocationSize(value.`members`) +
             FfiConverterSequenceTypeFfiChatDeviceMember.allocationSize(value.`deviceMembers`)
@@ -5786,8 +5932,10 @@ public object FfiConverterTypeFfiChatDetail: FfiConverterRustBuffer<FfiChatDetai
             FfiConverterTypeFfiChatType.write(value.`chatType`, buf)
             FfiConverterOptionalString.write(value.`title`, buf)
             FfiConverterULong.write(value.`lastServerSeq`, buf)
+            FfiConverterULong.write(value.`pendingMessageCount`, buf)
             FfiConverterULong.write(value.`epoch`, buf)
             FfiConverterOptionalString.write(value.`lastCommitMessageId`, buf)
+            FfiConverterOptionalTypeFfiMessageEnvelope.write(value.`lastMessage`, buf)
             FfiConverterSequenceTypeFfiChatParticipantProfile.write(value.`participantProfiles`, buf)
             FfiConverterSequenceTypeFfiChatMember.write(value.`members`, buf)
             FfiConverterSequenceTypeFfiChatDeviceMember.write(value.`deviceMembers`, buf)
@@ -5992,6 +6140,10 @@ data class FfiChatSummary (
     , 
     var `lastServerSeq`: kotlin.ULong
     , 
+    var `pendingMessageCount`: kotlin.ULong
+    , 
+    var `lastMessage`: FfiMessageEnvelope?
+    , 
     var `participantProfiles`: List<FfiChatParticipantProfile>
     
 ){
@@ -6013,6 +6165,8 @@ public object FfiConverterTypeFfiChatSummary: FfiConverterRustBuffer<FfiChatSumm
             FfiConverterTypeFfiChatType.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterOptionalTypeFfiMessageEnvelope.read(buf),
             FfiConverterSequenceTypeFfiChatParticipantProfile.read(buf),
         )
     }
@@ -6022,6 +6176,8 @@ public object FfiConverterTypeFfiChatSummary: FfiConverterRustBuffer<FfiChatSumm
             FfiConverterTypeFfiChatType.allocationSize(value.`chatType`) +
             FfiConverterOptionalString.allocationSize(value.`title`) +
             FfiConverterULong.allocationSize(value.`lastServerSeq`) +
+            FfiConverterULong.allocationSize(value.`pendingMessageCount`) +
+            FfiConverterOptionalTypeFfiMessageEnvelope.allocationSize(value.`lastMessage`) +
             FfiConverterSequenceTypeFfiChatParticipantProfile.allocationSize(value.`participantProfiles`)
     )
 
@@ -6030,6 +6186,8 @@ public object FfiConverterTypeFfiChatSummary: FfiConverterRustBuffer<FfiChatSumm
             FfiConverterTypeFfiChatType.write(value.`chatType`, buf)
             FfiConverterOptionalString.write(value.`title`, buf)
             FfiConverterULong.write(value.`lastServerSeq`, buf)
+            FfiConverterULong.write(value.`pendingMessageCount`, buf)
+            FfiConverterOptionalTypeFfiMessageEnvelope.write(value.`lastMessage`, buf)
             FfiConverterSequenceTypeFfiChatParticipantProfile.write(value.`participantProfiles`, buf)
     }
 }
@@ -7392,6 +7550,49 @@ public object FfiConverterTypeFfiLeaseInboxResponse: FfiConverterRustBuffer<FfiL
             FfiConverterString.write(value.`leaseOwner`, buf)
             FfiConverterULong.write(value.`leaseExpiresAtUnix`, buf)
             FfiConverterSequenceTypeFfiInboxItem.write(value.`items`, buf)
+    }
+}
+
+
+
+data class FfiLocalChatReadState (
+    var `chatId`: kotlin.String
+    , 
+    var `readCursorServerSeq`: kotlin.ULong
+    , 
+    var `unreadCount`: kotlin.ULong
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiLocalChatReadState: FfiConverterRustBuffer<FfiLocalChatReadState> {
+    override fun read(buf: ByteBuffer): FfiLocalChatReadState {
+        return FfiLocalChatReadState(
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiLocalChatReadState) = (
+            FfiConverterString.allocationSize(value.`chatId`) +
+            FfiConverterULong.allocationSize(value.`readCursorServerSeq`) +
+            FfiConverterULong.allocationSize(value.`unreadCount`)
+    )
+
+    override fun write(value: FfiLocalChatReadState, buf: ByteBuffer) {
+            FfiConverterString.write(value.`chatId`, buf)
+            FfiConverterULong.write(value.`readCursorServerSeq`, buf)
+            FfiConverterULong.write(value.`unreadCount`, buf)
     }
 }
 
@@ -9597,6 +9798,38 @@ public object FfiConverterOptionalTypeFfiControlMessage: FfiConverterRustBuffer<
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeFfiLocalChatReadState: FfiConverterRustBuffer<FfiLocalChatReadState?> {
+    override fun read(buf: ByteBuffer): FfiLocalChatReadState? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeFfiLocalChatReadState.read(buf)
+    }
+
+    override fun allocationSize(value: FfiLocalChatReadState?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeFfiLocalChatReadState.allocationSize(value)
+        }
+    }
+
+    override fun write(value: FfiLocalChatReadState?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeFfiLocalChatReadState.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeFfiMessageBody: FfiConverterRustBuffer<FfiMessageBody?> {
     override fun read(buf: ByteBuffer): FfiMessageBody? {
         if (buf.get().toInt() == 0) {
@@ -9619,6 +9852,38 @@ public object FfiConverterOptionalTypeFfiMessageBody: FfiConverterRustBuffer<Ffi
         } else {
             buf.put(1)
             FfiConverterTypeFfiMessageBody.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeFfiMessageEnvelope: FfiConverterRustBuffer<FfiMessageEnvelope?> {
+    override fun read(buf: ByteBuffer): FfiMessageEnvelope? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeFfiMessageEnvelope.read(buf)
+    }
+
+    override fun allocationSize(value: FfiMessageEnvelope?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeFfiMessageEnvelope.allocationSize(value)
+        }
+    }
+
+    override fun write(value: FfiMessageEnvelope?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeFfiMessageEnvelope.write(value, buf)
         }
     }
 }
@@ -10139,6 +10404,34 @@ public object FfiConverterSequenceTypeFfiInboxItem: FfiConverterRustBuffer<List<
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeFfiInboxItem.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiLocalChatReadState: FfiConverterRustBuffer<List<FfiLocalChatReadState>> {
+    override fun read(buf: ByteBuffer): List<FfiLocalChatReadState> {
+        val len = buf.getInt()
+        return List<FfiLocalChatReadState>(len) {
+            FfiConverterTypeFfiLocalChatReadState.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiLocalChatReadState>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiLocalChatReadState.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiLocalChatReadState>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiLocalChatReadState.write(it, buf)
         }
     }
 }

@@ -206,6 +206,21 @@ fun ChatsScreen(
         }
     }
 
+    suspend fun markConversationRead(chatId: String) {
+        try {
+            val result = repository.markConversationRead(chatId)
+            if (result.changed) {
+                overviewState = overviewState.copy(
+                    overview = result.overview,
+                    errorMessage = null,
+                )
+                overviewVersion += 1
+            }
+        } catch (_: IOException) {
+            // Keep the transcript interactive even if the local read cursor could not be updated.
+        }
+    }
+
     suspend fun searchDirectory() {
         directoryState = directoryState.copy(
             isLoading = true,
@@ -322,11 +337,16 @@ fun ChatsScreen(
         )
 
         detailState = try {
-            ChatsDetailState(
-                conversation = repository.loadConversation(chatId),
+            val conversation = repository.loadConversation(chatId)
+            val loadedState = ChatsDetailState(
+                conversation = conversation,
                 isLoading = false,
                 errorMessage = null,
             )
+            if ((overviewState.overview?.conversations?.firstOrNull { it.chatId == chatId }?.unreadCount ?: 0) > 0) {
+                markConversationRead(chatId)
+            }
+            loadedState
         } catch (error: IOException) {
             ChatsDetailState(
                 conversation = currentConversation,
@@ -996,6 +1016,15 @@ private fun ConversationListPane(
                                 if (conversation.hasProjectedTimeline) {
                                     TimelineBadge(label = "Projected")
                                 }
+                                if (conversation.unreadCount > 0) {
+                                    TimelineBadge(
+                                        label = if (conversation.unreadCount == 1) {
+                                            "1 unread"
+                                        } else {
+                                            "${conversation.unreadCount} unread"
+                                        },
+                                    )
+                                }
                             }
                             Text(
                                 text = conversation.participantsLabel,
@@ -1019,9 +1048,15 @@ private fun ConversationListPane(
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            if (conversation.messageCount > 0) {
+                            if (conversation.unreadCount > 0) {
                                 Badge {
-                                    Text(text = conversation.messageCount.toString())
+                                    Text(
+                                        text = if (conversation.unreadCount > 99) {
+                                            "99+"
+                                        } else {
+                                            conversation.unreadCount.toString()
+                                        },
+                                    )
                                 }
                             }
                         }

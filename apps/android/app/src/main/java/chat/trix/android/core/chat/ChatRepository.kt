@@ -219,6 +219,21 @@ class ChatRepository(
         }
     }
 
+    suspend fun markConversationRead(chatId: String): ChatReadResult = withContext(Dispatchers.IO) {
+        runFfi("Failed to update chat read state") {
+            val store = historyStore()
+            val previous = store.getChatReadState(chatId, session.localState.accountId)
+            val updated = store.markChatRead(chatId, null, session.localState.accountId)
+
+            ChatReadResult(
+                overview = buildOverview(),
+                changed = previous == null ||
+                    previous.readCursorServerSeq != updated.readCursorServerSeq ||
+                    previous.unreadCount != updated.unreadCount,
+            )
+        }
+    }
+
     override fun close() {
         if (clientDelegate.isInitialized()) {
             clientDelegate.value.close()
@@ -241,6 +256,7 @@ class ChatRepository(
             val detail = store.getChat(summary.chatId)
             val history = store.getChatHistory(summary.chatId, null, null)
             val projectedMessages = store.getProjectedMessages(summary.chatId, null, null)
+            val readState = store.getChatReadState(summary.chatId, session.localState.accountId)
             val mergedTimeline = mergeTimeline(
                 historyMessages = history.messages,
                 projectedMessages = projectedMessages,
@@ -266,14 +282,18 @@ class ChatRepository(
                             "$prefix: ${rawEnvelopeBody(entry.envelope)}"
                         }
                     }
+                } ?: summary.lastMessage?.let { envelope ->
+                    val prefix = authorLabel(envelope.senderAccountId)
+                    "$prefix: ${rawEnvelopeBody(envelope)}"
                 } ?: "No messages yet",
                 timestampLabel = latestEntry?.let { entry ->
                     when (entry) {
                         is ChatTimelineEntry.Projected -> entry.projected.createdAtUnix.toLong().formatChatTimestamp()
                         is ChatTimelineEntry.EncryptedEnvelope -> entry.envelope.createdAtUnix.toLong().formatChatTimestamp()
                     }
-                } ?: "Pending",
+                } ?: summary.lastMessage?.createdAtUnix?.toLong()?.formatChatTimestamp() ?: "Pending",
                 messageCount = mergedTimeline.size,
+                unreadCount = readState?.unreadCount?.toInt() ?: summary.pendingMessageCount.toInt(),
                 hasProjectedTimeline = projectedMessages.isNotEmpty(),
                 isAccountSyncChat = summary.chatId == session.localState.accountSyncChatId,
             )
@@ -334,6 +354,8 @@ class ChatRepository(
                     chatType = detail.chatType,
                     title = detail.title,
                     lastServerSeq = detail.lastServerSeq,
+                    pendingMessageCount = detail.pendingMessageCount,
+                    lastMessage = detail.lastMessage,
                     participantProfiles = detail.participantProfiles,
                 ),
                 detail = detail,
@@ -344,6 +366,8 @@ class ChatRepository(
                     chatType = detail.chatType,
                     title = detail.title,
                     lastServerSeq = detail.lastServerSeq,
+                    pendingMessageCount = detail.pendingMessageCount,
+                    lastMessage = detail.lastMessage,
                     participantProfiles = detail.participantProfiles,
                 ),
                 detail = detail,
@@ -763,6 +787,11 @@ data class ChatCreateResult(
     val conversation: ChatConversation,
 )
 
+data class ChatReadResult(
+    val overview: ChatOverview,
+    val changed: Boolean,
+)
+
 data class ChatDirectoryAccount(
     val accountId: String,
     val handle: String?,
@@ -777,6 +806,7 @@ data class ChatConversationSummary(
     val lastMessagePreview: String,
     val timestampLabel: String,
     val messageCount: Int,
+    val unreadCount: Int,
     val hasProjectedTimeline: Boolean,
     val isAccountSyncChat: Boolean,
 )
