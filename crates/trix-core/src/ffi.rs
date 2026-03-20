@@ -18,7 +18,8 @@ use crate::{
     ModifyChatMembersControlInput, ModifyChatMembersControlOutcome, PreparedAttachmentUpload,
     PublishKeyPackageMaterial, ReactionAction, ReceiptType, ReservedKeyPackageMaterial,
     SendMessageOutcome, ServerApiClient, SyncChatCursor, SyncCoordinator, SyncStateSnapshot,
-    UpdateAccountProfileParams, decrypt_attachment_payload, prepare_attachment_upload,
+    UpdateAccountProfileParams, account_bootstrap_message, decrypt_attachment_payload,
+    device_revoke_message, prepare_attachment_upload,
 };
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -116,6 +117,16 @@ pub struct FfiCreateAccountParams {
     pub account_root_pubkey: Vec<u8>,
     pub account_root_signature: Vec<u8>,
     pub transport_pubkey: Vec<u8>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiCreateAccountWithMaterialsParams {
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
+    pub device_display_name: String,
+    pub platform: String,
+    pub credential_identity: Vec<u8>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -239,6 +250,15 @@ pub struct FfiCompleteLinkIntentParams {
     pub platform: String,
     pub credential_identity: Vec<u8>,
     pub transport_pubkey: Vec<u8>,
+    pub key_packages: Vec<FfiPublishKeyPackage>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiCompleteLinkIntentWithDeviceKeyParams {
+    pub link_token: String,
+    pub device_display_name: String,
+    pub platform: String,
+    pub credential_identity: Vec<u8>,
     pub key_packages: Vec<FfiPublishKeyPackage>,
 }
 
@@ -911,6 +931,22 @@ fn ffi_decrypt_attachment_payload(
 }
 
 #[uniffi::export]
+fn ffi_account_bootstrap_payload(
+    transport_pubkey: Vec<u8>,
+    credential_identity: Vec<u8>,
+) -> Vec<u8> {
+    account_bootstrap_message(&transport_pubkey, &credential_identity)
+}
+
+#[uniffi::export]
+fn ffi_device_revoke_payload(device_id: String, reason: String) -> Result<Vec<u8>, TrixFfiError> {
+    Ok(device_revoke_message(
+        crate::signatures::parse_uuid(&device_id, "device_id").map_err(ffi_error)?,
+        &reason,
+    ))
+}
+
+#[uniffi::export]
 impl FfiServerApiClient {
     #[uniffi::constructor]
     pub fn new(base_url: String) -> Result<Arc<Self>, TrixFfiError> {
@@ -957,6 +993,29 @@ impl FfiServerApiClient {
             account_id: response.account_id.0.to_string(),
             device_id: response.device_id.0.to_string(),
             account_sync_chat_id: response.account_sync_chat_id.0.to_string(),
+        })
+    }
+
+    pub fn create_account_with_materials(
+        &self,
+        params: FfiCreateAccountWithMaterialsParams,
+        account_root: Arc<FfiAccountRootMaterial>,
+        device_keys: Arc<FfiDeviceKeyMaterial>,
+    ) -> Result<FfiCreateAccountResponse, TrixFfiError> {
+        let transport_pubkey = device_keys.public_key_bytes();
+        let account_root_pubkey = account_root.public_key_bytes();
+        let account_root_signature = account_root
+            .sign_account_bootstrap(transport_pubkey.clone(), params.credential_identity.clone());
+        self.create_account(FfiCreateAccountParams {
+            handle: params.handle,
+            profile_name: params.profile_name,
+            profile_bio: params.profile_bio,
+            device_display_name: params.device_display_name,
+            platform: params.platform,
+            credential_identity: params.credential_identity,
+            account_root_pubkey,
+            account_root_signature,
+            transport_pubkey,
         })
     }
 
@@ -1010,6 +1069,21 @@ impl FfiServerApiClient {
             account_id: response.account_id.0.to_string(),
             device_status: response.device_status.into(),
         })
+    }
+
+    pub fn authenticate_with_device_key(
+        &self,
+        device_id: String,
+        device_keys: Arc<FfiDeviceKeyMaterial>,
+        set_access_token: bool,
+    ) -> Result<FfiAuthSession, TrixFfiError> {
+        let challenge = self.create_auth_challenge(device_id.clone())?;
+        let signature = device_keys.sign_auth_challenge(challenge.challenge.clone());
+        let session = self.create_auth_session(device_id, challenge.challenge_id, signature)?;
+        if set_access_token {
+            self.set_access_token(session.access_token.clone())?;
+        }
+        Ok(session)
     }
 
     pub fn get_me(&self) -> Result<FfiAccountProfile, TrixFfiError> {
@@ -1111,6 +1185,25 @@ impl FfiServerApiClient {
         Ok(completed_link_intent_to_ffi(response))
     }
 
+    pub fn complete_link_intent_with_device_key(
+        &self,
+        link_intent_id: String,
+        params: FfiCompleteLinkIntentWithDeviceKeyParams,
+        device_keys: Arc<FfiDeviceKeyMaterial>,
+    ) -> Result<FfiCompletedLinkIntent, TrixFfiError> {
+        self.complete_link_intent(
+            link_intent_id,
+            FfiCompleteLinkIntentParams {
+                link_token: params.link_token,
+                device_display_name: params.device_display_name,
+                platform: params.platform,
+                credential_identity: params.credential_identity,
+                transport_pubkey: device_keys.public_key_bytes(),
+                key_packages: params.key_packages,
+            },
+        )
+    }
+
     pub fn get_device_approve_payload(
         &self,
         device_id: String,
@@ -1141,6 +1234,20 @@ impl FfiServerApiClient {
         })
     }
 
+    pub fn approve_device_with_account_root(
+        &self,
+        device_id: String,
+        account_root: Arc<FfiAccountRootMaterial>,
+        transfer_bundle: Option<Vec<u8>>,
+    ) -> Result<FfiApproveDeviceResponse, TrixFfiError> {
+        let payload = self.get_device_approve_payload(device_id.clone())?;
+        let signature = account_root.sign_account_bootstrap(
+            payload.transport_pubkey.clone(),
+            payload.credential_identity.clone(),
+        );
+        self.approve_device(device_id, signature, transfer_bundle)
+    }
+
     pub fn get_device_transfer_bundle(
         &self,
         device_id: String,
@@ -1169,6 +1276,16 @@ impl FfiServerApiClient {
             device_id: response.device_id.0.to_string(),
             device_status: response.device_status.into(),
         })
+    }
+
+    pub fn revoke_device_with_account_root(
+        &self,
+        device_id: String,
+        reason: String,
+        account_root: Arc<FfiAccountRootMaterial>,
+    ) -> Result<FfiRevokeDeviceResponse, TrixFfiError> {
+        let signature = account_root.sign_device_revoke(device_id.clone(), reason.clone())?;
+        self.revoke_device(device_id, reason, signature)
     }
 
     pub fn publish_key_packages(
@@ -1717,6 +1834,47 @@ impl FfiAccountRootMaterial {
         self.inner.sign(&payload)
     }
 
+    pub fn account_bootstrap_payload(
+        &self,
+        transport_pubkey: Vec<u8>,
+        credential_identity: Vec<u8>,
+    ) -> Vec<u8> {
+        account_bootstrap_message(&transport_pubkey, &credential_identity)
+    }
+
+    pub fn sign_account_bootstrap(
+        &self,
+        transport_pubkey: Vec<u8>,
+        credential_identity: Vec<u8>,
+    ) -> Vec<u8> {
+        self.inner.sign(&account_bootstrap_message(
+            &transport_pubkey,
+            &credential_identity,
+        ))
+    }
+
+    pub fn device_revoke_payload(
+        &self,
+        device_id: String,
+        reason: String,
+    ) -> Result<Vec<u8>, TrixFfiError> {
+        Ok(device_revoke_message(
+            crate::signatures::parse_uuid(&device_id, "device_id").map_err(ffi_error)?,
+            &reason,
+        ))
+    }
+
+    pub fn sign_device_revoke(
+        &self,
+        device_id: String,
+        reason: String,
+    ) -> Result<Vec<u8>, TrixFfiError> {
+        Ok(self.inner.sign(&device_revoke_message(
+            crate::signatures::parse_uuid(&device_id, "device_id").map_err(ffi_error)?,
+            &reason,
+        )))
+    }
+
     pub fn verify(&self, payload: Vec<u8>, signature: Vec<u8>) -> Result<(), TrixFfiError> {
         self.inner.verify(&payload, &signature).map_err(ffi_error)
     }
@@ -1749,6 +1907,10 @@ impl FfiDeviceKeyMaterial {
 
     pub fn sign(&self, payload: Vec<u8>) -> Vec<u8> {
         self.inner.sign(&payload)
+    }
+
+    pub fn sign_auth_challenge(&self, challenge: Vec<u8>) -> Vec<u8> {
+        self.inner.sign(&challenge)
     }
 
     pub fn verify(&self, payload: Vec<u8>, signature: Vec<u8>) -> Result<(), TrixFfiError> {
@@ -2513,6 +2675,24 @@ impl FfiMlsFacade {
         lock(&self.inner)?
             .generate_key_packages(count as usize)
             .map_err(ffi_error)
+    }
+
+    pub fn generate_publish_key_packages(
+        &self,
+        count: u32,
+    ) -> Result<Vec<FfiPublishKeyPackage>, TrixFfiError> {
+        let facade = lock(&self.inner)?;
+        let cipher_suite = facade.ciphersuite_label();
+        let key_packages = facade
+            .generate_key_packages(count as usize)
+            .map_err(ffi_error)?;
+        Ok(key_packages
+            .into_iter()
+            .map(|key_package| FfiPublishKeyPackage {
+                cipher_suite: cipher_suite.clone(),
+                key_package,
+            })
+            .collect())
     }
 
     pub fn create_group(&self, group_id: Vec<u8>) -> Result<Arc<FfiMlsConversation>, TrixFfiError> {
@@ -3774,6 +3954,7 @@ impl From<trix_types::ServiceStatus> for FfiServiceStatus {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use uuid::Uuid;
 
     use super::*;
 
@@ -3834,5 +4015,67 @@ mod tests {
             }
             other => panic!("expected attachment body, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn account_bootstrap_helpers_match_and_verify_signatures() {
+        let account_root = FfiAccountRootMaterial::generate();
+        let device_keys = FfiDeviceKeyMaterial::generate();
+        let credential_identity = b"device-credential".to_vec();
+
+        let payload = ffi_account_bootstrap_payload(
+            device_keys.public_key_bytes(),
+            credential_identity.clone(),
+        );
+        assert_eq!(
+            payload,
+            account_root.account_bootstrap_payload(
+                device_keys.public_key_bytes(),
+                credential_identity.clone(),
+            )
+        );
+
+        let signature = account_root
+            .sign_account_bootstrap(device_keys.public_key_bytes(), credential_identity.clone());
+        account_root.verify(payload, signature).unwrap();
+    }
+
+    #[test]
+    fn device_revoke_helpers_match_and_verify_signatures() {
+        let account_root = FfiAccountRootMaterial::generate();
+        let device_id = Uuid::new_v4().to_string();
+        let reason = "compromised".to_owned();
+
+        let payload = ffi_device_revoke_payload(device_id.clone(), reason.clone()).unwrap();
+        assert_eq!(
+            payload,
+            account_root
+                .device_revoke_payload(device_id.clone(), reason.clone())
+                .unwrap()
+        );
+
+        let signature = account_root
+            .sign_device_revoke(device_id.clone(), reason.clone())
+            .unwrap();
+        account_root.verify(payload, signature).unwrap();
+    }
+
+    #[test]
+    fn mls_facade_generate_publish_key_packages_sets_ciphersuite() {
+        let facade = FfiMlsFacade::new(b"credential".to_vec()).unwrap();
+        let expected = facade.ciphersuite_label().unwrap();
+
+        let packages = facade.generate_publish_key_packages(2).unwrap();
+        assert_eq!(packages.len(), 2);
+        assert!(
+            packages
+                .iter()
+                .all(|package| !package.key_package.is_empty())
+        );
+        assert!(
+            packages
+                .iter()
+                .all(|package| package.cipher_suite == expected)
+        );
     }
 }
