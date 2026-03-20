@@ -1,25 +1,35 @@
 use axum::{
     Json, Router,
-    extract::{Json as ExtractJson, Path, State},
+    extract::{Json as ExtractJson, Path, Query, State},
     http::HeaderMap,
     routing::{get, post},
 };
 use base64::{Engine as _, engine::general_purpose};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use serde::Deserialize;
 
 use crate::{
     db::CreateAccountInput, error::AppError, signatures::account_bootstrap_message, state::AppState,
 };
 use trix_types::{
-    AccountId, AccountKeyPackagesResponse, AccountProfileResponse, CreateAccountRequest,
-    CreateAccountResponse, DeviceId, ReservedKeyPackage,
+    AccountDirectoryResponse, AccountId, AccountKeyPackagesResponse, AccountProfileResponse,
+    CreateAccountRequest, CreateAccountResponse, DeviceId, DirectoryAccountSummary,
+    ReservedKeyPackage,
 };
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", post(create_account))
         .route("/me", get(get_me))
+        .route("/directory", get(search_directory))
         .route("/{account_id}/key-packages", get(get_account_key_packages))
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct AccountDirectoryQuery {
+    q: Option<String>,
+    limit: Option<usize>,
+    exclude_self: Option<bool>,
 }
 
 async fn create_account(
@@ -101,6 +111,35 @@ async fn get_account_key_packages(
                 device_id: DeviceId(package.device_id),
                 cipher_suite: package.cipher_suite,
                 key_package_b64: general_purpose::STANDARD.encode(package.key_package_bytes),
+            })
+            .collect(),
+    }))
+}
+
+async fn search_directory(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<AccountDirectoryQuery>,
+) -> Result<Json<AccountDirectoryResponse>, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+    let accounts = state
+        .db
+        .search_account_directory(
+            principal.account_id,
+            query.q.as_deref(),
+            query.exclude_self.unwrap_or(true),
+            query.limit,
+        )
+        .await?;
+
+    Ok(Json(AccountDirectoryResponse {
+        accounts: accounts
+            .into_iter()
+            .map(|account| DirectoryAccountSummary {
+                account_id: AccountId(account.account_id),
+                handle: account.handle,
+                profile_name: account.profile_name,
+                profile_bio: account.profile_bio,
             })
             .collect(),
     }))

@@ -7,8 +7,8 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use trix_types::{
-    ChatDetailResponse, ChatHistoryResponse, ChatId, ChatListResponse, ChatMemberSummary,
-    ChatSummary, ChatType, InboxItem, MessageEnvelope, MessageId,
+    ChatDetailResponse, ChatDeviceSummary, ChatHistoryResponse, ChatId, ChatListResponse,
+    ChatMemberSummary, ChatSummary, ChatType, InboxItem, MessageEnvelope, MessageId,
 };
 use uuid::Uuid;
 
@@ -89,6 +89,12 @@ pub struct LocalProjectionApplyReport {
     pub advanced_to_server_seq: Option<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalOutgoingMessageApplyOutcome {
+    pub report: LocalStoreApplyReport,
+    pub projected_message: LocalProjectedMessage,
+}
+
 #[derive(Debug, Clone)]
 pub struct LocalHistoryStore {
     state: PersistedLocalHistoryState,
@@ -109,6 +115,10 @@ struct PersistedChatState {
     epoch: u64,
     last_commit_message_id: Option<MessageId>,
     members: Vec<ChatMemberSummary>,
+    #[serde(default)]
+    device_members: Vec<ChatDeviceSummary>,
+    #[serde(default)]
+    mls_group_id_b64: Option<String>,
     messages: BTreeMap<u64, MessageEnvelope>,
     #[serde(default)]
     projected_cursor_server_seq: u64,
@@ -215,6 +225,7 @@ impl LocalHistoryStore {
             epoch: state.epoch,
             last_commit_message_id: state.last_commit_message_id,
             members: state.members.clone(),
+            device_members: state.device_members.clone(),
         })
     }
 
@@ -252,6 +263,41 @@ impl LocalHistoryStore {
             .chats
             .get(&chat_id.0.to_string())
             .map(|state| state.projected_cursor_server_seq)
+    }
+
+    pub fn chat_mls_group_id(&self, chat_id: ChatId) -> Option<Vec<u8>> {
+        self.state
+            .chats
+            .get(&chat_id.0.to_string())
+            .and_then(|state| state.mls_group_id_b64.as_deref())
+            .and_then(|value| decode_b64_field("mls_group_id_b64", value).ok())
+    }
+
+    pub fn set_chat_mls_group_id(&mut self, chat_id: ChatId, group_id: &[u8]) -> Result<bool> {
+        let entry = self
+            .state
+            .chats
+            .entry(chat_id.0.to_string())
+            .or_insert_with(|| PersistedChatState {
+                chat_type: ChatType::Dm,
+                title: None,
+                last_server_seq: 0,
+                epoch: 0,
+                last_commit_message_id: None,
+                members: Vec::new(),
+                device_members: Vec::new(),
+                mls_group_id_b64: None,
+                messages: BTreeMap::new(),
+                projected_cursor_server_seq: 0,
+                projected_messages: BTreeMap::new(),
+            });
+        let group_id_b64 = crate::encode_b64(group_id);
+        if entry.mls_group_id_b64.as_deref() == Some(group_id_b64.as_str()) {
+            return Ok(false);
+        }
+        entry.mls_group_id_b64 = Some(group_id_b64);
+        self.save_state()?;
+        Ok(true)
     }
 
     pub fn get_projected_messages(
@@ -299,7 +345,10 @@ impl LocalHistoryStore {
         let envelopes = chat
             .messages
             .values()
-            .filter(|message| message.server_seq > chat.projected_cursor_server_seq)
+            .filter(|message| {
+                message.server_seq > chat.projected_cursor_server_seq
+                    && !chat.projected_messages.contains_key(&message.server_seq)
+            })
             .take(limit.unwrap_or(usize::MAX))
             .cloned()
             .collect::<Vec<_>>();
@@ -323,8 +372,7 @@ impl LocalHistoryStore {
                 changed = true;
             }
             processed_messages += 1;
-            if envelope.server_seq > chat.projected_cursor_server_seq {
-                chat.projected_cursor_server_seq = envelope.server_seq;
+            if advance_projected_cursor(chat) {
                 changed = true;
             }
             advanced_to_server_seq = Some(envelope.server_seq);
@@ -334,6 +382,53 @@ impl LocalHistoryStore {
         Ok(LocalProjectionApplyReport {
             chat_id,
             processed_messages,
+            projected_messages_upserted,
+            advanced_to_server_seq,
+        })
+    }
+
+    pub fn apply_projected_messages(
+        &mut self,
+        chat_id: ChatId,
+        projected_messages: &[LocalProjectedMessage],
+    ) -> Result<LocalProjectionApplyReport> {
+        let chat = self
+            .state
+            .chats
+            .get_mut(&chat_id.0.to_string())
+            .ok_or_else(|| anyhow!("chat {} is missing from local store", chat_id.0))?;
+
+        let mut projected_messages_upserted = 0usize;
+        let mut changed = false;
+
+        for projected in projected_messages {
+            let persisted = persisted_projected_message_from(projected.clone());
+            let entry_changed = match chat.projected_messages.get(&projected.server_seq) {
+                Some(existing) => existing != &persisted,
+                None => true,
+            };
+            if entry_changed {
+                chat.projected_messages
+                    .insert(projected.server_seq, persisted);
+                projected_messages_upserted += 1;
+                changed = true;
+            }
+        }
+
+        if advance_projected_cursor(chat) {
+            changed = true;
+        }
+
+        let advanced_to_server_seq = if chat.projected_cursor_server_seq == 0 {
+            None
+        } else {
+            Some(chat.projected_cursor_server_seq)
+        };
+
+        self.persist_if_needed(changed)?;
+        Ok(LocalProjectionApplyReport {
+            chat_id,
+            processed_messages: projected_messages.len(),
             projected_messages_upserted,
             advanced_to_server_seq,
         })
@@ -358,6 +453,8 @@ impl LocalHistoryStore {
                     epoch: 0,
                     last_commit_message_id: None,
                     members: Vec::new(),
+                    device_members: Vec::new(),
+                    mls_group_id_b64: None,
                     messages: BTreeMap::new(),
                     projected_cursor_server_seq: 0,
                     projected_messages: BTreeMap::new(),
@@ -409,6 +506,8 @@ impl LocalHistoryStore {
                 epoch: detail.epoch,
                 last_commit_message_id: detail.last_commit_message_id,
                 members: detail.members.clone(),
+                device_members: detail.device_members.clone(),
+                mls_group_id_b64: None,
                 messages: BTreeMap::new(),
                 projected_cursor_server_seq: 0,
                 projected_messages: BTreeMap::new(),
@@ -437,6 +536,10 @@ impl LocalHistoryStore {
         }
         if entry.members != detail.members {
             entry.members = detail.members.clone();
+            changed = true;
+        }
+        if entry.device_members != detail.device_members {
+            entry.device_members = detail.device_members.clone();
             changed = true;
         }
 
@@ -470,6 +573,8 @@ impl LocalHistoryStore {
                 epoch: 0,
                 last_commit_message_id: None,
                 members: Vec::new(),
+                device_members: Vec::new(),
+                mls_group_id_b64: None,
                 messages: BTreeMap::new(),
                 projected_cursor_server_seq: 0,
                 projected_messages: BTreeMap::new(),
@@ -552,6 +657,44 @@ impl LocalHistoryStore {
             .filter_map(|chat_id| parse_chat_id(&chat_id).ok())
             .collect();
         Ok(combined)
+    }
+
+    pub fn apply_outgoing_message(
+        &mut self,
+        envelope: &MessageEnvelope,
+        body: &MessageBody,
+    ) -> Result<LocalOutgoingMessageApplyOutcome> {
+        let chat_id = envelope.chat_id;
+        let mut report = self.apply_chat_history(&ChatHistoryResponse {
+            chat_id,
+            messages: vec![envelope.clone()],
+        })?;
+
+        let projected_message = LocalProjectedMessage {
+            server_seq: envelope.server_seq,
+            message_id: envelope.message_id,
+            sender_account_id: envelope.sender_account_id,
+            sender_device_id: envelope.sender_device_id,
+            epoch: envelope.epoch,
+            message_kind: envelope.message_kind,
+            content_type: envelope.content_type,
+            projection_kind: LocalProjectionKind::ApplicationMessage,
+            payload: Some(body.to_bytes()?),
+            merged_epoch: None,
+            created_at_unix: envelope.created_at_unix,
+        };
+        let projection_report =
+            self.apply_projected_messages(chat_id, &[projected_message.clone()])?;
+        if projection_report.projected_messages_upserted > 0
+            && !report.changed_chat_ids.contains(&chat_id)
+        {
+            report.changed_chat_ids.push(chat_id);
+        }
+
+        Ok(LocalOutgoingMessageApplyOutcome {
+            report,
+            projected_message,
+        })
     }
 
     fn persist_if_needed(&self, changed: bool) -> Result<()> {
@@ -655,6 +798,18 @@ fn persisted_projected_message_from(value: LocalProjectedMessage) -> PersistedPr
         merged_epoch: value.merged_epoch,
         created_at_unix: value.created_at_unix,
     }
+}
+
+fn advance_projected_cursor(chat: &mut PersistedChatState) -> bool {
+    let mut next_cursor = chat.projected_cursor_server_seq;
+    while chat.projected_messages.contains_key(&(next_cursor + 1)) {
+        next_cursor += 1;
+    }
+    if next_cursor == chat.projected_cursor_server_seq {
+        return false;
+    }
+    chat.projected_cursor_server_seq = next_cursor;
+    true
 }
 
 fn save_state_to_path(path: &Path, state: &PersistedLocalHistoryState) -> Result<()> {
@@ -831,5 +986,117 @@ mod tests {
             projected[0].projection_kind,
             LocalProjectionKind::ApplicationMessage
         );
+    }
+
+    #[test]
+    fn synthetic_projections_do_not_skip_unprojected_gaps() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let account_id = AccountId(Uuid::new_v4());
+        let device_id = DeviceId(Uuid::new_v4());
+
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 1,
+                        sender_account_id: account_id,
+                        sender_device_id: device_id,
+                        epoch: 0,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        ciphertext_b64: "YQ==".to_owned(),
+                        aad_json: json!({}),
+                        created_at_unix: 1,
+                    },
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 2,
+                        sender_account_id: account_id,
+                        sender_device_id: device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Commit,
+                        content_type: ContentType::ChatEvent,
+                        ciphertext_b64: "Yg==".to_owned(),
+                        aad_json: json!({}),
+                        created_at_unix: 2,
+                    },
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 3,
+                        sender_account_id: account_id,
+                        sender_device_id: device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::WelcomeRef,
+                        content_type: ContentType::ChatEvent,
+                        ciphertext_b64: "Yw==".to_owned(),
+                        aad_json: json!({}),
+                        created_at_unix: 3,
+                    },
+                ],
+            })
+            .unwrap();
+
+        let sparse_report = store
+            .apply_projected_messages(
+                chat_id,
+                &[
+                    LocalProjectedMessage {
+                        server_seq: 2,
+                        message_id: MessageId(Uuid::new_v4()),
+                        sender_account_id: account_id,
+                        sender_device_id: device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Commit,
+                        content_type: ContentType::ChatEvent,
+                        projection_kind: LocalProjectionKind::CommitMerged,
+                        payload: None,
+                        merged_epoch: Some(1),
+                        created_at_unix: 2,
+                    },
+                    LocalProjectedMessage {
+                        server_seq: 3,
+                        message_id: MessageId(Uuid::new_v4()),
+                        sender_account_id: account_id,
+                        sender_device_id: device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::WelcomeRef,
+                        content_type: ContentType::ChatEvent,
+                        projection_kind: LocalProjectionKind::WelcomeRef,
+                        payload: Some(b"welcome".to_vec()),
+                        merged_epoch: None,
+                        created_at_unix: 3,
+                    },
+                ],
+            )
+            .unwrap();
+        assert_eq!(sparse_report.projected_messages_upserted, 2);
+        assert_eq!(store.projected_cursor(chat_id), Some(0));
+
+        let final_report = store
+            .apply_projected_messages(
+                chat_id,
+                &[LocalProjectedMessage {
+                    server_seq: 1,
+                    message_id: MessageId(Uuid::new_v4()),
+                    sender_account_id: account_id,
+                    sender_device_id: device_id,
+                    epoch: 0,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    projection_kind: LocalProjectionKind::ApplicationMessage,
+                    payload: Some(b"hello".to_vec()),
+                    merged_epoch: None,
+                    created_at_unix: 1,
+                }],
+            )
+            .unwrap();
+        assert_eq!(final_report.projected_messages_upserted, 1);
+        assert_eq!(store.projected_cursor(chat_id), Some(3));
     }
 }

@@ -19,16 +19,21 @@ pub use message::{
     ReceiptMessageBody, ReceiptType, TextMessageBody,
 };
 pub use storage::{
-    AttachmentStore, LocalHistoryStore, LocalProjectedMessage, LocalProjectionApplyReport,
-    LocalProjectionKind, LocalStoreApplyReport, MlsStateStore, SyncStateStore,
+    AttachmentStore, LocalHistoryStore, LocalOutgoingMessageApplyOutcome, LocalProjectedMessage,
+    LocalProjectionApplyReport, LocalProjectionKind, LocalStoreApplyReport, MlsStateStore,
+    SyncStateStore,
 };
 pub use sync::{
-    CoreEvent, CoreEventSink, InboxApplyOutcome, SyncChatCursor, SyncCoordinator, SyncStateSnapshot,
+    CoreEvent, CoreEventSink, CreateChatControlInput, CreateChatControlOutcome, InboxApplyOutcome,
+    ModifyChatDevicesControlInput, ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
+    ModifyChatMembersControlOutcome, SendMessageOutcome, SyncChatCursor, SyncCoordinator,
+    SyncStateSnapshot,
 };
 pub use transport::{
     AuthChallengeMaterial, BlobHeadMaterial, BlobMetadataMaterial, CompleteLinkIntentParams,
     CompletedLinkIntentMaterial, CreateAccountParams, DeviceApprovePayloadMaterial,
-    DeviceTransferBundleMaterial, HistorySyncChunkMaterial, PublishKeyPackageMaterial,
-    ReservedKeyPackageMaterial, ServerApiClient, ServerApiError, decode_b64_field, encode_b64,
-    make_control_message_input, make_create_message_request, make_publish_key_package_item,
+    DeviceTransferBundleMaterial, DirectoryAccountMaterial, HistorySyncChunkMaterial,
+    PublishKeyPackageMaterial, ReservedKeyPackageMaterial, ServerApiClient, ServerApiError,
+    decode_b64_field, encode_b64, make_control_message_input, make_create_message_request,
+    make_publish_key_package_item,
 };
