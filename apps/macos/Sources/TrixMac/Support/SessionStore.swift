@@ -48,7 +48,7 @@ struct SessionStore {
     private let fileName: String
 
     init(
-        directoryName: String = "TrixMac",
+        directoryName: String = AppIdentity.applicationSupportDirectoryName,
         fileName: String = "session.json"
     ) {
         self.directoryName = directoryName

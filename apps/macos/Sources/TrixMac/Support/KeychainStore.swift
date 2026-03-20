@@ -9,18 +9,34 @@ enum VaultKey: String, CaseIterable {
 }
 
 struct KeychainStore {
-    private let service = "dev.trix.macos"
+    private let service = AppIdentity.keychainService
 
     func save(_ data: Data, for key: VaultKey) throws {
         let query = baseQuery(for: key)
-        SecItemDelete(query as CFDictionary)
+        let updateAttributes = [kSecValueData as String: data]
+        let updateStatus = SecItemUpdate(query as CFDictionary, updateAttributes as CFDictionary)
 
-        var attributes = query
-        attributes[kSecValueData as String] = data
+        switch updateStatus {
+        case errSecSuccess:
+            return
+        case errSecItemNotFound:
+            var attributes = query
+            attributes[kSecValueData as String] = data
 
-        let status = SecItemAdd(attributes as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw KeychainStoreError.unhandledStatus(status)
+            let addStatus = SecItemAdd(attributes as CFDictionary, nil)
+            switch addStatus {
+            case errSecSuccess:
+                return
+            case errSecDuplicateItem:
+                let retryStatus = SecItemUpdate(query as CFDictionary, updateAttributes as CFDictionary)
+                guard retryStatus == errSecSuccess else {
+                    throw KeychainStoreError.unhandledStatus(retryStatus)
+                }
+            default:
+                throw KeychainStoreError.unhandledStatus(addStatus)
+            }
+        default:
+            throw KeychainStoreError.unhandledStatus(updateStatus)
         }
     }
 

@@ -12,6 +12,7 @@
 **/build/
 blobs/
 postgres-data/
+/apps/macos/dist/
 DerivedData/
 *.xcuserdata/
 *.xccheckout

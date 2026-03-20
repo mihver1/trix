@@ -173,6 +173,17 @@ extension ReceiptType {
     }
 }
 
+extension BlobUploadStatus {
+    init(_ ffiValue: FfiBlobUploadStatus) {
+        switch ffiValue {
+        case .pendingUpload:
+            self = .pending
+        case .available:
+            self = .uploaded
+        }
+    }
+}
+
 extension HistorySyncJobType {
     init(_ ffiValue: FfiHistorySyncJobType) {
         switch ffiValue {
@@ -519,6 +530,42 @@ extension ChatParticipantProfileSummary {
     }
 }
 
+extension LocalChatListItem {
+    init(ffiValue: FfiLocalChatListItem) throws {
+        self.init(
+            chatId: try TrixCoreCodec.uuid(ffiValue.chatId, label: "chat_id"),
+            chatType: ChatType(ffiValue.chatType),
+            title: ffiValue.title,
+            displayTitle: ffiValue.displayTitle,
+            lastServerSeq: ffiValue.lastServerSeq,
+            epoch: ffiValue.epoch,
+            pendingMessageCount: ffiValue.pendingMessageCount,
+            unreadCount: ffiValue.unreadCount,
+            previewText: ffiValue.previewText,
+            previewSenderAccountId: try ffiValue.previewSenderAccountId.map {
+                try TrixCoreCodec.uuid($0, label: "preview_sender_account_id")
+            },
+            previewSenderDisplayName: ffiValue.previewSenderDisplayName,
+            previewIsOutgoing: ffiValue.previewIsOutgoing,
+            previewServerSeq: ffiValue.previewServerSeq,
+            previewCreatedAtUnix: ffiValue.previewCreatedAtUnix,
+            participantProfiles: try ffiValue.participantProfiles.map {
+                try ChatParticipantProfileSummary(ffiValue: $0)
+            }
+        )
+    }
+}
+
+extension LocalChatReadState {
+    init(ffiValue: FfiLocalChatReadState) throws {
+        self.init(
+            chatId: try TrixCoreCodec.uuid(ffiValue.chatId, label: "chat_id"),
+            readCursorServerSeq: ffiValue.readCursorServerSeq,
+            unreadCount: ffiValue.unreadCount
+        )
+    }
+}
+
 extension ChatDeviceSummary {
     init(ffiValue: FfiChatDeviceMember) throws {
         self.init(
@@ -539,6 +586,9 @@ extension ChatSummary {
             chatType: ChatType(ffiValue.chatType),
             title: ffiValue.title,
             lastServerSeq: ffiValue.lastServerSeq,
+            epoch: ffiValue.epoch,
+            pendingMessageCount: ffiValue.pendingMessageCount,
+            lastMessage: try ffiValue.lastMessage.map { try MessageEnvelope(ffiValue: $0) },
             participantProfiles: try ffiValue.participantProfiles.map { try ChatParticipantProfileSummary(ffiValue: $0) }
         )
     }
@@ -613,10 +663,12 @@ extension ChatDetailResponse {
             chatType: ChatType(ffiValue.chatType),
             title: ffiValue.title,
             lastServerSeq: ffiValue.lastServerSeq,
+            pendingMessageCount: ffiValue.pendingMessageCount,
             epoch: ffiValue.epoch,
             lastCommitMessageId: try ffiValue.lastCommitMessageId.map {
                 try TrixCoreCodec.uuid($0, label: "last_commit_message_id")
             },
+            lastMessage: try ffiValue.lastMessage.map { try MessageEnvelope(ffiValue: $0) },
             participantProfiles: try ffiValue.participantProfiles.map { try ChatParticipantProfileSummary(ffiValue: $0) },
             members: try ffiValue.members.map { try ChatMemberSummary(ffiValue: $0) },
             deviceMembers: try ffiValue.deviceMembers.map { try ChatDeviceSummary(ffiValue: $0) }
@@ -724,6 +776,50 @@ extension LocalProjectedMessage {
     }
 }
 
+extension LocalTimelineItem {
+    init(ffiValue: FfiLocalTimelineItem) throws {
+        self.init(
+            serverSeq: ffiValue.serverSeq,
+            messageId: try TrixCoreCodec.uuid(ffiValue.messageId, label: "message_id"),
+            senderAccountId: try TrixCoreCodec.uuid(ffiValue.senderAccountId, label: "sender_account_id"),
+            senderDeviceId: try TrixCoreCodec.uuid(ffiValue.senderDeviceId, label: "sender_device_id"),
+            senderDisplayName: ffiValue.senderDisplayName,
+            isOutgoing: ffiValue.isOutgoing,
+            epoch: ffiValue.epoch,
+            messageKind: MessageKind(ffiValue.messageKind),
+            contentType: ContentType(ffiValue.contentType),
+            projectionKind: LocalProjectionKind(ffiValue.projectionKind),
+            body: try ffiValue.body.map { try TypedMessageBody(ffiValue: $0) },
+            bodyParseError: ffiValue.bodyParseError,
+            previewText: ffiValue.previewText,
+            mergedEpoch: ffiValue.mergedEpoch,
+            createdAtUnix: ffiValue.createdAtUnix
+        )
+    }
+}
+
+extension UploadedAttachment {
+    init(ffiValue: FfiUploadedAttachment) throws {
+        self.init(
+            body: try TypedMessageBody(ffiValue: ffiValue.body),
+            blobId: ffiValue.blobId,
+            uploadStatus: BlobUploadStatus(ffiValue.uploadStatus),
+            plaintextSizeBytes: ffiValue.plaintextSizeBytes,
+            encryptedSizeBytes: ffiValue.encryptedSizeBytes,
+            encryptedSha256: ffiValue.encryptedSha256
+        )
+    }
+}
+
+extension DownloadedAttachment {
+    init(ffiValue: FfiDownloadedAttachment) throws {
+        self.init(
+            body: try TypedMessageBody(ffiValue: ffiValue.body),
+            plaintext: ffiValue.plaintext
+        )
+    }
+}
+
 extension SendMessageOutcome {
     init(ffiValue: FfiSendMessageOutcome) throws {
         self.init(
@@ -732,6 +828,34 @@ extension SendMessageOutcome {
             serverSeq: ffiValue.serverSeq,
             report: try LocalStoreApplyReport(ffiValue: ffiValue.report),
             projectedMessage: try LocalProjectedMessage(ffiValue: ffiValue.projectedMessage)
+        )
+    }
+}
+
+extension ModifyChatMembersControlOutcome {
+    init(ffiValue: FfiModifyChatMembersControlOutcome) throws {
+        self.init(
+            chatId: try TrixCoreCodec.uuid(ffiValue.chatId, label: "chat_id"),
+            epoch: ffiValue.epoch,
+            changedParticipantAccountIDs: try ffiValue.changedAccountIds.map {
+                try TrixCoreCodec.uuid($0, label: "changed_participant_account_id")
+            },
+            report: try LocalStoreApplyReport(ffiValue: ffiValue.report),
+            projectedMessages: try ffiValue.projectedMessages.map { try LocalProjectedMessage(ffiValue: $0) }
+        )
+    }
+}
+
+extension ModifyChatDevicesControlOutcome {
+    init(ffiValue: FfiModifyChatDevicesControlOutcome) throws {
+        self.init(
+            chatId: try TrixCoreCodec.uuid(ffiValue.chatId, label: "chat_id"),
+            epoch: ffiValue.epoch,
+            changedDeviceIDs: try ffiValue.changedDeviceIds.map {
+                try TrixCoreCodec.uuid($0, label: "changed_device_id")
+            },
+            report: try LocalStoreApplyReport(ffiValue: ffiValue.report),
+            projectedMessages: try ffiValue.projectedMessages.map { try LocalProjectedMessage(ffiValue: $0) }
         )
     }
 }

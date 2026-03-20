@@ -380,6 +380,86 @@ struct LocalInboxAckResult: Sendable {
     let syncState: SyncStateSnapshot
 }
 
+struct LocalChatReadState: Identifiable, Sendable {
+    let chatId: UUID
+    let readCursorServerSeq: UInt64
+    let unreadCount: UInt64
+
+    var id: UUID { chatId }
+
+    var hasUnread: Bool {
+        unreadCount > 0
+    }
+}
+
+struct LocalChatListItem: Identifiable, Sendable {
+    let chatId: UUID
+    let chatType: ChatType
+    let title: String?
+    let displayTitle: String
+    let lastServerSeq: UInt64
+    let epoch: UInt64
+    let pendingMessageCount: UInt64
+    let unreadCount: UInt64
+    let previewText: String?
+    let previewSenderAccountId: UUID?
+    let previewSenderDisplayName: String?
+    let previewIsOutgoing: Bool?
+    let previewServerSeq: UInt64?
+    let previewCreatedAtUnix: UInt64?
+    let participantProfiles: [ChatParticipantProfileSummary]
+
+    var id: UUID { chatId }
+
+    var previewCreatedAt: Date? {
+        guard let previewCreatedAtUnix else {
+            return nil
+        }
+
+        return Date(timeIntervalSince1970: TimeInterval(previewCreatedAtUnix))
+    }
+
+    var hasUnread: Bool {
+        unreadCount > 0
+    }
+
+    func participantSubtitle(for currentAccountID: UUID?) -> String {
+        chatSummary.subtitle(for: currentAccountID)
+    }
+
+    func sidebarPreview(for currentAccountID: UUID?) -> String {
+        if let previewText = previewText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !previewText.isEmpty {
+            if previewIsOutgoing == true {
+                return "You: \(previewText)"
+            }
+
+            if let previewSenderDisplayName,
+               !previewSenderDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               chatType != .dm {
+                return "\(previewSenderDisplayName): \(previewText)"
+            }
+
+            return previewText
+        }
+
+        return participantSubtitle(for: currentAccountID)
+    }
+
+    private var chatSummary: ChatSummary {
+        ChatSummary(
+            chatId: chatId,
+            chatType: chatType,
+            title: title,
+            lastServerSeq: lastServerSeq,
+            epoch: epoch,
+            pendingMessageCount: pendingMessageCount,
+            lastMessage: nil,
+            participantProfiles: participantProfiles
+        )
+    }
+}
+
 struct ChatParticipantProfileSummary: Codable, Identifiable, Hashable {
     let accountId: UUID
     let handle: String?
@@ -438,6 +518,9 @@ struct ChatSummary: Codable, Identifiable {
     let chatType: ChatType
     let title: String?
     let lastServerSeq: UInt64
+    let epoch: UInt64
+    let pendingMessageCount: UInt64
+    let lastMessage: MessageEnvelope?
     let participantProfiles: [ChatParticipantProfileSummary]
 
     var id: UUID { chatId }
@@ -494,8 +577,10 @@ struct ChatDetailResponse: Codable {
     let chatType: ChatType
     let title: String?
     let lastServerSeq: UInt64
+    let pendingMessageCount: UInt64
     let epoch: UInt64
     let lastCommitMessageId: UUID?
+    let lastMessage: MessageEnvelope?
     let participantProfiles: [ChatParticipantProfileSummary]
     let members: [ChatMemberSummary]
     let deviceMembers: [ChatDeviceSummary]
@@ -506,6 +591,9 @@ struct ChatDetailResponse: Codable {
             chatType: chatType,
             title: title,
             lastServerSeq: lastServerSeq,
+            epoch: epoch,
+            pendingMessageCount: pendingMessageCount,
+            lastMessage: lastMessage,
             participantProfiles: participantProfiles
         )
         .displayTitle(for: currentAccountID)
@@ -517,6 +605,9 @@ struct ChatDetailResponse: Codable {
             chatType: chatType,
             title: title,
             lastServerSeq: lastServerSeq,
+            epoch: epoch,
+            pendingMessageCount: pendingMessageCount,
+            lastMessage: lastMessage,
             participantProfiles: participantProfiles
         )
         .subtitle(for: currentAccountID)
@@ -735,12 +826,201 @@ struct LocalProjectedMessage: Identifiable, Sendable {
     }
 }
 
+struct LocalTimelineItem: Identifiable, Sendable {
+    let serverSeq: UInt64
+    let messageId: UUID
+    let senderAccountId: UUID
+    let senderDeviceId: UUID
+    let senderDisplayName: String
+    let isOutgoing: Bool
+    let epoch: UInt64
+    let messageKind: MessageKind
+    let contentType: ContentType
+    let projectionKind: LocalProjectionKind
+    let body: TypedMessageBody?
+    let bodyParseError: String?
+    let previewText: String
+    let mergedEpoch: UInt64?
+    let createdAtUnix: UInt64
+
+    var id: UUID { messageId }
+
+    var createdAt: Date {
+        Date(timeIntervalSince1970: TimeInterval(createdAtUnix))
+    }
+
+    var bodySummary: String {
+        if let body {
+            return body.summary
+        }
+
+        if let bodyParseError,
+           !bodyParseError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return bodyParseError
+        }
+
+        return previewText
+    }
+}
+
+enum BlobUploadStatus: String, Sendable {
+    case pending
+    case uploaded
+    case failed
+
+    var label: String {
+        switch self {
+        case .pending:
+            return "Pending"
+        case .uploaded:
+            return "Uploaded"
+        case .failed:
+            return "Failed"
+        }
+    }
+}
+
+struct UploadedAttachment: Sendable {
+    let body: TypedMessageBody
+    let blobId: String
+    let uploadStatus: BlobUploadStatus
+    let plaintextSizeBytes: UInt64
+    let encryptedSizeBytes: UInt64
+    let encryptedSha256: Data
+}
+
+struct DownloadedAttachment: Sendable {
+    let body: TypedMessageBody
+    let plaintext: Data
+}
+
+struct ModifyChatMembersControlOutcome: Sendable {
+    let chatId: UUID
+    let epoch: UInt64
+    let changedParticipantAccountIDs: [UUID]
+    let report: LocalStoreApplyReport
+    let projectedMessages: [LocalProjectedMessage]
+}
+
+struct ModifyChatDevicesControlOutcome: Sendable {
+    let chatId: UUID
+    let epoch: UInt64
+    let changedDeviceIDs: [UUID]
+    let report: LocalStoreApplyReport
+    let projectedMessages: [LocalProjectedMessage]
+}
+
 struct SendMessageOutcome: Sendable {
     let chatId: UUID
     let messageId: UUID
     let serverSeq: UInt64
     let report: LocalStoreApplyReport
     let projectedMessage: LocalProjectedMessage
+}
+
+struct AttachmentDraft: Identifiable, Equatable, Sendable {
+    let id: UUID
+    let fileURL: URL
+    let fileName: String
+    let mimeType: String
+    let widthPx: UInt32?
+    let heightPx: UInt32?
+    let fileSizeBytes: UInt64
+
+    init(
+        id: UUID = UUID(),
+        fileURL: URL,
+        fileName: String,
+        mimeType: String,
+        widthPx: UInt32? = nil,
+        heightPx: UInt32? = nil,
+        fileSizeBytes: UInt64
+    ) {
+        self.id = id
+        self.fileURL = fileURL
+        self.fileName = fileName
+        self.mimeType = mimeType
+        self.widthPx = widthPx
+        self.heightPx = heightPx
+        self.fileSizeBytes = fileSizeBytes
+    }
+
+    var isImage: Bool {
+        mimeType.hasPrefix("image/")
+    }
+}
+
+enum PendingOutgoingPayload: Sendable, Equatable {
+    case text(String)
+    case attachment(AttachmentDraft)
+
+    var summary: String {
+        switch self {
+        case let .text(text):
+            return text
+        case let .attachment(draft):
+            return draft.fileName
+        }
+    }
+}
+
+enum PendingOutgoingStatus: String, Sendable {
+    case sending
+    case failed
+}
+
+struct PendingOutgoingMessage: Identifiable, Sendable {
+    let id: UUID
+    let chatId: UUID
+    let createdAt: Date
+    let payload: PendingOutgoingPayload
+    var status: PendingOutgoingStatus
+    var errorMessage: String?
+
+    init(
+        id: UUID = UUID(),
+        chatId: UUID,
+        createdAt: Date = Date(),
+        payload: PendingOutgoingPayload,
+        status: PendingOutgoingStatus = .sending,
+        errorMessage: String? = nil
+    ) {
+        self.id = id
+        self.chatId = chatId
+        self.createdAt = createdAt
+        self.payload = payload
+        self.status = status
+        self.errorMessage = errorMessage
+    }
+}
+
+enum NotificationPermissionState: String, Sendable {
+    case notDetermined
+    case denied
+    case authorized
+    case provisional
+    case ephemeral
+
+    var label: String {
+        switch self {
+        case .notDetermined:
+            return "Not Requested"
+        case .denied:
+            return "Denied"
+        case .authorized:
+            return "Allowed"
+        case .provisional:
+            return "Provisional"
+        case .ephemeral:
+            return "Ephemeral"
+        }
+    }
+}
+
+struct NotificationPreferences: Sendable {
+    var isEnabled: Bool = false
+    var permissionState: NotificationPermissionState = .notDetermined
+    var backgroundPollingIntervalSeconds: TimeInterval = 30
 }
 
 struct ChatHistoryResponse: Codable {

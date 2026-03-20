@@ -9,7 +9,7 @@ struct WorkspaceStorePaths {
 
     static func forAccount(
         _ accountId: UUID,
-        appDirectoryName: String = "TrixMac"
+        appDirectoryName: String = AppIdentity.applicationSupportDirectoryName
     ) throws -> WorkspaceStorePaths {
         let appSupport = try FileManager.default.url(
             for: .applicationSupportDirectory,
