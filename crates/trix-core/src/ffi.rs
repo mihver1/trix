@@ -13,8 +13,8 @@ use crate::{
     LocalHistoryStore, LocalProjectedMessage, LocalProjectionApplyReport, LocalProjectionKind,
     LocalStoreApplyReport, MessageBody, MlsCommitBundle, MlsFacade, MlsMemberIdentity,
     MlsProcessResult, PublishKeyPackageMaterial, ReactionAction, ReceiptType,
-    ReservedKeyPackageMaterial, ServerApiClient, SyncChatCursor, SyncCoordinator,
-    SyncStateSnapshot,
+    ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient, SyncChatCursor,
+    SyncCoordinator, SyncStateSnapshot,
 };
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -549,6 +549,25 @@ pub struct FfiInboxApplyOutcome {
     pub lease_expires_at_unix: u64,
     pub acked_inbox_ids: Vec<u64>,
     pub report: FfiLocalStoreApplyReport,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiSendMessageInput {
+    pub sender_account_id: String,
+    pub sender_device_id: String,
+    pub chat_id: String,
+    pub message_id: Option<String>,
+    pub body: FfiMessageBody,
+    pub aad_json: Option<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiSendMessageOutcome {
+    pub chat_id: String,
+    pub message_id: String,
+    pub server_seq: u64,
+    pub report: FfiLocalStoreApplyReport,
+    pub projected_message: FfiLocalProjectedMessage,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -1674,6 +1693,46 @@ impl FfiSyncCoordinator {
         };
         Ok(inbox_apply_outcome_to_ffi(outcome))
     }
+
+    pub fn send_message_body(
+        &self,
+        client: Arc<FfiServerApiClient>,
+        store: Arc<FfiLocalHistoryStore>,
+        facade: Arc<FfiMlsFacade>,
+        conversation: Arc<FfiMlsConversation>,
+        input: FfiSendMessageInput,
+    ) -> Result<FfiSendMessageOutcome, TrixFfiError> {
+        let client = clone_server_api_client(&client.inner)?;
+        let body = message_body_from_ffi(input.body)?;
+        let aad_json = parse_optional_json(input.aad_json)?;
+        let outcome = {
+            let mut coordinator = lock(&self.inner)?;
+            let mut store = lock(&store.inner)?;
+            let facade = lock(&facade.inner)?;
+            let mut conversation = lock(&conversation.inner)?;
+            self.runtime
+                .block_on(
+                    coordinator.send_message_body(
+                        &client,
+                        &mut store,
+                        &facade,
+                        &mut conversation,
+                        parse_account_id(&input.sender_account_id)?,
+                        parse_device_id(&input.sender_device_id)?,
+                        parse_chat_id(&input.chat_id)?,
+                        input
+                            .message_id
+                            .as_deref()
+                            .map(parse_message_id)
+                            .transpose()?,
+                        &body,
+                        aad_json,
+                    ),
+                )
+                .map_err(ffi_error)?
+        };
+        Ok(send_message_outcome_to_ffi(outcome))
+    }
 }
 
 #[uniffi::export]
@@ -2401,6 +2460,16 @@ fn inbox_apply_outcome_to_ffi(value: InboxApplyOutcome) -> FfiInboxApplyOutcome 
         lease_expires_at_unix: value.lease_expires_at_unix,
         acked_inbox_ids: value.acked_inbox_ids,
         report: local_store_apply_report_to_ffi(value.report),
+    }
+}
+
+fn send_message_outcome_to_ffi(value: SendMessageOutcome) -> FfiSendMessageOutcome {
+    FfiSendMessageOutcome {
+        chat_id: value.chat_id.0.to_string(),
+        message_id: value.message_id.0.to_string(),
+        server_seq: value.server_seq,
+        report: local_store_apply_report_to_ffi(value.report),
+        projected_message: local_projected_message_to_ffi(value.projected_message),
     }
 }
 
