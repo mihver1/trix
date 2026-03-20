@@ -58,6 +58,25 @@ type SendTextResult struct {
 	ServerSeq uint64 `json:"server_seq"`
 }
 
+type SendFileResult struct {
+	ChatID             string `json:"chat_id"`
+	MessageID          string `json:"message_id"`
+	ServerSeq          uint64 `json:"server_seq"`
+	BlobID             string `json:"blob_id"`
+	PlaintextSizeBytes uint64 `json:"plaintext_size_bytes"`
+	EncryptedSizeBytes uint64 `json:"encrypted_size_bytes"`
+}
+
+type DownloadFileResult struct {
+	ChatID     string  `json:"chat_id"`
+	MessageID  string  `json:"message_id"`
+	BlobID     string  `json:"blob_id"`
+	MimeType   string  `json:"mime_type"`
+	FileName   *string `json:"file_name"`
+	SizeBytes  uint64  `json:"size_bytes"`
+	OutputPath string  `json:"output_path"`
+}
+
 type PublishKeyPackagesResult struct {
 	Published int `json:"published"`
 }
@@ -143,6 +162,42 @@ func (c *Client) SendText(ctx context.Context, chatID, text string) (SendTextRes
 	err := c.request(ctx, "bot.v1.send_text", map[string]any{
 		"chat_id": chatID,
 		"text":    text,
+	}, &out)
+	return out, err
+}
+
+func (c *Client) SendFile(
+	ctx context.Context,
+	chatID string,
+	path string,
+	mimeType *string,
+	fileName *string,
+	widthPx *int,
+	heightPx *int,
+) (SendFileResult, error) {
+	var out SendFileResult
+	err := c.request(ctx, "bot.v1.send_file", map[string]any{
+		"chat_id":   chatID,
+		"path":      path,
+		"mime_type": mimeType,
+		"file_name": fileName,
+		"width_px":  widthPx,
+		"height_px": heightPx,
+	}, &out)
+	return out, err
+}
+
+func (c *Client) DownloadFile(
+	ctx context.Context,
+	chatID string,
+	messageID string,
+	outputPath string,
+) (DownloadFileResult, error) {
+	var out DownloadFileResult
+	err := c.request(ctx, "bot.v1.download_file", map[string]any{
+		"chat_id":     chatID,
+		"message_id":  messageID,
+		"output_path": outputPath,
 	}, &out)
 	return out, err
 }

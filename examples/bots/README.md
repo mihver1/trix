@@ -1,6 +1,7 @@
 # Bot Examples
 
 These examples all target the same `trix-botd stdio` contract, except the Rust example, which uses `trix-bot` directly.
+They echo text messages and save incoming files under `state_dir/downloads/`.
 
 ## Paths
 

@@ -1,4 +1,7 @@
-use std::{env, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -7,8 +10,8 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     sync::mpsc,
 };
-use trix_bot::{Bot, BotEvent, BotInitConfig, BotLoadConfig};
-use trix_types::ChatId;
+use trix_bot::{Bot, BotAttachmentUpload, BotEvent, BotInitConfig, BotLoadConfig};
+use trix_types::{ChatId, MessageId};
 use uuid::Uuid;
 
 #[tokio::main]
@@ -155,6 +158,23 @@ struct RpcSendTextParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct RpcSendFileParams {
+    chat_id: String,
+    path: String,
+    mime_type: Option<String>,
+    file_name: Option<String>,
+    width_px: Option<u32>,
+    height_px: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RpcDownloadFileParams {
+    chat_id: String,
+    message_id: String,
+    output_path: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct RpcPublishKeyPackagesParams {
     count: Option<usize>,
 }
@@ -237,6 +257,66 @@ async fn handle_rpc_request(
             let chat_id = parse_chat_id(&params.chat_id)?;
             serde_json::to_value(bot.send_text(chat_id, params.text).await?)?
         }
+        "bot.v1.send_file" => {
+            let bot = session
+                .bot
+                .as_ref()
+                .ok_or_else(|| anyhow!("bot.v1.init must be called first"))?;
+            let params: RpcSendFileParams = serde_json::from_value(request.params)?;
+            let chat_id = parse_chat_id(&params.chat_id)?;
+            let path = PathBuf::from(&params.path);
+            let payload = fs::read(&path)
+                .with_context(|| format!("failed to read file {}", path.display()))?;
+            let file_name = params.file_name.or_else(|| {
+                path.file_name()
+                    .map(|value| value.to_string_lossy().into_owned())
+            });
+            let mime_type = params
+                .mime_type
+                .unwrap_or_else(|| infer_mime_type(&path).to_owned());
+            serde_json::to_value(
+                bot.send_attachment(
+                    chat_id,
+                    payload,
+                    BotAttachmentUpload {
+                        mime_type,
+                        file_name,
+                        width_px: params.width_px,
+                        height_px: params.height_px,
+                    },
+                )
+                .await?,
+            )?
+        }
+        "bot.v1.download_file" => {
+            let bot = session
+                .bot
+                .as_ref()
+                .ok_or_else(|| anyhow!("bot.v1.init must be called first"))?;
+            let params: RpcDownloadFileParams = serde_json::from_value(request.params)?;
+            let chat_id = parse_chat_id(&params.chat_id)?;
+            let message_id = parse_message_id(&params.message_id)?;
+            let downloaded = bot.download_attachment(chat_id, message_id).await?;
+            let output_path = PathBuf::from(&params.output_path);
+            if let Some(parent) = output_path
+                .parent()
+                .filter(|path| !path.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("failed to create directory {}", parent.display()))?;
+            }
+            fs::write(&output_path, &downloaded.plaintext)
+                .with_context(|| format!("failed to write file {}", output_path.display()))?;
+            json!({
+                "chat_id": downloaded.chat_id,
+                "message_id": downloaded.message_id,
+                "blob_id": downloaded.blob_id,
+                "mime_type": downloaded.mime_type,
+                "file_name": downloaded.file_name,
+                "size_bytes": downloaded.size_bytes,
+                "output_path": output_path,
+            })
+        }
         "bot.v1.publish_key_packages" => {
             let bot = session
                 .bot
@@ -313,6 +393,36 @@ fn event_notification(event: BotEvent) -> Option<String> {
                 "sender_account_id": sender_account_id,
                 "sender_device_id": sender_device_id,
                 "text": text,
+                "created_at_unix": created_at_unix,
+            }),
+        ),
+        BotEvent::FileMessage {
+            chat_id,
+            message_id,
+            server_seq,
+            sender_account_id,
+            sender_device_id,
+            blob_id,
+            mime_type,
+            size_bytes,
+            file_name,
+            width_px,
+            height_px,
+            created_at_unix,
+        } => (
+            "bot.v1.file_message",
+            json!({
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "server_seq": server_seq,
+                "sender_account_id": sender_account_id,
+                "sender_device_id": sender_device_id,
+                "blob_id": blob_id,
+                "mime_type": mime_type,
+                "size_bytes": size_bytes,
+                "file_name": file_name,
+                "width_px": width_px,
+                "height_px": height_px,
                 "created_at_unix": created_at_unix,
             }),
         ),
@@ -478,6 +588,33 @@ fn parse_chat_id(value: &str) -> Result<ChatId> {
     ))
 }
 
+fn parse_message_id(value: &str) -> Result<MessageId> {
+    Ok(MessageId(Uuid::parse_str(value).with_context(|| {
+        format!("invalid message_id `{value}`")
+    })?))
+}
+
+fn infer_mime_type(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("png") => "image/png",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("txt") => "text/plain",
+        Some("json") => "application/json",
+        Some("pdf") => "application/pdf",
+        Some("csv") => "text/csv",
+        Some("mp4") => "video/mp4",
+        Some("mov") => "video/quicktime",
+        _ => "application/octet-stream",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -499,6 +636,23 @@ mod tests {
 
         assert_eq!(request.jsonrpc, "2.0");
         assert_eq!(request.method, "bot.v1.send_text");
+    }
+
+    #[test]
+    fn json_rpc_file_request_schema_decodes() {
+        let request: JsonRpcRequest = serde_json::from_value(json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "bot.v1.send_file",
+            "params": {
+                "chat_id": "3d4eb5be-4906-4459-a8be-63c9360f2d92",
+                "path": "/tmp/file.txt"
+            }
+        }))
+        .expect("request");
+
+        assert_eq!(request.jsonrpc, "2.0");
+        assert_eq!(request.method, "bot.v1.send_file");
     }
 
     #[test]
