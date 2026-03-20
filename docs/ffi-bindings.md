@@ -84,6 +84,17 @@ make ffi-bindings OUT=/tmp/trix-bindings
   - `get_local_chat_list_item(chat_id, self_account_id?)`
   - `get_local_timeline_items(chat_id, self_account_id?, after_server_seq?, limit?)`
 - These methods merge stored chat metadata, participant profiles, local unread state, derived `display_title`, sender display names, outgoing flags, and message preview text so clients do not need to reimplement that stitching layer.
+- Attachment helpers are now exposed in two layers:
+  - low-level free functions:
+    - `ffi_prepare_attachment_upload(payload, params)`
+    - `ffi_build_attachment_message_body(blob_id, prepared)`
+    - `ffi_decrypt_attachment_payload(body, encrypted_payload)`
+  - high-level server helpers on `FfiServerApiClient`:
+    - `upload_attachment(chat_id, payload, params)`
+    - `download_attachment(body)`
+- `upload_attachment(...)` performs client-side attachment encryption, computes encrypted blob sha256, creates/uploads the blob, and returns a ready-to-send attachment `FfiMessageBody`.
+- `download_attachment(...)` downloads the encrypted blob and decrypts it locally using the attachment descriptor fields from the message body.
+- In the attachment descriptor, `size_bytes` is the plaintext file size; blob upload size and `sha256` are derived from the encrypted payload.
 - `FfiLocalProjectedMessage` now includes parsed `body` and `body_parse_error`, so clients can render typed text/reaction/receipt/attachment/chat-event items directly from the projected timeline.
 - `FfiSyncCoordinator` now also exposes `send_message_body()`, which performs `MessageBody -> MLS encrypt -> POST /messages -> local store -> projected timeline` in one core call.
 - `FfiChatDetail` now includes `device_members` with `device_id`, `account_id`, `leaf_index`, and `credential_identity`, so clients can resolve removals against MLS leaf indices without a parallel side channel.
