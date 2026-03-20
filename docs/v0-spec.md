@@ -682,7 +682,38 @@ Returns all devices for the authenticated account.
 
 ### `GET /v0/history-sync/jobs`
 
-Returns orchestration jobs assigned to the authenticated source device.
+Returns orchestration jobs assigned to the authenticated device.
+
+Rules:
+
+- `role=source` returns jobs where the current device must produce encrypted history data
+- `role=target` returns jobs where the current device waits for encrypted history data from another trusted device
+
+### `POST /v0/history-sync/jobs/{job_id}/chunks`
+
+Uploads an encrypted history sync chunk for a job owned by the authenticated source device.
+
+Request:
+
+- `sequence_no`
+- opaque `payload_b64`
+- optional `cursor_json`
+- `is_final`
+
+Rules:
+
+- source-side writes are idempotent by `(job_id, sequence_no)`
+- first successful chunk moves the job to `running`
+- server stores only opaque ciphertext and cursor metadata
+
+### `GET /v0/history-sync/jobs/{job_id}/chunks`
+
+Returns encrypted history sync chunks for a job visible to the authenticated target device.
+
+Rules:
+
+- only the target device of the job can read the chunk stream
+- chunks are returned in `sequence_no` order
 
 ### `POST /v0/history-sync/jobs/{job_id}/complete`
 

@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    AccountId, ChatId, ChatType, ContentType, DeviceId, DeviceStatus, HistorySyncJobStatus,
-    HistorySyncJobType, MessageId, MessageKind,
+    AccountId, ChatId, ChatType, ContentType, DeviceId, DeviceStatus, HistorySyncJobRole,
+    HistorySyncJobStatus, HistorySyncJobType, MessageId, MessageKind,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -434,6 +434,38 @@ pub struct HistorySyncJobSummary {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HistorySyncJobListResponse {
     pub jobs: Vec<HistorySyncJobSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AppendHistorySyncChunkRequest {
+    pub sequence_no: u64,
+    pub payload_b64: String,
+    pub cursor_json: Option<Value>,
+    pub is_final: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppendHistorySyncChunkResponse {
+    pub job_id: String,
+    pub chunk_id: u64,
+    pub job_status: HistorySyncJobStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistorySyncChunkSummary {
+    pub chunk_id: u64,
+    pub sequence_no: u64,
+    pub payload_b64: String,
+    pub cursor_json: Option<Value>,
+    pub is_final: bool,
+    pub uploaded_at_unix: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistorySyncChunkListResponse {
+    pub job_id: String,
+    pub role: HistorySyncJobRole,
+    pub chunks: Vec<HistorySyncChunkSummary>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
