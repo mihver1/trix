@@ -666,8 +666,8 @@ private struct PersistentCorePaths {
 
         self.rootDirectory = rootDirectory
         mlsStorageRoot = rootDirectory.appendingPathComponent("mls", isDirectory: true)
-        historyDatabasePath = rootDirectory.appendingPathComponent("history-store.json")
-        syncStatePath = rootDirectory.appendingPathComponent("sync-state.json")
+        historyDatabasePath = rootDirectory.appendingPathComponent("history-store.sqlite")
+        syncStatePath = rootDirectory.appendingPathComponent("sync-state.sqlite")
     }
 
     func prepareRootDirectory() throws {

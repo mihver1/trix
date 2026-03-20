@@ -16,7 +16,7 @@
   - encrypted/plaintext identity store
   - auth refresh
   - history sync
-  - websocket with polling fallback
+  - shared realtime driver with websocket plus polling fallback
   - deduped text/unsupported event emission
 - `apps/trix-botd`
   - CLI entrypoints: `init`, `run`, `publish-key-packages`, `stdio`
@@ -30,12 +30,14 @@
 
 The bot runtime stores its local state under `state_dir`:
 
-- `history-store.json`
-- `sync-state.json`
+- `history-store.sqlite`
+- `sync-state.sqlite`
 - `runtime-state.json`
 - `mls/`
 - `identity.enc.json` by default
 - `identity.json` only when `plaintext_dev_store=true`
+
+Legacy `history-store.json` / `sync-state.json` files are migrated in place on first load.
 
 Encrypted identity storage uses `Argon2id + ChaCha20-Poly1305`. The master secret is read from the env var named by `master_secret_env`, or `TRIX_BOT_MASTER_SECRET` by default.
 

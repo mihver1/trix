@@ -14,7 +14,7 @@ impl Default for CoreConfig {
             database_path: PathBuf::from("trix-client.db"),
             attachment_cache_root: PathBuf::from("attachments"),
             mls_storage_root: PathBuf::from("mls"),
-            sync_state_path: PathBuf::from("sync-state.json"),
+            sync_state_path: PathBuf::from("sync-state.sqlite"),
         }
     }
 }
