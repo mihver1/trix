@@ -9,10 +9,10 @@ use tokio::{
 };
 use trix_core::{
     CreateAccountParams, LocalChatListItem, LocalHistoryStore, LocalProjectionKind,
-    LocalTimelineItem, MessageBody, MlsFacade, PublishKeyPackageMaterial, ServerApiClient,
-    SyncCoordinator, TextMessageBody,
+    LocalTimelineItem, MessageBody, MlsFacade, PublishKeyPackageMaterial, RealtimeConfig,
+    RealtimeDriver, RealtimeEventKind, ServerApiClient, SyncCoordinator, TextMessageBody,
 };
-use trix_types::{ChatId, ContentType, DeviceId, InboxItem, WebSocketServerFrame};
+use trix_types::{ChatId, ContentType, DeviceId};
 use uuid::Uuid;
 
 use crate::{
@@ -401,45 +401,21 @@ impl BotInner {
     }
 
     async fn poll_once(&self, client: &ServerApiClient) -> Result<()> {
-        let lease = {
-            let sync = self.sync.lock().await;
-            sync.lease_inbox(
-                client,
-                Some(INBOX_LEASE_LIMIT),
-                Some(INBOX_LEASE_TTL_SECONDS),
-            )
-            .await?
-        };
-
-        if lease.items.is_empty() {
-            return Ok(());
-        }
-
-        let inbox_ids = lease
-            .items
-            .iter()
-            .map(|item| item.inbox_id)
-            .collect::<Vec<_>>();
-        self.process_incoming_items(client, &lease.items).await?;
-        let mut sync = self.sync.lock().await;
-        sync.ack_inbox(client, inbox_ids).await?;
-        Ok(())
-    }
-
-    async fn process_incoming_items(
-        &self,
-        client: &ServerApiClient,
-        items: &[InboxItem],
-    ) -> Result<()> {
+        let driver = realtime_driver();
         let changed_chat_ids = {
             let mut sync = self.sync.lock().await;
             let mut store = self.store.lock().await;
-            let report = store.apply_inbox_items(items)?;
-            for item in items {
-                sync.record_chat_server_seq(item.message.chat_id, item.message.server_seq)?;
-            }
-            report.changed_chat_ids
+            driver
+                .poll_once(client, &mut sync, &mut store)
+                .await?
+                .report
+                .changed_chat_ids
         };
+
+        if changed_chat_ids.is_empty() {
+            return Ok(());
+        }
+
         self.apply_changed_chat_updates(client, changed_chat_ids)
             .await
     }
@@ -599,6 +575,7 @@ impl BotInner {
         websocket: &mut trix_core::ServerWebSocketClient,
         stop_rx: &mut watch::Receiver<bool>,
     ) -> Result<()> {
+        let driver = realtime_driver();
         loop {
             tokio::select! {
                 changed = stop_rx.changed() => {
@@ -608,31 +585,63 @@ impl BotInner {
                     }
                 }
                 frame = websocket.next_frame() => {
-                    match frame? {
-                        Some(WebSocketServerFrame::Hello { .. }) => {}
-                        Some(WebSocketServerFrame::InboxItems { items, .. }) => {
-                            if items.is_empty() {
-                                continue;
+                    let frame = match frame? {
+                        Some(frame) => frame,
+                        None => return Ok(()),
+                    };
+
+                    let event = {
+                        let mut sync = self.sync.lock().await;
+                        let mut store = self.store.lock().await;
+                        driver
+                            .process_websocket_frame(&mut sync, &mut store, frame)?
+                    };
+
+                    if !event.outbound_ack_inbox_ids.is_empty() {
+                        websocket.send_ack(event.outbound_ack_inbox_ids).await?;
+                    }
+
+                    match event.kind {
+                        RealtimeEventKind::Hello | RealtimeEventKind::Acked | RealtimeEventKind::Pong => {}
+                        RealtimeEventKind::InboxItems => {
+                            if let Some(report) = event.report {
+                                if !report.changed_chat_ids.is_empty() {
+                                    let client = self.current_client().await;
+                                    self.apply_changed_chat_updates(&client, report.changed_chat_ids).await?;
+                                }
                             }
-                            let inbox_ids = items.iter().map(|item| item.inbox_id).collect::<Vec<_>>();
-                            let client = self.current_client().await;
-                            self.process_incoming_items(&client, &items).await?;
-                            websocket.send_ack(inbox_ids).await?;
                         }
-                        Some(WebSocketServerFrame::Acked { .. }) | Some(WebSocketServerFrame::Pong { .. }) => {}
-                        Some(WebSocketServerFrame::SessionReplaced { reason }) => {
-                            self.publish_error(format!("websocket session replaced: {reason}"));
+                        RealtimeEventKind::SessionReplaced => {
+                            self.publish_error(format!(
+                                "websocket session replaced: {}",
+                                event
+                                    .session_replaced_reason
+                                    .unwrap_or_else(|| "session replaced".to_owned())
+                            ));
                             return Ok(());
                         }
-                        Some(WebSocketServerFrame::Error { code, message }) => {
-                            return Err(anyhow!("websocket error {code}: {message}"));
+                        RealtimeEventKind::Error => {
+                            return Err(anyhow!(
+                                "websocket error {}: {}",
+                                event.error_code.unwrap_or_else(|| "unknown".to_owned()),
+                                event.error_message.unwrap_or_else(|| "unknown websocket error".to_owned()),
+                            ));
                         }
-                        None => return Ok(()),
+                        RealtimeEventKind::Disconnected => return Ok(()),
                     }
                 }
             }
         }
     }
+}
+
+fn realtime_driver() -> RealtimeDriver {
+    RealtimeDriver::with_config(RealtimeConfig {
+        inbox_limit: INBOX_LEASE_LIMIT,
+        inbox_lease_ttl_seconds: INBOX_LEASE_TTL_SECONDS,
+        poll_interval: POLL_INTERVAL,
+        websocket_retry_delay: WEBSOCKET_RETRY_DELAY,
+    })
 }
 
 async fn authenticate_client(

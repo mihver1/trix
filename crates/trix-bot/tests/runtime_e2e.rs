@@ -256,13 +256,27 @@ async fn spawn_test_server() -> Result<TestServer> {
         blob_max_upload_bytes: 25 * 1024 * 1024,
         log_filter: "error".to_owned(),
         jwt_signing_key: "trix-bot-e2e-test-key".to_owned(),
+        cors_allowed_origins: Vec::new(),
+        rate_limit_window_seconds: 60,
+        rate_limit_auth_challenge_limit: 20,
+        rate_limit_auth_session_limit: 20,
+        rate_limit_link_intents_limit: 20,
+        rate_limit_directory_limit: 120,
+        rate_limit_blob_upload_limit: 20,
+        cleanup_interval_seconds: 300,
+        auth_challenge_retention_seconds: 3600,
+        link_intent_retention_seconds: 86400,
+        transfer_bundle_retention_seconds: 86400,
+        history_sync_retention_seconds: 86400,
+        pending_blob_retention_seconds: 86400,
+        shutdown_grace_period_seconds: 5,
     };
 
     let db = Database::connect(&config.database_url).await?;
     let blob_store = LocalBlobStore::new(&config.blob_root)?;
     let auth = AuthManager::new(&config.jwt_signing_key);
     let state = AppState::new(config, BuildInfo::current(), db, auth, blob_store);
-    let router = trix_server::app::build_router(state);
+    let router = trix_server::app::build_router(state)?;
 
     let task = tokio::spawn(async move {
         axum::serve(listener, router)

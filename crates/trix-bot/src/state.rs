@@ -23,8 +23,8 @@ impl BotStateLayout {
     pub fn new(state_dir: impl Into<PathBuf>) -> Self {
         let state_dir = state_dir.into();
         Self {
-            history_store_path: state_dir.join("history-store.json"),
-            sync_state_path: state_dir.join("sync-state.json"),
+            history_store_path: state_dir.join("history-store.sqlite"),
+            sync_state_path: state_dir.join("sync-state.sqlite"),
             runtime_state_path: state_dir.join("runtime-state.json"),
             mls_storage_root: state_dir.join("mls"),
             identity_path: state_dir.join("identity.json"),

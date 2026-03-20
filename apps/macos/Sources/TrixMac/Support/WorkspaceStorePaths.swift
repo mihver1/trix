@@ -25,8 +25,8 @@ struct WorkspaceStorePaths {
 
         return WorkspaceStorePaths(
             rootURL: rootURL,
-            localHistoryURL: rootURL.appending(path: "local-history.json"),
-            syncStateURL: rootURL.appending(path: "sync-state.json"),
+            localHistoryURL: rootURL.appending(path: "local-history.sqlite"),
+            syncStateURL: rootURL.appending(path: "sync-state.sqlite"),
             attachmentsRootURL: rootURL.appending(path: "attachments"),
             mlsStateRootURL: rootURL.appending(path: "mls-state")
         )

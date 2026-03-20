@@ -69,7 +69,8 @@ xcodebuild \
 - `./scripts/generate-trix-core-bridge.sh` installs missing Rust iOS targets automatically, regenerates `UniFFI` Swift sources under `TrixiOS/Bridge/Generated`, and rebuilds the local `xcframework` under `Vendor/TrixCoreFFI.xcframework`.
 - Linked devices currently store only transport key material locally. They can authenticate once approved, but account-management actions that require the shared account-root key remain disabled on-device.
 - Device approval now accepts an optional `transfer_bundle_b64`, and the server exposes `GET /v0/devices/{device_id}/transfer-bundle`. The current iOS bridge still sends `nil` there until transfer-bundle generation/decryption is wired through `trix-core`.
-- The app now stores `trix-core` state under `Application Support/TrixiOS/CoreState/<account_id>/<device_id>/`, including `mls/`, `history-store.json`, and `sync-state.json`.
+- The app now stores `trix-core` state under `Application Support/TrixiOS/CoreState/<account_id>/<device_id>/`, including `mls/`, `history-store.sqlite`, and `sync-state.sqlite`.
+- Existing installs that still point at legacy `history-store.json` / `sync-state.json` paths are migrated in place by `trix-core` on first load.
 - Inbox leasing is exposed both as a raw debug worker-style path and as a `trix-core` local-store sync path in the iOS PoC.
 - The messaging screens now serialize debug application payloads through the typed `trix-core` message-body helpers, but `Commit`, `Welcome`, and real MLS ciphertext generation still remain placeholders until the full conversation bridge lands.
 - `main` now exposes projected local timeline APIs in `trix-core`; the iOS app already regenerates those bindings, but it still needs persistent conversation/group state before it can project encrypted application and commit messages locally.
