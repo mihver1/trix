@@ -17,7 +17,8 @@
   - auth refresh
   - history sync
   - shared realtime driver with websocket plus polling fallback
-  - deduped text/unsupported event emission
+  - attachment upload/download helpers
+  - deduped text/file/unsupported event emission
 - `apps/trix-botd`
   - CLI entrypoints: `init`, `run`, `publish-key-packages`, `stdio`
   - versioned IPC namespace: `bot.v1.*`
@@ -99,12 +100,15 @@ Requests:
 - `bot.v1.list_chats`
 - `bot.v1.get_timeline`
 - `bot.v1.send_text`
+- `bot.v1.send_file`
+- `bot.v1.download_file`
 - `bot.v1.publish_key_packages`
 
 Notifications:
 
 - `bot.v1.ready`
 - `bot.v1.text_message`
+- `bot.v1.file_message`
 - `bot.v1.connection_changed`
 - `bot.v1.unsupported_message`
 - `bot.v1.error`
@@ -121,6 +125,16 @@ Minimal notification example:
 {"jsonrpc":"2.0","method":"bot.v1.text_message","params":{"chat_id":"c31a1ca0-2ae5-4cf9-a4ab-0da06a68f0cb","message_id":"63ffed4a-7df7-4f80-a3bc-61f9f3fdf479","server_seq":14,"sender_account_id":"93b2a745-10aa-4e7e-93b5-c2e8423054cc","sender_device_id":"c1b5464d-0a3f-4a54-bbf4-6f624eeb3e32","text":"hello bot","created_at_unix":1742474480}}
 ```
 
+Path-based file send/download over stdio:
+
+```json
+{"jsonrpc":"2.0","id":7,"method":"bot.v1.send_file","params":{"chat_id":"c31a1ca0-2ae5-4cf9-a4ab-0da06a68f0cb","path":"./fixtures/note.txt","mime_type":"text/plain"}}
+```
+
+```json
+{"jsonrpc":"2.0","id":8,"method":"bot.v1.download_file","params":{"chat_id":"c31a1ca0-2ae5-4cf9-a4ab-0da06a68f0cb","message_id":"63ffed4a-7df7-4f80-a3bc-61f9f3fdf479","output_path":"./downloads/note.txt"}}
+```
+
 ## Examples
 
 Repo-local examples live under `examples/bots/`:
@@ -129,11 +143,13 @@ Repo-local examples live under `examples/bots/`:
 - `go/trixbot/client.go` and `go/cmd/echo-bot/main.go`
 - `crates/trix-bot/examples/echo_bot.rs`
 
+The example bots now save incoming attachments under `state_dir/downloads/` and acknowledge them with a text reply.
+
 ## Scope
 
 `v1` intentionally excludes:
 
 - multi-device bot accounts
-- attachments, reactions, receipts, and admin control flows in the event surface
+- reactions, receipts, and admin control flows in the event surface
 - webhook-only or server-side bot execution
 - automatic key-package low-watermark replenishment

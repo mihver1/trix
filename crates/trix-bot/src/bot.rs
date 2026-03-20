@@ -8,11 +8,12 @@ use tokio::{
     time::{Duration, Instant, sleep},
 };
 use trix_core::{
-    CreateAccountParams, LocalChatListItem, LocalHistoryStore, LocalProjectionKind,
-    LocalTimelineItem, MessageBody, MlsFacade, PublishKeyPackageMaterial, RealtimeConfig,
-    RealtimeDriver, RealtimeEventKind, ServerApiClient, SyncCoordinator, TextMessageBody,
+    AttachmentMessageBody, CreateAccountParams, LocalChatListItem, LocalHistoryStore,
+    LocalProjectionKind, LocalTimelineItem, MessageBody, MlsFacade, PublishKeyPackageMaterial,
+    RealtimeConfig, RealtimeDriver, RealtimeEventKind, ServerApiClient, SyncCoordinator,
+    TextMessageBody, decrypt_attachment_payload, prepare_attachment_upload,
 };
-use trix_types::{ChatId, ContentType, DeviceId};
+use trix_types::{ChatId, ContentType, DeviceId, MessageId};
 use uuid::Uuid;
 
 use crate::{
@@ -62,6 +63,35 @@ pub struct SentTextMessage {
     pub server_seq: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BotAttachmentUpload {
+    pub mime_type: String,
+    pub file_name: Option<String>,
+    pub width_px: Option<u32>,
+    pub height_px: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SentAttachmentMessage {
+    pub chat_id: String,
+    pub message_id: String,
+    pub server_seq: u64,
+    pub blob_id: String,
+    pub plaintext_size_bytes: u64,
+    pub encrypted_size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownloadedAttachment {
+    pub chat_id: String,
+    pub message_id: String,
+    pub blob_id: String,
+    pub mime_type: String,
+    pub file_name: Option<String>,
+    pub size_bytes: u64,
+    pub plaintext: Vec<u8>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectionMode {
@@ -88,6 +118,20 @@ pub enum BotEvent {
         sender_account_id: String,
         sender_device_id: String,
         text: String,
+        created_at_unix: u64,
+    },
+    FileMessage {
+        chat_id: String,
+        message_id: String,
+        server_seq: u64,
+        sender_account_id: String,
+        sender_device_id: String,
+        blob_id: String,
+        mime_type: String,
+        size_bytes: u64,
+        file_name: Option<String>,
+        width_px: Option<u32>,
+        height_px: Option<u32>,
         created_at_unix: u64,
     },
     UnsupportedMessage {
@@ -343,6 +387,108 @@ impl Bot {
         })
     }
 
+    pub async fn send_attachment(
+        &self,
+        chat_id: ChatId,
+        payload: Vec<u8>,
+        attachment: BotAttachmentUpload,
+    ) -> Result<SentAttachmentMessage> {
+        let client = self.inner.reauthenticate().await?;
+        let prepared = prepare_attachment_upload(
+            &payload,
+            attachment.mime_type,
+            attachment.file_name,
+            attachment.width_px,
+            attachment.height_px,
+        )?;
+        let create = client
+            .create_blob_upload(
+                chat_id,
+                prepared.mime_type.clone(),
+                prepared.encrypted_size_bytes,
+                &prepared.encrypted_sha256,
+            )
+            .await?;
+        if create.needs_upload {
+            client
+                .upload_blob(create.blob_id.clone(), &prepared.encrypted_payload)
+                .await?;
+        } else {
+            client.head_blob(create.blob_id.clone()).await?;
+        }
+
+        let mut sync = self.inner.sync.lock().await;
+        let mut store = self.inner.store.lock().await;
+        let facade = self.inner.facade.lock().await;
+        let mut conversation = store
+            .load_or_bootstrap_chat_mls_conversation(chat_id, &facade)?
+            .ok_or_else(|| {
+                anyhow!(
+                    "chat {} has no local MLS state; start the bot first",
+                    chat_id.0
+                )
+            })?;
+        let blob_id = create.blob_id.clone();
+        let body = MessageBody::Attachment(prepared.clone().into_message_body(blob_id.clone()));
+        let outcome = sync
+            .send_message_body(
+                &client,
+                &mut store,
+                &facade,
+                &mut conversation,
+                self.inner.identity.account_id,
+                self.inner.identity.device_id,
+                chat_id,
+                None,
+                &body,
+                None,
+            )
+            .await?;
+        drop(facade);
+        drop(store);
+        drop(sync);
+        self.inner.emit_chat_events(chat_id).await?;
+
+        Ok(SentAttachmentMessage {
+            chat_id: outcome.chat_id.0.to_string(),
+            message_id: outcome.message_id.0.to_string(),
+            server_seq: outcome.server_seq,
+            blob_id,
+            plaintext_size_bytes: prepared.plaintext_size_bytes,
+            encrypted_size_bytes: prepared.encrypted_size_bytes,
+        })
+    }
+
+    pub async fn download_attachment(
+        &self,
+        chat_id: ChatId,
+        message_id: MessageId,
+    ) -> Result<DownloadedAttachment> {
+        let body = self
+            .inner
+            .attachment_body(chat_id, message_id)
+            .await?
+            .ok_or_else(|| {
+                anyhow!(
+                    "message {} is not a locally projected attachment",
+                    message_id.0
+                )
+            })?;
+        let client = self.inner.reauthenticate().await?;
+        let encrypted_payload = client.download_blob(body.blob_id.clone()).await?;
+        let plaintext = decrypt_attachment_payload(&body, &encrypted_payload)?;
+
+        Ok(DownloadedAttachment {
+            chat_id: chat_id.0.to_string(),
+            message_id: message_id.0.to_string(),
+            blob_id: body.blob_id.clone(),
+            mime_type: body.mime_type.clone(),
+            file_name: body.file_name.clone(),
+            size_bytes: body.size_bytes,
+            plaintext,
+        })
+    }
+
     pub async fn publish_key_packages(&self, count: usize) -> Result<usize> {
         let client = self.inner.reauthenticate().await?;
         let facade = self.inner.facade.lock().await;
@@ -482,6 +628,28 @@ impl BotInner {
                 }
             }
 
+            if item.projection_kind == LocalProjectionKind::ApplicationMessage
+                && item.content_type == ContentType::Attachment
+            {
+                if let Some(MessageBody::Attachment(body)) = &item.body {
+                    self.publish_event(BotEvent::FileMessage {
+                        chat_id: chat_id.0.to_string(),
+                        message_id: item.message_id.0.to_string(),
+                        server_seq: item.server_seq,
+                        sender_account_id: item.sender_account_id.0.to_string(),
+                        sender_device_id: item.sender_device_id.0.to_string(),
+                        blob_id: body.blob_id.clone(),
+                        mime_type: body.mime_type.clone(),
+                        size_bytes: body.size_bytes,
+                        file_name: body.file_name.clone(),
+                        width_px: body.width_px,
+                        height_px: body.height_px,
+                        created_at_unix: item.created_at_unix,
+                    });
+                    continue;
+                }
+            }
+
             if item.projection_kind == LocalProjectionKind::ApplicationMessage {
                 self.publish_event(BotEvent::UnsupportedMessage {
                     chat_id: chat_id.0.to_string(),
@@ -499,6 +667,25 @@ impl BotInner {
             state.record_emitted_cursor(chat_id, max_server_seq)?;
         }
         Ok(())
+    }
+
+    async fn attachment_body(
+        &self,
+        chat_id: ChatId,
+        message_id: MessageId,
+    ) -> Result<Option<AttachmentMessageBody>> {
+        let store = self.store.lock().await;
+        let timeline =
+            store.get_local_timeline_items(chat_id, Some(self.identity.account_id), None, None);
+        Ok(timeline.into_iter().find_map(|item| {
+            if item.message_id != message_id {
+                return None;
+            }
+            match item.body {
+                Some(MessageBody::Attachment(body)) => Some(body),
+                _ => None,
+            }
+        }))
     }
 }
 

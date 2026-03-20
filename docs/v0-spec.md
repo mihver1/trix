@@ -90,7 +90,7 @@ This document defines the initial `v0` architecture for a native-first end-to-en
 - Bot traffic uses the same end-to-end encrypted account, device, chat, inbox, and MLS flows as user clients.
 - There are no bot-only backend endpoints, discovery flags, webhook modes, or plaintext message paths.
 - `Rust` bots link against `trix-bot`; `Python` and `Go` integrate through `trix-botd` over `JSON-RPC 2.0` on stdio.
-- Attachments, reactions, receipts, and admin-control automation remain outside the `v1` bot event surface.
+- Attachments are part of the `v1` bot event surface; reactions, receipts, and admin-control automation remain outside it.
 
 ### Backend Binary
 

@@ -84,6 +84,38 @@ class BotClient:
     def send_text(self, chat_id: str, text: str) -> dict[str, Any]:
         return self.request("bot.v1.send_text", {"chat_id": chat_id, "text": text})
 
+    def send_file(
+        self,
+        chat_id: str,
+        path: str,
+        *,
+        mime_type: str | None = None,
+        file_name: str | None = None,
+        width_px: int | None = None,
+        height_px: int | None = None,
+    ) -> dict[str, Any]:
+        return self.request(
+            "bot.v1.send_file",
+            {
+                "chat_id": chat_id,
+                "path": path,
+                "mime_type": mime_type,
+                "file_name": file_name,
+                "width_px": width_px,
+                "height_px": height_px,
+            },
+        )
+
+    def download_file(self, chat_id: str, message_id: str, output_path: str) -> dict[str, Any]:
+        return self.request(
+            "bot.v1.download_file",
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "output_path": output_path,
+            },
+        )
+
     def publish_key_packages(self, count: int = 128) -> dict[str, Any]:
         return self.request("bot.v1.publish_key_packages", {"count": count})
 
