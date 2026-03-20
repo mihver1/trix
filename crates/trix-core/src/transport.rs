@@ -1,14 +1,18 @@
 use base64::{Engine as _, engine::general_purpose};
-use reqwest::{Client, Method, Url};
+use reqwest::{
+    Client, Method, Url,
+    header::{CONTENT_LENGTH, ETAG, HeaderMap},
+};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use thiserror::Error;
 use trix_types::{
     AccountId, AccountKeyPackagesResponse, AccountProfileResponse, AckInboxRequest,
     AckInboxResponse, AppendHistorySyncChunkRequest, AppendHistorySyncChunkResponse,
-    ChatDetailResponse, ChatHistoryResponse, ChatId, ChatListResponse,
-    CompleteHistorySyncJobRequest, CompleteHistorySyncJobResponse, CompleteLinkIntentRequest,
-    CompleteLinkIntentResponse, ControlMessageInput, CreateAccountRequest, CreateAccountResponse,
+    BlobMetadataResponse, BlobUploadStatus, ChatDetailResponse, ChatHistoryResponse, ChatId,
+    ChatListResponse, CompleteHistorySyncJobRequest, CompleteHistorySyncJobResponse,
+    CompleteLinkIntentRequest, CompleteLinkIntentResponse, ControlMessageInput,
+    CreateAccountRequest, CreateAccountResponse, CreateBlobUploadRequest, CreateBlobUploadResponse,
     CreateChatRequest, CreateChatResponse, CreateLinkIntentResponse, CreateMessageRequest,
     CreateMessageResponse, DeviceApprovePayloadResponse, DeviceId, DeviceListResponse,
     DeviceStatus, DeviceTransferBundleResponse, ErrorResponse, HistorySyncChunkListResponse,
@@ -121,6 +125,26 @@ pub struct HistorySyncChunkMaterial {
     pub cursor_json: Option<Value>,
     pub is_final: bool,
     pub uploaded_at_unix: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct BlobMetadataMaterial {
+    pub blob_id: String,
+    pub mime_type: String,
+    pub size_bytes: u64,
+    pub sha256: Vec<u8>,
+    pub upload_status: BlobUploadStatus,
+    pub created_by_device_id: DeviceId,
+}
+
+#[derive(Debug, Clone)]
+pub struct BlobHeadMaterial {
+    pub blob_id: String,
+    pub mime_type: String,
+    pub size_bytes: u64,
+    pub sha256: Vec<u8>,
+    pub upload_status: BlobUploadStatus,
+    pub etag: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -657,6 +681,88 @@ impl ServerApiClient {
         .await
     }
 
+    pub async fn create_blob_upload(
+        &self,
+        chat_id: ChatId,
+        mime_type: impl Into<String>,
+        size_bytes: u64,
+        sha256: &[u8],
+    ) -> Result<CreateBlobUploadResponse, ServerApiError> {
+        self.send_json(self.request(Method::POST, "v0/blobs/uploads")?.json(
+            &CreateBlobUploadRequest {
+                chat_id,
+                mime_type: mime_type.into(),
+                size_bytes,
+                sha256_b64: encode_b64(sha256),
+            },
+        ))
+        .await
+    }
+
+    pub async fn upload_blob(
+        &self,
+        blob_id: impl AsRef<str>,
+        payload: &[u8],
+    ) -> Result<BlobMetadataMaterial, ServerApiError> {
+        let response: BlobMetadataResponse = self
+            .send_json(
+                self.request(Method::PUT, &format!("v0/blobs/{}", blob_id.as_ref()))?
+                    .body(payload.to_vec()),
+            )
+            .await?;
+        decode_blob_metadata(response)
+    }
+
+    pub async fn head_blob(
+        &self,
+        blob_id: impl AsRef<str>,
+    ) -> Result<BlobHeadMaterial, ServerApiError> {
+        let response = self
+            .request(Method::HEAD, &format!("v0/blobs/{}", blob_id.as_ref()))?
+            .send()
+            .await?;
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body = response.bytes().await?;
+
+        if !status.is_success() {
+            return Err(api_error_from_response(status.as_u16(), &body));
+        }
+
+        Ok(BlobHeadMaterial {
+            blob_id: header_string(&headers, "x-trix-blob-id")?,
+            mime_type: header_string(&headers, "x-trix-blob-mime-type")?,
+            size_bytes: header_u64(&headers, CONTENT_LENGTH, "content length")?,
+            sha256: decode_b64_field(
+                "x-trix-blob-sha256-b64",
+                &header_string(&headers, "x-trix-blob-sha256-b64")?,
+            )?,
+            upload_status: parse_blob_upload_status(&header_string(
+                &headers,
+                "x-trix-blob-upload-status",
+            )?)?,
+            etag: headers
+                .get(ETAG)
+                .and_then(|value| value.to_str().ok())
+                .map(ToOwned::to_owned),
+        })
+    }
+
+    pub async fn download_blob(&self, blob_id: impl AsRef<str>) -> Result<Vec<u8>, ServerApiError> {
+        let response = self
+            .request(Method::GET, &format!("v0/blobs/{}", blob_id.as_ref()))?
+            .send()
+            .await?;
+        let status = response.status();
+        let body = response.bytes().await?;
+
+        if status.is_success() {
+            Ok(body.to_vec())
+        } else {
+            Err(api_error_from_response(status.as_u16(), &body))
+        }
+    }
+
     fn request(
         &self,
         method: Method,
@@ -777,6 +883,67 @@ fn decode_history_sync_chunk(
         is_final: chunk.is_final,
         uploaded_at_unix: chunk.uploaded_at_unix,
     })
+}
+
+fn decode_blob_metadata(
+    metadata: BlobMetadataResponse,
+) -> Result<BlobMetadataMaterial, ServerApiError> {
+    Ok(BlobMetadataMaterial {
+        blob_id: metadata.blob_id,
+        mime_type: metadata.mime_type,
+        size_bytes: metadata.size_bytes,
+        sha256: decode_b64_field("sha256_b64", &metadata.sha256_b64)?,
+        upload_status: metadata.upload_status,
+        created_by_device_id: metadata.created_by_device_id,
+    })
+}
+
+fn parse_blob_upload_status(value: &str) -> Result<BlobUploadStatus, ServerApiError> {
+    match value {
+        "pending_upload" => Ok(BlobUploadStatus::PendingUpload),
+        "available" => Ok(BlobUploadStatus::Available),
+        other => Err(ServerApiError::InvalidResponse(format!(
+            "unknown blob upload status `{other}`"
+        ))),
+    }
+}
+
+fn header_string(
+    headers: &HeaderMap,
+    name: impl reqwest::header::AsHeaderName,
+) -> Result<String, ServerApiError> {
+    headers
+        .get(name)
+        .ok_or_else(|| ServerApiError::InvalidResponse("missing response header".to_owned()))?
+        .to_str()
+        .map(ToOwned::to_owned)
+        .map_err(|err| ServerApiError::InvalidResponse(format!("invalid header value: {err}")))
+}
+
+fn header_u64(
+    headers: &HeaderMap,
+    name: impl reqwest::header::AsHeaderName,
+    field: &'static str,
+) -> Result<u64, ServerApiError> {
+    header_string(headers, name)?
+        .parse::<u64>()
+        .map_err(|err| ServerApiError::InvalidResponse(format!("invalid {field}: {err}")))
+}
+
+fn api_error_from_response(status: u16, body: &[u8]) -> ServerApiError {
+    if let Ok(api_error) = serde_json::from_slice::<ErrorResponse>(body) {
+        ServerApiError::Api {
+            status,
+            code: api_error.code,
+            message: api_error.message,
+        }
+    } else {
+        ServerApiError::Api {
+            status,
+            code: "http_error".to_owned(),
+            message: String::from_utf8_lossy(body).trim().to_owned(),
+        }
+    }
 }
 
 #[cfg(test)]
