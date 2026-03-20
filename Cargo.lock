@@ -1999,6 +1999,7 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a52c927ddb9940acb96d51aebd54b8b9c601c7119e6609622fb3f2cbe16abe3"
 dependencies = [
+ "base64",
  "log",
  "openmls_traits",
  "serde",
@@ -3503,6 +3504,7 @@ dependencies = [
  "ed25519-dalek",
  "openmls",
  "openmls_basic_credential",
+ "openmls_memory_storage",
  "openmls_rust_crypto",
  "openmls_traits",
  "rand 0.9.2",

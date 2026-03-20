@@ -23,3 +23,14 @@ impl AttachmentStore {
         Self { root: root.into() }
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct MlsStateStore {
+    pub root: PathBuf,
+}
+
+impl MlsStateStore {
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+}
