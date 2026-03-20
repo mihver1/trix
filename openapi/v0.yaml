@@ -254,6 +254,10 @@ paths:
         - bearerAuth: []
       parameters:
         - in: query
+          name: role
+          schema:
+            $ref: '#/components/schemas/HistorySyncJobRole'
+        - in: query
           name: status
           schema:
             $ref: '#/components/schemas/HistorySyncJobStatus'
@@ -271,6 +275,47 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HistorySyncJobListResponse'
+  /v0/history-sync/jobs/{job_id}/chunks:
+    get:
+      operationId: listHistorySyncChunks
+      tags: [history_sync]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: History sync chunks visible to the authenticated target device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistorySyncChunkListResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: appendHistorySyncChunk
+      tags: [history_sync]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppendHistorySyncChunkRequest'
+      responses:
+        '200':
+          description: Encrypted history sync chunk stored for the job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppendHistorySyncChunkResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v0/history-sync/jobs/{job_id}/complete:
     post:
       operationId: completeHistorySyncJob
@@ -781,6 +826,9 @@ components:
     HistorySyncJobType:
       type: string
       enum: [initial_sync, chat_backfill, device_rekey]
+    HistorySyncJobRole:
+      type: string
+      enum: [source, target]
     HistorySyncJobStatus:
       type: string
       enum: [pending, running, completed, failed, canceled]
@@ -1118,6 +1166,65 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/HistorySyncJobSummary'
+    AppendHistorySyncChunkRequest:
+      type: object
+      required: [sequence_no, payload_b64, is_final]
+      properties:
+        sequence_no:
+          type: integer
+          format: int64
+          minimum: 0
+        payload_b64:
+          type: string
+        cursor_json:
+          type: object
+          nullable: true
+        is_final:
+          type: boolean
+    AppendHistorySyncChunkResponse:
+      type: object
+      required: [job_id, chunk_id, job_status]
+      properties:
+        job_id:
+          $ref: '#/components/schemas/Uuid'
+        chunk_id:
+          type: integer
+          format: int64
+        job_status:
+          $ref: '#/components/schemas/HistorySyncJobStatus'
+    HistorySyncChunkSummary:
+      type: object
+      required: [chunk_id, sequence_no, payload_b64, is_final, uploaded_at_unix]
+      properties:
+        chunk_id:
+          type: integer
+          format: int64
+        sequence_no:
+          type: integer
+          format: int64
+          minimum: 0
+        payload_b64:
+          type: string
+        cursor_json:
+          type: object
+          nullable: true
+        is_final:
+          type: boolean
+        uploaded_at_unix:
+          type: integer
+          format: int64
+    HistorySyncChunkListResponse:
+      type: object
+      required: [job_id, role, chunks]
+      properties:
+        job_id:
+          $ref: '#/components/schemas/Uuid'
+        role:
+          $ref: '#/components/schemas/HistorySyncJobRole'
+        chunks:
+          type: array
+          items:
+            $ref: '#/components/schemas/HistorySyncChunkSummary'
     CompleteHistorySyncJobRequest:
       type: object
       properties:

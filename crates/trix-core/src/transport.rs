@@ -1,0 +1,794 @@
+use base64::{Engine as _, engine::general_purpose};
+use reqwest::{Client, Method, Url};
+use serde::{Serialize, de::DeserializeOwned};
+use serde_json::Value;
+use thiserror::Error;
+use trix_types::{
+    AccountId, AccountKeyPackagesResponse, AccountProfileResponse, AckInboxRequest,
+    AckInboxResponse, AppendHistorySyncChunkRequest, AppendHistorySyncChunkResponse,
+    ChatDetailResponse, ChatHistoryResponse, ChatId, ChatListResponse,
+    CompleteHistorySyncJobRequest, CompleteHistorySyncJobResponse, CompleteLinkIntentRequest,
+    CompleteLinkIntentResponse, ControlMessageInput, CreateAccountRequest, CreateAccountResponse,
+    CreateChatRequest, CreateChatResponse, CreateLinkIntentResponse, CreateMessageRequest,
+    CreateMessageResponse, DeviceApprovePayloadResponse, DeviceId, DeviceListResponse,
+    DeviceStatus, DeviceTransferBundleResponse, ErrorResponse, HistorySyncChunkListResponse,
+    HistorySyncChunkSummary, HistorySyncJobListResponse, HistorySyncJobRole, HistorySyncJobStatus,
+    LeaseInboxRequest, LeaseInboxResponse, MessageId, ModifyChatDevicesRequest,
+    ModifyChatDevicesResponse, ModifyChatMembersRequest, ModifyChatMembersResponse,
+    PublishKeyPackageItem, PublishKeyPackagesRequest, PublishKeyPackagesResponse,
+    ReserveKeyPackagesRequest, RevokeDeviceRequest, RevokeDeviceResponse,
+};
+
+#[derive(Debug, Error)]
+pub enum ServerApiError {
+    #[error("invalid base url: {0}")]
+    InvalidBaseUrl(String),
+    #[error("request failed: {0}")]
+    Request(#[from] reqwest::Error),
+    #[error("invalid response payload: {0}")]
+    InvalidResponse(String),
+    #[error("invalid base64 in field `{field}`: {source}")]
+    InvalidBase64 {
+        field: &'static str,
+        #[source]
+        source: base64::DecodeError,
+    },
+    #[error("api error {status}: {code}: {message}")]
+    Api {
+        status: u16,
+        code: String,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateAccountParams {
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
+    pub device_display_name: String,
+    pub platform: String,
+    pub credential_identity: Vec<u8>,
+    pub account_root_pubkey: Vec<u8>,
+    pub account_root_signature: Vec<u8>,
+    pub transport_pubkey: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PublishKeyPackageMaterial {
+    pub cipher_suite: String,
+    pub key_package: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReservedKeyPackageMaterial {
+    pub key_package_id: String,
+    pub device_id: DeviceId,
+    pub cipher_suite: String,
+    pub key_package: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthChallengeMaterial {
+    pub challenge_id: String,
+    pub challenge: Vec<u8>,
+    pub expires_at_unix: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompleteLinkIntentParams {
+    pub link_token: String,
+    pub device_display_name: String,
+    pub platform: String,
+    pub credential_identity: Vec<u8>,
+    pub transport_pubkey: Vec<u8>,
+    pub key_packages: Vec<PublishKeyPackageMaterial>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompletedLinkIntentMaterial {
+    pub account_id: AccountId,
+    pub pending_device_id: DeviceId,
+    pub device_status: DeviceStatus,
+    pub bootstrap_payload: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeviceApprovePayloadMaterial {
+    pub account_id: AccountId,
+    pub device_id: DeviceId,
+    pub device_display_name: String,
+    pub platform: String,
+    pub device_status: DeviceStatus,
+    pub credential_identity: Vec<u8>,
+    pub transport_pubkey: Vec<u8>,
+    pub bootstrap_payload: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeviceTransferBundleMaterial {
+    pub account_id: AccountId,
+    pub device_id: DeviceId,
+    pub transfer_bundle: Vec<u8>,
+    pub uploaded_at_unix: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct HistorySyncChunkMaterial {
+    pub chunk_id: u64,
+    pub sequence_no: u64,
+    pub payload: Vec<u8>,
+    pub cursor_json: Option<Value>,
+    pub is_final: bool,
+    pub uploaded_at_unix: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ServerApiClient {
+    base_url: Url,
+    http: Client,
+    access_token: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ListHistorySyncJobsQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    role: Option<HistorySyncJobRole>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<HistorySyncJobStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+struct HistoryQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    after_server_seq: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+struct InboxQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    after_inbox_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<usize>,
+}
+
+impl ServerApiClient {
+    pub fn new(base_url: impl AsRef<str>) -> Result<Self, ServerApiError> {
+        let mut normalized = base_url.as_ref().trim().trim_end_matches('/').to_owned();
+        normalized.push('/');
+        let base_url = Url::parse(&normalized)
+            .map_err(|err| ServerApiError::InvalidBaseUrl(err.to_string()))?;
+        Ok(Self {
+            base_url,
+            http: Client::new(),
+            access_token: None,
+        })
+    }
+
+    pub fn with_access_token(mut self, access_token: impl Into<String>) -> Self {
+        self.access_token = Some(access_token.into());
+        self
+    }
+
+    pub fn set_access_token(&mut self, access_token: impl Into<String>) {
+        self.access_token = Some(access_token.into());
+    }
+
+    pub fn clear_access_token(&mut self) {
+        self.access_token = None;
+    }
+
+    pub fn access_token(&self) -> Option<&str> {
+        self.access_token.as_deref()
+    }
+
+    pub async fn create_account(
+        &self,
+        params: CreateAccountParams,
+    ) -> Result<CreateAccountResponse, ServerApiError> {
+        self.send_json(
+            self.request(Method::POST, "v0/accounts")?
+                .json(&CreateAccountRequest {
+                    handle: params.handle,
+                    profile_name: params.profile_name,
+                    profile_bio: params.profile_bio,
+                    device_display_name: params.device_display_name,
+                    platform: params.platform,
+                    credential_identity_b64: encode_b64(&params.credential_identity),
+                    account_root_pubkey_b64: encode_b64(&params.account_root_pubkey),
+                    account_root_signature_b64: encode_b64(&params.account_root_signature),
+                    transport_pubkey_b64: encode_b64(&params.transport_pubkey),
+                }),
+        )
+        .await
+    }
+
+    pub async fn create_auth_challenge(
+        &self,
+        device_id: DeviceId,
+    ) -> Result<AuthChallengeMaterial, ServerApiError> {
+        let response: trix_types::AuthChallengeResponse = self
+            .send_json(
+                self.request(Method::POST, "v0/auth/challenge")?
+                    .json(&trix_types::AuthChallengeRequest { device_id }),
+            )
+            .await?;
+
+        Ok(AuthChallengeMaterial {
+            challenge_id: response.challenge_id,
+            challenge: decode_b64_field("challenge_b64", &response.challenge_b64)?,
+            expires_at_unix: response.expires_at_unix,
+        })
+    }
+
+    pub async fn create_auth_session(
+        &self,
+        device_id: DeviceId,
+        challenge_id: impl Into<String>,
+        signature: &[u8],
+    ) -> Result<trix_types::AuthSessionResponse, ServerApiError> {
+        self.send_json(self.request(Method::POST, "v0/auth/session")?.json(
+            &trix_types::AuthSessionRequest {
+                device_id,
+                challenge_id: challenge_id.into(),
+                signature_b64: encode_b64(signature),
+            },
+        ))
+        .await
+    }
+
+    pub async fn get_me(&self) -> Result<AccountProfileResponse, ServerApiError> {
+        self.send_json(self.request(Method::GET, "v0/accounts/me")?)
+            .await
+    }
+
+    pub async fn list_devices(&self) -> Result<DeviceListResponse, ServerApiError> {
+        self.send_json(self.request(Method::GET, "v0/devices")?)
+            .await
+    }
+
+    pub async fn create_link_intent(&self) -> Result<CreateLinkIntentResponse, ServerApiError> {
+        self.send_json(self.request(Method::POST, "v0/devices/link-intents")?)
+            .await
+    }
+
+    pub async fn complete_link_intent(
+        &self,
+        link_intent_id: impl AsRef<str>,
+        params: CompleteLinkIntentParams,
+    ) -> Result<CompletedLinkIntentMaterial, ServerApiError> {
+        let response: CompleteLinkIntentResponse = self
+            .send_json(
+                self.request(
+                    Method::POST,
+                    &format!(
+                        "v0/devices/link-intents/{}/complete",
+                        link_intent_id.as_ref()
+                    ),
+                )?
+                .json(&CompleteLinkIntentRequest {
+                    link_token: params.link_token,
+                    device_display_name: params.device_display_name,
+                    platform: params.platform,
+                    credential_identity_b64: encode_b64(&params.credential_identity),
+                    transport_pubkey_b64: encode_b64(&params.transport_pubkey),
+                    key_packages: params
+                        .key_packages
+                        .into_iter()
+                        .map(|package| PublishKeyPackageItem {
+                            cipher_suite: package.cipher_suite,
+                            key_package_b64: encode_b64(&package.key_package),
+                        })
+                        .collect(),
+                }),
+            )
+            .await?;
+
+        Ok(CompletedLinkIntentMaterial {
+            account_id: response.account_id,
+            pending_device_id: response.pending_device_id,
+            device_status: response.device_status,
+            bootstrap_payload: decode_b64_field(
+                "bootstrap_payload_b64",
+                &response.bootstrap_payload_b64,
+            )?,
+        })
+    }
+
+    pub async fn get_device_approve_payload(
+        &self,
+        device_id: DeviceId,
+    ) -> Result<DeviceApprovePayloadMaterial, ServerApiError> {
+        let response: DeviceApprovePayloadResponse = self
+            .send_json(self.request(
+                Method::GET,
+                &format!("v0/devices/{}/approve-payload", device_id.0),
+            )?)
+            .await?;
+
+        Ok(DeviceApprovePayloadMaterial {
+            account_id: response.account_id,
+            device_id: response.device_id,
+            device_display_name: response.device_display_name,
+            platform: response.platform,
+            device_status: response.device_status,
+            credential_identity: decode_b64_field(
+                "credential_identity_b64",
+                &response.credential_identity_b64,
+            )?,
+            transport_pubkey: decode_b64_field(
+                "transport_pubkey_b64",
+                &response.transport_pubkey_b64,
+            )?,
+            bootstrap_payload: decode_b64_field(
+                "bootstrap_payload_b64",
+                &response.bootstrap_payload_b64,
+            )?,
+        })
+    }
+
+    pub async fn approve_device(
+        &self,
+        device_id: DeviceId,
+        account_root_signature: &[u8],
+        transfer_bundle: Option<&[u8]>,
+    ) -> Result<trix_types::ApproveDeviceResponse, ServerApiError> {
+        self.send_json(
+            self.request(Method::POST, &format!("v0/devices/{}/approve", device_id.0))?
+                .json(&trix_types::ApproveDeviceRequest {
+                    account_root_signature_b64: encode_b64(account_root_signature),
+                    transfer_bundle_b64: transfer_bundle.map(encode_b64),
+                }),
+        )
+        .await
+    }
+
+    pub async fn get_device_transfer_bundle(
+        &self,
+        device_id: DeviceId,
+    ) -> Result<DeviceTransferBundleMaterial, ServerApiError> {
+        let response: DeviceTransferBundleResponse = self
+            .send_json(self.request(
+                Method::GET,
+                &format!("v0/devices/{}/transfer-bundle", device_id.0),
+            )?)
+            .await?;
+
+        Ok(DeviceTransferBundleMaterial {
+            account_id: response.account_id,
+            device_id: response.device_id,
+            transfer_bundle: decode_b64_field(
+                "transfer_bundle_b64",
+                &response.transfer_bundle_b64,
+            )?,
+            uploaded_at_unix: response.uploaded_at_unix,
+        })
+    }
+
+    pub async fn revoke_device(
+        &self,
+        device_id: DeviceId,
+        reason: impl Into<String>,
+        account_root_signature: &[u8],
+    ) -> Result<RevokeDeviceResponse, ServerApiError> {
+        self.send_json(
+            self.request(Method::POST, &format!("v0/devices/{}/revoke", device_id.0))?
+                .json(&RevokeDeviceRequest {
+                    reason: reason.into(),
+                    account_root_signature_b64: encode_b64(account_root_signature),
+                }),
+        )
+        .await
+    }
+
+    pub async fn publish_key_packages(
+        &self,
+        packages: Vec<PublishKeyPackageMaterial>,
+    ) -> Result<PublishKeyPackagesResponse, ServerApiError> {
+        self.send_json(
+            self.request(Method::POST, "v0/key-packages:publish")?.json(
+                &PublishKeyPackagesRequest {
+                    packages: packages
+                        .into_iter()
+                        .map(|package| PublishKeyPackageItem {
+                            cipher_suite: package.cipher_suite,
+                            key_package_b64: encode_b64(&package.key_package),
+                        })
+                        .collect(),
+                },
+            ),
+        )
+        .await
+    }
+
+    pub async fn reserve_key_packages(
+        &self,
+        account_id: AccountId,
+        device_ids: Vec<DeviceId>,
+    ) -> Result<Vec<ReservedKeyPackageMaterial>, ServerApiError> {
+        let response: AccountKeyPackagesResponse = self
+            .send_json(self.request(Method::POST, "v0/key-packages:reserve")?.json(
+                &ReserveKeyPackagesRequest {
+                    account_id,
+                    device_ids,
+                },
+            ))
+            .await?;
+
+        response
+            .packages
+            .into_iter()
+            .map(|package| {
+                Ok(ReservedKeyPackageMaterial {
+                    key_package_id: package.key_package_id,
+                    device_id: package.device_id,
+                    cipher_suite: package.cipher_suite,
+                    key_package: decode_b64_field("key_package_b64", &package.key_package_b64)?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn get_account_key_packages(
+        &self,
+        account_id: AccountId,
+    ) -> Result<Vec<ReservedKeyPackageMaterial>, ServerApiError> {
+        let response: AccountKeyPackagesResponse = self
+            .send_json(self.request(
+                Method::GET,
+                &format!("v0/accounts/{}/key-packages", account_id.0),
+            )?)
+            .await?;
+
+        response
+            .packages
+            .into_iter()
+            .map(|package| {
+                Ok(ReservedKeyPackageMaterial {
+                    key_package_id: package.key_package_id,
+                    device_id: package.device_id,
+                    cipher_suite: package.cipher_suite,
+                    key_package: decode_b64_field("key_package_b64", &package.key_package_b64)?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn list_history_sync_jobs(
+        &self,
+        role: Option<HistorySyncJobRole>,
+        status: Option<HistorySyncJobStatus>,
+        limit: Option<usize>,
+    ) -> Result<HistorySyncJobListResponse, ServerApiError> {
+        self.send_json(self.request(Method::GET, "v0/history-sync/jobs")?.query(
+            &ListHistorySyncJobsQuery {
+                role,
+                status,
+                limit,
+            },
+        ))
+        .await
+    }
+
+    pub async fn append_history_sync_chunk(
+        &self,
+        job_id: impl AsRef<str>,
+        sequence_no: u64,
+        payload: &[u8],
+        cursor_json: Option<Value>,
+        is_final: bool,
+    ) -> Result<AppendHistorySyncChunkResponse, ServerApiError> {
+        self.send_json(
+            self.request(
+                Method::POST,
+                &format!("v0/history-sync/jobs/{}/chunks", job_id.as_ref()),
+            )?
+            .json(&AppendHistorySyncChunkRequest {
+                sequence_no,
+                payload_b64: encode_b64(payload),
+                cursor_json,
+                is_final,
+            }),
+        )
+        .await
+    }
+
+    pub async fn get_history_sync_chunks(
+        &self,
+        job_id: impl AsRef<str>,
+    ) -> Result<Vec<HistorySyncChunkMaterial>, ServerApiError> {
+        let response: HistorySyncChunkListResponse = self
+            .send_json(self.request(
+                Method::GET,
+                &format!("v0/history-sync/jobs/{}/chunks", job_id.as_ref()),
+            )?)
+            .await?;
+
+        response
+            .chunks
+            .into_iter()
+            .map(decode_history_sync_chunk)
+            .collect()
+    }
+
+    pub async fn complete_history_sync_job(
+        &self,
+        job_id: impl AsRef<str>,
+        cursor_json: Option<Value>,
+    ) -> Result<CompleteHistorySyncJobResponse, ServerApiError> {
+        self.send_json(
+            self.request(
+                Method::POST,
+                &format!("v0/history-sync/jobs/{}/complete", job_id.as_ref()),
+            )?
+            .json(&CompleteHistorySyncJobRequest { cursor_json }),
+        )
+        .await
+    }
+
+    pub async fn list_chats(&self) -> Result<ChatListResponse, ServerApiError> {
+        self.send_json(self.request(Method::GET, "v0/chats")?).await
+    }
+
+    pub async fn get_chat(&self, chat_id: ChatId) -> Result<ChatDetailResponse, ServerApiError> {
+        self.send_json(self.request(Method::GET, &format!("v0/chats/{}", chat_id.0))?)
+            .await
+    }
+
+    pub async fn create_chat(
+        &self,
+        request: CreateChatRequest,
+    ) -> Result<CreateChatResponse, ServerApiError> {
+        self.send_json(self.request(Method::POST, "v0/chats")?.json(&request))
+            .await
+    }
+
+    pub async fn create_message(
+        &self,
+        chat_id: ChatId,
+        request: CreateMessageRequest,
+    ) -> Result<CreateMessageResponse, ServerApiError> {
+        self.send_json(
+            self.request(Method::POST, &format!("v0/chats/{}/messages", chat_id.0))?
+                .json(&request),
+        )
+        .await
+    }
+
+    pub async fn add_chat_members(
+        &self,
+        chat_id: ChatId,
+        request: ModifyChatMembersRequest,
+    ) -> Result<ModifyChatMembersResponse, ServerApiError> {
+        self.send_json(
+            self.request(Method::POST, &format!("v0/chats/{}/members:add", chat_id.0))?
+                .json(&request),
+        )
+        .await
+    }
+
+    pub async fn remove_chat_members(
+        &self,
+        chat_id: ChatId,
+        request: ModifyChatMembersRequest,
+    ) -> Result<ModifyChatMembersResponse, ServerApiError> {
+        self.send_json(
+            self.request(
+                Method::POST,
+                &format!("v0/chats/{}/members:remove", chat_id.0),
+            )?
+            .json(&request),
+        )
+        .await
+    }
+
+    pub async fn add_chat_devices(
+        &self,
+        chat_id: ChatId,
+        request: ModifyChatDevicesRequest,
+    ) -> Result<ModifyChatDevicesResponse, ServerApiError> {
+        self.send_json(
+            self.request(Method::POST, &format!("v0/chats/{}/devices:add", chat_id.0))?
+                .json(&request),
+        )
+        .await
+    }
+
+    pub async fn remove_chat_devices(
+        &self,
+        chat_id: ChatId,
+        request: ModifyChatDevicesRequest,
+    ) -> Result<ModifyChatDevicesResponse, ServerApiError> {
+        self.send_json(
+            self.request(
+                Method::POST,
+                &format!("v0/chats/{}/devices:remove", chat_id.0),
+            )?
+            .json(&request),
+        )
+        .await
+    }
+
+    pub async fn get_chat_history(
+        &self,
+        chat_id: ChatId,
+        after_server_seq: Option<u64>,
+        limit: Option<usize>,
+    ) -> Result<ChatHistoryResponse, ServerApiError> {
+        self.send_json(
+            self.request(Method::GET, &format!("v0/chats/{}/history", chat_id.0))?
+                .query(&HistoryQuery {
+                    after_server_seq,
+                    limit,
+                }),
+        )
+        .await
+    }
+
+    pub async fn get_inbox(
+        &self,
+        after_inbox_id: Option<u64>,
+        limit: Option<usize>,
+    ) -> Result<trix_types::InboxResponse, ServerApiError> {
+        self.send_json(self.request(Method::GET, "v0/inbox")?.query(&InboxQuery {
+            after_inbox_id,
+            limit,
+        }))
+        .await
+    }
+
+    pub async fn lease_inbox(
+        &self,
+        request: LeaseInboxRequest,
+    ) -> Result<LeaseInboxResponse, ServerApiError> {
+        self.send_json(self.request(Method::POST, "v0/inbox/lease")?.json(&request))
+            .await
+    }
+
+    pub async fn ack_inbox(&self, inbox_ids: Vec<u64>) -> Result<AckInboxResponse, ServerApiError> {
+        self.send_json(
+            self.request(Method::POST, "v0/inbox/ack")?
+                .json(&AckInboxRequest { inbox_ids }),
+        )
+        .await
+    }
+
+    fn request(
+        &self,
+        method: Method,
+        path: &str,
+    ) -> Result<reqwest::RequestBuilder, ServerApiError> {
+        let path = path.trim_start_matches('/');
+        let url = self
+            .base_url
+            .join(path)
+            .map_err(|err| ServerApiError::InvalidBaseUrl(err.to_string()))?;
+        let builder = self.http.request(method, url);
+        Ok(match &self.access_token {
+            Some(token) => builder.bearer_auth(token),
+            None => builder,
+        })
+    }
+
+    async fn send_json<T>(&self, request: reqwest::RequestBuilder) -> Result<T, ServerApiError>
+    where
+        T: DeserializeOwned,
+    {
+        let response = request.send().await?;
+        let status = response.status();
+        let body = response.bytes().await?;
+
+        if status.is_success() {
+            serde_json::from_slice(&body).map_err(|err| {
+                ServerApiError::InvalidResponse(format!("failed to decode success payload: {err}"))
+            })
+        } else if let Ok(api_error) = serde_json::from_slice::<ErrorResponse>(&body) {
+            Err(ServerApiError::Api {
+                status: status.as_u16(),
+                code: api_error.code,
+                message: api_error.message,
+            })
+        } else {
+            Err(ServerApiError::Api {
+                status: status.as_u16(),
+                code: "http_error".to_owned(),
+                message: String::from_utf8_lossy(&body).trim().to_owned(),
+            })
+        }
+    }
+}
+
+pub fn make_control_message_input(
+    message_id: MessageId,
+    ciphertext: &[u8],
+    aad_json: Option<Value>,
+) -> ControlMessageInput {
+    ControlMessageInput {
+        message_id,
+        ciphertext_b64: encode_b64(ciphertext),
+        aad_json,
+    }
+}
+
+pub fn make_create_message_request(
+    message_id: MessageId,
+    epoch: u64,
+    message_kind: trix_types::MessageKind,
+    content_type: trix_types::ContentType,
+    ciphertext: &[u8],
+    aad_json: Option<Value>,
+) -> CreateMessageRequest {
+    CreateMessageRequest {
+        message_id,
+        epoch,
+        message_kind,
+        content_type,
+        ciphertext_b64: encode_b64(ciphertext),
+        aad_json,
+    }
+}
+
+pub fn make_publish_key_package_item(
+    cipher_suite: impl Into<String>,
+    key_package: &[u8],
+) -> PublishKeyPackageItem {
+    PublishKeyPackageItem {
+        cipher_suite: cipher_suite.into(),
+        key_package_b64: encode_b64(key_package),
+    }
+}
+
+pub fn encode_b64(bytes: &[u8]) -> String {
+    general_purpose::STANDARD.encode(bytes)
+}
+
+pub fn decode_b64_field(field: &'static str, value: &str) -> Result<Vec<u8>, ServerApiError> {
+    for engine in [
+        &general_purpose::STANDARD,
+        &general_purpose::STANDARD_NO_PAD,
+        &general_purpose::URL_SAFE,
+        &general_purpose::URL_SAFE_NO_PAD,
+    ] {
+        if let Ok(bytes) = engine.decode(value) {
+            return Ok(bytes);
+        }
+    }
+
+    Err(ServerApiError::InvalidBase64 {
+        field,
+        source: general_purpose::STANDARD
+            .decode(value)
+            .expect_err("base64 decode error must exist for invalid payload"),
+    })
+}
+
+fn decode_history_sync_chunk(
+    chunk: HistorySyncChunkSummary,
+) -> Result<HistorySyncChunkMaterial, ServerApiError> {
+    Ok(HistorySyncChunkMaterial {
+        chunk_id: chunk.chunk_id,
+        sequence_no: chunk.sequence_no,
+        payload: decode_b64_field("payload_b64", &chunk.payload_b64)?,
+        cursor_json: chunk.cursor_json,
+        is_final: chunk.is_final,
+        uploaded_at_unix: chunk.uploaded_at_unix,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_b64_field, encode_b64};
+
+    #[test]
+    fn base64_helpers_roundtrip() {
+        let payload = b"trix-transport";
+        let encoded = encode_b64(payload);
+        let decoded = decode_b64_field("payload", &encoded).expect("decode succeeds");
+
+        assert_eq!(decoded, payload);
+    }
+}
