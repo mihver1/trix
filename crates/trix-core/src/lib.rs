@@ -1,6 +1,7 @@
 pub mod config;
 pub mod crypto;
 pub mod ffi;
+pub mod message;
 pub mod storage;
 pub mod sync;
 pub mod transport;
@@ -13,8 +14,13 @@ pub use crypto::{
     MlsFacade, MlsMemberIdentity, MlsProcessResult,
 };
 pub use ffi::*;
+pub use message::{
+    AttachmentMessageBody, ChatEventMessageBody, MessageBody, ReactionAction, ReactionMessageBody,
+    ReceiptMessageBody, ReceiptType, TextMessageBody,
+};
 pub use storage::{
-    AttachmentStore, LocalHistoryStore, LocalStoreApplyReport, MlsStateStore, SyncStateStore,
+    AttachmentStore, LocalHistoryStore, LocalProjectedMessage, LocalProjectionApplyReport,
+    LocalProjectionKind, LocalStoreApplyReport, MlsStateStore, SyncStateStore,
 };
 pub use sync::{
     CoreEvent, CoreEventSink, InboxApplyOutcome, SyncChatCursor, SyncCoordinator, SyncStateSnapshot,

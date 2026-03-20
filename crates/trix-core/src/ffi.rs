@@ -10,9 +10,11 @@ use crate::{
     AccountRootMaterial, AuthChallengeMaterial, CompleteLinkIntentParams,
     CompletedLinkIntentMaterial, CreateAccountParams, DeviceApprovePayloadMaterial,
     DeviceKeyMaterial, DeviceTransferBundleMaterial, HistorySyncChunkMaterial, InboxApplyOutcome,
-    LocalHistoryStore, LocalStoreApplyReport, MlsCommitBundle, MlsFacade, MlsMemberIdentity,
-    MlsProcessResult, PublishKeyPackageMaterial, ReservedKeyPackageMaterial, ServerApiClient,
-    SyncChatCursor, SyncCoordinator, SyncStateSnapshot,
+    LocalHistoryStore, LocalProjectedMessage, LocalProjectionApplyReport, LocalProjectionKind,
+    LocalStoreApplyReport, MessageBody, MlsCommitBundle, MlsFacade, MlsMemberIdentity,
+    MlsProcessResult, PublishKeyPackageMaterial, ReactionAction, ReceiptType,
+    ReservedKeyPackageMaterial, ServerApiClient, SyncChatCursor, SyncCoordinator,
+    SyncStateSnapshot,
 };
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -464,6 +466,83 @@ pub struct FfiLocalStoreApplyReport {
     pub changed_chat_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum FfiLocalProjectionKind {
+    ApplicationMessage,
+    ProposalQueued,
+    CommitMerged,
+    WelcomeRef,
+    System,
+}
+
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum FfiReactionAction {
+    Add,
+    Remove,
+}
+
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum FfiReceiptType {
+    Delivered,
+    Read,
+}
+
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum FfiMessageBodyKind {
+    Text,
+    Reaction,
+    Receipt,
+    Attachment,
+    ChatEvent,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiMessageBody {
+    pub kind: FfiMessageBodyKind,
+    pub text: Option<String>,
+    pub target_message_id: Option<String>,
+    pub emoji: Option<String>,
+    pub reaction_action: Option<FfiReactionAction>,
+    pub receipt_type: Option<FfiReceiptType>,
+    pub receipt_at_unix: Option<u64>,
+    pub blob_id: Option<String>,
+    pub mime_type: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub sha256: Option<Vec<u8>>,
+    pub file_name: Option<String>,
+    pub width_px: Option<u32>,
+    pub height_px: Option<u32>,
+    pub file_key: Option<Vec<u8>>,
+    pub nonce: Option<Vec<u8>>,
+    pub event_type: Option<String>,
+    pub event_json: Option<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiLocalProjectedMessage {
+    pub server_seq: u64,
+    pub message_id: String,
+    pub sender_account_id: String,
+    pub sender_device_id: String,
+    pub epoch: u64,
+    pub message_kind: FfiMessageKind,
+    pub content_type: FfiContentType,
+    pub projection_kind: FfiLocalProjectionKind,
+    pub payload: Option<Vec<u8>>,
+    pub body: Option<FfiMessageBody>,
+    pub body_parse_error: Option<String>,
+    pub merged_epoch: Option<u64>,
+    pub created_at_unix: u64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiLocalProjectionApplyReport {
+    pub chat_id: String,
+    pub processed_messages: u64,
+    pub projected_messages_upserted: u64,
+    pub advanced_to_server_seq: Option<u64>,
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct FfiInboxApplyOutcome {
     pub lease_owner: String,
@@ -563,6 +642,21 @@ pub struct FfiMlsConversation {
 #[uniffi::export]
 fn ffi_default_ciphersuite_label() -> String {
     crate::DEFAULT_CIPHERSUITE.to_string()
+}
+
+#[uniffi::export]
+fn ffi_serialize_message_body(body: FfiMessageBody) -> Result<Vec<u8>, TrixFfiError> {
+    message_body_from_ffi(body)?.to_bytes().map_err(ffi_error)
+}
+
+#[uniffi::export]
+fn ffi_parse_message_body(
+    content_type: FfiContentType,
+    payload: Vec<u8>,
+) -> Result<FfiMessageBody, TrixFfiError> {
+    Ok(message_body_to_ffi(
+        MessageBody::from_bytes(content_type.into(), &payload).map_err(ffi_error)?,
+    ))
 }
 
 #[uniffi::export]
@@ -1353,6 +1447,27 @@ impl FfiLocalHistoryStore {
         )))
     }
 
+    pub fn projected_cursor(&self, chat_id: String) -> Result<Option<u64>, TrixFfiError> {
+        Ok(lock(&self.inner)?.projected_cursor(parse_chat_id(&chat_id)?))
+    }
+
+    pub fn get_projected_messages(
+        &self,
+        chat_id: String,
+        after_server_seq: Option<u64>,
+        limit: Option<u32>,
+    ) -> Result<Vec<FfiLocalProjectedMessage>, TrixFfiError> {
+        Ok(lock(&self.inner)?
+            .get_projected_messages(
+                parse_chat_id(&chat_id)?,
+                after_server_seq,
+                limit.map(|value| value as usize),
+            )
+            .into_iter()
+            .map(local_projected_message_to_ffi)
+            .collect())
+    }
+
     pub fn apply_chat_history(
         &self,
         history: FfiChatHistory,
@@ -1377,6 +1492,28 @@ impl FfiLocalHistoryStore {
         Ok(local_store_apply_report_to_ffi(
             lock(&self.inner)?
                 .apply_inbox_items(&items)
+                .map_err(ffi_error)?,
+        ))
+    }
+
+    pub fn project_chat_messages(
+        &self,
+        chat_id: String,
+        facade: Arc<FfiMlsFacade>,
+        conversation: Arc<FfiMlsConversation>,
+        limit: Option<u32>,
+    ) -> Result<FfiLocalProjectionApplyReport, TrixFfiError> {
+        let chat_id = parse_chat_id(&chat_id)?;
+        let facade = lock(&facade.inner)?;
+        let mut conversation = lock(&conversation.inner)?;
+        Ok(local_projection_apply_report_to_ffi(
+            lock(&self.inner)?
+                .project_chat_messages(
+                    chat_id,
+                    &facade,
+                    &mut conversation,
+                    limit.map(|value| value as usize),
+                )
                 .map_err(ffi_error)?,
         ))
     }
@@ -2040,6 +2177,179 @@ fn ffi_message_envelope_to_api(
     })
 }
 
+fn message_body_to_ffi(value: MessageBody) -> FfiMessageBody {
+    match value {
+        MessageBody::Text(body) => FfiMessageBody {
+            kind: FfiMessageBodyKind::Text,
+            text: Some(body.text),
+            target_message_id: None,
+            emoji: None,
+            reaction_action: None,
+            receipt_type: None,
+            receipt_at_unix: None,
+            blob_id: None,
+            mime_type: None,
+            size_bytes: None,
+            sha256: None,
+            file_name: None,
+            width_px: None,
+            height_px: None,
+            file_key: None,
+            nonce: None,
+            event_type: None,
+            event_json: None,
+        },
+        MessageBody::Reaction(body) => FfiMessageBody {
+            kind: FfiMessageBodyKind::Reaction,
+            text: None,
+            target_message_id: Some(body.target_message_id.0.to_string()),
+            emoji: Some(body.emoji),
+            reaction_action: Some(body.action.into()),
+            receipt_type: None,
+            receipt_at_unix: None,
+            blob_id: None,
+            mime_type: None,
+            size_bytes: None,
+            sha256: None,
+            file_name: None,
+            width_px: None,
+            height_px: None,
+            file_key: None,
+            nonce: None,
+            event_type: None,
+            event_json: None,
+        },
+        MessageBody::Receipt(body) => FfiMessageBody {
+            kind: FfiMessageBodyKind::Receipt,
+            text: None,
+            target_message_id: Some(body.target_message_id.0.to_string()),
+            emoji: None,
+            reaction_action: None,
+            receipt_type: Some(body.receipt_type.into()),
+            receipt_at_unix: body.at_unix,
+            blob_id: None,
+            mime_type: None,
+            size_bytes: None,
+            sha256: None,
+            file_name: None,
+            width_px: None,
+            height_px: None,
+            file_key: None,
+            nonce: None,
+            event_type: None,
+            event_json: None,
+        },
+        MessageBody::Attachment(body) => FfiMessageBody {
+            kind: FfiMessageBodyKind::Attachment,
+            text: None,
+            target_message_id: None,
+            emoji: None,
+            reaction_action: None,
+            receipt_type: None,
+            receipt_at_unix: None,
+            blob_id: Some(body.blob_id),
+            mime_type: Some(body.mime_type),
+            size_bytes: Some(body.size_bytes),
+            sha256: Some(body.sha256),
+            file_name: body.file_name,
+            width_px: body.width_px,
+            height_px: body.height_px,
+            file_key: Some(body.file_key),
+            nonce: Some(body.nonce),
+            event_type: None,
+            event_json: None,
+        },
+        MessageBody::ChatEvent(body) => FfiMessageBody {
+            kind: FfiMessageBodyKind::ChatEvent,
+            text: None,
+            target_message_id: None,
+            emoji: None,
+            reaction_action: None,
+            receipt_type: None,
+            receipt_at_unix: None,
+            blob_id: None,
+            mime_type: None,
+            size_bytes: None,
+            sha256: None,
+            file_name: None,
+            width_px: None,
+            height_px: None,
+            file_key: None,
+            nonce: None,
+            event_type: Some(body.event_type),
+            event_json: Some(body.payload_json.to_string()),
+        },
+    }
+}
+
+fn message_body_from_ffi(value: FfiMessageBody) -> Result<MessageBody, TrixFfiError> {
+    Ok(match value.kind {
+        FfiMessageBodyKind::Text => MessageBody::Text(crate::TextMessageBody {
+            text: value
+                .text
+                .ok_or_else(|| TrixFfiError::Message("text body is missing `text`".to_owned()))?,
+        }),
+        FfiMessageBodyKind::Reaction => MessageBody::Reaction(crate::ReactionMessageBody {
+            target_message_id: parse_message_id(&value.target_message_id.ok_or_else(|| {
+                TrixFfiError::Message("reaction body is missing `target_message_id`".to_owned())
+            })?)?,
+            emoji: value.emoji.ok_or_else(|| {
+                TrixFfiError::Message("reaction body is missing `emoji`".to_owned())
+            })?,
+            action: value
+                .reaction_action
+                .ok_or_else(|| {
+                    TrixFfiError::Message("reaction body is missing `reaction_action`".to_owned())
+                })?
+                .into(),
+        }),
+        FfiMessageBodyKind::Receipt => MessageBody::Receipt(crate::ReceiptMessageBody {
+            target_message_id: parse_message_id(&value.target_message_id.ok_or_else(|| {
+                TrixFfiError::Message("receipt body is missing `target_message_id`".to_owned())
+            })?)?,
+            receipt_type: value
+                .receipt_type
+                .ok_or_else(|| {
+                    TrixFfiError::Message("receipt body is missing `receipt_type`".to_owned())
+                })?
+                .into(),
+            at_unix: value.receipt_at_unix,
+        }),
+        FfiMessageBodyKind::Attachment => MessageBody::Attachment(crate::AttachmentMessageBody {
+            blob_id: value.blob_id.ok_or_else(|| {
+                TrixFfiError::Message("attachment body is missing `blob_id`".to_owned())
+            })?,
+            mime_type: value.mime_type.ok_or_else(|| {
+                TrixFfiError::Message("attachment body is missing `mime_type`".to_owned())
+            })?,
+            size_bytes: value.size_bytes.ok_or_else(|| {
+                TrixFfiError::Message("attachment body is missing `size_bytes`".to_owned())
+            })?,
+            sha256: value.sha256.ok_or_else(|| {
+                TrixFfiError::Message("attachment body is missing `sha256`".to_owned())
+            })?,
+            file_name: value.file_name,
+            width_px: value.width_px,
+            height_px: value.height_px,
+            file_key: value.file_key.ok_or_else(|| {
+                TrixFfiError::Message("attachment body is missing `file_key`".to_owned())
+            })?,
+            nonce: value.nonce.ok_or_else(|| {
+                TrixFfiError::Message("attachment body is missing `nonce`".to_owned())
+            })?,
+        }),
+        FfiMessageBodyKind::ChatEvent => MessageBody::ChatEvent(crate::ChatEventMessageBody {
+            event_type: value.event_type.ok_or_else(|| {
+                TrixFfiError::Message("chat_event body is missing `event_type`".to_owned())
+            })?,
+            payload_json: serde_json::from_str(&value.event_json.ok_or_else(|| {
+                TrixFfiError::Message("chat_event body is missing `event_json`".to_owned())
+            })?)
+            .map_err(|err| TrixFfiError::Message(format!("invalid event_json: {err}")))?,
+        }),
+    })
+}
+
 fn local_store_apply_report_to_ffi(value: LocalStoreApplyReport) -> FfiLocalStoreApplyReport {
     FfiLocalStoreApplyReport {
         chats_upserted: value.chats_upserted as u64,
@@ -2049,6 +2359,39 @@ fn local_store_apply_report_to_ffi(value: LocalStoreApplyReport) -> FfiLocalStor
             .into_iter()
             .map(|chat_id| chat_id.0.to_string())
             .collect(),
+    }
+}
+
+fn local_projected_message_to_ffi(value: LocalProjectedMessage) -> FfiLocalProjectedMessage {
+    let (body, body_parse_error) = match value.parse_body() {
+        Ok(body) => (body.map(message_body_to_ffi), None),
+        Err(err) => (None, Some(err.to_string())),
+    };
+    FfiLocalProjectedMessage {
+        server_seq: value.server_seq,
+        message_id: value.message_id.0.to_string(),
+        sender_account_id: value.sender_account_id.0.to_string(),
+        sender_device_id: value.sender_device_id.0.to_string(),
+        epoch: value.epoch,
+        message_kind: value.message_kind.into(),
+        content_type: value.content_type.into(),
+        projection_kind: value.projection_kind.into(),
+        payload: value.payload,
+        body,
+        body_parse_error,
+        merged_epoch: value.merged_epoch,
+        created_at_unix: value.created_at_unix,
+    }
+}
+
+fn local_projection_apply_report_to_ffi(
+    value: LocalProjectionApplyReport,
+) -> FfiLocalProjectionApplyReport {
+    FfiLocalProjectionApplyReport {
+        chat_id: value.chat_id.0.to_string(),
+        processed_messages: value.processed_messages as u64,
+        projected_messages_upserted: value.projected_messages_upserted as u64,
+        advanced_to_server_seq: value.advanced_to_server_seq,
     }
 }
 
@@ -2282,6 +2625,54 @@ impl From<trix_types::BlobUploadStatus> for FfiBlobUploadStatus {
         match value {
             trix_types::BlobUploadStatus::PendingUpload => Self::PendingUpload,
             trix_types::BlobUploadStatus::Available => Self::Available,
+        }
+    }
+}
+
+impl From<LocalProjectionKind> for FfiLocalProjectionKind {
+    fn from(value: LocalProjectionKind) -> Self {
+        match value {
+            LocalProjectionKind::ApplicationMessage => Self::ApplicationMessage,
+            LocalProjectionKind::ProposalQueued => Self::ProposalQueued,
+            LocalProjectionKind::CommitMerged => Self::CommitMerged,
+            LocalProjectionKind::WelcomeRef => Self::WelcomeRef,
+            LocalProjectionKind::System => Self::System,
+        }
+    }
+}
+
+impl From<ReactionAction> for FfiReactionAction {
+    fn from(value: ReactionAction) -> Self {
+        match value {
+            ReactionAction::Add => Self::Add,
+            ReactionAction::Remove => Self::Remove,
+        }
+    }
+}
+
+impl From<FfiReactionAction> for ReactionAction {
+    fn from(value: FfiReactionAction) -> Self {
+        match value {
+            FfiReactionAction::Add => Self::Add,
+            FfiReactionAction::Remove => Self::Remove,
+        }
+    }
+}
+
+impl From<ReceiptType> for FfiReceiptType {
+    fn from(value: ReceiptType) -> Self {
+        match value {
+            ReceiptType::Delivered => Self::Delivered,
+            ReceiptType::Read => Self::Read,
+        }
+    }
+}
+
+impl From<FfiReceiptType> for ReceiptType {
+    fn from(value: FfiReceiptType) -> Self {
+        match value {
+            FfiReceiptType::Delivered => Self::Delivered,
+            FfiReceiptType::Read => Self::Read,
         }
     }
 }
