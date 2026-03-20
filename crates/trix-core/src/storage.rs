@@ -104,6 +104,7 @@ pub struct LocalChatListItem {
     pub title: Option<String>,
     pub display_title: String,
     pub last_server_seq: u64,
+    pub epoch: u64,
     pub pending_message_count: u64,
     pub unread_count: u64,
     pub preview_text: Option<String>,
@@ -255,6 +256,7 @@ impl LocalHistoryStore {
                     chat_type: state.chat_type,
                     title: state.title.clone(),
                     last_server_seq: state.last_server_seq,
+                    epoch: state.epoch,
                     pending_message_count: state.pending_message_count,
                     last_message: state.last_message.clone(),
                     participant_profiles: state.participant_profiles.clone(),
@@ -672,9 +674,9 @@ impl LocalHistoryStore {
                     chat_type: chat.chat_type,
                     title: chat.title.clone(),
                     last_server_seq: 0,
+                    epoch: 0,
                     pending_message_count: chat.pending_message_count,
                     last_message: chat.last_message.clone(),
-                    epoch: 0,
                     last_commit_message_id: None,
                     participant_profiles: chat.participant_profiles.clone(),
                     members: Vec::new(),
@@ -697,6 +699,10 @@ impl LocalHistoryStore {
             }
             if chat.last_server_seq > entry.last_server_seq {
                 entry.last_server_seq = chat.last_server_seq;
+                changed = true;
+            }
+            if entry.epoch != chat.epoch {
+                entry.epoch = chat.epoch;
                 changed = true;
             }
             if entry.pending_message_count != chat.pending_message_count {
@@ -1104,6 +1110,7 @@ fn local_chat_list_item_from(
         title: state.title.clone(),
         display_title: chat_display_title(state, self_account_id),
         last_server_seq: state.last_server_seq,
+        epoch: state.epoch,
         pending_message_count: state.pending_message_count,
         unread_count: unread_count_for_chat(state, self_account_id),
         preview_text: preview.as_ref().map(|preview| preview.preview_text.clone()),
@@ -1491,6 +1498,7 @@ mod tests {
                     chat_type: ChatType::Group,
                     title: Some("chat".to_owned()),
                     last_server_seq: 2,
+                    epoch: 2,
                     pending_message_count: 1,
                     last_message: Some(second_message.clone()),
                     participant_profiles: vec![ChatParticipantProfileSummary {
@@ -1864,6 +1872,7 @@ mod tests {
                     chat_type: ChatType::Dm,
                     title: None,
                     last_server_seq: 2,
+                    epoch: 1,
                     pending_message_count: 1,
                     last_message: None,
                     participant_profiles: vec![
@@ -1959,6 +1968,7 @@ mod tests {
                     chat_type: ChatType::Group,
                     title: Some("Group".to_owned()),
                     last_server_seq: 1,
+                    epoch: 1,
                     pending_message_count: 1,
                     last_message: None,
                     participant_profiles: vec![

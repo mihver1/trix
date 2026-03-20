@@ -20,7 +20,8 @@ pub use api::{
     ModifyChatMembersRequest, ModifyChatMembersResponse, PublishKeyPackageItem,
     PublishKeyPackagesRequest, PublishKeyPackagesResponse, PublishedKeyPackage,
     ReserveKeyPackagesRequest, ReservedKeyPackage, RevokeDeviceRequest, RevokeDeviceResponse,
-    ServiceStatus, UpdateAccountProfileRequest, VersionResponse,
+    ServiceStatus, UpdateAccountProfileRequest, VersionResponse, WebSocketClientFrame,
+    WebSocketServerFrame,
 };
 pub use ids::{AccountId, ChatId, DeviceId, MessageId};
 pub use model::{

@@ -70,6 +70,7 @@ make ffi-bindings OUT=/tmp/trix-bindings
 - `FfiServerApiClient` also exposes `get_account(account_id)` and `update_account_profile(...)`.
 - `FfiChatSummary` and `FfiChatDetail` now include `participant_profiles`, so clients can render chat lists and membership UIs without extra directory round-trips.
 - `FfiChatSummary` and `FfiChatDetail` also include `pending_message_count` and optional `last_message`, so list UIs can show transport backlog and latest encrypted envelope without extra history calls.
+- `FfiChatSummary` now also includes `epoch`, and `FfiLocalChatListItem` carries the locally known `epoch`, so clients can keep control flows on the current MLS epoch without a separate detail fetch.
 - `pending_message_count` is intentionally transport-level backlog, not user-read state.
 - `FfiLocalHistoryStore` now exposes local read-state APIs:
   - `chat_read_cursor()`
@@ -123,5 +124,25 @@ make ffi-bindings OUT=/tmp/trix-bindings
   - `add_chat_devices_control()`
   - `remove_chat_devices_control()`
 - These control flows reserve key packages, generate MLS commit/welcome payloads, call the server, refresh local store state, and synthesize projected control events for locally-originated commits.
+- WebSocket transport is now exposed through:
+  - `FfiServerApiClient.connect_websocket()`
+  - `FfiServerWebSocketClient.next_frame()`
+  - `FfiServerWebSocketClient.send_ack(...)`
+  - `FfiServerWebSocketClient.send_presence_ping(...)`
+  - `FfiServerWebSocketClient.send_typing_update(...)`
+  - `FfiServerWebSocketClient.send_history_sync_progress(...)`
+  - `FfiServerWebSocketClient.close()`
+- `next_frame()` returns a typed `FfiWebSocketServerFrame` with `kind` plus payload fields for:
+  - `hello`
+  - `inbox`
+  - `acked_inbox_ids`
+  - `pong`
+  - `session_replaced_reason`
+  - `error`
+- For websocket delivery, `FfiSyncCoordinator` now also exposes:
+  - `apply_inbox_items_into_store(...)`
+  - `apply_websocket_inbox_frame(...)`
+  - `record_acked_inbox_ids(...)`
+- This lets clients do `frame -> durable local apply -> websocket ack -> ack cursor update` without reimplementing sync-state bookkeeping in Swift/Kotlin.
 - Kotlin generation works without `ktlint`, but UniFFI will print a non-fatal formatting warning if `ktlint` is not installed.
 - Kotlin sources are generated under `bindings/uniffi/trix_core/`.
