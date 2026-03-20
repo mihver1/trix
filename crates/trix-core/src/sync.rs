@@ -21,6 +21,10 @@ use crate::{
     ServerApiClient, SyncStateStore, decode_b64_field, encode_b64, make_create_message_request,
 };
 
+fn empty_json_object() -> Value {
+    Value::Object(Default::default())
+}
+
 #[derive(Debug, Clone)]
 pub enum CoreEvent {
     Started,
@@ -430,7 +434,7 @@ impl SyncCoordinator {
             message_kind: MessageKind::Application,
             content_type: body.content_type(),
             ciphertext_b64: encode_b64(&ciphertext),
-            aad_json: aad_json.unwrap_or(Value::Null),
+            aad_json: aad_json.unwrap_or_else(empty_json_object),
             created_at_unix: current_unix_seconds()?,
         };
         let LocalOutgoingMessageApplyOutcome {
