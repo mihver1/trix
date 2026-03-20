@@ -186,6 +186,13 @@ async fn search_directory(
     Query(query): Query<AccountDirectoryQuery>,
 ) -> Result<Json<AccountDirectoryResponse>, AppError> {
     let principal = state.authenticate_active_headers(&headers).await?;
+    state
+        .enforce_rate_limit(
+            "account_directory",
+            principal.account_id.to_string(),
+            state.config.rate_limit_directory_limit,
+        )
+        .await?;
     let accounts = state
         .db
         .search_account_directory(

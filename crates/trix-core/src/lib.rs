@@ -3,6 +3,7 @@ pub mod config;
 pub mod crypto;
 pub mod ffi;
 pub mod message;
+pub mod realtime;
 pub mod signatures;
 pub mod storage;
 pub mod sync;
@@ -24,6 +25,9 @@ pub use message::{
     AttachmentMessageBody, ChatEventMessageBody, MessageBody, ReactionAction, ReactionMessageBody,
     ReceiptMessageBody, ReceiptType, TextMessageBody,
 };
+pub use realtime::{
+    RealtimeConfig, RealtimeDriver, RealtimeEvent, RealtimeEventKind, RealtimeMode,
+};
 pub use signatures::{account_bootstrap_message, device_revoke_message};
 pub use storage::{
     AttachmentStore, LocalChatListItem, LocalChatReadState, LocalHistoryStore,
@@ -41,6 +45,8 @@ pub use transport::{
     CompletedLinkIntentMaterial, CreateAccountParams, DeviceApprovePayloadMaterial,
     DeviceTransferBundleMaterial, DirectoryAccountMaterial, HistorySyncChunkMaterial,
     PublishKeyPackageMaterial, ReservedKeyPackageMaterial, ServerApiClient, ServerApiError,
-    ServerWebSocketClient, UpdateAccountProfileParams, decode_b64_field, encode_b64,
-    make_control_message_input, make_create_message_request, make_publish_key_package_item,
+    ServerWebSocketClient, UpdateAccountProfileParams, control_message_ratchet_tree,
+    decode_b64_field, encode_b64, make_control_message_input,
+    make_control_message_input_with_ratchet_tree, make_create_message_request,
+    make_publish_key_package_item,
 };

@@ -1,10 +1,12 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File},
+    io::Read,
     path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result, anyhow};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use trix_types::{
     ChatDetailResponse, ChatDeviceSummary, ChatHistoryResponse, ChatId, ChatListResponse,
@@ -13,7 +15,10 @@ use trix_types::{
 };
 use uuid::Uuid;
 
-use crate::{MessageBody, MlsConversation, MlsFacade, MlsProcessResult, decode_b64_field};
+use crate::{
+    MessageBody, MlsConversation, MlsFacade, MlsProcessResult, control_message_ratchet_tree,
+    decode_b64_field,
+};
 
 #[derive(Debug, Clone)]
 pub struct AttachmentStore {
@@ -396,6 +401,53 @@ impl LocalHistoryStore {
         entry.mls_group_id_b64 = Some(group_id_b64);
         self.save_state()?;
         Ok(true)
+    }
+
+    pub fn load_or_bootstrap_chat_mls_conversation(
+        &mut self,
+        chat_id: ChatId,
+        facade: &MlsFacade,
+    ) -> Result<Option<MlsConversation>> {
+        if let Some(group_id) = self.chat_mls_group_id(chat_id) {
+            return facade.load_group(&group_id).map_err(|err| {
+                anyhow!(
+                    "failed to load MLS group {} for chat {}: {err}",
+                    crate::encode_b64(&group_id),
+                    chat_id.0
+                )
+            });
+        }
+
+        let Some(bootstrap) = self.find_welcome_bootstrap(chat_id)? else {
+            return Ok(None);
+        };
+
+        let conversation = facade
+            .join_group_from_welcome(
+                &bootstrap.welcome_payload,
+                bootstrap.ratchet_tree.as_deref(),
+            )
+            .with_context(|| {
+                format!(
+                    "failed to bootstrap MLS conversation for chat {} from welcome {}",
+                    chat_id.0, bootstrap.welcome_message_id.0
+                )
+            })?;
+        self.set_chat_mls_group_id(chat_id, &conversation.group_id())?;
+        self.apply_projected_messages(chat_id, &bootstrap.synthetic_projections)?;
+        Ok(Some(conversation))
+    }
+
+    pub fn project_chat_with_facade(
+        &mut self,
+        chat_id: ChatId,
+        facade: &MlsFacade,
+        limit: Option<usize>,
+    ) -> Result<LocalProjectionApplyReport> {
+        let mut conversation = self
+            .load_or_bootstrap_chat_mls_conversation(chat_id, facade)?
+            .ok_or_else(|| anyhow!("chat {} has no bootstrappable MLS state", chat_id.0))?;
+        self.project_chat_messages(chat_id, facade, &mut conversation, limit)
     }
 
     pub fn chat_read_cursor(&self, chat_id: ChatId) -> Option<u64> {
@@ -977,6 +1029,54 @@ impl LocalHistoryStore {
         }
         Ok(())
     }
+
+    fn find_welcome_bootstrap(&self, chat_id: ChatId) -> Result<Option<WelcomeBootstrapMaterial>> {
+        let Some(chat) = self.state.chats.get(&chat_id.0.to_string()) else {
+            return Ok(None);
+        };
+
+        let Some(welcome) =
+            chat.messages.values().rev().find(|message| {
+                matches!(message.message_kind, trix_types::MessageKind::WelcomeRef)
+            })
+        else {
+            return Ok(None);
+        };
+
+        let welcome_payload =
+            decode_b64_field("ciphertext_b64", &welcome.ciphertext_b64).map_err(|err| {
+                anyhow!(
+                    "failed to decode welcome payload {}: {err}",
+                    welcome.message_id.0
+                )
+            })?;
+        let ratchet_tree = control_message_ratchet_tree(&welcome.aad_json).map_err(|err| {
+            anyhow!(
+                "failed to decode welcome ratchet tree {}: {err}",
+                welcome.message_id.0
+            )
+        })?;
+
+        let synthetic_projections = chat
+            .messages
+            .values()
+            .filter(|message| {
+                message.server_seq <= welcome.server_seq
+                    && matches!(
+                        message.message_kind,
+                        trix_types::MessageKind::Commit | trix_types::MessageKind::WelcomeRef
+                    )
+            })
+            .map(synthetic_control_projection_from)
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(Some(WelcomeBootstrapMaterial {
+            welcome_message_id: welcome.message_id,
+            welcome_payload,
+            ratchet_tree,
+            synthetic_projections,
+        }))
+    }
 }
 
 impl LocalProjectedMessage {
@@ -1056,6 +1156,56 @@ fn projected_message_from_persisted(value: PersistedProjectedMessage) -> LocalPr
         merged_epoch: value.merged_epoch,
         created_at_unix: value.created_at_unix,
     }
+}
+
+#[derive(Debug)]
+struct WelcomeBootstrapMaterial {
+    welcome_message_id: MessageId,
+    welcome_payload: Vec<u8>,
+    ratchet_tree: Option<Vec<u8>>,
+    synthetic_projections: Vec<LocalProjectedMessage>,
+}
+
+fn synthetic_control_projection_from(envelope: &MessageEnvelope) -> Result<LocalProjectedMessage> {
+    let (projection_kind, payload, merged_epoch) = match envelope.message_kind {
+        trix_types::MessageKind::Commit => (
+            LocalProjectionKind::CommitMerged,
+            None,
+            Some(envelope.epoch),
+        ),
+        trix_types::MessageKind::WelcomeRef => (
+            LocalProjectionKind::WelcomeRef,
+            Some(
+                decode_b64_field("ciphertext_b64", &envelope.ciphertext_b64).map_err(|err| {
+                    anyhow!(
+                        "failed to decode control payload for {}: {err}",
+                        envelope.message_id.0
+                    )
+                })?,
+            ),
+            None,
+        ),
+        _ => {
+            return Err(anyhow!(
+                "message {} is not a synthetic control message",
+                envelope.message_id.0
+            ));
+        }
+    };
+
+    Ok(LocalProjectedMessage {
+        server_seq: envelope.server_seq,
+        message_id: envelope.message_id,
+        sender_account_id: envelope.sender_account_id,
+        sender_device_id: envelope.sender_device_id,
+        epoch: envelope.epoch,
+        message_kind: envelope.message_kind,
+        content_type: envelope.content_type,
+        projection_kind,
+        payload,
+        merged_epoch,
+        created_at_unix: envelope.created_at_unix,
+    })
 }
 
 fn persisted_projected_message_from(value: LocalProjectedMessage) -> PersistedProjectedMessage {
@@ -1411,30 +1561,287 @@ fn projected_message_counts_as_unread(
     true
 }
 
+const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
+
 fn save_state_to_path(path: &Path, state: &PersistedLocalHistoryState) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| {
-            format!(
-                "failed to create local history directory {}",
-                parent.display()
-            )
-        })?;
+    let mut connection = open_history_sqlite(path)?;
+    let transaction = connection
+        .transaction()
+        .context("failed to start local history transaction")?;
+
+    transaction.execute_batch(
+        r#"
+        DELETE FROM local_history_metadata;
+        DELETE FROM local_history_chats;
+        DELETE FROM local_history_messages;
+        DELETE FROM local_history_projected_messages;
+        "#,
+    )?;
+
+    transaction.execute(
+        r#"
+        INSERT INTO local_history_metadata (key, value)
+        VALUES ('version', ?1)
+        "#,
+        params![state.version.to_string()],
+    )?;
+
+    let mut chat_statement = transaction.prepare(
+        r#"
+        INSERT INTO local_history_chats (
+            chat_id,
+            chat_type_json,
+            title,
+            last_server_seq,
+            pending_message_count,
+            last_message_json,
+            epoch,
+            last_commit_message_id,
+            participant_profiles_json,
+            members_json,
+            device_members_json,
+            mls_group_id_b64,
+            read_cursor_server_seq,
+            projected_cursor_server_seq
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+        "#,
+    )?;
+    let mut message_statement = transaction.prepare(
+        r#"
+        INSERT INTO local_history_messages (chat_id, server_seq, envelope_json)
+        VALUES (?1, ?2, ?3)
+        "#,
+    )?;
+    let mut projected_statement = transaction.prepare(
+        r#"
+        INSERT INTO local_history_projected_messages (chat_id, server_seq, projected_json)
+        VALUES (?1, ?2, ?3)
+        "#,
+    )?;
+
+    for (chat_id, chat) in &state.chats {
+        chat_statement.execute(params![
+            chat_id,
+            serde_json::to_string(&chat.chat_type)?,
+            chat.title,
+            u64_to_i64(chat.last_server_seq, "last_server_seq")?,
+            u64_to_i64(chat.pending_message_count, "pending_message_count")?,
+            chat.last_message
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?,
+            u64_to_i64(chat.epoch, "epoch")?,
+            chat.last_commit_message_id
+                .map(|message_id| message_id.0.to_string()),
+            serde_json::to_string(&chat.participant_profiles)?,
+            serde_json::to_string(&chat.members)?,
+            serde_json::to_string(&chat.device_members)?,
+            chat.mls_group_id_b64,
+            u64_to_i64(chat.read_cursor_server_seq, "read_cursor_server_seq")?,
+            u64_to_i64(
+                chat.projected_cursor_server_seq,
+                "projected_cursor_server_seq"
+            )?,
+        ])?;
+
+        for (server_seq, message) in &chat.messages {
+            message_statement.execute(params![
+                chat_id,
+                u64_to_i64(*server_seq, "message server_seq")?,
+                serde_json::to_string(message)?,
+            ])?;
+        }
+
+        for (server_seq, projected_message) in &chat.projected_messages {
+            projected_statement.execute(params![
+                chat_id,
+                u64_to_i64(*server_seq, "projected server_seq")?,
+                serde_json::to_string(projected_message)?,
+            ])?;
+        }
     }
 
-    let tmp_path = path.with_extension("tmp");
-    let output_file = File::create(&tmp_path).with_context(|| {
-        format!(
-            "failed to create temporary local history file {}",
-            tmp_path.display()
-        )
-    })?;
-    serde_json::to_writer_pretty(output_file, state).context("failed to write local history")?;
-    fs::rename(&tmp_path, path)
-        .with_context(|| format!("failed to replace local history file {}", path.display()))?;
+    drop(projected_statement);
+    drop(message_statement);
+    drop(chat_statement);
+    transaction
+        .commit()
+        .context("failed to commit local history transaction")?;
     Ok(())
 }
 
 fn load_state_from_path(path: &Path) -> Result<PersistedLocalHistoryState> {
+    if !is_sqlite_database(path)? {
+        let state = load_legacy_json_state_from_path(path)?;
+        save_state_to_path(path, &state)?;
+        return Ok(state);
+    }
+
+    let connection = open_history_sqlite(path)?;
+    let version = connection
+        .query_row(
+            r#"
+            SELECT value
+            FROM local_history_metadata
+            WHERE key = 'version'
+            "#,
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .unwrap_or_else(|| "1".to_owned())
+        .parse::<u32>()
+        .context("failed to parse local history version")?;
+    if version != 1 {
+        return Err(anyhow!(
+            "unsupported local history version {} in {}",
+            version,
+            path.display()
+        ));
+    }
+
+    let mut state = PersistedLocalHistoryState {
+        version,
+        chats: BTreeMap::new(),
+    };
+
+    let mut chats_statement = connection.prepare(
+        r#"
+        SELECT
+            chat_id,
+            chat_type_json,
+            title,
+            last_server_seq,
+            pending_message_count,
+            last_message_json,
+            epoch,
+            last_commit_message_id,
+            participant_profiles_json,
+            members_json,
+            device_members_json,
+            mls_group_id_b64,
+            read_cursor_server_seq,
+            projected_cursor_server_seq
+        FROM local_history_chats
+        ORDER BY chat_id
+        "#,
+    )?;
+    let chat_rows = chats_statement.query_map([], |row| {
+        let chat_id: String = row.get(0)?;
+        let chat_type_json: String = row.get(1)?;
+        let title: Option<String> = row.get(2)?;
+        let last_server_seq: i64 = row.get(3)?;
+        let pending_message_count: i64 = row.get(4)?;
+        let last_message_json: Option<String> = row.get(5)?;
+        let epoch: i64 = row.get(6)?;
+        let last_commit_message_id: Option<String> = row.get(7)?;
+        let participant_profiles_json: String = row.get(8)?;
+        let members_json: String = row.get(9)?;
+        let device_members_json: String = row.get(10)?;
+        let mls_group_id_b64: Option<String> = row.get(11)?;
+        let read_cursor_server_seq: i64 = row.get(12)?;
+        let projected_cursor_server_seq: i64 = row.get(13)?;
+
+        Ok((
+            chat_id,
+            PersistedChatState {
+                chat_type: serde_json::from_str(&chat_type_json).map_err(sqlite_serde_error)?,
+                title,
+                last_server_seq: i64_to_u64(last_server_seq, "last_server_seq")
+                    .map_err(sqlite_anyhow_error)?,
+                pending_message_count: i64_to_u64(pending_message_count, "pending_message_count")
+                    .map_err(sqlite_anyhow_error)?,
+                last_message: last_message_json
+                    .map(|value| serde_json::from_str(&value).map_err(sqlite_serde_error))
+                    .transpose()?,
+                epoch: i64_to_u64(epoch, "epoch").map_err(sqlite_anyhow_error)?,
+                last_commit_message_id: last_commit_message_id
+                    .map(|value| parse_message_id_string(&value).map_err(sqlite_anyhow_error))
+                    .transpose()?,
+                participant_profiles: serde_json::from_str(&participant_profiles_json)
+                    .map_err(sqlite_serde_error)?,
+                members: serde_json::from_str(&members_json).map_err(sqlite_serde_error)?,
+                device_members: serde_json::from_str(&device_members_json)
+                    .map_err(sqlite_serde_error)?,
+                mls_group_id_b64,
+                messages: BTreeMap::new(),
+                read_cursor_server_seq: i64_to_u64(
+                    read_cursor_server_seq,
+                    "read_cursor_server_seq",
+                )
+                .map_err(sqlite_anyhow_error)?,
+                projected_cursor_server_seq: i64_to_u64(
+                    projected_cursor_server_seq,
+                    "projected_cursor_server_seq",
+                )
+                .map_err(sqlite_anyhow_error)?,
+                projected_messages: BTreeMap::new(),
+            },
+        ))
+    })?;
+    for row in chat_rows {
+        let (chat_id, chat_state) = row?;
+        state.chats.insert(chat_id, chat_state);
+    }
+    drop(chats_statement);
+
+    let mut messages_statement = connection.prepare(
+        r#"
+        SELECT chat_id, server_seq, envelope_json
+        FROM local_history_messages
+        ORDER BY chat_id, server_seq
+        "#,
+    )?;
+    let message_rows = messages_statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    for row in message_rows {
+        let (chat_id, server_seq, envelope_json) = row?;
+        let chat = state
+            .chats
+            .get_mut(&chat_id)
+            .ok_or_else(|| anyhow!("local history messages contain unknown chat {chat_id}"))?;
+        chat.messages.insert(
+            i64_to_u64(server_seq, "message server_seq")?,
+            serde_json::from_str(&envelope_json).context("failed to parse message envelope")?,
+        );
+    }
+    drop(messages_statement);
+
+    let mut projected_statement = connection.prepare(
+        r#"
+        SELECT chat_id, server_seq, projected_json
+        FROM local_history_projected_messages
+        ORDER BY chat_id, server_seq
+        "#,
+    )?;
+    let projected_rows = projected_statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    for row in projected_rows {
+        let (chat_id, server_seq, projected_json) = row?;
+        let chat = state
+            .chats
+            .get_mut(&chat_id)
+            .ok_or_else(|| anyhow!("local projected messages contain unknown chat {chat_id}"))?;
+        chat.projected_messages.insert(
+            i64_to_u64(server_seq, "projected server_seq")?,
+            serde_json::from_str(&projected_json).context("failed to parse projected message")?,
+        );
+    }
+
+    Ok(state)
+}
+
+fn load_legacy_json_state_from_path(path: &Path) -> Result<PersistedLocalHistoryState> {
     let input_file = File::open(path)
         .with_context(|| format!("failed to open local history file {}", path.display()))?;
     let state: PersistedLocalHistoryState =
@@ -1449,6 +1856,104 @@ fn load_state_from_path(path: &Path) -> Result<PersistedLocalHistoryState> {
     Ok(state)
 }
 
+fn open_history_sqlite(path: &Path) -> Result<Connection> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create local history directory {}",
+                parent.display()
+            )
+        })?;
+    }
+    if path.exists() && !is_sqlite_database(path)? {
+        fs::remove_file(path).with_context(|| {
+            format!("failed to replace legacy local history {}", path.display())
+        })?;
+    }
+
+    let connection = Connection::open(path)
+        .with_context(|| format!("failed to open local history database {}", path.display()))?;
+    connection.pragma_update(None, "journal_mode", "WAL")?;
+    connection.pragma_update(None, "synchronous", "NORMAL")?;
+    connection.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS local_history_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS local_history_chats (
+            chat_id TEXT PRIMARY KEY,
+            chat_type_json TEXT NOT NULL,
+            title TEXT,
+            last_server_seq INTEGER NOT NULL,
+            pending_message_count INTEGER NOT NULL,
+            last_message_json TEXT,
+            epoch INTEGER NOT NULL,
+            last_commit_message_id TEXT,
+            participant_profiles_json TEXT NOT NULL,
+            members_json TEXT NOT NULL,
+            device_members_json TEXT NOT NULL,
+            mls_group_id_b64 TEXT,
+            read_cursor_server_seq INTEGER NOT NULL,
+            projected_cursor_server_seq INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS local_history_messages (
+            chat_id TEXT NOT NULL,
+            server_seq INTEGER NOT NULL,
+            envelope_json TEXT NOT NULL,
+            PRIMARY KEY (chat_id, server_seq)
+        );
+        CREATE TABLE IF NOT EXISTS local_history_projected_messages (
+            chat_id TEXT NOT NULL,
+            server_seq INTEGER NOT NULL,
+            projected_json TEXT NOT NULL,
+            PRIMARY KEY (chat_id, server_seq)
+        );
+        "#,
+    )?;
+    Ok(connection)
+}
+
+fn is_sqlite_database(path: &Path) -> Result<bool> {
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let mut file = File::open(path)
+        .with_context(|| format!("failed to inspect local history file {}", path.display()))?;
+    let mut header = [0u8; 16];
+    let bytes_read = file
+        .read(&mut header)
+        .with_context(|| format!("failed to read local history file {}", path.display()))?;
+    Ok(bytes_read == SQLITE_HEADER.len() && &header == SQLITE_HEADER)
+}
+
+fn sqlite_serde_error(err: serde_json::Error) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(err))
+}
+
+fn sqlite_anyhow_error(err: anyhow::Error) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        0,
+        rusqlite::types::Type::Text,
+        Box::new(std::io::Error::other(err.to_string())),
+    )
+}
+
+fn parse_message_id_string(value: &str) -> Result<MessageId> {
+    Ok(MessageId(Uuid::parse_str(value).with_context(|| {
+        format!("invalid message id `{value}`")
+    })?))
+}
+
+fn u64_to_i64(value: u64, field: &str) -> Result<i64> {
+    i64::try_from(value).with_context(|| format!("{field} exceeds SQLite integer range"))
+}
+
+fn i64_to_u64(value: i64, field: &str) -> Result<u64> {
+    u64::try_from(value).with_context(|| format!("{field} must not be negative"))
+}
+
 fn parse_chat_id(value: &str) -> Result<ChatId> {
     Ok(ChatId(Uuid::parse_str(value).map_err(|err| {
         anyhow!("invalid chat_id in local history: {err}")
@@ -1457,7 +1962,7 @@ fn parse_chat_id(value: &str) -> Result<ChatId> {
 
 #[cfg(test)]
 mod tests {
-    use std::{env, fs};
+    use std::{collections::BTreeMap, env, fs};
 
     use serde_json::json;
     use trix_types::{AccountId, ContentType, DeviceId, MessageKind};
@@ -1539,6 +2044,65 @@ mod tests {
         assert_eq!(history.messages, vec![second_message]);
 
         fs::remove_file(database_path).ok();
+    }
+
+    #[test]
+    fn local_history_store_migrates_legacy_json_state_to_sqlite() {
+        let database_path =
+            env::temp_dir().join(format!("trix-history-legacy-{}.json", Uuid::new_v4()));
+        let chat_id = ChatId(Uuid::new_v4());
+        let account_id = AccountId(Uuid::new_v4());
+        let device_id = DeviceId(Uuid::new_v4());
+        let state = PersistedLocalHistoryState {
+            version: 1,
+            chats: BTreeMap::from([(
+                chat_id.0.to_string(),
+                PersistedChatState {
+                    chat_type: ChatType::Dm,
+                    title: Some("Legacy Chat".to_owned()),
+                    last_server_seq: 1,
+                    pending_message_count: 0,
+                    last_message: Some(MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 1,
+                        sender_account_id: account_id,
+                        sender_device_id: device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        ciphertext_b64: "YQ==".to_owned(),
+                        aad_json: json!({}),
+                        created_at_unix: 10,
+                    }),
+                    epoch: 1,
+                    last_commit_message_id: None,
+                    participant_profiles: Vec::new(),
+                    members: Vec::new(),
+                    device_members: Vec::new(),
+                    mls_group_id_b64: None,
+                    messages: BTreeMap::new(),
+                    read_cursor_server_seq: 0,
+                    projected_cursor_server_seq: 0,
+                    projected_messages: BTreeMap::new(),
+                },
+            )]),
+        };
+        let file = File::create(&database_path).unwrap();
+        serde_json::to_writer_pretty(file, &state).unwrap();
+
+        let restored = LocalHistoryStore::new_persistent(&database_path).unwrap();
+        assert_eq!(
+            restored.get_chat(chat_id).unwrap().title.as_deref(),
+            Some("Legacy Chat")
+        );
+        assert!(is_sqlite_database(&database_path).unwrap());
+
+        fs::remove_file(&database_path).ok();
+        let wal_path = PathBuf::from(format!("{}-wal", database_path.display()));
+        let shm_path = PathBuf::from(format!("{}-shm", database_path.display()));
+        fs::remove_file(wal_path).ok();
+        fs::remove_file(shm_path).ok();
     }
 
     #[test]

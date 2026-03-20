@@ -5,7 +5,7 @@ use reqwest::{
     header::{AUTHORIZATION, CONTENT_LENGTH, ETAG, HeaderMap, HeaderValue},
 };
 use serde::{Serialize, de::DeserializeOwned};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use thiserror::Error;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{
@@ -30,6 +30,10 @@ use trix_types::{
     RevokeDeviceRequest, RevokeDeviceResponse, UpdateAccountProfileRequest, VersionResponse,
     WebSocketClientFrame, WebSocketServerFrame,
 };
+
+const CONTROL_AAD_META_KEY: &str = "_trix";
+const CONTROL_AAD_META_USER_KEY: &str = "user_aad";
+const CONTROL_AAD_META_RATCHET_TREE_B64_KEY: &str = "ratchet_tree_b64";
 
 #[derive(Debug, Error)]
 pub enum ServerApiError {
@@ -1033,10 +1037,19 @@ pub fn make_control_message_input(
     ciphertext: &[u8],
     aad_json: Option<Value>,
 ) -> ControlMessageInput {
+    make_control_message_input_with_ratchet_tree(message_id, ciphertext, aad_json, None)
+}
+
+pub fn make_control_message_input_with_ratchet_tree(
+    message_id: MessageId,
+    ciphertext: &[u8],
+    aad_json: Option<Value>,
+    ratchet_tree: Option<&[u8]>,
+) -> ControlMessageInput {
     ControlMessageInput {
         message_id,
         ciphertext_b64: encode_b64(ciphertext),
-        aad_json,
+        aad_json: merge_control_aad(aad_json, ratchet_tree),
     }
 }
 
@@ -1070,6 +1083,61 @@ pub fn make_publish_key_package_item(
 
 pub fn encode_b64(bytes: &[u8]) -> String {
     general_purpose::STANDARD.encode(bytes)
+}
+
+pub fn control_message_ratchet_tree(aad_json: &Value) -> Result<Option<Vec<u8>>, ServerApiError> {
+    let Some(meta) = aad_json
+        .as_object()
+        .and_then(|object| object.get(CONTROL_AAD_META_KEY))
+        .and_then(Value::as_object)
+    else {
+        return Ok(None);
+    };
+
+    let Some(value) = meta
+        .get(CONTROL_AAD_META_RATCHET_TREE_B64_KEY)
+        .and_then(Value::as_str)
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(decode_b64_field(
+        "aad_json._trix.ratchet_tree_b64",
+        value,
+    )?))
+}
+
+fn merge_control_aad(aad_json: Option<Value>, ratchet_tree: Option<&[u8]>) -> Option<Value> {
+    let Some(ratchet_tree) = ratchet_tree else {
+        return aad_json;
+    };
+
+    let mut root = match aad_json {
+        Some(Value::Object(object)) => object,
+        Some(other) => {
+            let mut object = Map::new();
+            object.insert(CONTROL_AAD_META_USER_KEY.to_owned(), other);
+            object
+        }
+        None => Map::new(),
+    };
+
+    let mut meta = match root.remove(CONTROL_AAD_META_KEY) {
+        Some(Value::Object(object)) => object,
+        Some(other) => {
+            let mut object = Map::new();
+            object.insert("raw".to_owned(), other);
+            object
+        }
+        None => Map::new(),
+    };
+    meta.insert(
+        CONTROL_AAD_META_RATCHET_TREE_B64_KEY.to_owned(),
+        Value::String(encode_b64(ratchet_tree)),
+    );
+    root.insert(CONTROL_AAD_META_KEY.to_owned(), Value::Object(meta));
+
+    Some(Value::Object(root))
 }
 
 fn directory_account_from_response(value: DirectoryAccountSummary) -> DirectoryAccountMaterial {

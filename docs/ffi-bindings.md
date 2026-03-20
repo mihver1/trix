@@ -51,16 +51,56 @@ make ffi-bindings-kotlin
 make ffi-bindings OUT=/tmp/trix-bindings
 ```
 
+## Bot Harness Bindings
+
+`UniFFI` remains the binding surface for app clients, but the bot harness adds a second integration layer:
+
+- direct Rust API in `crates/trix-bot`
+- `JSON-RPC 2.0` over stdio through `apps/trix-botd`
+
+The stdio namespace is versioned as `bot.v1.*`.
+
+Methods:
+
+- `bot.v1.init`
+- `bot.v1.start`
+- `bot.v1.stop`
+- `bot.v1.list_chats`
+- `bot.v1.get_timeline`
+- `bot.v1.send_text`
+- `bot.v1.send_file`
+- `bot.v1.download_file`
+- `bot.v1.publish_key_packages`
+
+Notifications:
+
+- `bot.v1.ready`
+- `bot.v1.text_message`
+- `bot.v1.file_message`
+- `bot.v1.connection_changed`
+- `bot.v1.unsupported_message`
+- `bot.v1.error`
+
+Repo-local bindings and examples live under:
+
+- `examples/bots/python`
+- `examples/bots/go`
+- `crates/trix-bot/examples`
+
+See `docs/bot-harness.md` for runtime setup and payload examples.
+
 ## Notes
 
-- The exported API is defined in [ffi.rs](/Users/m.verhovyh/Projects/trix/crates/trix-core/src/ffi.rs).
+- The exported UniFFI API is defined in `crates/trix-core/src/ffi.rs`.
 - The crate now builds as `lib`, `cdylib`, and `staticlib`.
 - The current FFI surface is synchronous on purpose; client apps should call it off the UI thread.
 - `FfiMlsFacade` now supports persistent state via `new_persistent(storage_root)`, `load_persistent(storage_root)`, `save_state()`, and `storage_root()`.
 - Persistent MLS state is stored under the provided root as `storage.json` and `metadata.json`.
 - `FfiSyncCoordinator` now supports persistent sync state via `new_persistent(state_path)`, plus `state_snapshot()`, `sync_chat_histories()`, `lease_inbox()`, `ack_inbox()`, and `record_chat_server_seq()`.
-- Persistent sync state is stored as a JSON snapshot at the provided `state_path`.
+- Persistent sync state is now stored in a SQLite-backed file at the provided `state_path`.
 - `FfiLocalHistoryStore` now supports persistent local encrypted-envelope history via `new_persistent(database_path)`, plus `list_chats()`, `get_chat()`, `get_chat_history()`, `apply_chat_history()`, and `apply_leased_inbox()`.
+- Persistent local history is now stored in a SQLite-backed file at `database_path`.
+- Legacy JSON files passed to `new_persistent(...)` are migrated in place on first load, so old `history-store.json` / `sync-state.json` paths remain readable even though new installs should use `.sqlite` names.
 - `FfiSyncCoordinator` also exposes high-level convenience flows: `sync_chat_histories_into_store()` and `lease_inbox_into_store()`.
 - `FfiLocalHistoryStore` now also exposes projected local timeline APIs: `projected_cursor()`, `project_chat_messages()`, and `get_projected_messages()`.
 - `FfiLocalHistoryStore` also persists optional `chat -> MLS group_id` mapping and exposes `chat_mls_group_id()` / `set_chat_mls_group_id()`.
@@ -132,6 +172,8 @@ make ffi-bindings OUT=/tmp/trix-bindings
   - `FfiServerWebSocketClient.send_typing_update(...)`
   - `FfiServerWebSocketClient.send_history_sync_progress(...)`
   - `FfiServerWebSocketClient.close()`
+- For `v0`, websocket is treated as a low-latency inbox delivery transport, not as a general realtime bus.
+- `send_typing_update(...)` and `send_history_sync_progress(...)` remain available only as compatibility no-ops for in-flight client branches; they are not part of the guaranteed `v0` realtime contract.
 - `next_frame()` returns a typed `FfiWebSocketServerFrame` with `kind` plus payload fields for:
   - `hello`
   - `inbox`
@@ -144,5 +186,12 @@ make ffi-bindings OUT=/tmp/trix-bindings
   - `apply_websocket_inbox_frame(...)`
   - `record_acked_inbox_ids(...)`
 - This lets clients do `frame -> durable local apply -> websocket ack -> ack cursor update` without reimplementing sync-state bookkeeping in Swift/Kotlin.
+- `trix-core` now also exposes a shared realtime runtime through `FfiRealtimeDriver`:
+  - `new()` / `with_config(...)`
+  - `config()`
+  - `poll_once(...)`
+  - `process_websocket_frame(...)`
+  - `next_websocket_event(...)`
+- `FfiRealtimeDriver` is the intended shared boundary for websocket/polling inbox delivery, reconnect pacing, local apply, and outbound ack bookkeeping. App clients and the bot runtime can now use the same core realtime flow instead of separate websocket loops.
 - Kotlin generation works without `ktlint`, but UniFFI will print a non-fatal formatting warning if `ktlint` is not installed.
 - Kotlin sources are generated under `bindings/uniffi/trix_core/`.

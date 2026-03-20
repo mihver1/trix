@@ -1,11 +1,13 @@
 use std::{
     collections::{BTreeMap, HashSet},
     fs::{self, File},
+    io::Read,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result, anyhow};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use trix_types::{
@@ -18,7 +20,8 @@ use uuid::Uuid;
 use crate::{
     LocalHistoryStore, LocalOutgoingMessageApplyOutcome, LocalProjectedMessage,
     LocalProjectionKind, LocalStoreApplyReport, MessageBody, MlsConversation, MlsFacade,
-    ServerApiClient, SyncStateStore, decode_b64_field, encode_b64, make_create_message_request,
+    ServerApiClient, SyncStateStore, decode_b64_field, encode_b64,
+    make_control_message_input_with_ratchet_tree, make_create_message_request,
 };
 
 fn empty_json_object() -> Value {
@@ -532,10 +535,11 @@ impl SyncCoordinator {
                     input.commit_aad_json,
                 )),
                 welcome_message: add_bundle.welcome_message.as_ref().map(|welcome| {
-                    crate::make_control_message_input(
+                    make_control_message_input_with_ratchet_tree(
                         welcome_message_id,
                         welcome,
                         input.welcome_aad_json,
+                        add_bundle.ratchet_tree.as_deref(),
                     )
                 }),
             })
@@ -648,10 +652,11 @@ impl SyncCoordinator {
                         input.commit_aad_json,
                     )),
                     welcome_message: add_bundle.welcome_message.as_ref().map(|welcome| {
-                        crate::make_control_message_input(
+                        make_control_message_input_with_ratchet_tree(
                             welcome_message_id,
                             welcome,
                             input.welcome_aad_json,
+                            add_bundle.ratchet_tree.as_deref(),
                         )
                     }),
                 },
@@ -829,10 +834,11 @@ impl SyncCoordinator {
                         input.commit_aad_json,
                     )),
                     welcome_message: add_bundle.welcome_message.as_ref().map(|welcome| {
-                        crate::make_control_message_input(
+                        make_control_message_input_with_ratchet_tree(
                             welcome_message_id,
                             welcome,
                             input.welcome_aad_json,
+                            add_bundle.ratchet_tree.as_deref(),
                         )
                     }),
                 },
@@ -1196,27 +1202,153 @@ fn current_unix_seconds() -> Result<u64> {
         .as_secs())
 }
 
-fn save_state_to_path(path: &Path, state: &PersistedSyncState) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| {
-            format!("failed to create sync state directory {}", parent.display())
-        })?;
-    }
+const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
 
-    let tmp_path = path.with_extension("tmp");
-    let output_file = File::create(&tmp_path).with_context(|| {
-        format!(
-            "failed to create temporary sync state file {}",
-            tmp_path.display()
-        )
-    })?;
-    serde_json::to_writer_pretty(output_file, state).context("failed to write sync state")?;
-    fs::rename(&tmp_path, path)
-        .with_context(|| format!("failed to replace sync state file {}", path.display()))?;
+fn save_state_to_path(path: &Path, state: &PersistedSyncState) -> Result<()> {
+    let mut connection = open_sync_sqlite(path)?;
+    let transaction = connection
+        .transaction()
+        .context("failed to start sync state transaction")?;
+
+    transaction.execute_batch(
+        r#"
+        DELETE FROM sync_state_metadata;
+        DELETE FROM sync_state_values;
+        DELETE FROM sync_state_chat_cursors;
+        "#,
+    )?;
+
+    transaction.execute(
+        r#"
+        INSERT INTO sync_state_metadata (key, value)
+        VALUES ('version', ?1)
+        "#,
+        params![state.version.to_string()],
+    )?;
+    transaction.execute(
+        r#"
+        INSERT INTO sync_state_values (key, value)
+        VALUES ('lease_owner', ?1)
+        "#,
+        params![state.lease_owner],
+    )?;
+    transaction.execute(
+        r#"
+        INSERT INTO sync_state_values (key, value)
+        VALUES ('last_acked_inbox_id', ?1)
+        "#,
+        params![state.last_acked_inbox_id.map(|value| value.to_string())],
+    )?;
+
+    let mut cursor_statement = transaction.prepare(
+        r#"
+        INSERT INTO sync_state_chat_cursors (chat_id, last_server_seq)
+        VALUES (?1, ?2)
+        "#,
+    )?;
+    for (chat_id, last_server_seq) in &state.chat_cursors {
+        cursor_statement.execute(params![
+            chat_id,
+            u64_to_i64(*last_server_seq, "last_server_seq")?,
+        ])?;
+    }
+    drop(cursor_statement);
+
+    transaction
+        .commit()
+        .context("failed to commit sync state transaction")?;
     Ok(())
 }
 
 fn load_state_from_path(path: &Path) -> Result<PersistedSyncState> {
+    if !is_sqlite_database(path)? {
+        let state = load_legacy_json_state_from_path(path)?;
+        save_state_to_path(path, &state)?;
+        return Ok(state);
+    }
+
+    let connection = open_sync_sqlite(path)?;
+    let version = connection
+        .query_row(
+            r#"
+            SELECT value
+            FROM sync_state_metadata
+            WHERE key = 'version'
+            "#,
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .unwrap_or_else(|| "1".to_owned())
+        .parse::<u32>()
+        .context("failed to parse sync state version")?;
+    if version != 1 {
+        return Err(anyhow!(
+            "unsupported sync state version {} in {}",
+            version,
+            path.display()
+        ));
+    }
+
+    let lease_owner = connection
+        .query_row(
+            r#"
+            SELECT value
+            FROM sync_state_values
+            WHERE key = 'lease_owner'
+            "#,
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let last_acked_inbox_id = connection
+        .query_row(
+            r#"
+            SELECT value
+            FROM sync_state_values
+            WHERE key = 'last_acked_inbox_id'
+            "#,
+            [],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()?
+        .flatten()
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .with_context(|| format!("invalid last_acked_inbox_id `{value}`"))
+        })
+        .transpose()?;
+
+    let mut state = PersistedSyncState {
+        version,
+        lease_owner,
+        last_acked_inbox_id,
+        chat_cursors: BTreeMap::new(),
+    };
+
+    let mut cursor_statement = connection.prepare(
+        r#"
+        SELECT chat_id, last_server_seq
+        FROM sync_state_chat_cursors
+        ORDER BY chat_id
+        "#,
+    )?;
+    let cursor_rows = cursor_statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    for row in cursor_rows {
+        let (chat_id, last_server_seq) = row?;
+        state
+            .chat_cursors
+            .insert(chat_id, i64_to_u64(last_server_seq, "last_server_seq")?);
+    }
+
+    Ok(state)
+}
+
+fn load_legacy_json_state_from_path(path: &Path) -> Result<PersistedSyncState> {
     let input_file = File::open(path)
         .with_context(|| format!("failed to open sync state file {}", path.display()))?;
     let state: PersistedSyncState =
@@ -1231,6 +1363,62 @@ fn load_state_from_path(path: &Path) -> Result<PersistedSyncState> {
     Ok(state)
 }
 
+fn open_sync_sqlite(path: &Path) -> Result<Connection> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!("failed to create sync state directory {}", parent.display())
+        })?;
+    }
+    if path.exists() && !is_sqlite_database(path)? {
+        fs::remove_file(path)
+            .with_context(|| format!("failed to replace legacy sync state {}", path.display()))?;
+    }
+
+    let connection = Connection::open(path)
+        .with_context(|| format!("failed to open sync state database {}", path.display()))?;
+    connection.pragma_update(None, "journal_mode", "WAL")?;
+    connection.pragma_update(None, "synchronous", "NORMAL")?;
+    connection.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS sync_state_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS sync_state_values (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        );
+        CREATE TABLE IF NOT EXISTS sync_state_chat_cursors (
+            chat_id TEXT PRIMARY KEY,
+            last_server_seq INTEGER NOT NULL
+        );
+        "#,
+    )?;
+    Ok(connection)
+}
+
+fn is_sqlite_database(path: &Path) -> Result<bool> {
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let mut file = File::open(path)
+        .with_context(|| format!("failed to inspect sync state file {}", path.display()))?;
+    let mut header = [0u8; 16];
+    let bytes_read = file
+        .read(&mut header)
+        .with_context(|| format!("failed to read sync state file {}", path.display()))?;
+    Ok(bytes_read == SQLITE_HEADER.len() && &header == SQLITE_HEADER)
+}
+
+fn u64_to_i64(value: u64, field: &str) -> Result<i64> {
+    i64::try_from(value).with_context(|| format!("{field} exceeds SQLite integer range"))
+}
+
+fn i64_to_u64(value: i64, field: &str) -> Result<u64> {
+    u64::try_from(value).with_context(|| format!("{field} must not be negative"))
+}
+
 fn parse_chat_id(value: &str) -> Result<ChatId> {
     Ok(ChatId(Uuid::parse_str(value).map_err(|err| {
         anyhow!("invalid chat_id in sync state: {err}")
@@ -1239,11 +1427,11 @@ fn parse_chat_id(value: &str) -> Result<ChatId> {
 
 #[cfg(test)]
 mod tests {
-    use std::{env, fs};
+    use std::{collections::BTreeMap, env, fs};
 
     use uuid::Uuid;
 
-    use super::SyncCoordinator;
+    use super::{PersistedSyncState, SyncCoordinator, is_sqlite_database};
     use trix_types::ChatId;
 
     #[test]
@@ -1259,6 +1447,28 @@ mod tests {
         let restored = SyncCoordinator::new_persistent(&state_path).unwrap();
         assert_eq!(restored.chat_cursor(chat_id), Some(42));
         assert_eq!(restored.last_acked_inbox_id(), Some(7));
+
+        fs::remove_file(state_path).ok();
+    }
+
+    #[test]
+    fn sync_coordinator_migrates_legacy_json_state_to_sqlite() {
+        let state_path = env::temp_dir().join(format!("trix-sync-legacy-{}.json", Uuid::new_v4()));
+        let chat_id = ChatId(Uuid::new_v4());
+        let state = PersistedSyncState {
+            version: 1,
+            lease_owner: "legacy-lease-owner".to_owned(),
+            last_acked_inbox_id: Some(12),
+            chat_cursors: BTreeMap::from([(chat_id.0.to_string(), 44)]),
+        };
+        let file = fs::File::create(&state_path).unwrap();
+        serde_json::to_writer_pretty(file, &state).unwrap();
+
+        let restored = SyncCoordinator::new_persistent(&state_path).unwrap();
+        assert_eq!(restored.lease_owner(), "legacy-lease-owner");
+        assert_eq!(restored.last_acked_inbox_id(), Some(12));
+        assert_eq!(restored.chat_cursor(chat_id), Some(44));
+        assert!(is_sqlite_database(&state_path).unwrap());
 
         fs::remove_file(state_path).ok();
     }
