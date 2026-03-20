@@ -1333,7 +1333,7 @@ private fun ConversationTranscript(
     if (conversation.messages.isEmpty()) {
         EmptyConversationPane(
             title = "No local messages yet",
-            body = "The chat exists in cache, but there are no synced envelopes for this thread on the device yet.",
+            body = "The chat exists in cache, but this device has not projected any local timeline items for the thread yet.",
             modifier = modifier,
         )
         return

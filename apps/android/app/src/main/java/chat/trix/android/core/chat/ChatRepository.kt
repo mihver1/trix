@@ -4,18 +4,15 @@ import android.content.Context
 import chat.trix.android.core.ffi.FfiChatParticipantProfile
 import chat.trix.android.core.auth.AuthenticatedSession
 import chat.trix.android.core.ffi.FfiChatDetail
-import chat.trix.android.core.ffi.FfiChatSummary
 import chat.trix.android.core.ffi.FfiChatType
-import chat.trix.android.core.ffi.FfiContentType
 import chat.trix.android.core.ffi.FfiCreateChatControlInput
 import chat.trix.android.core.ffi.FfiDirectoryAccount
+import chat.trix.android.core.ffi.FfiLocalChatListItem
 import chat.trix.android.core.ffi.FfiLocalHistoryStore
-import chat.trix.android.core.ffi.FfiLocalProjectedMessage
 import chat.trix.android.core.ffi.FfiLocalProjectionKind
+import chat.trix.android.core.ffi.FfiLocalTimelineItem
 import chat.trix.android.core.ffi.FfiMessageBody
 import chat.trix.android.core.ffi.FfiMessageBodyKind
-import chat.trix.android.core.ffi.FfiMessageEnvelope
-import chat.trix.android.core.ffi.FfiMessageKind
 import chat.trix.android.core.ffi.FfiMlsConversation
 import chat.trix.android.core.ffi.FfiMlsFacade
 import chat.trix.android.core.ffi.FfiSendMessageInput
@@ -251,51 +248,30 @@ class ChatRepository(
 
     private fun buildOverview(): ChatOverview {
         val store = historyStore()
+        val selfAccountId = session.localState.accountId
         val syncSnapshot = syncCoordinator().stateSnapshot()
-        val conversations = store.listChats().map { summary ->
-            val detail = store.getChat(summary.chatId)
-            val history = store.getChatHistory(summary.chatId, null, null)
-            val projectedMessages = store.getProjectedMessages(summary.chatId, null, null)
-            val readState = store.getChatReadState(summary.chatId, session.localState.accountId)
-            val mergedTimeline = mergeTimeline(
-                historyMessages = history.messages,
-                projectedMessages = projectedMessages,
-            )
-            val latestEntry = mergedTimeline.lastOrNull()
+        val conversations = store.listLocalChatListItems(selfAccountId).map { item ->
+            val detail = store.getChat(item.chatId)
+            val messageCount = store.getLocalTimelineItems(
+                item.chatId,
+                selfAccountId,
+                null,
+                null,
+            ).size
 
             ChatConversationSummary(
-                chatId = summary.chatId,
-                title = resolveChatTitle(summary, detail),
+                chatId = item.chatId,
+                title = item.displayTitle,
                 participantsLabel = participantsLabel(
-                    summary = summary,
+                    item = item,
                     detail = detail,
                 ),
-                lastMessagePreview = latestEntry?.let { entry ->
-                    when (entry) {
-                        is ChatTimelineEntry.Projected -> {
-                            val prefix = authorLabel(entry.projected.senderAccountId)
-                            "$prefix: ${projectedMessageBody(entry.projected)}"
-                        }
-
-                        is ChatTimelineEntry.EncryptedEnvelope -> {
-                            val prefix = authorLabel(entry.envelope.senderAccountId)
-                            "$prefix: ${rawEnvelopeBody(entry.envelope)}"
-                        }
-                    }
-                } ?: summary.lastMessage?.let { envelope ->
-                    val prefix = authorLabel(envelope.senderAccountId)
-                    "$prefix: ${rawEnvelopeBody(envelope)}"
-                } ?: "No messages yet",
-                timestampLabel = latestEntry?.let { entry ->
-                    when (entry) {
-                        is ChatTimelineEntry.Projected -> entry.projected.createdAtUnix.toLong().formatChatTimestamp()
-                        is ChatTimelineEntry.EncryptedEnvelope -> entry.envelope.createdAtUnix.toLong().formatChatTimestamp()
-                    }
-                } ?: summary.lastMessage?.createdAtUnix?.toLong()?.formatChatTimestamp() ?: "Pending",
-                messageCount = mergedTimeline.size,
-                unreadCount = readState?.unreadCount?.toInt() ?: summary.pendingMessageCount.toInt(),
-                hasProjectedTimeline = projectedMessages.isNotEmpty(),
-                isAccountSyncChat = summary.chatId == session.localState.accountSyncChatId,
+                lastMessagePreview = chatPreviewLabel(item),
+                timestampLabel = item.previewCreatedAtUnix?.toLong()?.formatChatTimestamp() ?: "Pending",
+                messageCount = messageCount,
+                unreadCount = item.unreadCount.toInt(),
+                hasProjectedTimeline = messageCount > 0,
+                isAccountSyncChat = item.chatId == session.localState.accountSyncChatId,
             )
         }
 
@@ -315,72 +291,26 @@ class ChatRepository(
 
     private fun buildConversation(chatId: String): ChatConversation? {
         val store = historyStore()
-        val detail = store.getChat(chatId) ?: return null
-        val history = store.getChatHistory(chatId, null, null)
-        val projectedMessages = store.getProjectedMessages(chatId, null, null)
-        val mergedTimeline = mergeTimeline(
-            historyMessages = history.messages,
-            projectedMessages = projectedMessages,
-        )
+        val selfAccountId = session.localState.accountId
+        val item = store.getLocalChatListItem(chatId, selfAccountId) ?: return null
+        val detail = store.getChat(chatId)
+        val timelineItems = store.getLocalTimelineItems(chatId, selfAccountId, null, null)
         val hasLocalMlsState = hasLocalConversation(chatId)
-        val canSend = detail.chatType == FfiChatType.ACCOUNT_SYNC || hasLocalMlsState
-        val messages = mergedTimeline.map { message ->
-            when (message) {
-                is ChatTimelineEntry.Projected -> ChatTimelineMessage(
-                    id = message.projected.messageId,
-                    author = authorLabel(message.projected.senderAccountId),
-                    body = projectedMessageBody(message.projected),
-                    timestampLabel = message.projected.createdAtUnix.toLong().formatChatTimestamp(),
-                    isMine = message.projected.senderAccountId == session.localState.accountId,
-                    note = projectedMessageNote(message.projected),
-                )
-
-                is ChatTimelineEntry.EncryptedEnvelope -> ChatTimelineMessage(
-                    id = message.envelope.messageId,
-                    author = authorLabel(message.envelope.senderAccountId),
-                    body = rawEnvelopeBody(message.envelope),
-                    timestampLabel = message.envelope.createdAtUnix.toLong().formatChatTimestamp(),
-                    isMine = message.envelope.senderAccountId == session.localState.accountId,
-                    note = "Encrypted envelope cached locally",
-                )
-            }
-        }
+        val canSend = item.chatType == FfiChatType.ACCOUNT_SYNC || hasLocalMlsState
+        val messages = timelineItems.map(::mapTimelineMessage)
 
         return ChatConversation(
             chatId = chatId,
-            title = resolveChatTitle(
-                summary = FfiChatSummary(
-                    chatId = detail.chatId,
-                    chatType = detail.chatType,
-                    title = detail.title,
-                    lastServerSeq = detail.lastServerSeq,
-                    pendingMessageCount = detail.pendingMessageCount,
-                    lastMessage = detail.lastMessage,
-                    participantProfiles = detail.participantProfiles,
-                ),
-                detail = detail,
-            ),
+            title = item.displayTitle,
             participantsLabel = participantsLabel(
-                summary = FfiChatSummary(
-                    chatId = detail.chatId,
-                    chatType = detail.chatType,
-                    title = detail.title,
-                    lastServerSeq = detail.lastServerSeq,
-                    pendingMessageCount = detail.pendingMessageCount,
-                    lastMessage = detail.lastMessage,
-                    participantProfiles = detail.participantProfiles,
-                ),
+                item = item,
                 detail = detail,
             ),
-            timelineLabel = when {
-                projectedMessages.isEmpty() -> "Encrypted cache only"
-                projectedMessages.size == mergedTimeline.size -> "Projected timeline"
-                else -> "Mixed local timeline"
-            },
+            timelineLabel = conversationTimelineLabel(item, timelineItems),
             isAccountSyncChat = chatId == session.localState.accountSyncChatId,
             canSend = canSend,
             composerHint = when {
-                detail.chatType == FfiChatType.ACCOUNT_SYNC -> {
+                item.chatType == FfiChatType.ACCOUNT_SYNC -> {
                     "Messages use this device's local MLS state for the account sync thread."
                 }
 
@@ -512,41 +442,11 @@ class ChatRepository(
         }
     }
 
-    private fun resolveChatTitle(
-        summary: FfiChatSummary,
-        detail: FfiChatDetail?,
-    ): String {
-        val explicitTitle = detail?.title?.takeIf(String::isNotBlank)
-            ?: summary.title?.takeIf(String::isNotBlank)
-        if (explicitTitle != null) {
-            return explicitTitle
-        }
-
-        return when (detail?.chatType ?: summary.chatType) {
-            FfiChatType.DM -> {
-                participantProfiles(summary, detail)
-                    .firstOrNull { it.accountId != session.localState.accountId }
-                    ?.let(::participantDisplayName)
-                    ?.let { "DM with $it" }
-                    ?: detail?.members
-                        ?.asSequence()
-                        ?.map { it.accountId }
-                        ?.firstOrNull { it != session.localState.accountId }
-                        ?.let(::shortAccountId)
-                        ?.let { "DM with $it" }
-                    ?: "Direct message"
-            }
-
-            FfiChatType.GROUP -> "Group chat"
-            FfiChatType.ACCOUNT_SYNC -> "Account sync"
-        }
-    }
-
     private fun participantsLabel(
-        summary: FfiChatSummary,
+        item: FfiLocalChatListItem,
         detail: FfiChatDetail?,
     ): String {
-        val profiles = participantProfiles(summary, detail)
+        val profiles = participantProfiles(item, detail)
         if (profiles.isNotEmpty()) {
             val visibleMembers = profiles
                 .take(MAX_VISIBLE_MEMBERS)
@@ -561,7 +461,7 @@ class ChatRepository(
 
         val members = detail?.members.orEmpty()
         if (members.isEmpty()) {
-            return when (detail?.chatType ?: summary.chatType) {
+            return when (detail?.chatType ?: item.chatType) {
                 FfiChatType.ACCOUNT_SYNC -> "Private cross-device sync channel"
                 FfiChatType.GROUP -> "Member metadata pending"
                 else -> "Member metadata pending"
@@ -586,11 +486,11 @@ class ChatRepository(
     }
 
     private fun participantProfiles(
-        summary: FfiChatSummary,
+        item: FfiLocalChatListItem,
         detail: FfiChatDetail?,
     ): List<FfiChatParticipantProfile> {
-        return detail?.participantProfiles?.takeIf(List<FfiChatParticipantProfile>::isNotEmpty)
-            ?: summary.participantProfiles
+        return item.participantProfiles.takeIf(List<FfiChatParticipantProfile>::isNotEmpty)
+            ?: detail?.participantProfiles.orEmpty()
     }
 
     private fun participantDisplayName(profile: FfiChatParticipantProfile): String {
@@ -602,14 +502,6 @@ class ChatRepository(
             ?: shortAccountId(profile.accountId)
     }
 
-    private fun authorLabel(accountId: String): String {
-        return if (accountId == session.localState.accountId) {
-            "You"
-        } else {
-            shortAccountId(accountId)
-        }
-    }
-
     private fun mapDirectoryAccount(account: FfiDirectoryAccount): ChatDirectoryAccount {
         return ChatDirectoryAccount(
             accountId = account.accountId,
@@ -619,29 +511,78 @@ class ChatRepository(
         )
     }
 
-    private fun projectedMessageBody(message: FfiLocalProjectedMessage): String {
+    private fun chatPreviewLabel(item: FfiLocalChatListItem): String {
+        val previewText = item.previewText?.trim()?.takeIf(String::isNotEmpty) ?: return "No messages yet"
+        val senderLabel = previewSenderLabel(item)
+        return if (senderLabel != null) {
+            "$senderLabel: $previewText"
+        } else {
+            previewText
+        }
+    }
+
+    private fun previewSenderLabel(item: FfiLocalChatListItem): String? {
+        val senderDisplayName = item.previewSenderDisplayName
+        val senderAccountId = item.previewSenderAccountId
+        return when {
+            item.previewIsOutgoing == true -> "You"
+            !senderDisplayName.isNullOrBlank() -> senderDisplayName
+            !senderAccountId.isNullOrBlank() -> shortAccountId(senderAccountId)
+            else -> null
+        }
+    }
+
+    private fun conversationTimelineLabel(
+        item: FfiLocalChatListItem,
+        timelineItems: List<FfiLocalTimelineItem>,
+    ): String {
+        if (timelineItems.isEmpty()) {
+            return if (item.previewText != null) {
+                "Encrypted cache only"
+            } else {
+                "No local timeline"
+            }
+        }
+
+        val latestTimelineSeq = timelineItems.last().serverSeq.toLong()
+        if (item.previewServerSeq?.toLong()?.let { it > latestTimelineSeq } == true) {
+            return "Mixed local timeline"
+        }
+
+        return if (timelineItems.any { it.projectionKind != FfiLocalProjectionKind.APPLICATION_MESSAGE }) {
+            "Projected + MLS events"
+        } else {
+            "Projected timeline"
+        }
+    }
+
+    private fun mapTimelineMessage(message: FfiLocalTimelineItem): ChatTimelineMessage {
+        return ChatTimelineMessage(
+            id = message.messageId,
+            author = if (message.isOutgoing) {
+                "You"
+            } else {
+                message.senderDisplayName.takeIf(String::isNotBlank)
+                    ?: shortAccountId(message.senderAccountId)
+            },
+            body = timelineBody(message),
+            timestampLabel = message.createdAtUnix.toLong().formatChatTimestamp(),
+            isMine = message.isOutgoing,
+            note = timelineNote(message),
+        )
+    }
+
+    private fun timelineBody(message: FfiLocalTimelineItem): String {
         val body = message.body
         if (body != null) {
             return structuredBodyText(body)
         }
 
-        val fallbackText = if (message.contentType == FfiContentType.TEXT) {
-            message.payload
-                ?.decodeToString()
-                ?.trim()
-                ?.takeIf { it.isNotEmpty() }
-        } else {
-            null
-        }
-        return fallbackText
+        return message.previewText
+            .trim()
+            .takeIf(String::isNotEmpty)
             ?: message.bodyParseError
-            ?: when (message.projectionKind) {
-                FfiLocalProjectionKind.APPLICATION_MESSAGE -> "Encrypted application payload"
-                FfiLocalProjectionKind.PROPOSAL_QUEUED -> "MLS proposal queued"
-                FfiLocalProjectionKind.COMMIT_MERGED -> "MLS commit merged"
-                FfiLocalProjectionKind.WELCOME_REF -> "Welcome reference"
-                FfiLocalProjectionKind.SYSTEM -> "System event"
-            }
+            ?: "Encrypted application payload"
     }
 
     private fun structuredBodyText(body: FfiMessageBody): String {
@@ -654,7 +595,7 @@ class ChatRepository(
         }
     }
 
-    private fun projectedMessageNote(message: FfiLocalProjectedMessage): String? {
+    private fun timelineNote(message: FfiLocalTimelineItem): String? {
         if (message.bodyParseError != null) {
             return message.bodyParseError
         }
@@ -669,23 +610,6 @@ class ChatRepository(
 
             FfiLocalProjectionKind.WELCOME_REF -> "Welcome reference"
             FfiLocalProjectionKind.SYSTEM -> "System event"
-        }
-    }
-
-    private fun rawEnvelopeBody(envelope: FfiMessageEnvelope): String {
-        val contentLabel = when (envelope.contentType) {
-            FfiContentType.TEXT -> "encrypted text message"
-            FfiContentType.REACTION -> "encrypted reaction"
-            FfiContentType.RECEIPT -> "encrypted receipt"
-            FfiContentType.ATTACHMENT -> "encrypted attachment"
-            FfiContentType.CHAT_EVENT -> "encrypted chat event"
-        }
-
-        return when (envelope.messageKind) {
-            FfiMessageKind.APPLICATION -> contentLabel.replaceFirstChar(Char::uppercase)
-            FfiMessageKind.COMMIT -> "MLS commit"
-            FfiMessageKind.WELCOME_REF -> "Welcome reference"
-            FfiMessageKind.SYSTEM -> "System message"
         }
     }
 
@@ -716,20 +640,6 @@ class ChatRepository(
         }
     }
 
-    private fun mergeTimeline(
-        historyMessages: List<FfiMessageEnvelope>,
-        projectedMessages: List<FfiLocalProjectedMessage>,
-    ): List<ChatTimelineEntry> {
-        val historyByServerSeq = historyMessages.associateBy { it.serverSeq }
-        val projectedByServerSeq = projectedMessages.associateBy { it.serverSeq }
-        return (historyByServerSeq.keys + projectedByServerSeq.keys)
-            .sorted()
-            .mapNotNull { serverSeq ->
-                projectedByServerSeq[serverSeq]?.let(ChatTimelineEntry::Projected)
-                    ?: historyByServerSeq[serverSeq]?.let(ChatTimelineEntry::EncryptedEnvelope)
-            }
-    }
-
     companion object {
         private const val MAX_VISIBLE_MEMBERS = 3
         private val DIRECTORY_SEARCH_LIMIT = 20u
@@ -741,16 +651,6 @@ class ChatRepository(
         private val DATE_FORMATTER = DateTimeFormatter.ofPattern("MMM d, yyyy")
         private const val EMPTY_AAD_JSON = "{}"
     }
-}
-
-private sealed interface ChatTimelineEntry {
-    data class Projected(
-        val projected: FfiLocalProjectedMessage,
-    ) : ChatTimelineEntry
-
-    data class EncryptedEnvelope(
-        val envelope: FfiMessageEnvelope,
-    ) : ChatTimelineEntry
 }
 
 data class ChatOverview(

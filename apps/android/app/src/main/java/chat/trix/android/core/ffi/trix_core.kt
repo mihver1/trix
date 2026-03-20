@@ -682,11 +682,17 @@ external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_get_chat_hist
 ): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_get_chat_read_state(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_get_local_chat_list_item(
+): Short
+external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_get_local_timeline_items(
+): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_get_projected_messages(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_list_chat_read_states(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_list_chats(
+): Short
+external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_list_local_chat_list_items(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_mark_chat_read(
 ): Short
@@ -964,11 +970,17 @@ external fun uniffi_trix_core_fn_method_ffilocalhistorystore_get_chat_history(`p
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_get_chat_read_state(`ptr`: Long,`chatId`: RustBuffer.ByValue,`selfAccountId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_get_local_chat_list_item(`ptr`: Long,`chatId`: RustBuffer.ByValue,`selfAccountId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_get_local_timeline_items(`ptr`: Long,`chatId`: RustBuffer.ByValue,`selfAccountId`: RustBuffer.ByValue,`afterServerSeq`: RustBuffer.ByValue,`limit`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_get_projected_messages(`ptr`: Long,`chatId`: RustBuffer.ByValue,`afterServerSeq`: RustBuffer.ByValue,`limit`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_list_chat_read_states(`ptr`: Long,`selfAccountId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_list_chats(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_list_local_chat_list_items(`ptr`: Long,`selfAccountId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_mark_chat_read(`ptr`: Long,`chatId`: RustBuffer.ByValue,`throughServerSeq`: RustBuffer.ByValue,`selfAccountId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1361,6 +1373,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_get_chat_read_state() != 48570.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_get_local_chat_list_item() != 35591.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_get_local_timeline_items() != 46900.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_get_projected_messages() != 59100.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1368,6 +1386,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_list_chats() != 27009.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_list_local_chat_list_items() != 16869.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_mark_chat_read() != 49850.toShort()) {
@@ -2718,11 +2739,17 @@ public interface FfiLocalHistoryStoreInterface {
     
     fun `getChatReadState`(`chatId`: kotlin.String, `selfAccountId`: kotlin.String?): FfiLocalChatReadState?
     
+    fun `getLocalChatListItem`(`chatId`: kotlin.String, `selfAccountId`: kotlin.String?): FfiLocalChatListItem?
+    
+    fun `getLocalTimelineItems`(`chatId`: kotlin.String, `selfAccountId`: kotlin.String?, `afterServerSeq`: kotlin.ULong?, `limit`: kotlin.UInt?): List<FfiLocalTimelineItem>
+    
     fun `getProjectedMessages`(`chatId`: kotlin.String, `afterServerSeq`: kotlin.ULong?, `limit`: kotlin.UInt?): List<FfiLocalProjectedMessage>
     
     fun `listChatReadStates`(`selfAccountId`: kotlin.String?): List<FfiLocalChatReadState>
     
     fun `listChats`(): List<FfiChatSummary>
+    
+    fun `listLocalChatListItems`(`selfAccountId`: kotlin.String?): List<FfiLocalChatListItem>
     
     fun `markChatRead`(`chatId`: kotlin.String, `throughServerSeq`: kotlin.ULong?, `selfAccountId`: kotlin.String?): FfiLocalChatReadState
     
@@ -2998,6 +3025,34 @@ open class FfiLocalHistoryStore: Disposable, AutoCloseable, FfiLocalHistoryStore
     
 
     
+    @Throws(TrixFfiException::class)override fun `getLocalChatListItem`(`chatId`: kotlin.String, `selfAccountId`: kotlin.String?): FfiLocalChatListItem? {
+            return FfiConverterOptionalTypeFfiLocalChatListItem.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_get_local_chat_list_item(
+        it,
+        FfiConverterString.lower(`chatId`),FfiConverterOptionalString.lower(`selfAccountId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `getLocalTimelineItems`(`chatId`: kotlin.String, `selfAccountId`: kotlin.String?, `afterServerSeq`: kotlin.ULong?, `limit`: kotlin.UInt?): List<FfiLocalTimelineItem> {
+            return FfiConverterSequenceTypeFfiLocalTimelineItem.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_get_local_timeline_items(
+        it,
+        FfiConverterString.lower(`chatId`),FfiConverterOptionalString.lower(`selfAccountId`),FfiConverterOptionalULong.lower(`afterServerSeq`),FfiConverterOptionalUInt.lower(`limit`),_status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(TrixFfiException::class)override fun `getProjectedMessages`(`chatId`: kotlin.String, `afterServerSeq`: kotlin.ULong?, `limit`: kotlin.UInt?): List<FfiLocalProjectedMessage> {
             return FfiConverterSequenceTypeFfiLocalProjectedMessage.lift(
     callWithHandle {
@@ -3033,6 +3088,20 @@ open class FfiLocalHistoryStore: Disposable, AutoCloseable, FfiLocalHistoryStore
     UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_list_chats(
         it,
         _status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `listLocalChatListItems`(`selfAccountId`: kotlin.String?): List<FfiLocalChatListItem> {
+            return FfiConverterSequenceTypeFfiLocalChatListItem.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_list_local_chat_list_items(
+        it,
+        FfiConverterOptionalString.lower(`selfAccountId`),_status)
 }
     }
     )
@@ -7555,6 +7624,104 @@ public object FfiConverterTypeFfiLeaseInboxResponse: FfiConverterRustBuffer<FfiL
 
 
 
+data class FfiLocalChatListItem (
+    var `chatId`: kotlin.String
+    , 
+    var `chatType`: FfiChatType
+    , 
+    var `title`: kotlin.String?
+    , 
+    var `displayTitle`: kotlin.String
+    , 
+    var `lastServerSeq`: kotlin.ULong
+    , 
+    var `pendingMessageCount`: kotlin.ULong
+    , 
+    var `unreadCount`: kotlin.ULong
+    , 
+    var `previewText`: kotlin.String?
+    , 
+    var `previewSenderAccountId`: kotlin.String?
+    , 
+    var `previewSenderDisplayName`: kotlin.String?
+    , 
+    var `previewIsOutgoing`: kotlin.Boolean?
+    , 
+    var `previewServerSeq`: kotlin.ULong?
+    , 
+    var `previewCreatedAtUnix`: kotlin.ULong?
+    , 
+    var `participantProfiles`: List<FfiChatParticipantProfile>
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiLocalChatListItem: FfiConverterRustBuffer<FfiLocalChatListItem> {
+    override fun read(buf: ByteBuffer): FfiLocalChatListItem {
+        return FfiLocalChatListItem(
+            FfiConverterString.read(buf),
+            FfiConverterTypeFfiChatType.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalBoolean.read(buf),
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterSequenceTypeFfiChatParticipantProfile.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiLocalChatListItem) = (
+            FfiConverterString.allocationSize(value.`chatId`) +
+            FfiConverterTypeFfiChatType.allocationSize(value.`chatType`) +
+            FfiConverterOptionalString.allocationSize(value.`title`) +
+            FfiConverterString.allocationSize(value.`displayTitle`) +
+            FfiConverterULong.allocationSize(value.`lastServerSeq`) +
+            FfiConverterULong.allocationSize(value.`pendingMessageCount`) +
+            FfiConverterULong.allocationSize(value.`unreadCount`) +
+            FfiConverterOptionalString.allocationSize(value.`previewText`) +
+            FfiConverterOptionalString.allocationSize(value.`previewSenderAccountId`) +
+            FfiConverterOptionalString.allocationSize(value.`previewSenderDisplayName`) +
+            FfiConverterOptionalBoolean.allocationSize(value.`previewIsOutgoing`) +
+            FfiConverterOptionalULong.allocationSize(value.`previewServerSeq`) +
+            FfiConverterOptionalULong.allocationSize(value.`previewCreatedAtUnix`) +
+            FfiConverterSequenceTypeFfiChatParticipantProfile.allocationSize(value.`participantProfiles`)
+    )
+
+    override fun write(value: FfiLocalChatListItem, buf: ByteBuffer) {
+            FfiConverterString.write(value.`chatId`, buf)
+            FfiConverterTypeFfiChatType.write(value.`chatType`, buf)
+            FfiConverterOptionalString.write(value.`title`, buf)
+            FfiConverterString.write(value.`displayTitle`, buf)
+            FfiConverterULong.write(value.`lastServerSeq`, buf)
+            FfiConverterULong.write(value.`pendingMessageCount`, buf)
+            FfiConverterULong.write(value.`unreadCount`, buf)
+            FfiConverterOptionalString.write(value.`previewText`, buf)
+            FfiConverterOptionalString.write(value.`previewSenderAccountId`, buf)
+            FfiConverterOptionalString.write(value.`previewSenderDisplayName`, buf)
+            FfiConverterOptionalBoolean.write(value.`previewIsOutgoing`, buf)
+            FfiConverterOptionalULong.write(value.`previewServerSeq`, buf)
+            FfiConverterOptionalULong.write(value.`previewCreatedAtUnix`, buf)
+            FfiConverterSequenceTypeFfiChatParticipantProfile.write(value.`participantProfiles`, buf)
+    }
+}
+
+
+
 data class FfiLocalChatReadState (
     var `chatId`: kotlin.String
     , 
@@ -7777,6 +7944,109 @@ public object FfiConverterTypeFfiLocalStoreApplyReport: FfiConverterRustBuffer<F
             FfiConverterULong.write(value.`chatsUpserted`, buf)
             FfiConverterULong.write(value.`messagesUpserted`, buf)
             FfiConverterSequenceString.write(value.`changedChatIds`, buf)
+    }
+}
+
+
+
+data class FfiLocalTimelineItem (
+    var `serverSeq`: kotlin.ULong
+    , 
+    var `messageId`: kotlin.String
+    , 
+    var `senderAccountId`: kotlin.String
+    , 
+    var `senderDeviceId`: kotlin.String
+    , 
+    var `senderDisplayName`: kotlin.String
+    , 
+    var `isOutgoing`: kotlin.Boolean
+    , 
+    var `epoch`: kotlin.ULong
+    , 
+    var `messageKind`: FfiMessageKind
+    , 
+    var `contentType`: FfiContentType
+    , 
+    var `projectionKind`: FfiLocalProjectionKind
+    , 
+    var `body`: FfiMessageBody?
+    , 
+    var `bodyParseError`: kotlin.String?
+    , 
+    var `previewText`: kotlin.String
+    , 
+    var `mergedEpoch`: kotlin.ULong?
+    , 
+    var `createdAtUnix`: kotlin.ULong
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiLocalTimelineItem: FfiConverterRustBuffer<FfiLocalTimelineItem> {
+    override fun read(buf: ByteBuffer): FfiLocalTimelineItem {
+        return FfiLocalTimelineItem(
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterTypeFfiMessageKind.read(buf),
+            FfiConverterTypeFfiContentType.read(buf),
+            FfiConverterTypeFfiLocalProjectionKind.read(buf),
+            FfiConverterOptionalTypeFfiMessageBody.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiLocalTimelineItem) = (
+            FfiConverterULong.allocationSize(value.`serverSeq`) +
+            FfiConverterString.allocationSize(value.`messageId`) +
+            FfiConverterString.allocationSize(value.`senderAccountId`) +
+            FfiConverterString.allocationSize(value.`senderDeviceId`) +
+            FfiConverterString.allocationSize(value.`senderDisplayName`) +
+            FfiConverterBoolean.allocationSize(value.`isOutgoing`) +
+            FfiConverterULong.allocationSize(value.`epoch`) +
+            FfiConverterTypeFfiMessageKind.allocationSize(value.`messageKind`) +
+            FfiConverterTypeFfiContentType.allocationSize(value.`contentType`) +
+            FfiConverterTypeFfiLocalProjectionKind.allocationSize(value.`projectionKind`) +
+            FfiConverterOptionalTypeFfiMessageBody.allocationSize(value.`body`) +
+            FfiConverterOptionalString.allocationSize(value.`bodyParseError`) +
+            FfiConverterString.allocationSize(value.`previewText`) +
+            FfiConverterOptionalULong.allocationSize(value.`mergedEpoch`) +
+            FfiConverterULong.allocationSize(value.`createdAtUnix`)
+    )
+
+    override fun write(value: FfiLocalTimelineItem, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`serverSeq`, buf)
+            FfiConverterString.write(value.`messageId`, buf)
+            FfiConverterString.write(value.`senderAccountId`, buf)
+            FfiConverterString.write(value.`senderDeviceId`, buf)
+            FfiConverterString.write(value.`senderDisplayName`, buf)
+            FfiConverterBoolean.write(value.`isOutgoing`, buf)
+            FfiConverterULong.write(value.`epoch`, buf)
+            FfiConverterTypeFfiMessageKind.write(value.`messageKind`, buf)
+            FfiConverterTypeFfiContentType.write(value.`contentType`, buf)
+            FfiConverterTypeFfiLocalProjectionKind.write(value.`projectionKind`, buf)
+            FfiConverterOptionalTypeFfiMessageBody.write(value.`body`, buf)
+            FfiConverterOptionalString.write(value.`bodyParseError`, buf)
+            FfiConverterString.write(value.`previewText`, buf)
+            FfiConverterOptionalULong.write(value.`mergedEpoch`, buf)
+            FfiConverterULong.write(value.`createdAtUnix`, buf)
     }
 }
 
@@ -9638,6 +9908,38 @@ public object FfiConverterOptionalULong: FfiConverterRustBuffer<kotlin.ULong?> {
 /**
  * @suppress
  */
+public object FfiConverterOptionalBoolean: FfiConverterRustBuffer<kotlin.Boolean?> {
+    override fun read(buf: ByteBuffer): kotlin.Boolean? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterBoolean.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.Boolean?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterBoolean.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.Boolean?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterBoolean.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?> {
     override fun read(buf: ByteBuffer): kotlin.String? {
         if (buf.get().toInt() == 0) {
@@ -9788,6 +10090,38 @@ public object FfiConverterOptionalTypeFfiControlMessage: FfiConverterRustBuffer<
         } else {
             buf.put(1)
             FfiConverterTypeFfiControlMessage.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeFfiLocalChatListItem: FfiConverterRustBuffer<FfiLocalChatListItem?> {
+    override fun read(buf: ByteBuffer): FfiLocalChatListItem? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeFfiLocalChatListItem.read(buf)
+    }
+
+    override fun allocationSize(value: FfiLocalChatListItem?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeFfiLocalChatListItem.allocationSize(value)
+        }
+    }
+
+    override fun write(value: FfiLocalChatListItem?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeFfiLocalChatListItem.write(value, buf)
         }
     }
 }
@@ -10414,6 +10748,34 @@ public object FfiConverterSequenceTypeFfiInboxItem: FfiConverterRustBuffer<List<
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeFfiLocalChatListItem: FfiConverterRustBuffer<List<FfiLocalChatListItem>> {
+    override fun read(buf: ByteBuffer): List<FfiLocalChatListItem> {
+        val len = buf.getInt()
+        return List<FfiLocalChatListItem>(len) {
+            FfiConverterTypeFfiLocalChatListItem.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiLocalChatListItem>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiLocalChatListItem.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiLocalChatListItem>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiLocalChatListItem.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeFfiLocalChatReadState: FfiConverterRustBuffer<List<FfiLocalChatReadState>> {
     override fun read(buf: ByteBuffer): List<FfiLocalChatReadState> {
         val len = buf.getInt()
@@ -10460,6 +10822,34 @@ public object FfiConverterSequenceTypeFfiLocalProjectedMessage: FfiConverterRust
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeFfiLocalProjectedMessage.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiLocalTimelineItem: FfiConverterRustBuffer<List<FfiLocalTimelineItem>> {
+    override fun read(buf: ByteBuffer): List<FfiLocalTimelineItem> {
+        val len = buf.getInt()
+        return List<FfiLocalTimelineItem>(len) {
+            FfiConverterTypeFfiLocalTimelineItem.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiLocalTimelineItem>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiLocalTimelineItem.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiLocalTimelineItem>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiLocalTimelineItem.write(it, buf)
         }
     }
 }
