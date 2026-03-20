@@ -312,7 +312,19 @@ private extension FfiChatSummary {
             chatId: chatId,
             chatType: chatType.trix_chatType,
             title: title,
-            lastServerSeq: lastServerSeq
+            lastServerSeq: lastServerSeq,
+            participantProfiles: participantProfiles.map(\.trix_chatParticipantProfileSummary)
+        )
+    }
+}
+
+private extension FfiChatParticipantProfile {
+    var trix_chatParticipantProfileSummary: ChatParticipantProfileSummary {
+        ChatParticipantProfileSummary(
+            accountId: accountId,
+            handle: handle,
+            profileName: profileName,
+            profileBio: profileBio
         )
     }
 }

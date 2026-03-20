@@ -371,6 +371,7 @@ struct ChatSummary: Decodable, Identifiable {
     let chatType: ChatType
     let title: String?
     let lastServerSeq: UInt64
+    let participantProfiles: [ChatParticipantProfileSummary]
 
     var id: String { chatId }
 }
@@ -387,6 +388,26 @@ struct ChatMemberSummary: Decodable, Identifiable {
     var id: String { accountId }
 }
 
+struct ChatParticipantProfileSummary: Decodable, Identifiable, Hashable {
+    let accountId: String
+    let handle: String?
+    let profileName: String
+    let profileBio: String?
+
+    var id: String { accountId }
+}
+
+struct ChatDeviceSummary: Decodable, Identifiable {
+    let deviceId: String
+    let accountId: String
+    let displayName: String
+    let platform: String
+    let leafIndex: UInt32
+    let credentialIdentityB64: String
+
+    var id: String { deviceId }
+}
+
 struct ChatDetailResponse: Decodable {
     let chatId: String
     let chatType: ChatType
@@ -394,7 +415,9 @@ struct ChatDetailResponse: Decodable {
     let lastServerSeq: UInt64
     let epoch: UInt64
     let lastCommitMessageId: String?
+    let participantProfiles: [ChatParticipantProfileSummary]
     let members: [ChatMemberSummary]
+    let deviceMembers: [ChatDeviceSummary]
 }
 
 struct ControlMessageInput: Encodable {
@@ -519,4 +542,186 @@ struct AckInboxRequest: Encodable {
 
 struct AckInboxResponse: Decodable {
     let ackedInboxIds: [UInt64]
+}
+
+extension ChatSummary {
+    func resolvedTitle(currentAccountId: String?) -> String {
+        ChatPresentationResolver.resolvedTitle(
+            explicitTitle: title,
+            chatType: chatType,
+            participantProfiles: participantProfiles,
+            currentAccountId: currentAccountId
+        )
+    }
+
+    func avatarSeedTitle(currentAccountId: String?) -> String {
+        ChatPresentationResolver.avatarSeedTitle(
+            explicitTitle: title,
+            chatType: chatType,
+            participantProfiles: participantProfiles,
+            currentAccountId: currentAccountId
+        )
+    }
+}
+
+extension ChatDetailResponse {
+    func resolvedTitle(currentAccountId: String?) -> String {
+        ChatPresentationResolver.resolvedTitle(
+            explicitTitle: title,
+            chatType: chatType,
+            participantProfiles: participantProfiles,
+            currentAccountId: currentAccountId
+        )
+    }
+
+    func avatarSeedTitle(currentAccountId: String?) -> String {
+        ChatPresentationResolver.avatarSeedTitle(
+            explicitTitle: title,
+            chatType: chatType,
+            participantProfiles: participantProfiles,
+            currentAccountId: currentAccountId
+        )
+    }
+
+    func participantProfile(accountId: String) -> ChatParticipantProfileSummary? {
+        participantProfiles.first { $0.accountId == accountId }
+    }
+}
+
+private enum ChatPresentationResolver {
+    static func resolvedTitle(
+        explicitTitle: String?,
+        chatType: ChatType,
+        participantProfiles: [ChatParticipantProfileSummary],
+        currentAccountId: String?
+    ) -> String {
+        if let explicitTitle = sanitized(explicitTitle) {
+            return explicitTitle
+        }
+
+        switch chatType {
+        case .dm:
+            if let otherParticipant = otherParticipant(
+                participantProfiles: participantProfiles,
+                currentAccountId: currentAccountId
+            ) {
+                return otherParticipant.conversationTitle
+            }
+            return fallbackTitle(for: chatType)
+        case .group:
+            if let participantTitle = groupedParticipantTitle(
+                participantProfiles: participantProfiles,
+                currentAccountId: currentAccountId
+            ) {
+                return participantTitle
+            }
+            return fallbackTitle(for: chatType)
+        case .accountSync:
+            return fallbackTitle(for: chatType)
+        }
+    }
+
+    static func avatarSeedTitle(
+        explicitTitle: String?,
+        chatType: ChatType,
+        participantProfiles: [ChatParticipantProfileSummary],
+        currentAccountId: String?
+    ) -> String {
+        if let explicitTitle = sanitized(explicitTitle) {
+            return explicitTitle
+        }
+
+        if let otherParticipant = otherParticipant(
+            participantProfiles: participantProfiles,
+            currentAccountId: currentAccountId
+        ) {
+            return otherParticipant.avatarSeedTitle
+        }
+
+        if let firstNamedParticipant = participantProfiles.first {
+            return firstNamedParticipant.avatarSeedTitle
+        }
+
+        return fallbackTitle(for: chatType)
+    }
+
+    private static func otherParticipant(
+        participantProfiles: [ChatParticipantProfileSummary],
+        currentAccountId: String?
+    ) -> ChatParticipantProfileSummary? {
+        if let currentAccountId {
+            return participantProfiles.first { $0.accountId != currentAccountId } ?? participantProfiles.first
+        }
+
+        return participantProfiles.first
+    }
+
+    private static func groupedParticipantTitle(
+        participantProfiles: [ChatParticipantProfileSummary],
+        currentAccountId: String?
+    ) -> String? {
+        let visibleProfiles = participantProfiles.filter { profile in
+            guard let currentAccountId else {
+                return true
+            }
+            return participantProfiles.count <= 1 || profile.accountId != currentAccountId
+        }
+
+        let names = visibleProfiles.compactMap { sanitized($0.profileName) ?? sanitized($0.handle) }
+
+        switch names.count {
+        case 0:
+            return nil
+        case 1:
+            return names[0]
+        case 2:
+            return "\(names[0]), \(names[1])"
+        default:
+            return "\(names[0]), \(names[1]) +\(names.count - 2)"
+        }
+    }
+
+    private static func fallbackTitle(for chatType: ChatType) -> String {
+        switch chatType {
+        case .dm:
+            return "Direct Message"
+        case .group:
+            return "Group"
+        case .accountSync:
+            return "Account Sync"
+        }
+    }
+
+    fileprivate static func sanitized(_ value: String?) -> String? {
+        guard let value else {
+            return nil
+        }
+
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+extension ChatParticipantProfileSummary {
+    var primaryDisplayName: String {
+        ChatPresentationResolver.sanitized(profileName) ?? accountId
+    }
+
+    var handleDisplay: String? {
+        ChatPresentationResolver.sanitized(handle).map { "@\($0)" }
+    }
+
+    var bioSummary: String? {
+        ChatPresentationResolver.sanitized(profileBio)
+    }
+
+    var conversationTitle: String {
+        handleDisplay ?? primaryDisplayName
+    }
+
+    var avatarSeedTitle: String {
+        ChatPresentationResolver.sanitized(profileName)
+            ?? ChatPresentationResolver.sanitized(handle)
+            ?? accountId
+    }
 }

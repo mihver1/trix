@@ -306,7 +306,8 @@ private struct ChatsHomeView: View {
                                 } label: {
                                     ChatListRow(
                                         chat: chat,
-                                        snapshot: dashboard.chatListSnapshot(for: chat)
+                                        snapshot: dashboard.chatListSnapshot(for: chat),
+                                        currentAccountId: dashboard.profile.accountId
                                     )
                                 }
                             }
@@ -676,14 +677,15 @@ private struct AdvancedConnectionBadge: View {
 private struct ChatListRow: View {
     let chat: ChatSummary
     let snapshot: ChatListSnapshot
+    let currentAccountId: String
 
     var body: some View {
         HStack(spacing: 14) {
-            AccountAvatarView(title: chat.title ?? chat.chatType.label, size: 54)
+            AccountAvatarView(title: chat.avatarSeedTitle(currentAccountId: currentAccountId), size: 54)
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text(chat.title ?? chat.chatType.label)
+                    Text(chat.resolvedTitle(currentAccountId: currentAccountId))
                         .font(.body.weight(.semibold))
                         .lineLimit(1)
 
@@ -700,12 +702,12 @@ private struct ChatListRow: View {
                     Text(snapshot.previewText)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        .lineLimit(1)
 
                     Spacer(minLength: 8)
 
                     if snapshot.unreadCount > 0 {
-                        Text(String(snapshot.unreadCount))
+                        Text(snapshot.unreadCount > 99 ? "99+" : String(snapshot.unreadCount))
                             .font(.caption.weight(.bold))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 9)
@@ -1081,20 +1083,60 @@ private extension DashboardData {
             .sorted { $0.message.createdAtUnix > $1.message.createdAtUnix }
 
         let latestItem = matchingItems.first
-        let previewText: String
-        if let latestItem {
-            previewText = latestItem.message.debugPreview
-        } else if chat.lastServerSeq == 0 {
-            previewText = "No messages yet"
-        } else {
-            previewText = "\(chat.chatType.label) conversation"
-        }
-
         return ChatListSnapshot(
-            previewText: previewText,
+            previewText: chatListPreviewText(for: chat, latestItem: latestItem),
             previewDate: latestItem?.message.createdAtDate,
             unreadCount: matchingItems.count
         )
+    }
+
+    private func chatListPreviewText(for chat: ChatSummary, latestItem: InboxItem?) -> String {
+        if let latestItem {
+            let previewBody = latestItem.message.debugPreview
+            if let prefix = senderPrefix(for: latestItem.message, in: chat) {
+                return "\(prefix): \(previewBody)"
+            }
+            return previewBody
+        }
+
+        if chat.lastServerSeq == 0 {
+            switch chat.chatType {
+            case .dm:
+                return "Tap to send the first message"
+            case .group:
+                let names = chat.participantProfiles
+                    .filter { chat.participantProfiles.count <= 1 || $0.accountId != profile.accountId }
+                    .map(\.primaryDisplayName)
+                if names.isEmpty {
+                    return "No messages yet"
+                }
+                if names.count == 1 {
+                    return names[0]
+                }
+                if names.count == 2 {
+                    return "\(names[0]), \(names[1])"
+                }
+                return "\(names[0]), \(names[1]) +\(names.count - 2)"
+            case .accountSync:
+                return "Secure device sync"
+            }
+        }
+
+        return "Loading recent messages..."
+    }
+
+    private func senderPrefix(for message: MessageEnvelope, in chat: ChatSummary) -> String? {
+        if message.senderAccountId == profile.accountId {
+            return "You"
+        }
+
+        guard chat.chatType == .group else {
+            return nil
+        }
+
+        return chat.participantProfiles
+            .first { $0.accountId == message.senderAccountId }?
+            .primaryDisplayName
     }
 }
 

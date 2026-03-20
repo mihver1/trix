@@ -1112,17 +1112,18 @@ final class AppModel: ObservableObject {
         chatId: String
     ) async throws -> ChatSnapshot {
         let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-        async let detail: ChatDetailResponse = context.client.get(
+        let detail: ChatDetailResponse = try await context.client.get(
             "/v0/chats/\(chatId)",
             accessToken: context.session.accessToken
         )
+        seedDirectoryAccountCache(with: detail.participantProfiles)
 
         if let localHistory = try TrixCorePersistentBridge.loadLocalChatHistory(
             identity: context.identity,
             chatId: chatId,
             limit: 100
         ) {
-            return try await ChatSnapshot(
+            return ChatSnapshot(
                 detail: detail,
                 history: localHistory.messages,
                 historySource: .localStore
@@ -1266,6 +1267,9 @@ final class AppModel: ObservableObject {
             profileName: dashboard.profile.profileName,
             profileBio: dashboard.profile.profileBio
         )
+        dashboard.chats.forEach { chat in
+            seedDirectoryAccountCache(with: chat.participantProfiles)
+        }
         self.dashboard = dashboard
         updateLocalCoreStateSnapshot(identity: localIdentity ?? identity)
         lastUpdatedAt = Date()
@@ -1376,6 +1380,17 @@ final class AppModel: ObservableObject {
         return mergedById
             .values
             .sorted { $0.inboxId < $1.inboxId }
+    }
+
+    private func seedDirectoryAccountCache(with participantProfiles: [ChatParticipantProfileSummary]) {
+        for profile in participantProfiles {
+            directoryAccountCache[profile.accountId] = DirectoryAccountSummary(
+                accountId: profile.accountId,
+                handle: profile.handle,
+                profileName: profile.profileName,
+                profileBio: profile.profileBio
+            )
+        }
     }
 
     private func makeDebugControlMessage(

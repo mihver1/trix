@@ -13,7 +13,6 @@ struct ChatDetailView: View {
     @ObservedObject var model: AppModel
 
     @State private var snapshot: ChatSnapshot?
-    @State private var memberProfiles: [String: DirectoryAccountSummary] = [:]
     @State private var isLoadingSnapshot = false
     @State private var localErrorMessage: String?
     @State private var activityMessage: String?
@@ -80,14 +79,21 @@ struct ChatDetailView: View {
                 Section("Members") {
                     ForEach(snapshot.detail.members) { member in
                         VStack(alignment: .leading, spacing: 6) {
-                            if let account = memberProfiles[member.accountId] {
-                                Text(account.profileName)
+                            if let account = snapshot.detail.participantProfile(accountId: member.accountId) {
+                                Text(account.primaryDisplayName)
                                     .font(.body.weight(.medium))
 
-                                if let handle = account.handle?.trix_trimmedOrNil() {
-                                    Text("@\(handle)")
+                                if let handleDisplay = account.handleDisplay {
+                                    Text(handleDisplay)
                                         .font(.footnote)
                                         .foregroundStyle(.secondary)
+                                }
+
+                                if let bioSummary = account.bioSummary {
+                                    Text(bioSummary)
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
                                 }
 
                                 Text(member.accountId)
@@ -108,6 +114,56 @@ struct ChatDetailView: View {
                         }
                         .padding(.vertical, 4)
                     }
+                }
+
+                Section {
+                    if snapshot.detail.deviceMembers.isEmpty {
+                        Text("No device leaves are advertised for this chat yet.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(snapshot.detail.deviceMembers) { device in
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(alignment: .firstTextBaseline) {
+                                    Text(device.displayName)
+                                        .font(.body.weight(.medium))
+
+                                    if device.deviceId == model.localIdentity?.deviceId {
+                                        Text("This Device")
+                                            .font(.caption2.weight(.semibold))
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 3)
+                                            .foregroundStyle(.green)
+                                            .background(Color.green.opacity(0.14))
+                                            .clipShape(Capsule())
+                                    }
+
+                                    Spacer()
+
+                                    Text("Leaf \(device.leafIndex)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Text(deviceOwnerLabel(for: device, in: snapshot.detail))
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+
+                                HStack {
+                                    Text(device.platform.capitalized)
+                                    Spacer()
+                                    Text(shortIdentifier(device.deviceId))
+                                        .font(.system(.caption, design: .monospaced))
+                                }
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+                } header: {
+                    Text("Device Members")
+                } footer: {
+                    Text("These are the MLS leaves currently active inside this chat.")
                 }
 
                 Section {
@@ -313,7 +369,7 @@ struct ChatDetailView: View {
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
 
-                                Text("Sender \(message.senderDeviceId)")
+                                Text(historySenderLabel(for: message, in: snapshot.detail))
                                     .font(.footnote)
                                     .foregroundStyle(.secondary)
                             }
@@ -372,27 +428,11 @@ struct ChatDetailView: View {
     }
 
     private var conversationTitle: String {
-        resolvedConversationTitle ?? chatSummary.title ?? chatSummary.chatType.label
-    }
-
-    private var resolvedConversationTitle: String? {
-        if let explicitTitle = snapshot?.detail.title?.trix_trimmedOrNil() {
-            return explicitTitle
+        if let detail = snapshot?.detail {
+            return detail.resolvedTitle(currentAccountId: model.localIdentity?.accountId)
         }
 
-        guard let detail = snapshot?.detail, detail.chatType == .dm else {
-            return nil
-        }
-
-        guard let account = otherParticipantAccount(in: detail) else {
-            return nil
-        }
-
-        if let handle = account.handle?.trix_trimmedOrNil() {
-            return "@\(handle)"
-        }
-
-        return account.profileName
+        return chatSummary.resolvedTitle(currentAccountId: model.localIdentity?.accountId)
     }
 
     private func reload() {
@@ -410,17 +450,11 @@ struct ChatDetailView: View {
         }
 
         do {
-            let loadedSnapshot = try await model.fetchChatSnapshot(
+            snapshot = try await model.fetchChatSnapshot(
                 baseURLString: serverBaseURL,
                 chatId: chatSummary.chatId
             )
-            snapshot = loadedSnapshot
-            memberProfiles = await model.resolveDirectoryAccounts(
-                baseURLString: serverBaseURL,
-                accountIds: loadedSnapshot.detail.members.map(\.accountId)
-            )
         } catch {
-            memberProfiles = [:]
             localErrorMessage = error.localizedDescription
         }
     }
@@ -603,24 +637,47 @@ struct ChatDetailView: View {
         }
     }
 
-    private func otherParticipantAccount(in detail: ChatDetailResponse) -> DirectoryAccountSummary? {
-        let currentAccountId = model.localIdentity?.accountId
+    private func deviceOwnerLabel(
+        for device: ChatDeviceSummary,
+        in detail: ChatDetailResponse
+    ) -> String {
+        let ownerName = detail.participantProfile(accountId: device.accountId)?.primaryDisplayName ?? device.accountId
+        let ownerHandle = detail.participantProfile(accountId: device.accountId)?.handleDisplay
 
-        if let currentAccountId {
-            for member in detail.members where member.accountId != currentAccountId {
-                if let account = memberProfiles[member.accountId] {
-                    return account
-                }
-            }
+        if let ownerHandle {
+            return "\(ownerName) \(ownerHandle)"
         }
 
-        for member in detail.members {
-            if let account = memberProfiles[member.accountId] {
-                return account
-            }
+        return ownerName
+    }
+
+    private func historySenderLabel(
+        for message: MessageEnvelope,
+        in detail: ChatDetailResponse
+    ) -> String {
+        let senderName: String
+        if message.senderAccountId == model.localIdentity?.accountId {
+            senderName = "You"
+        } else {
+            senderName = detail.participantProfile(accountId: message.senderAccountId)?.primaryDisplayName
+                ?? message.senderAccountId
         }
 
-        return nil
+        if let device = detail.deviceMembers.first(where: { $0.deviceId == message.senderDeviceId }) {
+            let deviceLabel = device.deviceId == model.localIdentity?.deviceId ? "This Device" : device.displayName
+            return "\(senderName) on \(deviceLabel)"
+        }
+
+        return senderName
+    }
+
+    private func shortIdentifier(_ identifier: String) -> String {
+        let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > 10 else {
+            return trimmed
+        }
+
+        return "\(trimmed.prefix(8))..."
     }
 }
 

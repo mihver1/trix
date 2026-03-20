@@ -3060,18 +3060,20 @@ public struct FfiChatDetail: Equatable, Hashable {
     public var lastServerSeq: UInt64
     public var epoch: UInt64
     public var lastCommitMessageId: String?
+    public var participantProfiles: [FfiChatParticipantProfile]
     public var members: [FfiChatMember]
     public var deviceMembers: [FfiChatDeviceMember]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(chatId: String, chatType: FfiChatType, title: String?, lastServerSeq: UInt64, epoch: UInt64, lastCommitMessageId: String?, members: [FfiChatMember], deviceMembers: [FfiChatDeviceMember]) {
+    public init(chatId: String, chatType: FfiChatType, title: String?, lastServerSeq: UInt64, epoch: UInt64, lastCommitMessageId: String?, participantProfiles: [FfiChatParticipantProfile], members: [FfiChatMember], deviceMembers: [FfiChatDeviceMember]) {
         self.chatId = chatId
         self.chatType = chatType
         self.title = title
         self.lastServerSeq = lastServerSeq
         self.epoch = epoch
         self.lastCommitMessageId = lastCommitMessageId
+        self.participantProfiles = participantProfiles
         self.members = members
         self.deviceMembers = deviceMembers
     }
@@ -3098,6 +3100,7 @@ public struct FfiConverterTypeFfiChatDetail: FfiConverterRustBuffer {
                 lastServerSeq: FfiConverterUInt64.read(from: &buf), 
                 epoch: FfiConverterUInt64.read(from: &buf), 
                 lastCommitMessageId: FfiConverterOptionString.read(from: &buf), 
+                participantProfiles: FfiConverterSequenceTypeFfiChatParticipantProfile.read(from: &buf), 
                 members: FfiConverterSequenceTypeFfiChatMember.read(from: &buf), 
                 deviceMembers: FfiConverterSequenceTypeFfiChatDeviceMember.read(from: &buf)
         )
@@ -3110,6 +3113,7 @@ public struct FfiConverterTypeFfiChatDetail: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.lastServerSeq, into: &buf)
         FfiConverterUInt64.write(value.epoch, into: &buf)
         FfiConverterOptionString.write(value.lastCommitMessageId, into: &buf)
+        FfiConverterSequenceTypeFfiChatParticipantProfile.write(value.participantProfiles, into: &buf)
         FfiConverterSequenceTypeFfiChatMember.write(value.members, into: &buf)
         FfiConverterSequenceTypeFfiChatDeviceMember.write(value.deviceMembers, into: &buf)
     }
@@ -3313,19 +3317,83 @@ public func FfiConverterTypeFfiChatMember_lower(_ value: FfiChatMember) -> RustB
 }
 
 
+public struct FfiChatParticipantProfile: Equatable, Hashable {
+    public var accountId: String
+    public var handle: String?
+    public var profileName: String
+    public var profileBio: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(accountId: String, handle: String?, profileName: String, profileBio: String?) {
+        self.accountId = accountId
+        self.handle = handle
+        self.profileName = profileName
+        self.profileBio = profileBio
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiChatParticipantProfile: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiChatParticipantProfile: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiChatParticipantProfile {
+        return
+            try FfiChatParticipantProfile(
+                accountId: FfiConverterString.read(from: &buf), 
+                handle: FfiConverterOptionString.read(from: &buf), 
+                profileName: FfiConverterString.read(from: &buf), 
+                profileBio: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiChatParticipantProfile, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.accountId, into: &buf)
+        FfiConverterOptionString.write(value.handle, into: &buf)
+        FfiConverterString.write(value.profileName, into: &buf)
+        FfiConverterOptionString.write(value.profileBio, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiChatParticipantProfile_lift(_ buf: RustBuffer) throws -> FfiChatParticipantProfile {
+    return try FfiConverterTypeFfiChatParticipantProfile.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiChatParticipantProfile_lower(_ value: FfiChatParticipantProfile) -> RustBuffer {
+    return FfiConverterTypeFfiChatParticipantProfile.lower(value)
+}
+
+
 public struct FfiChatSummary: Equatable, Hashable {
     public var chatId: String
     public var chatType: FfiChatType
     public var title: String?
     public var lastServerSeq: UInt64
+    public var participantProfiles: [FfiChatParticipantProfile]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(chatId: String, chatType: FfiChatType, title: String?, lastServerSeq: UInt64) {
+    public init(chatId: String, chatType: FfiChatType, title: String?, lastServerSeq: UInt64, participantProfiles: [FfiChatParticipantProfile]) {
         self.chatId = chatId
         self.chatType = chatType
         self.title = title
         self.lastServerSeq = lastServerSeq
+        self.participantProfiles = participantProfiles
     }
 
     
@@ -3347,7 +3415,8 @@ public struct FfiConverterTypeFfiChatSummary: FfiConverterRustBuffer {
                 chatId: FfiConverterString.read(from: &buf), 
                 chatType: FfiConverterTypeFfiChatType.read(from: &buf), 
                 title: FfiConverterOptionString.read(from: &buf), 
-                lastServerSeq: FfiConverterUInt64.read(from: &buf)
+                lastServerSeq: FfiConverterUInt64.read(from: &buf), 
+                participantProfiles: FfiConverterSequenceTypeFfiChatParticipantProfile.read(from: &buf)
         )
     }
 
@@ -3356,6 +3425,7 @@ public struct FfiConverterTypeFfiChatSummary: FfiConverterRustBuffer {
         FfiConverterTypeFfiChatType.write(value.chatType, into: &buf)
         FfiConverterOptionString.write(value.title, into: &buf)
         FfiConverterUInt64.write(value.lastServerSeq, into: &buf)
+        FfiConverterSequenceTypeFfiChatParticipantProfile.write(value.participantProfiles, into: &buf)
     }
 }
 
@@ -8466,6 +8536,31 @@ fileprivate struct FfiConverterSequenceTypeFfiChatMember: FfiConverterRustBuffer
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeFfiChatMember.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiChatParticipantProfile: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiChatParticipantProfile]
+
+    public static func write(_ value: [FfiChatParticipantProfile], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiChatParticipantProfile.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiChatParticipantProfile] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiChatParticipantProfile]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiChatParticipantProfile.read(from: &buf))
         }
         return seq
     }
