@@ -24,6 +24,8 @@ const DEFAULT_INBOX_LEASE_TTL_SECONDS: u64 = 30;
 const MAX_INBOX_LEASE_TTL_SECONDS: u64 = 5 * 60;
 const DEFAULT_HISTORY_SYNC_JOB_LIMIT: usize = 100;
 const MAX_HISTORY_SYNC_JOB_LIMIT: usize = 500;
+const DEFAULT_ACCOUNT_DIRECTORY_LIMIT: usize = 20;
+const MAX_ACCOUNT_DIRECTORY_LIMIT: usize = 50;
 
 #[derive(Debug, Clone)]
 pub struct Database {
@@ -74,6 +76,14 @@ pub struct AccountProfile {
     pub profile_bio: Option<String>,
     pub device_id: Uuid,
     pub device_status: DeviceStatus,
+}
+
+#[derive(Debug)]
+pub struct DirectoryAccountRow {
+    pub account_id: Uuid,
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
 }
 
 #[derive(Debug)]
@@ -240,6 +250,16 @@ pub struct ChatMemberRow {
 }
 
 #[derive(Debug)]
+pub struct ChatDeviceRow {
+    pub device_id: Uuid,
+    pub account_id: Uuid,
+    pub display_name: String,
+    pub platform: String,
+    pub leaf_index: u32,
+    pub credential_identity: Vec<u8>,
+}
+
+#[derive(Debug)]
 pub struct ChatDetail {
     pub chat_id: Uuid,
     pub chat_type: ChatType,
@@ -248,6 +268,7 @@ pub struct ChatDetail {
     pub epoch: u64,
     pub last_commit_message_id: Option<Uuid>,
     pub members: Vec<ChatMemberRow>,
+    pub device_members: Vec<ChatDeviceRow>,
 }
 
 #[derive(Debug)]
@@ -647,6 +668,87 @@ impl Database {
             device_id: row_uuid(&row, "device_id")?,
             device_status: parse_device_status(&row_text(&row, "device_status")?)?,
         }))
+    }
+
+    pub async fn search_account_directory(
+        &self,
+        viewer_account_id: Uuid,
+        query: Option<&str>,
+        exclude_self: bool,
+        limit: Option<usize>,
+    ) -> Result<Vec<DirectoryAccountRow>, AppError> {
+        let limit = clamp_limit(
+            limit,
+            DEFAULT_ACCOUNT_DIRECTORY_LIMIT,
+            MAX_ACCOUNT_DIRECTORY_LIMIT,
+        );
+        let normalized_query = query
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        let exact_pattern = normalized_query.clone();
+        let prefix_pattern = normalized_query.as_ref().map(|value| format!("{value}%"));
+        let contains_pattern = normalized_query.as_ref().map(|value| format!("%{value}%"));
+        let excluded_account_id = exclude_self.then_some(viewer_account_id);
+
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                a.account_id,
+                a.handle,
+                a.profile_name,
+                a.profile_bio
+            FROM accounts a
+            WHERE a.deleted_at IS NULL
+              AND ($1::uuid IS NULL OR a.account_id <> $1)
+              AND EXISTS (
+                    SELECT 1
+                    FROM devices d
+                    WHERE d.account_id = a.account_id
+                      AND d.device_status = 'active'::device_status
+                )
+              AND (
+                    $2::text IS NULL
+                    OR a.handle ILIKE $4
+                    OR a.profile_name ILIKE $4
+                    OR COALESCE(a.profile_bio, '') ILIKE $4
+                )
+            ORDER BY
+                CASE
+                    WHEN $2::text IS NULL THEN 5
+                    WHEN a.handle ILIKE $2 THEN 0
+                    WHEN a.handle ILIKE $3 THEN 1
+                    WHEN a.profile_name ILIKE $3 THEN 2
+                    WHEN COALESCE(a.profile_bio, '') ILIKE $3 THEN 3
+                    ELSE 4
+                END,
+                a.profile_name ASC,
+                a.account_id ASC
+            LIMIT $5
+            "#,
+        )
+        .bind(excluded_account_id)
+        .bind(exact_pattern.as_deref())
+        .bind(prefix_pattern.as_deref())
+        .bind(contains_pattern.as_deref())
+        .bind(
+            i64::try_from(limit)
+                .map_err(|_| AppError::bad_request("directory limit exceeds supported range"))?,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(DirectoryAccountRow {
+                    account_id: row_uuid(&row, "account_id")?,
+                    handle: row_optional_text(&row, "handle")?,
+                    profile_name: row_text(&row, "profile_name")?,
+                    profile_bio: row_optional_text(&row, "profile_bio")?,
+                })
+            })
+            .collect()
     }
 
     pub async fn ensure_active_device_session(
@@ -3324,6 +3426,43 @@ impl Database {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        let device_member_rows = sqlx::query(
+            r#"
+            SELECT
+                d.device_id,
+                d.account_id,
+                d.display_name,
+                d.platform,
+                cdm.leaf_index,
+                d.credential_identity
+            FROM chat_device_members cdm
+            JOIN devices d
+              ON d.device_id = cdm.device_id
+            WHERE cdm.chat_id = $1
+              AND cdm.membership_status = 'active'::device_membership_status
+              AND d.device_status = 'active'::device_status
+            ORDER BY cdm.leaf_index ASC, d.device_id ASC
+            "#,
+        )
+        .bind(chat_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let device_members = device_member_rows
+            .into_iter()
+            .map(|device_row| {
+                Ok(ChatDeviceRow {
+                    device_id: row_uuid(&device_row, "device_id")?,
+                    account_id: row_uuid(&device_row, "account_id")?,
+                    display_name: row_text(&device_row, "display_name")?,
+                    platform: row_text(&device_row, "platform")?,
+                    leaf_index: row_i32(&device_row, "leaf_index")? as u32,
+                    credential_identity: row_bytes(&device_row, "credential_identity")?,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         Ok(Some(ChatDetail {
             chat_id: row_uuid(&row, "chat_id")?,
             chat_type: parse_chat_type(&row_text(&row, "chat_type")?)?,
@@ -3332,6 +3471,7 @@ impl Database {
             epoch: row_u64_from_i64(&row, "epoch")?,
             last_commit_message_id: row_optional_uuid(&row, "last_commit_message_id")?,
             members,
+            device_members,
         }))
     }
 
@@ -5305,6 +5445,90 @@ mod tests {
             .expect("list completed target jobs");
         assert_eq!(completed_jobs.len(), 1);
         assert_eq!(completed_jobs[0].job_id, initial_sync_job.job_id);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn smoke_searches_account_directory() {
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [91; 32],
+                [92; 32],
+            ))
+            .await
+            .expect("create alice");
+        db.create_account(make_account_input("bob", "Bob Primary", [93; 32], [94; 32]))
+            .await
+            .expect("create bob");
+        db.create_account(make_account_input(
+            "bobby",
+            "Bobby Primary",
+            [95; 32],
+            [96; 32],
+        ))
+        .await
+        .expect("create bobby");
+        let carol = db
+            .create_account(make_account_input(
+                "carol",
+                "Carol Primary",
+                [97; 32],
+                [98; 32],
+            ))
+            .await
+            .expect("create carol");
+
+        sqlx::query(
+            r#"
+            UPDATE devices
+            SET device_status = 'revoked'::device_status, revoked_at = now()
+            WHERE account_id = $1
+            "#,
+        )
+        .bind(carol.account_id)
+        .execute(&db.pool)
+        .await
+        .expect("revoke carol device");
+
+        let results = db
+            .search_account_directory(alice.account_id, Some("bo"), true, Some(10))
+            .await
+            .expect("search directory");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].handle.as_deref(), Some("bob"));
+        assert_eq!(results[1].handle.as_deref(), Some("bobby"));
+        assert!(
+            results
+                .iter()
+                .all(|entry| entry.account_id != alice.account_id)
+        );
+
+        let all_results = db
+            .search_account_directory(alice.account_id, None, true, Some(10))
+            .await
+            .expect("list directory");
+        assert!(
+            all_results
+                .iter()
+                .all(|entry| entry.account_id != alice.account_id)
+        );
+        assert!(
+            all_results
+                .iter()
+                .all(|entry| entry.handle.as_deref() != Some("carol"))
+        );
+
+        let self_result = db
+            .search_account_directory(alice.account_id, Some("ALICE"), false, Some(10))
+            .await
+            .expect("search self by handle");
+        assert_eq!(self_result.len(), 1);
+        assert_eq!(self_result[0].handle.as_deref(), Some("alice"));
     }
 
     async fn connect_test_db() -> Database {

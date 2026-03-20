@@ -1,4 +1,5 @@
 use std::{
+    env,
     fs::{self, File},
     path::{Path, PathBuf},
 };
@@ -57,6 +58,12 @@ struct PersistedMlsMetadata {
     credential_identity: Vec<u8>,
     ciphersuite: u16,
     signature_public_key: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MlsFacadeSnapshot {
+    storage_snapshot: Vec<u8>,
+    metadata: PersistedMlsMetadata,
 }
 
 #[derive(Debug, Clone)]
@@ -267,6 +274,43 @@ impl MlsFacade {
         self.persistence.as_ref().map(|paths| paths.root.as_path())
     }
 
+    pub fn snapshot_state(&self) -> Result<MlsFacadeSnapshot> {
+        let snapshot_path = unique_snapshot_path("storage");
+        let output_file = File::create(&snapshot_path).with_context(|| {
+            format!(
+                "failed to create temporary MLS snapshot file at {}",
+                snapshot_path.display()
+            )
+        })?;
+        self.provider
+            .storage()
+            .save_to_file(&output_file)
+            .map_err(|err| anyhow!("failed to write MLS snapshot: {err}"))?;
+        let storage_snapshot = fs::read(&snapshot_path).with_context(|| {
+            format!(
+                "failed to read temporary MLS snapshot file {}",
+                snapshot_path.display()
+            )
+        })?;
+        fs::remove_file(&snapshot_path).ok();
+
+        Ok(MlsFacadeSnapshot {
+            storage_snapshot,
+            metadata: PersistedMlsMetadata {
+                version: 1,
+                credential_identity: self.credential_identity.clone(),
+                ciphersuite: self.ciphersuite.into(),
+                signature_public_key: self.signature_public_key().to_vec(),
+            },
+        })
+    }
+
+    pub fn restore_snapshot(&mut self, snapshot: &MlsFacadeSnapshot) -> Result<()> {
+        let restored = Self::build_from_snapshot(snapshot.clone(), self.persistence.clone())?;
+        *self = restored;
+        self.save_state()
+    }
+
     pub fn save_state(&self) -> Result<()> {
         let Some(paths) = &self.persistence else {
             return Ok(());
@@ -343,6 +387,51 @@ impl MlsFacade {
             ciphersuite,
             persistence,
         })
+    }
+
+    fn build_from_snapshot(
+        snapshot: MlsFacadeSnapshot,
+        persistence: Option<MlsPersistencePaths>,
+    ) -> Result<Self> {
+        let snapshot_path = unique_snapshot_path("restore");
+        fs::write(&snapshot_path, &snapshot.storage_snapshot).with_context(|| {
+            format!(
+                "failed to write temporary MLS restore snapshot {}",
+                snapshot_path.display()
+            )
+        })?;
+        let storage_file = File::open(&snapshot_path).with_context(|| {
+            format!(
+                "failed to open temporary MLS restore snapshot {}",
+                snapshot_path.display()
+            )
+        })?;
+        let mut storage = MemoryStorage::default();
+        storage
+            .load_from_file(&storage_file)
+            .map_err(|err| anyhow!("failed to load MLS restore snapshot: {err}"))?;
+        fs::remove_file(&snapshot_path).ok();
+
+        let provider = TrixOpenMlsProvider {
+            crypto: RustCrypto::default(),
+            key_store: storage,
+        };
+        let ciphersuite = Ciphersuite::try_from(snapshot.metadata.ciphersuite)
+            .map_err(|err| anyhow!("invalid MLS snapshot ciphersuite: {err}"))?;
+        let signer = SignatureKeyPair::read(
+            provider.storage(),
+            &snapshot.metadata.signature_public_key,
+            ciphersuite.signature_algorithm(),
+        )
+        .ok_or_else(|| anyhow!("MLS snapshot signer is missing from storage"))?;
+
+        Self::build(
+            provider,
+            signer,
+            snapshot.metadata.credential_identity,
+            ciphersuite,
+            persistence,
+        )
     }
 
     fn persist_if_needed(&self) -> Result<()> {
@@ -663,6 +752,10 @@ fn load_persisted_metadata(paths: &MlsPersistencePaths) -> Result<PersistedMlsMe
     Ok(metadata)
 }
 
+fn unique_snapshot_path(kind: &str) -> PathBuf {
+    env::temp_dir().join(format!("trix-mls-{kind}-{}.bin", uuid::Uuid::new_v4()))
+}
+
 fn default_group_create_config(ciphersuite: Ciphersuite) -> MlsGroupCreateConfig {
     MlsGroupCreateConfig::builder()
         .ciphersuite(ciphersuite)
@@ -825,5 +918,33 @@ mod tests {
         );
 
         fs::remove_dir_all(storage_root).ok();
+    }
+
+    #[test]
+    fn mls_facade_can_restore_snapshot_after_local_mutation() {
+        let mut alice = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+        let bob = MlsFacade::new(b"bob-device".to_vec()).unwrap();
+        let snapshot = alice.snapshot_state().unwrap();
+
+        let bob_key_package = bob.generate_key_package().unwrap();
+        let mut alice_group = alice.create_group(b"chat-rollback".as_slice()).unwrap();
+        alice
+            .add_members(&mut alice_group, &[bob_key_package])
+            .expect("local mutation succeeds");
+
+        assert!(
+            alice
+                .load_group(b"chat-rollback".as_slice())
+                .unwrap()
+                .is_some()
+        );
+
+        alice.restore_snapshot(&snapshot).unwrap();
+        assert!(
+            alice
+                .load_group(b"chat-rollback".as_slice())
+                .unwrap()
+                .is_none()
+        );
     }
 }

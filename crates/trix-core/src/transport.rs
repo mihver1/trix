@@ -7,21 +7,21 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use thiserror::Error;
 use trix_types::{
-    AccountId, AccountKeyPackagesResponse, AccountProfileResponse, AckInboxRequest,
-    AckInboxResponse, AppendHistorySyncChunkRequest, AppendHistorySyncChunkResponse,
-    BlobMetadataResponse, BlobUploadStatus, ChatDetailResponse, ChatHistoryResponse, ChatId,
-    ChatListResponse, CompleteHistorySyncJobRequest, CompleteHistorySyncJobResponse,
-    CompleteLinkIntentRequest, CompleteLinkIntentResponse, ControlMessageInput,
-    CreateAccountRequest, CreateAccountResponse, CreateBlobUploadRequest, CreateBlobUploadResponse,
-    CreateChatRequest, CreateChatResponse, CreateLinkIntentResponse, CreateMessageRequest,
-    CreateMessageResponse, DeviceApprovePayloadResponse, DeviceId, DeviceListResponse,
-    DeviceStatus, DeviceTransferBundleResponse, ErrorResponse, HealthResponse,
-    HistorySyncChunkListResponse, HistorySyncChunkSummary, HistorySyncJobListResponse,
-    HistorySyncJobRole, HistorySyncJobStatus, LeaseInboxRequest, LeaseInboxResponse, MessageId,
-    ModifyChatDevicesRequest, ModifyChatDevicesResponse, ModifyChatMembersRequest,
-    ModifyChatMembersResponse, PublishKeyPackageItem, PublishKeyPackagesRequest,
-    PublishKeyPackagesResponse, ReserveKeyPackagesRequest, RevokeDeviceRequest,
-    RevokeDeviceResponse, VersionResponse,
+    AccountDirectoryResponse, AccountId, AccountKeyPackagesResponse, AccountProfileResponse,
+    AckInboxRequest, AckInboxResponse, AppendHistorySyncChunkRequest,
+    AppendHistorySyncChunkResponse, BlobMetadataResponse, BlobUploadStatus, ChatDetailResponse,
+    ChatHistoryResponse, ChatId, ChatListResponse, CompleteHistorySyncJobRequest,
+    CompleteHistorySyncJobResponse, CompleteLinkIntentRequest, CompleteLinkIntentResponse,
+    ControlMessageInput, CreateAccountRequest, CreateAccountResponse, CreateBlobUploadRequest,
+    CreateBlobUploadResponse, CreateChatRequest, CreateChatResponse, CreateLinkIntentResponse,
+    CreateMessageRequest, CreateMessageResponse, DeviceApprovePayloadResponse, DeviceId,
+    DeviceListResponse, DeviceStatus, DeviceTransferBundleResponse, DirectoryAccountSummary,
+    ErrorResponse, HealthResponse, HistorySyncChunkListResponse, HistorySyncChunkSummary,
+    HistorySyncJobListResponse, HistorySyncJobRole, HistorySyncJobStatus, LeaseInboxRequest,
+    LeaseInboxResponse, MessageId, ModifyChatDevicesRequest, ModifyChatDevicesResponse,
+    ModifyChatMembersRequest, ModifyChatMembersResponse, PublishKeyPackageItem,
+    PublishKeyPackagesRequest, PublishKeyPackagesResponse, ReserveKeyPackagesRequest,
+    RevokeDeviceRequest, RevokeDeviceResponse, VersionResponse,
 };
 
 #[derive(Debug, Error)]
@@ -71,6 +71,14 @@ pub struct ReservedKeyPackageMaterial {
     pub device_id: DeviceId,
     pub cipher_suite: String,
     pub key_package: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DirectoryAccountMaterial {
+    pub account_id: AccountId,
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -181,6 +189,15 @@ struct InboxQuery {
     limit: Option<usize>,
 }
 
+#[derive(Debug, Serialize)]
+struct AccountDirectoryQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    q: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<usize>,
+    exclude_self: bool,
+}
+
 impl ServerApiClient {
     pub fn new(base_url: impl AsRef<str>) -> Result<Self, ServerApiError> {
         let mut normalized = base_url.as_ref().trim().trim_end_matches('/').to_owned();
@@ -279,6 +296,29 @@ impl ServerApiClient {
     pub async fn get_me(&self) -> Result<AccountProfileResponse, ServerApiError> {
         self.send_json(self.request(Method::GET, "v0/accounts/me")?)
             .await
+    }
+
+    pub async fn search_account_directory(
+        &self,
+        query: Option<String>,
+        limit: Option<usize>,
+        exclude_self: bool,
+    ) -> Result<Vec<DirectoryAccountMaterial>, ServerApiError> {
+        let response: AccountDirectoryResponse = self
+            .send_json(self.request(Method::GET, "v0/accounts/directory")?.query(
+                &AccountDirectoryQuery {
+                    q: query,
+                    limit,
+                    exclude_self,
+                },
+            ))
+            .await?;
+
+        Ok(response
+            .accounts
+            .into_iter()
+            .map(directory_account_from_response)
+            .collect())
     }
 
     pub async fn list_devices(&self) -> Result<DeviceListResponse, ServerApiError> {
@@ -861,6 +901,15 @@ pub fn make_publish_key_package_item(
 
 pub fn encode_b64(bytes: &[u8]) -> String {
     general_purpose::STANDARD.encode(bytes)
+}
+
+fn directory_account_from_response(value: DirectoryAccountSummary) -> DirectoryAccountMaterial {
+    DirectoryAccountMaterial {
+        account_id: value.account_id,
+        handle: value.handle,
+        profile_name: value.profile_name,
+        profile_bio: value.profile_bio,
+    }
 }
 
 pub fn decode_b64_field(field: &'static str, value: &str) -> Result<Vec<u8>, ServerApiError> {

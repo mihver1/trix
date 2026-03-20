@@ -102,6 +102,37 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AccountProfileResponse'
+  /v0/accounts/directory:
+    get:
+      operationId: searchAccountDirectory
+      tags: [accounts]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: q
+          schema:
+            type: string
+            nullable: true
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 50
+        - in: query
+          name: exclude_self
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: Directory search results for accounts with active devices
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountDirectoryResponse'
   /v0/accounts/{account_id}/key-packages:
     get:
       operationId: reserveAccountKeyPackages
@@ -977,6 +1008,28 @@ components:
           $ref: '#/components/schemas/Uuid'
         device_status:
           $ref: '#/components/schemas/DeviceStatus'
+    DirectoryAccountSummary:
+      type: object
+      required: [account_id, profile_name]
+      properties:
+        account_id:
+          $ref: '#/components/schemas/Uuid'
+        handle:
+          type: string
+          nullable: true
+        profile_name:
+          type: string
+        profile_bio:
+          type: string
+          nullable: true
+    AccountDirectoryResponse:
+      type: object
+      required: [accounts]
+      properties:
+        accounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/DirectoryAccountSummary'
     DeviceSummary:
       type: object
       required: [device_id, display_name, platform, device_status]
@@ -1374,9 +1427,26 @@ components:
           type: string
         membership_status:
           type: string
+    ChatDeviceSummary:
+      type: object
+      required: [device_id, account_id, display_name, platform, leaf_index, credential_identity_b64]
+      properties:
+        device_id:
+          $ref: '#/components/schemas/Uuid'
+        account_id:
+          $ref: '#/components/schemas/Uuid'
+        display_name:
+          type: string
+        platform:
+          type: string
+        leaf_index:
+          type: integer
+          format: int32
+        credential_identity_b64:
+          type: string
     ChatDetailResponse:
       type: object
-      required: [chat_id, chat_type, last_server_seq, epoch, members]
+      required: [chat_id, chat_type, last_server_seq, epoch, members, device_members]
       properties:
         chat_id:
           $ref: '#/components/schemas/Uuid'
@@ -1398,6 +1468,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ChatMemberSummary'
+        device_members:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatDeviceSummary'
     ControlMessageInput:
       type: object
       required: [message_id, ciphertext_b64]

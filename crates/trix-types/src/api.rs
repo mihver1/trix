@@ -100,6 +100,19 @@ pub struct AccountProfileResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DirectoryAccountSummary {
+    pub account_id: AccountId,
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountDirectoryResponse {
+    pub accounts: Vec<DirectoryAccountSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceSummary {
     pub device_id: DeviceId,
     pub display_name: String,
@@ -267,6 +280,16 @@ pub struct ChatMemberSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatDeviceSummary {
+    pub device_id: DeviceId,
+    pub account_id: AccountId,
+    pub display_name: String,
+    pub platform: String,
+    pub leaf_index: u32,
+    pub credential_identity_b64: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatDetailResponse {
     pub chat_id: ChatId,
     pub chat_type: ChatType,
@@ -275,6 +298,8 @@ pub struct ChatDetailResponse {
     pub epoch: u64,
     pub last_commit_message_id: Option<MessageId>,
     pub members: Vec<ChatMemberSummary>,
+    #[serde(default)]
+    pub device_members: Vec<ChatDeviceSummary>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

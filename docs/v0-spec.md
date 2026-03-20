@@ -599,6 +599,23 @@ Response:
 
 Returns current account profile and device list.
 
+### `GET /v0/accounts/directory`
+
+Returns directory entries for accounts that currently have at least one active device.
+
+Query parameters:
+
+- optional `q` for handle/profile search
+- optional `limit`
+- optional `exclude_self`, defaults to `true`
+
+Response fields per entry:
+
+- `account_id`
+- `handle`
+- `profile_name`
+- `profile_bio`
+
 ### `POST /v0/devices/link-intents`
 
 Creates a pending device-link intent from an authenticated trusted device.
@@ -763,6 +780,13 @@ Lists chats visible to the authenticated device.
 ### `GET /v0/chats/{chat_id}`
 
 Returns chat metadata, membership, and the latest group epoch metadata.
+
+Response includes:
+
+- account-level members
+- active device-level members with `device_id`
+- `leaf_index` for each active device
+- `credential_identity_b64` for MLS/member mapping on clients
 
 ### `POST /v0/chats/{chat_id}/members:add`
 
@@ -1021,7 +1045,6 @@ Ports:
 
 ## Open Questions
 
-- Whether `v0` should expose handle-based discovery or start with invitation links only.
 - Whether message ciphertext should remain in `PostgreSQL` beyond `v0`.
 - Whether device approval should require direct local proximity only or support remote approval.
 - Whether group membership changes should be server-orchestrated jobs or purely client-driven flows with server validation.
