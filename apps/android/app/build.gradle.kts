@@ -45,11 +45,35 @@ val trixBaseUrl = providers.gradleProperty("trixBaseUrl")
     .orElse("http://10.0.2.2:8080")
     .get()
     .trimEnd('/')
+val releaseStoreFileValue = providers.gradleProperty("trixReleaseStoreFile")
+    .orElse(providers.environmentVariable("TRIX_RELEASE_STORE_FILE"))
+    .orNull
+val releaseStorePasswordValue = providers.gradleProperty("trixReleaseStorePassword")
+    .orElse(providers.environmentVariable("TRIX_RELEASE_STORE_PASSWORD"))
+    .orNull
+val releaseKeyAliasValue = providers.gradleProperty("trixReleaseKeyAlias")
+    .orElse(providers.environmentVariable("TRIX_RELEASE_KEY_ALIAS"))
+    .orNull
+val releaseKeyPasswordValue = providers.gradleProperty("trixReleaseKeyPassword")
+    .orElse(providers.environmentVariable("TRIX_RELEASE_KEY_PASSWORD"))
+    .orNull
+val hasReleaseSigning = !releaseStoreFileValue.isNullOrBlank()
 
 android {
     namespace = "chat.trix.android"
     compileSdk = 36
     ndkVersion = trixAndroidNdkVersion
+
+    signingConfigs {
+        create("release") {
+            if (hasReleaseSigning) {
+                storeFile = file(releaseStoreFileValue!!)
+                storePassword = releaseStorePasswordValue
+                keyAlias = releaseKeyAliasValue
+                keyPassword = releaseKeyPasswordValue
+            }
+        }
+    }
 
     defaultConfig {
         applicationId = "chat.trix.android"
@@ -75,8 +99,14 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             ndk {
                 abiFilters += setOf("arm64-v8a")
+                debugSymbolLevel = "FULL"
             }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -161,6 +191,7 @@ dependencies {
 
     implementation("androidx.core:core-ktx:1.18.0")
     implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.lifecycle:lifecycle-process:2.9.4")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.foundation:foundation")

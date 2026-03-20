@@ -45,12 +45,21 @@ impl MlsStateStore {
 #[derive(Debug, Clone)]
 pub struct SyncStateStore {
     pub state_path: PathBuf,
+    pub database_key: Option<Vec<u8>>,
 }
 
 impl SyncStateStore {
     pub fn new(state_path: impl Into<PathBuf>) -> Self {
         Self {
             state_path: state_path.into(),
+            database_key: None,
+        }
+    }
+
+    pub fn new_encrypted(state_path: impl Into<PathBuf>, database_key: Vec<u8>) -> Self {
+        Self {
+            state_path: state_path.into(),
+            database_key: Some(database_key),
         }
     }
 }
@@ -150,6 +159,7 @@ pub struct LocalOutgoingMessageApplyOutcome {
 pub struct LocalHistoryStore {
     state: PersistedLocalHistoryState,
     database_path: Option<PathBuf>,
+    database_key: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -219,6 +229,7 @@ impl LocalHistoryStore {
         Self {
             state: PersistedLocalHistoryState::default(),
             database_path: None,
+            database_key: None,
         }
     }
 
@@ -228,11 +239,32 @@ impl LocalHistoryStore {
             Ok(Self {
                 state: load_state_from_path(&database_path)?,
                 database_path: Some(database_path),
+                database_key: None,
             })
         } else {
             let store = Self {
                 state: PersistedLocalHistoryState::default(),
                 database_path: Some(database_path),
+                database_key: None,
+            };
+            store.save_state()?;
+            Ok(store)
+        }
+    }
+
+    pub fn new_encrypted(database_path: impl Into<PathBuf>, database_key: Vec<u8>) -> Result<Self> {
+        let database_path = database_path.into();
+        if database_path.exists() {
+            Ok(Self {
+                state: load_state_from_encrypted_path(&database_path, &database_key)?,
+                database_path: Some(database_path),
+                database_key: Some(database_key),
+            })
+        } else {
+            let store = Self {
+                state: PersistedLocalHistoryState::default(),
+                database_path: Some(database_path),
+                database_key: Some(database_key),
             };
             store.save_state()?;
             Ok(store)
@@ -247,7 +279,12 @@ impl LocalHistoryStore {
         let Some(database_path) = &self.database_path else {
             return Ok(());
         };
-        save_state_to_path(database_path, &self.state)
+        save_state_to_path(database_path, self.database_key.as_deref(), &self.state)
+    }
+
+    pub(crate) fn replace_with(&mut self, other: &Self) -> Result<()> {
+        self.state = other.state.clone();
+        self.save_state()
     }
 
     pub fn list_chats(&self) -> Vec<ChatSummary> {
@@ -1615,8 +1652,12 @@ fn projected_message_counts_as_unread(
 
 const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
 
-fn save_state_to_path(path: &Path, state: &PersistedLocalHistoryState) -> Result<()> {
-    let mut connection = open_history_sqlite(path)?;
+fn save_state_to_path(
+    path: &Path,
+    database_key: Option<&[u8]>,
+    state: &PersistedLocalHistoryState,
+) -> Result<()> {
+    let mut connection = open_history_sqlite(path, database_key)?;
     let transaction = connection
         .transaction()
         .context("failed to start local history transaction")?;
@@ -1725,11 +1766,22 @@ fn save_state_to_path(path: &Path, state: &PersistedLocalHistoryState) -> Result
 fn load_state_from_path(path: &Path) -> Result<PersistedLocalHistoryState> {
     if !is_sqlite_database(path)? {
         let state = load_legacy_json_state_from_path(path)?;
-        save_state_to_path(path, &state)?;
+        save_state_to_path(path, None, &state)?;
         return Ok(state);
     }
 
-    let connection = open_history_sqlite(path)?;
+    load_state_from_sqlite(path, None)
+}
+
+fn load_state_from_encrypted_path(path: &Path, database_key: &[u8]) -> Result<PersistedLocalHistoryState> {
+    load_state_from_sqlite(path, Some(database_key))
+}
+
+fn load_state_from_sqlite(
+    path: &Path,
+    database_key: Option<&[u8]>,
+) -> Result<PersistedLocalHistoryState> {
+    let connection = open_history_sqlite(path, database_key)?;
     let version = connection
         .query_row(
             r#"
@@ -1908,7 +1960,7 @@ fn load_legacy_json_state_from_path(path: &Path) -> Result<PersistedLocalHistory
     Ok(state)
 }
 
-fn open_history_sqlite(path: &Path) -> Result<Connection> {
+fn open_history_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Connection> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| {
             format!(
@@ -1917,7 +1969,7 @@ fn open_history_sqlite(path: &Path) -> Result<Connection> {
             )
         })?;
     }
-    if path.exists() && !is_sqlite_database(path)? {
+    if database_key.is_none() && path.exists() && !is_sqlite_database(path)? {
         fs::remove_file(path).with_context(|| {
             format!("failed to replace legacy local history {}", path.display())
         })?;
@@ -1925,6 +1977,14 @@ fn open_history_sqlite(path: &Path) -> Result<Connection> {
 
     let connection = Connection::open(path)
         .with_context(|| format!("failed to open local history database {}", path.display()))?;
+    if let Some(database_key) = database_key {
+        configure_sqlcipher_connection(
+            &connection,
+            path,
+            database_key,
+            "local history",
+        )?;
+    }
     connection.pragma_update(None, "journal_mode", "WAL")?;
     connection.pragma_update(None, "synchronous", "NORMAL")?;
     connection.execute_batch(
@@ -1966,6 +2026,30 @@ fn open_history_sqlite(path: &Path) -> Result<Connection> {
     Ok(connection)
 }
 
+fn configure_sqlcipher_connection(
+    connection: &Connection,
+    path: &Path,
+    database_key: &[u8],
+    label: &str,
+) -> Result<()> {
+    let encoded_key = encode_hex(database_key);
+    connection
+        .execute_batch(&format!(
+            "PRAGMA key = \"x'{encoded_key}'\"; PRAGMA cipher_compatibility = 4;"
+        ))
+        .with_context(|| format!("failed to configure SQLCipher for {label} {}", path.display()))?;
+    connection
+        .query_row("SELECT count(*) FROM sqlite_master", [], |row| row.get::<_, i64>(0))
+        .map(|_| ())
+        .with_context(|| {
+            format!(
+                "{label} database key rejected or database is corrupted: {}",
+                path.display()
+            )
+        })?;
+    Ok(())
+}
+
 fn is_sqlite_database(path: &Path) -> Result<bool> {
     if !path.exists() {
         return Ok(false);
@@ -1992,6 +2076,16 @@ fn sqlite_anyhow_error(err: anyhow::Error) -> rusqlite::Error {
     )
 }
 
+fn encode_hex(input: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(input.len() * 2);
+    for byte in input {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
+
 fn parse_message_id_string(value: &str) -> Result<MessageId> {
     Ok(MessageId(Uuid::parse_str(value).with_context(|| {
         format!("invalid message id `{value}`")
@@ -2014,7 +2108,7 @@ fn parse_chat_id(value: &str) -> Result<ChatId> {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, env, fs};
+    use std::{collections::BTreeMap, env, fs, path::Path};
 
     use serde_json::json;
     use trix_types::{AccountId, ContentType, DeviceId, MessageKind};
@@ -2096,6 +2190,45 @@ mod tests {
         assert_eq!(history.messages, vec![second_message]);
 
         fs::remove_file(database_path).ok();
+    }
+
+    #[test]
+    fn encrypted_local_history_store_round_trips_with_same_key() {
+        let database_path = env::temp_dir().join(format!("trix-history-encrypted-{}.db", Uuid::new_v4()));
+        let database_key = vec![7u8; 32];
+        let chat_id = ChatId(Uuid::new_v4());
+        let mut store = LocalHistoryStore::new_encrypted(&database_path, database_key.clone()).unwrap();
+
+        store
+            .apply_chat_list(&ChatListResponse {
+                chats: vec![ChatSummary {
+                    chat_id,
+                    chat_type: ChatType::Dm,
+                    title: Some("Encrypted".to_owned()),
+                    last_server_seq: 0,
+                    epoch: 1,
+                    pending_message_count: 0,
+                    last_message: None,
+                    participant_profiles: Vec::new(),
+                }],
+            })
+            .unwrap();
+
+        let restored = LocalHistoryStore::new_encrypted(&database_path, database_key).unwrap();
+        assert_eq!(restored.get_chat(chat_id).and_then(|chat| chat.title), Some("Encrypted".to_owned()));
+
+        cleanup_sqlite_test_path(&database_path);
+    }
+
+    #[test]
+    fn encrypted_local_history_store_rejects_wrong_key() {
+        let database_path = env::temp_dir().join(format!("trix-history-wrong-key-{}.db", Uuid::new_v4()));
+        LocalHistoryStore::new_encrypted(&database_path, vec![1u8; 32]).unwrap();
+
+        let error = LocalHistoryStore::new_encrypted(&database_path, vec![2u8; 32]).unwrap_err();
+        assert!(error.to_string().contains("database key rejected") || error.to_string().contains("corrupted"));
+
+        cleanup_sqlite_test_path(&database_path);
     }
 
     #[test]
@@ -2637,5 +2770,11 @@ mod tests {
             }))
         );
         assert_eq!(item.body_parse_error, None);
+    }
+
+    fn cleanup_sqlite_test_path(path: &Path) {
+        fs::remove_file(path).ok();
+        fs::remove_file(format!("{}-wal", path.display())).ok();
+        fs::remove_file(format!("{}-shm", path.display())).ok();
     }
 }

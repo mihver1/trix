@@ -15,6 +15,7 @@ import chat.trix.android.core.ffi.FfiMessageBody
 import chat.trix.android.core.ffi.FfiServerApiClient
 import chat.trix.android.core.ffi.FfiUploadedAttachment
 import chat.trix.android.core.ffi.TrixFfiException
+import chat.trix.android.core.system.deviceStorageLayout
 import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
@@ -26,11 +27,12 @@ class AttachmentRepository(
     private val session: AuthenticatedSession,
 ) {
     private val appContext = context.applicationContext
-    private val sessionRoot = File(
-        appContext.filesDir,
-        "trix/accounts/${session.localState.accountId}/devices/${session.localState.deviceId}",
+    private val storageLayout = deviceStorageLayout(
+        context = appContext,
+        accountId = session.localState.accountId,
+        deviceId = session.localState.deviceId,
     )
-    private val decryptedAttachmentRoot = File(sessionRoot, "attachments/decrypted")
+    private val decryptedAttachmentRoot = storageLayout.decryptedAttachmentRoot
     private val clientDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         FfiServerApiClient(session.baseUrl)
     }

@@ -29,7 +29,9 @@ The UI, lifecycle, adaptive navigation, and Android-secure local persistence sti
 
 - account root and transport Ed25519 key material
 - server transport calls already exposed via `FfiServerApiClient`
+- encrypted local chat/sync state through `FfiClientStore` on top of a single `state-v1.db`
 - MLS state and persistent group storage through `FfiMlsFacade`
+- realtime websocket delivery through `FfiRealtimeDriver`
 
 The Android project now generates Kotlin bindings from UniFFI during the Gradle build and cross-compiles `libtrix_core.so` for `arm64-v8a` and `x86_64` via `cargo ndk`.
 
@@ -58,8 +60,11 @@ The better tradeoff for this PoC is still:
 - open an auth challenge/session for the stored device through `FfiServerApiClient`
 - auto-import the encrypted transfer bundle on the first successful reconnect after approval, promoting the linked Android client into a full trusted device
 - persist bootstrap state locally in an encrypted file protected by Android Keystore
+- generate a per-device SQLCipher key on Android, wrap it with Android Keystore, and open the shared Rust-owned `state-v1.db`
 - restore a saved device session on app launch
-- sync cached chats and inbox items into the local Rust-backed history store
+- migrate legacy JSON/plaintext SQLite caches into the encrypted `state-v1.db` on first open
+- sync cached chats and inbox items into the local Rust-backed encrypted SQLite store
+- keep a foreground realtime websocket active while the app is in the foreground, with `WorkManager` catch-up as a background fallback
 - project decryptable transcripts through persistent `FfiMlsFacade` state when this device has the group locally
 - send text messages into chats backed by local MLS state, with local projection applied immediately after server accept
 - render trusted-device link intents as QR codes and share/copy them from Android
@@ -83,4 +88,5 @@ The better tradeoff for this PoC is still:
 - override it when needed with:
   - `./gradlew installDebug -PtrixBaseUrl=http://10.0.2.2:8080`
   - or `TRIX_BASE_URL=http://10.0.2.2:8080 ./gradlew installDebug`
-- local cleartext HTTP is enabled in the manifest for development because `trixd` currently runs over plain HTTP in the dev stack
+- Android also keeps a runtime server switcher on the bootstrap screen; this remains enabled in release beta builds for tester flexibility
+- cleartext HTTP is enabled in the manifest for beta/dev builds because `trixd` still commonly runs over plain HTTP in local and staging setups

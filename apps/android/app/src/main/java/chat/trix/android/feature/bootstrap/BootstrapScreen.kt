@@ -50,11 +50,13 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 @Composable
 fun BootstrapScreen(
     baseUrl: String,
+    defaultBaseUrl: String,
     storedDevice: StoredDeviceSummary?,
     busyMessage: String?,
     errorMessage: String?,
     backendErrorMessage: String?,
     onUpdateBaseUrl: (String) -> Unit,
+    onResetBaseUrl: () -> Unit,
     onCreateAccount: (BootstrapInput) -> Unit,
     onCompleteLinkIntent: (LinkExistingAccountInput) -> Unit,
     onReconnectStoredDevice: (() -> Unit)?,
@@ -157,11 +159,13 @@ fun BootstrapScreen(
 
             BackendServerCard(
                 baseUrl = baseUrl,
+                defaultBaseUrl = defaultBaseUrl,
                 editableBaseUrl = editableBaseUrl,
                 onEditableBaseUrlChange = { editableBaseUrl = it },
                 errorMessage = backendErrorMessage,
                 isBusy = isBusy,
                 onApplyBaseUrl = { onUpdateBaseUrl(editableBaseUrl) },
+                onResetBaseUrl = onResetBaseUrl,
             )
 
             if (storedDevice != null) {
@@ -266,13 +270,16 @@ fun BootstrapScreen(
 @Composable
 private fun BackendServerCard(
     baseUrl: String,
+    defaultBaseUrl: String,
     editableBaseUrl: String,
     onEditableBaseUrlChange: (String) -> Unit,
     errorMessage: String?,
     isBusy: Boolean,
     onApplyBaseUrl: () -> Unit,
+    onResetBaseUrl: () -> Unit,
 ) {
     val hasPendingChange = editableBaseUrl.trim().trimEnd('/') != baseUrl.trim().trimEnd('/')
+    val canReset = baseUrl.trim().trimEnd('/') != defaultBaseUrl.trim().trimEnd('/')
 
     Surface(
         shape = RoundedCornerShape(28.dp),
@@ -293,6 +300,10 @@ private fun BackendServerCard(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            ElevatedAssistChip(
+                onClick = {},
+                label = { Text("Active endpoint: ${describeBaseUrl(baseUrl)}") },
+            )
             OutlinedTextField(
                 value = editableBaseUrl,
                 onValueChange = onEditableBaseUrlChange,
@@ -306,15 +317,21 @@ private fun BackendServerCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                ElevatedAssistChip(
-                    onClick = {},
-                    label = { Text("Current: $baseUrl") },
-                )
-                Button(
-                    onClick = onApplyBaseUrl,
-                    enabled = !isBusy && hasPendingChange && editableBaseUrl.isNotBlank(),
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text("Apply")
+                    OutlinedButton(
+                        onClick = onResetBaseUrl,
+                        enabled = !isBusy && canReset,
+                    ) {
+                        Text("Reset")
+                    }
+                    Button(
+                        onClick = onApplyBaseUrl,
+                        enabled = !isBusy && hasPendingChange && editableBaseUrl.isNotBlank(),
+                    ) {
+                        Text("Apply")
+                    }
                 }
             }
             if (!errorMessage.isNullOrBlank()) {
@@ -326,6 +343,13 @@ private fun BackendServerCard(
             }
         }
     }
+}
+
+private fun describeBaseUrl(value: String): String {
+    val normalized = value.trim().trimEnd('/')
+    val withoutScheme = normalized.substringAfter("://", missingDelimiterValue = normalized)
+    val scheme = normalized.substringBefore("://", missingDelimiterValue = "http")
+    return "$scheme://$withoutScheme"
 }
 
 @Composable

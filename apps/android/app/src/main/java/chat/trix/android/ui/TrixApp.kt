@@ -31,6 +31,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -59,6 +60,7 @@ import chat.trix.android.core.auth.StoredDeviceSummary
 import chat.trix.android.core.auth.restoreSessionErrorMessage
 import chat.trix.android.core.notifications.TrixNotificationRouter
 import chat.trix.android.core.runtime.BackgroundSyncScheduler
+import chat.trix.android.core.runtime.RealtimeSessionManager
 import chat.trix.android.core.system.BackendConfigStore
 import chat.trix.android.core.system.DESTINATION_CHATS
 import chat.trix.android.core.system.EXTRA_OPEN_CHAT_ID
@@ -154,6 +156,7 @@ fun TrixApp(
                 is TrixAuthState.Loading -> LoadingScreen(message = state.message)
                 is TrixAuthState.SignedOut -> BootstrapScreen(
                     baseUrl = configuredBaseUrl,
+                    defaultBaseUrl = BuildConfig.TRIX_BASE_URL,
                     storedDevice = state.storedDevice,
                     busyMessage = null,
                     errorMessage = state.errorMessage,
@@ -172,6 +175,14 @@ fun TrixApp(
                             } catch (error: IOException) {
                                 backendConfigError = error.message ?: "Failed to update backend URL"
                             }
+                        }
+                    },
+                    onResetBaseUrl = {
+                        coroutineScope.launch {
+                            backendConfigStore.writeBaseUrl(BuildConfig.TRIX_BASE_URL)
+                            backendConfigError = null
+                            authState = TrixAuthState.Loading("Switching backend")
+                            configuredBaseUrl = BuildConfig.TRIX_BASE_URL
                         }
                     },
                     onCreateAccount = { input ->
@@ -222,6 +233,29 @@ fun TrixApp(
                 )
                 is TrixAuthState.SignedIn -> {
                     val session = state.session
+                    DisposableEffect(
+                        context,
+                        session.baseUrl,
+                        session.accessToken,
+                        session.localState.deviceId,
+                    ) {
+                        val realtimeManager = RealtimeSessionManager(
+                            context = context,
+                            session = session,
+                            onSessionReplaced = { reason ->
+                                coroutineScope.launch {
+                                    authState = TrixAuthState.SignedOut(
+                                        storedDevice = session.localState.toSummary(),
+                                        errorMessage = "Realtime session ended: $reason",
+                                    )
+                                }
+                            },
+                        )
+                        realtimeManager.startObserving()
+                        onDispose {
+                            realtimeManager.close()
+                        }
+                    }
                     when (windowInfo.navigationLayout) {
                         TrixNavigationLayout.BottomBar -> BottomBarLayout(
                             destination = destination,

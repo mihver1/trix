@@ -4,9 +4,12 @@ import android.content.Context
 import android.net.Uri
 import chat.trix.android.core.ffi.FfiChatParticipantProfile
 import chat.trix.android.core.auth.AuthenticatedSession
+import chat.trix.android.core.auth.DeviceDatabaseKeyStore
 import chat.trix.android.core.ffi.FfiContentType
 import chat.trix.android.core.ffi.FfiChatDetail
 import chat.trix.android.core.ffi.FfiChatType
+import chat.trix.android.core.ffi.FfiClientStore
+import chat.trix.android.core.ffi.FfiClientStoreConfig
 import chat.trix.android.core.ffi.FfiCreateChatControlInput
 import chat.trix.android.core.ffi.FfiDirectoryAccount
 import chat.trix.android.core.ffi.FfiLocalChatListItem
@@ -22,7 +25,7 @@ import chat.trix.android.core.ffi.FfiSendMessageInput
 import chat.trix.android.core.ffi.FfiServerApiClient
 import chat.trix.android.core.ffi.FfiSyncCoordinator
 import chat.trix.android.core.ffi.TrixFfiException
-import java.io.File
+import chat.trix.android.core.system.deviceStorageLayout
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.time.Instant
@@ -40,31 +43,38 @@ class ChatRepository(
     private val session: AuthenticatedSession,
 ) : AutoCloseable {
     private val appContext = context.applicationContext
-    private val sessionRoot = File(
-        appContext.filesDir,
-        "trix/accounts/${session.localState.accountId}/devices/${session.localState.deviceId}",
+    private val storageLayout = deviceStorageLayout(
+        context = appContext,
+        accountId = session.localState.accountId,
+        deviceId = session.localState.deviceId,
     )
-    private val historyStorePath = File(sessionRoot, "history/local-history-v1.json")
-    private val syncStatePath = File(sessionRoot, "sync/sync-state-v1.json")
-    private val mlsStorageRoot = File(sessionRoot, "mls")
+    private val databaseKeyStore = DeviceDatabaseKeyStore(appContext)
+    private val corePersistencePrepared = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        storageLayout.prepareCorePersistenceMigration()
+        true
+    }
     private val clientDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         FfiServerApiClient(session.baseUrl)
     }
+    private val clientStoreDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        corePersistencePrepared.value
+        val databaseKey = runBlockingStoreKey()
+        FfiClientStore.open(
+            FfiClientStoreConfig(
+                databasePath = storageLayout.stateDatabasePath.absolutePath,
+                databaseKey = databaseKey,
+                attachmentCacheRoot = storageLayout.attachmentCacheRoot.absolutePath,
+            ),
+        )
+    }
     private val historyStoreDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        FfiLocalHistoryStore.newPersistent(historyStorePath.absolutePath)
+        clientStore().historyStore()
     }
     private val syncCoordinatorDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        FfiSyncCoordinator.newPersistent(syncStatePath.absolutePath)
+        clientStore().syncCoordinator()
     }
     private val mlsFacadeDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        if (mlsMetadataFile().exists() && mlsStorageFile().exists()) {
-            FfiMlsFacade.loadPersistent(mlsStorageRoot.absolutePath)
-        } else {
-            FfiMlsFacade.newPersistent(
-                session.localState.credentialIdentity,
-                mlsStorageRoot.absolutePath,
-            )
-        }
+        clientStore().openMlsFacade(session.localState.credentialIdentity)
     }
     private val attachmentRepositoryDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         AttachmentRepository(
@@ -431,6 +441,9 @@ class ChatRepository(
         if (mlsFacadeDelegate.isInitialized()) {
             mlsFacadeDelegate.value.close()
         }
+        if (clientStoreDelegate.isInitialized()) {
+            clientStoreDelegate.value.close()
+        }
     }
 
     private fun buildOverview(): ChatOverview {
@@ -472,7 +485,7 @@ class ChatRepository(
                 lastAckedInboxId = syncSnapshot.lastAckedInboxId?.toLong(),
                 leaseOwner = syncSnapshot.leaseOwner,
                 historyStorePath = store.databasePath(),
-                syncStatePath = syncCoordinator().statePath(),
+                syncStatePath = clientStore().databasePath(),
             ),
         )
     }
@@ -615,6 +628,8 @@ class ChatRepository(
 
     private fun client(): FfiServerApiClient = clientDelegate.value
 
+    private fun clientStore(): FfiClientStore = clientStoreDelegate.value
+
     private fun historyStore(): FfiLocalHistoryStore = historyStoreDelegate.value
 
     private fun syncCoordinator(): FfiSyncCoordinator = syncCoordinatorDelegate.value
@@ -622,10 +637,6 @@ class ChatRepository(
     private fun mlsFacade(): FfiMlsFacade = mlsFacadeDelegate.value
 
     private fun attachmentRepository(): AttachmentRepository = attachmentRepositoryDelegate.value
-
-    private fun mlsMetadataFile(): File = File(mlsStorageRoot, "metadata.json")
-
-    private fun mlsStorageFile(): File = File(mlsStorageRoot, "storage.json")
 
     private inline fun <T> runFfi(
         fallbackMessage: String,
@@ -641,6 +652,12 @@ class ChatRepository(
             throw IOException("Rust FFI library is not available in the Android app bundle", error)
         } catch (error: RuntimeException) {
             throw IOException(fallbackMessage, error)
+        }
+    }
+
+    private fun runBlockingStoreKey(): ByteArray {
+        return kotlinx.coroutines.runBlocking {
+            databaseKeyStore.getOrCreate(storageLayout.storeKeyPath)
         }
     }
 

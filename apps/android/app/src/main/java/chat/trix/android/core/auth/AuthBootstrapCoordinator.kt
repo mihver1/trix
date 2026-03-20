@@ -2,6 +2,7 @@ package chat.trix.android.core.auth
 
 import android.content.Context
 import chat.trix.android.core.ffi.FfiMlsFacade
+import chat.trix.android.core.system.deviceStorageLayout
 import java.io.File
 import java.io.IOException
 import java.security.SecureRandom
@@ -15,6 +16,7 @@ class AuthBootstrapCoordinator(
 ) {
     private val appContext = context.applicationContext
     private val stateStore = LocalAuthStateStore(context)
+    private val databaseKeyStore = DeviceDatabaseKeyStore(context)
     private val authApiClient = AuthApiClient(baseUrl)
     private val random = SecureRandom()
 
@@ -62,6 +64,7 @@ class AuthBootstrapCoordinator(
 
         val session = signIn(localState)
         stateStore.write(session.localState)
+        ensureDeviceStoreKey(session.localState.accountId, session.localState.deviceId)
         return session
     }
 
@@ -115,6 +118,7 @@ class AuthBootstrapCoordinator(
                 accessTokenExpiresAtUnix = null,
             )
             stateStore.write(localState)
+            ensureDeviceStoreKey(localState.accountId, localState.deviceId)
             return localState.toSummary()
         } catch (error: IOException) {
             pendingStorageRoot.deleteRecursively()
@@ -223,7 +227,11 @@ class AuthBootstrapCoordinator(
         accountId: String,
         deviceId: String,
     ) = withContext(Dispatchers.IO) {
-        val finalRoot = deviceSessionRoot(accountId, deviceId)
+        val finalRoot = deviceStorageLayout(
+            context = appContext,
+            accountId = accountId,
+            deviceId = deviceId,
+        ).sessionRoot
         if (!fromRoot.exists()) {
             return@withContext
         }
@@ -242,11 +250,17 @@ class AuthBootstrapCoordinator(
         return File(appContext.filesDir, "trix/pending-links/$linkIntentId")
     }
 
-    private fun deviceSessionRoot(accountId: String, deviceId: String): File {
-        return File(
-            appContext.filesDir,
-            "trix/accounts/$accountId/devices/$deviceId",
+    private suspend fun ensureDeviceStoreKey(
+        accountId: String,
+        deviceId: String,
+    ) {
+        val storageLayout = deviceStorageLayout(
+            context = appContext,
+            accountId = accountId,
+            deviceId = deviceId,
         )
+        storageLayout.prepareCorePersistenceMigration()
+        databaseKeyStore.getOrCreate(storageLayout.storeKeyPath)
     }
 
     companion object {

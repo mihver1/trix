@@ -1,4 +1,8 @@
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, MutexGuard},
+};
 
 use serde_json::Value;
 use thiserror::Error;
@@ -946,6 +950,13 @@ pub struct FfiMlsProcessResult {
     pub epoch: Option<u64>,
 }
 
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiClientStoreConfig {
+    pub database_path: String,
+    pub database_key: Vec<u8>,
+    pub attachment_cache_root: String,
+}
+
 #[derive(uniffi::Object)]
 pub struct FfiServerApiClient {
     inner: Mutex<ServerApiClient>,
@@ -977,6 +988,15 @@ pub struct FfiDeviceKeyMaterial {
 #[derive(uniffi::Object)]
 pub struct FfiMlsFacade {
     inner: Mutex<MlsFacade>,
+}
+
+#[derive(uniffi::Object)]
+pub struct FfiClientStore {
+    history_store: Arc<FfiLocalHistoryStore>,
+    sync_coordinator: Arc<FfiSyncCoordinator>,
+    database_path: String,
+    attachment_cache_root: String,
+    mls_storage_root: String,
 }
 
 #[derive(uniffi::Object)]
@@ -1982,7 +2002,7 @@ impl FfiServerWebSocketClient {
         Ok(())
     }
 
-    pub fn close(&self) -> Result<(), TrixFfiError> {
+    pub fn close_socket(&self) -> Result<(), TrixFfiError> {
         let mut websocket = lock(&self.inner)?;
         self.runtime.block_on(websocket.close())?;
         Ok(())
@@ -2223,6 +2243,93 @@ impl FfiDeviceKeyMaterial {
 }
 
 #[uniffi::export]
+impl FfiClientStore {
+    #[uniffi::constructor]
+    pub fn open(config: FfiClientStoreConfig) -> Result<Arc<Self>, TrixFfiError> {
+        let database_path = PathBuf::from(&config.database_path);
+        let session_root = database_path.parent().ok_or_else(|| {
+            TrixFfiError::Message("client store database path must have a parent directory".to_owned())
+        })?;
+        let attachment_cache_root = PathBuf::from(&config.attachment_cache_root);
+        let mls_storage_root = session_root.join("mls");
+        fs::create_dir_all(&attachment_cache_root).map_err(ffi_error)?;
+        fs::create_dir_all(&mls_storage_root).map_err(ffi_error)?;
+
+        let should_attempt_migration =
+            !database_path.exists() && has_any_legacy_client_store_path(session_root);
+
+        let history_store = Arc::new(FfiLocalHistoryStore {
+            inner: Mutex::new(
+                LocalHistoryStore::new_encrypted(&database_path, config.database_key.clone())
+                    .map_err(ffi_error)?,
+            ),
+        });
+        let sync_coordinator = Arc::new(FfiSyncCoordinator {
+            inner: Mutex::new(
+                SyncCoordinator::new_encrypted(&database_path, config.database_key.clone())
+                    .map_err(ffi_error)?,
+            ),
+            runtime: build_runtime()?,
+        });
+
+        if should_attempt_migration {
+            if let Err(error) = migrate_legacy_client_store(
+                session_root,
+                &database_path,
+                &history_store,
+                &sync_coordinator,
+            ) {
+                cleanup_sqlite_sidecars(&database_path).map_err(ffi_error)?;
+                return Err(ffi_error(error));
+            }
+        }
+
+        Ok(Arc::new(Self {
+            history_store,
+            sync_coordinator,
+            database_path: database_path.to_string_lossy().into_owned(),
+            attachment_cache_root: attachment_cache_root.to_string_lossy().into_owned(),
+            mls_storage_root: mls_storage_root.to_string_lossy().into_owned(),
+        }))
+    }
+
+    pub fn database_path(&self) -> String {
+        self.database_path.clone()
+    }
+
+    pub fn attachment_cache_root(&self) -> String {
+        self.attachment_cache_root.clone()
+    }
+
+    pub fn mls_storage_root(&self) -> String {
+        self.mls_storage_root.clone()
+    }
+
+    pub fn history_store(&self) -> Arc<FfiLocalHistoryStore> {
+        Arc::clone(&self.history_store)
+    }
+
+    pub fn sync_coordinator(&self) -> Arc<FfiSyncCoordinator> {
+        Arc::clone(&self.sync_coordinator)
+    }
+
+    pub fn open_mls_facade(
+        &self,
+        credential_identity: Vec<u8>,
+    ) -> Result<Arc<FfiMlsFacade>, TrixFfiError> {
+        let storage_root = PathBuf::from(&self.mls_storage_root);
+        let inner = if has_persistent_mls_state(&storage_root) {
+            MlsFacade::load_persistent(&storage_root).map_err(ffi_error)?
+        } else {
+            MlsFacade::new_persistent(credential_identity, &storage_root).map_err(ffi_error)?
+        };
+        Ok(Arc::new(FfiMlsFacade {
+            inner: Mutex::new(inner),
+        }))
+    }
+}
+
+#[uniffi::export]
 impl FfiLocalHistoryStore {
     #[uniffi::constructor]
     pub fn new() -> Arc<Self> {
@@ -2235,6 +2342,18 @@ impl FfiLocalHistoryStore {
     pub fn new_persistent(database_path: String) -> Result<Arc<Self>, TrixFfiError> {
         Ok(Arc::new(Self {
             inner: Mutex::new(LocalHistoryStore::new_persistent(database_path).map_err(ffi_error)?),
+        }))
+    }
+
+    #[uniffi::constructor]
+    pub fn new_encrypted(
+        database_path: String,
+        database_key: Vec<u8>,
+    ) -> Result<Arc<Self>, TrixFfiError> {
+        Ok(Arc::new(Self {
+            inner: Mutex::new(
+                LocalHistoryStore::new_encrypted(database_path, database_key).map_err(ffi_error)?,
+            ),
         }))
     }
 
@@ -2582,6 +2701,19 @@ impl FfiSyncCoordinator {
     pub fn new_persistent(state_path: String) -> Result<Arc<Self>, TrixFfiError> {
         Ok(Arc::new(Self {
             inner: Mutex::new(SyncCoordinator::new_persistent(state_path).map_err(ffi_error)?),
+            runtime: build_runtime()?,
+        }))
+    }
+
+    #[uniffi::constructor]
+    pub fn new_encrypted(
+        state_path: String,
+        database_key: Vec<u8>,
+    ) -> Result<Arc<Self>, TrixFfiError> {
+        Ok(Arc::new(Self {
+            inner: Mutex::new(
+                SyncCoordinator::new_encrypted(state_path, database_key).map_err(ffi_error)?,
+            ),
             runtime: build_runtime()?,
         }))
     }
@@ -3222,6 +3354,132 @@ fn clone_server_api_client(
     Ok(lock(value)?.clone())
 }
 
+fn has_any_legacy_client_store_path(session_root: &Path) -> bool {
+    legacy_history_sqlite_path(session_root).exists()
+        || legacy_history_json_path(session_root).exists()
+        || legacy_sync_sqlite_path(session_root).exists()
+        || legacy_sync_json_path(session_root).exists()
+}
+
+fn migrate_legacy_client_store(
+    session_root: &Path,
+    database_path: &Path,
+    history_store: &Arc<FfiLocalHistoryStore>,
+    sync_coordinator: &Arc<FfiSyncCoordinator>,
+) -> anyhow::Result<()> {
+    let legacy_history = load_legacy_history_store(session_root)?;
+    let legacy_sync = load_legacy_sync_coordinator(session_root)?;
+
+    if let Some(legacy_history) = legacy_history.as_ref() {
+        lock(&history_store.inner)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?
+            .replace_with(legacy_history)?;
+    }
+    if let Some(legacy_sync) = legacy_sync.as_ref() {
+        lock(&sync_coordinator.inner)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?
+            .replace_with(legacy_sync)?;
+    }
+
+    cleanup_legacy_client_store(session_root)?;
+
+    if !database_path.exists() {
+        return Err(anyhow::anyhow!(
+            "encrypted client store was not created at {}",
+            database_path.display()
+        ));
+    }
+
+    Ok(())
+}
+
+fn load_legacy_history_store(session_root: &Path) -> anyhow::Result<Option<LocalHistoryStore>> {
+    let sqlite_path = legacy_history_sqlite_path(session_root);
+    if sqlite_path.exists() {
+        return LocalHistoryStore::new_persistent(&sqlite_path).map(Some);
+    }
+
+    let json_path = legacy_history_json_path(session_root);
+    if json_path.exists() {
+        return LocalHistoryStore::new_persistent(&json_path).map(Some);
+    }
+
+    Ok(None)
+}
+
+fn load_legacy_sync_coordinator(session_root: &Path) -> anyhow::Result<Option<SyncCoordinator>> {
+    let sqlite_path = legacy_sync_sqlite_path(session_root);
+    if sqlite_path.exists() {
+        return SyncCoordinator::new_persistent(&sqlite_path).map(Some);
+    }
+
+    let json_path = legacy_sync_json_path(session_root);
+    if json_path.exists() {
+        return SyncCoordinator::new_persistent(&json_path).map(Some);
+    }
+
+    Ok(None)
+}
+
+fn cleanup_legacy_client_store(session_root: &Path) -> anyhow::Result<()> {
+    cleanup_sqlite_sidecars(&legacy_history_sqlite_path(session_root))?;
+    cleanup_sqlite_sidecars(&legacy_sync_sqlite_path(session_root))?;
+    remove_file_if_exists(&legacy_history_json_path(session_root))?;
+    remove_file_if_exists(&legacy_sync_json_path(session_root))?;
+    remove_dir_if_empty(&session_root.join("history"))?;
+    remove_dir_if_empty(&session_root.join("sync"))?;
+    Ok(())
+}
+
+fn cleanup_sqlite_sidecars(path: &Path) -> anyhow::Result<()> {
+    for candidate in sqlite_path_set(path) {
+        remove_file_if_exists(&candidate)?;
+    }
+    Ok(())
+}
+
+fn sqlite_path_set(path: &Path) -> [PathBuf; 3] {
+    [
+        path.to_path_buf(),
+        PathBuf::from(format!("{}-wal", path.display())),
+        PathBuf::from(format!("{}-shm", path.display())),
+    ]
+}
+
+fn remove_file_if_exists(path: &Path) -> anyhow::Result<()> {
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+fn remove_dir_if_empty(path: &Path) -> anyhow::Result<()> {
+    if path.is_dir() && path.read_dir()?.next().is_none() {
+        fs::remove_dir(path)?;
+    }
+    Ok(())
+}
+
+fn legacy_history_sqlite_path(session_root: &Path) -> PathBuf {
+    session_root.join("trix-client.db")
+}
+
+fn legacy_history_json_path(session_root: &Path) -> PathBuf {
+    session_root.join("history/local-history-v1.json")
+}
+
+fn legacy_sync_sqlite_path(session_root: &Path) -> PathBuf {
+    session_root.join("sync-state.sqlite")
+}
+
+fn legacy_sync_json_path(session_root: &Path) -> PathBuf {
+    session_root.join("sync/sync-state-v1.json")
+}
+
+fn has_persistent_mls_state(storage_root: &Path) -> bool {
+    storage_root.join("metadata.json").exists() && storage_root.join("storage.json").exists()
+}
+
 fn lock<T>(value: &Mutex<T>) -> Result<MutexGuard<'_, T>, TrixFfiError> {
     value
         .lock()
@@ -3511,64 +3769,6 @@ fn chat_history_to_ffi(value: trix_types::ChatHistoryResponse) -> FfiChatHistory
             .map(message_envelope_to_ffi)
             .collect(),
     }
-}
-
-fn ffi_chat_detail_to_api(
-    value: FfiChatDetail,
-) -> Result<trix_types::ChatDetailResponse, TrixFfiError> {
-    Ok(trix_types::ChatDetailResponse {
-        chat_id: parse_chat_id(&value.chat_id)?,
-        chat_type: value.chat_type.into(),
-        title: value.title,
-        last_server_seq: value.last_server_seq,
-        pending_message_count: value.pending_message_count,
-        epoch: value.epoch,
-        last_commit_message_id: value
-            .last_commit_message_id
-            .map(|message_id| parse_message_id(&message_id))
-            .transpose()?,
-        last_message: value
-            .last_message
-            .map(ffi_message_envelope_to_api)
-            .transpose()?,
-        participant_profiles: value
-            .participant_profiles
-            .into_iter()
-            .map(|profile| {
-                Ok(trix_types::ChatParticipantProfileSummary {
-                    account_id: parse_account_id(&profile.account_id)?,
-                    handle: profile.handle,
-                    profile_name: profile.profile_name,
-                    profile_bio: profile.profile_bio,
-                })
-            })
-            .collect::<Result<Vec<_>, TrixFfiError>>()?,
-        members: value
-            .members
-            .into_iter()
-            .map(|member| {
-                Ok(trix_types::ChatMemberSummary {
-                    account_id: parse_account_id(&member.account_id)?,
-                    role: member.role,
-                    membership_status: member.membership_status,
-                })
-            })
-            .collect::<Result<Vec<_>, TrixFfiError>>()?,
-        device_members: value
-            .device_members
-            .into_iter()
-            .map(|member| {
-                Ok(trix_types::ChatDeviceSummary {
-                    device_id: parse_device_id(&member.device_id)?,
-                    account_id: parse_account_id(&member.account_id)?,
-                    display_name: member.display_name,
-                    platform: member.platform,
-                    leaf_index: member.leaf_index,
-                    credential_identity_b64: crate::encode_b64(&member.credential_identity),
-                })
-            })
-            .collect::<Result<Vec<_>, TrixFfiError>>()?,
-    })
 }
 
 fn ffi_chat_history_to_api(
