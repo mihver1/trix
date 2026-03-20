@@ -33,6 +33,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.MarkUnreadChatAlt
 import androidx.compose.material.icons.rounded.PersonAddAlt1
 import androidx.compose.material.icons.rounded.Share
@@ -83,6 +84,7 @@ import chat.trix.android.R
 import chat.trix.android.core.chat.ChatAttachment
 import chat.trix.android.core.auth.AuthenticatedSession
 import chat.trix.android.core.chat.ChatConversation
+import chat.trix.android.core.chat.ChatConversationMember
 import chat.trix.android.core.chat.ChatConversationSummary
 import chat.trix.android.core.chat.ChatDirectoryAccount
 import chat.trix.android.core.chat.ChatDiagnostics
@@ -90,6 +92,7 @@ import chat.trix.android.core.chat.ChatOverview
 import chat.trix.android.core.chat.ChatRefreshResult
 import chat.trix.android.core.chat.ChatRepository
 import chat.trix.android.core.chat.ChatTimelineMessage
+import chat.trix.android.core.ffi.FfiChatType
 import chat.trix.android.ui.adaptive.TrixAdaptiveInfo
 import chat.trix.android.ui.adaptive.TrixFoldPosture
 import java.io.IOException
@@ -126,11 +129,32 @@ fun ChatsScreen(
     var overviewState by remember(repository) { mutableStateOf(ChatsOverviewState(isRefreshing = true)) }
     var detailState by remember(repository) { mutableStateOf(ChatsDetailState()) }
     var composerDraft by rememberSaveable(selectedConversationId) { mutableStateOf("") }
-    var isDirectorySheetVisible by rememberSaveable(session.localState.deviceId) { mutableStateOf(false) }
+    var directorySheetConfig by remember(session.localState.deviceId) { mutableStateOf<DirectorySheetConfig?>(null) }
     var directoryQuery by rememberSaveable(session.localState.deviceId) { mutableStateOf("") }
+    var groupDraftTitle by rememberSaveable(session.localState.deviceId) { mutableStateOf("") }
+    var selectedDirectoryAccountIds by remember(session.localState.deviceId) { mutableStateOf(setOf<String>()) }
     var directoryState by remember(repository) { mutableStateOf(ChatsDirectoryState()) }
+    var isGroupMembersSheetVisible by rememberSaveable(session.localState.deviceId) { mutableStateOf(false) }
+    var activeGroupMemberAccountId by remember(repository) { mutableStateOf<String?>(null) }
+    var groupMembershipErrorMessage by remember(repository) { mutableStateOf<String?>(null) }
     var activeAttachmentMessageId by remember(repository) { mutableStateOf<String?>(null) }
     var attachmentErrorMessage by remember(repository) { mutableStateOf<String?>(null) }
+
+    fun openDirectorySheet(config: DirectorySheetConfig) {
+        directorySheetConfig = config
+        directoryQuery = ""
+        groupDraftTitle = ""
+        selectedDirectoryAccountIds = emptySet()
+        directoryState = ChatsDirectoryState()
+    }
+
+    fun closeDirectorySheet() {
+        directorySheetConfig = null
+        directoryQuery = ""
+        groupDraftTitle = ""
+        selectedDirectoryAccountIds = emptySet()
+        directoryState = ChatsDirectoryState()
+    }
 
     suspend fun loadCachedOverview(): ChatOverview? {
         return try {
@@ -295,7 +319,8 @@ fun ChatsScreen(
 
     suspend fun createDirectMessage(targetAccountId: String) {
         directoryState = directoryState.copy(
-            creatingAccountId = targetAccountId,
+            activeAccountId = targetAccountId,
+            isSubmitting = true,
             errorMessage = null,
         )
 
@@ -314,15 +339,112 @@ fun ChatsScreen(
                 errorMessage = null,
             )
             directoryState = directoryState.copy(
-                creatingAccountId = null,
+                activeAccountId = null,
+                isSubmitting = false,
                 errorMessage = null,
             )
-            isDirectorySheetVisible = false
+            closeDirectorySheet()
         } catch (error: IOException) {
             directoryState = directoryState.copy(
-                creatingAccountId = null,
+                activeAccountId = null,
+                isSubmitting = false,
                 errorMessage = error.message ?: "Failed to create direct message",
             )
+        }
+    }
+
+    suspend fun createGroupChat() {
+        directoryState = directoryState.copy(
+            isSubmitting = true,
+            errorMessage = null,
+        )
+
+        try {
+            val result = repository.createGroupChat(
+                title = groupDraftTitle,
+                participantAccountIds = selectedDirectoryAccountIds.toList(),
+            )
+            overviewState = overviewState.copy(
+                overview = result.overview,
+                errorMessage = null,
+            )
+            overviewVersion += 1
+            selectedConversationId = result.conversation.chatId
+            composerDraft = ""
+            detailState = ChatsDetailState(
+                conversation = result.conversation,
+                isLoading = false,
+                errorMessage = null,
+            )
+            closeDirectorySheet()
+        } catch (error: IOException) {
+            directoryState = directoryState.copy(
+                isSubmitting = false,
+                errorMessage = error.message ?: "Failed to create group chat",
+            )
+        }
+    }
+
+    suspend fun addSelectedGroupMembers() {
+        val config = directorySheetConfig ?: return
+        val chatId = config.chatId ?: return
+
+        directoryState = directoryState.copy(
+            isSubmitting = true,
+            errorMessage = null,
+        )
+
+        try {
+            val result = repository.addMembers(
+                chatId = chatId,
+                participantAccountIds = selectedDirectoryAccountIds.toList(),
+            )
+            overviewState = overviewState.copy(
+                overview = result.overview,
+                errorMessage = null,
+            )
+            overviewVersion += 1
+            selectedConversationId = result.conversation.chatId
+            detailState = detailState.copy(
+                conversation = result.conversation,
+                isLoading = false,
+                errorMessage = null,
+            )
+            groupMembershipErrorMessage = null
+            closeDirectorySheet()
+            isGroupMembersSheetVisible = true
+        } catch (error: IOException) {
+            directoryState = directoryState.copy(
+                isSubmitting = false,
+                errorMessage = error.message ?: "Failed to add members",
+            )
+        }
+    }
+
+    suspend fun removeGroupMember(accountId: String) {
+        val chatId = selectedConversationId ?: return
+        activeGroupMemberAccountId = accountId
+        groupMembershipErrorMessage = null
+
+        try {
+            val result = repository.removeMember(
+                chatId = chatId,
+                accountId = accountId,
+            )
+            overviewState = overviewState.copy(
+                overview = result.overview,
+                errorMessage = null,
+            )
+            overviewVersion += 1
+            detailState = detailState.copy(
+                conversation = result.conversation,
+                isLoading = false,
+                errorMessage = null,
+            )
+        } catch (error: IOException) {
+            groupMembershipErrorMessage = error.message ?: "Failed to remove member"
+        } finally {
+            activeGroupMemberAccountId = null
         }
     }
 
@@ -387,8 +509,8 @@ fun ChatsScreen(
         onConversationRequestConsumed(requestedChatId)
     }
 
-    LaunchedEffect(repository, isDirectorySheetVisible, directoryQuery) {
-        if (!isDirectorySheetVisible) {
+    LaunchedEffect(repository, directorySheetConfig, directoryQuery) {
+        if (directorySheetConfig == null) {
             return@LaunchedEffect
         }
 
@@ -454,21 +576,82 @@ fun ChatsScreen(
     val selectedConversationSummary = conversations.firstOrNull { it.chatId == selectedConversationId }
     val selectedConversation = detailState.conversation
         ?.takeIf { it.chatId == selectedConversationId }
+    val activeDirectorySheetConfig = directorySheetConfig
+    val directoryExistingAccountIds = if (directorySheetConfig?.mode == DirectorySheetMode.GROUP_ADD_MEMBERS) {
+        selectedConversation?.members.orEmpty().map { it.accountId }.toSet()
+    } else {
+        emptySet()
+    }
     val detailOnly = !showTwoPane && selectedConversationId != null
 
     BackHandler(enabled = detailOnly) {
         selectedConversationId = null
     }
 
-    if (isDirectorySheetVisible) {
+    LaunchedEffect(selectedConversation?.chatId, selectedConversation?.canManageMembers) {
+        if (selectedConversation?.canManageMembers != true) {
+            isGroupMembersSheetVisible = false
+        }
+    }
+
+    if (activeDirectorySheetConfig != null) {
         DirectoryAccountsSheet(
+            config = activeDirectorySheetConfig,
             query = directoryQuery,
             onQueryChange = { directoryQuery = it },
+            groupTitle = groupDraftTitle,
+            onGroupTitleChange = { groupDraftTitle = it },
             state = directoryState,
-            onDismissRequest = { isDirectorySheetVisible = false },
+            selectedAccountIds = selectedDirectoryAccountIds,
+            existingAccountIds = directoryExistingAccountIds,
+            onDismissRequest = { closeDirectorySheet() },
+            onToggleAccountSelection = { accountId ->
+                if (accountId !in directoryExistingAccountIds) {
+                    selectedDirectoryAccountIds = if (accountId in selectedDirectoryAccountIds) {
+                        selectedDirectoryAccountIds - accountId
+                    } else {
+                        selectedDirectoryAccountIds + accountId
+                    }
+                }
+            },
             onCreateDirectMessage = { accountId ->
                 coroutineScope.launch {
                     createDirectMessage(accountId)
+                }
+            },
+            onSubmitSelection = {
+                coroutineScope.launch {
+                    when (directorySheetConfig?.mode) {
+                        DirectorySheetMode.GROUP_CREATE -> createGroupChat()
+                        DirectorySheetMode.GROUP_ADD_MEMBERS -> addSelectedGroupMembers()
+                        DirectorySheetMode.DIRECT_MESSAGE,
+                        null,
+                        -> Unit
+                    }
+                }
+            },
+        )
+    }
+
+    if (isGroupMembersSheetVisible && selectedConversation?.chatType == FfiChatType.GROUP) {
+        GroupMembersSheet(
+            conversation = selectedConversation,
+            isUpdatingMember = activeGroupMemberAccountId != null,
+            activeMemberAccountId = activeGroupMemberAccountId,
+            errorMessage = groupMembershipErrorMessage,
+            onDismissRequest = { isGroupMembersSheetVisible = false },
+            onAddMembers = {
+                groupMembershipErrorMessage = null
+                openDirectorySheet(
+                    DirectorySheetConfig(
+                        mode = DirectorySheetMode.GROUP_ADD_MEMBERS,
+                        chatId = selectedConversation.chatId,
+                    ),
+                )
+            },
+            onRemoveMember = { accountId ->
+                coroutineScope.launch {
+                    removeGroupMember(accountId)
                 }
             },
         )
@@ -495,8 +678,13 @@ fun ChatsScreen(
                         }
                     },
                     actions = {
-                        NewChatAction(
-                            onOpenDirectory = { isDirectorySheetVisible = true },
+                        NewChatActions(
+                            onOpenDirectMessages = {
+                                openDirectorySheet(DirectorySheetConfig(mode = DirectorySheetMode.DIRECT_MESSAGE))
+                            },
+                            onOpenGroupChats = {
+                                openDirectorySheet(DirectorySheetConfig(mode = DirectorySheetMode.GROUP_CREATE))
+                            },
                         )
                         RefreshAction(
                             isRefreshing = overviewState.isRefreshing,
@@ -508,8 +696,13 @@ fun ChatsScreen(
                 CenterAlignedTopAppBar(
                     title = { Text(stringResource(R.string.screen_chats)) },
                     actions = {
-                        NewChatAction(
-                            onOpenDirectory = { isDirectorySheetVisible = true },
+                        NewChatActions(
+                            onOpenDirectMessages = {
+                                openDirectorySheet(DirectorySheetConfig(mode = DirectorySheetMode.DIRECT_MESSAGE))
+                            },
+                            onOpenGroupChats = {
+                                openDirectorySheet(DirectorySheetConfig(mode = DirectorySheetMode.GROUP_CREATE))
+                            },
                         )
                         RefreshAction(
                             isRefreshing = overviewState.isRefreshing,
@@ -561,6 +754,10 @@ fun ChatsScreen(
                             shareAttachment(attachment)
                         }
                     },
+                    onManageMembers = {
+                        isGroupMembersSheetVisible = true
+                        groupMembershipErrorMessage = null
+                    },
                     modifier = contentModifier,
                 )
             }
@@ -591,6 +788,10 @@ fun ChatsScreen(
                             shareAttachment(attachment)
                         }
                     },
+                    onManageMembers = {
+                        isGroupMembersSheetVisible = true
+                        groupMembershipErrorMessage = null
+                    },
                     foldPosture = windowInfo.foldPosture,
                     foldBounds = windowInfo.foldBounds,
                     modifier = contentModifier,
@@ -620,6 +821,10 @@ fun ChatsScreen(
                             shareAttachment(attachment)
                         }
                     },
+                    onManageMembers = {
+                        isGroupMembersSheetVisible = true
+                        groupMembershipErrorMessage = null
+                    },
                     modifier = contentModifier,
                 )
             }
@@ -638,26 +843,62 @@ fun ChatsScreen(
 }
 
 @Composable
-private fun NewChatAction(
-    onOpenDirectory: () -> Unit,
+private fun NewChatActions(
+    onOpenDirectMessages: () -> Unit,
+    onOpenGroupChats: () -> Unit,
 ) {
-    FilledTonalIconButton(onClick = onOpenDirectory) {
-        Icon(
-            imageVector = Icons.Rounded.PersonAddAlt1,
-            contentDescription = "Start direct message",
-        )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilledTonalIconButton(onClick = onOpenDirectMessages) {
+            Icon(
+                imageVector = Icons.Rounded.PersonAddAlt1,
+                contentDescription = "Start direct message",
+            )
+        }
+        FilledTonalIconButton(onClick = onOpenGroupChats) {
+            Icon(
+                imageVector = Icons.Rounded.Groups,
+                contentDescription = "Create group chat",
+            )
+        }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DirectoryAccountsSheet(
+    config: DirectorySheetConfig,
     query: String,
     onQueryChange: (String) -> Unit,
+    groupTitle: String,
+    onGroupTitleChange: (String) -> Unit,
     state: ChatsDirectoryState,
+    selectedAccountIds: Set<String>,
+    existingAccountIds: Set<String>,
     onDismissRequest: () -> Unit,
+    onToggleAccountSelection: (String) -> Unit,
     onCreateDirectMessage: (String) -> Unit,
+    onSubmitSelection: () -> Unit,
 ) {
+    val isDirectMessageMode = config.mode == DirectorySheetMode.DIRECT_MESSAGE
+    val isGroupCreateMode = config.mode == DirectorySheetMode.GROUP_CREATE
+    val selectedCount = selectedAccountIds.size
+    val minimumSelection = if (isGroupCreateMode) 2 else 1
+    val submitLabel = when (config.mode) {
+        DirectorySheetMode.DIRECT_MESSAGE -> "Message"
+        DirectorySheetMode.GROUP_CREATE -> "Create group"
+        DirectorySheetMode.GROUP_ADD_MEMBERS -> "Add members"
+    }
+    val sheetTitle = when (config.mode) {
+        DirectorySheetMode.DIRECT_MESSAGE -> "New direct message"
+        DirectorySheetMode.GROUP_CREATE -> "Create group chat"
+        DirectorySheetMode.GROUP_ADD_MEMBERS -> "Add members"
+    }
+    val sheetBody = when (config.mode) {
+        DirectorySheetMode.DIRECT_MESSAGE -> "Search the account directory and open a DM without leaving the chats surface."
+        DirectorySheetMode.GROUP_CREATE -> "Search the account directory, choose at least two people, and create a new group thread."
+        DirectorySheetMode.GROUP_ADD_MEMBERS -> "Search the account directory and add more people to the current group thread."
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismissRequest,
     ) {
@@ -671,15 +912,24 @@ private fun DirectoryAccountsSheet(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = "New direct message",
+                        text = sheetTitle,
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "Search the account directory and open a DM without leaving the chats surface.",
+                        text = sheetBody,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    if (isGroupCreateMode) {
+                        OutlinedTextField(
+                            value = groupTitle,
+                            onValueChange = onGroupTitleChange,
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text("Group title (optional)") },
+                            singleLine = true,
+                        )
+                    }
                     OutlinedTextField(
                         value = query,
                         onValueChange = onQueryChange,
@@ -688,6 +938,36 @@ private fun DirectoryAccountsSheet(
                         singleLine = true,
                         keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Search),
                     )
+                    if (!isDirectMessageMode) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = if (isGroupCreateMode) {
+                                    "$selectedCount selected, minimum $minimumSelection"
+                                } else {
+                                    "$selectedCount selected"
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Button(
+                                onClick = onSubmitSelection,
+                                enabled = !state.isSubmitting && selectedCount >= minimumSelection,
+                            ) {
+                                if (state.isSubmitting) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp,
+                                    )
+                                } else {
+                                    Text(submitLabel)
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -733,12 +1013,22 @@ private fun DirectoryAccountsSheet(
             }
 
             items(state.accounts, key = { it.accountId }) { account ->
-                DirectoryAccountRow(
-                    account = account,
-                    isCreating = state.creatingAccountId == account.accountId,
-                    enabled = state.creatingAccountId == null,
-                    onCreateDirectMessage = { onCreateDirectMessage(account.accountId) },
-                )
+                if (isDirectMessageMode) {
+                    DirectoryAccountRow(
+                        account = account,
+                        isCreating = state.activeAccountId == account.accountId,
+                        enabled = state.activeAccountId == null && !state.isSubmitting,
+                        onCreateDirectMessage = { onCreateDirectMessage(account.accountId) },
+                    )
+                } else {
+                    DirectorySelectionRow(
+                        account = account,
+                        isSelected = account.accountId in selectedAccountIds,
+                        isAlreadyInChat = account.accountId in existingAccountIds,
+                        enabled = !state.isSubmitting,
+                        onToggleSelection = { onToggleAccountSelection(account.accountId) },
+                    )
+                }
             }
 
             if (state.errorMessage != null) {
@@ -751,6 +1041,78 @@ private fun DirectoryAccountsSheet(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun DirectorySelectionRow(
+    account: ChatDirectoryAccount,
+    isSelected: Boolean,
+    isAlreadyInChat: Boolean,
+    enabled: Boolean,
+    onToggleSelection: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        ListItem(
+            leadingContent = {
+                ConversationAvatar(name = directoryAccountDisplayName(account))
+            },
+            headlineContent = {
+                Text(
+                    text = directoryAccountDisplayName(account),
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+            supportingContent = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = directoryAccountSecondaryLine(account),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    account.profileBio
+                        ?.takeIf(String::isNotBlank)
+                        ?.let { bio ->
+                            Text(
+                                text = bio,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                }
+            },
+            trailingContent = {
+                when {
+                    isAlreadyInChat -> {
+                        TimelineBadge(label = "In group")
+                    }
+
+                    isSelected -> {
+                        Button(
+                            onClick = onToggleSelection,
+                            enabled = enabled,
+                        ) {
+                            Text("Selected")
+                        }
+                    }
+
+                    else -> {
+                        OutlinedButton(
+                            onClick = onToggleSelection,
+                            enabled = enabled,
+                        ) {
+                            Text("Select")
+                        }
+                    }
+                }
+            },
+        )
     }
 }
 
@@ -809,6 +1171,124 @@ private fun DirectoryAccountRow(
                     } else {
                         Text("Message")
                     }
+                }
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GroupMembersSheet(
+    conversation: ChatConversation,
+    isUpdatingMember: Boolean,
+    activeMemberAccountId: String?,
+    errorMessage: String?,
+    onDismissRequest: () -> Unit,
+    onAddMembers: () -> Unit,
+    onRemoveMember: (String) -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismissRequest,
+    ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Group members",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "${conversation.members.size} members in ${conversation.title}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(
+                        onClick = onAddMembers,
+                        enabled = conversation.canManageMembers && !isUpdatingMember,
+                    ) {
+                        Text("Add members")
+                    }
+                }
+            }
+
+            items(conversation.members, key = { it.accountId }) { member ->
+                GroupMemberRow(
+                    member = member,
+                    isUpdating = activeMemberAccountId == member.accountId,
+                    canRemove = conversation.canManageMembers && !member.isSelf,
+                    enabled = !isUpdatingMember,
+                    onRemoveMember = { onRemoveMember(member.accountId) },
+                )
+            }
+
+            if (errorMessage != null) {
+                item {
+                    Text(
+                        text = errorMessage,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GroupMemberRow(
+    member: ChatConversationMember,
+    isUpdating: Boolean,
+    canRemove: Boolean,
+    enabled: Boolean,
+    onRemoveMember: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        ListItem(
+            leadingContent = { ConversationAvatar(name = member.displayName) },
+            headlineContent = {
+                Text(
+                    text = member.displayName,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+            supportingContent = {
+                Text(
+                    text = "${member.role.replaceFirstChar(Char::uppercase)} · ${member.membershipStatus.replaceFirstChar(Char::uppercase)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+            trailingContent = {
+                when {
+                    member.isSelf -> TimelineBadge(label = "You")
+                    canRemove -> {
+                        OutlinedButton(
+                            onClick = onRemoveMember,
+                            enabled = enabled && !isUpdating,
+                        ) {
+                            if (isUpdating) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                            } else {
+                                Text("Remove")
+                            }
+                        }
+                    }
+                    else -> TimelineBadge(label = member.membershipStatus.replaceFirstChar(Char::uppercase))
                 }
             },
         )
@@ -961,6 +1441,7 @@ private fun WideConversationLayout(
     onSend: () -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
     onShareAttachment: (ChatAttachment) -> Unit,
+    onManageMembers: (() -> Unit)?,
     foldPosture: TrixFoldPosture,
     foldBounds: Rect?,
     modifier: Modifier = Modifier,
@@ -1015,6 +1496,7 @@ private fun WideConversationLayout(
                 onSend = onSend,
                 onOpenAttachment = onOpenAttachment,
                 onShareAttachment = onShareAttachment,
+                onManageMembers = onManageMembers,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight(),
@@ -1038,6 +1520,7 @@ private fun TabletopConversationLayout(
     onSend: () -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
     onShareAttachment: (ChatAttachment) -> Unit,
+    onManageMembers: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -1057,6 +1540,7 @@ private fun TabletopConversationLayout(
             onSend = onSend,
             onOpenAttachment = onOpenAttachment,
             onShareAttachment = onShareAttachment,
+            onManageMembers = onManageMembers,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
@@ -1169,6 +1653,9 @@ private fun ConversationListPane(
                             ) {
                                 if (conversation.isAccountSyncChat) {
                                     TimelineBadge(label = "Account sync")
+                                }
+                                if (conversation.chatType == FfiChatType.GROUP) {
+                                    TimelineBadge(label = "Group")
                                 }
                                 if (conversation.hasProjectedTimeline) {
                                     TimelineBadge(label = "Projected")
@@ -1374,6 +1861,7 @@ private fun ConversationDetailPane(
     onSend: () -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
     onShareAttachment: (ChatAttachment) -> Unit,
+    onManageMembers: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     ConversationDetailContent(
@@ -1390,6 +1878,7 @@ private fun ConversationDetailPane(
         onSend = onSend,
         onOpenAttachment = onOpenAttachment,
         onShareAttachment = onShareAttachment,
+        onManageMembers = onManageMembers,
         modifier = modifier,
         showComposer = true,
         compactHeader = true,
@@ -1411,6 +1900,7 @@ private fun ConversationDetailContent(
     onSend: () -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
     onShareAttachment: (ChatAttachment) -> Unit,
+    onManageMembers: (() -> Unit)?,
     modifier: Modifier = Modifier,
     showComposer: Boolean,
     compactHeader: Boolean,
@@ -1443,8 +1933,16 @@ private fun ConversationDetailContent(
                     ) {
                         TimelineBadge(label = conversation.participantsLabel)
                         TimelineBadge(label = conversation.timelineLabel)
+                        if (conversation.chatType == FfiChatType.GROUP) {
+                            TimelineBadge(label = "${conversation.members.size} members")
+                        }
                         if (conversation.isAccountSyncChat) {
                             TimelineBadge(label = "Account sync")
+                        }
+                    }
+                    if (conversation.canManageMembers && onManageMembers != null) {
+                        TextButton(onClick = onManageMembers) {
+                            Text("Manage members")
                         }
                     }
                 }
@@ -1777,9 +2275,21 @@ private data class ChatsDirectoryState(
     val accounts: List<ChatDirectoryAccount> = emptyList(),
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
-    val creatingAccountId: String? = null,
+    val activeAccountId: String? = null,
+    val isSubmitting: Boolean = false,
     val hasLoaded: Boolean = false,
 )
+
+private data class DirectorySheetConfig(
+    val mode: DirectorySheetMode,
+    val chatId: String? = null,
+)
+
+private enum class DirectorySheetMode {
+    DIRECT_MESSAGE,
+    GROUP_CREATE,
+    GROUP_ADD_MEMBERS,
+}
 
 private fun ChatRefreshResult.toSummary(): String {
     return buildString {

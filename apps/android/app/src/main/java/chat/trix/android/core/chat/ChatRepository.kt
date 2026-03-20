@@ -15,6 +15,7 @@ import chat.trix.android.core.ffi.FfiLocalProjectionKind
 import chat.trix.android.core.ffi.FfiLocalTimelineItem
 import chat.trix.android.core.ffi.FfiMessageBody
 import chat.trix.android.core.ffi.FfiMessageBodyKind
+import chat.trix.android.core.ffi.FfiModifyChatMembersControlInput
 import chat.trix.android.core.ffi.FfiMlsConversation
 import chat.trix.android.core.ffi.FfiMlsFacade
 import chat.trix.android.core.ffi.FfiSendMessageInput
@@ -131,6 +132,11 @@ class ChatRepository(
     }
 
     suspend fun createDirectMessage(targetAccountId: String): ChatCreateResult = withContext(Dispatchers.IO) {
+        val normalizedParticipants = normalizeParticipantAccountIds(listOf(targetAccountId))
+        if (normalizedParticipants.isEmpty()) {
+            throw IOException("Choose a valid account to start a direct message")
+        }
+
         runFfi("Failed to create direct message") {
             val client = client()
             val store = historyStore()
@@ -147,17 +153,137 @@ class ChatRepository(
                     creatorDeviceId = session.localState.deviceId,
                     chatType = FfiChatType.DM,
                     title = null,
-                    participantAccountIds = listOf(targetAccountId),
+                    participantAccountIds = normalizedParticipants,
                     groupId = null,
                     commitAadJson = EMPTY_AAD_JSON,
                     welcomeAadJson = EMPTY_AAD_JSON,
                 ),
             )
+            hydrateChatDetail(client, store, outcome.chatId)
 
             ChatCreateResult(
                 overview = buildOverview(),
                 conversation = buildConversation(outcome.chatId)
                     ?: throw IOException("Conversation ${outcome.chatId} is no longer available"),
+            )
+        }
+    }
+
+    suspend fun createGroupChat(
+        title: String?,
+        participantAccountIds: List<String>,
+    ): ChatCreateResult = withContext(Dispatchers.IO) {
+        val normalizedParticipants = normalizeParticipantAccountIds(participantAccountIds)
+        if (normalizedParticipants.size < MIN_GROUP_PARTICIPANTS) {
+            throw IOException("Select at least $MIN_GROUP_PARTICIPANTS people for a group chat")
+        }
+
+        runFfi("Failed to create group chat") {
+            val client = client()
+            val store = historyStore()
+            val syncCoordinator = syncCoordinator()
+            val facade = mlsFacade()
+
+            client.setAccessToken(session.accessToken)
+            val outcome = syncCoordinator.createChatControl(
+                client = client,
+                store = store,
+                facade = facade,
+                input = FfiCreateChatControlInput(
+                    creatorAccountId = session.localState.accountId,
+                    creatorDeviceId = session.localState.deviceId,
+                    chatType = FfiChatType.GROUP,
+                    title = title?.trim()?.takeIf(String::isNotEmpty),
+                    participantAccountIds = normalizedParticipants,
+                    groupId = null,
+                    commitAadJson = EMPTY_AAD_JSON,
+                    welcomeAadJson = EMPTY_AAD_JSON,
+                ),
+            )
+            hydrateChatDetail(client, store, outcome.chatId)
+
+            ChatCreateResult(
+                overview = buildOverview(),
+                conversation = buildConversation(outcome.chatId)
+                    ?: throw IOException("Conversation ${outcome.chatId} is no longer available"),
+            )
+        }
+    }
+
+    suspend fun addMembers(
+        chatId: String,
+        participantAccountIds: List<String>,
+    ): ChatMembershipUpdateResult = withContext(Dispatchers.IO) {
+        val normalizedParticipants = normalizeParticipantAccountIds(participantAccountIds)
+        if (normalizedParticipants.isEmpty()) {
+            throw IOException("Select at least one person to add")
+        }
+
+        runFfi("Failed to add group members") {
+            val client = client()
+            val store = historyStore()
+            val syncCoordinator = syncCoordinator()
+            val facade = mlsFacade()
+
+            client.setAccessToken(session.accessToken)
+            syncCoordinator.addChatMembersControl(
+                client = client,
+                store = store,
+                facade = facade,
+                input = FfiModifyChatMembersControlInput(
+                    actorAccountId = session.localState.accountId,
+                    actorDeviceId = session.localState.deviceId,
+                    chatId = chatId,
+                    participantAccountIds = normalizedParticipants,
+                    commitAadJson = EMPTY_AAD_JSON,
+                    welcomeAadJson = EMPTY_AAD_JSON,
+                ),
+            )
+            hydrateChatDetail(client, store, chatId)
+
+            ChatMembershipUpdateResult(
+                overview = buildOverview(),
+                conversation = buildConversation(chatId)
+                    ?: throw IOException("Conversation $chatId is no longer available"),
+            )
+        }
+    }
+
+    suspend fun removeMember(
+        chatId: String,
+        accountId: String,
+    ): ChatMembershipUpdateResult = withContext(Dispatchers.IO) {
+        val normalizedParticipants = normalizeParticipantAccountIds(listOf(accountId))
+        if (normalizedParticipants.isEmpty()) {
+            throw IOException("Choose a valid member to remove")
+        }
+
+        runFfi("Failed to remove group member") {
+            val client = client()
+            val store = historyStore()
+            val syncCoordinator = syncCoordinator()
+            val facade = mlsFacade()
+
+            client.setAccessToken(session.accessToken)
+            syncCoordinator.removeChatMembersControl(
+                client = client,
+                store = store,
+                facade = facade,
+                input = FfiModifyChatMembersControlInput(
+                    actorAccountId = session.localState.accountId,
+                    actorDeviceId = session.localState.deviceId,
+                    chatId = chatId,
+                    participantAccountIds = normalizedParticipants,
+                    commitAadJson = EMPTY_AAD_JSON,
+                    welcomeAadJson = EMPTY_AAD_JSON,
+                ),
+            )
+            hydrateChatDetail(client, store, chatId)
+
+            ChatMembershipUpdateResult(
+                overview = buildOverview(),
+                conversation = buildConversation(chatId)
+                    ?: throw IOException("Conversation $chatId is no longer available"),
             )
         }
     }
@@ -322,6 +448,7 @@ class ChatRepository(
 
             ChatConversationSummary(
                 chatId = item.chatId,
+                chatType = item.chatType,
                 title = item.displayTitle,
                 participantsLabel = participantsLabel(
                     item = item,
@@ -359,9 +486,11 @@ class ChatRepository(
         val hasLocalMlsState = hasLocalConversation(chatId)
         val canSend = item.chatType == FfiChatType.ACCOUNT_SYNC || hasLocalMlsState
         val messages = timelineItems.map(::mapTimelineMessage)
+        val members = conversationMembers(item, detail)
 
         return ChatConversation(
             chatId = chatId,
+            chatType = item.chatType,
             title = item.displayTitle,
             participantsLabel = participantsLabel(
                 item = item,
@@ -370,6 +499,7 @@ class ChatRepository(
             timelineLabel = conversationTimelineLabel(item, timelineItems),
             isAccountSyncChat = chatId == session.localState.accountSyncChatId,
             canSend = canSend,
+            canManageMembers = item.chatType == FfiChatType.GROUP && canSend,
             composerHint = when {
                 item.chatType == FfiChatType.ACCOUNT_SYNC -> {
                     "Messages use this device's local MLS state for the account sync thread."
@@ -378,6 +508,7 @@ class ChatRepository(
                 canSend -> "Send through the local MLS state already present on this device."
                 else -> "Sending is disabled until this device has local MLS state for this chat."
             },
+            members = members,
             messages = messages,
         )
     }
@@ -388,10 +519,18 @@ class ChatRepository(
     ): Int {
         var changedChats = 0
         store.listChats().forEach { summary ->
-            val detail = client.getChat(summary.chatId)
-            changedChats += store.applyChatDetail(detail).chatsUpserted.toInt()
+            changedChats += hydrateChatDetail(client, store, summary.chatId)
         }
         return changedChats
+    }
+
+    private fun hydrateChatDetail(
+        client: FfiServerApiClient,
+        store: FfiLocalHistoryStore,
+        chatId: String,
+    ): Int {
+        val detail = client.getChat(chatId)
+        return store.applyChatDetail(detail).chatsUpserted.toInt()
     }
 
     private fun projectChatsWithLocalMlsState(store: FfiLocalHistoryStore): Int {
@@ -556,6 +695,37 @@ class ChatRepository(
             ?: detail?.participantProfiles.orEmpty()
     }
 
+    private fun conversationMembers(
+        item: FfiLocalChatListItem,
+        detail: FfiChatDetail?,
+    ): List<ChatConversationMember> {
+        val profilesByAccountId = participantProfiles(item, detail).associateBy { it.accountId }
+        val detailMembers = detail?.members.orEmpty()
+        if (detailMembers.isNotEmpty()) {
+            return detailMembers.map { member ->
+                ChatConversationMember(
+                    accountId = member.accountId,
+                    displayName = profilesByAccountId[member.accountId]
+                        ?.let(::participantDisplayName)
+                        ?: fallbackMemberDisplayName(member.accountId),
+                    role = member.role,
+                    membershipStatus = member.membershipStatus,
+                    isSelf = member.accountId == session.localState.accountId,
+                )
+            }
+        }
+
+        return profilesByAccountId.values.map { profile ->
+            ChatConversationMember(
+                accountId = profile.accountId,
+                displayName = participantDisplayName(profile),
+                role = "participant",
+                membershipStatus = "active",
+                isSelf = profile.accountId == session.localState.accountId,
+            )
+        }
+    }
+
     private fun participantDisplayName(profile: FfiChatParticipantProfile): String {
         if (profile.accountId == session.localState.accountId) {
             return "You"
@@ -563,6 +733,14 @@ class ChatRepository(
         return profile.profileName.takeIf(String::isNotBlank)
             ?: profile.handle?.takeIf(String::isNotBlank)?.let { "@$it" }
             ?: shortAccountId(profile.accountId)
+    }
+
+    private fun fallbackMemberDisplayName(accountId: String): String {
+        return if (accountId == session.localState.accountId) {
+            "You"
+        } else {
+            shortAccountId(accountId)
+        }
     }
 
     private fun mapDirectoryAccount(account: FfiDirectoryAccount): ChatDirectoryAccount {
@@ -714,6 +892,16 @@ class ChatRepository(
         }
     }
 
+    private fun normalizeParticipantAccountIds(accountIds: List<String>): List<String> {
+        return accountIds
+            .asSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .filterNot { it == session.localState.accountId }
+            .distinct()
+            .toList()
+    }
+
     private fun Long.formatChatTimestamp(): String {
         val zoneId = ZoneId.systemDefault()
         val messageTime = Instant.ofEpochSecond(this).atZone(zoneId)
@@ -731,6 +919,7 @@ class ChatRepository(
         private val HISTORY_SYNC_LIMIT = 200u
         private val INBOX_SYNC_LIMIT = 100u
         private val LEASE_TTL_SECONDS = 60uL
+        private const val MIN_GROUP_PARTICIPANTS = 2
         private val TIME_FORMATTER = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
         private val MONTH_DAY_FORMATTER = DateTimeFormatter.ofPattern("MMM d")
         private val DATE_FORMATTER = DateTimeFormatter.ofPattern("MMM d, yyyy")
@@ -772,6 +961,11 @@ data class ChatCreateResult(
     val conversation: ChatConversation,
 )
 
+data class ChatMembershipUpdateResult(
+    val overview: ChatOverview,
+    val conversation: ChatConversation,
+)
+
 data class ChatReadResult(
     val overview: ChatOverview,
     val changed: Boolean,
@@ -786,6 +980,7 @@ data class ChatDirectoryAccount(
 
 data class ChatConversationSummary(
     val chatId: String,
+    val chatType: FfiChatType,
     val title: String,
     val participantsLabel: String,
     val lastMessagePreview: String,
@@ -798,13 +993,24 @@ data class ChatConversationSummary(
 
 data class ChatConversation(
     val chatId: String,
+    val chatType: FfiChatType,
     val title: String,
     val participantsLabel: String,
     val timelineLabel: String,
     val isAccountSyncChat: Boolean,
     val canSend: Boolean,
+    val canManageMembers: Boolean,
     val composerHint: String,
+    val members: List<ChatConversationMember>,
     val messages: List<ChatTimelineMessage>,
+)
+
+data class ChatConversationMember(
+    val accountId: String,
+    val displayName: String,
+    val role: String,
+    val membershipStatus: String,
+    val isSelf: Boolean,
 )
 
 data class ChatTimelineMessage(
