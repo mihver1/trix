@@ -7,7 +7,7 @@ pub use api::{
     AppendHistorySyncChunkRequest, AppendHistorySyncChunkResponse, ApproveDeviceRequest,
     ApproveDeviceResponse, AuthChallengeRequest, AuthChallengeResponse, AuthSessionRequest,
     AuthSessionResponse, BlobMetadataResponse, BlobUploadStatus, ChatDetailResponse,
-    ChatHistoryResponse, ChatListResponse, ChatMemberSummary, ChatSummary,
+    ChatDeviceSummary, ChatHistoryResponse, ChatListResponse, ChatMemberSummary, ChatSummary,
     CompleteHistorySyncJobRequest, CompleteHistorySyncJobResponse, CompleteLinkIntentRequest,
     CompleteLinkIntentResponse, ControlMessageInput, CreateAccountRequest, CreateAccountResponse,
     CreateBlobUploadRequest, CreateBlobUploadResponse, CreateChatRequest, CreateChatResponse,

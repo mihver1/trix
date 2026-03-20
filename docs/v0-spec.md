@@ -764,6 +764,13 @@ Lists chats visible to the authenticated device.
 
 Returns chat metadata, membership, and the latest group epoch metadata.
 
+Response includes:
+
+- account-level members
+- active device-level members with `device_id`
+- `leaf_index` for each active device
+- `credential_identity_b64` for MLS/member mapping on clients
+
 ### `POST /v0/chats/{chat_id}/members:add`
 
 Adds one or more accounts or devices to the chat.

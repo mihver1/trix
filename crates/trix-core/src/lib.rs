@@ -24,8 +24,10 @@ pub use storage::{
     SyncStateStore,
 };
 pub use sync::{
-    CoreEvent, CoreEventSink, InboxApplyOutcome, SendMessageOutcome, SyncChatCursor,
-    SyncCoordinator, SyncStateSnapshot,
+    CoreEvent, CoreEventSink, CreateChatControlInput, CreateChatControlOutcome, InboxApplyOutcome,
+    ModifyChatDevicesControlInput, ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
+    ModifyChatMembersControlOutcome, SendMessageOutcome, SyncChatCursor, SyncCoordinator,
+    SyncStateSnapshot,
 };
 pub use transport::{
     AuthChallengeMaterial, BlobHeadMaterial, BlobMetadataMaterial, CompleteLinkIntentParams,

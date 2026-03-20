@@ -240,6 +240,16 @@ pub struct ChatMemberRow {
 }
 
 #[derive(Debug)]
+pub struct ChatDeviceRow {
+    pub device_id: Uuid,
+    pub account_id: Uuid,
+    pub display_name: String,
+    pub platform: String,
+    pub leaf_index: u32,
+    pub credential_identity: Vec<u8>,
+}
+
+#[derive(Debug)]
 pub struct ChatDetail {
     pub chat_id: Uuid,
     pub chat_type: ChatType,
@@ -248,6 +258,7 @@ pub struct ChatDetail {
     pub epoch: u64,
     pub last_commit_message_id: Option<Uuid>,
     pub members: Vec<ChatMemberRow>,
+    pub device_members: Vec<ChatDeviceRow>,
 }
 
 #[derive(Debug)]
@@ -3324,6 +3335,43 @@ impl Database {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        let device_member_rows = sqlx::query(
+            r#"
+            SELECT
+                d.device_id,
+                d.account_id,
+                d.display_name,
+                d.platform,
+                cdm.leaf_index,
+                d.credential_identity
+            FROM chat_device_members cdm
+            JOIN devices d
+              ON d.device_id = cdm.device_id
+            WHERE cdm.chat_id = $1
+              AND cdm.membership_status = 'active'::device_membership_status
+              AND d.device_status = 'active'::device_status
+            ORDER BY cdm.leaf_index ASC, d.device_id ASC
+            "#,
+        )
+        .bind(chat_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let device_members = device_member_rows
+            .into_iter()
+            .map(|device_row| {
+                Ok(ChatDeviceRow {
+                    device_id: row_uuid(&device_row, "device_id")?,
+                    account_id: row_uuid(&device_row, "account_id")?,
+                    display_name: row_text(&device_row, "display_name")?,
+                    platform: row_text(&device_row, "platform")?,
+                    leaf_index: row_i32(&device_row, "leaf_index")? as u32,
+                    credential_identity: row_bytes(&device_row, "credential_identity")?,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         Ok(Some(ChatDetail {
             chat_id: row_uuid(&row, "chat_id")?,
             chat_type: parse_chat_type(&row_text(&row, "chat_type")?)?,
@@ -3332,6 +3380,7 @@ impl Database {
             epoch: row_u64_from_i64(&row, "epoch")?,
             last_commit_message_id: row_optional_uuid(&row, "last_commit_message_id")?,
             members,
+            device_members,
         }))
     }
 

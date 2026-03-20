@@ -1374,9 +1374,26 @@ components:
           type: string
         membership_status:
           type: string
+    ChatDeviceSummary:
+      type: object
+      required: [device_id, account_id, display_name, platform, leaf_index, credential_identity_b64]
+      properties:
+        device_id:
+          $ref: '#/components/schemas/Uuid'
+        account_id:
+          $ref: '#/components/schemas/Uuid'
+        display_name:
+          type: string
+        platform:
+          type: string
+        leaf_index:
+          type: integer
+          format: int32
+        credential_identity_b64:
+          type: string
     ChatDetailResponse:
       type: object
-      required: [chat_id, chat_type, last_server_seq, epoch, members]
+      required: [chat_id, chat_type, last_server_seq, epoch, members, device_members]
       properties:
         chat_id:
           $ref: '#/components/schemas/Uuid'
@@ -1398,6 +1415,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ChatMemberSummary'
+        device_members:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatDeviceSummary'
     ControlMessageInput:
       type: object
       required: [message_id, ciphertext_b64]
