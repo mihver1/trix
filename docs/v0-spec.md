@@ -25,7 +25,7 @@ This document defines the initial `v0` architecture for a native-first end-to-en
 ## Non-Goals for v0
 
 - Voice or video calls.
-- Public channels, bots, or federation.
+- Public channels, server-side bots, or federation.
 - Server-side full-text search over message content.
 - Strong metadata hiding beyond basic minimization.
 - Anonymous routing, anti-censorship transports, or anti-DPI protocol camouflage.
@@ -83,6 +83,14 @@ This document defines the initial `v0` architecture for a native-first end-to-en
 - `OpenMLS`
 - encrypted local `SQLite`
 - `Keychain` for device keys and account root material
+
+### Headless Bot Harness
+
+- `v1` bots run as ordinary single-device accounts with `platform="bot"`.
+- Bot traffic uses the same end-to-end encrypted account, device, chat, inbox, and MLS flows as user clients.
+- There are no bot-only backend endpoints, discovery flags, webhook modes, or plaintext message paths.
+- `Rust` bots link against `trix-bot`; `Python` and `Go` integrate through `trix-botd` over `JSON-RPC 2.0` on stdio.
+- Attachments, reactions, receipts, and admin-control automation remain outside the `v1` bot event surface.
 
 ### Backend Binary
 

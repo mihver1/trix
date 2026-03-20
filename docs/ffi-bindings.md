@@ -51,9 +51,44 @@ make ffi-bindings-kotlin
 make ffi-bindings OUT=/tmp/trix-bindings
 ```
 
+## Bot Harness Bindings
+
+`UniFFI` remains the binding surface for app clients, but the bot harness adds a second integration layer:
+
+- direct Rust API in `crates/trix-bot`
+- `JSON-RPC 2.0` over stdio through `apps/trix-botd`
+
+The stdio namespace is versioned as `bot.v1.*`.
+
+Methods:
+
+- `bot.v1.init`
+- `bot.v1.start`
+- `bot.v1.stop`
+- `bot.v1.list_chats`
+- `bot.v1.get_timeline`
+- `bot.v1.send_text`
+- `bot.v1.publish_key_packages`
+
+Notifications:
+
+- `bot.v1.ready`
+- `bot.v1.text_message`
+- `bot.v1.connection_changed`
+- `bot.v1.unsupported_message`
+- `bot.v1.error`
+
+Repo-local bindings and examples live under:
+
+- `examples/bots/python`
+- `examples/bots/go`
+- `crates/trix-bot/examples`
+
+See `docs/bot-harness.md` for runtime setup and payload examples.
+
 ## Notes
 
-- The exported API is defined in [ffi.rs](/Users/m.verhovyh/Projects/trix/crates/trix-core/src/ffi.rs).
+- The exported UniFFI API is defined in `crates/trix-core/src/ffi.rs`.
 - The crate now builds as `lib`, `cdylib`, and `staticlib`.
 - The current FFI surface is synchronous on purpose; client apps should call it off the UI thread.
 - `FfiMlsFacade` now supports persistent state via `new_persistent(storage_root)`, `load_persistent(storage_root)`, `save_state()`, and `storage_root()`.
