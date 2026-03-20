@@ -2463,14 +2463,47 @@ fn parse_message_id(value: &str) -> Result<MessageId, TrixFfiError> {
 fn parse_optional_json(value: Option<String>) -> Result<Option<Value>, TrixFfiError> {
     value
         .map(|json| {
-            serde_json::from_str(&json)
-                .map_err(|err| TrixFfiError::Message(format!("invalid json payload: {err}")))
+            let trimmed = json.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            let parsed: Value = serde_json::from_str(trimmed)
+                .map_err(|err| TrixFfiError::Message(format!("invalid json payload: {err}")))?;
+            Ok(if parsed.is_null() { None } else { Some(parsed) })
         })
         .transpose()
+        .map(|value| value.flatten())
 }
 
 fn json_to_string(value: Value) -> String {
     value.to_string()
+}
+
+fn empty_json_object() -> Value {
+    Value::Object(Default::default())
+}
+
+fn normalize_aad_json(value: Value) -> Value {
+    if value.is_null() {
+        empty_json_object()
+    } else {
+        value
+    }
+}
+
+fn aad_json_to_string(value: Value) -> String {
+    json_to_string(normalize_aad_json(value))
+}
+
+fn parse_aad_json_string(value: &str) -> Result<Value, TrixFfiError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(empty_json_object());
+    }
+
+    let parsed: Value = serde_json::from_str(trimmed)
+        .map_err(|err| TrixFfiError::Message(format!("invalid aad_json: {err}")))?;
+    Ok(normalize_aad_json(parsed))
 }
 
 fn control_message_from_ffi(
@@ -2785,7 +2818,7 @@ fn message_envelope_to_ffi(value: trix_types::MessageEnvelope) -> FfiMessageEnve
         content_type: value.content_type.into(),
         ciphertext: crate::decode_b64_field("ciphertext_b64", &value.ciphertext_b64)
             .unwrap_or_default(),
-        aad_json: json_to_string(value.aad_json),
+        aad_json: aad_json_to_string(value.aad_json),
         created_at_unix: value.created_at_unix,
     }
 }
@@ -2817,8 +2850,7 @@ fn ffi_message_envelope_to_api(
         message_kind: message_kind_from_ffi(value.message_kind),
         content_type: content_type_from_ffi(value.content_type),
         ciphertext_b64: crate::encode_b64(&value.ciphertext),
-        aad_json: serde_json::from_str(&value.aad_json)
-            .map_err(|err| TrixFfiError::Message(format!("invalid aad_json: {err}")))?,
+        aad_json: parse_aad_json_string(&value.aad_json)?,
         created_at_unix: value.created_at_unix,
     })
 }
@@ -3416,5 +3448,34 @@ impl From<trix_types::ServiceStatus> for FfiServiceStatus {
             trix_types::ServiceStatus::Ok => Self::Ok,
             trix_types::ServiceStatus::Degraded => Self::Degraded,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn parse_optional_json_accepts_empty_and_null_as_absent() {
+        assert_eq!(parse_optional_json(None).unwrap(), None);
+        assert_eq!(parse_optional_json(Some(String::new())).unwrap(), None);
+        assert_eq!(parse_optional_json(Some("null".to_owned())).unwrap(), None);
+        assert_eq!(
+            parse_optional_json(Some("{\"k\":\"v\"}".to_owned())).unwrap(),
+            Some(json!({"k":"v"}))
+        );
+    }
+
+    #[test]
+    fn aad_json_helpers_normalize_nullish_values_to_object() {
+        assert_eq!(aad_json_to_string(Value::Null), "{}");
+        assert_eq!(parse_aad_json_string("").unwrap(), json!({}));
+        assert_eq!(parse_aad_json_string("null").unwrap(), json!({}));
+        assert_eq!(
+            parse_aad_json_string("{\"preview\":\"hello\"}").unwrap(),
+            json!({"preview":"hello"})
+        );
     }
 }
