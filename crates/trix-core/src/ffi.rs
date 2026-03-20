@@ -22,12 +22,12 @@ use crate::{
     MlsMemberIdentity, MlsProcessResult, ModifyChatDevicesControlInput,
     ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
     ModifyChatMembersControlOutcome, PreparedAttachmentUpload, PublishKeyPackageMaterial,
-    ReactionAction, RealtimeConfig, RealtimeDriver, RealtimeEvent, RealtimeEventKind,
-    RealtimeMode, ReceiptType, ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient,
+    ReactionAction, RealtimeConfig, RealtimeDriver, RealtimeEvent, RealtimeEventKind, RealtimeMode,
+    ReceiptType, ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient,
     ServerWebSocketClient, SyncChatCursor, SyncCoordinator, SyncStateSnapshot,
-    UpdateAccountProfileParams,
-    account_bootstrap_message, create_device_transfer_bundle, decrypt_attachment_payload,
-    decrypt_device_transfer_bundle, device_revoke_message, prepare_attachment_upload,
+    UpdateAccountProfileParams, account_bootstrap_message, create_device_transfer_bundle,
+    decrypt_attachment_payload, decrypt_device_transfer_bundle, device_revoke_message,
+    prepare_attachment_upload,
 };
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -1369,7 +1369,9 @@ impl FfiServerApiClient {
                 key_package: package.key_package,
             })
             .collect();
-        let response = self.runtime.block_on(client.publish_key_packages(packages))?;
+        let response = self
+            .runtime
+            .block_on(client.publish_key_packages(packages))?;
         facade.save_state()?;
 
         Ok(Some(FfiPublishKeyPackagesResponse {
@@ -2332,7 +2334,9 @@ impl FfiClientStore {
     pub fn open(config: FfiClientStoreConfig) -> Result<Arc<Self>, TrixFfiError> {
         let database_path = PathBuf::from(&config.database_path);
         let session_root = database_path.parent().ok_or_else(|| {
-            TrixFfiError::Message("client store database path must have a parent directory".to_owned())
+            TrixFfiError::Message(
+                "client store database path must have a parent directory".to_owned(),
+            )
         })?;
         let attachment_cache_root = PathBuf::from(&config.attachment_cache_root);
         let mls_storage_root = session_root.join("mls");
@@ -2661,12 +2665,7 @@ impl FfiLocalHistoryStore {
         let envelope = ffi_message_envelope_to_api(envelope)?;
         Ok(local_store_apply_report_to_ffi(
             lock(&self.inner)?
-                .apply_local_projection(
-                    &envelope,
-                    projection_kind.into(),
-                    payload,
-                    merged_epoch,
-                )
+                .apply_local_projection(&envelope, projection_kind.into(), payload, merged_epoch)
                 .map_err(ffi_error)?,
         ))
     }
@@ -2847,6 +2846,39 @@ impl FfiLocalHistoryStore {
                 )
                 .map_err(ffi_error)?,
         ))
+    }
+
+    pub fn load_or_bootstrap_chat_conversation(
+        &self,
+        chat_id: String,
+        facade: Arc<FfiMlsFacade>,
+    ) -> Result<Option<Arc<FfiMlsConversation>>, TrixFfiError> {
+        let chat_id = parse_chat_id(&chat_id)?;
+        let facade = lock(&facade.inner)?;
+        let conversation = lock(&self.inner)?
+            .load_or_bootstrap_chat_mls_conversation(chat_id, &facade)
+            .map_err(ffi_error)?;
+        facade.save_state().map_err(ffi_error)?;
+        Ok(conversation.map(|conversation| {
+            Arc::new(FfiMlsConversation {
+                inner: Mutex::new(conversation),
+            })
+        }))
+    }
+
+    pub fn project_chat_with_facade(
+        &self,
+        chat_id: String,
+        facade: Arc<FfiMlsFacade>,
+        limit: Option<u32>,
+    ) -> Result<FfiLocalProjectionApplyReport, TrixFfiError> {
+        let chat_id = parse_chat_id(&chat_id)?;
+        let facade = lock(&facade.inner)?;
+        let report = lock(&self.inner)?
+            .project_chat_with_facade(chat_id, &facade, limit.map(|value| value as usize))
+            .map_err(ffi_error)?;
+        facade.save_state().map_err(ffi_error)?;
+        Ok(local_projection_apply_report_to_ffi(report))
     }
 }
 

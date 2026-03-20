@@ -506,6 +506,9 @@ class ChatRepository(
         val store = historyStore()
         val selfAccountId = session.localState.accountId
         val item = store.getLocalChatListItem(chatId, selfAccountId) ?: return null
+        runCatching {
+            ensureConversationProjection(chatId, store)
+        }
         val detail = store.getChat(chatId)
         val timelineItems = store.getLocalTimelineItems(chatId, selfAccountId, null, null)
         val pendingOutboxItems = store.listOutboxMessages(chatId)
@@ -558,36 +561,23 @@ class ChatRepository(
         chatId: String,
     ): Int {
         val detail = client.getChat(chatId)
-        return store.applyChatDetail(detail).chatsUpserted.toInt()
+        val report = store.applyChatDetail(detail)
+        runCatching {
+            ensureConversationProjection(chatId, store)
+        }
+        return report.chatsUpserted.toInt()
     }
 
     private fun projectChatsWithLocalMlsState(store: FfiLocalHistoryStore): Int {
-        val facade = mlsFacade()
         var projectedChatTimelines = 0
 
         store.listChats().forEach { summary ->
-            val conversation = try {
-                loadLocalConversation(summary.chatId)
-            } catch (_: TrixFfiException) {
-                null
-            }
+            val projected = runCatching {
+                ensureConversationProjection(summary.chatId, store)
+            }.getOrDefault(false)
 
-            if (conversation == null) {
-                return@forEach
-            }
-
-            try {
-                try {
-                    store.projectChatMessages(summary.chatId, facade, conversation, null)
-                } catch (_: TrixFfiException) {
-                    return@forEach
-                }
-
-                if (store.getProjectedMessages(summary.chatId, null, 1u).isNotEmpty()) {
-                    projectedChatTimelines += 1
-                }
-            } finally {
-                conversation.close()
+            if (projected && store.getProjectedMessages(summary.chatId, null, 1u).isNotEmpty()) {
+                projectedChatTimelines += 1
             }
         }
 
@@ -753,9 +743,9 @@ class ChatRepository(
     }
 
     private fun getOrCreateSendConversation(chatId: String): FfiMlsConversation? {
-        val existing = loadLocalConversation(chatId)
-        if (existing != null) {
-            return existing
+        val bootstrapped = loadOrBootstrapConversation(chatId)
+        if (bootstrapped != null) {
+            return bootstrapped
         }
         if (chatId != session.localState.accountSyncChatId) {
             return null
@@ -764,19 +754,48 @@ class ChatRepository(
         return mlsFacade().createGroup(groupId)
     }
 
+    private fun loadOrBootstrapConversation(chatId: String): FfiMlsConversation? {
+        val existing = loadLocalConversation(chatId)
+        if (existing != null) {
+            return existing
+        }
+        if (chatId == session.localState.accountSyncChatId) {
+            return null
+        }
+        return historyStore().loadOrBootstrapChatConversation(chatId, mlsFacade())
+    }
+
     private fun canQueueReceipt(chatId: String): Boolean {
         if (chatId == session.localState.accountSyncChatId) {
             return true
         }
 
-        val conversation = loadLocalConversation(chatId) ?: return false
+        val conversation = loadOrBootstrapConversation(chatId) ?: return false
         conversation.close()
         return true
     }
 
     private fun hasLocalConversation(chatId: String): Boolean {
-        val conversation = loadLocalConversation(chatId) ?: return false
+        val conversation = loadOrBootstrapConversation(chatId) ?: return false
         conversation.close()
+        return true
+    }
+
+    private fun ensureConversationProjection(
+        chatId: String,
+        store: FfiLocalHistoryStore = historyStore(),
+    ): Boolean {
+        if (chatId == session.localState.accountSyncChatId) {
+            val conversation = getOrCreateSendConversation(chatId) ?: return false
+            return try {
+                store.projectChatMessages(chatId, mlsFacade(), conversation, null)
+                true
+            } finally {
+                conversation.close()
+            }
+        }
+
+        store.projectChatWithFacade(chatId, mlsFacade(), null)
         return true
     }
 

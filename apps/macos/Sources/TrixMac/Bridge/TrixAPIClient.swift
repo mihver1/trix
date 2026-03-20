@@ -339,7 +339,7 @@ struct TrixAPIClient {
             )
             try facade.saveState()
 
-            try CompleteLinkIntentResponse(
+            return try CompleteLinkIntentResponse(
                 ffiValue: try client.completeLinkIntentWithDeviceKey(
                     linkIntentId: linkIntentId.uuidString,
                     params: FfiCompleteLinkIntentWithDeviceKeyParams(

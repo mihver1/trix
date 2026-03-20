@@ -174,8 +174,12 @@ pub struct LocalOutboxAttachmentDraft {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum LocalOutboxPayload {
-    Body { body: MessageBody },
-    AttachmentDraft { attachment: LocalOutboxAttachmentDraft },
+    Body {
+        body: MessageBody,
+    },
+    AttachmentDraft {
+        attachment: LocalOutboxAttachmentDraft,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -686,7 +690,11 @@ impl LocalHistoryStore {
             .state
             .outbox
             .values()
-            .filter(|message| chat_id.map(|value| value == message.chat_id).unwrap_or(true))
+            .filter(|message| {
+                chat_id
+                    .map(|value| value == message.chat_id)
+                    .unwrap_or(true)
+            })
             .cloned()
             .collect::<Vec<_>>();
         messages.sort_by(|left, right| {
@@ -781,7 +789,11 @@ impl LocalHistoryStore {
     }
 
     pub fn remove_outbox_message(&mut self, message_id: MessageId) -> Result<()> {
-        let removed = self.state.outbox.remove(&message_id.0.to_string()).is_some();
+        let removed = self
+            .state
+            .outbox
+            .remove(&message_id.0.to_string())
+            .is_some();
         self.persist_if_needed(removed)
     }
 
@@ -1262,7 +1274,8 @@ impl LocalHistoryStore {
             None => true,
         };
         if entry_changed {
-            chat.projected_messages.insert(envelope.server_seq, projected);
+            chat.projected_messages
+                .insert(envelope.server_seq, projected);
             changed = true;
         }
         if envelope.server_seq > chat.projected_cursor_server_seq {
@@ -1950,7 +1963,10 @@ fn load_state_from_path(path: &Path) -> Result<PersistedLocalHistoryState> {
     load_state_from_sqlite(path, None)
 }
 
-fn load_state_from_encrypted_path(path: &Path, database_key: &[u8]) -> Result<PersistedLocalHistoryState> {
+fn load_state_from_encrypted_path(
+    path: &Path,
+    database_key: &[u8],
+) -> Result<PersistedLocalHistoryState> {
     load_state_from_sqlite(path, Some(database_key))
 }
 
@@ -2174,12 +2190,7 @@ fn open_history_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Conne
     let connection = Connection::open(path)
         .with_context(|| format!("failed to open local history database {}", path.display()))?;
     if let Some(database_key) = database_key {
-        configure_sqlcipher_connection(
-            &connection,
-            path,
-            database_key,
-            "local history",
-        )?;
+        configure_sqlcipher_connection(&connection, path, database_key, "local history")?;
     }
     connection.pragma_update(None, "journal_mode", "WAL")?;
     connection.pragma_update(None, "synchronous", "NORMAL")?;
@@ -2237,9 +2248,16 @@ fn configure_sqlcipher_connection(
         .execute_batch(&format!(
             "PRAGMA key = \"x'{encoded_key}'\"; PRAGMA cipher_compatibility = 4;"
         ))
-        .with_context(|| format!("failed to configure SQLCipher for {label} {}", path.display()))?;
+        .with_context(|| {
+            format!(
+                "failed to configure SQLCipher for {label} {}",
+                path.display()
+            )
+        })?;
     connection
-        .query_row("SELECT count(*) FROM sqlite_master", [], |row| row.get::<_, i64>(0))
+        .query_row("SELECT count(*) FROM sqlite_master", [], |row| {
+            row.get::<_, i64>(0)
+        })
         .map(|_| ())
         .with_context(|| {
             format!(
@@ -2394,10 +2412,12 @@ mod tests {
 
     #[test]
     fn encrypted_local_history_store_round_trips_with_same_key() {
-        let database_path = env::temp_dir().join(format!("trix-history-encrypted-{}.db", Uuid::new_v4()));
+        let database_path =
+            env::temp_dir().join(format!("trix-history-encrypted-{}.db", Uuid::new_v4()));
         let database_key = vec![7u8; 32];
         let chat_id = ChatId(Uuid::new_v4());
-        let mut store = LocalHistoryStore::new_encrypted(&database_path, database_key.clone()).unwrap();
+        let mut store =
+            LocalHistoryStore::new_encrypted(&database_path, database_key.clone()).unwrap();
 
         store
             .apply_chat_list(&ChatListResponse {
@@ -2415,25 +2435,33 @@ mod tests {
             .unwrap();
 
         let restored = LocalHistoryStore::new_encrypted(&database_path, database_key).unwrap();
-        assert_eq!(restored.get_chat(chat_id).and_then(|chat| chat.title), Some("Encrypted".to_owned()));
+        assert_eq!(
+            restored.get_chat(chat_id).and_then(|chat| chat.title),
+            Some("Encrypted".to_owned())
+        );
 
         cleanup_sqlite_test_path(&database_path);
     }
 
     #[test]
     fn encrypted_local_history_store_rejects_wrong_key() {
-        let database_path = env::temp_dir().join(format!("trix-history-wrong-key-{}.db", Uuid::new_v4()));
+        let database_path =
+            env::temp_dir().join(format!("trix-history-wrong-key-{}.db", Uuid::new_v4()));
         LocalHistoryStore::new_encrypted(&database_path, vec![1u8; 32]).unwrap();
 
         let error = LocalHistoryStore::new_encrypted(&database_path, vec![2u8; 32]).unwrap_err();
-        assert!(error.to_string().contains("database key rejected") || error.to_string().contains("corrupted"));
+        assert!(
+            error.to_string().contains("database key rejected")
+                || error.to_string().contains("corrupted")
+        );
 
         cleanup_sqlite_test_path(&database_path);
     }
 
     #[test]
     fn local_history_store_persists_outbox_messages() {
-        let database_path = env::temp_dir().join(format!("trix-history-outbox-{}.db", Uuid::new_v4()));
+        let database_path =
+            env::temp_dir().join(format!("trix-history-outbox-{}.db", Uuid::new_v4()));
         let chat_id = ChatId(Uuid::new_v4());
         let account_id = AccountId(Uuid::new_v4());
         let device_id = DeviceId(Uuid::new_v4());
@@ -2452,9 +2480,7 @@ mod tests {
                 42,
             )
             .unwrap();
-        store
-            .mark_outbox_failure(message_id, "offline")
-            .unwrap();
+        store.mark_outbox_failure(message_id, "offline").unwrap();
 
         let restored = LocalHistoryStore::new_encrypted(&database_path, vec![5u8; 32]).unwrap();
         let queued = restored.list_outbox_messages(Some(chat_id));

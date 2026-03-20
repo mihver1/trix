@@ -215,7 +215,11 @@ impl SyncCoordinator {
         let Some(store) = &self.store else {
             return Ok(());
         };
-        save_state_to_path(&store.state_path, store.database_key.as_deref(), &self.state)
+        save_state_to_path(
+            &store.state_path,
+            store.database_key.as_deref(),
+            &self.state,
+        )
     }
 
     pub fn state_path(&self) -> Option<&Path> {
@@ -1304,10 +1308,7 @@ fn load_state_from_encrypted_path(path: &Path, database_key: &[u8]) -> Result<Pe
     load_state_from_sqlite(path, Some(database_key))
 }
 
-fn load_state_from_sqlite(
-    path: &Path,
-    database_key: Option<&[u8]>,
-) -> Result<PersistedSyncState> {
+fn load_state_from_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<PersistedSyncState> {
     let connection = open_sync_sqlite(path, database_key)?;
     let version = connection
         .query_row(
@@ -1418,12 +1419,7 @@ fn open_sync_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Connecti
     let connection = Connection::open(path)
         .with_context(|| format!("failed to open sync state database {}", path.display()))?;
     if let Some(database_key) = database_key {
-        configure_sqlcipher_connection(
-            &connection,
-            path,
-            database_key,
-            "sync state",
-        )?;
+        configure_sqlcipher_connection(&connection, path, database_key, "sync state")?;
     }
     connection.pragma_update(None, "journal_mode", "WAL")?;
     connection.pragma_update(None, "synchronous", "NORMAL")?;
@@ -1457,9 +1453,16 @@ fn configure_sqlcipher_connection(
         .execute_batch(&format!(
             "PRAGMA key = \"x'{encoded_key}'\"; PRAGMA cipher_compatibility = 4;"
         ))
-        .with_context(|| format!("failed to configure SQLCipher for {label} {}", path.display()))?;
+        .with_context(|| {
+            format!(
+                "failed to configure SQLCipher for {label} {}",
+                path.display()
+            )
+        })?;
     connection
-        .query_row("SELECT count(*) FROM sqlite_master", [], |row| row.get::<_, i64>(0))
+        .query_row("SELECT count(*) FROM sqlite_master", [], |row| {
+            row.get::<_, i64>(0)
+        })
         .map(|_| ())
         .with_context(|| {
             format!(
@@ -1578,7 +1581,10 @@ mod tests {
         SyncCoordinator::new_encrypted(&state_path, vec![3u8; 32]).unwrap();
 
         let error = SyncCoordinator::new_encrypted(&state_path, vec![4u8; 32]).unwrap_err();
-        assert!(error.to_string().contains("database key rejected") || error.to_string().contains("corrupted"));
+        assert!(
+            error.to_string().contains("database key rejected")
+                || error.to_string().contains("corrupted")
+        );
 
         cleanup_sqlite_test_path(&state_path);
     }

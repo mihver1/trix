@@ -1,9 +1,7 @@
 import Foundation
 
 struct RealtimeConnectionUpdate {
-    let frame: FfiWebSocketServerFrame
     let event: FfiRealtimeEvent
-    let inboxItems: [InboxItem]
 }
 
 actor RealtimeWebSocketClient {
@@ -12,8 +10,8 @@ actor RealtimeWebSocketClient {
 
     private let websocket: FfiServerWebSocketClient
     private let realtimeDriver: FfiRealtimeDriver
-    private let historyDatabasePath: String
-    private let syncStatePath: String
+    private let historyStore: FfiLocalHistoryStore
+    private let syncCoordinator: FfiSyncCoordinator
     private let onEvent: EventHandler
     private let onDisconnect: DisconnectHandler
 
@@ -35,8 +33,8 @@ actor RealtimeWebSocketClient {
         )
         websocket = bindings.websocket
         realtimeDriver = bindings.realtimeDriver
-        historyDatabasePath = bindings.historyDatabasePath
-        syncStatePath = bindings.syncStatePath
+        historyStore = try FfiLocalHistoryStore.newPersistent(databasePath: bindings.historyDatabasePath)
+        syncCoordinator = try FfiSyncCoordinator.newPersistent(statePath: bindings.syncStatePath)
         self.onEvent = onEvent
         self.onDisconnect = onDisconnect
     }
@@ -63,30 +61,17 @@ actor RealtimeWebSocketClient {
     private func receiveLoop() async {
         while isRunning, !Task.isCancelled {
             do {
-                guard let frame = try websocket.nextFrame() else {
+                guard let event = try realtimeDriver.nextWebsocketEvent(
+                    websocket: websocket,
+                    coordinator: syncCoordinator,
+                    store: historyStore,
+                    autoAck: true
+                ) else {
                     await shutdown(notifyDisconnect: isRunning, reason: "Realtime websocket closed.")
                     return
                 }
 
-                let coordinator = try FfiSyncCoordinator.newPersistent(statePath: syncStatePath)
-                let store = try FfiLocalHistoryStore.newPersistent(databasePath: historyDatabasePath)
-                let event = try realtimeDriver.processWebsocketFrame(
-                    coordinator: coordinator,
-                    store: store,
-                    frame: frame
-                )
-
-                if !event.outboundAckInboxIds.isEmpty {
-                    try websocket.sendAck(inboxIds: event.outboundAckInboxIds)
-                }
-
-                await onEvent(
-                    RealtimeConnectionUpdate(
-                        frame: frame,
-                        event: event,
-                        inboxItems: frame.trix_inboxItems
-                    )
-                )
+                await onEvent(RealtimeConnectionUpdate(event: event))
             } catch {
                 await shutdown(notifyDisconnect: isRunning, reason: error.localizedDescription)
                 return
@@ -119,86 +104,10 @@ actor RealtimeWebSocketClient {
         receiveLoopTask = nil
         heartbeatTask?.cancel()
         heartbeatTask = nil
-
-        try? websocket.close()
+        _ = try? websocket.closeSocket()
 
         if shouldNotify {
             await onDisconnect(reason)
         }
-    }
-}
-
-private extension FfiWebSocketServerFrame {
-    var trix_inboxItems: [InboxItem] {
-        inbox?.items.map(\.trix_inboxItem) ?? []
-    }
-}
-
-private extension FfiInboxItem {
-    var trix_inboxItem: InboxItem {
-        InboxItem(
-            inboxId: inboxId,
-            message: message.trix_messageEnvelope
-        )
-    }
-}
-
-private extension FfiMessageEnvelope {
-    var trix_messageEnvelope: MessageEnvelope {
-        MessageEnvelope(
-            messageId: messageId,
-            chatId: chatId,
-            serverSeq: serverSeq,
-            senderAccountId: senderAccountId,
-            senderDeviceId: senderDeviceId,
-            epoch: epoch,
-            messageKind: messageKind.trix_messageKind,
-            contentType: contentType.trix_contentType,
-            ciphertextB64: ciphertext.base64EncodedString(),
-            aadJson: aadJson.trix_jsonValue,
-            createdAtUnix: createdAtUnix
-        )
-    }
-}
-
-private extension FfiMessageKind {
-    var trix_messageKind: MessageKind {
-        switch self {
-        case .application:
-            return .application
-        case .commit:
-            return .commit
-        case .welcomeRef:
-            return .welcomeRef
-        case .system:
-            return .system
-        }
-    }
-}
-
-private extension FfiContentType {
-    var trix_contentType: ContentType {
-        switch self {
-        case .text:
-            return .text
-        case .reaction:
-            return .reaction
-        case .receipt:
-            return .receipt
-        case .attachment:
-            return .attachment
-        case .chatEvent:
-            return .chatEvent
-        }
-    }
-}
-
-private extension String {
-    var trix_jsonValue: JSONValue {
-        guard let data = data(using: .utf8) else {
-            return .string(self)
-        }
-
-        return (try? JSONDecoder().decode(JSONValue.self, from: data)) ?? .string(self)
     }
 }

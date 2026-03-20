@@ -39,6 +39,7 @@ class RealtimeSessionManager(
     context: Context,
     private val session: AuthenticatedSession,
     private val onSessionReplaced: (String) -> Unit,
+    private val onChatsChanged: (Set<String>) -> Unit = {},
 ) : DefaultLifecycleObserver, AutoCloseable {
     private val appContext = context.applicationContext
     private val storageLayout = deviceStorageLayout(
@@ -198,10 +199,16 @@ class RealtimeSessionManager(
             FfiRealtimeEventKind.INBOX_ITEMS,
             FfiRealtimeEventKind.ACKED,
             -> {
+                val changedChatIds = event.report?.changedChatIds.orEmpty().toSet()
                 telemetry.info(
                     TAG,
-                    "realtime event=${event.kind.name.lowercase()} changed=${event.report?.changedChatIds?.size ?: 0}",
+                    "realtime event=${event.kind.name.lowercase()} changed=${changedChatIds.size}",
                 )
+                if (changedChatIds.isNotEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        onChatsChanged(changedChatIds)
+                    }
+                }
                 flushPendingOutbox()
                 publishUnreadSummary()
             }

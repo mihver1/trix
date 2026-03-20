@@ -744,11 +744,15 @@ external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_list_local_ch
 ): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_list_outbox_messages(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_load_or_bootstrap_chat_conversation(
+): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_mark_chat_read(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_mark_outbox_failure(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_project_chat_messages(
+): Short
+external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_project_chat_with_facade(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_projected_cursor(
 ): Short
@@ -1144,11 +1148,15 @@ external fun uniffi_trix_core_fn_method_ffilocalhistorystore_list_local_chat_lis
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_list_outbox_messages(`ptr`: Long,`chatId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_load_or_bootstrap_chat_conversation(`ptr`: Long,`chatId`: RustBuffer.ByValue,`facade`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_mark_chat_read(`ptr`: Long,`chatId`: RustBuffer.ByValue,`throughServerSeq`: RustBuffer.ByValue,`selfAccountId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_mark_outbox_failure(`ptr`: Long,`messageId`: RustBuffer.ByValue,`failureMessage`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_project_chat_messages(`ptr`: Long,`chatId`: RustBuffer.ByValue,`facade`: Long,`conversation`: Long,`limit`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_project_chat_with_facade(`ptr`: Long,`chatId`: RustBuffer.ByValue,`facade`: Long,`limit`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_projected_cursor(`ptr`: Long,`chatId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1702,6 +1710,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_list_outbox_messages() != 16845.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_load_or_bootstrap_chat_conversation() != 38076.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_mark_chat_read() != 49850.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1709,6 +1720,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_project_chat_messages() != 40538.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_project_chat_with_facade() != 23931.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_projected_cursor() != 55925.toShort()) {
@@ -3639,11 +3653,15 @@ public interface FfiLocalHistoryStoreInterface {
     
     fun `listOutboxMessages`(`chatId`: kotlin.String?): List<FfiLocalOutboxItem>
     
+    fun `loadOrBootstrapChatConversation`(`chatId`: kotlin.String, `facade`: FfiMlsFacade): FfiMlsConversation?
+    
     fun `markChatRead`(`chatId`: kotlin.String, `throughServerSeq`: kotlin.ULong?, `selfAccountId`: kotlin.String?): FfiLocalChatReadState
     
     fun `markOutboxFailure`(`messageId`: kotlin.String, `failureMessage`: kotlin.String)
     
     fun `projectChatMessages`(`chatId`: kotlin.String, `facade`: FfiMlsFacade, `conversation`: FfiMlsConversation, `limit`: kotlin.UInt?): FfiLocalProjectionApplyReport
+    
+    fun `projectChatWithFacade`(`chatId`: kotlin.String, `facade`: FfiMlsFacade, `limit`: kotlin.UInt?): FfiLocalProjectionApplyReport
     
     fun `projectedCursor`(`chatId`: kotlin.String): kotlin.ULong?
     
@@ -4084,6 +4102,20 @@ open class FfiLocalHistoryStore: Disposable, AutoCloseable, FfiLocalHistoryStore
     
 
     
+    @Throws(TrixFfiException::class)override fun `loadOrBootstrapChatConversation`(`chatId`: kotlin.String, `facade`: FfiMlsFacade): FfiMlsConversation? {
+            return FfiConverterOptionalTypeFfiMlsConversation.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_load_or_bootstrap_chat_conversation(
+        it,
+        FfiConverterString.lower(`chatId`),FfiConverterTypeFfiMlsFacade.lower(`facade`),_status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(TrixFfiException::class)override fun `markChatRead`(`chatId`: kotlin.String, `throughServerSeq`: kotlin.ULong?, `selfAccountId`: kotlin.String?): FfiLocalChatReadState {
             return FfiConverterTypeFfiLocalChatReadState.lift(
     callWithHandle {
@@ -4118,6 +4150,20 @@ open class FfiLocalHistoryStore: Disposable, AutoCloseable, FfiLocalHistoryStore
     UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_project_chat_messages(
         it,
         FfiConverterString.lower(`chatId`),FfiConverterTypeFfiMlsFacade.lower(`facade`),FfiConverterTypeFfiMlsConversation.lower(`conversation`),FfiConverterOptionalUInt.lower(`limit`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `projectChatWithFacade`(`chatId`: kotlin.String, `facade`: FfiMlsFacade, `limit`: kotlin.UInt?): FfiLocalProjectionApplyReport {
+            return FfiConverterTypeFfiLocalProjectionApplyReport.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_project_chat_with_facade(
+        it,
+        FfiConverterString.lower(`chatId`),FfiConverterTypeFfiMlsFacade.lower(`facade`),FfiConverterOptionalUInt.lower(`limit`),_status)
 }
     }
     )

@@ -98,8 +98,10 @@ pub fn decrypt_device_transfer_bundle(
         ));
     }
 
-    let sender_transport_pubkey =
-        decode_b64(&envelope.sender_transport_pubkey_b64, "sender_transport_pubkey_b64")?;
+    let sender_transport_pubkey = decode_b64(
+        &envelope.sender_transport_pubkey_b64,
+        "sender_transport_pubkey_b64",
+    )?;
     let recipient_transport_pubkey = recipient_device_keys.public_key_bytes();
     let key = derive_recipient_bundle_key(
         recipient_device_keys,
@@ -122,8 +124,10 @@ pub fn decrypt_device_transfer_bundle(
         ));
     }
 
-    let account_root_private_key =
-        decode_array_32(&plaintext.account_root_private_seed_b64, "account_root_private_seed_b64")?;
+    let account_root_private_key = decode_array_32(
+        &plaintext.account_root_private_seed_b64,
+        "account_root_private_seed_b64",
+    )?;
     let account_root = AccountRootMaterial::from_bytes(account_root_private_key);
 
     Ok(ImportedDeviceTransferBundle {
@@ -206,16 +210,21 @@ fn decode_b64(value: &str, field: &str) -> Result<Vec<u8>> {
 
 fn decode_array_24(value: &str, field: &str) -> Result<[u8; 24]> {
     let bytes = decode_b64(value, field)?;
-    bytes.try_into().map_err(|_| anyhow!("{field} must be 24 bytes"))
+    bytes
+        .try_into()
+        .map_err(|_| anyhow!("{field} must be 24 bytes"))
 }
 
 fn decode_array_32(value: &str, field: &str) -> Result<[u8; 32]> {
     let bytes = decode_b64(value, field)?;
-    bytes.try_into().map_err(|_| anyhow!("{field} must be 32 bytes"))
+    bytes
+        .try_into()
+        .map_err(|_| anyhow!("{field} must be 32 bytes"))
 }
 
 fn to_32_bytes(bytes: &[u8], label: &str) -> Result<[u8; 32]> {
-    bytes.try_into()
+    bytes
+        .try_into()
         .map_err(|_| anyhow!("{label} must be 32 bytes"))
 }
 
@@ -251,12 +260,18 @@ mod tests {
         assert_eq!(imported.account_id, "account-1");
         assert_eq!(imported.source_device_id, "device-a");
         assert_eq!(imported.target_device_id, "device-b");
-        assert_eq!(imported.account_sync_chat_id.as_deref(), Some("chat-sync-1"));
+        assert_eq!(
+            imported.account_sync_chat_id.as_deref(),
+            Some("chat-sync-1")
+        );
         assert_eq!(
             imported.account_root_private_key,
             account_root.private_key_bytes().to_vec()
         );
-        assert_eq!(imported.account_root_public_key, account_root.public_key_bytes());
+        assert_eq!(
+            imported.account_root_public_key,
+            account_root.public_key_bytes()
+        );
     }
 
     #[test]
@@ -281,7 +296,9 @@ mod tests {
 
         let error = decrypt_device_transfer_bundle(&encrypted, &wrong_device).unwrap_err();
         assert!(
-            error.to_string().contains("failed to decrypt transfer bundle"),
+            error
+                .to_string()
+                .contains("failed to decrypt transfer bundle"),
             "{error:?}"
         );
     }

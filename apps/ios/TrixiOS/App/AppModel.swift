@@ -112,6 +112,8 @@ final class AppModel: ObservableObject {
     private var realtimeConnectionID = UUID()
     private var currentServerBaseURLString: String?
     private var hasScheduledBackgroundRefresh = false
+    private var cachedAuthSession: CachedAuthSession?
+    private var realtimeAccessToken: String?
 
     init(identityStore: LocalDeviceIdentityStore = LocalDeviceIdentityStore()) {
         self.identityStore = identityStore
@@ -154,7 +156,7 @@ final class AppModel: ObservableObject {
         }
 
         hasStarted = true
-        currentServerBaseURLString = baseURLString
+        currentServerBaseURLString = normalizedBaseURLString(baseURLString)
 
         do {
             localIdentity = try identityStore.load()
@@ -170,7 +172,7 @@ final class AppModel: ObservableObject {
             return
         }
 
-        currentServerBaseURLString = baseURLString
+        currentServerBaseURLString = normalizedBaseURLString(baseURLString)
         isLoading = true
         errorMessage = nil
 
@@ -185,6 +187,7 @@ final class AppModel: ObservableObject {
                 do {
                     try await refreshAuthenticatedState(client: client, identity: localIdentity)
                 } catch let error as APIError where isPendingApprovalAuthFailure(error, identity: localIdentity) {
+                    invalidateCachedAuthSession()
                     await stopRealtimeConnection()
                     dashboard = nil
                     updateLocalCoreStateSnapshot(identity: localIdentity)
@@ -208,7 +211,7 @@ final class AppModel: ObservableObject {
             return
         }
 
-        currentServerBaseURLString = baseURLString
+        currentServerBaseURLString = normalizedBaseURLString(baseURLString)
         let profileName = form.profileName.trix_trimmed()
         let deviceDisplayName = form.deviceDisplayName.trix_trimmed()
 
@@ -263,7 +266,7 @@ final class AppModel: ObservableObject {
             return
         }
 
-        currentServerBaseURLString = baseURLString
+        currentServerBaseURLString = normalizedBaseURLString(baseURLString)
         let deviceDisplayName = form.deviceDisplayName.trix_trimmed()
         guard !deviceDisplayName.isEmpty else {
             errorMessage = "Device name must not be empty."
@@ -298,6 +301,7 @@ final class AppModel: ObservableObject {
             updateLocalCoreStateSnapshot(identity: localIdentity)
             dashboard = nil
             activeLinkIntent = nil
+            invalidateCachedAuthSession()
             systemSnapshot = try await fetchSystemSnapshot(client: client)
             lastUpdatedAt = Date()
         } catch {
@@ -308,12 +312,13 @@ final class AppModel: ObservableObject {
     func forgetLocalDevice() {
         do {
             if let localIdentity {
-                try? TrixCorePersistentBridge.deletePersistentState(identity: localIdentity)
-            }
-            disconnectRealtimeConnection()
-            try identityStore.delete()
-            localIdentity = nil
-            localCoreState = nil
+            try? TrixCorePersistentBridge.deletePersistentState(identity: localIdentity)
+        }
+        disconnectRealtimeConnection()
+        invalidateCachedAuthSession()
+        try identityStore.delete()
+        localIdentity = nil
+        localCoreState = nil
             dashboard = nil
             activeLinkIntent = nil
             directoryAccountCache = [:]
@@ -328,7 +333,7 @@ final class AppModel: ObservableObject {
             return
         }
 
-        currentServerBaseURLString = baseURLString
+        currentServerBaseURLString = normalizedBaseURLString(baseURLString)
         isLoading = true
         errorMessage = nil
 
@@ -752,7 +757,12 @@ final class AppModel: ObservableObject {
                 body: try TrixCoreMessageBridge.messageBody(for: draft)
             )
 
-            try await refreshAuthenticatedState(client: context.client, identity: context.identity)
+            updateLocalCoreStateSnapshot(identity: context.identity)
+            applyLocalCoreStateOverlay(
+                session: context.session,
+                ackedInboxIds: [],
+                changedChatIds: [chatId]
+            )
             return response
         } catch {
             errorMessage = error.localizedDescription
@@ -799,7 +809,12 @@ final class AppModel: ObservableObject {
                 body: uploadedAttachment.body
             )
 
-            try await refreshAuthenticatedState(client: context.client, identity: context.identity)
+            updateLocalCoreStateSnapshot(identity: context.identity)
+            applyLocalCoreStateOverlay(
+                session: context.session,
+                ackedInboxIds: [],
+                changedChatIds: [chatId]
+            )
             return DebugAttachmentSendOutcome(
                 createMessage: response,
                 blobId: uploadedAttachment.blobId,
@@ -1372,10 +1387,16 @@ final class AppModel: ObservableObject {
 
     private func refreshAuthenticatedState(
         client: APIClient,
-        identity: LocalDeviceIdentity
+        identity: LocalDeviceIdentity,
+        session existingSession: AuthSessionResponse? = nil,
+        restartRealtime: Bool = true
     ) async throws {
         async let systemSnapshot = fetchSystemSnapshot(client: client)
-        let session = try await authenticate(client: client, identity: identity)
+        let session = try await resolveAuthenticatedSession(
+            client: client,
+            identity: identity,
+            existingSession: existingSession
+        )
         let effectiveIdentity = try reconcileAuthenticatedIdentity(
             baseURLString: try client.baseURLString(),
             accessToken: session.accessToken,
@@ -1451,11 +1472,13 @@ final class AppModel: ObservableObject {
         self.dashboard = dashboard
         lastUpdatedAt = Date()
 
-        await startRealtimeConnection(
-            baseURLString: try client.baseURLString(),
-            accessToken: session.accessToken,
-            identity: effectiveIdentity
-        )
+        if restartRealtime {
+            await startRealtimeConnection(
+                baseURLString: try client.baseURLString(),
+                accessToken: session.accessToken,
+                identity: effectiveIdentity
+            )
+        }
     }
 
     private func authenticate(
@@ -1537,8 +1560,58 @@ final class AppModel: ObservableObject {
         }
 
         let client = try APIClient(baseURLString: baseURLString)
-        let session = try await authenticate(client: client, identity: identity)
+        let session = try await resolveAuthenticatedSession(
+            client: client,
+            identity: identity
+        )
         return AuthenticatedContext(client: client, identity: identity, session: session)
+    }
+
+    private func resolveAuthenticatedSession(
+        client: APIClient,
+        identity: LocalDeviceIdentity,
+        existingSession: AuthSessionResponse? = nil
+    ) async throws -> AuthSessionResponse {
+        if let existingSession {
+            cacheAuthenticatedSession(existingSession, for: identity, baseURLString: try client.baseURLString())
+            return existingSession
+        }
+
+        let normalizedBaseURL = try client.baseURLString()
+        if let cachedAuthSession,
+           cachedAuthSession.isUsable(
+               for: identity,
+               baseURLString: normalizedBaseURL,
+               leewaySeconds: 60
+           ) {
+            return cachedAuthSession.session
+        }
+
+        let session = try await authenticate(client: client, identity: identity)
+        cacheAuthenticatedSession(session, for: identity, baseURLString: normalizedBaseURL)
+        return session
+    }
+
+    private func cacheAuthenticatedSession(
+        _ session: AuthSessionResponse,
+        for identity: LocalDeviceIdentity,
+        baseURLString: String
+    ) {
+        cachedAuthSession = CachedAuthSession(
+            baseURLString: normalizedBaseURLString(baseURLString),
+            accountId: identity.accountId,
+            deviceId: identity.deviceId,
+            session: session
+        )
+    }
+
+    private func invalidateCachedAuthSession() {
+        cachedAuthSession = nil
+        realtimeAccessToken = nil
+    }
+
+    private func normalizedBaseURLString(_ baseURLString: String) -> String {
+        baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func markChatReadLocally(chatId: String, throughServerSeq: UInt64?) {
@@ -1573,6 +1646,14 @@ final class AppModel: ObservableObject {
         accessToken: String,
         identity: LocalDeviceIdentity
     ) async {
+        let normalizedBaseURL = normalizedBaseURLString(baseURLString)
+        if realtimeClient != nil,
+           realtimeAccessToken == accessToken,
+           normalizedBaseURLString(currentServerBaseURLString ?? "") == normalizedBaseURL,
+           localIdentity?.deviceId == identity.deviceId {
+            return
+        }
+
         await stopRealtimeConnection()
 
         let connectionID = UUID()
@@ -1591,15 +1672,18 @@ final class AppModel: ObservableObject {
                 }
             )
             realtimeClient = client
+            realtimeAccessToken = accessToken
             await client.start()
         } catch {
             realtimeClient = nil
+            realtimeAccessToken = nil
         }
     }
 
     private func stopRealtimeConnection() async {
         let client = realtimeClient
         realtimeClient = nil
+        realtimeAccessToken = nil
         realtimeConnectionID = UUID()
         await client?.stop()
     }
@@ -1607,6 +1691,7 @@ final class AppModel: ObservableObject {
     private func disconnectRealtimeConnection() {
         let client = realtimeClient
         realtimeClient = nil
+        realtimeAccessToken = nil
         realtimeConnectionID = UUID()
 
         if let client {
@@ -1633,12 +1718,24 @@ final class AppModel: ObservableObject {
         case .hello:
             lastUpdatedAt = Date()
         case .inboxItems:
-            updateDashboardInboxItems(update.inboxItems, scheduleRefreshForUnknownChats: true)
+            if let dashboard {
+                let applied = applyLocalCoreStateOverlay(
+                    session: dashboard.session,
+                    ackedInboxIds: [],
+                    changedChatIds: update.event.report?.changedChatIds ?? []
+                )
+                if !applied {
+                    scheduleBackgroundRefresh(delayNanoseconds: 300_000_000)
+                }
+            } else {
+                scheduleBackgroundRefresh(delayNanoseconds: 300_000_000)
+            }
         case .acked:
             removeDashboardInboxItems(update.event.serverAckedInboxIds)
         case .pong:
             break
         case .sessionReplaced:
+            invalidateCachedAuthSession()
             disconnectRealtimeConnection()
             if let reason = update.event.sessionReplacedReason?.trix_trimmedOrNil() {
                 errorMessage = reason
@@ -2026,6 +2123,30 @@ private struct AuthenticatedContext {
     let client: APIClient
     let identity: LocalDeviceIdentity
     let session: AuthSessionResponse
+}
+
+private struct CachedAuthSession {
+    let baseURLString: String
+    let accountId: String
+    let deviceId: String
+    let session: AuthSessionResponse
+
+    func isUsable(
+        for identity: LocalDeviceIdentity,
+        baseURLString: String,
+        leewaySeconds: UInt64
+    ) -> Bool {
+        guard self.baseURLString == baseURLString,
+              accountId == identity.accountId,
+              deviceId == identity.deviceId,
+              session.deviceStatus != .revoked
+        else {
+            return false
+        }
+
+        let nowUnix = UInt64(Date().timeIntervalSince1970)
+        return session.expiresAtUnix > nowUnix + leewaySeconds
+    }
 }
 
 private enum AppModelError: LocalizedError {

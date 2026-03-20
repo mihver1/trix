@@ -106,6 +106,8 @@ fun TrixApp(
         var destination by rememberSaveable { mutableStateOf(TrixDestination.Chats) }
         var requestedConversationId by rememberSaveable { mutableStateOf<String?>(null) }
         var reloadSignal by rememberSaveable { mutableIntStateOf(0) }
+        var realtimeChangeSignal by rememberSaveable { mutableIntStateOf(0) }
+        var realtimeChangedChatIds by remember { mutableStateOf(emptySet<String>()) }
         var authState by remember { mutableStateOf<TrixAuthState>(TrixAuthState.Loading("Restoring local device")) }
         var backendConfigError by remember { mutableStateOf<String?>(null) }
         var notificationPermissionRequested by rememberSaveable { mutableStateOf(false) }
@@ -250,6 +252,10 @@ fun TrixApp(
                                     )
                                 }
                             },
+                            onChatsChanged = { changedChatIds ->
+                                realtimeChangedChatIds = changedChatIds
+                                realtimeChangeSignal += 1
+                            },
                         )
                         realtimeManager.startObserving()
                         onDispose {
@@ -262,6 +268,8 @@ fun TrixApp(
                             onDestinationChange = { destination = it },
                             windowInfo = windowInfo,
                             session = session,
+                            realtimeChangeSignal = realtimeChangeSignal,
+                            realtimeChangedChatIds = realtimeChangedChatIds,
                             requestedConversationId = requestedConversationId,
                             onConversationRequestConsumed = { consumedChatId ->
                                 if (requestedConversationId == consumedChatId) {
@@ -288,6 +296,8 @@ fun TrixApp(
                             onDestinationChange = { destination = it },
                             windowInfo = windowInfo,
                             session = session,
+                            realtimeChangeSignal = realtimeChangeSignal,
+                            realtimeChangedChatIds = realtimeChangedChatIds,
                             requestedConversationId = requestedConversationId,
                             onConversationRequestConsumed = { consumedChatId ->
                                 if (requestedConversationId == consumedChatId) {
@@ -314,6 +324,8 @@ fun TrixApp(
                             onDestinationChange = { destination = it },
                             windowInfo = windowInfo,
                             session = session,
+                            realtimeChangeSignal = realtimeChangeSignal,
+                            realtimeChangedChatIds = realtimeChangedChatIds,
                             requestedConversationId = requestedConversationId,
                             onConversationRequestConsumed = { consumedChatId ->
                                 if (requestedConversationId == consumedChatId) {
@@ -494,6 +506,8 @@ private fun BottomBarLayout(
     onDestinationChange: (TrixDestination) -> Unit,
     windowInfo: TrixAdaptiveInfo,
     session: AuthenticatedSession,
+    realtimeChangeSignal: Int,
+    realtimeChangedChatIds: Set<String>,
     requestedConversationId: String?,
     onConversationRequestConsumed: (String) -> Unit,
     onPersistAccountProfile: suspend (AccountProfile) -> Unit,
@@ -522,6 +536,8 @@ private fun BottomBarLayout(
             destination = destination,
             windowInfo = windowInfo,
             session = session,
+            realtimeChangeSignal = realtimeChangeSignal,
+            realtimeChangedChatIds = realtimeChangedChatIds,
             requestedConversationId = requestedConversationId,
             onConversationRequestConsumed = onConversationRequestConsumed,
             onPersistAccountProfile = onPersistAccountProfile,
@@ -536,6 +552,8 @@ private fun RailLayout(
     onDestinationChange: (TrixDestination) -> Unit,
     windowInfo: TrixAdaptiveInfo,
     session: AuthenticatedSession,
+    realtimeChangeSignal: Int,
+    realtimeChangedChatIds: Set<String>,
     requestedConversationId: String?,
     onConversationRequestConsumed: (String) -> Unit,
     onPersistAccountProfile: suspend (AccountProfile) -> Unit,
@@ -566,6 +584,8 @@ private fun RailLayout(
             destination = destination,
             windowInfo = windowInfo,
             session = session,
+            realtimeChangeSignal = realtimeChangeSignal,
+            realtimeChangedChatIds = realtimeChangedChatIds,
             requestedConversationId = requestedConversationId,
             onConversationRequestConsumed = onConversationRequestConsumed,
             onPersistAccountProfile = onPersistAccountProfile,
@@ -582,6 +602,8 @@ private fun DrawerLayout(
     onDestinationChange: (TrixDestination) -> Unit,
     windowInfo: TrixAdaptiveInfo,
     session: AuthenticatedSession,
+    realtimeChangeSignal: Int,
+    realtimeChangedChatIds: Set<String>,
     requestedConversationId: String?,
     onConversationRequestConsumed: (String) -> Unit,
     onPersistAccountProfile: suspend (AccountProfile) -> Unit,
@@ -636,6 +658,8 @@ private fun DrawerLayout(
                 destination = destination,
                 windowInfo = windowInfo,
                 session = session,
+                realtimeChangeSignal = realtimeChangeSignal,
+                realtimeChangedChatIds = realtimeChangedChatIds,
                 requestedConversationId = requestedConversationId,
                 onConversationRequestConsumed = onConversationRequestConsumed,
                 onPersistAccountProfile = onPersistAccountProfile,
@@ -650,6 +674,8 @@ private fun DestinationContent(
     destination: TrixDestination,
     windowInfo: TrixAdaptiveInfo,
     session: AuthenticatedSession,
+    realtimeChangeSignal: Int,
+    realtimeChangedChatIds: Set<String>,
     requestedConversationId: String?,
     onConversationRequestConsumed: (String) -> Unit,
     onPersistAccountProfile: suspend (AccountProfile) -> Unit,
@@ -659,6 +685,8 @@ private fun DestinationContent(
         TrixDestination.Chats -> ChatsScreen(
             windowInfo = windowInfo,
             session = session,
+            realtimeChangeSignal = realtimeChangeSignal,
+            realtimeChangedChatIds = realtimeChangedChatIds,
             requestedConversationId = requestedConversationId,
             onConversationRequestConsumed = onConversationRequestConsumed,
             modifier = modifier,

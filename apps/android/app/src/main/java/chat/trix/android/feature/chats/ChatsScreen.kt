@@ -105,6 +105,8 @@ import kotlinx.coroutines.launch
 fun ChatsScreen(
     windowInfo: TrixAdaptiveInfo,
     session: AuthenticatedSession,
+    realtimeChangeSignal: Int = 0,
+    realtimeChangedChatIds: Set<String> = emptySet(),
     requestedConversationId: String? = null,
     onConversationRequestConsumed: (String) -> Unit = {},
     modifier: Modifier = Modifier,
@@ -570,6 +572,41 @@ fun ChatsScreen(
                 isLoading = false,
                 errorMessage = error.message ?: "Failed to load conversation",
             )
+        }
+    }
+
+    LaunchedEffect(repository, realtimeChangeSignal) {
+        if (realtimeChangeSignal <= 0) {
+            return@LaunchedEffect
+        }
+
+        val localOverview = runCatching {
+            repository.loadOverview()
+        }.getOrNull()
+
+        if (localOverview != null) {
+            overviewState = overviewState.copy(
+                overview = localOverview,
+                errorMessage = null,
+            )
+            overviewVersion += 1
+        }
+
+        val selectedChatId = selectedConversationId
+        if (selectedChatId != null &&
+            (realtimeChangedChatIds.isEmpty() || selectedChatId in realtimeChangedChatIds)
+        ) {
+            val refreshedConversation = runCatching {
+                repository.loadConversation(selectedChatId)
+            }.getOrNull()
+
+            if (refreshedConversation != null) {
+                detailState = detailState.copy(
+                    conversation = refreshedConversation,
+                    isLoading = false,
+                    errorMessage = null,
+                )
+            }
         }
     }
 

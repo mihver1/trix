@@ -1184,11 +1184,15 @@ public protocol FfiLocalHistoryStoreProtocol: AnyObject, Sendable {
     
     func listOutboxMessages(chatId: String?) throws  -> [FfiLocalOutboxItem]
     
+    func loadOrBootstrapChatConversation(chatId: String, facade: FfiMlsFacade) throws  -> FfiMlsConversation?
+    
     func markChatRead(chatId: String, throughServerSeq: UInt64?, selfAccountId: String?) throws  -> FfiLocalChatReadState
     
     func markOutboxFailure(messageId: String, failureMessage: String) throws 
     
     func projectChatMessages(chatId: String, facade: FfiMlsFacade, conversation: FfiMlsConversation, limit: UInt32?) throws  -> FfiLocalProjectionApplyReport
+    
+    func projectChatWithFacade(chatId: String, facade: FfiMlsFacade, limit: UInt32?) throws  -> FfiLocalProjectionApplyReport
     
     func projectedCursor(chatId: String) throws  -> UInt64?
     
@@ -1506,6 +1510,16 @@ open func listOutboxMessages(chatId: String?)throws  -> [FfiLocalOutboxItem]  {
 })
 }
     
+open func loadOrBootstrapChatConversation(chatId: String, facade: FfiMlsFacade)throws  -> FfiMlsConversation?  {
+    return try  FfiConverterOptionTypeFfiMlsConversation.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffilocalhistorystore_load_or_bootstrap_chat_conversation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(chatId),
+        FfiConverterTypeFfiMlsFacade_lower(facade),$0
+    )
+})
+}
+    
 open func markChatRead(chatId: String, throughServerSeq: UInt64?, selfAccountId: String?)throws  -> FfiLocalChatReadState  {
     return try  FfiConverterTypeFfiLocalChatReadState_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffilocalhistorystore_mark_chat_read(
@@ -1533,6 +1547,17 @@ open func projectChatMessages(chatId: String, facade: FfiMlsFacade, conversation
         FfiConverterString.lower(chatId),
         FfiConverterTypeFfiMlsFacade_lower(facade),
         FfiConverterTypeFfiMlsConversation_lower(conversation),
+        FfiConverterOptionUInt32.lower(limit),$0
+    )
+})
+}
+    
+open func projectChatWithFacade(chatId: String, facade: FfiMlsFacade, limit: UInt32?)throws  -> FfiLocalProjectionApplyReport  {
+    return try  FfiConverterTypeFfiLocalProjectionApplyReport_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffilocalhistorystore_project_chat_with_facade(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(chatId),
+        FfiConverterTypeFfiMlsFacade_lower(facade),
         FfiConverterOptionUInt32.lower(limit),$0
     )
 })
@@ -12400,6 +12425,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffilocalhistorystore_list_outbox_messages() != 16845) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffilocalhistorystore_load_or_bootstrap_chat_conversation() != 38076) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffilocalhistorystore_mark_chat_read() != 49850) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -12407,6 +12435,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffilocalhistorystore_project_chat_messages() != 40538) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffilocalhistorystore_project_chat_with_facade() != 23931) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffilocalhistorystore_projected_cursor() != 55925) {
