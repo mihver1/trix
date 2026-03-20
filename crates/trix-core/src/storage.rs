@@ -89,6 +89,12 @@ pub struct LocalProjectionApplyReport {
     pub advanced_to_server_seq: Option<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalOutgoingMessageApplyOutcome {
+    pub report: LocalStoreApplyReport,
+    pub projected_message: LocalProjectedMessage,
+}
+
 #[derive(Debug, Clone)]
 pub struct LocalHistoryStore {
     state: PersistedLocalHistoryState,
@@ -552,6 +558,58 @@ impl LocalHistoryStore {
             .filter_map(|chat_id| parse_chat_id(&chat_id).ok())
             .collect();
         Ok(combined)
+    }
+
+    pub fn apply_outgoing_message(
+        &mut self,
+        envelope: &MessageEnvelope,
+        body: &MessageBody,
+    ) -> Result<LocalOutgoingMessageApplyOutcome> {
+        let chat_id = envelope.chat_id;
+        let mut report = self.apply_chat_history(&ChatHistoryResponse {
+            chat_id,
+            messages: vec![envelope.clone()],
+        })?;
+
+        let chat = self
+            .state
+            .chats
+            .get_mut(&chat_id.0.to_string())
+            .ok_or_else(|| anyhow!("chat {} is missing from local store", chat_id.0))?;
+        let projected_message = LocalProjectedMessage {
+            server_seq: envelope.server_seq,
+            message_id: envelope.message_id,
+            sender_account_id: envelope.sender_account_id,
+            sender_device_id: envelope.sender_device_id,
+            epoch: envelope.epoch,
+            message_kind: envelope.message_kind,
+            content_type: envelope.content_type,
+            projection_kind: LocalProjectionKind::ApplicationMessage,
+            payload: Some(body.to_bytes()?),
+            merged_epoch: None,
+            created_at_unix: envelope.created_at_unix,
+        };
+        let persisted = persisted_projected_message_from(projected_message.clone());
+        let projection_changed = match chat.projected_messages.get(&envelope.server_seq) {
+            Some(existing) => existing != &persisted,
+            None => true,
+        };
+        if projection_changed {
+            chat.projected_messages
+                .insert(envelope.server_seq, persisted);
+            if envelope.server_seq > chat.projected_cursor_server_seq {
+                chat.projected_cursor_server_seq = envelope.server_seq;
+            }
+            if !report.changed_chat_ids.contains(&chat_id) {
+                report.changed_chat_ids.push(chat_id);
+            }
+            self.save_state()?;
+        }
+
+        Ok(LocalOutgoingMessageApplyOutcome {
+            report,
+            projected_message,
+        })
     }
 
     fn persist_if_needed(&self, changed: bool) -> Result<()> {

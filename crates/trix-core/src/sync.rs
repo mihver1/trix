@@ -2,16 +2,23 @@ use std::{
     collections::BTreeMap,
     fs::{self, File},
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use trix_types::{
     AckInboxResponse, ChatHistoryResponse, ChatId, LeaseInboxRequest, LeaseInboxResponse,
+    MessageEnvelope, MessageId, MessageKind,
 };
 use uuid::Uuid;
 
-use crate::{LocalHistoryStore, LocalStoreApplyReport, ServerApiClient, SyncStateStore};
+use crate::{
+    LocalHistoryStore, LocalOutgoingMessageApplyOutcome, LocalProjectedMessage,
+    LocalStoreApplyReport, MessageBody, MlsConversation, MlsFacade, ServerApiClient,
+    SyncStateStore, encode_b64, make_create_message_request,
+};
 
 #[derive(Debug, Clone)]
 pub enum CoreEvent {
@@ -47,6 +54,15 @@ pub struct InboxApplyOutcome {
     pub lease_expires_at_unix: u64,
     pub acked_inbox_ids: Vec<u64>,
     pub report: LocalStoreApplyReport,
+}
+
+#[derive(Debug, Clone)]
+pub struct SendMessageOutcome {
+    pub chat_id: ChatId,
+    pub message_id: MessageId,
+    pub server_seq: u64,
+    pub report: LocalStoreApplyReport,
+    pub projected_message: LocalProjectedMessage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -311,6 +327,72 @@ impl SyncCoordinator {
             report,
         })
     }
+
+    pub async fn send_message_body(
+        &mut self,
+        client: &ServerApiClient,
+        store: &mut LocalHistoryStore,
+        facade: &MlsFacade,
+        conversation: &mut MlsConversation,
+        sender_account_id: trix_types::AccountId,
+        sender_device_id: trix_types::DeviceId,
+        chat_id: ChatId,
+        message_id: Option<MessageId>,
+        body: &MessageBody,
+        aad_json: Option<Value>,
+    ) -> Result<SendMessageOutcome> {
+        let plaintext = body.to_bytes()?;
+        let epoch = conversation.epoch();
+        let message_id = message_id.unwrap_or_default();
+        let ciphertext = facade.create_application_message(conversation, &plaintext)?;
+        let response = client
+            .create_message(
+                chat_id,
+                make_create_message_request(
+                    message_id,
+                    epoch,
+                    MessageKind::Application,
+                    body.content_type(),
+                    &ciphertext,
+                    aad_json.clone(),
+                ),
+            )
+            .await?;
+
+        let envelope = MessageEnvelope {
+            message_id: response.message_id,
+            chat_id,
+            server_seq: response.server_seq,
+            sender_account_id,
+            sender_device_id,
+            epoch,
+            message_kind: MessageKind::Application,
+            content_type: body.content_type(),
+            ciphertext_b64: encode_b64(&ciphertext),
+            aad_json: aad_json.unwrap_or(Value::Null),
+            created_at_unix: current_unix_seconds()?,
+        };
+        let LocalOutgoingMessageApplyOutcome {
+            report,
+            projected_message,
+        } = store.apply_outgoing_message(&envelope, body)?;
+        self.record_chat_server_seq(chat_id, response.server_seq)?;
+
+        Ok(SendMessageOutcome {
+            chat_id,
+            message_id: response.message_id,
+            server_seq: response.server_seq,
+            report,
+            projected_message,
+        })
+    }
+}
+
+fn current_unix_seconds() -> Result<u64> {
+    Ok(SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| anyhow!("system clock is before unix epoch: {err}"))?
+        .as_secs())
 }
 
 fn save_state_to_path(path: &Path, state: &PersistedSyncState) -> Result<()> {

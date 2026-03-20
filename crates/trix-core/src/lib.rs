@@ -19,11 +19,13 @@ pub use message::{
     ReceiptMessageBody, ReceiptType, TextMessageBody,
 };
 pub use storage::{
-    AttachmentStore, LocalHistoryStore, LocalProjectedMessage, LocalProjectionApplyReport,
-    LocalProjectionKind, LocalStoreApplyReport, MlsStateStore, SyncStateStore,
+    AttachmentStore, LocalHistoryStore, LocalOutgoingMessageApplyOutcome, LocalProjectedMessage,
+    LocalProjectionApplyReport, LocalProjectionKind, LocalStoreApplyReport, MlsStateStore,
+    SyncStateStore,
 };
 pub use sync::{
-    CoreEvent, CoreEventSink, InboxApplyOutcome, SyncChatCursor, SyncCoordinator, SyncStateSnapshot,
+    CoreEvent, CoreEventSink, InboxApplyOutcome, SendMessageOutcome, SyncChatCursor,
+    SyncCoordinator, SyncStateSnapshot,
 };
 pub use transport::{
     AuthChallengeMaterial, BlobHeadMaterial, BlobMetadataMaterial, CompleteLinkIntentParams,
