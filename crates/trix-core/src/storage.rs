@@ -91,6 +91,13 @@ pub struct LocalProjectionApplyReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalChatReadState {
+    pub chat_id: ChatId,
+    pub read_cursor_server_seq: u64,
+    pub unread_count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalOutgoingMessageApplyOutcome {
     pub report: LocalStoreApplyReport,
     pub projected_message: LocalProjectedMessage,
@@ -113,6 +120,9 @@ struct PersistedChatState {
     chat_type: ChatType,
     title: Option<String>,
     last_server_seq: u64,
+    #[serde(default)]
+    pending_message_count: u64,
+    last_message: Option<MessageEnvelope>,
     epoch: u64,
     last_commit_message_id: Option<MessageId>,
     #[serde(default)]
@@ -123,6 +133,8 @@ struct PersistedChatState {
     #[serde(default)]
     mls_group_id_b64: Option<String>,
     messages: BTreeMap<u64, MessageEnvelope>,
+    #[serde(default)]
+    read_cursor_server_seq: u64,
     #[serde(default)]
     projected_cursor_server_seq: u64,
     #[serde(default)]
@@ -206,6 +218,8 @@ impl LocalHistoryStore {
                     chat_type: state.chat_type,
                     title: state.title.clone(),
                     last_server_seq: state.last_server_seq,
+                    pending_message_count: state.pending_message_count,
+                    last_message: state.last_message.clone(),
                     participant_profiles: state.participant_profiles.clone(),
                 })
             })
@@ -226,8 +240,10 @@ impl LocalHistoryStore {
             chat_type: state.chat_type,
             title: state.title.clone(),
             last_server_seq: state.last_server_seq,
+            pending_message_count: state.pending_message_count,
             epoch: state.epoch,
             last_commit_message_id: state.last_commit_message_id,
+            last_message: state.last_message.clone(),
             participant_profiles: state.participant_profiles.clone(),
             members: state.members.clone(),
             device_members: state.device_members.clone(),
@@ -287,6 +303,8 @@ impl LocalHistoryStore {
                 chat_type: ChatType::Dm,
                 title: None,
                 last_server_seq: 0,
+                pending_message_count: 0,
+                last_message: None,
                 epoch: 0,
                 last_commit_message_id: None,
                 participant_profiles: Vec::new(),
@@ -294,6 +312,7 @@ impl LocalHistoryStore {
                 device_members: Vec::new(),
                 mls_group_id_b64: None,
                 messages: BTreeMap::new(),
+                read_cursor_server_seq: 0,
                 projected_cursor_server_seq: 0,
                 projected_messages: BTreeMap::new(),
             });
@@ -304,6 +323,100 @@ impl LocalHistoryStore {
         entry.mls_group_id_b64 = Some(group_id_b64);
         self.save_state()?;
         Ok(true)
+    }
+
+    pub fn chat_read_cursor(&self, chat_id: ChatId) -> Option<u64> {
+        self.state
+            .chats
+            .get(&chat_id.0.to_string())
+            .map(|state| state.read_cursor_server_seq)
+    }
+
+    pub fn chat_unread_count(
+        &self,
+        chat_id: ChatId,
+        self_account_id: Option<trix_types::AccountId>,
+    ) -> Option<u64> {
+        self.state
+            .chats
+            .get(&chat_id.0.to_string())
+            .map(|state| unread_count_for_chat(state, self_account_id))
+    }
+
+    pub fn get_chat_read_state(
+        &self,
+        chat_id: ChatId,
+        self_account_id: Option<trix_types::AccountId>,
+    ) -> Option<LocalChatReadState> {
+        let state = self.state.chats.get(&chat_id.0.to_string())?;
+        Some(local_chat_read_state_from(chat_id, state, self_account_id))
+    }
+
+    pub fn list_chat_read_states(
+        &self,
+        self_account_id: Option<trix_types::AccountId>,
+    ) -> Vec<LocalChatReadState> {
+        let mut states = self
+            .state
+            .chats
+            .iter()
+            .filter_map(|(chat_id, state)| {
+                Some(local_chat_read_state_from(
+                    parse_chat_id(chat_id).ok()?,
+                    state,
+                    self_account_id,
+                ))
+            })
+            .collect::<Vec<_>>();
+        states.sort_by(|left, right| {
+            self.state.chats[&right.chat_id.0.to_string()]
+                .last_server_seq
+                .cmp(&self.state.chats[&left.chat_id.0.to_string()].last_server_seq)
+                .then_with(|| left.chat_id.0.cmp(&right.chat_id.0))
+        });
+        states
+    }
+
+    pub fn mark_chat_read(
+        &mut self,
+        chat_id: ChatId,
+        through_server_seq: Option<u64>,
+        self_account_id: Option<trix_types::AccountId>,
+    ) -> Result<LocalChatReadState> {
+        let state = self
+            .state
+            .chats
+            .get_mut(&chat_id.0.to_string())
+            .ok_or_else(|| anyhow!("chat {} is missing from local store", chat_id.0))?;
+        let target = through_server_seq
+            .unwrap_or(state.projected_cursor_server_seq)
+            .min(state.projected_cursor_server_seq);
+        let changed = state.read_cursor_server_seq != target;
+        state.read_cursor_server_seq = target;
+        let read_state = local_chat_read_state_from(chat_id, state, self_account_id);
+        self.persist_if_needed(changed)?;
+        Ok(read_state)
+    }
+
+    pub fn set_chat_read_cursor(
+        &mut self,
+        chat_id: ChatId,
+        read_cursor_server_seq: Option<u64>,
+        self_account_id: Option<trix_types::AccountId>,
+    ) -> Result<LocalChatReadState> {
+        let state = self
+            .state
+            .chats
+            .get_mut(&chat_id.0.to_string())
+            .ok_or_else(|| anyhow!("chat {} is missing from local store", chat_id.0))?;
+        let target = read_cursor_server_seq
+            .unwrap_or_default()
+            .min(state.projected_cursor_server_seq);
+        let changed = state.read_cursor_server_seq != target;
+        state.read_cursor_server_seq = target;
+        let read_state = local_chat_read_state_from(chat_id, state, self_account_id);
+        self.persist_if_needed(changed)?;
+        Ok(read_state)
     }
 
     pub fn get_projected_messages(
@@ -456,6 +569,8 @@ impl LocalHistoryStore {
                     chat_type: chat.chat_type,
                     title: chat.title.clone(),
                     last_server_seq: 0,
+                    pending_message_count: chat.pending_message_count,
+                    last_message: chat.last_message.clone(),
                     epoch: 0,
                     last_commit_message_id: None,
                     participant_profiles: chat.participant_profiles.clone(),
@@ -463,6 +578,7 @@ impl LocalHistoryStore {
                     device_members: Vec::new(),
                     mls_group_id_b64: None,
                     messages: BTreeMap::new(),
+                    read_cursor_server_seq: 0,
                     projected_cursor_server_seq: 0,
                     projected_messages: BTreeMap::new(),
                 });
@@ -478,6 +594,14 @@ impl LocalHistoryStore {
             }
             if chat.last_server_seq > entry.last_server_seq {
                 entry.last_server_seq = chat.last_server_seq;
+                changed = true;
+            }
+            if entry.pending_message_count != chat.pending_message_count {
+                entry.pending_message_count = chat.pending_message_count;
+                changed = true;
+            }
+            if entry.last_message != chat.last_message {
+                entry.last_message = chat.last_message.clone();
                 changed = true;
             }
             if entry.participant_profiles != chat.participant_profiles {
@@ -514,6 +638,8 @@ impl LocalHistoryStore {
                 chat_type: detail.chat_type,
                 title: detail.title.clone(),
                 last_server_seq: detail.last_server_seq,
+                pending_message_count: detail.pending_message_count,
+                last_message: detail.last_message.clone(),
                 epoch: detail.epoch,
                 last_commit_message_id: detail.last_commit_message_id,
                 participant_profiles: detail.participant_profiles.clone(),
@@ -521,6 +647,7 @@ impl LocalHistoryStore {
                 device_members: detail.device_members.clone(),
                 mls_group_id_b64: None,
                 messages: BTreeMap::new(),
+                read_cursor_server_seq: 0,
                 projected_cursor_server_seq: 0,
                 projected_messages: BTreeMap::new(),
             });
@@ -538,12 +665,20 @@ impl LocalHistoryStore {
             entry.last_server_seq = detail.last_server_seq;
             changed = true;
         }
+        if entry.pending_message_count != detail.pending_message_count {
+            entry.pending_message_count = detail.pending_message_count;
+            changed = true;
+        }
         if entry.epoch != detail.epoch {
             entry.epoch = detail.epoch;
             changed = true;
         }
         if entry.last_commit_message_id != detail.last_commit_message_id {
             entry.last_commit_message_id = detail.last_commit_message_id;
+            changed = true;
+        }
+        if entry.last_message != detail.last_message {
+            entry.last_message = detail.last_message.clone();
             changed = true;
         }
         if entry.participant_profiles != detail.participant_profiles {
@@ -586,6 +721,8 @@ impl LocalHistoryStore {
                 chat_type: ChatType::Dm,
                 title: None,
                 last_server_seq: 0,
+                pending_message_count: 0,
+                last_message: None,
                 epoch: 0,
                 last_commit_message_id: None,
                 participant_profiles: Vec::new(),
@@ -593,6 +730,7 @@ impl LocalHistoryStore {
                 device_members: Vec::new(),
                 mls_group_id_b64: None,
                 messages: BTreeMap::new(),
+                read_cursor_server_seq: 0,
                 projected_cursor_server_seq: 0,
                 projected_messages: BTreeMap::new(),
             });
@@ -618,6 +756,16 @@ impl LocalHistoryStore {
             }
             if message.server_seq > entry.last_server_seq {
                 entry.last_server_seq = message.server_seq;
+                chat_changed = true;
+            }
+            if entry
+                .last_message
+                .as_ref()
+                .map(|last_message| message.server_seq >= last_message.server_seq)
+                .unwrap_or(true)
+                && entry.last_message.as_ref() != Some(message)
+            {
+                entry.last_message = Some(message.clone());
                 chat_changed = true;
             }
             if message.epoch > entry.epoch {
@@ -829,6 +977,48 @@ fn advance_projected_cursor(chat: &mut PersistedChatState) -> bool {
     true
 }
 
+fn local_chat_read_state_from(
+    chat_id: ChatId,
+    state: &PersistedChatState,
+    self_account_id: Option<trix_types::AccountId>,
+) -> LocalChatReadState {
+    LocalChatReadState {
+        chat_id,
+        read_cursor_server_seq: state.read_cursor_server_seq,
+        unread_count: unread_count_for_chat(state, self_account_id),
+    }
+}
+
+fn unread_count_for_chat(
+    state: &PersistedChatState,
+    self_account_id: Option<trix_types::AccountId>,
+) -> u64 {
+    state
+        .projected_messages
+        .values()
+        .filter(|message| message.server_seq > state.read_cursor_server_seq)
+        .filter(|message| projected_message_counts_as_unread(message, self_account_id))
+        .count() as u64
+}
+
+fn projected_message_counts_as_unread(
+    message: &PersistedProjectedMessage,
+    self_account_id: Option<trix_types::AccountId>,
+) -> bool {
+    if message.projection_kind != LocalProjectionKind::ApplicationMessage {
+        return false;
+    }
+    if matches!(message.content_type, trix_types::ContentType::Receipt) {
+        return false;
+    }
+    if let Some(self_account_id) = self_account_id {
+        if message.sender_account_id == self_account_id {
+            return false;
+        }
+    }
+    true
+}
+
 fn save_state_to_path(path: &Path, state: &PersistedLocalHistoryState) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| {
@@ -916,6 +1106,8 @@ mod tests {
                     chat_type: ChatType::Group,
                     title: Some("chat".to_owned()),
                     last_server_seq: 2,
+                    pending_message_count: 1,
+                    last_message: Some(second_message.clone()),
                     participant_profiles: vec![ChatParticipantProfileSummary {
                         account_id: AccountId(Uuid::new_v4()),
                         handle: Some("alice".to_owned()),
@@ -939,10 +1131,15 @@ mod tests {
         let chat = restored.get_chat(chat_id).unwrap();
         assert_eq!(chat.chat_type, ChatType::Group);
         assert_eq!(chat.last_server_seq, 2);
+        assert_eq!(chat.pending_message_count, 1);
         assert_eq!(chat.participant_profiles.len(), 1);
         assert_eq!(
             chat.participant_profiles[0].handle.as_deref(),
             Some("alice")
+        );
+        assert_eq!(
+            chat.last_message.as_ref().map(|message| message.server_seq),
+            Some(2)
         );
 
         let history = restored.get_chat_history(chat_id, Some(1), Some(10));
@@ -1126,5 +1323,143 @@ mod tests {
             .unwrap();
         assert_eq!(final_report.projected_messages_upserted, 1);
         assert_eq!(store.projected_cursor(chat_id), Some(3));
+    }
+
+    #[test]
+    fn local_history_store_persists_read_state_and_excludes_own_messages_from_unread() {
+        let database_path =
+            env::temp_dir().join(format!("trix-history-read-state-{}.json", Uuid::new_v4()));
+        let mut store = LocalHistoryStore::new_persistent(&database_path).unwrap();
+        let chat_id = ChatId(Uuid::new_v4());
+        let self_account_id = AccountId(Uuid::new_v4());
+        let other_account_id = AccountId(Uuid::new_v4());
+        let device_id = DeviceId(Uuid::new_v4());
+
+        let first_message = MessageEnvelope {
+            message_id: MessageId(Uuid::new_v4()),
+            chat_id,
+            server_seq: 1,
+            sender_account_id: self_account_id,
+            sender_device_id: device_id,
+            epoch: 1,
+            message_kind: MessageKind::Application,
+            content_type: ContentType::Text,
+            ciphertext_b64: "YQ==".to_owned(),
+            aad_json: json!({}),
+            created_at_unix: 1,
+        };
+        let second_message = MessageEnvelope {
+            message_id: MessageId(Uuid::new_v4()),
+            server_seq: 2,
+            sender_account_id: other_account_id,
+            created_at_unix: 2,
+            ..first_message.clone()
+        };
+        let third_message = MessageEnvelope {
+            message_id: MessageId(Uuid::new_v4()),
+            server_seq: 3,
+            sender_account_id: other_account_id,
+            content_type: ContentType::Receipt,
+            created_at_unix: 3,
+            ..first_message.clone()
+        };
+
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![
+                    first_message.clone(),
+                    second_message.clone(),
+                    third_message.clone(),
+                ],
+            })
+            .unwrap();
+        store
+            .apply_projected_messages(
+                chat_id,
+                &[
+                    LocalProjectedMessage {
+                        server_seq: 1,
+                        message_id: first_message.message_id,
+                        sender_account_id: self_account_id,
+                        sender_device_id: device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        projection_kind: LocalProjectionKind::ApplicationMessage,
+                        payload: Some(b"self".to_vec()),
+                        merged_epoch: None,
+                        created_at_unix: 1,
+                    },
+                    LocalProjectedMessage {
+                        server_seq: 2,
+                        message_id: second_message.message_id,
+                        sender_account_id: other_account_id,
+                        sender_device_id: device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        projection_kind: LocalProjectionKind::ApplicationMessage,
+                        payload: Some(b"other".to_vec()),
+                        merged_epoch: None,
+                        created_at_unix: 2,
+                    },
+                    LocalProjectedMessage {
+                        server_seq: 3,
+                        message_id: third_message.message_id,
+                        sender_account_id: other_account_id,
+                        sender_device_id: device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Receipt,
+                        projection_kind: LocalProjectionKind::ApplicationMessage,
+                        payload: Some(
+                            MessageBody::Receipt(crate::ReceiptMessageBody {
+                                target_message_id: second_message.message_id,
+                                receipt_type: crate::ReceiptType::Delivered,
+                                at_unix: Some(3),
+                            })
+                            .to_bytes()
+                            .unwrap(),
+                        ),
+                        merged_epoch: None,
+                        created_at_unix: 3,
+                    },
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(store.projected_cursor(chat_id), Some(3));
+        assert_eq!(store.chat_read_cursor(chat_id), Some(0));
+        assert_eq!(
+            store.chat_unread_count(chat_id, Some(self_account_id)),
+            Some(1)
+        );
+        assert_eq!(store.chat_unread_count(chat_id, None), Some(2));
+
+        let partial = store
+            .set_chat_read_cursor(chat_id, Some(1), Some(self_account_id))
+            .unwrap();
+        assert_eq!(partial.read_cursor_server_seq, 1);
+        assert_eq!(partial.unread_count, 1);
+
+        let read_all = store
+            .mark_chat_read(chat_id, None, Some(self_account_id))
+            .unwrap();
+        assert_eq!(read_all.read_cursor_server_seq, 3);
+        assert_eq!(read_all.unread_count, 0);
+
+        let restored = LocalHistoryStore::new_persistent(&database_path).unwrap();
+        assert_eq!(restored.chat_read_cursor(chat_id), Some(3));
+        assert_eq!(
+            restored.get_chat_read_state(chat_id, Some(self_account_id)),
+            Some(LocalChatReadState {
+                chat_id,
+                read_cursor_server_seq: 3,
+                unread_count: 0,
+            })
+        );
+
+        fs::remove_file(database_path).ok();
     }
 }

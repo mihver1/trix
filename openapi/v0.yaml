@@ -1458,7 +1458,7 @@ components:
           format: int64
     ChatSummary:
       type: object
-      required: [chat_id, chat_type, last_server_seq, participant_profiles]
+      required: [chat_id, chat_type, last_server_seq, pending_message_count, participant_profiles]
       properties:
         chat_id:
           $ref: '#/components/schemas/Uuid'
@@ -1470,6 +1470,13 @@ components:
         last_server_seq:
           type: integer
           format: int64
+        pending_message_count:
+          type: integer
+          format: int64
+        last_message:
+          allOf:
+            - $ref: '#/components/schemas/MessageEnvelope'
+          nullable: true
         participant_profiles:
           type: array
           items:
@@ -1511,7 +1518,7 @@ components:
           type: string
     ChatDetailResponse:
       type: object
-      required: [chat_id, chat_type, last_server_seq, epoch, participant_profiles, members, device_members]
+      required: [chat_id, chat_type, last_server_seq, pending_message_count, epoch, participant_profiles, members, device_members]
       properties:
         chat_id:
           $ref: '#/components/schemas/Uuid'
@@ -1523,11 +1530,18 @@ components:
         last_server_seq:
           type: integer
           format: int64
+        pending_message_count:
+          type: integer
+          format: int64
         epoch:
           type: integer
           format: int64
         last_commit_message_id:
           $ref: '#/components/schemas/Uuid'
+          nullable: true
+        last_message:
+          allOf:
+            - $ref: '#/components/schemas/MessageEnvelope'
           nullable: true
         participant_profiles:
           type: array

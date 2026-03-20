@@ -59,6 +59,8 @@ async fn list_chats(
                 chat_type: chat.chat_type,
                 title: chat.title,
                 last_server_seq: chat.last_server_seq,
+                pending_message_count: chat.pending_message_count,
+                last_message: chat.last_message.map(message_to_api),
                 participant_profiles: chat
                     .participant_profiles
                     .into_iter()
@@ -129,8 +131,10 @@ async fn get_chat(
         chat_type: chat.chat_type,
         title: chat.title,
         last_server_seq: chat.last_server_seq,
+        pending_message_count: chat.pending_message_count,
         epoch: chat.epoch,
         last_commit_message_id: chat.last_commit_message_id.map(trix_types::MessageId),
+        last_message: chat.last_message.map(message_to_api),
         participant_profiles: chat
             .participant_profiles
             .into_iter()

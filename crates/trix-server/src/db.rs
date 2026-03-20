@@ -259,6 +259,8 @@ pub struct ChatSummaryRow {
     pub chat_type: ChatType,
     pub title: Option<String>,
     pub last_server_seq: u64,
+    pub pending_message_count: u64,
+    pub last_message: Option<MessageEnvelopeRow>,
     pub participant_profiles: Vec<ChatParticipantProfileRow>,
 }
 
@@ -285,8 +287,10 @@ pub struct ChatDetail {
     pub chat_type: ChatType,
     pub title: Option<String>,
     pub last_server_seq: u64,
+    pub pending_message_count: u64,
     pub epoch: u64,
     pub last_commit_message_id: Option<Uuid>,
+    pub last_message: Option<MessageEnvelopeRow>,
     pub participant_profiles: Vec<ChatParticipantProfileRow>,
     pub members: Vec<ChatMemberRow>,
     pub device_members: Vec<ChatDeviceRow>,
@@ -2311,6 +2315,8 @@ impl Database {
                     chat_type: parse_chat_type(&row_text(&row, "chat_type")?)?,
                     title: row_optional_text(&row, "title")?,
                     last_server_seq: row_u64_from_i64(&row, "last_server_seq")?,
+                    pending_message_count: 0,
+                    last_message: None,
                     participant_profiles: Vec::new(),
                 })
             })
@@ -2342,6 +2348,51 @@ impl Database {
         .await
         .map_err(map_db_error)?;
 
+        let pending_rows = sqlx::query(
+            r#"
+            SELECT
+                di.chat_id,
+                count(*)::bigint AS pending_message_count
+            FROM device_inbox di
+            JOIN devices d
+              ON d.device_id = di.device_id
+            WHERE di.device_id = $1
+              AND di.chat_id = ANY($2)
+              AND di.delivery_state <> 'acked'::delivery_state
+              AND d.device_status = 'active'::device_status
+            GROUP BY di.chat_id
+            "#,
+        )
+        .bind(device_id)
+        .bind(&chat_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let last_message_rows = sqlx::query(
+            r#"
+            SELECT DISTINCT ON (m.chat_id)
+                m.message_id,
+                m.chat_id,
+                m.server_seq,
+                m.sender_account_id,
+                m.sender_device_id,
+                m.epoch,
+                m.message_kind::text AS message_kind,
+                m.content_type::text AS content_type,
+                m.ciphertext,
+                m.aad_json,
+                extract(epoch from m.created_at)::bigint AS created_at_unix
+            FROM messages m
+            WHERE m.chat_id = ANY($1)
+            ORDER BY m.chat_id ASC, m.server_seq DESC
+            "#,
+        )
+        .bind(&chat_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
         let mut profiles_by_chat = BTreeMap::<Uuid, Vec<ChatParticipantProfileRow>>::new();
         for row in participant_rows {
             let chat_id = row_uuid(&row, "chat_id")?;
@@ -2356,9 +2407,29 @@ impl Database {
                 });
         }
 
+        let mut pending_counts_by_chat = BTreeMap::<Uuid, u64>::new();
+        for row in pending_rows {
+            pending_counts_by_chat.insert(
+                row_uuid(&row, "chat_id")?,
+                row_u64_from_i64(&row, "pending_message_count")?,
+            );
+        }
+
+        let mut last_messages_by_chat = BTreeMap::<Uuid, MessageEnvelopeRow>::new();
+        for row in last_message_rows {
+            let message = message_row_from_db(row)?;
+            last_messages_by_chat.insert(message.chat_id, message);
+        }
+
         for chat in &mut chats {
             if let Some(participant_profiles) = profiles_by_chat.remove(&chat.chat_id) {
                 chat.participant_profiles = participant_profiles;
+            }
+            if let Some(pending_message_count) = pending_counts_by_chat.remove(&chat.chat_id) {
+                chat.pending_message_count = pending_message_count;
+            }
+            if let Some(last_message) = last_messages_by_chat.remove(&chat.chat_id) {
+                chat.last_message = Some(last_message);
             }
         }
 
@@ -3574,6 +3645,53 @@ impl Database {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        let pending_message_count_row = sqlx::query(
+            r#"
+            SELECT count(*)::bigint AS pending_message_count
+            FROM device_inbox di
+            JOIN devices d
+              ON d.device_id = di.device_id
+            WHERE di.device_id = $1
+              AND di.chat_id = $2
+              AND di.delivery_state <> 'acked'::delivery_state
+              AND d.device_status = 'active'::device_status
+            "#,
+        )
+        .bind(device_id)
+        .bind(chat_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        let pending_message_count =
+            row_u64_from_i64(&pending_message_count_row, "pending_message_count")?;
+
+        let last_message = sqlx::query(
+            r#"
+            SELECT
+                m.message_id,
+                m.chat_id,
+                m.server_seq,
+                m.sender_account_id,
+                m.sender_device_id,
+                m.epoch,
+                m.message_kind::text AS message_kind,
+                m.content_type::text AS content_type,
+                m.ciphertext,
+                m.aad_json,
+                extract(epoch from m.created_at)::bigint AS created_at_unix
+            FROM messages m
+            WHERE m.chat_id = $1
+            ORDER BY m.server_seq DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(chat_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?
+        .map(message_row_from_db)
+        .transpose()?;
+
         let device_member_rows = sqlx::query(
             r#"
             SELECT
@@ -3616,8 +3734,10 @@ impl Database {
             chat_type: parse_chat_type(&row_text(&row, "chat_type")?)?,
             title: row_optional_text(&row, "title")?,
             last_server_seq: row_u64_from_i64(&row, "last_server_seq")?,
+            pending_message_count,
             epoch: row_u64_from_i64(&row, "epoch")?,
             last_commit_message_id: row_optional_uuid(&row, "last_commit_message_id")?,
+            last_message,
             participant_profiles,
             members,
             device_members,
@@ -5815,6 +5935,128 @@ mod tests {
             vec!["alice", "bob"]
         );
         assert_eq!(detail.members.len(), 2);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn smoke_includes_pending_count_and_last_message_in_chat_list_and_detail() {
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [107; 32],
+                [108; 32],
+            ))
+            .await
+            .expect("create alice");
+        let bob = db
+            .create_account(make_account_input(
+                "bob",
+                "Bob Primary",
+                [109; 32],
+                [110; 32],
+            ))
+            .await
+            .expect("create bob");
+
+        db.publish_key_packages(
+            bob.device_id,
+            vec![PublishKeyPackageInput {
+                device_id: bob.device_id,
+                cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                key_package_bytes: b"bob-primary-kp".to_vec(),
+            }],
+        )
+        .await
+        .expect("publish bob key package");
+
+        let bob_reserved = db
+            .reserve_key_packages_for_account(alice.account_id, bob.account_id)
+            .await
+            .expect("reserve bob key package");
+        let created = db
+            .create_chat(CreateChatInput {
+                creator_account_id: alice.account_id,
+                creator_device_id: alice.device_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                participant_account_ids: vec![bob.account_id],
+                reserved_key_package_ids: bob_reserved
+                    .iter()
+                    .map(|package| package.key_package_id)
+                    .collect(),
+                initial_commit: Some(make_control_message("dm-create-commit")),
+                welcome_message: Some(make_control_message("dm-create-welcome")),
+            })
+            .await
+            .expect("create dm");
+
+        let initial_inbox = db
+            .get_inbox_for_device(bob.device_id, None, Some(10))
+            .await
+            .expect("get initial bob inbox");
+        db.ack_inbox_items(
+            bob.device_id,
+            initial_inbox
+                .into_iter()
+                .map(|item| i64::try_from(item.inbox_id).expect("inbox id fits into i64"))
+                .collect(),
+        )
+        .await
+        .expect("ack initial bob inbox");
+
+        let sent = db
+            .append_message(CreateMessageInput {
+                chat_id: created.chat_id,
+                sender_account_id: alice.account_id,
+                sender_device_id: alice.device_id,
+                message_id: Uuid::new_v4(),
+                epoch: created.epoch,
+                message_kind: MessageKind::Application,
+                content_type: ContentType::Text,
+                ciphertext: b"hello".to_vec(),
+                aad_json: json!({"preview":"hello"}),
+            })
+            .await
+            .expect("append message");
+
+        let bob_chats = db
+            .list_chats_for_device(bob.account_id, bob.device_id)
+            .await
+            .expect("list bob chats");
+        assert_eq!(bob_chats.len(), 1);
+        assert_eq!(bob_chats[0].pending_message_count, 1);
+        assert_eq!(
+            bob_chats[0]
+                .last_message
+                .as_ref()
+                .map(|message| message.message_id),
+            Some(sent.message_id)
+        );
+
+        let bob_detail = db
+            .get_chat_detail_for_device(created.chat_id, bob.device_id)
+            .await
+            .expect("get bob detail")
+            .expect("detail must exist");
+        assert_eq!(bob_detail.pending_message_count, 1);
+        assert_eq!(
+            bob_detail
+                .last_message
+                .as_ref()
+                .map(|message| message.message_id),
+            Some(sent.message_id)
+        );
+        assert_eq!(
+            bob_detail
+                .last_message
+                .as_ref()
+                .map(|message| message.server_seq),
+            Some(sent.server_seq)
+        );
     }
 
     async fn connect_test_db() -> Database {
