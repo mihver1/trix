@@ -4,7 +4,7 @@ import Security
 struct KeychainStore {
     private let service: String
 
-    init(service: String = "dev.trix.ios") {
+    init(service: String = "com.softgrid.trixapp") {
         self.service = service
     }
 
@@ -22,7 +22,7 @@ struct KeychainStore {
         let status = SecItemAdd(query as CFDictionary, nil)
         guard status == errSecSuccess else {
             if shouldUseSimulatorFallback(for: status) {
-                try fallbackStore.save(data, account: account)
+                try fallbackStore(service: service).save(data, account: account)
                 return
             }
             throw KeychainStoreError.unexpectedStatus(status)
@@ -48,10 +48,10 @@ struct KeychainStore {
             }
             return data
         case errSecItemNotFound:
-            return try fallbackStore.load(account: account)
+            return try fallbackStore(service: service).load(account: account)
         default:
             if shouldUseSimulatorFallback(for: status) {
-                return try fallbackStore.load(account: account)
+                return try fallbackStore(service: service).load(account: account)
             }
             throw KeychainStoreError.unexpectedStatus(status)
         }
@@ -66,12 +66,12 @@ struct KeychainStore {
 
         let status = SecItemDelete(query as CFDictionary)
         if status == errSecSuccess || status == errSecItemNotFound {
-            try? fallbackStore.delete(account: account)
+            try? fallbackStore(service: service).delete(account: account)
             return
         }
 
         if shouldUseSimulatorFallback(for: status) {
-            try fallbackStore.delete(account: account)
+            try fallbackStore(service: service).delete(account: account)
             return
         }
 
@@ -80,7 +80,7 @@ struct KeychainStore {
         }
     }
 
-    private var fallbackStore: SimulatorFallbackStore {
+    private func fallbackStore(service: String) -> SimulatorFallbackStore {
         SimulatorFallbackStore(service: service)
     }
 

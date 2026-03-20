@@ -94,6 +94,13 @@ struct LocalInboxSyncResult {
     }
 }
 
+struct PersistentRealtimeBindings {
+    let websocket: FfiServerWebSocketClient
+    let realtimeDriver: FfiRealtimeDriver
+    let historyDatabasePath: String
+    let syncStatePath: String
+}
+
 struct LocalCoreStateSnapshot {
     let mlsStorageRoot: String
     let historyDatabasePath: String
@@ -162,6 +169,40 @@ enum TrixCorePersistentBridge {
             leaseTtlSeconds: leaseTtlSeconds
         )
         return outcome.trix_localInboxSyncResult
+    }
+
+    static func pollRealtimeOnce(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity
+    ) throws -> LocalInboxSyncResult {
+        let context = try loadOrCreateContext(identity: identity)
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        let driver = try FfiRealtimeDriver()
+        let outcome = try driver.pollOnce(
+            client: client,
+            coordinator: context.syncCoordinator,
+            store: context.historyStore
+        )
+        try saveContextState(context)
+        return outcome.trix_localInboxSyncResult
+    }
+
+    static func makeRealtimeBindings(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity
+    ) throws -> PersistentRealtimeBindings {
+        let paths = try PersistentCorePaths(identity: identity)
+        try paths.prepareRootDirectory()
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+
+        return PersistentRealtimeBindings(
+            websocket: try client.connectWebsocket(),
+            realtimeDriver: try FfiRealtimeDriver(),
+            historyDatabasePath: paths.historyDatabasePath.path,
+            syncStatePath: paths.syncStatePath.path
+        )
     }
 
     static func localStateSnapshot(identity: LocalDeviceIdentity) throws -> LocalCoreStateSnapshot {
