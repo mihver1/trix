@@ -9,3 +9,5 @@ DerivedData/
 *.xcuserdata/
 *.xccheckout
 *.xcscmblueprint
+apps/ios/Vendor/
+apps/ios/TrixiOS/Bridge/Artifacts/

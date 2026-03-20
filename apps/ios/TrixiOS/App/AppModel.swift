@@ -3,6 +3,7 @@ import UIKit
 
 private let trixDebugCipherSuite = "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519"
 
+@MainActor
 struct CreateAccountForm {
     var profileName = ""
     var handle = ""
@@ -15,6 +16,7 @@ struct CreateAccountForm {
     }
 }
 
+@MainActor
 struct LinkExistingAccountForm {
     var linkPayload = ""
     var deviceDisplayName = UIDevice.current.name
@@ -156,14 +158,11 @@ final class AppModel: ObservableObject {
         do {
             let client = try APIClient(baseURLString: baseURLString)
             let bootstrapMaterial = try DeviceBootstrapMaterial.generate()
-            let request = try bootstrapMaterial.makeCreateAccountRequest(
-                profileName: profileName,
-                handle: form.handle.trix_trimmedOrNil(),
-                profileBio: form.profileBio.trix_trimmedOrNil(),
-                deviceDisplayName: deviceDisplayName,
-                platform: form.platform
+            let response = try TrixCoreServerBridge.createAccount(
+                baseURLString: baseURLString,
+                form: form,
+                bootstrapMaterial: bootstrapMaterial
             )
-            let response: CreateAccountResponse = try await client.post("/v0/accounts", body: request)
             let localIdentity = bootstrapMaterial.makeLocalIdentity(
                 accountId: response.accountId,
                 deviceId: response.deviceId,
@@ -206,14 +205,11 @@ final class AppModel: ObservableObject {
         do {
             let client = try APIClient(baseURLString: baseURLString)
             let bootstrapMaterial = try DeviceBootstrapMaterial.generate()
-            let request = try bootstrapMaterial.makeCompleteLinkIntentRequest(
-                linkToken: payload.linkToken,
-                deviceDisplayName: deviceDisplayName,
-                platform: form.platform
-            )
-            let response: CompleteLinkIntentResponse = try await client.post(
-                "/v0/devices/link-intents/\(payload.linkIntentId)/complete",
-                body: request
+            let response = try TrixCoreServerBridge.completeLinkIntent(
+                baseURLString: baseURLString,
+                payload: payload,
+                form: form,
+                bootstrapMaterial: bootstrapMaterial
             )
             let localIdentity = bootstrapMaterial.makeLinkedLocalIdentity(
                 accountId: response.accountId,
@@ -259,9 +255,8 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response: CreateLinkIntentResponse = try await context.client.post(
-                "/v0/devices/link-intents",
-                body: EmptyRequest(),
+            let response = try TrixCoreServerBridge.createLinkIntent(
+                baseURLString: baseURLString,
                 accessToken: context.session.accessToken
             )
             activeLinkIntent = response
@@ -292,22 +287,11 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let approvePayload: DeviceApprovePayloadResponse = try await context.client.get(
-                "/v0/devices/\(deviceId)/approve-payload",
-                accessToken: context.session.accessToken
-            )
-            guard let bootstrapPayload = Data(base64Encoded: approvePayload.bootstrapPayloadB64) else {
-                throw AppModelError.invalidBootstrapPayload
-            }
-
-            let signature = try context.identity.signAccountBootstrapPayload(bootstrapPayload)
-            let response: ApproveDeviceResponse = try await context.client.post(
-                "/v0/devices/\(deviceId)/approve",
-                body: ApproveDeviceRequest(
-                    accountRootSignatureB64: signature.base64EncodedString(),
-                    transferBundleB64: nil
-                ),
-                accessToken: context.session.accessToken
+            let response = try TrixCoreServerBridge.approvePendingDevice(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: context.identity,
+                deviceId: deviceId
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
@@ -342,15 +326,12 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let signature = try context.identity.signDeviceRevoke(deviceId: deviceId, reason: trimmedReason)
-
-            let _: RevokeDeviceResponse = try await context.client.post(
-                "/v0/devices/\(deviceId)/revoke",
-                body: RevokeDeviceRequest(
-                    reason: trimmedReason,
-                    accountRootSignatureB64: signature.base64EncodedString()
-                ),
-                accessToken: context.session.accessToken
+            let _: RevokeDeviceResponse = try TrixCoreServerBridge.revokeDevice(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: context.identity,
+                deviceId: deviceId,
+                reason: trimmedReason
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
@@ -978,20 +959,9 @@ final class AppModel: ObservableObject {
         client: APIClient,
         identity: LocalDeviceIdentity
     ) async throws -> AuthSessionResponse {
-        let challenge: AuthChallengeResponse = try await client.post(
-            "/v0/auth/challenge",
-            body: AuthChallengeRequest(deviceId: identity.deviceId)
-        )
-        let challengeBytes = try Data.trix_base64Decoded(challenge.challengeB64)
-        let signatureBytes = try identity.signChallenge(challengeBytes)
-
-        return try await client.post(
-            "/v0/auth/session",
-            body: AuthSessionRequest(
-                deviceId: identity.deviceId,
-                challengeId: challenge.challengeId,
-                signatureB64: signatureBytes.base64EncodedString()
-            )
+        return try TrixCoreServerBridge.authenticate(
+            baseURLString: try client.baseURLString(),
+            identity: identity
         )
     }
 
@@ -1155,19 +1125,16 @@ private struct AuthenticatedContext {
 
 private enum AppModelError: LocalizedError {
     case localIdentityMissing
-    case invalidBootstrapPayload
 
     var errorDescription: String? {
         switch self {
         case .localIdentityMissing:
             return "Local identity is missing."
-        case .invalidBootstrapPayload:
-            return "Server bootstrap payload is invalid."
         }
     }
 }
 
-private extension String {
+extension String {
     func trix_trimmed() -> String {
         trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -1177,5 +1144,3 @@ private extension String {
         return trimmed.isEmpty ? nil : trimmed
     }
 }
-
-private struct EmptyRequest: Encodable {}

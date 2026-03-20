@@ -18,13 +18,17 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: TrixiOS
+        excludes:
+          - Bridge/Artifacts
+    dependencies:
+      - framework: Vendor/TrixCoreFFI.xcframework
+        embed: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.trix.ios
         PRODUCT_NAME: Trix
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Trix
-        INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads: YES
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: TrixiOS/Resources/Info.plist
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_ASSET_PATHS: "\"TrixiOS/Resources\""

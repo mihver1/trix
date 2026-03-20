@@ -58,6 +58,10 @@ struct APIClient {
         return try await perform(request)
     }
 
+    func baseURLString() throws -> String {
+        baseURL.absoluteString.removingPercentEncoding ?? baseURL.absoluteString
+    }
+
     private func url(for path: String) throws -> URL {
         guard let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
             throw APIError.invalidPath(path)

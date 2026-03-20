@@ -77,12 +77,8 @@ struct DeviceBootstrapMaterial {
         deviceDisplayName: String,
         platform: String
     ) throws -> CreateAccountRequest {
-        let accountRootPrivateKey = try Curve25519.Signing.PrivateKey(
-            rawRepresentation: accountRootPrivateKeyRaw
-        )
-        let transportPrivateKey = try Curve25519.Signing.PrivateKey(
-            rawRepresentation: transportPrivateKeyRaw
-        )
+        let accountRootPrivateKey = try trix_signingPrivateKey(accountRootPrivateKeyRaw)
+        let transportPrivateKey = try trix_signingPrivateKey(transportPrivateKeyRaw)
         let transportPublicKey = transportPrivateKey.publicKey.rawRepresentation
         let accountRootPublicKey = accountRootPrivateKey.publicKey.rawRepresentation
         let bootstrapMessage = Self.bootstrapMessage(
@@ -109,9 +105,7 @@ struct DeviceBootstrapMaterial {
         deviceDisplayName: String,
         platform: String
     ) throws -> CompleteLinkIntentRequest {
-        let transportPrivateKey = try Curve25519.Signing.PrivateKey(
-            rawRepresentation: transportPrivateKeyRaw
-        )
+        let transportPrivateKey = try trix_signingPrivateKey(transportPrivateKeyRaw)
         let transportPublicKey = transportPrivateKey.publicKey.rawRepresentation
 
         return CompleteLinkIntentRequest(
@@ -228,9 +222,7 @@ extension LocalDeviceIdentity {
     }
 
     func signChallenge(_ challengeBytes: Data) throws -> Data {
-        let transportPrivateKey = try Curve25519.Signing.PrivateKey(
-            rawRepresentation: transportPrivateKeyRaw
-        )
+        let transportPrivateKey = try trix_signingPrivateKey(transportPrivateKeyRaw)
         return try transportPrivateKey.signature(for: challengeBytes)
     }
 
@@ -249,9 +241,7 @@ extension LocalDeviceIdentity {
             throw LocalDeviceIdentityError.accountRootKeyUnavailable
         }
 
-        let accountRootPrivateKey = try Curve25519.Signing.PrivateKey(
-            rawRepresentation: accountRootPrivateKeyRaw
-        )
+        let accountRootPrivateKey = try trix_signingPrivateKey(accountRootPrivateKeyRaw)
         return try accountRootPrivateKey.signature(for: message)
     }
 
@@ -282,13 +272,11 @@ extension LocalDeviceIdentity {
     }
 }
 
-private extension Curve25519.Signing.PrivateKey {
-    init(rawRepresentation: Data) throws {
-        do {
-            try self.init(rawRepresentation: rawRepresentation)
-        } catch {
-            throw LocalDeviceIdentityError.invalidPrivateKeyMaterial
-        }
+private func trix_signingPrivateKey(_ rawRepresentation: Data) throws -> Curve25519.Signing.PrivateKey {
+    do {
+        return try Curve25519.Signing.PrivateKey(rawRepresentation: rawRepresentation)
+    } catch {
+        throw LocalDeviceIdentityError.invalidPrivateKeyMaterial
     }
 }
 

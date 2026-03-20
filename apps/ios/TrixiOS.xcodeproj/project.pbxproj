@@ -11,12 +11,15 @@
 		299255BB4FA97D30B09AE774 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22C33A945CFEA9105871D033 /* AppModel.swift */; };
 		2A4D048B3AE35BA823611D63 /* APIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D76E826883729659D5B0DF4 /* APIError.swift */; };
 		32DD1CD4D3EDDE9B08297EEF /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD786FA5598DD8B41A0444FE /* APIClient.swift */; };
+		6ED0BC0781B8D0D40D666E4B /* TrixCoreFFI.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF953E0FF2B7D830771DC6DA /* TrixCoreFFI.xcframework */; };
 		7DA8A99622CCCA79A97EE7BF /* CreateAccountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB561F04E1C44D1888D73336 /* CreateAccountView.swift */; };
 		8010E114AB48C5DB7FC15A51 /* MessagingLabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F16E8D46A5E1F90D5FA589FB /* MessagingLabView.swift */; };
 		9B911226C1B996C30814B35F /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 658A7042AB73BF905B248D96 /* DashboardView.swift */; };
+		9FFE059EB1320E146D1865E3 /* TrixCoreServerBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FF7213EA531F2A99EC523D4 /* TrixCoreServerBridge.swift */; };
 		A3F584F628831CED1241968D /* SystemModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B39C56B87A0D7373CCAF305 /* SystemModels.swift */; };
 		A98F44A4D5CD8F14237D279A /* ChatDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E6C5B8826FF255BAF650A38 /* ChatDetailView.swift */; };
 		B44143903FCFD7AC94B12123 /* PendingApprovalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C76457452D572429031461CC /* PendingApprovalView.swift */; };
+		BA618D8F998D732D83C222E6 /* trix_core.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48115076F282C6F00F84200E /* trix_core.swift */; };
 		BD87D15AEFAF56495250E94C /* TrixiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E99B20CD4D5A31B630CCE43 /* TrixiOSApp.swift */; };
 		D5B3D522018E2EDCC239D6B3 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 229E4FE51C86DFFFFBEDA5BF /* KeychainStore.swift */; };
 		D8728BF5E7629A0B84E4CAB4 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B9EE7D8E7C908B372176F97 /* RootView.swift */; };
@@ -25,27 +28,53 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		0BE73C1B13A52D7BFF9426BC /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		184D72DBD37F99C0A5067184 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
 		229E4FE51C86DFFFFBEDA5BF /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		22C33A945CFEA9105871D033 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		2746CAF75EE97A4BDBA763BB /* SystemStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemStatusView.swift; sourceTree = "<group>"; };
 		3E8E57CCC8925A9519C5EB59 /* ServerConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConfiguration.swift; sourceTree = "<group>"; };
+		48115076F282C6F00F84200E /* trix_core.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = trix_core.swift; sourceTree = "<group>"; };
 		4947F3F335746A3BEADF9960 /* TrixiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TrixiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		658A7042AB73BF905B248D96 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
 		6B9EE7D8E7C908B372176F97 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		6FF7213EA531F2A99EC523D4 /* TrixCoreServerBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixCoreServerBridge.swift; sourceTree = "<group>"; };
 		7B39C56B87A0D7373CCAF305 /* SystemModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemModels.swift; sourceTree = "<group>"; };
+		93AB452AEAC561406820AB33 /* module.modulemap */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.module-map"; path = module.modulemap; sourceTree = "<group>"; };
 		9D76E826883729659D5B0DF4 /* APIError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIError.swift; sourceTree = "<group>"; };
 		9E6C5B8826FF255BAF650A38 /* ChatDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatDetailView.swift; sourceTree = "<group>"; };
 		9E99B20CD4D5A31B630CCE43 /* TrixiOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixiOSApp.swift; sourceTree = "<group>"; };
+		A96D86962664B4EFF403EA16 /* trix_coreFFI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = trix_coreFFI.h; sourceTree = "<group>"; };
+		AF953E0FF2B7D830771DC6DA /* TrixCoreFFI.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = TrixCoreFFI.xcframework; path = Vendor/TrixCoreFFI.xcframework; sourceTree = "<group>"; };
 		BD786FA5598DD8B41A0444FE /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		C76457452D572429031461CC /* PendingApprovalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingApprovalView.swift; sourceTree = "<group>"; };
 		C81238E1EC57CFBB2B333A7A /* LocalDeviceIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDeviceIdentity.swift; sourceTree = "<group>"; };
 		CBCD0355F29849AC8FC65507 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
+		D382E0082C361DD751AE4867 /* trix_coreFFI.modulemap */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.module-map"; path = trix_coreFFI.modulemap; sourceTree = "<group>"; };
 		F16E8D46A5E1F90D5FA589FB /* MessagingLabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagingLabView.swift; sourceTree = "<group>"; };
 		FB561F04E1C44D1888D73336 /* CreateAccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateAccountView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXFrameworksBuildPhase section */
+		47F172B22F4348BDB8B8185D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6ED0BC0781B8D0D40D666E4B /* TrixCoreFFI.xcframework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
 /* Begin PBXGroup section */
+		1C49F9CBC0D1F6A9418A6BE5 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				AF953E0FF2B7D830771DC6DA /* TrixCoreFFI.xcframework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		291D9E665D29513C2BC7CA74 /* Networking */ = {
 			isa = PBXGroup;
 			children = (
@@ -120,6 +149,17 @@
 			path = Onboarding;
 			sourceTree = "<group>";
 		};
+		8AC3572456216797EEEB77A2 /* Generated */ = {
+			isa = PBXGroup;
+			children = (
+				93AB452AEAC561406820AB33 /* module.modulemap */,
+				48115076F282C6F00F84200E /* trix_core.swift */,
+				A96D86962664B4EFF403EA16 /* trix_coreFFI.h */,
+				D382E0082C361DD751AE4867 /* trix_coreFFI.modulemap */,
+			);
+			path = Generated;
+			sourceTree = "<group>";
+		};
 		A2DC788B5278576D5E39C8EC /* TrixiOS */ = {
 			isa = PBXGroup;
 			children = (
@@ -146,6 +186,7 @@
 			isa = PBXGroup;
 			children = (
 				184D72DBD37F99C0A5067184 /* .gitkeep */,
+				0BE73C1B13A52D7BFF9426BC /* Info.plist */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -154,6 +195,7 @@
 			isa = PBXGroup;
 			children = (
 				A2DC788B5278576D5E39C8EC /* TrixiOS */,
+				1C49F9CBC0D1F6A9418A6BE5 /* Frameworks */,
 				2D93899E1C1D88CEABAB3352 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -162,6 +204,8 @@
 			isa = PBXGroup;
 			children = (
 				CBCD0355F29849AC8FC65507 /* .gitkeep */,
+				6FF7213EA531F2A99EC523D4 /* TrixCoreServerBridge.swift */,
+				8AC3572456216797EEEB77A2 /* Generated */,
 			);
 			path = Bridge;
 			sourceTree = "<group>";
@@ -174,6 +218,7 @@
 			buildConfigurationList = 30FCD116EF8786C50C1E5B59 /* Build configuration list for PBXNativeTarget "TrixiOS" */;
 			buildPhases = (
 				B310ED466CDDDF295B8C766A /* Sources */,
+				47F172B22F4348BDB8B8185D /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -238,7 +283,9 @@
 				E4F971691AB2F86D7BACBBB2 /* ServerConfiguration.swift in Sources */,
 				A3F584F628831CED1241968D /* SystemModels.swift in Sources */,
 				DB5806C60BE9AACB7A23AEE9 /* SystemStatusView.swift in Sources */,
+				9FFE059EB1320E146D1865E3 /* TrixCoreServerBridge.swift in Sources */,
 				BD87D15AEFAF56495250E94C /* TrixiOSApp.swift in Sources */,
+				BA618D8F998D732D83C222E6 /* trix_core.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -252,9 +299,12 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_ASSET_PATHS = "\"TrixiOS/Resources\"";
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Trix;
-				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"Vendor\"",
+				);
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TrixiOS/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -339,9 +389,12 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_ASSET_PATHS = "\"TrixiOS/Resources\"";
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Trix;
-				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"Vendor\"",
+				);
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TrixiOS/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
