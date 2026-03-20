@@ -6,6 +6,7 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose};
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::{
     db::{
@@ -22,6 +23,25 @@ use trix_types::{
     MessageEnvelope, ModifyChatDevicesRequest, ModifyChatDevicesResponse, ModifyChatMembersRequest,
     ModifyChatMembersResponse,
 };
+
+fn empty_json_object() -> Value {
+    Value::Object(Default::default())
+}
+
+fn normalize_aad_json(value: Option<Value>) -> Value {
+    match value {
+        Some(value) if !value.is_null() => value,
+        _ => empty_json_object(),
+    }
+}
+
+fn normalize_stored_aad_json(value: Value) -> Value {
+    if value.is_null() {
+        empty_json_object()
+    } else {
+        value
+    }
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -189,7 +209,7 @@ async fn create_message(
             message_kind: request.message_kind,
             content_type: request.content_type,
             ciphertext,
-            aad_json: request.aad_json.unwrap_or_default(),
+            aad_json: normalize_aad_json(request.aad_json),
         })
         .await?;
 
@@ -414,7 +434,7 @@ fn decode_control_message(message: ControlMessageInput) -> Result<PendingControl
     Ok(PendingControlMessage {
         message_id: message.message_id.0,
         ciphertext: decode_b64(&message.ciphertext_b64)?,
-        aad_json: message.aad_json.unwrap_or_default(),
+        aad_json: normalize_aad_json(message.aad_json),
     })
 }
 
@@ -439,7 +459,33 @@ pub(super) fn message_to_api(message: MessageEnvelopeRow) -> MessageEnvelope {
         message_kind: message.message_kind,
         content_type: message.content_type,
         ciphertext_b64: general_purpose::STANDARD.encode(message.ciphertext),
-        aad_json: message.aad_json,
+        aad_json: normalize_stored_aad_json(message.aad_json),
         created_at_unix: message.created_at_unix,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn normalize_aad_json_maps_absent_and_null_to_empty_object() {
+        assert_eq!(normalize_aad_json(None), json!({}));
+        assert_eq!(normalize_aad_json(Some(Value::Null)), json!({}));
+        assert_eq!(
+            normalize_aad_json(Some(json!({"preview":"hello"}))),
+            json!({"preview":"hello"})
+        );
+    }
+
+    #[test]
+    fn normalize_stored_aad_json_maps_null_to_empty_object() {
+        assert_eq!(normalize_stored_aad_json(Value::Null), json!({}));
+        assert_eq!(
+            normalize_stored_aad_json(json!({"kind":"text"})),
+            json!({"kind":"text"})
+        );
     }
 }
