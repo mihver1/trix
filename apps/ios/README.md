@@ -61,6 +61,7 @@ xcodebuild \
 - The app currently defaults to `http://127.0.0.1:8080`, which works for the simulator when the server runs on the same Mac.
 - `xcodebuild` requires an installed `iOS Simulator` runtime or device platform in the local `Xcode` setup.
 - Linked devices currently store only transport key material locally. They can authenticate once approved, but account-management actions that require the shared account-root key remain disabled on-device.
+- Device approval now accepts an optional `transfer_bundle_b64`, and the server exposes `GET /v0/devices/{device_id}/transfer-bundle`. The current iOS PoC still sends `nil` there until `trix-core` gets a Swift-callable FFI layer.
 - Inbox leasing is exposed as a debug worker-style tool in the iOS PoC. The normal UI still relies on regular polling and explicit `ack`.
 - The messaging screens currently use placeholder debug payloads for `Commit`, `Welcome`, message ciphertexts, and key packages. That is intentional for the server PoC and should be replaced by `trix-core` MLS bindings later.
 

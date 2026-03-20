@@ -264,12 +264,20 @@ struct DeviceApprovePayloadResponse: Decodable {
 
 struct ApproveDeviceRequest: Encodable {
     let accountRootSignatureB64: String
+    let transferBundleB64: String?
 }
 
 struct ApproveDeviceResponse: Decodable {
     let accountId: String
     let deviceId: String
     let deviceStatus: DeviceStatus
+}
+
+struct DeviceTransferBundleResponse: Decodable {
+    let accountId: String
+    let deviceId: String
+    let transferBundleB64: String
+    let uploadedAtUnix: UInt64
 }
 
 struct PublishKeyPackageItem: Encodable {

@@ -304,7 +304,8 @@ final class AppModel: ObservableObject {
             let response: ApproveDeviceResponse = try await context.client.post(
                 "/v0/devices/\(deviceId)/approve",
                 body: ApproveDeviceRequest(
-                    accountRootSignatureB64: signature.base64EncodedString()
+                    accountRootSignatureB64: signature.base64EncodedString(),
+                    transferBundleB64: nil
                 ),
                 accessToken: context.session.accessToken
             )
