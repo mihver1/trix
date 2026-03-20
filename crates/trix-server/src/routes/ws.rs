@@ -18,12 +18,16 @@ use tokio::{
 };
 use trix_types::{InboxItem, WebSocketClientFrame, WebSocketServerFrame};
 
-use crate::{auth::SessionPrincipal, error::AppError, state::AppState};
+use crate::{
+    auth::SessionPrincipal,
+    error::AppError,
+    state::{AppState, WebSocketSessionCommand},
+};
 
 use super::chats::message_to_api;
 
 const WS_INBOX_LEASE_TTL_SECONDS: u64 = 30;
-const WS_POLL_INTERVAL: Duration = Duration::from_millis(750);
+const WS_SAFETY_SWEEP_INTERVAL: Duration = Duration::from_secs(15);
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/ws", get(connect_ws))
@@ -39,7 +43,7 @@ async fn connect_ws(
 }
 
 async fn websocket_session(state: AppState, principal: SessionPrincipal, mut socket: WebSocket) {
-    let (server_tx, mut server_rx) = mpsc::unbounded_channel::<WebSocketServerFrame>();
+    let (server_tx, mut server_rx) = mpsc::unbounded_channel::<WebSocketSessionCommand>();
     let session_id = state
         .ws_registry
         .register(principal.device_id, server_tx.clone())
@@ -74,22 +78,31 @@ async fn websocket_session(state: AppState, principal: SessionPrincipal, mut soc
         return;
     }
 
-    let mut poll_interval = interval(WS_POLL_INTERVAL);
-    poll_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut sweep_interval = interval(WS_SAFETY_SWEEP_INTERVAL);
+    sweep_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     loop {
         select! {
-            maybe_frame = server_rx.recv() => {
-                let Some(frame) = maybe_frame else {
+            maybe_command = server_rx.recv() => {
+                let Some(command) = maybe_command else {
                     break;
                 };
 
-                let should_close = matches!(frame, WebSocketServerFrame::SessionReplaced { .. });
-                if send_server_frame(&mut socket, &frame).await.is_err() {
-                    break;
-                }
-                if should_close {
-                    break;
+                match command {
+                    WebSocketSessionCommand::Frame(frame) => {
+                        let should_close = matches!(frame, WebSocketServerFrame::SessionReplaced { .. });
+                        if send_server_frame(&mut socket, &frame).await.is_err() {
+                            break;
+                        }
+                        if should_close {
+                            break;
+                        }
+                    }
+                    WebSocketSessionCommand::DeliverInbox => {
+                        if deliver_inbox_batch(&state, principal, &lease_owner, &mut socket).await.is_err() {
+                            break;
+                        }
+                    }
                 }
             }
             incoming = socket.next() => {
@@ -104,7 +117,7 @@ async fn websocket_session(state: AppState, principal: SessionPrincipal, mut soc
                     Some(Err(_)) | None => break,
                 }
             }
-            _ = poll_interval.tick() => {
+            _ = sweep_interval.tick() => {
                 if deliver_inbox_batch(&state, principal, &lease_owner, &mut socket).await.is_err() {
                     break;
                 }

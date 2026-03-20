@@ -67,6 +67,13 @@ async fn create_link_intent(
     headers: HeaderMap,
 ) -> Result<Json<CreateLinkIntentResponse>, AppError> {
     let principal = state.authenticate_active_headers(&headers).await?;
+    state
+        .enforce_rate_limit(
+            "device_link_intent",
+            principal.account_id.to_string(),
+            state.config.rate_limit_link_intents_limit,
+        )
+        .await?;
     let created = state
         .db
         .create_link_intent(principal.account_id, principal.device_id)

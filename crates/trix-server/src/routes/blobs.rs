@@ -28,6 +28,13 @@ async fn create_upload(
     Json(request): Json<CreateBlobUploadRequest>,
 ) -> Result<Json<CreateBlobUploadResponse>, AppError> {
     let principal = state.authenticate_active_headers(&headers).await?;
+    state
+        .enforce_rate_limit(
+            "blob_upload",
+            principal.account_id.to_string(),
+            state.config.rate_limit_blob_upload_limit,
+        )
+        .await?;
     let mime_type = request.mime_type.trim().to_owned();
     if mime_type.is_empty() {
         return Err(AppError::bad_request("mime_type must not be empty"));
