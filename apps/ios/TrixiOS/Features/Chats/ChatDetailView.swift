@@ -9,7 +9,7 @@ struct ChatDetailView: View {
     @State private var isLoadingSnapshot = false
     @State private var localErrorMessage: String?
     @State private var activityMessage: String?
-    @State private var messageText = ""
+    @State private var messageDraft = DebugMessageDraft()
     @State private var addMemberAccountIds = ""
     @State private var removeMemberAccountIds = ""
     @State private var addDeviceAccountId = ""
@@ -86,23 +86,70 @@ struct ChatDetailView: View {
                 }
 
                 Section {
-                    TextField("Write a debug plaintext message", text: $messageText, axis: .vertical)
-                        .lineLimit(3, reservesSpace: true)
+                    Picker("Body Type", selection: $messageDraft.kind) {
+                        ForEach(DebugMessageDraftKind.allCases) { kind in
+                            Text(kind.label).tag(kind)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    switch messageDraft.kind {
+                    case .text:
+                        TextField("Text body", text: $messageDraft.text, axis: .vertical)
+                            .lineLimit(3, reservesSpace: true)
+                    case .reaction:
+                        TextField("Target Message ID", text: $messageDraft.targetMessageId)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .font(.system(.footnote, design: .monospaced))
+
+                        TextField("Emoji", text: $messageDraft.emoji)
+
+                        Picker("Action", selection: $messageDraft.reactionAction) {
+                            ForEach(DebugReactionAction.allCases) { action in
+                                Text(action.rawValue.capitalized).tag(action)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    case .receipt:
+                        TextField("Target Message ID", text: $messageDraft.targetMessageId)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .font(.system(.footnote, design: .monospaced))
+
+                        Picker("Receipt Type", selection: $messageDraft.receiptKind) {
+                            ForEach(DebugReceiptKind.allCases) { receiptKind in
+                                Text(receiptKind.rawValue.capitalized).tag(receiptKind)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+
+                        TextField("Receipt Timestamp (optional Unix)", text: $messageDraft.receiptAtUnix)
+                            .keyboardType(.numberPad)
+                    case .chatEvent:
+                        TextField("Event Type", text: $messageDraft.eventType)
+
+                        TextField("Event JSON", text: $messageDraft.eventJSON, axis: .vertical)
+                            .lineLimit(4, reservesSpace: true)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .font(.system(.footnote, design: .monospaced))
+                    }
 
                     Button(action: postDebugMessage) {
                         if model.isLoading {
                             ProgressView()
                                 .frame(maxWidth: .infinity)
                         } else {
-                            Text("Send Debug Message")
+                            Text("Send Typed Message")
                                 .frame(maxWidth: .infinity)
                         }
                     }
-                    .disabled(model.isLoading || messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(model.isLoading || !messageDraft.canSubmit)
                 } header: {
                     Text("Send Message")
                 } footer: {
-                    Text("This PoC stores the plaintext as a base64-encoded debug payload so the server history flow can be exercised without an MLS bridge.")
+                    Text("Payloads are serialized through `trix-core` typed message-body helpers and still sent as debug application payloads until the real MLS conversation bridge is wired.")
                 }
 
                 Section {
@@ -174,9 +221,9 @@ struct ChatDetailView: View {
                     Text("The acting device cannot remove itself through this endpoint.")
                 }
 
-                Section("History") {
+                Section {
                     if snapshot.history.isEmpty {
-                        Text("No server history for this chat yet.")
+                        Text("No \(snapshot.historySource.label.lowercased()) history for this chat yet.")
                             .foregroundStyle(.secondary)
                     } else {
                         ForEach(snapshot.history) { message in
@@ -194,6 +241,12 @@ struct ChatDetailView: View {
 
                                 Text(message.debugPreview)
                                     .font(.subheadline)
+
+                                if let debugDetail = message.debugDetail {
+                                    Text(debugDetail)
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                }
 
                                 Text(message.messageId)
                                     .font(.system(.footnote, design: .monospaced))
@@ -214,6 +267,10 @@ struct ChatDetailView: View {
                             .padding(.vertical, 4)
                         }
                     }
+                } header: {
+                    Text("History (\(snapshot.historySource.label))")
+                } footer: {
+                    Text(snapshot.historySource.description)
                 }
             } else {
                 Section {
@@ -277,7 +334,7 @@ struct ChatDetailView: View {
             return
         }
 
-        let plaintext = messageText
+        let draft = messageDraft
         activityMessage = nil
         localErrorMessage = nil
 
@@ -286,9 +343,9 @@ struct ChatDetailView: View {
                 baseURLString: serverBaseURL,
                 chatId: snapshot.detail.chatId,
                 epoch: snapshot.detail.epoch,
-                plaintext: plaintext
+                draft: draft
             ) {
-                messageText = ""
+                messageDraft = DebugMessageDraft()
                 activityMessage = "Accepted message \(response.messageId) at server sequence \(response.serverSeq)."
                 await loadSnapshot()
             } else {
@@ -397,6 +454,26 @@ struct ChatDetailView: View {
             } else {
                 localErrorMessage = model.errorMessage
             }
+        }
+    }
+}
+
+private extension ChatHistorySource {
+    var label: String {
+        switch self {
+        case .server:
+            return "Server"
+        case .localStore:
+            return "Local Store"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .server:
+            return "This chat is currently showing the latest server history payload."
+        case .localStore:
+            return "This chat is showing history cached in the persistent `trix-core` local store."
         }
     }
 }

@@ -1,8 +1,6 @@
 import Foundation
 import UIKit
 
-private let trixDebugCipherSuite = "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519"
-
 @MainActor
 struct CreateAccountForm {
     var profileName = ""
@@ -51,11 +49,13 @@ struct DashboardData {
 struct ChatSnapshot {
     let detail: ChatDetailResponse
     let history: [MessageEnvelope]
+    let historySource: ChatHistorySource
 }
 
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var localIdentity: LocalDeviceIdentity?
+    @Published private(set) var localCoreState: LocalCoreStateSnapshot?
     @Published private(set) var dashboard: DashboardData?
     @Published private(set) var activeLinkIntent: CreateLinkIntentResponse?
     @Published private(set) var systemSnapshot: ServerSnapshot?
@@ -118,11 +118,13 @@ final class AppModel: ObservableObject {
                     try await refreshAuthenticatedState(client: client, identity: localIdentity)
                 } catch let error as APIError where isPendingApprovalAuthFailure(error, identity: localIdentity) {
                     dashboard = nil
+                    updateLocalCoreStateSnapshot(identity: localIdentity)
                     systemSnapshot = try? await fetchSystemSnapshot(client: client)
                     lastUpdatedAt = Date()
                 }
             } else {
                 dashboard = nil
+                localCoreState = nil
                 systemSnapshot = try await fetchSystemSnapshot(client: client)
                 lastUpdatedAt = Date()
             }
@@ -173,6 +175,7 @@ final class AppModel: ObservableObject {
 
             try identityStore.save(localIdentity)
             self.localIdentity = localIdentity
+            updateLocalCoreStateSnapshot(identity: localIdentity)
 
             try await refreshAuthenticatedState(client: client, identity: localIdentity)
         } catch {
@@ -220,6 +223,7 @@ final class AppModel: ObservableObject {
 
             try identityStore.save(localIdentity)
             self.localIdentity = localIdentity
+            updateLocalCoreStateSnapshot(identity: localIdentity)
             dashboard = nil
             activeLinkIntent = nil
             systemSnapshot = try await fetchSystemSnapshot(client: client)
@@ -231,8 +235,12 @@ final class AppModel: ObservableObject {
 
     func forgetLocalDevice() {
         do {
+            if let localIdentity {
+                try? TrixCorePersistentBridge.deletePersistentState(identity: localIdentity)
+            }
             try identityStore.delete()
             localIdentity = nil
+            localCoreState = nil
             dashboard = nil
             activeLinkIntent = nil
             errorMessage = nil
@@ -371,10 +379,9 @@ final class AppModel: ObservableObject {
     }
 
     @discardableResult
-    func publishDebugKeyPackages(
+    func publishKeyPackages(
         baseURLString: String,
-        count: Int = 5,
-        cipherSuite: String = trixDebugCipherSuite
+        count: Int = 5
     ) async -> PublishKeyPackagesResponse? {
         guard !isLoading else {
             return nil
@@ -394,22 +401,14 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let packages = (0 ..< count).map { index in
-                PublishKeyPackageItem(
-                    cipherSuite: cipherSuite,
-                    keyPackageB64: makeDebugKeyPackagePayload(
-                        deviceId: context.identity.deviceId,
-                        index: index
-                    )
-                )
-            }
-
-            let response: PublishKeyPackagesResponse = try await context.client.post(
-                "/v0/key-packages:publish",
-                body: PublishKeyPackagesRequest(packages: packages),
-                accessToken: context.session.accessToken
+            let response = try TrixCorePersistentBridge.publishKeyPackages(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: context.identity,
+                count: count
             )
 
+            updateLocalCoreStateSnapshot(identity: context.identity)
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
             return response
         } catch {
@@ -728,15 +727,14 @@ final class AppModel: ObservableObject {
         baseURLString: String,
         chatId: String,
         epoch: UInt64,
-        plaintext: String
+        draft: DebugMessageDraft
     ) async -> CreateMessageResponse? {
         guard !isLoading else {
             return nil
         }
 
-        let plaintext = plaintext.trix_trimmed()
-        guard !plaintext.isEmpty else {
-            errorMessage = "Message text must not be empty."
+        guard draft.canSubmit else {
+            errorMessage = "Message body is incomplete."
             return nil
         }
 
@@ -749,16 +747,9 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let request = CreateMessageRequest(
-                messageId: UUID().uuidString.lowercased(),
+            let request = try TrixCoreMessageBridge.makeCreateMessageRequest(
                 epoch: epoch,
-                messageKind: .application,
-                contentType: .text,
-                ciphertextB64: Data(plaintext.utf8).base64EncodedString(),
-                aadJson: .object([
-                    "debug_plaintext": .string(plaintext),
-                    "source": .string("ios_poc")
-                ])
+                draft: draft
             )
 
             let response: CreateMessageResponse = try await context.client.post(
@@ -899,6 +890,19 @@ final class AppModel: ObservableObject {
             "/v0/chats/\(chatId)",
             accessToken: context.session.accessToken
         )
+
+        if let localHistory = try TrixCorePersistentBridge.loadLocalChatHistory(
+            identity: context.identity,
+            chatId: chatId,
+            limit: 100
+        ) {
+            return try await ChatSnapshot(
+                detail: detail,
+                history: localHistory.messages,
+                historySource: .localStore
+            )
+        }
+
         async let history: ChatHistoryResponse = context.client.get(
             "/v0/chats/\(chatId)/history?limit=100",
             accessToken: context.session.accessToken
@@ -906,8 +910,86 @@ final class AppModel: ObservableObject {
 
         return try await ChatSnapshot(
             detail: detail,
-            history: history.messages
+            history: history.messages,
+            historySource: .server
         )
+    }
+
+    @discardableResult
+    func syncChatHistoriesIntoLocalStore(
+        baseURLString: String,
+        limitPerChat: Int = 100
+    ) async -> LocalStoreSyncResult? {
+        guard !isLoading else {
+            return nil
+        }
+
+        guard limitPerChat > 0 else {
+            errorMessage = "History sync limit must be greater than zero."
+            return nil
+        }
+
+        isLoading = true
+        errorMessage = nil
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            let result = try TrixCorePersistentBridge.syncChatHistoriesIntoStore(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: context.identity,
+                limitPerChat: limitPerChat
+            )
+            updateLocalCoreStateSnapshot(identity: context.identity)
+            return result
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    @discardableResult
+    func leaseInboxIntoLocalStore(
+        baseURLString: String,
+        limit: Int = 25,
+        leaseTtlSeconds: UInt64? = nil
+    ) async -> LocalInboxSyncResult? {
+        guard !isLoading else {
+            return nil
+        }
+
+        guard limit > 0 else {
+            errorMessage = "Inbox lease limit must be greater than zero."
+            return nil
+        }
+
+        isLoading = true
+        errorMessage = nil
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            let result = try TrixCorePersistentBridge.leaseInboxIntoStore(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: context.identity,
+                limit: limit,
+                leaseTtlSeconds: leaseTtlSeconds
+            )
+            updateLocalCoreStateSnapshot(identity: context.identity)
+            try await refreshAuthenticatedState(client: context.client, identity: context.identity)
+            return result
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
     }
 
     private func refreshAuthenticatedState(
@@ -952,6 +1034,7 @@ final class AppModel: ObservableObject {
             chats: chats.chats,
             inboxItems: inbox.items
         )
+        updateLocalCoreStateSnapshot(identity: localIdentity ?? identity)
         lastUpdatedAt = Date()
     }
 
@@ -1062,11 +1145,6 @@ final class AppModel: ObservableObject {
             .sorted { $0.inboxId < $1.inboxId }
     }
 
-    private func makeDebugKeyPackagePayload(deviceId: String, index: Int) -> String {
-        let raw = "trix-ios-debug-key-package:\(deviceId):\(index):\(UUID().uuidString.lowercased())"
-        return Data(raw.utf8).base64EncodedString()
-    }
-
     private func makeDebugControlMessage(
         label: String,
         context: [String: String]
@@ -1114,6 +1192,15 @@ final class AppModel: ObservableObject {
         }
 
         return false
+    }
+
+    private func updateLocalCoreStateSnapshot(identity: LocalDeviceIdentity) {
+        do {
+            localCoreState = try TrixCorePersistentBridge.localStateSnapshot(identity: identity)
+        } catch {
+            localCoreState = nil
+            errorMessage = error.localizedDescription
+        }
     }
 }
 

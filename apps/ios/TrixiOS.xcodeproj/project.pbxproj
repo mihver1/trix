@@ -12,6 +12,7 @@
 		2A4D048B3AE35BA823611D63 /* APIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D76E826883729659D5B0DF4 /* APIError.swift */; };
 		32DD1CD4D3EDDE9B08297EEF /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD786FA5598DD8B41A0444FE /* APIClient.swift */; };
 		6ED0BC0781B8D0D40D666E4B /* TrixCoreFFI.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF953E0FF2B7D830771DC6DA /* TrixCoreFFI.xcframework */; };
+		6FEC0B6CA6C8DD295B34506C /* TrixCorePersistentBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E53DB9EB4BE8475A31F2189A /* TrixCorePersistentBridge.swift */; };
 		7DA8A99622CCCA79A97EE7BF /* CreateAccountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB561F04E1C44D1888D73336 /* CreateAccountView.swift */; };
 		8010E114AB48C5DB7FC15A51 /* MessagingLabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F16E8D46A5E1F90D5FA589FB /* MessagingLabView.swift */; };
 		9B911226C1B996C30814B35F /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 658A7042AB73BF905B248D96 /* DashboardView.swift */; };
@@ -22,6 +23,7 @@
 		BA618D8F998D732D83C222E6 /* trix_core.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48115076F282C6F00F84200E /* trix_core.swift */; };
 		BD87D15AEFAF56495250E94C /* TrixiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E99B20CD4D5A31B630CCE43 /* TrixiOSApp.swift */; };
 		D5B3D522018E2EDCC239D6B3 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 229E4FE51C86DFFFFBEDA5BF /* KeychainStore.swift */; };
+		D7A634A74EF8AFA641149594 /* TrixCoreMessageBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39DC437F679BF827B2ECC4D1 /* TrixCoreMessageBridge.swift */; };
 		D8728BF5E7629A0B84E4CAB4 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B9EE7D8E7C908B372176F97 /* RootView.swift */; };
 		DB5806C60BE9AACB7A23AEE9 /* SystemStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2746CAF75EE97A4BDBA763BB /* SystemStatusView.swift */; };
 		E4F971691AB2F86D7BACBBB2 /* ServerConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E8E57CCC8925A9519C5EB59 /* ServerConfiguration.swift */; };
@@ -33,6 +35,7 @@
 		229E4FE51C86DFFFFBEDA5BF /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		22C33A945CFEA9105871D033 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		2746CAF75EE97A4BDBA763BB /* SystemStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemStatusView.swift; sourceTree = "<group>"; };
+		39DC437F679BF827B2ECC4D1 /* TrixCoreMessageBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixCoreMessageBridge.swift; sourceTree = "<group>"; };
 		3E8E57CCC8925A9519C5EB59 /* ServerConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConfiguration.swift; sourceTree = "<group>"; };
 		48115076F282C6F00F84200E /* trix_core.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = trix_core.swift; sourceTree = "<group>"; };
 		4947F3F335746A3BEADF9960 /* TrixiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TrixiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -51,6 +54,7 @@
 		C81238E1EC57CFBB2B333A7A /* LocalDeviceIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDeviceIdentity.swift; sourceTree = "<group>"; };
 		CBCD0355F29849AC8FC65507 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
 		D382E0082C361DD751AE4867 /* trix_coreFFI.modulemap */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.module-map"; path = trix_coreFFI.modulemap; sourceTree = "<group>"; };
+		E53DB9EB4BE8475A31F2189A /* TrixCorePersistentBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixCorePersistentBridge.swift; sourceTree = "<group>"; };
 		F16E8D46A5E1F90D5FA589FB /* MessagingLabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagingLabView.swift; sourceTree = "<group>"; };
 		FB561F04E1C44D1888D73336 /* CreateAccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateAccountView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -204,6 +208,8 @@
 			isa = PBXGroup;
 			children = (
 				CBCD0355F29849AC8FC65507 /* .gitkeep */,
+				39DC437F679BF827B2ECC4D1 /* TrixCoreMessageBridge.swift */,
+				E53DB9EB4BE8475A31F2189A /* TrixCorePersistentBridge.swift */,
 				6FF7213EA531F2A99EC523D4 /* TrixCoreServerBridge.swift */,
 				8AC3572456216797EEEB77A2 /* Generated */,
 			);
@@ -283,6 +289,8 @@
 				E4F971691AB2F86D7BACBBB2 /* ServerConfiguration.swift in Sources */,
 				A3F584F628831CED1241968D /* SystemModels.swift in Sources */,
 				DB5806C60BE9AACB7A23AEE9 /* SystemStatusView.swift in Sources */,
+				D7A634A74EF8AFA641149594 /* TrixCoreMessageBridge.swift in Sources */,
+				6FEC0B6CA6C8DD295B34506C /* TrixCorePersistentBridge.swift in Sources */,
 				9FFE059EB1320E146D1865E3 /* TrixCoreServerBridge.swift in Sources */,
 				BD87D15AEFAF56495250E94C /* TrixiOSApp.swift in Sources */,
 				BA618D8F998D732D83C222E6 /* trix_core.swift in Sources */,

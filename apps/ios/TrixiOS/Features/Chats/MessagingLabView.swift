@@ -13,6 +13,7 @@ struct MessagingLabView: View {
     @State private var createChatDraft = CreateChatDraft()
     @State private var activityMessage: String?
     @State private var leasedInboxBatch: LeaseInboxResponse?
+    @State private var localInboxSync: LocalInboxSyncResult?
 
     var body: some View {
         List {
@@ -40,20 +41,96 @@ struct MessagingLabView: View {
                         }
                     }
 
-                    Button(action: publishDebugKeyPackages) {
+                    Button(action: publishKeyPackages) {
                         if model.isLoading {
                             ProgressView()
                                 .frame(maxWidth: .infinity)
                         } else {
-                            Text("Publish 5 Debug Key Packages")
+                            Text("Publish 5 MLS Key Packages")
                                 .frame(maxWidth: .infinity)
                         }
                     }
                     .disabled(model.isLoading)
                 } header: {
-                    Text("Debug Key Packages")
+                    Text("MLS Key Packages")
                 } footer: {
-                    Text("Chat creation and device membership flows require published key packages on the target devices. This PoC publishes placeholder payloads under the server test cipher suite.")
+                    Text("Key packages now come from the persistent `trix-core` MLS facade stored on-device. Chat creation and membership flows can reserve these packages from the server.")
+                }
+
+                Section {
+                    Button(action: syncChatHistoriesIntoLocalStore) {
+                        if model.isLoading {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Text("Sync Histories Into Local Store")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .disabled(model.isLoading)
+
+                    Button(action: leaseInboxIntoLocalStore) {
+                        if model.isLoading {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Text("Lease Inbox Into Local Store")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .disabled(model.isLoading)
+
+                    if let localCoreState = model.localCoreState {
+                        LabeledContent("Cipher Suite") {
+                            Text(localCoreState.ciphersuiteLabel)
+                                .font(.system(.footnote, design: .monospaced))
+                                .multilineTextAlignment(.trailing)
+                        }
+
+                        LabeledContent("Local Chats") {
+                            Text(String(localCoreState.localChats.count))
+                        }
+
+                        LabeledContent("Lease Owner") {
+                            Text(localCoreState.leaseOwner)
+                                .font(.system(.footnote, design: .monospaced))
+                                .multilineTextAlignment(.trailing)
+                        }
+
+                        LabeledContent("Inbox Cursor") {
+                            Text(localCoreState.lastAckedInboxId.map(String.init) ?? "None")
+                        }
+
+                        if let localInboxSync {
+                            LabeledContent("Last Lease Acked") {
+                                Text(String(localInboxSync.ackedInboxIds.count))
+                            }
+
+                            LabeledContent("Lease Expires") {
+                                Text(localInboxSync.leaseExpiresAtDate.formatted(date: .abbreviated, time: .standard))
+                            }
+                        }
+
+                        if !localCoreState.chatCursors.isEmpty {
+                            ForEach(localCoreState.chatCursors.prefix(5)) { cursor in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(cursor.chatId)
+                                        .font(.system(.footnote, design: .monospaced))
+                                    Text("Cursor \(cursor.lastServerSeq)")
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        }
+                    } else {
+                        Text("Persistent `trix-core` state will be created on first MLS publish or sync.")
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Local Core Store")
+                } footer: {
+                    Text("This is the on-device `trix-core` cache for MLS state, chat history, and inbox sync cursors. Chat detail prefers local history after you sync it here.")
                 }
 
                 Section {
@@ -196,6 +273,12 @@ struct MessagingLabView: View {
                                 Text(item.message.debugPreview)
                                     .font(.subheadline)
 
+                                if let debugDetail = item.message.debugDetail {
+                                    Text(debugDetail)
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                }
+
                                 Text(item.message.chatId)
                                     .font(.system(.footnote, design: .monospaced))
                                     .foregroundStyle(.secondary)
@@ -247,12 +330,34 @@ struct MessagingLabView: View {
         }
     }
 
-    private func publishDebugKeyPackages() {
+    private func publishKeyPackages() {
         activityMessage = nil
 
         Task {
-            if let response = await model.publishDebugKeyPackages(baseURLString: serverBaseURL) {
-                activityMessage = "Published \(response.packages.count) debug key packages for device \(response.deviceId)."
+            if let response = await model.publishKeyPackages(baseURLString: serverBaseURL) {
+                activityMessage = "Published \(response.packages.count) MLS key packages for device \(response.deviceId)."
+            }
+        }
+    }
+
+    private func syncChatHistoriesIntoLocalStore() {
+        activityMessage = nil
+
+        Task {
+            if let result = await model.syncChatHistoriesIntoLocalStore(baseURLString: serverBaseURL) {
+                activityMessage = "Local history sync upserted \(result.chatsUpserted) chats and \(result.messagesUpserted) messages."
+            }
+        }
+    }
+
+    private func leaseInboxIntoLocalStore() {
+        activityMessage = nil
+        localInboxSync = nil
+
+        Task {
+            if let result = await model.leaseInboxIntoLocalStore(baseURLString: serverBaseURL) {
+                localInboxSync = result
+                activityMessage = "Leased, applied, and acknowledged \(result.ackedInboxIds.count) inbox items into the local store."
             }
         }
     }
@@ -366,6 +471,10 @@ extension ContentType {
 
 extension MessageEnvelope {
     var debugPreview: String {
+        if let preview = TrixCoreMessageBridge.preview(for: self) {
+            return preview.title
+        }
+
         if let data = Data(base64Encoded: ciphertextB64),
            let text = String(data: data, encoding: .utf8),
            !text.isEmpty {
@@ -378,6 +487,10 @@ extension MessageEnvelope {
         }
 
         return ciphertextB64
+    }
+
+    var debugDetail: String? {
+        TrixCoreMessageBridge.preview(for: self)?.detail
     }
 }
 

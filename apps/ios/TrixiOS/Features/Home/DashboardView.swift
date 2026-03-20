@@ -249,6 +249,16 @@ struct DashboardView: View {
                         }
                     }
 
+                    if let localCoreState = model.localCoreState {
+                        LabeledContent("Local Chat Cache") {
+                            Text("\(localCoreState.localChats.count) chats")
+                        }
+
+                        LabeledContent("Inbox Cursor") {
+                            Text(localCoreState.lastAckedInboxId.map(String.init) ?? "None")
+                        }
+                    }
+
                     Button("Forget This Device", role: .destructive) {
                         isShowingForgetAlert = true
                     }
