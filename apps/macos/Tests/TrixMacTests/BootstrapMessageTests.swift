@@ -23,6 +23,26 @@ func bootstrapMessageMatchesServerLayout() {
 }
 
 @Test
+func ffiBootstrapPayloadMatchesServerLayout() {
+    let transport = Data([0xAA, 0xBB, 0xCC])
+    let credentialIdentity = Data([0x01, 0x02])
+    let accountRoot = FfiAccountRootMaterial.generate()
+
+    let payload = accountRoot.accountBootstrapPayload(
+        transportPubkey: transport,
+        credentialIdentity: credentialIdentity
+    )
+
+    #expect(
+        payload
+            == DeviceIdentityMaterial.bootstrapMessage(
+                transportPublicKey: transport,
+                credentialIdentity: credentialIdentity
+            )
+    )
+}
+
+@Test
 func normalizedURLAddsDefaultScheme() {
     let url = ServerEndpoint.normalizedURL(from: "127.0.0.1:8080")
 
@@ -46,6 +66,20 @@ func revokeMessageMatchesServerLayout() {
             + Data([0x00, 0x00, 0x00, UInt8(reasonBytes.count)])
             + reasonBytes
     )
+}
+
+@Test
+func ffiDeviceRevokePayloadMatchesServerLayout() throws {
+    let deviceID = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
+    let reason = "device revoked"
+    let accountRoot = FfiAccountRootMaterial.generate()
+
+    let payload = try accountRoot.deviceRevokePayload(
+        deviceId: deviceID.uuidString,
+        reason: reason
+    )
+
+    #expect(payload == DeviceIdentityMaterial.revokeMessage(deviceID: deviceID, reason: reason))
 }
 
 @Test
@@ -126,4 +160,25 @@ func ffiSerializesAndParsesReactionBodyRoundTrip() throws {
     #expect(decoded.targetMessageId == targetMessageId)
     #expect(decoded.emoji == "🔥")
     #expect(decoded.reactionAction == .add)
+}
+
+@Test
+func messageEnvelopeAcceptsNullAadJson() throws {
+    let envelope = try MessageEnvelope(
+        ffiValue: FfiMessageEnvelope(
+            messageId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            chatId: "11111111-2222-3333-4444-555555555555",
+            serverSeq: 1,
+            senderAccountId: "99999999-8888-7777-6666-555555555555",
+            senderDeviceId: "12345678-1234-1234-1234-1234567890ab",
+            epoch: 0,
+            messageKind: .commit,
+            contentType: .chatEvent,
+            ciphertext: Data([0x01, 0x02, 0x03]),
+            aadJson: "null",
+            createdAtUnix: 1
+        )
+    )
+
+    #expect(envelope.aadJson.isEmpty)
 }

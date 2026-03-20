@@ -54,6 +54,20 @@ struct WorkspaceView: View {
         model.selectedChatProjectedMessages.isEmpty && !model.selectedChatHistory.isEmpty
     }
 
+    private var presentationAccountID: UUID? {
+        model.chatPresentationAccountID
+    }
+
+    private var selectedChatNeedsRecreation: Bool {
+        guard let detail = model.selectedChatDetail else {
+            return false
+        }
+
+        return detail.epoch == 0 &&
+            model.selectedChatProjectedMessages.isEmpty &&
+            model.selectedChatHistory.isEmpty
+    }
+
     var body: some View {
         if let currentAccount = model.currentAccount {
             VStack(alignment: .leading, spacing: 20) {
@@ -151,7 +165,7 @@ struct WorkspaceView: View {
         }
 
         if let selectedChatSummary = model.selectedChatSummary {
-            return selectedChatSummary.chatType.label
+            return selectedChatSummary.subtitle(for: presentationAccountID)
         }
 
         return "Choose a conversation from the sidebar."
@@ -183,8 +197,8 @@ struct WorkspaceView: View {
     private func conversationPanel(_ currentAccount: AccountProfileResponse) -> some View {
         if let summary = model.selectedChatSummary {
             TrixPanel(
-                title: summary.displayTitle,
-                subtitle: summary.chatType.label
+                title: summary.displayTitle(for: currentAccount.accountId),
+                subtitle: summary.subtitle(for: currentAccount.accountId)
             ) {
                 VStack(alignment: .leading, spacing: 18) {
                     HStack(spacing: 10) {
@@ -592,6 +606,7 @@ struct WorkspaceView: View {
                         ForEach(model.chats) { chat in
                             ChatRow(
                                 chat: chat,
+                                currentAccountID: presentationAccountID,
                                 isSelected: chat.chatId == model.selectedChatID,
                                 isLoading: chat.chatId == model.selectedChatID && model.isLoadingSelectedChat
                             ) {
@@ -611,11 +626,11 @@ struct WorkspaceView: View {
             if let summary = model.selectedChatSummary {
                 TrixPanel(
                     title: "Selected Chat Diagnostics",
-                    subtitle: "\(summary.displayTitle) • \(summary.chatType.rawValue.replacingOccurrences(of: "_", with: " "))"
+                    subtitle: "\(summary.displayTitle(for: presentationAccountID)) • \(summary.subtitle(for: presentationAccountID))"
                 ) {
                     VStack(alignment: .leading, spacing: 18) {
                         HStack(spacing: 12) {
-                            TrixToneBadge(label: summary.chatType.rawValue.replacingOccurrences(of: "_", with: " "), tint: colors.accent)
+                            TrixToneBadge(label: summary.chatType.label, tint: colors.accent)
                             if model.isLoadingSelectedChat {
                                 TrixToneBadge(label: "Refreshing detail", tint: colors.rust)
                             }
@@ -647,10 +662,10 @@ struct WorkspaceView: View {
                                 ForEach(detail.members) { member in
                                     HStack(alignment: .top) {
                                         VStack(alignment: .leading, spacing: 4) {
-                                            Text(shortID(member.accountId))
-                                                .font(.system(.subheadline, design: .monospaced))
+                                            Text(memberDisplayName(detail: detail, accountId: member.accountId))
+                                                .font(.subheadline.weight(.semibold))
                                                 .foregroundStyle(colors.ink)
-                                            Text(member.role)
+                                            Text(memberSecondaryLine(detail: detail, accountId: member.accountId) ?? member.role)
                                                 .font(.footnote.weight(.semibold))
                                                 .foregroundStyle(colors.inkMuted)
                                         }
@@ -744,8 +759,8 @@ struct WorkspaceView: View {
                 )
             }
 
-            if !detail.members.isEmpty {
-                Text(detail.members.prefix(6).map { shortID($0.accountId) }.joined(separator: " · "))
+            if !detail.participantProfiles.isEmpty {
+                Text(detail.participantProfiles.prefix(6).map(\.displayName).joined(separator: " · "))
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(colors.inkMuted)
                     .textSelection(.enabled)
@@ -816,7 +831,11 @@ struct WorkspaceView: View {
                     Text("Composer")
                         .font(.headline)
                         .foregroundStyle(colors.ink)
-                    Text("You can type drafts now. Sending stays disabled until the Mac can restore the MLS conversation for this chat.")
+                    Text(
+                        selectedChatNeedsRecreation
+                            ? "Этот чат был создан без локального MLS control flow. Для отправки создай новый чат в текущей сборке."
+                            : "Messages now send through the local MLS state when this Mac has the chat conversation material."
+                    )
                         .font(.footnote)
                         .foregroundStyle(colors.inkMuted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -824,12 +843,15 @@ struct WorkspaceView: View {
 
                 Spacer()
 
-                TrixToneBadge(label: "Local draft only", tint: colors.warning)
+                TrixToneBadge(
+                    label: selectedChatNeedsRecreation ? "Legacy chat" : (model.isSendingMessage ? "Sending…" : "MLS send"),
+                    tint: selectedChatNeedsRecreation ? colors.warning : (model.isSendingMessage ? colors.warning : colors.success)
+                )
             }
 
             ZStack(alignment: .topLeading) {
                 if composerDraft.isEmpty {
-                    Text("Write a reply to \(summary.displayTitle)…")
+                    Text("Write a reply to \(summary.displayTitle(for: presentationAccountID))…")
                         .font(.body)
                         .foregroundStyle(colors.inkMuted)
                         .padding(.horizontal, 14)
@@ -855,11 +877,21 @@ struct WorkspaceView: View {
                 Spacer()
 
                 Button {
+                    Task {
+                        let sent = await model.sendMessage(draftText: composerDraft)
+                        if sent {
+                            composerDraft = ""
+                        }
+                    }
                 } label: {
-                    Label("Send", systemImage: "paperplane.fill")
+                    Label(model.isSendingMessage ? "Sending…" : "Send", systemImage: "paperplane.fill")
                 }
                 .buttonStyle(TrixActionButtonStyle(tone: .primary))
-                .disabled(true)
+                .disabled(
+                    composerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                        model.isSendingMessage ||
+                        selectedChatNeedsRecreation
+                )
             }
         }
         .padding(20)
@@ -882,6 +914,24 @@ struct WorkspaceView: View {
 
     private func shortID(_ uuid: UUID) -> String {
         String(uuid.uuidString.prefix(8)).lowercased()
+    }
+
+    private func participantProfile(
+        detail: ChatDetailResponse,
+        accountId: UUID
+    ) -> ChatParticipantProfileSummary? {
+        detail.participantProfiles.first { $0.accountId == accountId }
+    }
+
+    private func memberDisplayName(detail: ChatDetailResponse, accountId: UUID) -> String {
+        participantProfile(detail: detail, accountId: accountId)?.displayName ?? shortID(accountId)
+    }
+
+    private func memberSecondaryLine(detail: ChatDetailResponse, accountId: UUID) -> String? {
+        let profile = participantProfile(detail: detail, accountId: accountId)
+        let role = detail.members.first(where: { $0.accountId == accountId })?.role
+        let segments = [profile?.handleLabel, role].compactMap { $0 }
+        return segments.isEmpty ? profile?.detailLine : segments.joined(separator: " • ")
     }
 
     private func cursorBinding(for jobID: UUID) -> Binding<String> {
@@ -1695,6 +1745,7 @@ private struct DeviceRow: View {
 private struct ChatRow: View {
     @Environment(\.trixColors) private var colors
     let chat: ChatSummary
+    let currentAccountID: UUID?
     let isSelected: Bool
     let isLoading: Bool
     let action: () -> Void
@@ -1713,14 +1764,15 @@ private struct ChatRow: View {
                 }
 
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(chat.displayTitle)
+                    Text(chat.displayTitle(for: currentAccountID))
                         .font(.headline)
                         .foregroundStyle(colors.ink)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Text(chat.chatType.rawValue.replacingOccurrences(of: "_", with: " "))
+                    Text(chat.subtitle(for: currentAccountID))
                         .font(.subheadline)
                         .foregroundStyle(colors.inkMuted)
+                        .lineLimit(2)
                 }
 
                 VStack(alignment: .trailing, spacing: 6) {

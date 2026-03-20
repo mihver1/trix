@@ -89,6 +89,35 @@ struct TrixAPIClient {
         }
     }
 
+    func createAccount(
+        handle: String?,
+        profileName: String,
+        profileBio: String?,
+        deviceDisplayName: String,
+        identity: DeviceIdentityMaterial
+    ) async throws -> CreateAccountResponse {
+        guard let accountRoot = identity.accountRootKeyMaterial else {
+            throw TrixAPIError.invalidPayload("У этого устройства нет account-root ключа.")
+        }
+
+        return try await callFFI { client in
+            try CreateAccountResponse(
+                ffiValue: try client.createAccountWithMaterials(
+                    params: FfiCreateAccountWithMaterialsParams(
+                        handle: handle,
+                        profileName: profileName,
+                        profileBio: profileBio,
+                        deviceDisplayName: deviceDisplayName,
+                        platform: DeviceIdentityMaterial.platform,
+                        credentialIdentity: identity.credentialIdentityData
+                    ),
+                    accountRoot: accountRoot,
+                    deviceKeys: identity.transportKeyMaterial
+                )
+            )
+        }
+    }
+
     func createAuthChallenge(_ request: AuthChallengeRequest) async throws -> AuthChallengeResponse {
         try await callFFI { client in
             AuthChallengeResponse(
@@ -107,6 +136,22 @@ struct TrixAPIClient {
                         request.signatureB64,
                         label: "signature_b64"
                     )
+                )
+            )
+        }
+    }
+
+    func authenticate(
+        deviceId: UUID,
+        identity: DeviceIdentityMaterial,
+        setAccessToken: Bool = false
+    ) async throws -> AuthSessionResponse {
+        try await callFFI { client in
+            try AuthSessionResponse(
+                ffiValue: try client.authenticateWithDeviceKey(
+                    deviceId: deviceId.uuidString,
+                    deviceKeys: identity.transportKeyMaterial,
+                    setAccessToken: setAccessToken
                 )
             )
         }
@@ -132,6 +177,15 @@ struct TrixAPIClient {
                     excludeSelf: excludeSelf
                 )
             )
+        }
+    }
+
+    func updateAccountProfile(
+        accessToken: String,
+        request: UpdateAccountProfileRequest
+    ) async throws -> AccountProfileResponse {
+        try await callFFI(accessToken: accessToken) { client in
+            try AccountProfileResponse(ffiValue: client.updateAccountProfile(params: request.ffiParams()))
         }
     }
 
@@ -234,6 +288,29 @@ struct TrixAPIClient {
         }
     }
 
+    func completeLinkIntent(
+        linkIntentId: UUID,
+        linkToken: UUID,
+        deviceDisplayName: String,
+        identity: DeviceIdentityMaterial
+    ) async throws -> CompleteLinkIntentResponse {
+        try await callFFI { client in
+            try CompleteLinkIntentResponse(
+                ffiValue: try client.completeLinkIntentWithDeviceKey(
+                    linkIntentId: linkIntentId.uuidString,
+                    params: FfiCompleteLinkIntentWithDeviceKeyParams(
+                        linkToken: linkToken.uuidString,
+                        deviceDisplayName: deviceDisplayName,
+                        platform: DeviceIdentityMaterial.platform,
+                        credentialIdentity: identity.credentialIdentityData,
+                        keyPackages: []
+                    ),
+                    deviceKeys: identity.transportKeyMaterial
+                )
+            )
+        }
+    }
+
     func approveDevice(
         accessToken: String,
         deviceId: UUID,
@@ -248,6 +325,29 @@ struct TrixAPIClient {
                         label: "account_root_signature_b64"
                     ),
                     transferBundle: try request.transferBundleB64.map {
+                        try TrixCoreCodec.decodeBase64($0, label: "transfer_bundle_b64")
+                    }
+                )
+            )
+        }
+    }
+
+    func approveDevice(
+        accessToken: String,
+        deviceId: UUID,
+        identity: DeviceIdentityMaterial,
+        transferBundleB64: String? = nil
+    ) async throws -> ApproveDeviceResponse {
+        guard let accountRoot = identity.accountRootKeyMaterial else {
+            throw TrixAPIError.invalidPayload("Approve доступен только на root-capable устройстве.")
+        }
+
+        return try await callFFI(accessToken: accessToken) { client in
+            try ApproveDeviceResponse(
+                ffiValue: try client.approveDeviceWithAccountRoot(
+                    deviceId: deviceId.uuidString,
+                    accountRoot: accountRoot,
+                    transferBundle: try transferBundleB64.map {
                         try TrixCoreCodec.decodeBase64($0, label: "transfer_bundle_b64")
                     }
                 )
@@ -280,6 +380,27 @@ struct TrixAPIClient {
                         request.accountRootSignatureB64,
                         label: "account_root_signature_b64"
                     )
+                )
+            )
+        }
+    }
+
+    func revokeDevice(
+        accessToken: String,
+        deviceId: UUID,
+        reason: String,
+        identity: DeviceIdentityMaterial
+    ) async throws -> RevokeDeviceResponse {
+        guard let accountRoot = identity.accountRootKeyMaterial else {
+            throw TrixAPIError.invalidPayload("Revoke доступен только на root-capable устройстве.")
+        }
+
+        return try await callFFI(accessToken: accessToken) { client in
+            try RevokeDeviceResponse(
+                ffiValue: try client.revokeDeviceWithAccountRoot(
+                    deviceId: deviceId.uuidString,
+                    reason: reason,
+                    accountRoot: accountRoot
                 )
             )
         }
@@ -328,6 +449,93 @@ struct TrixAPIClient {
     ) async throws -> CreateChatResponse {
         try await callFFI(accessToken: accessToken) { client in
             try CreateChatResponse(ffiValue: client.createChat(params: try request.ffiValue()))
+        }
+    }
+
+    func createChatControl(
+        accessToken: String,
+        databasePath: URL,
+        statePath: URL,
+        mlsStorageRoot: URL,
+        credentialIdentity: Data,
+        creatorAccountId: UUID,
+        creatorDeviceId: UUID,
+        chatType: ChatType,
+        title: String?,
+        participantAccountIds: [UUID]
+    ) async throws -> CreateChatControlOutcome {
+        try await callFFI(accessToken: accessToken) { client in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
+            let facade = try Self.makePersistentMlsFacade(
+                storageRoot: mlsStorageRoot,
+                credentialIdentity: credentialIdentity
+            )
+            let outcome = try coordinator.createChatControl(
+                client: client,
+                store: store,
+                facade: facade,
+                input: FfiCreateChatControlInput(
+                    creatorAccountId: creatorAccountId.uuidString,
+                    creatorDeviceId: creatorDeviceId.uuidString,
+                    chatType: chatType.ffiValue,
+                    title: title,
+                    participantAccountIds: participantAccountIds.map(\.uuidString),
+                    groupId: nil,
+                    commitAadJson: nil,
+                    welcomeAadJson: nil
+                )
+            )
+            try store.saveState()
+            try facade.saveState()
+            try coordinator.saveState()
+            return try CreateChatControlOutcome(ffiValue: outcome)
+        }
+    }
+
+    func sendTextMessage(
+        accessToken: String,
+        databasePath: URL,
+        statePath: URL,
+        mlsStorageRoot: URL,
+        credentialIdentity: Data,
+        senderAccountId: UUID,
+        senderDeviceId: UUID,
+        chatId: UUID,
+        text: String
+    ) async throws -> SendMessageOutcome {
+        try await callFFI(accessToken: accessToken) { client in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
+            let facade = try Self.makePersistentMlsFacade(
+                storageRoot: mlsStorageRoot,
+                credentialIdentity: credentialIdentity
+            )
+            guard let groupId = try store.chatMlsGroupId(chatId: chatId.uuidString) else {
+                throw TrixAPIError.invalidPayload("Этот чат ещё не готов к отправке с этого Mac.")
+            }
+            guard let conversation = try facade.loadGroup(groupId: groupId) else {
+                throw TrixAPIError.invalidPayload("Локальное MLS-состояние для этого чата ещё не восстановлено.")
+            }
+
+            let outcome = try coordinator.sendMessageBody(
+                client: client,
+                store: store,
+                facade: facade,
+                conversation: conversation,
+                input: FfiSendMessageInput(
+                    senderAccountId: senderAccountId.uuidString,
+                    senderDeviceId: senderDeviceId.uuidString,
+                    chatId: chatId.uuidString,
+                    messageId: nil,
+                    body: TypedMessageBody.text(text).ffiValue(),
+                    aadJson: nil
+                )
+            )
+            try store.saveState()
+            try facade.saveState()
+            try coordinator.saveState()
+            return try SendMessageOutcome(ffiValue: outcome)
         }
     }
 
@@ -613,6 +821,25 @@ struct TrixAPIClient {
 
     private static func makeSyncCoordinator(statePath: URL) throws -> FfiSyncCoordinator {
         try FfiSyncCoordinator.newPersistent(statePath: statePath.path)
+    }
+
+    private static func makePersistentMlsFacade(
+        storageRoot: URL,
+        credentialIdentity: Data
+    ) throws -> FfiMlsFacade {
+        try FileManager.default.createDirectory(
+            at: storageRoot,
+            withIntermediateDirectories: true
+        )
+
+        if let loadedFacade = try? FfiMlsFacade.loadPersistent(storageRoot: storageRoot.path) {
+            return loadedFacade
+        }
+
+        return try FfiMlsFacade.newPersistent(
+            credentialIdentity: credentialIdentity,
+            storageRoot: storageRoot.path
+        )
     }
 
     private func decode<Response: Decodable>(data: Data, response: URLResponse) throws -> Response {

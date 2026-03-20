@@ -2456,6 +2456,7 @@ impl Database {
         participant_account_ids.insert(input.creator_account_id);
         participant_account_ids.extend(target_account_ids.iter().copied());
         let participant_account_ids: Vec<Uuid> = participant_account_ids.into_iter().collect();
+        let created_epoch = u64::from(input.initial_commit.is_some());
 
         match input.chat_type {
             ChatType::Dm if participant_account_ids.len() != 2 => {
@@ -2596,11 +2597,12 @@ impl Database {
         sqlx::query(
             r#"
             INSERT INTO mls_group_states (chat_id, group_id_bytes, epoch, state_status)
-            VALUES ($1, $2, 0, 'active'::group_state_status)
+            VALUES ($1, $2, $3, 'active'::group_state_status)
             "#,
         )
         .bind(chat_id)
         .bind(Uuid::new_v4().as_bytes().to_vec())
+        .bind(u64_to_i64(created_epoch, "created epoch")?)
         .execute(&mut *tx)
         .await
         .map_err(map_db_error)?;
@@ -2623,7 +2625,7 @@ impl Database {
                 chat_id,
                 input.creator_account_id,
                 input.creator_device_id,
-                0,
+                created_epoch,
                 MessageKind::Commit,
                 commit,
                 &recipients,
@@ -2640,7 +2642,7 @@ impl Database {
                 chat_id,
                 input.creator_account_id,
                 input.creator_device_id,
-                0,
+                created_epoch,
                 MessageKind::WelcomeRef,
                 welcome,
                 &recipients,
@@ -2655,7 +2657,7 @@ impl Database {
         Ok(CreateChatOutput {
             chat_id,
             chat_type: input.chat_type,
-            epoch: 0,
+            epoch: created_epoch,
         })
     }
 
@@ -5217,6 +5219,7 @@ mod tests {
             })
             .await
             .expect("create dm");
+        assert_eq!(dm.epoch, 1);
 
         let intent = db
             .create_link_intent(alice.account_id, alice.device_id)
@@ -5293,7 +5296,7 @@ mod tests {
             .await
             .expect("add secondary device to dm");
 
-        assert_eq!(added.epoch, 1);
+        assert_eq!(added.epoch, 2);
         assert_eq!(added.changed_device_ids, vec![completed.pending_device_id]);
         assert!(
             db.get_chat_detail_for_device(dm.chat_id, completed.pending_device_id)
@@ -5330,7 +5333,7 @@ mod tests {
             .await
             .expect("remove secondary device from dm");
 
-        assert_eq!(removed.epoch, 2);
+        assert_eq!(removed.epoch, 3);
         assert_eq!(
             removed.changed_device_ids,
             vec![completed.pending_device_id]

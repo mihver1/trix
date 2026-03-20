@@ -22,6 +22,7 @@ final class AppModel: ObservableObject {
     @Published var keyPackagePublishDraft = KeyPackagePublishDraft()
     @Published var keyPackageReserveDraft = KeyPackageReserveDraft()
     @Published var createChatDraft = CreateChatDraft()
+    @Published var editProfileDraft = EditProfileDraft()
     @Published var accountDirectoryResults: [DirectoryAccountSummary] = []
     @Published var publishedKeyPackages: [PublishedKeyPackage] = []
     @Published var reservedKeyPackages: [ReservedKeyPackage] = []
@@ -43,6 +44,8 @@ final class AppModel: ObservableObject {
     @Published var isRefreshingWorkspace = false
     @Published var isCreatingChat = false
     @Published var isSearchingAccountDirectory = false
+    @Published var isUpdatingProfile = false
+    @Published var isSendingMessage = false
     @Published var isRefreshingInbox = false
     @Published var isLeasingInbox = false
     @Published var isAckingInbox = false
@@ -120,6 +123,10 @@ final class AppModel: ObservableObject {
         }
     }
 
+    var canUpdateProfile: Bool {
+        editProfileDraft.profileName.nonEmptyTrimmed != nil && !isUpdatingProfile
+    }
+
     var canReserveKeyPackages: Bool {
         guard keyPackageReserveDraft.accountID.nonEmptyTrimmed != nil else {
             return false
@@ -154,6 +161,10 @@ final class AppModel: ObservableObject {
 
     var hasProjectedTimelineData: Bool {
         !selectedChatProjectedMessages.isEmpty
+    }
+
+    var chatPresentationAccountID: UUID? {
+        currentAccount?.accountId ?? persistedSession?.accountId
     }
 
     var isCreateChatDirectoryEmpty: Bool {
@@ -245,13 +256,13 @@ final class AppModel: ObservableObject {
                 deviceDisplayName: deviceDisplayName,
                 platform: DeviceIdentityMaterial.platform
             )
-            let request = try identity.makeCreateAccountRequest(
+            let created = try await client.createAccount(
                 handle: handle,
                 profileName: profileName,
                 profileBio: profileBio,
-                deviceDisplayName: deviceDisplayName
+                deviceDisplayName: deviceDisplayName,
+                identity: identity
             )
-            let created = try await client.createAccount(request)
             let authSession = try await authenticate(
                 client: client,
                 deviceId: created.deviceId,
@@ -323,10 +334,9 @@ final class AppModel: ObservableObject {
             )
             let response = try await client.completeLinkIntent(
                 linkIntentId: payload.linkIntentId,
-                request: identity.makeCompleteLinkIntentRequest(
-                    linkToken: payload.linkToken,
-                    deviceDisplayName: deviceDisplayName
-                )
+                linkToken: payload.linkToken,
+                deviceDisplayName: deviceDisplayName,
+                identity: identity
             )
 
             serverBaseURLString = payload.baseURL
@@ -439,12 +449,17 @@ final class AppModel: ObservableObject {
             lastErrorMessage = "Аккаунт ещё не загружен."
             return false
         }
+        guard let creatorDeviceID = currentDeviceID else {
+            lastErrorMessage = "Текущее устройство ещё не загружено."
+            return false
+        }
 
         isCreatingChat = true
         lastErrorMessage = nil
         defer { isCreatingChat = false }
 
         do {
+            let identity = try loadStoredIdentity()
             var seenParticipantIDs = Set<UUID>()
             let uniqueParticipants = createChatParticipantAccountIDs.filter { participantAccountID in
                 guard participantAccountID != creatorAccountID else {
@@ -467,30 +482,18 @@ final class AppModel: ObservableObject {
                 throw TrixAPIError.invalidPayload("Account sync chats создаются только сервером.")
             }
 
-            var reservedKeyPackageIDs: [String] = []
-            for participantAccountID in uniqueParticipants {
-                let reserved = try await client.fetchAccountKeyPackages(
-                    accessToken: token,
-                    accountId: participantAccountID
-                )
-
-                guard !reserved.packages.isEmpty else {
-                    throw TrixAPIError.invalidPayload("У одного из выбранных аккаунтов нет доступных key packages.")
-                }
-
-                reservedKeyPackageIDs.append(contentsOf: reserved.packages.map(\.keyPackageId))
-            }
-
-            let created = try await client.createChat(
+            let storePaths = try workspaceStorePaths()
+            let created = try await client.createChatControl(
                 accessToken: token,
-                request: CreateChatRequest(
-                    chatType: createChatDraft.chatType,
-                    title: createChatDraft.title.nonEmptyTrimmed,
-                    participantAccountIds: uniqueParticipants,
-                    reservedKeyPackageIds: reservedKeyPackageIDs,
-                    initialCommit: nil,
-                    welcomeMessage: nil
-                )
+                databasePath: storePaths.localHistoryURL,
+                statePath: storePaths.syncStateURL,
+                mlsStorageRoot: storePaths.mlsStateRootURL,
+                credentialIdentity: identity.storedIdentity.credentialIdentity,
+                creatorAccountId: creatorAccountID,
+                creatorDeviceId: creatorDeviceID,
+                chatType: createChatDraft.chatType,
+                title: createChatDraft.title.nonEmptyTrimmed,
+                participantAccountIds: uniqueParticipants
             )
 
             resetCreateChatComposer()
@@ -510,6 +513,80 @@ final class AppModel: ObservableObject {
             }
         } catch {
             lastErrorMessage = error.userFacingMessage
+        }
+
+        return false
+    }
+
+    func sendMessage(draftText: String) async -> Bool {
+        guard let token = accessToken else {
+            await restoreSession()
+            return false
+        }
+        guard let client = makeClient() else {
+            return false
+        }
+        guard let chatId = selectedChatID else {
+            lastErrorMessage = "Сначала выбери чат."
+            return false
+        }
+        guard let senderAccountID = currentAccount?.accountId ?? persistedSession?.accountId else {
+            lastErrorMessage = "Аккаунт ещё не загружен."
+            return false
+        }
+        guard let senderDeviceID = currentDeviceID else {
+            lastErrorMessage = "Текущее устройство ещё не загружено."
+            return false
+        }
+        guard let text = draftText.nonEmptyTrimmed else {
+            return false
+        }
+
+        isSendingMessage = true
+        lastErrorMessage = nil
+        defer { isSendingMessage = false }
+
+        do {
+            let identity = try loadStoredIdentity()
+            let storePaths = try workspaceStorePaths()
+            _ = try await client.sendTextMessage(
+                accessToken: token,
+                databasePath: storePaths.localHistoryURL,
+                statePath: storePaths.syncStateURL,
+                mlsStorageRoot: storePaths.mlsStateRootURL,
+                credentialIdentity: identity.storedIdentity.credentialIdentity,
+                senderAccountId: senderAccountID,
+                senderDeviceId: senderDeviceID,
+                chatId: chatId,
+                text: text
+            )
+            try await loadWorkspace(client: client, accessToken: token)
+            try await loadSelectedChat(
+                client: client,
+                accessToken: token,
+                chatId: chatId
+            )
+            return true
+        } catch let error as TrixAPIError {
+            if error.isCredentialFailure {
+                accessToken = nil
+                await restoreSession()
+            } else {
+                lastErrorMessage = error.userFacingMessage
+            }
+        } catch {
+            let message = error.userFacingMessage
+            if message.contains("MLS group id") || message.contains("MLS group for chat") {
+                if selectedChatDetail?.epoch == 0 &&
+                    selectedChatProjectedMessages.isEmpty &&
+                    selectedChatHistory.isEmpty {
+                    lastErrorMessage = "Этот чат создан старым flow без локального MLS состояния. Создай новый чат в текущей сборке."
+                } else {
+                    lastErrorMessage = "Этот чат ещё не готов к отправке с этого Mac."
+                }
+            } else {
+                lastErrorMessage = message
+            }
         }
 
         return false
@@ -899,29 +976,11 @@ final class AppModel: ObservableObject {
         defer { approvingDeviceIDs.remove(device.deviceId) }
 
         do {
-            let payload = try await client.fetchDeviceApprovePayload(
-                accessToken: token,
-                deviceId: device.deviceId
-            )
-            guard payload.accountId == currentAccount?.accountId else {
-                throw TrixAPIError.invalidPayload("Approve payload относится к другому аккаунту.")
-            }
-
             let identity = try loadStoredIdentity(requireAccountRoot: true)
-            guard
-                let bootstrapPayload = Data(base64Encoded: payload.bootstrapPayloadB64)
-            else {
-                throw TrixAPIError.invalidPayload("Сервер вернул невалидный approve payload.")
-            }
-
-            let signatureB64 = try identity.accountRootSignatureB64(
-                for: bootstrapPayload,
-                errorMessage: "Approve доступен только на root-capable устройстве."
-            )
             _ = try await client.approveDevice(
                 accessToken: token,
-                deviceId: payload.deviceId,
-                request: ApproveDeviceRequest(accountRootSignatureB64: signatureB64)
+                deviceId: device.deviceId,
+                identity: identity
             )
 
             await refreshWorkspace()
@@ -953,10 +1012,6 @@ final class AppModel: ObservableObject {
             let reason = device.deviceStatus == .pending
                 ? "pending link rejected from macOS alpha client"
                 : "device revoked from macOS alpha client"
-            let signatureB64 = try identity.revokeSignatureB64(
-                deviceID: device.deviceId,
-                reason: reason
-            )
 
             guard let client = makeClient() else {
                 return
@@ -965,10 +1020,8 @@ final class AppModel: ObservableObject {
             _ = try await client.revokeDevice(
                 accessToken: token,
                 deviceId: device.deviceId,
-                request: RevokeDeviceRequest(
-                    reason: reason,
-                    accountRootSignatureB64: signatureB64
-                )
+                reason: reason,
+                identity: identity
             )
 
             await refreshWorkspace()
@@ -1035,22 +1088,9 @@ final class AppModel: ObservableObject {
         deviceId: UUID,
         identity: DeviceIdentityMaterial
     ) async throws -> AuthSessionResponse {
-        let challenge = try await client.createAuthChallenge(
-            AuthChallengeRequest(deviceId: deviceId)
-        )
-
-        guard let challengeData = Data(base64Encoded: challenge.challengeB64) else {
-            throw TrixAPIError.invalidPayload("Сервер вернул challenge в неожиданном формате.")
-        }
-
-        let signatureB64 = try identity.transportSignatureB64(for: challengeData)
-
-        return try await client.createAuthSession(
-            AuthSessionRequest(
-                deviceId: deviceId,
-                challengeId: challenge.challengeId,
-                signatureB64: signatureB64
-            )
+        try await client.authenticate(
+            deviceId: deviceId,
+            identity: identity
         )
     }
 
@@ -1481,7 +1521,8 @@ final class AppModel: ObservableObject {
         if lhs.chatType != .accountSync && rhs.chatType == .accountSync {
             return true
         }
-        return lhs.displayTitle.localizedCaseInsensitiveCompare(rhs.displayTitle) == .orderedAscending
+        return lhs.displayTitle(for: chatPresentationAccountID)
+            .localizedCaseInsensitiveCompare(rhs.displayTitle(for: chatPresentationAccountID)) == .orderedAscending
     }
 
     private func preferredChatSelection(from chats: [ChatSummary]) -> UUID? {
@@ -1566,6 +1607,12 @@ struct CreateChatDraft {
     var title = ""
     var directoryQuery = ""
     var selectedParticipants: [DirectoryAccountSummary] = []
+}
+
+struct EditProfileDraft {
+    var handle = ""
+    var profileName = ""
+    var profileBio = ""
 }
 
 enum KeyPackageReserveMode: String {

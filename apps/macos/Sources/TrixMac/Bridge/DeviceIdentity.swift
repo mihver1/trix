@@ -171,6 +171,18 @@ struct DeviceIdentityMaterial {
         accountRootMaterial != nil
     }
 
+    var accountRootKeyMaterial: FfiAccountRootMaterial? {
+        accountRootMaterial
+    }
+
+    var transportKeyMaterial: FfiDeviceKeyMaterial {
+        transportMaterial
+    }
+
+    var credentialIdentityData: Data {
+        credentialIdentity
+    }
+
     var storedIdentity: StoredDeviceIdentity {
         StoredDeviceIdentity(
             accountRootSeed: accountRootMaterial?.privateKeyBytes(),

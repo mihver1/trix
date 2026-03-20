@@ -384,6 +384,16 @@ extension AccountDirectoryResponse {
     }
 }
 
+extension UpdateAccountProfileRequest {
+    func ffiParams() -> FfiUpdateAccountProfileParams {
+        FfiUpdateAccountProfileParams(
+            handle: handle,
+            profileName: profileName,
+            profileBio: profileBio
+        )
+    }
+}
+
 extension DeviceSummary {
     init(ffiValue: FfiDeviceSummary) throws {
         self.init(
@@ -498,13 +508,38 @@ extension AccountKeyPackagesResponse {
     }
 }
 
+extension ChatParticipantProfileSummary {
+    init(ffiValue: FfiChatParticipantProfile) throws {
+        self.init(
+            accountId: try TrixCoreCodec.uuid(ffiValue.accountId, label: "account_id"),
+            handle: ffiValue.handle,
+            profileName: ffiValue.profileName,
+            profileBio: ffiValue.profileBio
+        )
+    }
+}
+
+extension ChatDeviceSummary {
+    init(ffiValue: FfiChatDeviceMember) throws {
+        self.init(
+            deviceId: try TrixCoreCodec.uuid(ffiValue.deviceId, label: "device_id"),
+            accountId: try TrixCoreCodec.uuid(ffiValue.accountId, label: "account_id"),
+            displayName: ffiValue.displayName,
+            platform: ffiValue.platform,
+            leafIndex: ffiValue.leafIndex,
+            credentialIdentityB64: ffiValue.credentialIdentity.base64EncodedString()
+        )
+    }
+}
+
 extension ChatSummary {
     init(ffiValue: FfiChatSummary) throws {
         self.init(
             chatId: try TrixCoreCodec.uuid(ffiValue.chatId, label: "chat_id"),
             chatType: ChatType(ffiValue.chatType),
             title: ffiValue.title,
-            lastServerSeq: ffiValue.lastServerSeq
+            lastServerSeq: ffiValue.lastServerSeq,
+            participantProfiles: try ffiValue.participantProfiles.map { try ChatParticipantProfileSummary(ffiValue: $0) }
         )
     }
 }
@@ -542,6 +577,19 @@ extension CreateChatResponse {
     }
 }
 
+extension CreateChatControlOutcome {
+    init(ffiValue: FfiCreateChatControlOutcome) throws {
+        self.init(
+            chatId: try TrixCoreCodec.uuid(ffiValue.chatId, label: "chat_id"),
+            chatType: ChatType(ffiValue.chatType),
+            epoch: ffiValue.epoch,
+            mlsGroupId: ffiValue.mlsGroupId,
+            report: try LocalStoreApplyReport(ffiValue: ffiValue.report),
+            projectedMessages: try ffiValue.projectedMessages.map { try LocalProjectedMessage(ffiValue: $0) }
+        )
+    }
+}
+
 extension ChatListResponse {
     init(ffiValues: [FfiChatSummary]) throws {
         self.init(chats: try ffiValues.map { try ChatSummary(ffiValue: $0) })
@@ -569,7 +617,9 @@ extension ChatDetailResponse {
             lastCommitMessageId: try ffiValue.lastCommitMessageId.map {
                 try TrixCoreCodec.uuid($0, label: "last_commit_message_id")
             },
-            members: try ffiValue.members.map { try ChatMemberSummary(ffiValue: $0) }
+            participantProfiles: try ffiValue.participantProfiles.map { try ChatParticipantProfileSummary(ffiValue: $0) },
+            members: try ffiValue.members.map { try ChatMemberSummary(ffiValue: $0) },
+            deviceMembers: try ffiValue.deviceMembers.map { try ChatDeviceSummary(ffiValue: $0) }
         )
     }
 }
@@ -586,7 +636,7 @@ extension MessageEnvelope {
             messageKind: MessageKind(ffiValue.messageKind),
             contentType: ContentType(ffiValue.contentType),
             ciphertextB64: ffiValue.ciphertext.base64EncodedString(),
-            aadJson: try TrixCoreCodec.decodeJSONObject(ffiValue.aadJson, label: "aad_json"),
+            aadJson: try TrixCoreCodec.decodeJSONObjectAllowingNull(ffiValue.aadJson, label: "aad_json"),
             createdAtUnix: ffiValue.createdAtUnix
         )
     }
@@ -674,6 +724,18 @@ extension LocalProjectedMessage {
     }
 }
 
+extension SendMessageOutcome {
+    init(ffiValue: FfiSendMessageOutcome) throws {
+        self.init(
+            chatId: try TrixCoreCodec.uuid(ffiValue.chatId, label: "chat_id"),
+            messageId: try TrixCoreCodec.uuid(ffiValue.messageId, label: "message_id"),
+            serverSeq: ffiValue.serverSeq,
+            report: try LocalStoreApplyReport(ffiValue: ffiValue.report),
+            projectedMessage: try LocalProjectedMessage(ffiValue: ffiValue.projectedMessage)
+        )
+    }
+}
+
 extension LocalStoreApplyReport {
     init(ffiValue: FfiLocalStoreApplyReport) throws {
         self.init(
@@ -754,6 +816,21 @@ enum TrixCoreCodec {
         }
 
         return object
+    }
+
+    static func decodeJSONObjectAllowingNull(
+        _ rawValue: String,
+        label: String
+    ) throws -> [String: JSONValue] {
+        let value = try decodeJSONValue(rawValue, label: label)
+        switch value {
+        case let .object(object):
+            return object
+        case .null:
+            return [:]
+        default:
+            throw TrixAPIError.invalidPayload("FFI returned invalid \(label).")
+        }
     }
 
     static func decodeOptionalJSONValue(_ rawValue: String, label: String) throws -> JSONValue? {

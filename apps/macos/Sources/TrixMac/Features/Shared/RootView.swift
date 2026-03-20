@@ -129,6 +129,7 @@ private struct WorkspaceSidebarView: View {
                     ForEach(model.chats) { chat in
                         WorkspaceSidebarChatRow(
                             chat: chat,
+                            currentAccountID: model.chatPresentationAccountID,
                             isSelected: chat.chatId == model.selectedChatID,
                             isLoading: chat.chatId == model.selectedChatID && model.isLoadingSelectedChat
                         ) {
@@ -317,6 +318,7 @@ private struct SidebarView: View {
 private struct WorkspaceSidebarChatRow: View {
     @Environment(\.trixColors) private var colors
     let chat: ChatSummary
+    let currentAccountID: UUID?
     let isSelected: Bool
     let isLoading: Bool
     let action: () -> Void
@@ -335,14 +337,15 @@ private struct WorkspaceSidebarChatRow: View {
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(chat.displayTitle)
+                    Text(chat.displayTitle(for: currentAccountID))
                         .font(.headline)
                         .foregroundStyle(colors.inverseInk)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Text(chat.chatType.label)
+                    Text(chat.subtitle(for: currentAccountID))
                         .font(.subheadline)
                         .foregroundStyle(colors.inverseInkMuted)
+                        .lineLimit(2)
                 }
 
                 if isLoading {

@@ -119,6 +119,12 @@ struct AccountDirectoryResponse: Codable {
     let accounts: [DirectoryAccountSummary]
 }
 
+struct UpdateAccountProfileRequest: Codable {
+    let handle: String?
+    let profileName: String
+    let profileBio: String?
+}
+
 struct DeviceListResponse: Codable {
     let accountId: UUID
     let devices: [DeviceSummary]
@@ -287,6 +293,15 @@ struct CreateChatResponse: Codable {
     let epoch: UInt64
 }
 
+struct CreateChatControlOutcome: Sendable {
+    let chatId: UUID
+    let chatType: ChatType
+    let epoch: UInt64
+    let mlsGroupId: Data
+    let report: LocalStoreApplyReport
+    let projectedMessages: [LocalProjectedMessage]
+}
+
 enum HistorySyncJobType: String, Codable {
     case initialSync = "initial_sync"
     case chatBackfill = "chat_backfill"
@@ -365,27 +380,112 @@ struct LocalInboxAckResult: Sendable {
     let syncState: SyncStateSnapshot
 }
 
+struct ChatParticipantProfileSummary: Codable, Identifiable, Hashable {
+    let accountId: UUID
+    let handle: String?
+    let profileName: String
+    let profileBio: String?
+
+    var id: UUID { accountId }
+
+    var displayName: String {
+        let trimmedName = profileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedName.isEmpty {
+            return trimmedName
+        }
+
+        if let handle, !handle.isEmpty {
+            return "@\(handle)"
+        }
+
+        return String(accountId.uuidString.prefix(8)).lowercased()
+    }
+
+    var handleLabel: String? {
+        guard let handle, !handle.isEmpty else {
+            return nil
+        }
+
+        return "@\(handle)"
+    }
+
+    var detailLine: String? {
+        if let handleLabel {
+            return handleLabel
+        }
+
+        guard let profileBio, !profileBio.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+
+        return profileBio
+    }
+}
+
+struct ChatDeviceSummary: Codable, Identifiable {
+    let deviceId: UUID
+    let accountId: UUID
+    let displayName: String
+    let platform: String
+    let leafIndex: UInt32
+    let credentialIdentityB64: String
+
+    var id: UUID { deviceId }
+}
+
 struct ChatSummary: Codable, Identifiable {
     let chatId: UUID
     let chatType: ChatType
     let title: String?
     let lastServerSeq: UInt64
+    let participantProfiles: [ChatParticipantProfileSummary]
 
     var id: UUID { chatId }
 
-    var displayTitle: String {
-        if let title, !title.isEmpty {
+    func displayTitle(for currentAccountID: UUID?) -> String {
+        if let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return title
         }
 
         switch chatType {
         case .dm:
-            return "Direct Message"
+            return primaryParticipant(for: currentAccountID)?.displayName ?? "Direct Message"
         case .group:
-            return "Untitled Group"
+            let names = displayParticipantNames(excluding: currentAccountID, limit: 3)
+            return names.isEmpty ? "Untitled Group" : names
         case .accountSync:
             return "Account Sync"
         }
+    }
+
+    func subtitle(for currentAccountID: UUID?) -> String {
+        switch chatType {
+        case .dm:
+            return primaryParticipant(for: currentAccountID)?.detailLine ?? chatType.label
+        case .group:
+            let names = displayParticipantNames(excluding: currentAccountID, limit: 5)
+            return names.isEmpty ? chatType.label : names
+        case .accountSync:
+            return chatType.label
+        }
+    }
+
+    func primaryParticipant(for currentAccountID: UUID?) -> ChatParticipantProfileSummary? {
+        participantProfiles.first { $0.accountId != currentAccountID } ?? participantProfiles.first
+    }
+
+    private func displayParticipantNames(excluding currentAccountID: UUID?, limit: Int) -> String {
+        let participants = participantProfiles.filter { $0.accountId != currentAccountID }
+        guard !participants.isEmpty else {
+            return ""
+        }
+
+        let names = participants.prefix(limit).map(\.displayName)
+        if participants.count > limit {
+            return names.joined(separator: ", ") + " +\(participants.count - limit)"
+        }
+
+        return names.joined(separator: ", ")
     }
 }
 
@@ -396,7 +496,31 @@ struct ChatDetailResponse: Codable {
     let lastServerSeq: UInt64
     let epoch: UInt64
     let lastCommitMessageId: UUID?
+    let participantProfiles: [ChatParticipantProfileSummary]
     let members: [ChatMemberSummary]
+    let deviceMembers: [ChatDeviceSummary]
+
+    func displayTitle(for currentAccountID: UUID?) -> String {
+        ChatSummary(
+            chatId: chatId,
+            chatType: chatType,
+            title: title,
+            lastServerSeq: lastServerSeq,
+            participantProfiles: participantProfiles
+        )
+        .displayTitle(for: currentAccountID)
+    }
+
+    func subtitle(for currentAccountID: UUID?) -> String {
+        ChatSummary(
+            chatId: chatId,
+            chatType: chatType,
+            title: title,
+            lastServerSeq: lastServerSeq,
+            participantProfiles: participantProfiles
+        )
+        .subtitle(for: currentAccountID)
+    }
 }
 
 struct ChatMemberSummary: Codable, Identifiable {
@@ -552,6 +676,29 @@ struct TypedMessageBody: Sendable {
             return eventType ?? "Chat event"
         }
     }
+
+    static func text(_ text: String) -> TypedMessageBody {
+        TypedMessageBody(
+            kind: .text,
+            text: text,
+            targetMessageId: nil,
+            emoji: nil,
+            reactionAction: nil,
+            receiptType: nil,
+            receiptAtUnix: nil,
+            blobId: nil,
+            mimeType: nil,
+            sizeBytes: nil,
+            sha256: nil,
+            fileName: nil,
+            widthPx: nil,
+            heightPx: nil,
+            fileKey: nil,
+            nonce: nil,
+            eventType: nil,
+            eventJson: nil
+        )
+    }
 }
 
 struct LocalProjectedMessage: Identifiable, Sendable {
@@ -586,6 +733,14 @@ struct LocalProjectedMessage: Identifiable, Sendable {
 
         return Data(base64Encoded: payloadB64)?.count ?? 0
     }
+}
+
+struct SendMessageOutcome: Sendable {
+    let chatId: UUID
+    let messageId: UUID
+    let serverSeq: UInt64
+    let report: LocalStoreApplyReport
+    let projectedMessage: LocalProjectedMessage
 }
 
 struct ChatHistoryResponse: Codable {
