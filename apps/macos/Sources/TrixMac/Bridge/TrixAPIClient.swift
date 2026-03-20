@@ -55,48 +55,73 @@ struct TrixAPIClient {
     let baseURL: URL
 
     private let session: URLSession
-    private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private let ffiClient: FfiServerApiClient
 
-    init(baseURL: URL, session: URLSession = .shared) {
+    init(baseURL: URL, session: URLSession = .shared) throws {
         self.baseURL = baseURL
         self.session = session
-
-        let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        self.encoder = encoder
 
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         self.decoder = decoder
+
+        do {
+            self.ffiClient = try FfiServerApiClient(baseUrl: baseURL.absoluteString)
+        } catch {
+            throw Self.mapFFIError(error)
+        }
     }
 
     func fetchHealth() async throws -> HealthResponse {
-        try await get("v0/system/health")
+        try await systemGet("v0/system/health")
     }
 
     func fetchVersion() async throws -> VersionResponse {
-        try await get("v0/system/version")
+        try await systemGet("v0/system/version")
     }
 
     func createAccount(_ request: CreateAccountRequest) async throws -> CreateAccountResponse {
-        try await post("v0/accounts", body: request)
+        try await callFFI { client in
+            try CreateAccountResponse(
+                ffiValue: client.createAccount(params: try request.ffiParams())
+            )
+        }
     }
 
     func createAuthChallenge(_ request: AuthChallengeRequest) async throws -> AuthChallengeResponse {
-        try await post("v0/auth/challenge", body: request)
+        try await callFFI { client in
+            AuthChallengeResponse(
+                ffiValue: try client.createAuthChallenge(deviceId: request.deviceId.uuidString)
+            )
+        }
     }
 
     func createAuthSession(_ request: AuthSessionRequest) async throws -> AuthSessionResponse {
-        try await post("v0/auth/session", body: request)
+        try await callFFI { client in
+            try AuthSessionResponse(
+                ffiValue: try client.createAuthSession(
+                    deviceId: request.deviceId.uuidString,
+                    challengeId: request.challengeId,
+                    signature: try TrixCoreCodec.decodeBase64(
+                        request.signatureB64,
+                        label: "signature_b64"
+                    )
+                )
+            )
+        }
     }
 
     func fetchCurrentAccount(accessToken: String) async throws -> AccountProfileResponse {
-        try await get("v0/accounts/me", accessToken: accessToken)
+        try await callFFI(accessToken: accessToken) { client in
+            try AccountProfileResponse(ffiValue: client.getMe())
+        }
     }
 
     func fetchDevices(accessToken: String) async throws -> DeviceListResponse {
-        try await get("v0/devices", accessToken: accessToken)
+        try await callFFI(accessToken: accessToken) { client in
+            try DeviceListResponse(ffiValue: client.listDevices())
+        }
     }
 
     func fetchInbox(
@@ -104,91 +129,92 @@ struct TrixAPIClient {
         afterInboxId: UInt64? = nil,
         limit: Int = 50
     ) async throws -> InboxResponse {
-        var queryItems = [
-            URLQueryItem(name: "limit", value: String(limit)),
-        ]
-
-        if let afterInboxId {
-            queryItems.append(URLQueryItem(name: "after_inbox_id", value: String(afterInboxId)))
+        try await callFFI(accessToken: accessToken) { client in
+            try InboxResponse(
+                ffiValue: client.getInbox(
+                    afterInboxId: afterInboxId,
+                    limit: try TrixCoreCodec.uint32(limit, label: "inbox limit")
+                )
+            )
         }
-
-        return try await get(
-            "v0/inbox",
-            queryItems: queryItems,
-            accessToken: accessToken
-        )
     }
 
     func leaseInbox(
         accessToken: String,
         request: LeaseInboxRequest
     ) async throws -> LeaseInboxResponse {
-        try await post(
-            "v0/inbox/lease",
-            body: request,
-            accessToken: accessToken
-        )
+        try await callFFI(accessToken: accessToken) { client in
+            try LeaseInboxResponse(ffiValue: client.leaseInbox(params: try request.ffiValue()))
+        }
     }
 
     func ackInbox(
         accessToken: String,
         request: AckInboxRequest
     ) async throws -> AckInboxResponse {
-        try await post(
-            "v0/inbox/ack",
-            body: request,
-            accessToken: accessToken
-        )
+        try await callFFI(accessToken: accessToken) { client in
+            AckInboxResponse(ffiValue: try client.ackInbox(inboxIds: request.inboxIds))
+        }
     }
 
     func fetchAccountKeyPackages(
         accessToken: String,
         accountId: UUID
     ) async throws -> AccountKeyPackagesResponse {
-        try await get(
-            "v0/accounts/\(accountId.uuidString)/key-packages",
-            accessToken: accessToken
-        )
+        try await callFFI(accessToken: accessToken) { client in
+            try AccountKeyPackagesResponse(
+                accountId: accountId.uuidString,
+                packages: client.getAccountKeyPackages(accountId: accountId.uuidString)
+            )
+        }
     }
 
     func publishKeyPackages(
         accessToken: String,
         request: PublishKeyPackagesRequest
     ) async throws -> PublishKeyPackagesResponse {
-        try await post(
-            "v0/key-packages:publish",
-            body: request,
-            accessToken: accessToken
-        )
+        try await callFFI(accessToken: accessToken) { client in
+            try PublishKeyPackagesResponse(
+                ffiValue: client.publishKeyPackages(
+                    packages: try request.packages.map { try $0.ffiValue() }
+                )
+            )
+        }
     }
 
     func reserveKeyPackages(
         accessToken: String,
         request: ReserveKeyPackagesRequest
     ) async throws -> AccountKeyPackagesResponse {
-        try await post(
-            "v0/key-packages:reserve",
-            body: request,
-            accessToken: accessToken
-        )
+        try await callFFI(accessToken: accessToken) { client in
+            try AccountKeyPackagesResponse(
+                accountId: request.accountId.uuidString,
+                packages: try client.reserveKeyPackages(
+                    accountId: request.accountId.uuidString,
+                    deviceIds: request.deviceIds.map(\.uuidString)
+                )
+            )
+        }
     }
 
     func createLinkIntent(accessToken: String) async throws -> CreateLinkIntentResponse {
-        try await post(
-            "v0/devices/link-intents",
-            body: Optional<String>.none,
-            accessToken: accessToken
-        )
+        try await callFFI(accessToken: accessToken) { client in
+            try CreateLinkIntentResponse(ffiValue: client.createLinkIntent())
+        }
     }
 
     func completeLinkIntent(
         linkIntentId: UUID,
         request: CompleteLinkIntentRequest
     ) async throws -> CompleteLinkIntentResponse {
-        try await post(
-            "v0/devices/link-intents/\(linkIntentId.uuidString)/complete",
-            body: request
-        )
+        try await callFFI { client in
+            try CompleteLinkIntentResponse(
+                ffiValue: client.completeLinkIntent(
+                    linkIntentId: linkIntentId.uuidString,
+                    params: try request.ffiParams()
+                )
+            )
+        }
     }
 
     func approveDevice(
@@ -196,21 +222,31 @@ struct TrixAPIClient {
         deviceId: UUID,
         request: ApproveDeviceRequest
     ) async throws -> ApproveDeviceResponse {
-        try await post(
-            "v0/devices/\(deviceId.uuidString)/approve",
-            body: request,
-            accessToken: accessToken
-        )
+        try await callFFI(accessToken: accessToken) { client in
+            try ApproveDeviceResponse(
+                ffiValue: try client.approveDevice(
+                    deviceId: deviceId.uuidString,
+                    accountRootSignature: try TrixCoreCodec.decodeBase64(
+                        request.accountRootSignatureB64,
+                        label: "account_root_signature_b64"
+                    ),
+                    transferBundle: try request.transferBundleB64.map {
+                        try TrixCoreCodec.decodeBase64($0, label: "transfer_bundle_b64")
+                    }
+                )
+            )
+        }
     }
 
     func fetchDeviceApprovePayload(
         accessToken: String,
         deviceId: UUID
     ) async throws -> DeviceApprovePayloadResponse {
-        try await get(
-            "v0/devices/\(deviceId.uuidString)/approve-payload",
-            accessToken: accessToken
-        )
+        try await callFFI(accessToken: accessToken) { client in
+            try DeviceApprovePayloadResponse(
+                ffiValue: client.getDeviceApprovePayload(deviceId: deviceId.uuidString)
+            )
+        }
     }
 
     func revokeDevice(
@@ -218,11 +254,18 @@ struct TrixAPIClient {
         deviceId: UUID,
         request: RevokeDeviceRequest
     ) async throws -> RevokeDeviceResponse {
-        try await post(
-            "v0/devices/\(deviceId.uuidString)/revoke",
-            body: request,
-            accessToken: accessToken
-        )
+        try await callFFI(accessToken: accessToken) { client in
+            try RevokeDeviceResponse(
+                ffiValue: try client.revokeDevice(
+                    deviceId: deviceId.uuidString,
+                    reason: request.reason,
+                    accountRootSignature: try TrixCoreCodec.decodeBase64(
+                        request.accountRootSignatureB64,
+                        label: "account_root_signature_b64"
+                    )
+                )
+            )
+        }
     }
 
     func fetchHistorySyncJobs(
@@ -230,18 +273,15 @@ struct TrixAPIClient {
         status: HistorySyncJobStatus? = nil,
         limit: Int = 50
     ) async throws -> HistorySyncJobListResponse {
-        var queryItems = [
-            URLQueryItem(name: "limit", value: String(limit)),
-        ]
-        if let status {
-            queryItems.append(URLQueryItem(name: "status", value: status.rawValue))
+        try await callFFI(accessToken: accessToken) { client in
+            try HistorySyncJobListResponse(
+                ffiValues: client.listHistorySyncJobs(
+                    role: nil,
+                    status: status?.ffiValue,
+                    limit: try TrixCoreCodec.uint32(limit, label: "history sync limit")
+                )
+            )
         }
-
-        return try await get(
-            "v0/history-sync/jobs",
-            queryItems: queryItems,
-            accessToken: accessToken
-        )
     }
 
     func completeHistorySyncJob(
@@ -249,19 +289,26 @@ struct TrixAPIClient {
         jobId: UUID,
         request: CompleteHistorySyncJobRequest
     ) async throws -> CompleteHistorySyncJobResponse {
-        try await post(
-            "v0/history-sync/jobs/\(jobId.uuidString)/complete",
-            body: request,
-            accessToken: accessToken
-        )
+        try await callFFI(accessToken: accessToken) { client in
+            try CompleteHistorySyncJobResponse(
+                ffiValue: client.completeHistorySyncJob(
+                    jobId: jobId.uuidString,
+                    cursorJson: try request.ffiCursorJSONString()
+                )
+            )
+        }
     }
 
     func fetchChats(accessToken: String) async throws -> ChatListResponse {
-        try await get("v0/chats", accessToken: accessToken)
+        try await callFFI(accessToken: accessToken) { client in
+            try ChatListResponse(ffiValues: client.listChats())
+        }
     }
 
     func fetchChatDetail(accessToken: String, chatId: UUID) async throws -> ChatDetailResponse {
-        try await get("v0/chats/\(chatId.uuidString)", accessToken: accessToken)
+        try await callFFI(accessToken: accessToken) { client in
+            try ChatDetailResponse(ffiValue: client.getChat(chatId: chatId.uuidString))
+        }
     }
 
     func fetchChatHistory(
@@ -269,123 +316,127 @@ struct TrixAPIClient {
         chatId: UUID,
         limit: Int = 100
     ) async throws -> ChatHistoryResponse {
-        try await get(
-            "v0/chats/\(chatId.uuidString)/history",
-            queryItems: [
-                URLQueryItem(name: "limit", value: String(limit)),
-            ],
-            accessToken: accessToken
-        )
-    }
-
-    private func get<Response: Decodable>(
-        _ path: String,
-        queryItems: [URLQueryItem] = [],
-        accessToken: String? = nil
-    ) async throws -> Response {
-        try await perform(
-            path: path,
-            queryItems: queryItems,
-            method: "GET",
-            body: Optional<String>.none,
-            accessToken: accessToken
-        )
-    }
-
-    private func post<Body: Encodable, Response: Decodable>(
-        _ path: String,
-        body: Body,
-        accessToken: String? = nil
-    ) async throws -> Response {
-        try await perform(
-            path: path,
-            queryItems: [],
-            method: "POST",
-            body: body,
-            accessToken: accessToken
-        )
-    }
-
-    private func post<Response: Decodable>(
-        _ path: String,
-        body: String?,
-        accessToken: String? = nil
-    ) async throws -> Response {
-        try await perform(
-            path: path,
-            queryItems: [],
-            method: "POST",
-            body: body,
-            accessToken: accessToken
-        )
-    }
-
-    private func perform<Body: Encodable, Response: Decodable>(
-        path: String,
-        queryItems: [URLQueryItem],
-        method: String,
-        body: Body?,
-        accessToken: String?
-    ) async throws -> Response {
-        let endpoint = try endpointURL(path: path, queryItems: queryItems)
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = method
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-
-        if let accessToken {
-            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        try await callFFI(accessToken: accessToken) { client in
+            try ChatHistoryResponse(
+                ffiValue: client.getChatHistory(
+                    chatId: chatId.uuidString,
+                    afterServerSeq: nil,
+                    limit: try TrixCoreCodec.uint32(limit, label: "chat history limit")
+                )
+            )
         }
+    }
 
-        if let body {
-            request.httpBody = try encoder.encode(body)
-        }
+    private func systemGet<Response: Decodable>(_ path: String) async throws -> Response {
+        let url = baseURL.appendingPathComponent(path)
+        let request = URLRequest(url: url)
+        let (data, response): (Data, URLResponse)
 
         do {
-            let (data, response) = try await session.data(for: request)
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw TrixAPIError.transport(error)
+        }
 
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw TrixAPIError.invalidResponse
-            }
+        return try decode(data: data, response: response)
+    }
 
-            guard (200...299).contains(httpResponse.statusCode) else {
-                if let errorResponse = try? decoder.decode(ErrorResponse.self, from: data) {
-                    throw TrixAPIError.server(
-                        code: errorResponse.code,
-                        message: errorResponse.message,
-                        statusCode: httpResponse.statusCode
-                    )
+    private func callFFI<Response: Sendable>(
+        accessToken: String? = nil,
+        _ operation: @escaping @Sendable (FfiServerApiClient) throws -> Response
+    ) async throws -> Response {
+        let ffiClient = self.ffiClient
+
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    if let accessToken {
+                        try ffiClient.setAccessToken(accessToken: accessToken)
+                    } else {
+                        try ffiClient.clearAccessToken()
+                    }
+
+                    continuation.resume(returning: try operation(ffiClient))
+                } catch let error as TrixAPIError {
+                    continuation.resume(throwing: error)
+                } catch {
+                    continuation.resume(throwing: Self.mapFFIError(error))
                 }
+            }
+        }
+    }
 
+    private func decode<Response: Decodable>(data: Data, response: URLResponse) throws -> Response {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw TrixAPIError.invalidResponse
+        }
+
+        guard (200 ..< 300).contains(httpResponse.statusCode) else {
+            if let apiError = try? decoder.decode(ErrorResponse.self, from: data) {
                 throw TrixAPIError.server(
-                    code: "http_\(httpResponse.statusCode)",
-                    message: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode),
+                    code: apiError.code,
+                    message: apiError.message,
                     statusCode: httpResponse.statusCode
                 )
             }
 
+            throw TrixAPIError.invalidResponse
+        }
+
+        do {
             return try decoder.decode(Response.self, from: data)
-        } catch let error as TrixAPIError {
-            throw error
         } catch {
             throw TrixAPIError.transport(error)
         }
     }
 
-    private func endpointURL(path: String, queryItems: [URLQueryItem]) throws -> URL {
-        guard var components = URLComponents(
-            url: baseURL.appending(path: path),
-            resolvingAgainstBaseURL: true
-        ) else {
-            throw TrixAPIError.invalidPayload("Не удалось собрать URL запроса.")
+    private static func mapFFIError(_ error: Error) -> TrixAPIError {
+        if let error = error as? TrixAPIError {
+            return error
         }
 
-        components.queryItems = queryItems.isEmpty ? nil : queryItems
-
-        guard let url = components.url else {
-            throw TrixAPIError.invalidPayload("Не удалось собрать URL запроса.")
+        if let ffiError = error as? TrixFfiError {
+            switch ffiError {
+            case let .Message(message):
+                if let serverError = parseServerError(message) {
+                    return serverError
+                }
+                return .transport(ffiError)
+            }
         }
 
-        return url
+        return .transport(error)
+    }
+
+    private static func parseServerError(_ message: String) -> TrixAPIError? {
+        let prefix = "api error "
+        guard message.hasPrefix(prefix) else {
+            return nil
+        }
+
+        let remainder = message.dropFirst(prefix.count)
+        guard let firstColon = remainder.firstIndex(of: ":") else {
+            return nil
+        }
+        let statusPart = remainder[..<firstColon].trimmingCharacters(in: .whitespaces)
+        guard let statusCode = Int(statusPart) else {
+            return nil
+        }
+
+        let afterStatus = remainder[remainder.index(after: firstColon)...]
+            .trimmingCharacters(in: .whitespaces)
+        guard let secondColon = afterStatus.firstIndex(of: ":") else {
+            return nil
+        }
+
+        let code = afterStatus[..<secondColon].trimmingCharacters(in: .whitespaces)
+        let serverMessage = afterStatus[afterStatus.index(after: secondColon)...]
+            .trimmingCharacters(in: .whitespaces)
+
+        return .server(
+            code: String(code),
+            message: String(serverMessage),
+            statusCode: statusCode
+        )
     }
 }

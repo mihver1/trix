@@ -820,7 +820,12 @@ final class AppModel: ObservableObject {
             lastErrorMessage = "Не удалось разобрать URL сервера."
             return nil
         }
-        return TrixAPIClient(baseURL: baseURL)
+        do {
+            return try TrixAPIClient(baseURL: baseURL)
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+            return nil
+        }
     }
 
     private func authenticate(

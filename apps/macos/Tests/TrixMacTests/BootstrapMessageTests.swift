@@ -67,3 +67,15 @@ func persistedSessionDecodesLegacyPayloadWithoutDeviceStatus() throws {
     #expect(decoded.deviceStatus == .active)
     #expect(decoded.accountSyncChatId == UUID(uuidString: "33333333-3333-3333-3333-333333333333"))
 }
+
+@Test
+func ffiKeyMaterialSignsAndVerifies() throws {
+    let payload = Data("ffi-roundtrip".utf8)
+    let keyMaterial = FfiAccountRootMaterial.generate()
+    let signature = keyMaterial.sign(payload: payload)
+
+    try keyMaterial.verify(payload: payload, signature: signature)
+
+    #expect(!signature.isEmpty)
+    #expect(!keyMaterial.publicKeyBytes().isEmpty)
+}

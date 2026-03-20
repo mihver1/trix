@@ -130,6 +130,12 @@ struct DeviceApprovePayloadResponse: Codable {
 
 struct ApproveDeviceRequest: Codable {
     let accountRootSignatureB64: String
+    let transferBundleB64: String?
+
+    init(accountRootSignatureB64: String, transferBundleB64: String? = nil) {
+        self.accountRootSignatureB64 = accountRootSignatureB64
+        self.transferBundleB64 = transferBundleB64
+    }
 }
 
 struct ApproveDeviceResponse: Codable {

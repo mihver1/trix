@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 struct StoredDeviceIdentity {
@@ -10,20 +9,20 @@ struct StoredDeviceIdentity {
 struct DeviceIdentityMaterial {
     static let platform = "macos"
 
-    private let accountRootPrivateKey: Curve25519.Signing.PrivateKey?
-    private let transportPrivateKey: Curve25519.Signing.PrivateKey
+    private let accountRootMaterial: FfiAccountRootMaterial?
+    private let transportMaterial: FfiDeviceKeyMaterial
     private let credentialIdentity: Data
 
     init(storedIdentity: StoredDeviceIdentity) throws {
         if let accountRootSeed = storedIdentity.accountRootSeed {
-            self.accountRootPrivateKey = try Curve25519.Signing.PrivateKey(
-                rawRepresentation: accountRootSeed
+            self.accountRootMaterial = try FfiAccountRootMaterial.fromPrivateKey(
+                privateKey: accountRootSeed
             )
         } else {
-            self.accountRootPrivateKey = nil
+            self.accountRootMaterial = nil
         }
-        self.transportPrivateKey = try Curve25519.Signing.PrivateKey(
-            rawRepresentation: storedIdentity.transportSeed
+        self.transportMaterial = try FfiDeviceKeyMaterial.fromPrivateKey(
+            privateKey: storedIdentity.transportSeed
         )
         self.credentialIdentity = storedIdentity.credentialIdentity
     }
@@ -34,8 +33,8 @@ struct DeviceIdentityMaterial {
         deviceDisplayName: String,
         platform: String
     ) throws -> DeviceIdentityMaterial {
-        let accountRootPrivateKey = Curve25519.Signing.PrivateKey()
-        let transportPrivateKey = Curve25519.Signing.PrivateKey()
+        let accountRootMaterial = FfiAccountRootMaterial.generate()
+        let transportMaterial = FfiDeviceKeyMaterial.generate()
 
         let payload = CredentialIdentityPayload(
             version: 1,
@@ -50,8 +49,8 @@ struct DeviceIdentityMaterial {
         let credentialIdentity = try encoder.encode(payload)
 
         return DeviceIdentityMaterial(
-            accountRootPrivateKey: accountRootPrivateKey,
-            transportPrivateKey: transportPrivateKey,
+            accountRootMaterial: accountRootMaterial,
+            transportMaterial: transportMaterial,
             credentialIdentity: credentialIdentity
         )
     }
@@ -61,7 +60,7 @@ struct DeviceIdentityMaterial {
         platform: String,
         profileName: String = "Linked Account"
     ) throws -> DeviceIdentityMaterial {
-        let transportPrivateKey = Curve25519.Signing.PrivateKey()
+        let transportMaterial = FfiDeviceKeyMaterial.generate()
 
         let payload = CredentialIdentityPayload(
             version: 1,
@@ -76,8 +75,8 @@ struct DeviceIdentityMaterial {
         let credentialIdentity = try encoder.encode(payload)
 
         return DeviceIdentityMaterial(
-            accountRootPrivateKey: nil,
-            transportPrivateKey: transportPrivateKey,
+            accountRootMaterial: nil,
+            transportMaterial: transportMaterial,
             credentialIdentity: credentialIdentity
         )
     }
@@ -88,17 +87,17 @@ struct DeviceIdentityMaterial {
         profileBio: String?,
         deviceDisplayName: String
     ) throws -> CreateAccountRequest {
-        guard let accountRootPrivateKey else {
+        guard let accountRootMaterial else {
             throw TrixAPIError.invalidPayload("У этого устройства нет account-root ключа.")
         }
 
-        let transportPublicKey = Data(transportPrivateKey.publicKey.rawRepresentation)
+        let transportPublicKey = transportMaterial.publicKeyBytes()
         let bootstrapMessage = Self.bootstrapMessage(
             transportPublicKey: transportPublicKey,
             credentialIdentity: credentialIdentity
         )
 
-        let signature = try accountRootPrivateKey.signature(for: bootstrapMessage)
+        let signature = accountRootMaterial.sign(payload: bootstrapMessage)
 
         return CreateAccountRequest(
             handle: handle,
@@ -107,7 +106,7 @@ struct DeviceIdentityMaterial {
             deviceDisplayName: deviceDisplayName,
             platform: Self.platform,
             credentialIdentityB64: credentialIdentity.base64EncodedString(),
-            accountRootPubkeyB64: Data(accountRootPrivateKey.publicKey.rawRepresentation).base64EncodedString(),
+            accountRootPubkeyB64: accountRootMaterial.publicKeyBytes().base64EncodedString(),
             accountRootSignatureB64: signature.base64EncodedString(),
             transportPubkeyB64: transportPublicKey.base64EncodedString()
         )
@@ -122,13 +121,13 @@ struct DeviceIdentityMaterial {
             deviceDisplayName: deviceDisplayName,
             platform: Self.platform,
             credentialIdentityB64: credentialIdentity.base64EncodedString(),
-            transportPubkeyB64: Data(transportPrivateKey.publicKey.rawRepresentation).base64EncodedString(),
+            transportPubkeyB64: transportMaterial.publicKeyBytes().base64EncodedString(),
             keyPackages: []
         )
     }
 
     func transportSignatureB64(for challenge: Data) throws -> String {
-        let signature = try transportPrivateKey.signature(for: challenge)
+        let signature = transportMaterial.sign(payload: challenge)
         return signature.base64EncodedString()
     }
 
@@ -149,39 +148,39 @@ struct DeviceIdentityMaterial {
         for payload: Data,
         errorMessage: String = "У этого устройства нет account-root ключа."
     ) throws -> String {
-        guard let accountRootPrivateKey else {
+        guard let accountRootMaterial else {
             throw TrixAPIError.invalidPayload(errorMessage)
         }
 
-        let signature = try accountRootPrivateKey.signature(for: payload)
+        let signature = accountRootMaterial.sign(payload: payload)
         return signature.base64EncodedString()
     }
 
     func revokeSignatureB64(deviceID: UUID, reason: String) throws -> String {
-        guard let accountRootPrivateKey else {
+        guard let accountRootMaterial else {
             throw TrixAPIError.invalidPayload("Revoke доступен только на root-capable устройстве.")
         }
 
-        let signature = try accountRootPrivateKey.signature(
-            for: Self.revokeMessage(deviceID: deviceID, reason: reason)
+        let signature = accountRootMaterial.sign(
+            payload: Self.revokeMessage(deviceID: deviceID, reason: reason)
         )
         return signature.base64EncodedString()
     }
 
     var hasAccountRootKey: Bool {
-        accountRootPrivateKey != nil
+        accountRootMaterial != nil
     }
 
     var storedIdentity: StoredDeviceIdentity {
         StoredDeviceIdentity(
-            accountRootSeed: accountRootPrivateKey?.rawRepresentation,
-            transportSeed: transportPrivateKey.rawRepresentation,
+            accountRootSeed: accountRootMaterial?.privateKeyBytes(),
+            transportSeed: transportMaterial.privateKeyBytes(),
             credentialIdentity: credentialIdentity
         )
     }
 
     var transportPublicKeyB64: String {
-        Data(transportPrivateKey.publicKey.rawRepresentation).base64EncodedString()
+        transportMaterial.publicKeyBytes().base64EncodedString()
     }
 
     var credentialIdentityB64: String {
@@ -213,12 +212,12 @@ struct DeviceIdentityMaterial {
     }
 
     private init(
-        accountRootPrivateKey: Curve25519.Signing.PrivateKey?,
-        transportPrivateKey: Curve25519.Signing.PrivateKey,
+        accountRootMaterial: FfiAccountRootMaterial?,
+        transportMaterial: FfiDeviceKeyMaterial,
         credentialIdentity: Data
     ) {
-        self.accountRootPrivateKey = accountRootPrivateKey
-        self.transportPrivateKey = transportPrivateKey
+        self.accountRootMaterial = accountRootMaterial
+        self.transportMaterial = transportMaterial
         self.credentialIdentity = credentialIdentity
     }
 }

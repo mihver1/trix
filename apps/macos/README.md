@@ -7,10 +7,10 @@
 - `SwiftUI` macOS app entrypoint
 - server handshake via `/v0/system/health` and `/v0/system/version`
 - first-device account bootstrap against `/v0/accounts`
-- challenge/session sign-in using locally generated Ed25519 keys
+- challenge/session sign-in using `trix-core` UniFFI key material and transport client
 - local session persistence in `Application Support`
 - secret material persisted in `Keychain`
-- post-auth snapshot for `/v0/accounts/me`, `/v0/devices`, and `/v0/chats`
+- post-auth snapshot for `/v0/accounts/me`, `/v0/devices`, `/v0/chats`, inbox, key packages, and history sync jobs
 
 ## Layout
 
@@ -28,6 +28,7 @@ apps/macos/
 ## Run
 
 ```bash
+MACOSX_DEPLOYMENT_TARGET=14.0 cargo build -p trix-core --lib
 cd apps/macos
 swift build
 swift run TrixMac
@@ -35,9 +36,21 @@ swift run TrixMac
 
 You can also open `Package.swift` in `Xcode` and run the `TrixMac` target as a regular macOS app.
 
+`TrixMac` links against `../../target/debug/libtrix_core.a`, so rebuild `trix-core` when Rust FFI changes. Keep the Rust build on `MACOSX_DEPLOYMENT_TARGET=14.0` to match the app target and avoid linker version warnings.
+
+## Bindings
+
+Swift bindings are checked into `apps/macos`:
+
+- `Sources/TrixMac/Generated/trix_core.swift`
+- `Sources/trix_coreFFI/trix_coreFFI.h`
+- `Sources/trix_coreFFI/module.modulemap`
+
+To regenerate them, follow [docs/ffi-bindings.md](/Users/m.verhovyh/.codex/worktrees/e1d0/trix/docs/ffi-bindings.md).
+
 ## Next Steps
 
-- move bootstrap/auth and storage logic behind `trix-core` + `UniFFI`
-- replace metadata-only chat view with real message sync/decrypt flow
-- add device linking, approval, and revocation UI
-- move access token refresh/session policies into a dedicated bridge layer
+- move message creation, MLS state, and decrypt flow behind `trix-core`
+- add real transfer-bundle handling during device approval
+- replace manual operational panels with user-facing chat and sync UX
+- add a release build path for shipping `trix-core` artifacts outside local debug workflows

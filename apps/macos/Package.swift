@@ -1,6 +1,13 @@
 // swift-tools-version: 6.2
 
+import Foundation
 import PackageDescription
+
+let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+let rustArtifactsPath = packageRoot
+    .appendingPathComponent("../../target/debug")
+    .standardizedFileURL
+    .path
 
 let package = Package(
     name: "TrixMac",
@@ -14,9 +21,20 @@ let package = Package(
         ),
     ],
     targets: [
+        .systemLibrary(
+            name: "trix_coreFFI",
+            path: "Sources/trix_coreFFI"
+        ),
         .executableTarget(
             name: "TrixMac",
-            path: "Sources/TrixMac"
+            dependencies: ["trix_coreFFI"],
+            path: "Sources/TrixMac",
+            linkerSettings: [
+                .unsafeFlags([
+                    "-Xlinker",
+                    "\(rustArtifactsPath)/libtrix_core.a",
+                ]),
+            ]
         ),
         .testTarget(
             name: "TrixMacTests",
