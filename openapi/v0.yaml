@@ -55,6 +55,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AuthChallengeResponse'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v0/auth/session:
     post:
       operationId: createAuthSession
@@ -72,6 +74,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AuthSessionResponse'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v0/accounts:
     post:
       operationId: createAccount
@@ -151,6 +155,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AccountDirectoryResponse'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v0/accounts/{account_id}:
     get:
       operationId: getAccount
@@ -211,6 +217,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CreateLinkIntentResponse'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v0/devices/link-intents/{link_intent_id}/complete:
     post:
       operationId: completeLinkIntent
@@ -259,7 +267,7 @@ paths:
         - $ref: '#/components/parameters/DeviceId'
       responses:
         '200':
-          description: Encrypted transfer bundle for the authenticated device
+          description: Encrypted transfer bundle for the authenticated device. The ciphertext is single-consume and will not be returned again after the first successful fetch.
           content:
             application/json:
               schema:
@@ -373,7 +381,7 @@ paths:
               $ref: '#/components/schemas/AppendHistorySyncChunkRequest'
       responses:
         '200':
-          description: Encrypted history sync chunk stored for the job
+          description: Encrypted history sync chunk stored for the job. Replays of the same `(job_id, sequence_no)` with the same payload return the existing chunk result; payload mismatches return `409`.
           content:
             application/json:
               schema:
@@ -509,7 +517,7 @@ paths:
               $ref: '#/components/schemas/CreateMessageRequest'
       responses:
         '200':
-          description: Message accepted
+          description: Message accepted. Replays of the same `message_id` with the same payload are idempotent and return the existing result; payload mismatches return `409`.
           content:
             application/json:
               schema:
@@ -722,6 +730,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CreateBlobUploadResponse'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v0/blobs/{blob_id}:
     put:
       operationId: putBlob
@@ -812,6 +822,32 @@ paths:
                 $ref: '#/components/schemas/BlobUploadStatus'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v0/ws:
+    get:
+      operationId: openWebSocketSession
+      tags: [inbox]
+      security:
+        - bearerAuth: []
+      summary: Open websocket transport for low-latency inbox delivery
+      description: |
+        Upgrades the connection to a WebSocket used for low-latency inbox delivery.
+
+        Guaranteed server frames in `v0`:
+        - `hello`
+        - `inbox_items`
+        - `acked`
+        - `pong`
+        - `session_replaced`
+        - `error`
+
+        Guaranteed client frames in `v0`:
+        - `ack`
+        - `presence_ping`
+
+        `typing_update` and `history_sync_progress` are accepted only as compatibility no-ops and are not part of the guaranteed realtime contract.
+      responses:
+        '101':
+          description: WebSocket upgrade successful
 components:
   securitySchemes:
     bearerAuth:
@@ -869,6 +905,18 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
     Conflict:
       description: Request conflicts with current server state
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    TooManyRequests:
+      description: Request was rate limited
+      headers:
+        Retry-After:
+          description: Seconds until the caller should retry.
+          schema:
+            type: integer
+            format: int64
       content:
         application/json:
           schema:

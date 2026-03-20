@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use serde_json::Value;
 use thiserror::Error;
 use tokio::runtime::{Builder, Runtime};
-use trix_types::{AccountId, ChatId, DeviceId, MessageId};
+use trix_types::{AccountId, ChatId, DeviceId, MessageId, WebSocketServerFrame};
 use uuid::Uuid;
 
 use crate::{
@@ -17,9 +17,9 @@ use crate::{
     MlsProcessResult, ModifyChatDevicesControlInput, ModifyChatDevicesControlOutcome,
     ModifyChatMembersControlInput, ModifyChatMembersControlOutcome, PreparedAttachmentUpload,
     PublishKeyPackageMaterial, ReactionAction, ReceiptType, ReservedKeyPackageMaterial,
-    SendMessageOutcome, ServerApiClient, SyncChatCursor, SyncCoordinator, SyncStateSnapshot,
-    UpdateAccountProfileParams, account_bootstrap_message, decrypt_attachment_payload,
-    device_revoke_message, prepare_attachment_upload,
+    SendMessageOutcome, ServerApiClient, ServerWebSocketClient, SyncChatCursor, SyncCoordinator,
+    SyncStateSnapshot, UpdateAccountProfileParams, account_bootstrap_message,
+    decrypt_attachment_payload, device_revoke_message, prepare_attachment_upload,
 };
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -97,6 +97,16 @@ pub enum FfiBlobUploadStatus {
 pub enum FfiServiceStatus {
     Ok,
     Degraded,
+}
+
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum FfiWebSocketServerFrameKind {
+    Hello,
+    InboxItems,
+    Acked,
+    Pong,
+    SessionReplaced,
+    Error,
 }
 
 #[derive(Debug, Clone, Copy, uniffi::Enum)]
@@ -517,6 +527,45 @@ pub struct FfiAckInboxResponse {
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiWebSocketHello {
+    pub session_id: String,
+    pub account_id: String,
+    pub device_id: String,
+    pub lease_owner: String,
+    pub lease_ttl_seconds: u64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiWebSocketInboxItems {
+    pub lease_owner: String,
+    pub lease_expires_at_unix: u64,
+    pub items: Vec<FfiInboxItem>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiWebSocketPong {
+    pub nonce: Option<String>,
+    pub server_unix: u64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiWebSocketErrorFrame {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiWebSocketServerFrame {
+    pub kind: FfiWebSocketServerFrameKind,
+    pub hello: Option<FfiWebSocketHello>,
+    pub inbox: Option<FfiWebSocketInboxItems>,
+    pub acked_inbox_ids: Vec<u64>,
+    pub pong: Option<FfiWebSocketPong>,
+    pub session_replaced_reason: Option<String>,
+    pub error: Option<FfiWebSocketErrorFrame>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct FfiSyncChatCursor {
     pub chat_id: String,
     pub last_server_seq: u64,
@@ -841,6 +890,12 @@ pub struct FfiServerApiClient {
 }
 
 #[derive(uniffi::Object)]
+pub struct FfiServerWebSocketClient {
+    inner: Mutex<ServerWebSocketClient>,
+    runtime: Runtime,
+}
+
+#[derive(uniffi::Object)]
 pub struct FfiAccountRootMaterial {
     inner: AccountRootMaterial,
 }
@@ -970,6 +1025,15 @@ impl FfiServerApiClient {
 
     pub fn access_token(&self) -> Result<Option<String>, TrixFfiError> {
         Ok(lock(&self.inner)?.access_token().map(ToOwned::to_owned))
+    }
+
+    pub fn connect_websocket(&self) -> Result<Arc<FfiServerWebSocketClient>, TrixFfiError> {
+        let client = clone_server_api_client(&self.inner)?;
+        let websocket = self.runtime.block_on(client.connect_websocket())?;
+        Ok(Arc::new(FfiServerWebSocketClient {
+            inner: Mutex::new(websocket),
+            runtime: build_runtime()?,
+        }))
     }
 
     pub fn create_account(
@@ -1808,6 +1872,55 @@ impl FfiServerApiClient {
 }
 
 #[uniffi::export]
+impl FfiServerWebSocketClient {
+    pub fn next_frame(&self) -> Result<Option<FfiWebSocketServerFrame>, TrixFfiError> {
+        let mut websocket = lock(&self.inner)?;
+        let frame = self.runtime.block_on(websocket.next_frame())?;
+        Ok(frame.map(websocket_server_frame_to_ffi))
+    }
+
+    pub fn send_ack(&self, inbox_ids: Vec<u64>) -> Result<(), TrixFfiError> {
+        let mut websocket = lock(&self.inner)?;
+        self.runtime.block_on(websocket.send_ack(inbox_ids))?;
+        Ok(())
+    }
+
+    pub fn send_presence_ping(&self, nonce: Option<String>) -> Result<(), TrixFfiError> {
+        let mut websocket = lock(&self.inner)?;
+        self.runtime.block_on(websocket.send_presence_ping(nonce))?;
+        Ok(())
+    }
+
+    pub fn send_typing_update(&self, chat_id: String, is_typing: bool) -> Result<(), TrixFfiError> {
+        let mut websocket = lock(&self.inner)?;
+        self.runtime
+            .block_on(websocket.send_typing_update(parse_chat_id(&chat_id)?, is_typing))?;
+        Ok(())
+    }
+
+    pub fn send_history_sync_progress(
+        &self,
+        job_id: String,
+        cursor_json: Option<String>,
+        completed_chunks: Option<u64>,
+    ) -> Result<(), TrixFfiError> {
+        let mut websocket = lock(&self.inner)?;
+        self.runtime.block_on(websocket.send_history_sync_progress(
+            job_id,
+            parse_optional_json(cursor_json)?,
+            completed_chunks,
+        ))?;
+        Ok(())
+    }
+
+    pub fn close(&self) -> Result<(), TrixFfiError> {
+        let mut websocket = lock(&self.inner)?;
+        self.runtime.block_on(websocket.close())?;
+        Ok(())
+    }
+}
+
+#[uniffi::export]
 impl FfiAccountRootMaterial {
     #[uniffi::constructor]
     pub fn generate() -> Arc<Self> {
@@ -2389,6 +2502,42 @@ impl FfiSyncCoordinator {
         Ok(FfiAckInboxResponse {
             acked_inbox_ids: response.acked_inbox_ids,
         })
+    }
+
+    pub fn record_acked_inbox_ids(&self, acked_inbox_ids: Vec<u64>) -> Result<(), TrixFfiError> {
+        lock(&self.inner)?
+            .record_acked_inbox_ids(&acked_inbox_ids)
+            .map_err(ffi_error)
+    }
+
+    pub fn apply_inbox_items_into_store(
+        &self,
+        store: Arc<FfiLocalHistoryStore>,
+        items: Vec<FfiInboxItem>,
+    ) -> Result<FfiLocalStoreApplyReport, TrixFfiError> {
+        let items = items
+            .into_iter()
+            .map(ffi_inbox_item_to_api)
+            .collect::<Result<Vec<_>, _>>()?;
+        let report = {
+            let mut coordinator = lock(&self.inner)?;
+            let mut store = lock(&store.inner)?;
+            coordinator
+                .apply_inbox_items_into_store(&mut store, &items)
+                .map_err(ffi_error)?
+        };
+        Ok(local_store_apply_report_to_ffi(report))
+    }
+
+    pub fn apply_websocket_inbox_frame(
+        &self,
+        store: Arc<FfiLocalHistoryStore>,
+        frame: FfiWebSocketServerFrame,
+    ) -> Result<Option<FfiLocalStoreApplyReport>, TrixFfiError> {
+        let Some(inbox) = frame.inbox else {
+            return Ok(None);
+        };
+        Ok(Some(self.apply_inbox_items_into_store(store, inbox.items)?))
     }
 
     pub fn lease_inbox_into_store(
@@ -3301,6 +3450,85 @@ fn inbox_item_to_ffi(value: trix_types::InboxItem) -> FfiInboxItem {
     FfiInboxItem {
         inbox_id: value.inbox_id,
         message: message_envelope_to_ffi(value.message),
+    }
+}
+
+fn websocket_server_frame_to_ffi(value: WebSocketServerFrame) -> FfiWebSocketServerFrame {
+    match value {
+        WebSocketServerFrame::Hello {
+            session_id,
+            account_id,
+            device_id,
+            lease_owner,
+            lease_ttl_seconds,
+        } => FfiWebSocketServerFrame {
+            kind: FfiWebSocketServerFrameKind::Hello,
+            hello: Some(FfiWebSocketHello {
+                session_id,
+                account_id: account_id.0.to_string(),
+                device_id: device_id.0.to_string(),
+                lease_owner,
+                lease_ttl_seconds,
+            }),
+            inbox: None,
+            acked_inbox_ids: Vec::new(),
+            pong: None,
+            session_replaced_reason: None,
+            error: None,
+        },
+        WebSocketServerFrame::InboxItems {
+            lease_owner,
+            lease_expires_at_unix,
+            items,
+        } => FfiWebSocketServerFrame {
+            kind: FfiWebSocketServerFrameKind::InboxItems,
+            hello: None,
+            inbox: Some(FfiWebSocketInboxItems {
+                lease_owner,
+                lease_expires_at_unix,
+                items: items.into_iter().map(inbox_item_to_ffi).collect(),
+            }),
+            acked_inbox_ids: Vec::new(),
+            pong: None,
+            session_replaced_reason: None,
+            error: None,
+        },
+        WebSocketServerFrame::Acked { acked_inbox_ids } => FfiWebSocketServerFrame {
+            kind: FfiWebSocketServerFrameKind::Acked,
+            hello: None,
+            inbox: None,
+            acked_inbox_ids,
+            pong: None,
+            session_replaced_reason: None,
+            error: None,
+        },
+        WebSocketServerFrame::Pong { nonce, server_unix } => FfiWebSocketServerFrame {
+            kind: FfiWebSocketServerFrameKind::Pong,
+            hello: None,
+            inbox: None,
+            acked_inbox_ids: Vec::new(),
+            pong: Some(FfiWebSocketPong { nonce, server_unix }),
+            session_replaced_reason: None,
+            error: None,
+        },
+        WebSocketServerFrame::SessionReplaced { reason } => FfiWebSocketServerFrame {
+            kind: FfiWebSocketServerFrameKind::SessionReplaced,
+            hello: None,
+            inbox: None,
+            acked_inbox_ids: Vec::new(),
+            pong: None,
+            session_replaced_reason: Some(reason),
+            error: None,
+        },
+        WebSocketServerFrame::Error { code, message } => FfiWebSocketServerFrame {
+            kind: FfiWebSocketServerFrameKind::Error,
+            hello: None,
+            inbox: None,
+            acked_inbox_ids: Vec::new(),
+            pong: None,
+            session_replaced_reason: None,
+            error: Some(FfiWebSocketErrorFrame { code, message }),
+        },
     }
 }
 

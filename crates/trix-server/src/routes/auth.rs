@@ -19,6 +19,13 @@ async fn challenge(
     State(state): State<AppState>,
     Json(request): Json<AuthChallengeRequest>,
 ) -> Result<Json<AuthChallengeResponse>, AppError> {
+    state
+        .enforce_rate_limit(
+            "auth_challenge",
+            request.device_id.0.to_string(),
+            state.config.rate_limit_auth_challenge_limit,
+        )
+        .await?;
     let challenge_bytes: [u8; 32] = rand::random();
     let challenge = state
         .db
@@ -36,6 +43,13 @@ async fn session(
     State(state): State<AppState>,
     Json(request): Json<AuthSessionRequest>,
 ) -> Result<Json<AuthSessionResponse>, AppError> {
+    state
+        .enforce_rate_limit(
+            "auth_session",
+            request.device_id.0.to_string(),
+            state.config.rate_limit_auth_session_limit,
+        )
+        .await?;
     let challenge_id = Uuid::parse_str(&request.challenge_id)
         .map_err(|_| AppError::bad_request("invalid challenge id"))?;
 

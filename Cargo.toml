@@ -1,6 +1,8 @@
 [workspace]
 members = [
+    "apps/trix-botd",
     "apps/trixd",
+    "crates/trix-bot",
     "crates/trix-core",
     "crates/trix-server",
     "crates/trix-types",
@@ -15,6 +17,7 @@ publish = false
 
 [workspace.dependencies]
 aead = "0.5.2"
+argon2 = "0.5.3"
 anyhow = "1.0.98"
 axum = { version = "0.8.4", features = ["json", "ws"] }
 base64 = "0.22.1"
