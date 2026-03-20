@@ -137,6 +137,45 @@ enum TrixCorePersistentBridge {
         return response.trix_publishKeyPackagesResponse
     }
 
+    static func ensureOwnDeviceKeyPackages(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        minimumAvailable: Int = 8,
+        targetAvailable: Int = 32
+    ) throws -> PublishKeyPackagesResponse? {
+        let context = try loadOrCreateContext(identity: identity)
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        return try client
+            .ensureDeviceKeyPackages(
+                facade: context.mlsFacade,
+                deviceId: identity.deviceId,
+                minimumAvailable: UInt32(max(minimumAvailable, 0)),
+                targetAvailable: UInt32(max(targetAvailable, 0))
+            )?
+            .trix_publishKeyPackagesResponse
+    }
+
+    static func prepareLinkedDeviceKeyPackages(
+        payload: LinkIntentPayload,
+        form: LinkExistingAccountForm,
+        bootstrapMaterial: DeviceBootstrapMaterial,
+        count: Int = 32
+    ) throws -> [FfiPublishKeyPackage] {
+        let provisionalIdentity = bootstrapMaterial.makeLinkedLocalIdentity(
+            accountId: payload.accountId,
+            deviceId: UUID().uuidString,
+            deviceDisplayName: form.deviceDisplayName.trix_trimmed(),
+            platform: form.platform
+        )
+        let context = try loadOrCreateContext(identity: provisionalIdentity)
+        let packages = try context.mlsFacade.generatePublishKeyPackages(
+            count: UInt32(max(count, 0))
+        )
+        try context.mlsFacade.saveState()
+        return packages
+    }
+
     static func syncChatHistoriesIntoStore(
         baseURLString: String,
         accessToken: String,

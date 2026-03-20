@@ -182,6 +182,19 @@ class AuthBootstrapCoordinator(
             accessTokenExpiresAtUnix = authSession.expiresAtUnix,
         )
 
+        val storageLayout = deviceStorageLayout(
+            context = appContext,
+            accountId = updatedLocalState.accountId,
+            deviceId = updatedLocalState.deviceId,
+        )
+        storageLayout.prepareCorePersistenceMigration()
+        authApiClient.ensureOwnDeviceKeyPackages(
+            accessToken = authSession.accessToken,
+            deviceId = updatedLocalState.deviceId,
+            credentialIdentity = updatedLocalState.credentialIdentity,
+            mlsStorageRoot = storageLayout.mlsStorageRoot,
+        )
+
         return AuthenticatedSession(
             localState = updatedLocalState,
             accountProfile = accountProfile,

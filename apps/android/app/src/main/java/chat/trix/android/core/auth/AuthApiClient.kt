@@ -4,11 +4,13 @@ import chat.trix.android.core.ffi.FfiAccountProfile
 import chat.trix.android.core.ffi.FfiCompleteLinkIntentWithDeviceKeyParams
 import chat.trix.android.core.ffi.FfiCreateAccountParams
 import chat.trix.android.core.ffi.FfiCreateAccountWithMaterialsParams
+import chat.trix.android.core.ffi.FfiMlsFacade
 import chat.trix.android.core.ffi.FfiDeviceStatus
 import chat.trix.android.core.ffi.FfiPublishKeyPackage
 import chat.trix.android.core.ffi.FfiServerApiClient
 import chat.trix.android.core.ffi.TrixFfiException
 import chat.trix.android.core.ffi.FfiUpdateAccountProfileParams
+import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -167,6 +169,34 @@ class AuthApiClient(
         }
     }
 
+    suspend fun ensureOwnDeviceKeyPackages(
+        accessToken: String,
+        deviceId: String,
+        credentialIdentity: ByteArray,
+        mlsStorageRoot: File,
+        minimumAvailable: UInt = 8u,
+        targetAvailable: UInt = 32u,
+    ) = withContext(Dispatchers.IO) {
+        runFfi("Failed to ensure device key package stock") {
+            if (!mlsStorageRoot.exists()) {
+                mlsStorageRoot.mkdirs()
+            }
+            ffiClient.setAccessToken(accessToken)
+            var facade: FfiMlsFacade? = null
+            try {
+                facade = tryLoadPersistentFacade(mlsStorageRoot, credentialIdentity)
+                ffiClient.ensureDeviceKeyPackages(
+                    facade = facade,
+                    deviceId = deviceId,
+                    minimumAvailable = minimumAvailable,
+                    targetAvailable = targetAvailable,
+                )
+            } finally {
+                facade?.close()
+            }
+        }
+    }
+
     private inline fun <T> runFfi(
         fallbackMessage: String,
         block: () -> T,
@@ -185,6 +215,20 @@ class AuthApiClient(
     }
 
     companion object {
+        private fun tryLoadPersistentFacade(
+            mlsStorageRoot: File,
+            credentialIdentity: ByteArray,
+        ): FfiMlsFacade {
+            return try {
+                FfiMlsFacade.loadPersistent(storageRoot = mlsStorageRoot.absolutePath)
+            } catch (_: Exception) {
+                FfiMlsFacade.newPersistent(
+                    credentialIdentity = credentialIdentity,
+                    storageRoot = mlsStorageRoot.absolutePath,
+                )
+            }
+        }
+
         private fun FfiAccountProfile.toAccountProfile(): AccountProfile {
             return AccountProfile(
                 accountId = accountId,

@@ -57,6 +57,7 @@ async fn list_devices(
                 display_name: device.display_name,
                 platform: device.platform,
                 device_status: device.device_status,
+                available_key_package_count: device.available_key_package_count,
             })
             .collect(),
     }))

@@ -244,6 +244,7 @@ pub struct FfiDeviceSummary {
     pub display_name: String,
     pub platform: String,
     pub device_status: FfiDeviceStatus,
+    pub available_key_package_count: u32,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -1328,6 +1329,60 @@ impl FfiServerApiClient {
                 .map(device_summary_to_ffi)
                 .collect(),
         })
+    }
+
+    pub fn ensure_device_key_packages(
+        &self,
+        facade: Arc<FfiMlsFacade>,
+        device_id: String,
+        minimum_available: u32,
+        target_available: u32,
+    ) -> Result<Option<FfiPublishKeyPackagesResponse>, TrixFfiError> {
+        let target_device_id = parse_device_id(&device_id)?;
+        let desired_available = target_available.max(minimum_available);
+        if desired_available == 0 {
+            return Ok(None);
+        }
+
+        let client = clone_server_api_client(&self.inner)?;
+        let devices = self.runtime.block_on(client.list_devices())?;
+        let Some(device) = devices
+            .devices
+            .into_iter()
+            .find(|device| device.device_id == target_device_id)
+        else {
+            return Err(TrixFfiError::Message(
+                "device not found in authenticated device list".to_owned(),
+            ));
+        };
+
+        if device.available_key_package_count >= minimum_available {
+            return Ok(None);
+        }
+
+        let publish_count = desired_available - device.available_key_package_count;
+        let packages = facade
+            .generate_publish_key_packages(publish_count)?
+            .into_iter()
+            .map(|package| PublishKeyPackageMaterial {
+                cipher_suite: package.cipher_suite,
+                key_package: package.key_package,
+            })
+            .collect();
+        let response = self.runtime.block_on(client.publish_key_packages(packages))?;
+        facade.save_state()?;
+
+        Ok(Some(FfiPublishKeyPackagesResponse {
+            device_id: response.device_id.0.to_string(),
+            packages: response
+                .packages
+                .into_iter()
+                .map(|package| FfiPublishedKeyPackage {
+                    key_package_id: package.key_package_id,
+                    cipher_suite: package.cipher_suite,
+                })
+                .collect(),
+        }))
     }
 
     pub fn create_link_intent(&self) -> Result<FfiCreateLinkIntentResponse, TrixFfiError> {
@@ -3714,6 +3769,7 @@ fn device_summary_to_ffi(value: trix_types::DeviceSummary) -> FfiDeviceSummary {
         display_name: value.display_name,
         platform: value.platform,
         device_status: value.device_status.into(),
+        available_key_package_count: value.available_key_package_count,
     }
 }
 

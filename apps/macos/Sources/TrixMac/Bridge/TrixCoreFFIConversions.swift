@@ -411,7 +411,8 @@ extension DeviceSummary {
             deviceId: try TrixCoreCodec.uuid(ffiValue.deviceId, label: "device_id"),
             displayName: ffiValue.displayName,
             platform: ffiValue.platform,
-            deviceStatus: DeviceStatus(ffiValue.deviceStatus)
+            deviceStatus: DeviceStatus(ffiValue.deviceStatus),
+            availableKeyPackageCount: ffiValue.availableKeyPackageCount
         )
     }
 }

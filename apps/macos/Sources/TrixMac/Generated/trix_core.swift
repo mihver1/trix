@@ -538,6 +538,8 @@ public protocol FfiAccountRootMaterialProtocol: AnyObject, Sendable {
     
     func accountBootstrapPayload(transportPubkey: Data, credentialIdentity: Data)  -> Data
     
+    func createDeviceTransferBundle(params: FfiCreateDeviceTransferBundleParams, senderDeviceKeys: FfiDeviceKeyMaterial, recipientTransportPubkey: Data) throws  -> Data
+    
     func deviceRevokePayload(deviceId: String, reason: String) throws  -> Data
     
     func privateKeyBytes()  -> Data
@@ -549,6 +551,8 @@ public protocol FfiAccountRootMaterialProtocol: AnyObject, Sendable {
     func signAccountBootstrap(transportPubkey: Data, credentialIdentity: Data)  -> Data
     
     func signDeviceRevoke(deviceId: String, reason: String) throws  -> Data
+    
+    func transferBundle()  -> Data
     
     func verify(payload: Data, signature: Data) throws 
     
@@ -612,6 +616,14 @@ public static func fromPrivateKey(privateKey: Data)throws  -> FfiAccountRootMate
 })
 }
     
+public static func fromTransferBundle(transferBundle: Data)throws  -> FfiAccountRootMaterial  {
+    return try  FfiConverterTypeFfiAccountRootMaterial_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_constructor_ffiaccountrootmaterial_from_transfer_bundle(
+        FfiConverterData.lower(transferBundle),$0
+    )
+})
+}
+    
 public static func generate() -> FfiAccountRootMaterial  {
     return try!  FfiConverterTypeFfiAccountRootMaterial_lift(try! rustCall() {
     uniffi_trix_core_fn_constructor_ffiaccountrootmaterial_generate($0
@@ -627,6 +639,17 @@ open func accountBootstrapPayload(transportPubkey: Data, credentialIdentity: Dat
             self.uniffiCloneHandle(),
         FfiConverterData.lower(transportPubkey),
         FfiConverterData.lower(credentialIdentity),$0
+    )
+})
+}
+    
+open func createDeviceTransferBundle(params: FfiCreateDeviceTransferBundleParams, senderDeviceKeys: FfiDeviceKeyMaterial, recipientTransportPubkey: Data)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiaccountrootmaterial_create_device_transfer_bundle(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiCreateDeviceTransferBundleParams_lower(params),
+        FfiConverterTypeFfiDeviceKeyMaterial_lower(senderDeviceKeys),
+        FfiConverterData.lower(recipientTransportPubkey),$0
     )
 })
 }
@@ -682,6 +705,14 @@ open func signDeviceRevoke(deviceId: String, reason: String)throws  -> Data  {
             self.uniffiCloneHandle(),
         FfiConverterString.lower(deviceId),
         FfiConverterString.lower(reason),$0
+    )
+})
+}
+    
+open func transferBundle() -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+    uniffi_trix_core_fn_method_ffiaccountrootmaterial_transfer_bundle(
+            self.uniffiCloneHandle(),$0
     )
 })
 }
@@ -745,7 +776,184 @@ public func FfiConverterTypeFfiAccountRootMaterial_lower(_ value: FfiAccountRoot
 
 
 
+public protocol FfiClientStoreProtocol: AnyObject, Sendable {
+    
+    func attachmentCacheRoot()  -> String
+    
+    func databasePath()  -> String
+    
+    func historyStore()  -> FfiLocalHistoryStore
+    
+    func mlsStorageRoot()  -> String
+    
+    func openMlsFacade(credentialIdentity: Data) throws  -> FfiMlsFacade
+    
+    func syncCoordinator()  -> FfiSyncCoordinator
+    
+}
+open class FfiClientStore: FfiClientStoreProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_trix_core_fn_clone_fficlientstore(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_trix_core_fn_free_fficlientstore(handle, $0) }
+    }
+
+    
+public static func `open`(config: FfiClientStoreConfig)throws  -> FfiClientStore  {
+    return try  FfiConverterTypeFfiClientStore_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_constructor_fficlientstore_open(
+        FfiConverterTypeFfiClientStoreConfig_lower(config),$0
+    )
+})
+}
+    
+
+    
+open func attachmentCacheRoot() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_trix_core_fn_method_fficlientstore_attachment_cache_root(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+open func databasePath() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_trix_core_fn_method_fficlientstore_database_path(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+open func historyStore() -> FfiLocalHistoryStore  {
+    return try!  FfiConverterTypeFfiLocalHistoryStore_lift(try! rustCall() {
+    uniffi_trix_core_fn_method_fficlientstore_history_store(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+open func mlsStorageRoot() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_trix_core_fn_method_fficlientstore_mls_storage_root(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+open func openMlsFacade(credentialIdentity: Data)throws  -> FfiMlsFacade  {
+    return try  FfiConverterTypeFfiMlsFacade_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_fficlientstore_open_mls_facade(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(credentialIdentity),$0
+    )
+})
+}
+    
+open func syncCoordinator() -> FfiSyncCoordinator  {
+    return try!  FfiConverterTypeFfiSyncCoordinator_lift(try! rustCall() {
+    uniffi_trix_core_fn_method_fficlientstore_sync_coordinator(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiClientStore: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = FfiClientStore
+
+    public static func lift(_ handle: UInt64) throws -> FfiClientStore {
+        return FfiClientStore(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: FfiClientStore) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiClientStore {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: FfiClientStore, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiClientStore_lift(_ handle: UInt64) throws -> FfiClientStore {
+    return try FfiConverterTypeFfiClientStore.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiClientStore_lower(_ value: FfiClientStore) -> UInt64 {
+    return FfiConverterTypeFfiClientStore.lower(value)
+}
+
+
+
+
+
+
 public protocol FfiDeviceKeyMaterialProtocol: AnyObject, Sendable {
+    
+    func decryptDeviceTransferBundle(bundle: Data) throws  -> FfiImportedDeviceTransferBundle
     
     func privateKeyBytes()  -> Data
     
@@ -825,6 +1033,15 @@ public static func generate() -> FfiDeviceKeyMaterial  {
 }
     
 
+    
+open func decryptDeviceTransferBundle(bundle: Data)throws  -> FfiImportedDeviceTransferBundle  {
+    return try  FfiConverterTypeFfiImportedDeviceTransferBundle_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffidevicekeymaterial_decrypt_device_transfer_bundle(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(bundle),$0
+    )
+})
+}
     
 open func privateKeyBytes() -> Data  {
     return try!  FfiConverterData.lift(try! rustCall() {
@@ -921,9 +1138,17 @@ public func FfiConverterTypeFfiDeviceKeyMaterial_lower(_ value: FfiDeviceKeyMate
 
 public protocol FfiLocalHistoryStoreProtocol: AnyObject, Sendable {
     
+    func applyChatDetail(detail: FfiChatDetail) throws  -> FfiLocalStoreApplyReport
+    
     func applyChatHistory(history: FfiChatHistory) throws  -> FfiLocalStoreApplyReport
     
+    func applyChatList(chats: [FfiChatSummary]) throws  -> FfiLocalStoreApplyReport
+    
     func applyLeasedInbox(lease: FfiLeaseInboxResponse) throws  -> FfiLocalStoreApplyReport
+    
+    func applyLocalProjection(envelope: FfiMessageEnvelope, projectionKind: FfiLocalProjectionKind, payload: Data?, mergedEpoch: UInt64?) throws  -> FfiLocalStoreApplyReport
+    
+    func applyProjectedMessages(chatId: String, projectedMessages: [FfiLocalProjectedMessage]) throws  -> FfiLocalProjectionApplyReport
     
     func chatMlsGroupId(chatId: String) throws  -> Data?
     
@@ -931,7 +1156,13 @@ public protocol FfiLocalHistoryStoreProtocol: AnyObject, Sendable {
     
     func chatUnreadCount(chatId: String, selfAccountId: String?) throws  -> UInt64?
     
+    func clearOutboxFailure(messageId: String) throws 
+    
     func databasePath() throws  -> String?
+    
+    func enqueueOutboxAttachment(chatId: String, senderAccountId: String, senderDeviceId: String, messageId: String, attachment: FfiLocalOutboxAttachmentDraft, queuedAtUnix: UInt64) throws  -> FfiLocalOutboxItem
+    
+    func enqueueOutboxMessage(chatId: String, senderAccountId: String, senderDeviceId: String, messageId: String, body: FfiMessageBody, queuedAtUnix: UInt64) throws  -> FfiLocalOutboxItem
     
     func getChat(chatId: String) throws  -> FfiChatDetail?
     
@@ -951,11 +1182,17 @@ public protocol FfiLocalHistoryStoreProtocol: AnyObject, Sendable {
     
     func listLocalChatListItems(selfAccountId: String?) throws  -> [FfiLocalChatListItem]
     
+    func listOutboxMessages(chatId: String?) throws  -> [FfiLocalOutboxItem]
+    
     func markChatRead(chatId: String, throughServerSeq: UInt64?, selfAccountId: String?) throws  -> FfiLocalChatReadState
+    
+    func markOutboxFailure(messageId: String, failureMessage: String) throws 
     
     func projectChatMessages(chatId: String, facade: FfiMlsFacade, conversation: FfiMlsConversation, limit: UInt32?) throws  -> FfiLocalProjectionApplyReport
     
     func projectedCursor(chatId: String) throws  -> UInt64?
+    
+    func removeOutboxMessage(messageId: String) throws 
     
     func saveState() throws 
     
@@ -1022,6 +1259,15 @@ public convenience init() {
     }
 
     
+public static func newEncrypted(databasePath: String, databaseKey: Data)throws  -> FfiLocalHistoryStore  {
+    return try  FfiConverterTypeFfiLocalHistoryStore_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_constructor_ffilocalhistorystore_new_encrypted(
+        FfiConverterString.lower(databasePath),
+        FfiConverterData.lower(databaseKey),$0
+    )
+})
+}
+    
 public static func newPersistent(databasePath: String)throws  -> FfiLocalHistoryStore  {
     return try  FfiConverterTypeFfiLocalHistoryStore_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_constructor_ffilocalhistorystore_new_persistent(
@@ -1032,6 +1278,15 @@ public static func newPersistent(databasePath: String)throws  -> FfiLocalHistory
     
 
     
+open func applyChatDetail(detail: FfiChatDetail)throws  -> FfiLocalStoreApplyReport  {
+    return try  FfiConverterTypeFfiLocalStoreApplyReport_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffilocalhistorystore_apply_chat_detail(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiChatDetail_lower(detail),$0
+    )
+})
+}
+    
 open func applyChatHistory(history: FfiChatHistory)throws  -> FfiLocalStoreApplyReport  {
     return try  FfiConverterTypeFfiLocalStoreApplyReport_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffilocalhistorystore_apply_chat_history(
@@ -1041,11 +1296,42 @@ open func applyChatHistory(history: FfiChatHistory)throws  -> FfiLocalStoreApply
 })
 }
     
+open func applyChatList(chats: [FfiChatSummary])throws  -> FfiLocalStoreApplyReport  {
+    return try  FfiConverterTypeFfiLocalStoreApplyReport_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffilocalhistorystore_apply_chat_list(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceTypeFfiChatSummary.lower(chats),$0
+    )
+})
+}
+    
 open func applyLeasedInbox(lease: FfiLeaseInboxResponse)throws  -> FfiLocalStoreApplyReport  {
     return try  FfiConverterTypeFfiLocalStoreApplyReport_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffilocalhistorystore_apply_leased_inbox(
             self.uniffiCloneHandle(),
         FfiConverterTypeFfiLeaseInboxResponse_lower(lease),$0
+    )
+})
+}
+    
+open func applyLocalProjection(envelope: FfiMessageEnvelope, projectionKind: FfiLocalProjectionKind, payload: Data?, mergedEpoch: UInt64?)throws  -> FfiLocalStoreApplyReport  {
+    return try  FfiConverterTypeFfiLocalStoreApplyReport_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffilocalhistorystore_apply_local_projection(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiMessageEnvelope_lower(envelope),
+        FfiConverterTypeFfiLocalProjectionKind_lower(projectionKind),
+        FfiConverterOptionData.lower(payload),
+        FfiConverterOptionUInt64.lower(mergedEpoch),$0
+    )
+})
+}
+    
+open func applyProjectedMessages(chatId: String, projectedMessages: [FfiLocalProjectedMessage])throws  -> FfiLocalProjectionApplyReport  {
+    return try  FfiConverterTypeFfiLocalProjectionApplyReport_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffilocalhistorystore_apply_projected_messages(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(chatId),
+        FfiConverterSequenceTypeFfiLocalProjectedMessage.lower(projectedMessages),$0
     )
 })
 }
@@ -1078,10 +1364,46 @@ open func chatUnreadCount(chatId: String, selfAccountId: String?)throws  -> UInt
 })
 }
     
+open func clearOutboxFailure(messageId: String)throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffilocalhistorystore_clear_outbox_failure(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(messageId),$0
+    )
+}
+}
+    
 open func databasePath()throws  -> String?  {
     return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffilocalhistorystore_database_path(
             self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+open func enqueueOutboxAttachment(chatId: String, senderAccountId: String, senderDeviceId: String, messageId: String, attachment: FfiLocalOutboxAttachmentDraft, queuedAtUnix: UInt64)throws  -> FfiLocalOutboxItem  {
+    return try  FfiConverterTypeFfiLocalOutboxItem_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffilocalhistorystore_enqueue_outbox_attachment(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(chatId),
+        FfiConverterString.lower(senderAccountId),
+        FfiConverterString.lower(senderDeviceId),
+        FfiConverterString.lower(messageId),
+        FfiConverterTypeFfiLocalOutboxAttachmentDraft_lower(attachment),
+        FfiConverterUInt64.lower(queuedAtUnix),$0
+    )
+})
+}
+    
+open func enqueueOutboxMessage(chatId: String, senderAccountId: String, senderDeviceId: String, messageId: String, body: FfiMessageBody, queuedAtUnix: UInt64)throws  -> FfiLocalOutboxItem  {
+    return try  FfiConverterTypeFfiLocalOutboxItem_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffilocalhistorystore_enqueue_outbox_message(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(chatId),
+        FfiConverterString.lower(senderAccountId),
+        FfiConverterString.lower(senderDeviceId),
+        FfiConverterString.lower(messageId),
+        FfiConverterTypeFfiMessageBody_lower(body),
+        FfiConverterUInt64.lower(queuedAtUnix),$0
     )
 })
 }
@@ -1175,6 +1497,15 @@ open func listLocalChatListItems(selfAccountId: String?)throws  -> [FfiLocalChat
 })
 }
     
+open func listOutboxMessages(chatId: String?)throws  -> [FfiLocalOutboxItem]  {
+    return try  FfiConverterSequenceTypeFfiLocalOutboxItem.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffilocalhistorystore_list_outbox_messages(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionString.lower(chatId),$0
+    )
+})
+}
+    
 open func markChatRead(chatId: String, throughServerSeq: UInt64?, selfAccountId: String?)throws  -> FfiLocalChatReadState  {
     return try  FfiConverterTypeFfiLocalChatReadState_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffilocalhistorystore_mark_chat_read(
@@ -1184,6 +1515,15 @@ open func markChatRead(chatId: String, throughServerSeq: UInt64?, selfAccountId:
         FfiConverterOptionString.lower(selfAccountId),$0
     )
 })
+}
+    
+open func markOutboxFailure(messageId: String, failureMessage: String)throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffilocalhistorystore_mark_outbox_failure(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(messageId),
+        FfiConverterString.lower(failureMessage),$0
+    )
+}
 }
     
 open func projectChatMessages(chatId: String, facade: FfiMlsFacade, conversation: FfiMlsConversation, limit: UInt32?)throws  -> FfiLocalProjectionApplyReport  {
@@ -1205,6 +1545,14 @@ open func projectedCursor(chatId: String)throws  -> UInt64?  {
         FfiConverterString.lower(chatId),$0
     )
 })
+}
+    
+open func removeOutboxMessage(messageId: String)throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffilocalhistorystore_remove_outbox_message(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(messageId),$0
+    )
+}
 }
     
 open func saveState()throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
@@ -1751,6 +2099,177 @@ public func FfiConverterTypeFfiMlsFacade_lower(_ value: FfiMlsFacade) -> UInt64 
 
 
 
+public protocol FfiRealtimeDriverProtocol: AnyObject, Sendable {
+    
+    func config()  -> FfiRealtimeConfig
+    
+    func nextWebsocketEvent(websocket: FfiServerWebSocketClient, coordinator: FfiSyncCoordinator, store: FfiLocalHistoryStore, autoAck: Bool) throws  -> FfiRealtimeEvent?
+    
+    func pollOnce(client: FfiServerApiClient, coordinator: FfiSyncCoordinator, store: FfiLocalHistoryStore) throws  -> FfiInboxApplyOutcome
+    
+    func processWebsocketFrame(coordinator: FfiSyncCoordinator, store: FfiLocalHistoryStore, frame: FfiWebSocketServerFrame) throws  -> FfiRealtimeEvent
+    
+}
+open class FfiRealtimeDriver: FfiRealtimeDriverProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_trix_core_fn_clone_ffirealtimedriver(self.handle, $0) }
+    }
+public convenience init()throws  {
+    let handle =
+        try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_constructor_ffirealtimedriver_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_trix_core_fn_free_ffirealtimedriver(handle, $0) }
+    }
+
+    
+public static func withConfig(config: FfiRealtimeConfig)throws  -> FfiRealtimeDriver  {
+    return try  FfiConverterTypeFfiRealtimeDriver_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_constructor_ffirealtimedriver_with_config(
+        FfiConverterTypeFfiRealtimeConfig_lower(config),$0
+    )
+})
+}
+    
+
+    
+open func config() -> FfiRealtimeConfig  {
+    return try!  FfiConverterTypeFfiRealtimeConfig_lift(try! rustCall() {
+    uniffi_trix_core_fn_method_ffirealtimedriver_config(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+open func nextWebsocketEvent(websocket: FfiServerWebSocketClient, coordinator: FfiSyncCoordinator, store: FfiLocalHistoryStore, autoAck: Bool)throws  -> FfiRealtimeEvent?  {
+    return try  FfiConverterOptionTypeFfiRealtimeEvent.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffirealtimedriver_next_websocket_event(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiServerWebSocketClient_lower(websocket),
+        FfiConverterTypeFfiSyncCoordinator_lower(coordinator),
+        FfiConverterTypeFfiLocalHistoryStore_lower(store),
+        FfiConverterBool.lower(autoAck),$0
+    )
+})
+}
+    
+open func pollOnce(client: FfiServerApiClient, coordinator: FfiSyncCoordinator, store: FfiLocalHistoryStore)throws  -> FfiInboxApplyOutcome  {
+    return try  FfiConverterTypeFfiInboxApplyOutcome_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffirealtimedriver_poll_once(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiServerApiClient_lower(client),
+        FfiConverterTypeFfiSyncCoordinator_lower(coordinator),
+        FfiConverterTypeFfiLocalHistoryStore_lower(store),$0
+    )
+})
+}
+    
+open func processWebsocketFrame(coordinator: FfiSyncCoordinator, store: FfiLocalHistoryStore, frame: FfiWebSocketServerFrame)throws  -> FfiRealtimeEvent  {
+    return try  FfiConverterTypeFfiRealtimeEvent_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffirealtimedriver_process_websocket_frame(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiSyncCoordinator_lower(coordinator),
+        FfiConverterTypeFfiLocalHistoryStore_lower(store),
+        FfiConverterTypeFfiWebSocketServerFrame_lower(frame),$0
+    )
+})
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRealtimeDriver: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = FfiRealtimeDriver
+
+    public static func lift(_ handle: UInt64) throws -> FfiRealtimeDriver {
+        return FfiRealtimeDriver(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: FfiRealtimeDriver) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRealtimeDriver {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: FfiRealtimeDriver, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRealtimeDriver_lift(_ handle: UInt64) throws -> FfiRealtimeDriver {
+    return try FfiConverterTypeFfiRealtimeDriver.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRealtimeDriver_lower(_ value: FfiRealtimeDriver) -> UInt64 {
+    return FfiConverterTypeFfiRealtimeDriver.lower(value)
+}
+
+
+
+
+
+
 public protocol FfiServerApiClientProtocol: AnyObject, Sendable {
     
     func accessToken() throws  -> String?
@@ -1798,6 +2317,8 @@ public protocol FfiServerApiClientProtocol: AnyObject, Sendable {
     func downloadAttachment(body: FfiMessageBody) throws  -> FfiDownloadedAttachment
     
     func downloadBlob(blobId: String) throws  -> Data
+    
+    func ensureDeviceKeyPackages(facade: FfiMlsFacade, deviceId: String, minimumAvailable: UInt32, targetAvailable: UInt32) throws  -> FfiPublishKeyPackagesResponse?
     
     func getAccount(accountId: String) throws  -> FfiDirectoryAccount
     
@@ -2141,6 +2662,18 @@ open func downloadBlob(blobId: String)throws  -> Data  {
 })
 }
     
+open func ensureDeviceKeyPackages(facade: FfiMlsFacade, deviceId: String, minimumAvailable: UInt32, targetAvailable: UInt32)throws  -> FfiPublishKeyPackagesResponse?  {
+    return try  FfiConverterOptionTypeFfiPublishKeyPackagesResponse.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverapiclient_ensure_device_key_packages(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiMlsFacade_lower(facade),
+        FfiConverterString.lower(deviceId),
+        FfiConverterUInt32.lower(minimumAvailable),
+        FfiConverterUInt32.lower(targetAvailable),$0
+    )
+})
+}
+    
 open func getAccount(accountId: String)throws  -> FfiDirectoryAccount  {
     return try  FfiConverterTypeFfiDirectoryAccount_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_get_account(
@@ -2447,7 +2980,7 @@ public func FfiConverterTypeFfiServerApiClient_lower(_ value: FfiServerApiClient
 
 public protocol FfiServerWebSocketClientProtocol: AnyObject, Sendable {
     
-    func close() throws 
+    func closeSocket() throws 
     
     func nextFrame() throws  -> FfiWebSocketServerFrame?
     
@@ -2513,8 +3046,8 @@ open class FfiServerWebSocketClient: FfiServerWebSocketClientProtocol, @unchecke
     
 
     
-open func close()throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
-    uniffi_trix_core_fn_method_ffiserverwebsocketclient_close(
+open func closeSocket()throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverwebsocketclient_close_socket(
             self.uniffiCloneHandle(),$0
     )
 }
@@ -2715,6 +3248,15 @@ public convenience init()throws  {
         try! rustCall { uniffi_trix_core_fn_free_ffisynccoordinator(handle, $0) }
     }
 
+    
+public static func newEncrypted(statePath: String, databaseKey: Data)throws  -> FfiSyncCoordinator  {
+    return try  FfiConverterTypeFfiSyncCoordinator_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_constructor_ffisynccoordinator_new_encrypted(
+        FfiConverterString.lower(statePath),
+        FfiConverterData.lower(databaseKey),$0
+    )
+})
+}
     
 public static func newPersistent(statePath: String)throws  -> FfiSyncCoordinator  {
     return try  FfiConverterTypeFfiSyncCoordinator_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
@@ -4007,6 +4549,64 @@ public func FfiConverterTypeFfiChatSummary_lower(_ value: FfiChatSummary) -> Rus
 }
 
 
+public struct FfiClientStoreConfig: Equatable, Hashable {
+    public var databasePath: String
+    public var databaseKey: Data
+    public var attachmentCacheRoot: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(databasePath: String, databaseKey: Data, attachmentCacheRoot: String) {
+        self.databasePath = databasePath
+        self.databaseKey = databaseKey
+        self.attachmentCacheRoot = attachmentCacheRoot
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiClientStoreConfig: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiClientStoreConfig: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiClientStoreConfig {
+        return
+            try FfiClientStoreConfig(
+                databasePath: FfiConverterString.read(from: &buf), 
+                databaseKey: FfiConverterData.read(from: &buf), 
+                attachmentCacheRoot: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiClientStoreConfig, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.databasePath, into: &buf)
+        FfiConverterData.write(value.databaseKey, into: &buf)
+        FfiConverterString.write(value.attachmentCacheRoot, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiClientStoreConfig_lift(_ buf: RustBuffer) throws -> FfiClientStoreConfig {
+    return try FfiConverterTypeFfiClientStoreConfig.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiClientStoreConfig_lower(_ value: FfiClientStoreConfig) -> RustBuffer {
+    return FfiConverterTypeFfiClientStoreConfig.lower(value)
+}
+
+
 public struct FfiCompleteHistorySyncJobResponse: Equatable, Hashable {
     public var jobId: String
     public var jobStatus: FfiHistorySyncJobStatus
@@ -4869,6 +5469,68 @@ public func FfiConverterTypeFfiCreateChatResponse_lower(_ value: FfiCreateChatRe
 }
 
 
+public struct FfiCreateDeviceTransferBundleParams: Equatable, Hashable {
+    public var accountId: String
+    public var sourceDeviceId: String
+    public var targetDeviceId: String
+    public var accountSyncChatId: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(accountId: String, sourceDeviceId: String, targetDeviceId: String, accountSyncChatId: String?) {
+        self.accountId = accountId
+        self.sourceDeviceId = sourceDeviceId
+        self.targetDeviceId = targetDeviceId
+        self.accountSyncChatId = accountSyncChatId
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiCreateDeviceTransferBundleParams: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiCreateDeviceTransferBundleParams: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCreateDeviceTransferBundleParams {
+        return
+            try FfiCreateDeviceTransferBundleParams(
+                accountId: FfiConverterString.read(from: &buf), 
+                sourceDeviceId: FfiConverterString.read(from: &buf), 
+                targetDeviceId: FfiConverterString.read(from: &buf), 
+                accountSyncChatId: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiCreateDeviceTransferBundleParams, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.accountId, into: &buf)
+        FfiConverterString.write(value.sourceDeviceId, into: &buf)
+        FfiConverterString.write(value.targetDeviceId, into: &buf)
+        FfiConverterOptionString.write(value.accountSyncChatId, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCreateDeviceTransferBundleParams_lift(_ buf: RustBuffer) throws -> FfiCreateDeviceTransferBundleParams {
+    return try FfiConverterTypeFfiCreateDeviceTransferBundleParams.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCreateDeviceTransferBundleParams_lower(_ value: FfiCreateDeviceTransferBundleParams) -> RustBuffer {
+    return FfiConverterTypeFfiCreateDeviceTransferBundleParams.lower(value)
+}
+
+
 public struct FfiCreateLinkIntentResponse: Equatable, Hashable {
     public var linkIntentId: String
     public var qrPayload: String
@@ -5188,14 +5850,16 @@ public struct FfiDeviceSummary: Equatable, Hashable {
     public var displayName: String
     public var platform: String
     public var deviceStatus: FfiDeviceStatus
+    public var availableKeyPackageCount: UInt32
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(deviceId: String, displayName: String, platform: String, deviceStatus: FfiDeviceStatus) {
+    public init(deviceId: String, displayName: String, platform: String, deviceStatus: FfiDeviceStatus, availableKeyPackageCount: UInt32) {
         self.deviceId = deviceId
         self.displayName = displayName
         self.platform = platform
         self.deviceStatus = deviceStatus
+        self.availableKeyPackageCount = availableKeyPackageCount
     }
 
     
@@ -5217,7 +5881,8 @@ public struct FfiConverterTypeFfiDeviceSummary: FfiConverterRustBuffer {
                 deviceId: FfiConverterString.read(from: &buf), 
                 displayName: FfiConverterString.read(from: &buf), 
                 platform: FfiConverterString.read(from: &buf), 
-                deviceStatus: FfiConverterTypeFfiDeviceStatus.read(from: &buf)
+                deviceStatus: FfiConverterTypeFfiDeviceStatus.read(from: &buf), 
+                availableKeyPackageCount: FfiConverterUInt32.read(from: &buf)
         )
     }
 
@@ -5226,6 +5891,7 @@ public struct FfiConverterTypeFfiDeviceSummary: FfiConverterRustBuffer {
         FfiConverterString.write(value.displayName, into: &buf)
         FfiConverterString.write(value.platform, into: &buf)
         FfiConverterTypeFfiDeviceStatus.write(value.deviceStatus, into: &buf)
+        FfiConverterUInt32.write(value.availableKeyPackageCount, into: &buf)
     }
 }
 
@@ -5634,6 +6300,76 @@ public func FfiConverterTypeFfiHistorySyncJob_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeFfiHistorySyncJob_lower(_ value: FfiHistorySyncJob) -> RustBuffer {
     return FfiConverterTypeFfiHistorySyncJob.lower(value)
+}
+
+
+public struct FfiImportedDeviceTransferBundle: Equatable, Hashable {
+    public var accountId: String
+    public var sourceDeviceId: String
+    public var targetDeviceId: String
+    public var accountSyncChatId: String?
+    public var accountRootPrivateKey: Data
+    public var accountRootPublicKey: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(accountId: String, sourceDeviceId: String, targetDeviceId: String, accountSyncChatId: String?, accountRootPrivateKey: Data, accountRootPublicKey: Data) {
+        self.accountId = accountId
+        self.sourceDeviceId = sourceDeviceId
+        self.targetDeviceId = targetDeviceId
+        self.accountSyncChatId = accountSyncChatId
+        self.accountRootPrivateKey = accountRootPrivateKey
+        self.accountRootPublicKey = accountRootPublicKey
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiImportedDeviceTransferBundle: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiImportedDeviceTransferBundle: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiImportedDeviceTransferBundle {
+        return
+            try FfiImportedDeviceTransferBundle(
+                accountId: FfiConverterString.read(from: &buf), 
+                sourceDeviceId: FfiConverterString.read(from: &buf), 
+                targetDeviceId: FfiConverterString.read(from: &buf), 
+                accountSyncChatId: FfiConverterOptionString.read(from: &buf), 
+                accountRootPrivateKey: FfiConverterData.read(from: &buf), 
+                accountRootPublicKey: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiImportedDeviceTransferBundle, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.accountId, into: &buf)
+        FfiConverterString.write(value.sourceDeviceId, into: &buf)
+        FfiConverterString.write(value.targetDeviceId, into: &buf)
+        FfiConverterOptionString.write(value.accountSyncChatId, into: &buf)
+        FfiConverterData.write(value.accountRootPrivateKey, into: &buf)
+        FfiConverterData.write(value.accountRootPublicKey, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiImportedDeviceTransferBundle_lift(_ buf: RustBuffer) throws -> FfiImportedDeviceTransferBundle {
+    return try FfiConverterTypeFfiImportedDeviceTransferBundle.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiImportedDeviceTransferBundle_lower(_ value: FfiImportedDeviceTransferBundle) -> RustBuffer {
+    return FfiConverterTypeFfiImportedDeviceTransferBundle.lower(value)
 }
 
 
@@ -6084,6 +6820,154 @@ public func FfiConverterTypeFfiLocalChatReadState_lift(_ buf: RustBuffer) throws
 #endif
 public func FfiConverterTypeFfiLocalChatReadState_lower(_ value: FfiLocalChatReadState) -> RustBuffer {
     return FfiConverterTypeFfiLocalChatReadState.lower(value)
+}
+
+
+public struct FfiLocalOutboxAttachmentDraft: Equatable, Hashable {
+    public var localPath: String
+    public var mimeType: String
+    public var fileName: String?
+    public var widthPx: UInt32?
+    public var heightPx: UInt32?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(localPath: String, mimeType: String, fileName: String?, widthPx: UInt32?, heightPx: UInt32?) {
+        self.localPath = localPath
+        self.mimeType = mimeType
+        self.fileName = fileName
+        self.widthPx = widthPx
+        self.heightPx = heightPx
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiLocalOutboxAttachmentDraft: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiLocalOutboxAttachmentDraft: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiLocalOutboxAttachmentDraft {
+        return
+            try FfiLocalOutboxAttachmentDraft(
+                localPath: FfiConverterString.read(from: &buf), 
+                mimeType: FfiConverterString.read(from: &buf), 
+                fileName: FfiConverterOptionString.read(from: &buf), 
+                widthPx: FfiConverterOptionUInt32.read(from: &buf), 
+                heightPx: FfiConverterOptionUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiLocalOutboxAttachmentDraft, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.localPath, into: &buf)
+        FfiConverterString.write(value.mimeType, into: &buf)
+        FfiConverterOptionString.write(value.fileName, into: &buf)
+        FfiConverterOptionUInt32.write(value.widthPx, into: &buf)
+        FfiConverterOptionUInt32.write(value.heightPx, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLocalOutboxAttachmentDraft_lift(_ buf: RustBuffer) throws -> FfiLocalOutboxAttachmentDraft {
+    return try FfiConverterTypeFfiLocalOutboxAttachmentDraft.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLocalOutboxAttachmentDraft_lower(_ value: FfiLocalOutboxAttachmentDraft) -> RustBuffer {
+    return FfiConverterTypeFfiLocalOutboxAttachmentDraft.lower(value)
+}
+
+
+public struct FfiLocalOutboxItem: Equatable, Hashable {
+    public var messageId: String
+    public var chatId: String
+    public var senderAccountId: String
+    public var senderDeviceId: String
+    public var body: FfiMessageBody?
+    public var attachmentDraft: FfiLocalOutboxAttachmentDraft?
+    public var queuedAtUnix: UInt64
+    public var status: FfiLocalOutboxStatus
+    public var failureMessage: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(messageId: String, chatId: String, senderAccountId: String, senderDeviceId: String, body: FfiMessageBody?, attachmentDraft: FfiLocalOutboxAttachmentDraft?, queuedAtUnix: UInt64, status: FfiLocalOutboxStatus, failureMessage: String?) {
+        self.messageId = messageId
+        self.chatId = chatId
+        self.senderAccountId = senderAccountId
+        self.senderDeviceId = senderDeviceId
+        self.body = body
+        self.attachmentDraft = attachmentDraft
+        self.queuedAtUnix = queuedAtUnix
+        self.status = status
+        self.failureMessage = failureMessage
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiLocalOutboxItem: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiLocalOutboxItem: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiLocalOutboxItem {
+        return
+            try FfiLocalOutboxItem(
+                messageId: FfiConverterString.read(from: &buf), 
+                chatId: FfiConverterString.read(from: &buf), 
+                senderAccountId: FfiConverterString.read(from: &buf), 
+                senderDeviceId: FfiConverterString.read(from: &buf), 
+                body: FfiConverterOptionTypeFfiMessageBody.read(from: &buf), 
+                attachmentDraft: FfiConverterOptionTypeFfiLocalOutboxAttachmentDraft.read(from: &buf), 
+                queuedAtUnix: FfiConverterUInt64.read(from: &buf), 
+                status: FfiConverterTypeFfiLocalOutboxStatus.read(from: &buf), 
+                failureMessage: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiLocalOutboxItem, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.messageId, into: &buf)
+        FfiConverterString.write(value.chatId, into: &buf)
+        FfiConverterString.write(value.senderAccountId, into: &buf)
+        FfiConverterString.write(value.senderDeviceId, into: &buf)
+        FfiConverterOptionTypeFfiMessageBody.write(value.body, into: &buf)
+        FfiConverterOptionTypeFfiLocalOutboxAttachmentDraft.write(value.attachmentDraft, into: &buf)
+        FfiConverterUInt64.write(value.queuedAtUnix, into: &buf)
+        FfiConverterTypeFfiLocalOutboxStatus.write(value.status, into: &buf)
+        FfiConverterOptionString.write(value.failureMessage, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLocalOutboxItem_lift(_ buf: RustBuffer) throws -> FfiLocalOutboxItem {
+    return try FfiConverterTypeFfiLocalOutboxItem.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLocalOutboxItem_lower(_ value: FfiLocalOutboxItem) -> RustBuffer {
+    return FfiConverterTypeFfiLocalOutboxItem.lower(value)
 }
 
 
@@ -7565,6 +8449,162 @@ public func FfiConverterTypeFfiPublishedKeyPackage_lower(_ value: FfiPublishedKe
 }
 
 
+public struct FfiRealtimeConfig: Equatable, Hashable {
+    public var inboxLimit: UInt32
+    public var inboxLeaseTtlSeconds: UInt64
+    public var pollIntervalMs: UInt64
+    public var websocketRetryDelayMs: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(inboxLimit: UInt32, inboxLeaseTtlSeconds: UInt64, pollIntervalMs: UInt64, websocketRetryDelayMs: UInt64) {
+        self.inboxLimit = inboxLimit
+        self.inboxLeaseTtlSeconds = inboxLeaseTtlSeconds
+        self.pollIntervalMs = pollIntervalMs
+        self.websocketRetryDelayMs = websocketRetryDelayMs
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiRealtimeConfig: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRealtimeConfig: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRealtimeConfig {
+        return
+            try FfiRealtimeConfig(
+                inboxLimit: FfiConverterUInt32.read(from: &buf), 
+                inboxLeaseTtlSeconds: FfiConverterUInt64.read(from: &buf), 
+                pollIntervalMs: FfiConverterUInt64.read(from: &buf), 
+                websocketRetryDelayMs: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiRealtimeConfig, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.inboxLimit, into: &buf)
+        FfiConverterUInt64.write(value.inboxLeaseTtlSeconds, into: &buf)
+        FfiConverterUInt64.write(value.pollIntervalMs, into: &buf)
+        FfiConverterUInt64.write(value.websocketRetryDelayMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRealtimeConfig_lift(_ buf: RustBuffer) throws -> FfiRealtimeConfig {
+    return try FfiConverterTypeFfiRealtimeConfig.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRealtimeConfig_lower(_ value: FfiRealtimeConfig) -> RustBuffer {
+    return FfiConverterTypeFfiRealtimeConfig.lower(value)
+}
+
+
+public struct FfiRealtimeEvent: Equatable, Hashable {
+    public var mode: FfiRealtimeMode
+    public var kind: FfiRealtimeEventKind
+    public var report: FfiLocalStoreApplyReport?
+    public var outboundAckInboxIds: [UInt64]
+    public var serverAckedInboxIds: [UInt64]
+    public var leaseOwner: String?
+    public var leaseExpiresAtUnix: UInt64?
+    public var pongNonce: String?
+    public var pongServerUnix: UInt64?
+    public var sessionReplacedReason: String?
+    public var errorCode: String?
+    public var errorMessage: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(mode: FfiRealtimeMode, kind: FfiRealtimeEventKind, report: FfiLocalStoreApplyReport?, outboundAckInboxIds: [UInt64], serverAckedInboxIds: [UInt64], leaseOwner: String?, leaseExpiresAtUnix: UInt64?, pongNonce: String?, pongServerUnix: UInt64?, sessionReplacedReason: String?, errorCode: String?, errorMessage: String?) {
+        self.mode = mode
+        self.kind = kind
+        self.report = report
+        self.outboundAckInboxIds = outboundAckInboxIds
+        self.serverAckedInboxIds = serverAckedInboxIds
+        self.leaseOwner = leaseOwner
+        self.leaseExpiresAtUnix = leaseExpiresAtUnix
+        self.pongNonce = pongNonce
+        self.pongServerUnix = pongServerUnix
+        self.sessionReplacedReason = sessionReplacedReason
+        self.errorCode = errorCode
+        self.errorMessage = errorMessage
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiRealtimeEvent: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRealtimeEvent: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRealtimeEvent {
+        return
+            try FfiRealtimeEvent(
+                mode: FfiConverterTypeFfiRealtimeMode.read(from: &buf), 
+                kind: FfiConverterTypeFfiRealtimeEventKind.read(from: &buf), 
+                report: FfiConverterOptionTypeFfiLocalStoreApplyReport.read(from: &buf), 
+                outboundAckInboxIds: FfiConverterSequenceUInt64.read(from: &buf), 
+                serverAckedInboxIds: FfiConverterSequenceUInt64.read(from: &buf), 
+                leaseOwner: FfiConverterOptionString.read(from: &buf), 
+                leaseExpiresAtUnix: FfiConverterOptionUInt64.read(from: &buf), 
+                pongNonce: FfiConverterOptionString.read(from: &buf), 
+                pongServerUnix: FfiConverterOptionUInt64.read(from: &buf), 
+                sessionReplacedReason: FfiConverterOptionString.read(from: &buf), 
+                errorCode: FfiConverterOptionString.read(from: &buf), 
+                errorMessage: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiRealtimeEvent, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiRealtimeMode.write(value.mode, into: &buf)
+        FfiConverterTypeFfiRealtimeEventKind.write(value.kind, into: &buf)
+        FfiConverterOptionTypeFfiLocalStoreApplyReport.write(value.report, into: &buf)
+        FfiConverterSequenceUInt64.write(value.outboundAckInboxIds, into: &buf)
+        FfiConverterSequenceUInt64.write(value.serverAckedInboxIds, into: &buf)
+        FfiConverterOptionString.write(value.leaseOwner, into: &buf)
+        FfiConverterOptionUInt64.write(value.leaseExpiresAtUnix, into: &buf)
+        FfiConverterOptionString.write(value.pongNonce, into: &buf)
+        FfiConverterOptionUInt64.write(value.pongServerUnix, into: &buf)
+        FfiConverterOptionString.write(value.sessionReplacedReason, into: &buf)
+        FfiConverterOptionString.write(value.errorCode, into: &buf)
+        FfiConverterOptionString.write(value.errorMessage, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRealtimeEvent_lift(_ buf: RustBuffer) throws -> FfiRealtimeEvent {
+    return try FfiConverterTypeFfiRealtimeEvent.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRealtimeEvent_lower(_ value: FfiRealtimeEvent) -> RustBuffer {
+    return FfiConverterTypeFfiRealtimeEvent.lower(value)
+}
+
+
 public struct FfiReservedKeyPackage: Equatable, Hashable {
     public var keyPackageId: String
     public var deviceId: String
@@ -8959,6 +9999,73 @@ public func FfiConverterTypeFfiHistorySyncJobType_lower(_ value: FfiHistorySyncJ
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum FfiLocalOutboxStatus: Equatable, Hashable {
+    
+    case pending
+    case failed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiLocalOutboxStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiLocalOutboxStatus: FfiConverterRustBuffer {
+    typealias SwiftType = FfiLocalOutboxStatus
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiLocalOutboxStatus {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .pending
+        
+        case 2: return .failed
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiLocalOutboxStatus, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .pending:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .failed:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLocalOutboxStatus_lift(_ buf: RustBuffer) throws -> FfiLocalOutboxStatus {
+    return try FfiConverterTypeFfiLocalOutboxStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLocalOutboxStatus_lower(_ value: FfiLocalOutboxStatus) -> RustBuffer {
+    return FfiConverterTypeFfiLocalOutboxStatus.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum FfiLocalProjectionKind: Equatable, Hashable {
     
     case applicationMessage
@@ -9351,6 +10458,182 @@ public func FfiConverterTypeFfiReactionAction_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeFfiReactionAction_lower(_ value: FfiReactionAction) -> RustBuffer {
     return FfiConverterTypeFfiReactionAction.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum FfiRealtimeEventKind: Equatable, Hashable {
+    
+    case hello
+    case inboxItems
+    case acked
+    case pong
+    case sessionReplaced
+    case error
+    case disconnected
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiRealtimeEventKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRealtimeEventKind: FfiConverterRustBuffer {
+    typealias SwiftType = FfiRealtimeEventKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRealtimeEventKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .hello
+        
+        case 2: return .inboxItems
+        
+        case 3: return .acked
+        
+        case 4: return .pong
+        
+        case 5: return .sessionReplaced
+        
+        case 6: return .error
+        
+        case 7: return .disconnected
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiRealtimeEventKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .hello:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .inboxItems:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .acked:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .pong:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .sessionReplaced:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .error:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .disconnected:
+            writeInt(&buf, Int32(7))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRealtimeEventKind_lift(_ buf: RustBuffer) throws -> FfiRealtimeEventKind {
+    return try FfiConverterTypeFfiRealtimeEventKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRealtimeEventKind_lower(_ value: FfiRealtimeEventKind) -> RustBuffer {
+    return FfiConverterTypeFfiRealtimeEventKind.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum FfiRealtimeMode: Equatable, Hashable {
+    
+    case websocket
+    case polling
+    case disconnected
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiRealtimeMode: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRealtimeMode: FfiConverterRustBuffer {
+    typealias SwiftType = FfiRealtimeMode
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRealtimeMode {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .websocket
+        
+        case 2: return .polling
+        
+        case 3: return .disconnected
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiRealtimeMode, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .websocket:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .polling:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .disconnected:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRealtimeMode_lift(_ buf: RustBuffer) throws -> FfiRealtimeMode {
+    return try FfiConverterTypeFfiRealtimeMode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRealtimeMode_lower(_ value: FfiRealtimeMode) -> RustBuffer {
+    return FfiConverterTypeFfiRealtimeMode.lower(value)
 }
 
 
@@ -9900,6 +11183,30 @@ fileprivate struct FfiConverterOptionTypeFfiLocalChatReadState: FfiConverterRust
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeFfiLocalOutboxAttachmentDraft: FfiConverterRustBuffer {
+    typealias SwiftType = FfiLocalOutboxAttachmentDraft?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiLocalOutboxAttachmentDraft.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiLocalOutboxAttachmentDraft.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeFfiLocalStoreApplyReport: FfiConverterRustBuffer {
     typealias SwiftType = FfiLocalStoreApplyReport?
 
@@ -9964,6 +11271,54 @@ fileprivate struct FfiConverterOptionTypeFfiMessageEnvelope: FfiConverterRustBuf
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeFfiMessageEnvelope.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiPublishKeyPackagesResponse: FfiConverterRustBuffer {
+    typealias SwiftType = FfiPublishKeyPackagesResponse?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiPublishKeyPackagesResponse.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiPublishKeyPackagesResponse.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiRealtimeEvent: FfiConverterRustBuffer {
+    typealias SwiftType = FfiRealtimeEvent?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiRealtimeEvent.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiRealtimeEvent.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -10588,6 +11943,31 @@ fileprivate struct FfiConverterSequenceTypeFfiLocalChatReadState: FfiConverterRu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiLocalOutboxItem: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiLocalOutboxItem]
+
+    public static func write(_ value: [FfiLocalOutboxItem], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiLocalOutboxItem.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiLocalOutboxItem] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiLocalOutboxItem]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiLocalOutboxItem.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiLocalProjectedMessage: FfiConverterRustBuffer {
     typealias SwiftType = [FfiLocalProjectedMessage]
 
@@ -10888,6 +12268,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffiaccountrootmaterial_account_bootstrap_payload() != 37556) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffiaccountrootmaterial_create_device_transfer_bundle() != 37674) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffiaccountrootmaterial_device_revoke_payload() != 52349) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -10906,7 +12289,31 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffiaccountrootmaterial_sign_device_revoke() != 43154) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffiaccountrootmaterial_transfer_bundle() != 58764) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffiaccountrootmaterial_verify() != 58382) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_fficlientstore_attachment_cache_root() != 16889) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_fficlientstore_database_path() != 47812) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_fficlientstore_history_store() != 284) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_fficlientstore_mls_storage_root() != 56655) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_fficlientstore_open_mls_facade() != 7350) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_fficlientstore_sync_coordinator() != 45318) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffidevicekeymaterial_decrypt_device_transfer_bundle() != 56144) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffidevicekeymaterial_private_key_bytes() != 49132) {
@@ -10924,10 +12331,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffidevicekeymaterial_verify() != 11630) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffilocalhistorystore_apply_chat_detail() != 52493) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffilocalhistorystore_apply_chat_history() != 30010) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffilocalhistorystore_apply_chat_list() != 65246) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffilocalhistorystore_apply_leased_inbox() != 20144) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffilocalhistorystore_apply_local_projection() != 35010) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffilocalhistorystore_apply_projected_messages() != 2456) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffilocalhistorystore_chat_mls_group_id() != 10675) {
@@ -10939,7 +12358,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffilocalhistorystore_chat_unread_count() != 15308) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffilocalhistorystore_clear_outbox_failure() != 63960) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffilocalhistorystore_database_path() != 21137) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffilocalhistorystore_enqueue_outbox_attachment() != 23677) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffilocalhistorystore_enqueue_outbox_message() != 41416) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffilocalhistorystore_get_chat() != 41372) {
@@ -10969,13 +12397,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffilocalhistorystore_list_local_chat_list_items() != 16869) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffilocalhistorystore_list_outbox_messages() != 16845) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffilocalhistorystore_mark_chat_read() != 49850) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffilocalhistorystore_mark_outbox_failure() != 57229) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffilocalhistorystore_project_chat_messages() != 40538) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffilocalhistorystore_projected_cursor() != 55925) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffilocalhistorystore_remove_outbox_message() != 21712) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffilocalhistorystore_save_state() != 61222) {
@@ -11050,6 +12487,18 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffimlsfacade_storage_root() != 51521) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffirealtimedriver_config() != 13059) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffirealtimedriver_next_websocket_event() != 14226) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffirealtimedriver_poll_once() != 52508) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffirealtimedriver_process_websocket_frame() != 65052) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_access_token() != 22592) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -11117,6 +12566,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_download_blob() != 62802) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffiserverapiclient_ensure_device_key_packages() != 64963) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_get_account() != 32148) {
@@ -11200,7 +12652,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_upload_blob() != 30342) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_trix_core_checksum_method_ffiserverwebsocketclient_close() != 41684) {
+    if (uniffi_trix_core_checksum_method_ffiserverwebsocketclient_close_socket() != 15571) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffiserverwebsocketclient_next_frame() != 11208) {
@@ -11284,7 +12736,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_constructor_ffiaccountrootmaterial_from_private_key() != 9414) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_constructor_ffiaccountrootmaterial_from_transfer_bundle() != 55885) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_constructor_ffiaccountrootmaterial_generate() != 26904) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_constructor_fficlientstore_open() != 40329) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_constructor_ffidevicekeymaterial_from_private_key() != 12174) {
@@ -11294,6 +12752,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_constructor_ffilocalhistorystore_new() != 36949) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_constructor_ffilocalhistorystore_new_encrypted() != 60941) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_constructor_ffilocalhistorystore_new_persistent() != 16055) {
@@ -11308,10 +12769,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_constructor_ffimlsfacade_new_persistent() != 54853) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_constructor_ffirealtimedriver_new() != 63358) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_constructor_ffirealtimedriver_with_config() != 1438) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_constructor_ffiserverapiclient_new() != 35642) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_constructor_ffisynccoordinator_new() != 18306) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_constructor_ffisynccoordinator_new_encrypted() != 54725) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_constructor_ffisynccoordinator_new_persistent() != 12494) {

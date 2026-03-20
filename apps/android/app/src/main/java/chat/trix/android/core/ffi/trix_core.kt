@@ -856,6 +856,8 @@ external fun uniffi_trix_core_checksum_method_ffiserverapiclient_download_attach
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_download_blob(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffiserverapiclient_ensure_device_key_packages(
+): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_get_account(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_get_account_key_packages(
@@ -1281,6 +1283,8 @@ external fun uniffi_trix_core_fn_method_ffiserverapiclient_create_message(`ptr`:
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_download_attachment(`ptr`: Long,`body`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_download_blob(`ptr`: Long,`blobId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffiserverapiclient_ensure_device_key_packages(`ptr`: Long,`facade`: Long,`deviceId`: RustBuffer.ByValue,`minimumAvailable`: Int,`targetAvailable`: Int,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_get_account(`ptr`: Long,`accountId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1864,6 +1868,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_download_blob() != 62802.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_ensure_device_key_packages() != 64963.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_get_account() != 32148.toShort()) {
@@ -5540,6 +5547,8 @@ public interface FfiServerApiClientInterface {
     
     fun `downloadBlob`(`blobId`: kotlin.String): kotlin.ByteArray
     
+    fun `ensureDeviceKeyPackages`(`facade`: FfiMlsFacade, `deviceId`: kotlin.String, `minimumAvailable`: kotlin.UInt, `targetAvailable`: kotlin.UInt): FfiPublishKeyPackagesResponse?
+    
     fun `getAccount`(`accountId`: kotlin.String): FfiDirectoryAccount
     
     fun `getAccountKeyPackages`(`accountId`: kotlin.String): List<FfiReservedKeyPackage>
@@ -6016,6 +6025,20 @@ open class FfiServerApiClient: Disposable, AutoCloseable, FfiServerApiClientInte
     UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_download_blob(
         it,
         FfiConverterString.lower(`blobId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `ensureDeviceKeyPackages`(`facade`: FfiMlsFacade, `deviceId`: kotlin.String, `minimumAvailable`: kotlin.UInt, `targetAvailable`: kotlin.UInt): FfiPublishKeyPackagesResponse? {
+            return FfiConverterOptionalTypeFfiPublishKeyPackagesResponse.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_ensure_device_key_packages(
+        it,
+        FfiConverterTypeFfiMlsFacade.lower(`facade`),FfiConverterString.lower(`deviceId`),FfiConverterUInt.lower(`minimumAvailable`),FfiConverterUInt.lower(`targetAvailable`),_status)
 }
     }
     )
@@ -9205,6 +9228,8 @@ data class FfiDeviceSummary (
     var `platform`: kotlin.String
     , 
     var `deviceStatus`: FfiDeviceStatus
+    , 
+    var `availableKeyPackageCount`: kotlin.UInt
     
 ){
     
@@ -9225,6 +9250,7 @@ public object FfiConverterTypeFfiDeviceSummary: FfiConverterRustBuffer<FfiDevice
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
             FfiConverterTypeFfiDeviceStatus.read(buf),
+            FfiConverterUInt.read(buf),
         )
     }
 
@@ -9232,7 +9258,8 @@ public object FfiConverterTypeFfiDeviceSummary: FfiConverterRustBuffer<FfiDevice
             FfiConverterString.allocationSize(value.`deviceId`) +
             FfiConverterString.allocationSize(value.`displayName`) +
             FfiConverterString.allocationSize(value.`platform`) +
-            FfiConverterTypeFfiDeviceStatus.allocationSize(value.`deviceStatus`)
+            FfiConverterTypeFfiDeviceStatus.allocationSize(value.`deviceStatus`) +
+            FfiConverterUInt.allocationSize(value.`availableKeyPackageCount`)
     )
 
     override fun write(value: FfiDeviceSummary, buf: ByteBuffer) {
@@ -9240,6 +9267,7 @@ public object FfiConverterTypeFfiDeviceSummary: FfiConverterRustBuffer<FfiDevice
             FfiConverterString.write(value.`displayName`, buf)
             FfiConverterString.write(value.`platform`, buf)
             FfiConverterTypeFfiDeviceStatus.write(value.`deviceStatus`, buf)
+            FfiConverterUInt.write(value.`availableKeyPackageCount`, buf)
     }
 }
 
@@ -13268,6 +13296,38 @@ public object FfiConverterOptionalTypeFfiMessageEnvelope: FfiConverterRustBuffer
         } else {
             buf.put(1)
             FfiConverterTypeFfiMessageEnvelope.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeFfiPublishKeyPackagesResponse: FfiConverterRustBuffer<FfiPublishKeyPackagesResponse?> {
+    override fun read(buf: ByteBuffer): FfiPublishKeyPackagesResponse? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeFfiPublishKeyPackagesResponse.read(buf)
+    }
+
+    override fun allocationSize(value: FfiPublishKeyPackagesResponse?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeFfiPublishKeyPackagesResponse.allocationSize(value)
+        }
+    }
+
+    override fun write(value: FfiPublishKeyPackagesResponse?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeFfiPublishKeyPackagesResponse.write(value, buf)
         }
     }
 }

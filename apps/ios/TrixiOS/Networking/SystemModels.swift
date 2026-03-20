@@ -180,6 +180,7 @@ struct DeviceSummary: Decodable, Identifiable {
     let displayName: String
     let platform: String
     let deviceStatus: DeviceStatus
+    let availableKeyPackageCount: UInt32
 
     var id: String { deviceId }
 }

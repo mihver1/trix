@@ -1381,6 +1381,17 @@ final class AppModel: ObservableObject {
             accessToken: session.accessToken,
             identity: identity
         )
+
+        do {
+            _ = try TrixCorePersistentBridge.ensureOwnDeviceKeyPackages(
+                baseURLString: try client.baseURLString(),
+                accessToken: session.accessToken,
+                identity: effectiveIdentity
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+
         async let profile: AccountProfileResponse = client.get(
             "/v0/accounts/me",
             accessToken: session.accessToken

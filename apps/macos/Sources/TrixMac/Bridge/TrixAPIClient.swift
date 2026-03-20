@@ -253,6 +253,36 @@ struct TrixAPIClient {
         }
     }
 
+    func ensureOwnDeviceKeyPackages(
+        accessToken: String,
+        deviceId: UUID,
+        mlsStorageRoot: URL,
+        credentialIdentity: Data,
+        minimumAvailable: Int = 8,
+        targetAvailable: Int = 32
+    ) async throws -> PublishKeyPackagesResponse? {
+        let response = try await callFFI(accessToken: accessToken) { client in
+            let facade = try Self.makePersistentMlsFacade(
+                storageRoot: mlsStorageRoot,
+                credentialIdentity: credentialIdentity
+            )
+            return try client.ensureDeviceKeyPackages(
+                facade: facade,
+                deviceId: deviceId.uuidString,
+                minimumAvailable: try TrixCoreCodec.uint32(
+                    minimumAvailable,
+                    label: "minimum available key packages"
+                ),
+                targetAvailable: try TrixCoreCodec.uint32(
+                    targetAvailable,
+                    label: "target available key packages"
+                )
+            )
+        }
+
+        return try response.map(PublishKeyPackagesResponse.init(ffiValue:))
+    }
+
     func reserveKeyPackages(
         accessToken: String,
         request: ReserveKeyPackagesRequest
@@ -292,9 +322,23 @@ struct TrixAPIClient {
         linkIntentId: UUID,
         linkToken: UUID,
         deviceDisplayName: String,
-        identity: DeviceIdentityMaterial
+        identity: DeviceIdentityMaterial,
+        mlsStorageRoot: URL,
+        initialKeyPackageCount: Int = 32
     ) async throws -> CompleteLinkIntentResponse {
         try await callFFI { client in
+            let facade = try Self.makePersistentMlsFacade(
+                storageRoot: mlsStorageRoot,
+                credentialIdentity: identity.credentialIdentityData
+            )
+            let keyPackages = try facade.generatePublishKeyPackages(
+                count: try TrixCoreCodec.uint32(
+                    initialKeyPackageCount,
+                    label: "initial key package count"
+                )
+            )
+            try facade.saveState()
+
             try CompleteLinkIntentResponse(
                 ffiValue: try client.completeLinkIntentWithDeviceKey(
                     linkIntentId: linkIntentId.uuidString,
@@ -303,7 +347,7 @@ struct TrixAPIClient {
                         deviceDisplayName: deviceDisplayName,
                         platform: DeviceIdentityMaterial.platform,
                         credentialIdentity: identity.credentialIdentityData,
-                        keyPackages: []
+                        keyPackages: keyPackages
                     ),
                     deviceKeys: identity.transportKeyMaterial
                 )

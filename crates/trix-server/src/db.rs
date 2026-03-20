@@ -111,6 +111,7 @@ pub struct DeviceSummaryRow {
     pub display_name: String,
     pub platform: String,
     pub device_status: DeviceStatus,
+    pub available_key_package_count: u32,
 }
 
 #[derive(Debug)]
@@ -1271,13 +1272,19 @@ impl Database {
         let rows = sqlx::query(
             r#"
             SELECT
-                device_id,
-                display_name,
-                platform,
-                device_status::text AS device_status
-            FROM devices
-            WHERE account_id = $1
-            ORDER BY created_at ASC
+                d.device_id,
+                d.display_name,
+                d.platform,
+                d.device_status::text AS device_status,
+                COALESCE((
+                    SELECT COUNT(*)
+                    FROM device_key_packages kp
+                    WHERE kp.device_id = d.device_id
+                      AND kp.status = 'available'::key_package_status
+                ), 0) AS available_key_package_count
+            FROM devices d
+            WHERE d.account_id = $1
+            ORDER BY d.created_at ASC
             "#,
         )
         .bind(account_id)
@@ -1292,6 +1299,10 @@ impl Database {
                     display_name: row_text(&row, "display_name")?,
                     platform: row_text(&row, "platform")?,
                     device_status: parse_device_status(&row_text(&row, "device_status")?)?,
+                    available_key_package_count: row_u64_from_i64(
+                        &row,
+                        "available_key_package_count",
+                    )? as u32,
                 })
             })
             .collect()

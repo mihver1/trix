@@ -133,6 +133,7 @@ pub struct DeviceSummary {
     pub display_name: String,
     pub platform: String,
     pub device_status: DeviceStatus,
+    pub available_key_package_count: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -460,11 +460,13 @@ final class AppModel: ObservableObject {
                 deviceDisplayName: deviceDisplayName,
                 platform: DeviceIdentityMaterial.platform
             )
+            let storePaths = try workspaceStorePaths(for: payload.accountId)
             let response = try await client.completeLinkIntent(
                 linkIntentId: payload.linkIntentId,
                 linkToken: payload.linkToken,
                 deviceDisplayName: deviceDisplayName,
-                identity: identity
+                identity: identity,
+                mlsStorageRoot: storePaths.mlsStateRootURL
             )
 
             serverBaseURLString = payload.baseURL
@@ -1560,6 +1562,21 @@ final class AppModel: ObservableObject {
     private func loadWorkspace(client: TrixAPIClient, accessToken: String) async throws {
         isRefreshingWorkspace = true
         defer { isRefreshingWorkspace = false }
+
+        if let session = persistedSession {
+            do {
+                let identity = try loadStoredIdentity()
+                let storePaths = try workspaceStorePaths(for: session.accountId)
+                _ = try await client.ensureOwnDeviceKeyPackages(
+                    accessToken: accessToken,
+                    deviceId: session.deviceId,
+                    mlsStorageRoot: storePaths.mlsStateRootURL,
+                    credentialIdentity: identity.storedIdentity.credentialIdentity
+                )
+            } catch {
+                lastErrorMessage = error.userFacingMessage
+            }
+        }
 
         async let profile = client.fetchCurrentAccount(accessToken: accessToken)
         async let devices = client.fetchDevices(accessToken: accessToken)

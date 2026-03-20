@@ -241,6 +241,7 @@ struct DeviceSummary: Codable, Identifiable {
     let displayName: String
     let platform: String
     let deviceStatus: DeviceStatus
+    let availableKeyPackageCount: UInt32
 
     var id: UUID { deviceId }
 }

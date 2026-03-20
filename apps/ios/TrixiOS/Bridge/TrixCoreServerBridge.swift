@@ -110,6 +110,11 @@ struct TrixCoreServerBridge {
         bootstrapMaterial: DeviceBootstrapMaterial
     ) throws -> CompleteLinkIntentResponse {
         let client = try makeClient(baseURLString: baseURLString)
+        let keyPackages = try TrixCorePersistentBridge.prepareLinkedDeviceKeyPackages(
+            payload: payload,
+            form: form,
+            bootstrapMaterial: bootstrapMaterial
+        )
         let response = try client.completeLinkIntentWithDeviceKey(
             linkIntentId: payload.linkIntentId,
             params: FfiCompleteLinkIntentWithDeviceKeyParams(
@@ -117,7 +122,7 @@ struct TrixCoreServerBridge {
                 deviceDisplayName: form.deviceDisplayName.trix_trimmed(),
                 platform: form.platform,
                 credentialIdentity: bootstrapMaterial.credentialIdentity,
-                keyPackages: []
+                keyPackages: keyPackages
             ),
             deviceKeys: try bootstrapMaterial.deviceKeyMaterial()
         )
