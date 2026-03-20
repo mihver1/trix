@@ -5,6 +5,7 @@ import chat.trix.android.core.ffi.FfiCreateAccountParams
 import chat.trix.android.core.ffi.FfiDeviceStatus
 import chat.trix.android.core.ffi.FfiServerApiClient
 import chat.trix.android.core.ffi.TrixFfiException
+import chat.trix.android.core.ffi.FfiUpdateAccountProfileParams
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -75,6 +76,22 @@ class AuthApiClient(
         runFfi("Failed to fetch current account") {
             ffiClient.setAccessToken(accessToken)
             ffiClient.getMe().toAccountProfile()
+        }
+    }
+
+    suspend fun updateCurrentAccount(
+        accessToken: String,
+        request: UpdateAccountProfilePayload,
+    ): AccountProfile = withContext(Dispatchers.IO) {
+        runFfi("Failed to update account profile") {
+            ffiClient.setAccessToken(accessToken)
+            ffiClient.updateAccountProfile(
+                FfiUpdateAccountProfileParams(
+                    handle = request.handle,
+                    profileName = request.profileName,
+                    profileBio = request.profileBio,
+                ),
+            ).toAccountProfile()
         }
     }
 
@@ -149,4 +166,10 @@ data class AccountProfile(
     val profileBio: String?,
     val deviceId: String,
     val deviceStatus: String,
+)
+
+data class UpdateAccountProfilePayload(
+    val handle: String?,
+    val profileName: String,
+    val profileBio: String?,
 )

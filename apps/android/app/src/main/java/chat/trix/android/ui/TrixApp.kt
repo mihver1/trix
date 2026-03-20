@@ -43,6 +43,8 @@ import chat.trix.android.R
 import chat.trix.android.core.auth.AuthBootstrapCoordinator
 import chat.trix.android.core.auth.AuthenticatedSession
 import chat.trix.android.core.auth.BootstrapInput
+import chat.trix.android.core.auth.AccountProfile
+import chat.trix.android.core.auth.LocalAuthStateStore
 import chat.trix.android.core.auth.StoredDeviceSummary
 import chat.trix.android.core.system.BackendConfigStore
 import chat.trix.android.designsystem.theme.TrixTheme
@@ -64,6 +66,7 @@ fun TrixApp() {
         val context = LocalContext.current.applicationContext
         val windowInfo = rememberTrixAdaptiveInfo()
         val backendConfigStore = remember(context) { BackendConfigStore(context) }
+        val localAuthStateStore = remember(context) { LocalAuthStateStore(context) }
         var configuredBaseUrl by rememberSaveable {
             mutableStateOf(backendConfigStore.readBaseUrl() ?: BuildConfig.TRIX_BASE_URL)
         }
@@ -143,24 +146,67 @@ fun TrixApp() {
                     },
                 )
                 is TrixAuthState.SignedIn -> {
+                    val session = state.session
                     when (windowInfo.navigationLayout) {
                         TrixNavigationLayout.BottomBar -> BottomBarLayout(
                             destination = destination,
                             onDestinationChange = { destination = it },
                             windowInfo = windowInfo,
-                            session = state.session,
+                            session = session,
+                            onPersistAccountProfile = { updatedProfile ->
+                                val updatedLocalState = session.localState.copy(
+                                    handle = updatedProfile.handle,
+                                    profileName = updatedProfile.profileName,
+                                    profileBio = updatedProfile.profileBio,
+                                )
+                                localAuthStateStore.write(updatedLocalState)
+                                authState = TrixAuthState.SignedIn(
+                                    session.copy(
+                                        localState = updatedLocalState,
+                                        accountProfile = updatedProfile,
+                                    ),
+                                )
+                            },
                         )
                         TrixNavigationLayout.NavigationRail -> RailLayout(
                             destination = destination,
                             onDestinationChange = { destination = it },
                             windowInfo = windowInfo,
-                            session = state.session,
+                            session = session,
+                            onPersistAccountProfile = { updatedProfile ->
+                                val updatedLocalState = session.localState.copy(
+                                    handle = updatedProfile.handle,
+                                    profileName = updatedProfile.profileName,
+                                    profileBio = updatedProfile.profileBio,
+                                )
+                                localAuthStateStore.write(updatedLocalState)
+                                authState = TrixAuthState.SignedIn(
+                                    session.copy(
+                                        localState = updatedLocalState,
+                                        accountProfile = updatedProfile,
+                                    ),
+                                )
+                            },
                         )
                         TrixNavigationLayout.PermanentDrawer -> DrawerLayout(
                             destination = destination,
                             onDestinationChange = { destination = it },
                             windowInfo = windowInfo,
-                            session = state.session,
+                            session = session,
+                            onPersistAccountProfile = { updatedProfile ->
+                                val updatedLocalState = session.localState.copy(
+                                    handle = updatedProfile.handle,
+                                    profileName = updatedProfile.profileName,
+                                    profileBio = updatedProfile.profileBio,
+                                )
+                                localAuthStateStore.write(updatedLocalState)
+                                authState = TrixAuthState.SignedIn(
+                                    session.copy(
+                                        localState = updatedLocalState,
+                                        accountProfile = updatedProfile,
+                                    ),
+                                )
+                            },
                         )
                     }
                 }
@@ -276,6 +322,7 @@ private fun BottomBarLayout(
     onDestinationChange: (TrixDestination) -> Unit,
     windowInfo: TrixAdaptiveInfo,
     session: AuthenticatedSession,
+    onPersistAccountProfile: suspend (AccountProfile) -> Unit,
 ) {
     androidx.compose.material3.Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -301,6 +348,7 @@ private fun BottomBarLayout(
             destination = destination,
             windowInfo = windowInfo,
             session = session,
+            onPersistAccountProfile = onPersistAccountProfile,
             modifier = Modifier.padding(innerPadding),
         )
     }
@@ -312,6 +360,7 @@ private fun RailLayout(
     onDestinationChange: (TrixDestination) -> Unit,
     windowInfo: TrixAdaptiveInfo,
     session: AuthenticatedSession,
+    onPersistAccountProfile: suspend (AccountProfile) -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -339,6 +388,7 @@ private fun RailLayout(
             destination = destination,
             windowInfo = windowInfo,
             session = session,
+            onPersistAccountProfile = onPersistAccountProfile,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxSize(),
@@ -352,6 +402,7 @@ private fun DrawerLayout(
     onDestinationChange: (TrixDestination) -> Unit,
     windowInfo: TrixAdaptiveInfo,
     session: AuthenticatedSession,
+    onPersistAccountProfile: suspend (AccountProfile) -> Unit,
 ) {
     PermanentNavigationDrawer(
         drawerContent = {
@@ -403,6 +454,7 @@ private fun DrawerLayout(
                 destination = destination,
                 windowInfo = windowInfo,
                 session = session,
+                onPersistAccountProfile = onPersistAccountProfile,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -414,6 +466,7 @@ private fun DestinationContent(
     destination: TrixDestination,
     windowInfo: TrixAdaptiveInfo,
     session: AuthenticatedSession,
+    onPersistAccountProfile: suspend (AccountProfile) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     when (destination) {
@@ -429,6 +482,7 @@ private fun DestinationContent(
         TrixDestination.Settings -> SettingsScreen(
             windowInfo = windowInfo,
             session = session,
+            onPersistAccountProfile = onPersistAccountProfile,
             modifier = modifier,
         )
     }
