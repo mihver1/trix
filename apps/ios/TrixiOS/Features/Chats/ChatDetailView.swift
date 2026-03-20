@@ -258,7 +258,7 @@ struct ChatDetailView: View {
                 } header: {
                     Text("Send Message")
                 } footer: {
-                    Text("Typed bodies are serialized through `trix-core`. Attachment mode also encrypts the file locally, uploads the blob, and sends the descriptor as a debug application payload until the real MLS conversation bridge is wired.")
+                    Text("Typed bodies are serialized through `trix-core`. Attachment mode encrypts the file locally, uploads the blob, and then sends the descriptor through the persistent MLS conversation state.")
                 }
 
                 Section {
@@ -273,7 +273,7 @@ struct ChatDetailView: View {
                 } header: {
                     Text("Add Members")
                 } footer: {
-                    Text("The client reserves key packages for each target account and submits placeholder commit and welcome references.")
+                    Text("The client reserves target key packages through `trix-core` and submits the resulting MLS commit and welcome messages through the control flow.")
                 }
 
                 Section {
@@ -288,7 +288,7 @@ struct ChatDetailView: View {
                 } header: {
                     Text("Remove Members")
                 } footer: {
-                    Text("Account removal does not require new key package reservations, only an updated commit reference.")
+                    Text("Account removal reuses the local MLS conversation state and submits the resulting control commit.")
                 }
 
                 Section {

@@ -334,6 +334,7 @@ struct ChatSummary: Decodable, Identifiable {
     let chatType: ChatType
     let title: String?
     let lastServerSeq: UInt64
+    let epoch: UInt64
     let pendingMessageCount: UInt64
     let lastMessage: MessageEnvelope?
     let participantProfiles: [ChatParticipantProfileSummary]
@@ -509,6 +510,88 @@ struct AckInboxRequest: Encodable {
 
 struct AckInboxResponse: Decodable {
     let ackedInboxIds: [UInt64]
+}
+
+struct WebSocketAckClientFrame: Encodable {
+    let type = "ack"
+    let inboxIds: [UInt64]
+}
+
+struct WebSocketPresencePingClientFrame: Encodable {
+    let type = "presence_ping"
+    let nonce: String?
+}
+
+struct WebSocketHelloFrame: Decodable {
+    let sessionId: String
+    let accountId: String
+    let deviceId: String
+    let leaseOwner: String
+    let leaseTtlSeconds: UInt64
+}
+
+struct WebSocketInboxItemsFrame: Decodable {
+    let leaseOwner: String
+    let leaseExpiresAtUnix: UInt64
+    let items: [InboxItem]
+}
+
+struct WebSocketAckedFrame: Decodable {
+    let ackedInboxIds: [UInt64]
+}
+
+struct WebSocketPongFrame: Decodable {
+    let nonce: String?
+    let serverUnix: UInt64
+}
+
+struct WebSocketSessionReplacedFrame: Decodable {
+    let reason: String
+}
+
+struct WebSocketErrorFrame: Decodable {
+    let code: String
+    let message: String
+}
+
+enum WebSocketServerFrame: Decodable {
+    case hello(WebSocketHelloFrame)
+    case inboxItems(WebSocketInboxItemsFrame)
+    case acked(WebSocketAckedFrame)
+    case pong(WebSocketPongFrame)
+    case sessionReplaced(WebSocketSessionReplacedFrame)
+    case error(WebSocketErrorFrame)
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+    }
+
+    private enum FrameType: String, Decodable {
+        case hello
+        case inboxItems = "inbox_items"
+        case acked
+        case pong
+        case sessionReplaced = "session_replaced"
+        case error
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(FrameType.self, forKey: .type) {
+        case .hello:
+            self = .hello(try WebSocketHelloFrame(from: decoder))
+        case .inboxItems:
+            self = .inboxItems(try WebSocketInboxItemsFrame(from: decoder))
+        case .acked:
+            self = .acked(try WebSocketAckedFrame(from: decoder))
+        case .pong:
+            self = .pong(try WebSocketPongFrame(from: decoder))
+        case .sessionReplaced:
+            self = .sessionReplaced(try WebSocketSessionReplacedFrame(from: decoder))
+        case .error:
+            self = .error(try WebSocketErrorFrame(from: decoder))
+        }
+    }
 }
 
 extension ChatSummary {

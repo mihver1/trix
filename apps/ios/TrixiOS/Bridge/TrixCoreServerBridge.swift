@@ -159,13 +159,28 @@ struct TrixCoreServerBridge {
         let response = try client.approveDeviceWithAccountRoot(
             deviceId: deviceId,
             accountRoot: try identity.accountRootMaterial(),
-            transferBundle: nil
+            transferBundle: try identity.accountRootTransferBundle()
         )
 
         return ApproveDeviceResponse(
             accountId: response.accountId,
             deviceId: response.deviceId,
             deviceStatus: response.deviceStatus.trix_deviceStatus
+        )
+    }
+
+    static func fetchDeviceTransferBundle(
+        baseURLString: String,
+        accessToken: String,
+        deviceId: String
+    ) throws -> DeviceTransferBundleResponse {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        let response = try client.getDeviceTransferBundle(deviceId: deviceId)
+        return DeviceTransferBundleResponse(
+            accountId: response.accountId,
+            deviceId: response.deviceId,
+            transferBundleB64: response.transferBundle.base64EncodedString(),
+            uploadedAtUnix: response.uploadedAtUnix
         )
     }
 

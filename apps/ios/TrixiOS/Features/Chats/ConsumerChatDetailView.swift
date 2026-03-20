@@ -114,7 +114,7 @@ struct ConsumerChatDetailView: View {
                 .disabled(model.isLoading || isLoadingSnapshot)
             }
         }
-        .task(id: chatSummary.chatId) {
+        .task(id: snapshotTaskID) {
             await loadSnapshot()
         }
         .refreshable {
@@ -261,6 +261,20 @@ struct ConsumerChatDetailView: View {
         }
 
         return chatSummary.resolvedTitle(currentAccountId: model.localIdentity?.accountId)
+    }
+
+    private var snapshotTaskID: String {
+        let latestInboxId = model.dashboard?
+            .inboxItems
+            .filter { $0.message.chatId == chatSummary.chatId }
+            .map(\.inboxId)
+            .max() ?? 0
+        let latestServerSeq = model.dashboard?
+            .chats
+            .first { $0.chatId == chatSummary.chatId }?
+            .lastServerSeq ?? chatSummary.lastServerSeq
+
+        return "\(chatSummary.chatId)-\(latestInboxId)-\(latestServerSeq)"
     }
 
     private func reload() {

@@ -1828,6 +1828,18 @@ impl FfiAccountRootMaterial {
         self.inner.private_key_bytes().to_vec()
     }
 
+    // Temporary bridge until encrypted transfer bundles land in trix-core.
+    // The server already stores opaque bytes, so iOS can round-trip root-capable
+    // linked-device upgrades without inventing a separate wire format first.
+    #[uniffi::constructor]
+    pub fn from_transfer_bundle(transfer_bundle: Vec<u8>) -> Result<Arc<Self>, TrixFfiError> {
+        Self::from_private_key(transfer_bundle)
+    }
+
+    pub fn transfer_bundle(&self) -> Vec<u8> {
+        self.private_key_bytes()
+    }
+
     pub fn public_key_bytes(&self) -> Vec<u8> {
         self.inner.public_key_bytes()
     }
@@ -1954,6 +1966,22 @@ impl FfiLocalHistoryStore {
             .collect())
     }
 
+    pub fn apply_chat_list(
+        &self,
+        chats: Vec<FfiChatSummary>,
+    ) -> Result<FfiLocalStoreApplyReport, TrixFfiError> {
+        Ok(local_store_apply_report_to_ffi(
+            lock(&self.inner)?
+                .apply_chat_list(&trix_types::ChatListResponse {
+                    chats: chats
+                        .into_iter()
+                        .map(ffi_chat_summary_to_api)
+                        .collect::<Result<Vec<_>, _>>()?,
+                })
+                .map_err(ffi_error)?,
+        ))
+    }
+
     pub fn list_local_chat_list_items(
         &self,
         self_account_id: Option<String>,
@@ -1990,6 +2018,17 @@ impl FfiLocalHistoryStore {
         Ok(lock(&self.inner)?
             .get_chat(parse_chat_id(&chat_id)?)
             .map(chat_detail_to_ffi))
+    }
+
+    pub fn apply_chat_detail(
+        &self,
+        detail: FfiChatDetail,
+    ) -> Result<FfiLocalStoreApplyReport, TrixFfiError> {
+        Ok(local_store_apply_report_to_ffi(
+            lock(&self.inner)?
+                .apply_chat_detail(&ffi_chat_detail_to_api(detail)?)
+                .map_err(ffi_error)?,
+        ))
     }
 
     pub fn get_chat_history(
@@ -3112,6 +3151,91 @@ fn ffi_chat_history_to_api(
     })
 }
 
+fn ffi_chat_summary_to_api(
+    value: FfiChatSummary,
+) -> Result<trix_types::ChatSummary, TrixFfiError> {
+    Ok(trix_types::ChatSummary {
+        chat_id: parse_chat_id(&value.chat_id)?,
+        chat_type: value.chat_type.into(),
+        title: value.title,
+        last_server_seq: value.last_server_seq,
+        epoch: value.epoch,
+        pending_message_count: value.pending_message_count,
+        last_message: value
+            .last_message
+            .map(ffi_message_envelope_to_api)
+            .transpose()?,
+        participant_profiles: value
+            .participant_profiles
+            .into_iter()
+            .map(ffi_chat_participant_profile_to_api)
+            .collect::<Result<Vec<_>, _>>()?,
+    })
+}
+
+fn ffi_chat_detail_to_api(
+    value: FfiChatDetail,
+) -> Result<trix_types::ChatDetailResponse, TrixFfiError> {
+    Ok(trix_types::ChatDetailResponse {
+        chat_id: parse_chat_id(&value.chat_id)?,
+        chat_type: value.chat_type.into(),
+        title: value.title,
+        last_server_seq: value.last_server_seq,
+        pending_message_count: value.pending_message_count,
+        epoch: value.epoch,
+        last_commit_message_id: value
+            .last_commit_message_id
+            .as_deref()
+            .map(parse_message_id)
+            .transpose()?,
+        last_message: value
+            .last_message
+            .map(ffi_message_envelope_to_api)
+            .transpose()?,
+        participant_profiles: value
+            .participant_profiles
+            .into_iter()
+            .map(ffi_chat_participant_profile_to_api)
+            .collect::<Result<Vec<_>, _>>()?,
+        members: value
+            .members
+            .into_iter()
+            .map(|member| {
+                Ok(trix_types::ChatMemberSummary {
+                    account_id: parse_account_id(&member.account_id)?,
+                    role: member.role,
+                    membership_status: member.membership_status,
+                })
+            })
+            .collect::<Result<Vec<_>, TrixFfiError>>()?,
+        device_members: value
+            .device_members
+            .into_iter()
+            .map(|member| {
+                Ok(trix_types::ChatDeviceSummary {
+                    device_id: parse_device_id(&member.device_id)?,
+                    account_id: parse_account_id(&member.account_id)?,
+                    display_name: member.display_name,
+                    platform: member.platform,
+                    leaf_index: member.leaf_index,
+                    credential_identity_b64: crate::encode_b64(&member.credential_identity),
+                })
+            })
+            .collect::<Result<Vec<_>, TrixFfiError>>()?,
+    })
+}
+
+fn ffi_chat_participant_profile_to_api(
+    value: FfiChatParticipantProfile,
+) -> Result<trix_types::ChatParticipantProfileSummary, TrixFfiError> {
+    Ok(trix_types::ChatParticipantProfileSummary {
+        account_id: parse_account_id(&value.account_id)?,
+        handle: value.handle,
+        profile_name: value.profile_name,
+        profile_bio: value.profile_bio,
+    })
+}
+
 fn modify_chat_members_response_to_ffi(
     value: trix_types::ModifyChatMembersResponse,
 ) -> FfiModifyChatMembersResponse {
@@ -3960,6 +4084,16 @@ mod tests {
             .sign_device_revoke(device_id.clone(), reason.clone())
             .unwrap();
         account_root.verify(payload, signature).unwrap();
+    }
+
+    #[test]
+    fn account_root_transfer_bundle_round_trip_restores_same_keypair() {
+        let original = FfiAccountRootMaterial::generate();
+        let transfer_bundle = original.transfer_bundle();
+        let restored = FfiAccountRootMaterial::from_transfer_bundle(transfer_bundle).unwrap();
+
+        assert_eq!(original.private_key_bytes(), restored.private_key_bytes());
+        assert_eq!(original.public_key_bytes(), restored.public_key_bytes());
     }
 
     #[test]

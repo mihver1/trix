@@ -410,6 +410,7 @@ private struct SettingsHomeView: View {
                         LinkedDevicesView(
                             dashboard: dashboard,
                             canManageDevices: model.canManageAccountDevices,
+                            capabilitySummary: model.deviceCapabilitySummary,
                             isLoading: model.isLoading,
                             onCreateLinkIntent: onCreateLinkIntent,
                             onApprovePendingDevice: onApprovePendingDevice,
@@ -666,6 +667,7 @@ private struct AdvancedConnectionBadge: View {
 private struct LinkedDevicesView: View {
     let dashboard: DashboardData
     let canManageDevices: Bool
+    let capabilitySummary: String
     let isLoading: Bool
     let onCreateLinkIntent: () -> Void
     let onApprovePendingDevice: (String) -> Void
@@ -779,9 +781,12 @@ private struct LinkedDevicesView: View {
                 }
             }
 
-            if !canManageDevices {
+            if !capabilitySummary.isEmpty {
                 Section {
-                    Label("Approve and remove actions are available only on a device that still holds the shared account root keys.", systemImage: "lock.shield")
+                    Label(
+                        capabilitySummary,
+                        systemImage: canManageDevices ? "checkmark.shield" : "lock.shield"
+                    )
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

@@ -95,11 +95,15 @@ struct AttachmentUploadMaterial {
 }
 
 enum TrixCoreMessageBridge {
+    static func messageBody(for draft: DebugMessageDraft) throws -> FfiMessageBody {
+        try buildMessageBody(for: draft)
+    }
+
     static func makeCreateMessageRequest(
         epoch: UInt64,
         draft: DebugMessageDraft
     ) throws -> CreateMessageRequest {
-        let body = try messageBody(for: draft)
+        let body = try buildMessageBody(for: draft)
         let payload = try ffiSerializeMessageBody(body: body)
 
         return CreateMessageRequest(
@@ -204,7 +208,7 @@ enum TrixCoreMessageBridge {
         return baseName
     }
 
-    private static func messageBody(for draft: DebugMessageDraft) throws -> FfiMessageBody {
+    private static func buildMessageBody(for draft: DebugMessageDraft) throws -> FfiMessageBody {
         switch draft.kind {
         case .text:
             let text = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -6,7 +6,16 @@ enum LocalDeviceTrustState: String, Codable {
     case pendingApproval
 }
 
-struct LocalDeviceIdentity: Codable {
+enum LocalDeviceCapabilityState: String, Codable {
+    case fullAccountAccess
+    case transportOnly
+    case requiresRootUpgrade
+}
+
+struct LocalDeviceIdentity: Codable, Equatable {
+    static let currentSchemaVersion = 2
+
+    let schemaVersion: Int
     let accountId: String
     let deviceId: String
     let accountSyncChatId: String?
@@ -16,6 +25,7 @@ struct LocalDeviceIdentity: Codable {
     let accountRootPrivateKeyRaw: Data?
     let transportPrivateKeyRaw: Data
     let trustState: LocalDeviceTrustState
+    let capabilityState: LocalDeviceCapabilityState
 
     init(
         accountId: String,
@@ -26,8 +36,10 @@ struct LocalDeviceIdentity: Codable {
         credentialIdentity: Data,
         accountRootPrivateKeyRaw: Data?,
         transportPrivateKeyRaw: Data,
-        trustState: LocalDeviceTrustState
+        trustState: LocalDeviceTrustState,
+        capabilityState: LocalDeviceCapabilityState
     ) {
+        schemaVersion = Self.currentSchemaVersion
         self.accountId = accountId
         self.deviceId = deviceId
         self.accountSyncChatId = accountSyncChatId
@@ -37,10 +49,12 @@ struct LocalDeviceIdentity: Codable {
         self.accountRootPrivateKeyRaw = accountRootPrivateKeyRaw
         self.transportPrivateKeyRaw = transportPrivateKeyRaw
         self.trustState = trustState
+        self.capabilityState = capabilityState
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
         accountId = try container.decode(String.self, forKey: .accountId)
         deviceId = try container.decode(String.self, forKey: .deviceId)
         accountSyncChatId = try container.decodeIfPresent(String.self, forKey: .accountSyncChatId)
@@ -50,6 +64,38 @@ struct LocalDeviceIdentity: Codable {
         accountRootPrivateKeyRaw = try container.decodeIfPresent(Data.self, forKey: .accountRootPrivateKeyRaw)
         transportPrivateKeyRaw = try container.decode(Data.self, forKey: .transportPrivateKeyRaw)
         trustState = try container.decodeIfPresent(LocalDeviceTrustState.self, forKey: .trustState) ?? .active
+        capabilityState = try container.decodeIfPresent(
+            LocalDeviceCapabilityState.self,
+            forKey: .capabilityState
+        ) ?? Self.inferredCapabilityState(
+            accountRootPrivateKeyRaw: accountRootPrivateKeyRaw,
+            trustState: trustState
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case accountId
+        case deviceId
+        case accountSyncChatId
+        case deviceDisplayName
+        case platform
+        case credentialIdentity
+        case accountRootPrivateKeyRaw
+        case transportPrivateKeyRaw
+        case trustState
+        case capabilityState
+    }
+
+    private static func inferredCapabilityState(
+        accountRootPrivateKeyRaw: Data?,
+        trustState: LocalDeviceTrustState
+    ) -> LocalDeviceCapabilityState {
+        if accountRootPrivateKeyRaw != nil {
+            return .fullAccountAccess
+        }
+
+        return trustState == .pendingApproval ? .transportOnly : .requiresRootUpgrade
     }
 }
 
@@ -84,7 +130,7 @@ struct DeviceBootstrapMaterial {
         deviceDisplayName: String,
         platform: String
     ) -> LocalDeviceIdentity {
-        LocalDeviceIdentity(
+        return LocalDeviceIdentity(
             accountId: accountId,
             deviceId: deviceId,
             accountSyncChatId: accountSyncChatId,
@@ -93,7 +139,8 @@ struct DeviceBootstrapMaterial {
             credentialIdentity: credentialIdentity,
             accountRootPrivateKeyRaw: accountRootPrivateKeyRaw,
             transportPrivateKeyRaw: transportPrivateKeyRaw,
-            trustState: .active
+            trustState: .active,
+            capabilityState: .fullAccountAccess
         )
     }
 
@@ -112,7 +159,8 @@ struct DeviceBootstrapMaterial {
             credentialIdentity: credentialIdentity,
             accountRootPrivateKeyRaw: nil,
             transportPrivateKeyRaw: transportPrivateKeyRaw,
-            trustState: .pendingApproval
+            trustState: .pendingApproval,
+            capabilityState: .transportOnly
         )
     }
 
@@ -166,6 +214,14 @@ extension LocalDeviceIdentity {
         accountRootPrivateKeyRaw != nil
     }
 
+    var hasFullAccountAccess: Bool {
+        capabilityState == .fullAccountAccess && hasAccountRootKey
+    }
+
+    var needsAccountRootUpgrade: Bool {
+        trustState == .active && !hasFullAccountAccess
+    }
+
     func accountRootMaterial() throws -> FfiAccountRootMaterial {
         guard let accountRootPrivateKeyRaw else {
             throw LocalDeviceIdentityError.accountRootKeyUnavailable
@@ -174,12 +230,25 @@ extension LocalDeviceIdentity {
         return try accountRootPrivateKeyRaw.trix_accountRootMaterial()
     }
 
+    func accountRootTransferBundle() throws -> Data {
+        try accountRootMaterial().transferBundle()
+    }
+
     func deviceKeyMaterial() throws -> FfiDeviceKeyMaterial {
         try transportPrivateKeyRaw.trix_deviceKeyMaterial()
     }
 
     func markingActive() -> LocalDeviceIdentity {
-        LocalDeviceIdentity(
+        let nextCapabilityState: LocalDeviceCapabilityState
+        if hasAccountRootKey {
+            nextCapabilityState = .fullAccountAccess
+        } else if capabilityState == .transportOnly {
+            nextCapabilityState = .requiresRootUpgrade
+        } else {
+            nextCapabilityState = capabilityState
+        }
+
+        return LocalDeviceIdentity(
             accountId: accountId,
             deviceId: deviceId,
             accountSyncChatId: accountSyncChatId,
@@ -188,7 +257,42 @@ extension LocalDeviceIdentity {
             credentialIdentity: credentialIdentity,
             accountRootPrivateKeyRaw: accountRootPrivateKeyRaw,
             transportPrivateKeyRaw: transportPrivateKeyRaw,
-            trustState: .active
+            trustState: .active,
+            capabilityState: nextCapabilityState
+        )
+    }
+
+    func markingRequiresRootUpgrade() -> LocalDeviceIdentity {
+        return LocalDeviceIdentity(
+            accountId: accountId,
+            deviceId: deviceId,
+            accountSyncChatId: accountSyncChatId,
+            deviceDisplayName: deviceDisplayName,
+            platform: platform,
+            credentialIdentity: credentialIdentity,
+            accountRootPrivateKeyRaw: nil,
+            transportPrivateKeyRaw: transportPrivateKeyRaw,
+            trustState: .active,
+            capabilityState: .requiresRootUpgrade
+        )
+    }
+
+    func importingAccountRoot(fromTransferBundle transferBundle: Data) throws -> LocalDeviceIdentity {
+        let importedMaterial = try FfiAccountRootMaterial.fromTransferBundle(
+            transferBundle: transferBundle
+        )
+
+        return LocalDeviceIdentity(
+            accountId: accountId,
+            deviceId: deviceId,
+            accountSyncChatId: accountSyncChatId,
+            deviceDisplayName: deviceDisplayName,
+            platform: platform,
+            credentialIdentity: credentialIdentity,
+            accountRootPrivateKeyRaw: importedMaterial.privateKeyBytes(),
+            transportPrivateKeyRaw: transportPrivateKeyRaw,
+            trustState: .active,
+            capabilityState: .fullAccountAccess
         )
     }
 }

@@ -16,6 +16,7 @@
 		7DA8A99622CCCA79A97EE7BF /* CreateAccountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB561F04E1C44D1888D73336 /* CreateAccountView.swift */; };
 		8010E114AB48C5DB7FC15A51 /* MessagingLabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F16E8D46A5E1F90D5FA589FB /* MessagingLabView.swift */; };
 		908402838C3C292D717884F8 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 3776D66EB844AFF0402EFA82 /* LaunchScreen.storyboard */; };
+		9A12FED66BED4B7F021152E5 /* RealtimeWebSocketClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E0262CCF48A32A9EBE5341D /* RealtimeWebSocketClient.swift */; };
 		9B277FA389EBFDE5478C996D /* ConsumerChatDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD242B589907CC8D81728515 /* ConsumerChatDetailView.swift */; };
 		9B911226C1B996C30814B35F /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 658A7042AB73BF905B248D96 /* DashboardView.swift */; };
 		9FFE059EB1320E146D1865E3 /* TrixCoreServerBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FF7213EA531F2A99EC523D4 /* TrixCoreServerBridge.swift */; };
@@ -48,6 +49,7 @@
 		7B39C56B87A0D7373CCAF305 /* SystemModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemModels.swift; sourceTree = "<group>"; };
 		93AB452AEAC561406820AB33 /* module.modulemap */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.module-map"; path = module.modulemap; sourceTree = "<group>"; };
 		9D76E826883729659D5B0DF4 /* APIError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIError.swift; sourceTree = "<group>"; };
+		9E0262CCF48A32A9EBE5341D /* RealtimeWebSocketClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeWebSocketClient.swift; sourceTree = "<group>"; };
 		9E6C5B8826FF255BAF650A38 /* ChatDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatDetailView.swift; sourceTree = "<group>"; };
 		9E99B20CD4D5A31B630CCE43 /* TrixiOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixiOSApp.swift; sourceTree = "<group>"; };
 		A96D86962664B4EFF403EA16 /* trix_coreFFI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = trix_coreFFI.h; sourceTree = "<group>"; };
@@ -88,6 +90,7 @@
 			children = (
 				BD786FA5598DD8B41A0444FE /* APIClient.swift */,
 				9D76E826883729659D5B0DF4 /* APIError.swift */,
+				9E0262CCF48A32A9EBE5341D /* RealtimeWebSocketClient.swift */,
 				7B39C56B87A0D7373CCAF305 /* SystemModels.swift */,
 			);
 			path = Networking;
@@ -304,6 +307,7 @@
 				0C59311F8E54EDC1AD82DE2A /* LocalDeviceIdentity.swift in Sources */,
 				8010E114AB48C5DB7FC15A51 /* MessagingLabView.swift in Sources */,
 				B44143903FCFD7AC94B12123 /* PendingApprovalView.swift in Sources */,
+				9A12FED66BED4B7F021152E5 /* RealtimeWebSocketClient.swift in Sources */,
 				D8728BF5E7629A0B84E4CAB4 /* RootView.swift in Sources */,
 				E4F971691AB2F86D7BACBBB2 /* ServerConfiguration.swift in Sources */,
 				A3F584F628831CED1241968D /* SystemModels.swift in Sources */,

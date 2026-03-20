@@ -550,6 +550,8 @@ public protocol FfiAccountRootMaterialProtocol: AnyObject, Sendable {
     
     func signDeviceRevoke(deviceId: String, reason: String) throws  -> Data
     
+    func transferBundle()  -> Data
+    
     func verify(payload: Data, signature: Data) throws 
     
 }
@@ -608,6 +610,14 @@ public static func fromPrivateKey(privateKey: Data)throws  -> FfiAccountRootMate
     return try  FfiConverterTypeFfiAccountRootMaterial_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_constructor_ffiaccountrootmaterial_from_private_key(
         FfiConverterData.lower(privateKey),$0
+    )
+})
+}
+    
+public static func fromTransferBundle(transferBundle: Data)throws  -> FfiAccountRootMaterial  {
+    return try  FfiConverterTypeFfiAccountRootMaterial_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_constructor_ffiaccountrootmaterial_from_transfer_bundle(
+        FfiConverterData.lower(transferBundle),$0
     )
 })
 }
@@ -682,6 +692,14 @@ open func signDeviceRevoke(deviceId: String, reason: String)throws  -> Data  {
             self.uniffiCloneHandle(),
         FfiConverterString.lower(deviceId),
         FfiConverterString.lower(reason),$0
+    )
+})
+}
+    
+open func transferBundle() -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+    uniffi_trix_core_fn_method_ffiaccountrootmaterial_transfer_bundle(
+            self.uniffiCloneHandle(),$0
     )
 })
 }
@@ -921,7 +939,11 @@ public func FfiConverterTypeFfiDeviceKeyMaterial_lower(_ value: FfiDeviceKeyMate
 
 public protocol FfiLocalHistoryStoreProtocol: AnyObject, Sendable {
     
+    func applyChatDetail(detail: FfiChatDetail) throws  -> FfiLocalStoreApplyReport
+    
     func applyChatHistory(history: FfiChatHistory) throws  -> FfiLocalStoreApplyReport
+    
+    func applyChatList(chats: [FfiChatSummary]) throws  -> FfiLocalStoreApplyReport
     
     func applyLeasedInbox(lease: FfiLeaseInboxResponse) throws  -> FfiLocalStoreApplyReport
     
@@ -1032,11 +1054,29 @@ public static func newPersistent(databasePath: String)throws  -> FfiLocalHistory
     
 
     
+open func applyChatDetail(detail: FfiChatDetail)throws  -> FfiLocalStoreApplyReport  {
+    return try  FfiConverterTypeFfiLocalStoreApplyReport_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffilocalhistorystore_apply_chat_detail(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiChatDetail_lower(detail),$0
+    )
+})
+}
+    
 open func applyChatHistory(history: FfiChatHistory)throws  -> FfiLocalStoreApplyReport  {
     return try  FfiConverterTypeFfiLocalStoreApplyReport_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffilocalhistorystore_apply_chat_history(
             self.uniffiCloneHandle(),
         FfiConverterTypeFfiChatHistory_lower(history),$0
+    )
+})
+}
+    
+open func applyChatList(chats: [FfiChatSummary])throws  -> FfiLocalStoreApplyReport  {
+    return try  FfiConverterTypeFfiLocalStoreApplyReport_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffilocalhistorystore_apply_chat_list(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceTypeFfiChatSummary.lower(chats),$0
     )
 })
 }
@@ -3722,17 +3762,19 @@ public struct FfiChatSummary: Equatable, Hashable {
     public var chatType: FfiChatType
     public var title: String?
     public var lastServerSeq: UInt64
+    public var epoch: UInt64
     public var pendingMessageCount: UInt64
     public var lastMessage: FfiMessageEnvelope?
     public var participantProfiles: [FfiChatParticipantProfile]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(chatId: String, chatType: FfiChatType, title: String?, lastServerSeq: UInt64, pendingMessageCount: UInt64, lastMessage: FfiMessageEnvelope?, participantProfiles: [FfiChatParticipantProfile]) {
+    public init(chatId: String, chatType: FfiChatType, title: String?, lastServerSeq: UInt64, epoch: UInt64, pendingMessageCount: UInt64, lastMessage: FfiMessageEnvelope?, participantProfiles: [FfiChatParticipantProfile]) {
         self.chatId = chatId
         self.chatType = chatType
         self.title = title
         self.lastServerSeq = lastServerSeq
+        self.epoch = epoch
         self.pendingMessageCount = pendingMessageCount
         self.lastMessage = lastMessage
         self.participantProfiles = participantProfiles
@@ -3758,6 +3800,7 @@ public struct FfiConverterTypeFfiChatSummary: FfiConverterRustBuffer {
                 chatType: FfiConverterTypeFfiChatType.read(from: &buf), 
                 title: FfiConverterOptionString.read(from: &buf), 
                 lastServerSeq: FfiConverterUInt64.read(from: &buf), 
+                epoch: FfiConverterUInt64.read(from: &buf), 
                 pendingMessageCount: FfiConverterUInt64.read(from: &buf), 
                 lastMessage: FfiConverterOptionTypeFfiMessageEnvelope.read(from: &buf), 
                 participantProfiles: FfiConverterSequenceTypeFfiChatParticipantProfile.read(from: &buf)
@@ -3769,6 +3812,7 @@ public struct FfiConverterTypeFfiChatSummary: FfiConverterRustBuffer {
         FfiConverterTypeFfiChatType.write(value.chatType, into: &buf)
         FfiConverterOptionString.write(value.title, into: &buf)
         FfiConverterUInt64.write(value.lastServerSeq, into: &buf)
+        FfiConverterUInt64.write(value.epoch, into: &buf)
         FfiConverterUInt64.write(value.pendingMessageCount, into: &buf)
         FfiConverterOptionTypeFfiMessageEnvelope.write(value.lastMessage, into: &buf)
         FfiConverterSequenceTypeFfiChatParticipantProfile.write(value.participantProfiles, into: &buf)
@@ -5713,6 +5757,7 @@ public struct FfiLocalChatListItem: Equatable, Hashable {
     public var title: String?
     public var displayTitle: String
     public var lastServerSeq: UInt64
+    public var epoch: UInt64
     public var pendingMessageCount: UInt64
     public var unreadCount: UInt64
     public var previewText: String?
@@ -5725,12 +5770,13 @@ public struct FfiLocalChatListItem: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(chatId: String, chatType: FfiChatType, title: String?, displayTitle: String, lastServerSeq: UInt64, pendingMessageCount: UInt64, unreadCount: UInt64, previewText: String?, previewSenderAccountId: String?, previewSenderDisplayName: String?, previewIsOutgoing: Bool?, previewServerSeq: UInt64?, previewCreatedAtUnix: UInt64?, participantProfiles: [FfiChatParticipantProfile]) {
+    public init(chatId: String, chatType: FfiChatType, title: String?, displayTitle: String, lastServerSeq: UInt64, epoch: UInt64, pendingMessageCount: UInt64, unreadCount: UInt64, previewText: String?, previewSenderAccountId: String?, previewSenderDisplayName: String?, previewIsOutgoing: Bool?, previewServerSeq: UInt64?, previewCreatedAtUnix: UInt64?, participantProfiles: [FfiChatParticipantProfile]) {
         self.chatId = chatId
         self.chatType = chatType
         self.title = title
         self.displayTitle = displayTitle
         self.lastServerSeq = lastServerSeq
+        self.epoch = epoch
         self.pendingMessageCount = pendingMessageCount
         self.unreadCount = unreadCount
         self.previewText = previewText
@@ -5763,6 +5809,7 @@ public struct FfiConverterTypeFfiLocalChatListItem: FfiConverterRustBuffer {
                 title: FfiConverterOptionString.read(from: &buf), 
                 displayTitle: FfiConverterString.read(from: &buf), 
                 lastServerSeq: FfiConverterUInt64.read(from: &buf), 
+                epoch: FfiConverterUInt64.read(from: &buf), 
                 pendingMessageCount: FfiConverterUInt64.read(from: &buf), 
                 unreadCount: FfiConverterUInt64.read(from: &buf), 
                 previewText: FfiConverterOptionString.read(from: &buf), 
@@ -5781,6 +5828,7 @@ public struct FfiConverterTypeFfiLocalChatListItem: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.title, into: &buf)
         FfiConverterString.write(value.displayTitle, into: &buf)
         FfiConverterUInt64.write(value.lastServerSeq, into: &buf)
+        FfiConverterUInt64.write(value.epoch, into: &buf)
         FfiConverterUInt64.write(value.pendingMessageCount, into: &buf)
         FfiConverterUInt64.write(value.unreadCount, into: &buf)
         FfiConverterOptionString.write(value.previewText, into: &buf)
@@ -10141,6 +10189,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffiaccountrootmaterial_sign_device_revoke() != 43154) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffiaccountrootmaterial_transfer_bundle() != 58764) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffiaccountrootmaterial_verify() != 58382) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -10159,7 +10210,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffidevicekeymaterial_verify() != 11630) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffilocalhistorystore_apply_chat_detail() != 52493) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffilocalhistorystore_apply_chat_history() != 30010) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffilocalhistorystore_apply_chat_list() != 65246) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffilocalhistorystore_apply_leased_inbox() != 20144) {
@@ -10487,6 +10544,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_constructor_ffiaccountrootmaterial_from_private_key() != 9414) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_constructor_ffiaccountrootmaterial_from_transfer_bundle() != 55885) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_constructor_ffiaccountrootmaterial_generate() != 26904) {

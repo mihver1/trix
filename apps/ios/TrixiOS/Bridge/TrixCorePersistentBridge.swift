@@ -26,6 +26,7 @@ struct LocalChatListItemSnapshot: Identifiable {
     let title: String?
     let displayTitle: String
     let lastServerSeq: UInt64
+    let epoch: UInt64
     let pendingMessageCount: UInt64
     let unreadCount: UInt64
     let previewText: String?
@@ -200,6 +201,297 @@ enum TrixCorePersistentBridge {
         )
     }
 
+    static func applyChatList(
+        identity: LocalDeviceIdentity,
+        chats: [ChatSummary]
+    ) throws -> LocalStoreSyncResult {
+        let context = try loadOrCreateContext(identity: identity)
+        let report = try context.historyStore.applyChatList(
+            chats: try chats.map { try $0.trix_ffiChatSummary() }
+        )
+        try saveContextState(context)
+        return report.trix_localStoreSyncResult
+    }
+
+    static func applyChatDetail(
+        identity: LocalDeviceIdentity,
+        detail: ChatDetailResponse
+    ) throws -> LocalStoreSyncResult {
+        let context = try loadOrCreateContext(identity: identity)
+        let report = try context.historyStore.applyChatDetail(detail: try detail.trix_ffiChatDetail())
+        try saveContextState(context)
+        return report.trix_localStoreSyncResult
+    }
+
+    static func applyChatHistory(
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        messages: [MessageEnvelope]
+    ) throws -> LocalStoreSyncResult {
+        let context = try loadOrCreateContext(identity: identity)
+        let report = try context.historyStore.applyChatHistory(
+            history: FfiChatHistory(
+                chatId: chatId,
+                messages: try messages.map { try $0.trix_ffiMessageEnvelope() }
+            )
+        )
+
+        if let lastServerSeq = messages.map(\.serverSeq).max() {
+            _ = try context.syncCoordinator.recordChatServerSeq(
+                chatId: chatId,
+                serverSeq: lastServerSeq
+            )
+        }
+
+        try saveContextState(context)
+        return report.trix_localStoreSyncResult
+    }
+
+    static func applyInboxItems(
+        identity: LocalDeviceIdentity,
+        items: [InboxItem],
+        leaseOwner: String? = nil,
+        leaseExpiresAtUnix: UInt64 = 0
+    ) throws -> LocalStoreSyncResult {
+        let context = try loadOrCreateContext(identity: identity)
+        let effectiveLeaseOwner = if let leaseOwner {
+            leaseOwner
+        } else {
+            try context.syncCoordinator.leaseOwner()
+        }
+        let report = try context.historyStore.applyLeasedInbox(
+            lease: FfiLeaseInboxResponse(
+                leaseOwner: effectiveLeaseOwner,
+                leaseExpiresAtUnix: leaseExpiresAtUnix,
+                items: try items.map { try $0.trix_ffiInboxItem() }
+            )
+        )
+
+        for item in items {
+            _ = try context.syncCoordinator.recordChatServerSeq(
+                chatId: item.message.chatId,
+                serverSeq: item.message.serverSeq
+            )
+        }
+
+        try saveContextState(context)
+        return report.trix_localStoreSyncResult
+    }
+
+    static func createChatControl(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        chatType: ChatType,
+        title: String?,
+        participantAccountIds: [String]
+    ) throws -> CreateChatResponse {
+        let context = try loadOrCreateContext(identity: identity)
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        let outcome = try context.syncCoordinator.createChatControl(
+            client: client,
+            store: context.historyStore,
+            facade: context.mlsFacade,
+            input: FfiCreateChatControlInput(
+                creatorAccountId: identity.accountId,
+                creatorDeviceId: identity.deviceId,
+                chatType: chatType.trix_ffiChatType,
+                title: title?.trix_trimmedOrNil(),
+                participantAccountIds: participantAccountIds,
+                groupId: nil,
+                commitAadJson: nil,
+                welcomeAadJson: nil
+            )
+        )
+
+        try saveContextState(context)
+        return CreateChatResponse(
+            chatId: outcome.chatId,
+            chatType: outcome.chatType.trix_chatType,
+            epoch: outcome.epoch
+        )
+    }
+
+    static func addChatMembersControl(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        participantAccountIds: [String]
+    ) throws -> ModifyChatMembersResponse {
+        let context = try loadOrCreateContext(identity: identity)
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        let outcome = try context.syncCoordinator.addChatMembersControl(
+            client: client,
+            store: context.historyStore,
+            facade: context.mlsFacade,
+            input: FfiModifyChatMembersControlInput(
+                actorAccountId: identity.accountId,
+                actorDeviceId: identity.deviceId,
+                chatId: chatId,
+                participantAccountIds: participantAccountIds,
+                commitAadJson: nil,
+                welcomeAadJson: nil
+            )
+        )
+
+        try saveContextState(context)
+        return ModifyChatMembersResponse(
+            chatId: outcome.chatId,
+            epoch: outcome.epoch,
+            changedAccountIds: outcome.changedAccountIds
+        )
+    }
+
+    static func removeChatMembersControl(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        participantAccountIds: [String]
+    ) throws -> ModifyChatMembersResponse {
+        let context = try loadOrCreateContext(identity: identity)
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        let outcome = try context.syncCoordinator.removeChatMembersControl(
+            client: client,
+            store: context.historyStore,
+            facade: context.mlsFacade,
+            input: FfiModifyChatMembersControlInput(
+                actorAccountId: identity.accountId,
+                actorDeviceId: identity.deviceId,
+                chatId: chatId,
+                participantAccountIds: participantAccountIds,
+                commitAadJson: nil,
+                welcomeAadJson: nil
+            )
+        )
+
+        try saveContextState(context)
+        return ModifyChatMembersResponse(
+            chatId: outcome.chatId,
+            epoch: outcome.epoch,
+            changedAccountIds: outcome.changedAccountIds
+        )
+    }
+
+    static func addChatDevicesControl(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        deviceIds: [String]
+    ) throws -> ModifyChatDevicesResponse {
+        let context = try loadOrCreateContext(identity: identity)
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        let outcome = try context.syncCoordinator.addChatDevicesControl(
+            client: client,
+            store: context.historyStore,
+            facade: context.mlsFacade,
+            input: FfiModifyChatDevicesControlInput(
+                actorAccountId: identity.accountId,
+                actorDeviceId: identity.deviceId,
+                chatId: chatId,
+                deviceIds: deviceIds,
+                commitAadJson: nil,
+                welcomeAadJson: nil
+            )
+        )
+
+        try saveContextState(context)
+        return ModifyChatDevicesResponse(
+            chatId: outcome.chatId,
+            epoch: outcome.epoch,
+            changedDeviceIds: outcome.changedDeviceIds
+        )
+    }
+
+    static func removeChatDevicesControl(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        deviceIds: [String]
+    ) throws -> ModifyChatDevicesResponse {
+        let context = try loadOrCreateContext(identity: identity)
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        let outcome = try context.syncCoordinator.removeChatDevicesControl(
+            client: client,
+            store: context.historyStore,
+            facade: context.mlsFacade,
+            input: FfiModifyChatDevicesControlInput(
+                actorAccountId: identity.accountId,
+                actorDeviceId: identity.deviceId,
+                chatId: chatId,
+                deviceIds: deviceIds,
+                commitAadJson: nil,
+                welcomeAadJson: nil
+            )
+        )
+
+        try saveContextState(context)
+        return ModifyChatDevicesResponse(
+            chatId: outcome.chatId,
+            epoch: outcome.epoch,
+            changedDeviceIds: outcome.changedDeviceIds
+        )
+    }
+
+    static func sendMessageBody(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        body: FfiMessageBody,
+        messageId: String? = nil,
+        aadJSON: String? = nil
+    ) throws -> CreateMessageResponse {
+        let conversationContext = try loadConversationContext(identity: identity, chatId: chatId)
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        let outcome = try conversationContext.context.syncCoordinator.sendMessageBody(
+            client: client,
+            store: conversationContext.context.historyStore,
+            facade: conversationContext.context.mlsFacade,
+            conversation: conversationContext.conversation,
+            input: FfiSendMessageInput(
+                senderAccountId: identity.accountId,
+                senderDeviceId: identity.deviceId,
+                chatId: chatId,
+                messageId: messageId,
+                body: body,
+                aadJson: aadJSON
+            )
+        )
+
+        try saveContextState(conversationContext.context)
+        return CreateMessageResponse(
+            messageId: outcome.messageId,
+            serverSeq: outcome.serverSeq
+        )
+    }
+
+    @discardableResult
+    static func projectChatMessagesIfPossible(
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        limit: Int = 200
+    ) throws -> Bool {
+        let context = try loadOrCreateContext(identity: identity)
+        guard let groupId = try context.historyStore.chatMlsGroupId(chatId: chatId),
+              let conversation = try context.mlsFacade.loadGroup(groupId: groupId)
+        else {
+            return false
+        }
+
+        _ = try context.historyStore.projectChatMessages(
+            chatId: chatId,
+            facade: context.mlsFacade,
+            conversation: conversation,
+            limit: UInt32(min(max(limit, 1), 500))
+        )
+        try saveContextState(context)
+        return true
+    }
+
     static func markChatRead(
         identity: LocalDeviceIdentity,
         chatId: String,
@@ -320,6 +612,11 @@ private struct PersistentCoreContext {
     let syncCoordinator: FfiSyncCoordinator
 }
 
+private struct PersistentConversationContext {
+    let context: PersistentCoreContext
+    let conversation: FfiMlsConversation
+}
+
 private struct PersistentCorePaths {
     let rootDirectory: URL
     let mlsStorageRoot: URL
@@ -355,11 +652,20 @@ private struct PersistentCorePaths {
 
 private enum TrixCorePersistentBridgeError: LocalizedError {
     case credentialIdentityMismatch
+    case missingMlsGroupID(chatId: String)
+    case missingConversationState(chatId: String)
+    case invalidBase64Field(String)
 
     var errorDescription: String? {
         switch self {
         case .credentialIdentityMismatch:
             return "Persisted trix-core state does not match the current device credential identity."
+        case let .missingMlsGroupID(chatId):
+            return "This chat is not ready for MLS messaging on this device yet (\(chatId))."
+        case let .missingConversationState(chatId):
+            return "Local MLS conversation state is missing for chat \(chatId)."
+        case let .invalidBase64Field(fieldName):
+            return "Invalid base64 data in \(fieldName)."
         }
     }
 }
@@ -370,6 +676,32 @@ private extension FfiPublishKeyPackagesResponse {
             deviceId: deviceId,
             packages: packages.map(\.trix_publishedKeyPackage)
         )
+    }
+}
+
+private extension TrixCorePersistentBridge {
+    static func loadConversationContext(
+        identity: LocalDeviceIdentity,
+        chatId: String
+    ) throws -> PersistentConversationContext {
+        let context = try loadOrCreateContext(identity: identity)
+        guard let groupId = try context.historyStore.chatMlsGroupId(chatId: chatId) else {
+            throw TrixCorePersistentBridgeError.missingMlsGroupID(chatId: chatId)
+        }
+        guard let conversation = try context.mlsFacade.loadGroup(groupId: groupId) else {
+            throw TrixCorePersistentBridgeError.missingConversationState(chatId: chatId)
+        }
+
+        return PersistentConversationContext(
+            context: context,
+            conversation: conversation
+        )
+    }
+
+    static func saveContextState(_ context: PersistentCoreContext) throws {
+        try context.historyStore.saveState()
+        try context.mlsFacade.saveState()
+        try context.syncCoordinator.saveState()
     }
 }
 
@@ -430,6 +762,7 @@ private extension FfiLocalChatListItem {
             title: title,
             displayTitle: displayTitle,
             lastServerSeq: lastServerSeq,
+            epoch: epoch,
             pendingMessageCount: pendingMessageCount,
             unreadCount: unreadCount,
             previewText: previewText,
@@ -482,6 +815,7 @@ private extension FfiChatSummary {
             chatType: chatType.trix_chatType,
             title: title,
             lastServerSeq: lastServerSeq,
+            epoch: epoch,
             pendingMessageCount: pendingMessageCount,
             lastMessage: lastMessage?.trix_messageEnvelope,
             participantProfiles: participantProfiles.map(\.trix_chatParticipantProfileSummary)
@@ -531,6 +865,19 @@ private extension FfiChatType {
     }
 }
 
+private extension ChatType {
+    var trix_ffiChatType: FfiChatType {
+        switch self {
+        case .dm:
+            return .dm
+        case .group:
+            return .group
+        case .accountSync:
+            return .accountSync
+        }
+    }
+}
+
 private extension FfiMessageKind {
     var trix_messageKind: MessageKind {
         switch self {
@@ -548,6 +895,23 @@ private extension FfiMessageKind {
 
 private extension FfiContentType {
     var trix_contentType: ContentType {
+        switch self {
+        case .text:
+            return .text
+        case .reaction:
+            return .reaction
+        case .receipt:
+            return .receipt
+        case .attachment:
+            return .attachment
+        case .chatEvent:
+            return .chatEvent
+        }
+    }
+}
+
+private extension ContentType {
+    var trix_ffiContentType: FfiContentType {
         switch self {
         case .text:
             return .text
@@ -623,5 +987,130 @@ private extension String {
         }
 
         return (try? JSONDecoder().decode(JSONValue.self, from: data)) ?? .string(self)
+    }
+}
+
+private extension ChatSummary {
+    func trix_ffiChatSummary() throws -> FfiChatSummary {
+        FfiChatSummary(
+            chatId: chatId,
+            chatType: chatType.trix_ffiChatType,
+            title: title,
+            lastServerSeq: lastServerSeq,
+            epoch: epoch,
+            pendingMessageCount: pendingMessageCount,
+            lastMessage: try lastMessage?.trix_ffiMessageEnvelope(),
+            participantProfiles: participantProfiles.map(\.trix_ffiChatParticipantProfile)
+        )
+    }
+}
+
+private extension ChatDetailResponse {
+    func trix_ffiChatDetail() throws -> FfiChatDetail {
+        FfiChatDetail(
+            chatId: chatId,
+            chatType: chatType.trix_ffiChatType,
+            title: title,
+            lastServerSeq: lastServerSeq,
+            pendingMessageCount: pendingMessageCount,
+            epoch: epoch,
+            lastCommitMessageId: lastCommitMessageId,
+            lastMessage: try lastMessage?.trix_ffiMessageEnvelope(),
+            participantProfiles: participantProfiles.map(\.trix_ffiChatParticipantProfile),
+            members: members.map(\.trix_ffiChatMember),
+            deviceMembers: try deviceMembers.map { try $0.trix_ffiChatDeviceMember() }
+        )
+    }
+}
+
+private extension ChatParticipantProfileSummary {
+    var trix_ffiChatParticipantProfile: FfiChatParticipantProfile {
+        FfiChatParticipantProfile(
+            accountId: accountId,
+            handle: handle,
+            profileName: profileName,
+            profileBio: profileBio
+        )
+    }
+}
+
+private extension ChatMemberSummary {
+    var trix_ffiChatMember: FfiChatMember {
+        FfiChatMember(
+            accountId: accountId,
+            role: role,
+            membershipStatus: membershipStatus
+        )
+    }
+}
+
+private extension ChatDeviceSummary {
+    func trix_ffiChatDeviceMember() throws -> FfiChatDeviceMember {
+        FfiChatDeviceMember(
+            deviceId: deviceId,
+            accountId: accountId,
+            displayName: displayName,
+            platform: platform,
+            leafIndex: leafIndex,
+            credentialIdentity: try credentialIdentityB64.trix_decodedBase64(fieldName: "credential_identity_b64")
+        )
+    }
+}
+
+private extension MessageEnvelope {
+    func trix_ffiMessageEnvelope() throws -> FfiMessageEnvelope {
+        FfiMessageEnvelope(
+            messageId: messageId,
+            chatId: chatId,
+            serverSeq: serverSeq,
+            senderAccountId: senderAccountId,
+            senderDeviceId: senderDeviceId,
+            epoch: epoch,
+            messageKind: messageKind.trix_ffiMessageKind,
+            contentType: contentType.trix_ffiContentType,
+            ciphertext: try ciphertextB64.trix_decodedBase64(fieldName: "ciphertext_b64"),
+            aadJson: try aadJson.trix_jsonString(),
+            createdAtUnix: createdAtUnix
+        )
+    }
+}
+
+private extension InboxItem {
+    func trix_ffiInboxItem() throws -> FfiInboxItem {
+        FfiInboxItem(
+            inboxId: inboxId,
+            message: try message.trix_ffiMessageEnvelope()
+        )
+    }
+}
+
+private extension MessageKind {
+    var trix_ffiMessageKind: FfiMessageKind {
+        switch self {
+        case .application:
+            return .application
+        case .commit:
+            return .commit
+        case .welcomeRef:
+            return .welcomeRef
+        case .system:
+            return .system
+        }
+    }
+}
+
+private extension JSONValue {
+    func trix_jsonString() throws -> String {
+        let data = try JSONEncoder().encode(self)
+        return String(decoding: data, as: UTF8.self)
+    }
+}
+
+private extension String {
+    func trix_decodedBase64(fieldName: String) throws -> Data {
+        guard let data = Data(base64Encoded: self) else {
+            throw TrixCorePersistentBridgeError.invalidBase64Field(fieldName)
+        }
+        return data
     }
 }
