@@ -60,5 +60,7 @@ make ffi-bindings OUT=/tmp/trix-bindings
 - Persistent MLS state is stored under the provided root as `storage.json` and `metadata.json`.
 - `FfiSyncCoordinator` now supports persistent sync state via `new_persistent(state_path)`, plus `state_snapshot()`, `sync_chat_histories()`, `lease_inbox()`, `ack_inbox()`, and `record_chat_server_seq()`.
 - Persistent sync state is stored as a JSON snapshot at the provided `state_path`.
+- `FfiLocalHistoryStore` now supports persistent local encrypted-envelope history via `new_persistent(database_path)`, plus `list_chats()`, `get_chat()`, `get_chat_history()`, `apply_chat_history()`, and `apply_leased_inbox()`.
+- `FfiSyncCoordinator` also exposes high-level convenience flows: `sync_chat_histories_into_store()` and `lease_inbox_into_store()`.
 - Kotlin generation works without `ktlint`, but UniFFI will print a non-fatal formatting warning if `ktlint` is not installed.
 - Kotlin sources are generated under `bindings/uniffi/trix_core/`.
