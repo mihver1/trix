@@ -7,3 +7,9 @@
 .env
 blobs/
 postgres-data/
+DerivedData/
+*.xcuserdata/
+*.xccheckout
+*.xcscmblueprint
+apps/ios/Vendor/
+apps/ios/TrixiOS/Bridge/Artifacts/

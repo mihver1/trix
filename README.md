@@ -14,6 +14,7 @@
 - `apps/trixd` backend binary
 - `apps/trix-botd` bot CLI and `JSON-RPC` stdio daemon
 - `apps/macos` macOS app scaffold and integration notes
+- `apps/ios` iOS app scaffold and baseline client
 - `crates/trix-bot` headless bot runtime
 - `crates/trix-core` shared client core scaffold
 - `crates/trix-server` backend server library scaffold
@@ -45,6 +46,8 @@ See `docs/bot-harness.md` for setup and `docs/ffi-bindings.md` for the binding s
 The repository currently contains a compile-ready scaffold plus the first working backend vertical slice:
 
 - workspace and crate layout
+- initial Apple client scaffolds for `macOS` and `iOS`
+- `iOS` PoC flow for account bootstrap, device auth, and authenticated profile/device reads
 - backend HTTP router with health and version endpoints
 - `PostgreSQL` bootstrap and automatic migrations on startup
 - working `create account`, `auth challenge`, `auth session`, `accounts/me`, and `devices` endpoints
@@ -58,7 +61,10 @@ The repository currently contains a compile-ready scaffold plus the first workin
 
 ## Next Steps
 
-- implement device linking and revocation flows for all client types
+- add `OpenMLS` group state management into `trix-core`
 - extend bot events beyond text-only delivery
-- add mobile clients on top of the same `trix-core` primitives
+- implement device linking and revocation flows for all client types
+- implement chat creation and encrypted message append paths across Apple clients and bots
+- expand mobile clients on top of the same `trix-core` primitives
+- keep hardening the `UniFFI`/client bridge surface
 - harden production ops around blob storage, retries, and observability
