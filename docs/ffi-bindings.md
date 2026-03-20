@@ -58,5 +58,7 @@ make ffi-bindings OUT=/tmp/trix-bindings
 - The current FFI surface is synchronous on purpose; client apps should call it off the UI thread.
 - `FfiMlsFacade` now supports persistent state via `new_persistent(storage_root)`, `load_persistent(storage_root)`, `save_state()`, and `storage_root()`.
 - Persistent MLS state is stored under the provided root as `storage.json` and `metadata.json`.
+- `FfiSyncCoordinator` now supports persistent sync state via `new_persistent(state_path)`, plus `state_snapshot()`, `sync_chat_histories()`, `lease_inbox()`, `ack_inbox()`, and `record_chat_server_seq()`.
+- Persistent sync state is stored as a JSON snapshot at the provided `state_path`.
 - Kotlin generation works without `ktlint`, but UniFFI will print a non-fatal formatting warning if `ktlint` is not installed.
 - Kotlin sources are generated under `bindings/uniffi/trix_core/`.

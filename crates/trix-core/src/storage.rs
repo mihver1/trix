@@ -34,3 +34,16 @@ impl MlsStateStore {
         Self { root: root.into() }
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct SyncStateStore {
+    pub state_path: PathBuf,
+}
+
+impl SyncStateStore {
+    pub fn new(state_path: impl Into<PathBuf>) -> Self {
+        Self {
+            state_path: state_path.into(),
+        }
+    }
+}
