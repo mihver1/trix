@@ -6,12 +6,14 @@
 - `PostgreSQL` for metadata and delivery state
 - local filesystem blob storage for encrypted attachments
 - `OpenMLS` as the planned group-crypto layer
-- `macOS` as the first client platform
+- `macOS` as the first desktop client platform
+- `Android` as the adaptive mobile client track
 - headless `E2EE` bot accounts via `trix-bot`
 
 ## Repository Layout
 
 - `apps/trixd` backend binary
+- `apps/android` Android adaptive client scaffold
 - `apps/trix-botd` bot CLI and `JSON-RPC` stdio daemon
 - `apps/macos` macOS app scaffold and integration notes
 - `apps/ios` iOS app scaffold and baseline client
@@ -61,6 +63,15 @@ The repository currently contains a compile-ready scaffold plus the first workin
 
 ## Next Steps
 
+<<<<<<< HEAD
+- add `OpenMLS` group state management into `trix-core`
+- implement device linking and revocation flows
+- implement chat creation and encrypted message append paths
+- generate `UniFFI` bindings for the future `macOS` app
+- wire Android health/version and auth/device flows on top of the adaptive scaffold
+- extend bot events beyond text-only delivery
+=======
+>>>>>>> origin/main
 - implement device linking and revocation flows for all client types
 - extend bot events beyond text/file delivery
 - add mobile clients on top of the same `trix-core` primitives

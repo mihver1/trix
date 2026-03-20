@@ -1,0 +1,3 @@
+-keep class com.sun.jna.** { *; }
+-keep class chat.trix.android.core.ffi.** { *; }
+-dontwarn com.sun.jna.**

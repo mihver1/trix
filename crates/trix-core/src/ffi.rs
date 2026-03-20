@@ -1,4 +1,8 @@
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, MutexGuard},
+};
 
 use serde_json::Value;
 use thiserror::Error;
@@ -11,16 +15,19 @@ use crate::{
     CompletedLinkIntentMaterial, CreateAccountParams, CreateChatControlInput,
     CreateChatControlOutcome, DeviceApprovePayloadMaterial, DeviceKeyMaterial,
     DeviceTransferBundleMaterial, DirectoryAccountMaterial, HistorySyncChunkMaterial,
-    InboxApplyOutcome, LocalChatListItem, LocalChatReadState, LocalHistoryStore,
-    LocalProjectedMessage, LocalProjectionApplyReport, LocalProjectionKind, LocalStoreApplyReport,
-    LocalTimelineItem, MessageBody, MlsCommitBundle, MlsFacade, MlsMemberIdentity,
-    MlsProcessResult, ModifyChatDevicesControlInput, ModifyChatDevicesControlOutcome,
-    ModifyChatMembersControlInput, ModifyChatMembersControlOutcome, PreparedAttachmentUpload,
-    PublishKeyPackageMaterial, ReactionAction, RealtimeConfig, RealtimeDriver, RealtimeEvent,
-    RealtimeEventKind, RealtimeMode, ReceiptType, ReservedKeyPackageMaterial, SendMessageOutcome,
-    ServerApiClient, ServerWebSocketClient, SyncChatCursor, SyncCoordinator, SyncStateSnapshot,
-    UpdateAccountProfileParams, account_bootstrap_message, decrypt_attachment_payload,
-    device_revoke_message, prepare_attachment_upload,
+    ImportedDeviceTransferBundle, InboxApplyOutcome, LocalChatListItem, LocalChatReadState,
+    LocalHistoryStore, LocalOutboxAttachmentDraft, LocalOutboxMessage, LocalOutboxPayload,
+    LocalOutboxStatus, LocalProjectedMessage, LocalProjectionApplyReport, LocalProjectionKind,
+    LocalStoreApplyReport, LocalTimelineItem, MessageBody, MlsCommitBundle, MlsFacade,
+    MlsMemberIdentity, MlsProcessResult, ModifyChatDevicesControlInput,
+    ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
+    ModifyChatMembersControlOutcome, PreparedAttachmentUpload, PublishKeyPackageMaterial,
+    ReactionAction, RealtimeConfig, RealtimeDriver, RealtimeEvent, RealtimeEventKind,
+    RealtimeMode, ReceiptType, ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient,
+    ServerWebSocketClient, SyncChatCursor, SyncCoordinator, SyncStateSnapshot,
+    UpdateAccountProfileParams,
+    account_bootstrap_message, create_device_transfer_bundle, decrypt_attachment_payload,
+    decrypt_device_transfer_bundle, device_revoke_message, prepare_attachment_upload,
 };
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -80,6 +87,12 @@ pub enum FfiHistorySyncJobStatus {
     Completed,
     Failed,
     Canceled,
+}
+
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum FfiLocalOutboxStatus {
+    Pending,
+    Failed,
 }
 
 #[derive(Debug, Clone, Copy, uniffi::Enum)]
@@ -244,6 +257,24 @@ pub struct FfiCreateLinkIntentResponse {
     pub link_intent_id: String,
     pub qr_payload: String,
     pub expires_at_unix: u64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiCreateDeviceTransferBundleParams {
+    pub account_id: String,
+    pub source_device_id: String,
+    pub target_device_id: String,
+    pub account_sync_chat_id: Option<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiImportedDeviceTransferBundle {
+    pub account_id: String,
+    pub source_device_id: String,
+    pub target_device_id: String,
+    pub account_sync_chat_id: Option<String>,
+    pub account_root_private_key: Vec<u8>,
+    pub account_root_public_key: Vec<u8>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -926,6 +957,35 @@ pub struct FfiMlsProcessResult {
     pub epoch: Option<u64>,
 }
 
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiLocalOutboxAttachmentDraft {
+    pub local_path: String,
+    pub mime_type: String,
+    pub file_name: Option<String>,
+    pub width_px: Option<u32>,
+    pub height_px: Option<u32>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiLocalOutboxItem {
+    pub message_id: String,
+    pub chat_id: String,
+    pub sender_account_id: String,
+    pub sender_device_id: String,
+    pub body: Option<FfiMessageBody>,
+    pub attachment_draft: Option<FfiLocalOutboxAttachmentDraft>,
+    pub queued_at_unix: u64,
+    pub status: FfiLocalOutboxStatus,
+    pub failure_message: Option<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiClientStoreConfig {
+    pub database_path: String,
+    pub database_key: Vec<u8>,
+    pub attachment_cache_root: String,
+}
+
 #[derive(uniffi::Object)]
 pub struct FfiServerApiClient {
     inner: Mutex<ServerApiClient>,
@@ -957,6 +1017,15 @@ pub struct FfiDeviceKeyMaterial {
 #[derive(uniffi::Object)]
 pub struct FfiMlsFacade {
     inner: Mutex<MlsFacade>,
+}
+
+#[derive(uniffi::Object)]
+pub struct FfiClientStore {
+    history_store: Arc<FfiLocalHistoryStore>,
+    sync_coordinator: Arc<FfiSyncCoordinator>,
+    database_path: String,
+    attachment_cache_root: String,
+    mls_storage_root: String,
 }
 
 #[derive(uniffi::Object)]
@@ -1962,7 +2031,7 @@ impl FfiServerWebSocketClient {
         Ok(())
     }
 
-    pub fn close(&self) -> Result<(), TrixFfiError> {
+    pub fn close_socket(&self) -> Result<(), TrixFfiError> {
         let mut websocket = lock(&self.inner)?;
         self.runtime.block_on(websocket.close())?;
         Ok(())
@@ -2130,6 +2199,26 @@ impl FfiAccountRootMaterial {
         )))
     }
 
+    pub fn create_device_transfer_bundle(
+        &self,
+        params: FfiCreateDeviceTransferBundleParams,
+        sender_device_keys: Arc<FfiDeviceKeyMaterial>,
+        recipient_transport_pubkey: Vec<u8>,
+    ) -> Result<Vec<u8>, TrixFfiError> {
+        create_device_transfer_bundle(
+            crate::CreateDeviceTransferBundleInput {
+                account_id: params.account_id,
+                source_device_id: params.source_device_id,
+                target_device_id: params.target_device_id,
+                account_sync_chat_id: params.account_sync_chat_id,
+            },
+            &self.inner,
+            &sender_device_keys.inner,
+            &recipient_transport_pubkey,
+        )
+        .map_err(ffi_error)
+    }
+
     pub fn verify(&self, payload: Vec<u8>, signature: Vec<u8>) -> Result<(), TrixFfiError> {
         self.inner.verify(&payload, &signature).map_err(ffi_error)
     }
@@ -2168,8 +2257,104 @@ impl FfiDeviceKeyMaterial {
         self.inner.sign(&challenge)
     }
 
+    pub fn decrypt_device_transfer_bundle(
+        &self,
+        bundle: Vec<u8>,
+    ) -> Result<FfiImportedDeviceTransferBundle, TrixFfiError> {
+        decrypt_device_transfer_bundle(&bundle, &self.inner)
+            .map(imported_device_transfer_bundle_to_ffi)
+            .map_err(ffi_error)
+    }
+
     pub fn verify(&self, payload: Vec<u8>, signature: Vec<u8>) -> Result<(), TrixFfiError> {
         self.inner.verify(&payload, &signature).map_err(ffi_error)
+    }
+}
+
+#[uniffi::export]
+impl FfiClientStore {
+    #[uniffi::constructor]
+    pub fn open(config: FfiClientStoreConfig) -> Result<Arc<Self>, TrixFfiError> {
+        let database_path = PathBuf::from(&config.database_path);
+        let session_root = database_path.parent().ok_or_else(|| {
+            TrixFfiError::Message("client store database path must have a parent directory".to_owned())
+        })?;
+        let attachment_cache_root = PathBuf::from(&config.attachment_cache_root);
+        let mls_storage_root = session_root.join("mls");
+        fs::create_dir_all(&attachment_cache_root).map_err(ffi_error)?;
+        fs::create_dir_all(&mls_storage_root).map_err(ffi_error)?;
+
+        let should_attempt_migration =
+            !database_path.exists() && has_any_legacy_client_store_path(session_root);
+
+        let history_store = Arc::new(FfiLocalHistoryStore {
+            inner: Mutex::new(
+                LocalHistoryStore::new_encrypted(&database_path, config.database_key.clone())
+                    .map_err(ffi_error)?,
+            ),
+        });
+        let sync_coordinator = Arc::new(FfiSyncCoordinator {
+            inner: Mutex::new(
+                SyncCoordinator::new_encrypted(&database_path, config.database_key.clone())
+                    .map_err(ffi_error)?,
+            ),
+            runtime: build_runtime()?,
+        });
+
+        if should_attempt_migration {
+            if let Err(error) = migrate_legacy_client_store(
+                session_root,
+                &database_path,
+                &history_store,
+                &sync_coordinator,
+            ) {
+                cleanup_sqlite_sidecars(&database_path).map_err(ffi_error)?;
+                return Err(ffi_error(error));
+            }
+        }
+
+        Ok(Arc::new(Self {
+            history_store,
+            sync_coordinator,
+            database_path: database_path.to_string_lossy().into_owned(),
+            attachment_cache_root: attachment_cache_root.to_string_lossy().into_owned(),
+            mls_storage_root: mls_storage_root.to_string_lossy().into_owned(),
+        }))
+    }
+
+    pub fn database_path(&self) -> String {
+        self.database_path.clone()
+    }
+
+    pub fn attachment_cache_root(&self) -> String {
+        self.attachment_cache_root.clone()
+    }
+
+    pub fn mls_storage_root(&self) -> String {
+        self.mls_storage_root.clone()
+    }
+
+    pub fn history_store(&self) -> Arc<FfiLocalHistoryStore> {
+        Arc::clone(&self.history_store)
+    }
+
+    pub fn sync_coordinator(&self) -> Arc<FfiSyncCoordinator> {
+        Arc::clone(&self.sync_coordinator)
+    }
+
+    pub fn open_mls_facade(
+        &self,
+        credential_identity: Vec<u8>,
+    ) -> Result<Arc<FfiMlsFacade>, TrixFfiError> {
+        let storage_root = PathBuf::from(&self.mls_storage_root);
+        let inner = if has_persistent_mls_state(&storage_root) {
+            MlsFacade::load_persistent(&storage_root).map_err(ffi_error)?
+        } else {
+            MlsFacade::new_persistent(credential_identity, &storage_root).map_err(ffi_error)?
+        };
+        Ok(Arc::new(FfiMlsFacade {
+            inner: Mutex::new(inner),
+        }))
     }
 }
 
@@ -2186,6 +2371,18 @@ impl FfiLocalHistoryStore {
     pub fn new_persistent(database_path: String) -> Result<Arc<Self>, TrixFfiError> {
         Ok(Arc::new(Self {
             inner: Mutex::new(LocalHistoryStore::new_persistent(database_path).map_err(ffi_error)?),
+        }))
+    }
+
+    #[uniffi::constructor]
+    pub fn new_encrypted(
+        database_path: String,
+        database_key: Vec<u8>,
+    ) -> Result<Arc<Self>, TrixFfiError> {
+        Ok(Arc::new(Self {
+            inner: Mutex::new(
+                LocalHistoryStore::new_encrypted(database_path, database_key).map_err(ffi_error)?,
+            ),
         }))
     }
 
@@ -2261,6 +2458,85 @@ impl FfiLocalHistoryStore {
             .map(chat_detail_to_ffi))
     }
 
+    pub fn list_outbox_messages(
+        &self,
+        chat_id: Option<String>,
+    ) -> Result<Vec<FfiLocalOutboxItem>, TrixFfiError> {
+        Ok(lock(&self.inner)?
+            .list_outbox_messages(chat_id.as_deref().map(parse_chat_id).transpose()?)
+            .into_iter()
+            .map(local_outbox_item_to_ffi)
+            .collect())
+    }
+
+    pub fn enqueue_outbox_message(
+        &self,
+        chat_id: String,
+        sender_account_id: String,
+        sender_device_id: String,
+        message_id: String,
+        body: FfiMessageBody,
+        queued_at_unix: u64,
+    ) -> Result<FfiLocalOutboxItem, TrixFfiError> {
+        Ok(local_outbox_item_to_ffi(
+            lock(&self.inner)?
+                .enqueue_outbox_message(
+                    parse_chat_id(&chat_id)?,
+                    parse_account_id(&sender_account_id)?,
+                    parse_device_id(&sender_device_id)?,
+                    parse_message_id(&message_id)?,
+                    message_body_from_ffi(body)?,
+                    queued_at_unix,
+                )
+                .map_err(ffi_error)?,
+        ))
+    }
+
+    pub fn enqueue_outbox_attachment(
+        &self,
+        chat_id: String,
+        sender_account_id: String,
+        sender_device_id: String,
+        message_id: String,
+        attachment: FfiLocalOutboxAttachmentDraft,
+        queued_at_unix: u64,
+    ) -> Result<FfiLocalOutboxItem, TrixFfiError> {
+        Ok(local_outbox_item_to_ffi(
+            lock(&self.inner)?
+                .enqueue_outbox_attachment(
+                    parse_chat_id(&chat_id)?,
+                    parse_account_id(&sender_account_id)?,
+                    parse_device_id(&sender_device_id)?,
+                    parse_message_id(&message_id)?,
+                    local_outbox_attachment_draft_from_ffi(attachment),
+                    queued_at_unix,
+                )
+                .map_err(ffi_error)?,
+        ))
+    }
+
+    pub fn clear_outbox_failure(&self, message_id: String) -> Result<(), TrixFfiError> {
+        lock(&self.inner)?
+            .clear_outbox_failure(parse_message_id(&message_id)?)
+            .map_err(ffi_error)
+    }
+
+    pub fn mark_outbox_failure(
+        &self,
+        message_id: String,
+        failure_message: String,
+    ) -> Result<(), TrixFfiError> {
+        lock(&self.inner)?
+            .mark_outbox_failure(parse_message_id(&message_id)?, failure_message)
+            .map_err(ffi_error)
+    }
+
+    pub fn remove_outbox_message(&self, message_id: String) -> Result<(), TrixFfiError> {
+        lock(&self.inner)?
+            .remove_outbox_message(parse_message_id(&message_id)?)
+            .map_err(ffi_error)
+    }
+
     pub fn apply_chat_detail(
         &self,
         detail: FfiChatDetail,
@@ -2318,6 +2594,26 @@ impl FfiLocalHistoryStore {
             .into_iter()
             .map(local_projected_message_to_ffi)
             .collect())
+    }
+
+    pub fn apply_local_projection(
+        &self,
+        envelope: FfiMessageEnvelope,
+        projection_kind: FfiLocalProjectionKind,
+        payload: Option<Vec<u8>>,
+        merged_epoch: Option<u64>,
+    ) -> Result<FfiLocalStoreApplyReport, TrixFfiError> {
+        let envelope = ffi_message_envelope_to_api(envelope)?;
+        Ok(local_store_apply_report_to_ffi(
+            lock(&self.inner)?
+                .apply_local_projection(
+                    &envelope,
+                    projection_kind.into(),
+                    payload,
+                    merged_epoch,
+                )
+                .map_err(ffi_error)?,
+        ))
     }
 
     pub fn apply_projected_messages(
@@ -2513,6 +2809,19 @@ impl FfiSyncCoordinator {
     pub fn new_persistent(state_path: String) -> Result<Arc<Self>, TrixFfiError> {
         Ok(Arc::new(Self {
             inner: Mutex::new(SyncCoordinator::new_persistent(state_path).map_err(ffi_error)?),
+            runtime: build_runtime()?,
+        }))
+    }
+
+    #[uniffi::constructor]
+    pub fn new_encrypted(
+        state_path: String,
+        database_key: Vec<u8>,
+    ) -> Result<Arc<Self>, TrixFfiError> {
+        Ok(Arc::new(Self {
+            inner: Mutex::new(
+                SyncCoordinator::new_encrypted(state_path, database_key).map_err(ffi_error)?,
+            ),
             runtime: build_runtime()?,
         }))
     }
@@ -3153,6 +3462,132 @@ fn clone_server_api_client(
     Ok(lock(value)?.clone())
 }
 
+fn has_any_legacy_client_store_path(session_root: &Path) -> bool {
+    legacy_history_sqlite_path(session_root).exists()
+        || legacy_history_json_path(session_root).exists()
+        || legacy_sync_sqlite_path(session_root).exists()
+        || legacy_sync_json_path(session_root).exists()
+}
+
+fn migrate_legacy_client_store(
+    session_root: &Path,
+    database_path: &Path,
+    history_store: &Arc<FfiLocalHistoryStore>,
+    sync_coordinator: &Arc<FfiSyncCoordinator>,
+) -> anyhow::Result<()> {
+    let legacy_history = load_legacy_history_store(session_root)?;
+    let legacy_sync = load_legacy_sync_coordinator(session_root)?;
+
+    if let Some(legacy_history) = legacy_history.as_ref() {
+        lock(&history_store.inner)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?
+            .replace_with(legacy_history)?;
+    }
+    if let Some(legacy_sync) = legacy_sync.as_ref() {
+        lock(&sync_coordinator.inner)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?
+            .replace_with(legacy_sync)?;
+    }
+
+    cleanup_legacy_client_store(session_root)?;
+
+    if !database_path.exists() {
+        return Err(anyhow::anyhow!(
+            "encrypted client store was not created at {}",
+            database_path.display()
+        ));
+    }
+
+    Ok(())
+}
+
+fn load_legacy_history_store(session_root: &Path) -> anyhow::Result<Option<LocalHistoryStore>> {
+    let sqlite_path = legacy_history_sqlite_path(session_root);
+    if sqlite_path.exists() {
+        return LocalHistoryStore::new_persistent(&sqlite_path).map(Some);
+    }
+
+    let json_path = legacy_history_json_path(session_root);
+    if json_path.exists() {
+        return LocalHistoryStore::new_persistent(&json_path).map(Some);
+    }
+
+    Ok(None)
+}
+
+fn load_legacy_sync_coordinator(session_root: &Path) -> anyhow::Result<Option<SyncCoordinator>> {
+    let sqlite_path = legacy_sync_sqlite_path(session_root);
+    if sqlite_path.exists() {
+        return SyncCoordinator::new_persistent(&sqlite_path).map(Some);
+    }
+
+    let json_path = legacy_sync_json_path(session_root);
+    if json_path.exists() {
+        return SyncCoordinator::new_persistent(&json_path).map(Some);
+    }
+
+    Ok(None)
+}
+
+fn cleanup_legacy_client_store(session_root: &Path) -> anyhow::Result<()> {
+    cleanup_sqlite_sidecars(&legacy_history_sqlite_path(session_root))?;
+    cleanup_sqlite_sidecars(&legacy_sync_sqlite_path(session_root))?;
+    remove_file_if_exists(&legacy_history_json_path(session_root))?;
+    remove_file_if_exists(&legacy_sync_json_path(session_root))?;
+    remove_dir_if_empty(&session_root.join("history"))?;
+    remove_dir_if_empty(&session_root.join("sync"))?;
+    Ok(())
+}
+
+fn cleanup_sqlite_sidecars(path: &Path) -> anyhow::Result<()> {
+    for candidate in sqlite_path_set(path) {
+        remove_file_if_exists(&candidate)?;
+    }
+    Ok(())
+}
+
+fn sqlite_path_set(path: &Path) -> [PathBuf; 3] {
+    [
+        path.to_path_buf(),
+        PathBuf::from(format!("{}-wal", path.display())),
+        PathBuf::from(format!("{}-shm", path.display())),
+    ]
+}
+
+fn remove_file_if_exists(path: &Path) -> anyhow::Result<()> {
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+fn remove_dir_if_empty(path: &Path) -> anyhow::Result<()> {
+    if path.is_dir() && path.read_dir()?.next().is_none() {
+        fs::remove_dir(path)?;
+    }
+    Ok(())
+}
+
+fn legacy_history_sqlite_path(session_root: &Path) -> PathBuf {
+    session_root.join("trix-client.db")
+}
+
+fn legacy_history_json_path(session_root: &Path) -> PathBuf {
+    session_root.join("history/local-history-v1.json")
+}
+
+fn legacy_sync_sqlite_path(session_root: &Path) -> PathBuf {
+    session_root.join("sync-state.sqlite")
+}
+
+fn legacy_sync_json_path(session_root: &Path) -> PathBuf {
+    session_root.join("sync/sync-state-v1.json")
+}
+
+fn has_persistent_mls_state(storage_root: &Path) -> bool {
+    storage_root.join("metadata.json").exists() && storage_root.join("storage.json").exists()
+}
+
 fn lock<T>(value: &Mutex<T>) -> Result<MutexGuard<'_, T>, TrixFfiError> {
     value
         .lock()
@@ -3310,6 +3745,19 @@ fn device_transfer_bundle_to_ffi(value: DeviceTransferBundleMaterial) -> FfiDevi
         device_id: value.device_id.0.to_string(),
         transfer_bundle: value.transfer_bundle,
         uploaded_at_unix: value.uploaded_at_unix,
+    }
+}
+
+fn imported_device_transfer_bundle_to_ffi(
+    value: ImportedDeviceTransferBundle,
+) -> FfiImportedDeviceTransferBundle {
+    FfiImportedDeviceTransferBundle {
+        account_id: value.account_id,
+        source_device_id: value.source_device_id,
+        target_device_id: value.target_device_id,
+        account_sync_chat_id: value.account_sync_chat_id,
+        account_root_private_key: value.account_root_private_key,
+        account_root_public_key: value.account_root_public_key,
     }
 }
 
@@ -4031,6 +4479,45 @@ fn local_timeline_item_to_ffi(value: LocalTimelineItem) -> FfiLocalTimelineItem 
     }
 }
 
+fn local_outbox_item_to_ffi(value: LocalOutboxMessage) -> FfiLocalOutboxItem {
+    let (body, attachment_draft) = match value.payload {
+        LocalOutboxPayload::Body { body } => (Some(message_body_to_ffi(body)), None),
+        LocalOutboxPayload::AttachmentDraft { attachment } => (
+            None,
+            Some(FfiLocalOutboxAttachmentDraft {
+                local_path: attachment.local_path,
+                mime_type: attachment.mime_type,
+                file_name: attachment.file_name,
+                width_px: attachment.width_px,
+                height_px: attachment.height_px,
+            }),
+        ),
+    };
+    FfiLocalOutboxItem {
+        message_id: value.message_id.0.to_string(),
+        chat_id: value.chat_id.0.to_string(),
+        sender_account_id: value.sender_account_id.0.to_string(),
+        sender_device_id: value.sender_device_id.0.to_string(),
+        body,
+        attachment_draft,
+        queued_at_unix: value.queued_at_unix,
+        status: value.status.into(),
+        failure_message: value.failure_message,
+    }
+}
+
+fn local_outbox_attachment_draft_from_ffi(
+    value: FfiLocalOutboxAttachmentDraft,
+) -> LocalOutboxAttachmentDraft {
+    LocalOutboxAttachmentDraft {
+        local_path: value.local_path,
+        mime_type: value.mime_type,
+        file_name: value.file_name,
+        width_px: value.width_px,
+        height_px: value.height_px,
+    }
+}
+
 fn local_projection_apply_report_to_ffi(
     value: LocalProjectionApplyReport,
 ) -> FfiLocalProjectionApplyReport {
@@ -4419,6 +4906,15 @@ impl From<trix_types::HistorySyncJobStatus> for FfiHistorySyncJobStatus {
             trix_types::HistorySyncJobStatus::Completed => Self::Completed,
             trix_types::HistorySyncJobStatus::Failed => Self::Failed,
             trix_types::HistorySyncJobStatus::Canceled => Self::Canceled,
+        }
+    }
+}
+
+impl From<LocalOutboxStatus> for FfiLocalOutboxStatus {
+    fn from(value: LocalOutboxStatus) -> Self {
+        match value {
+            LocalOutboxStatus::Pending => Self::Pending,
+            LocalOutboxStatus::Failed => Self::Failed,
         }
     }
 }

@@ -190,15 +190,41 @@ impl SyncCoordinator {
         }
     }
 
+    pub fn new_encrypted(state_path: impl Into<PathBuf>, database_key: Vec<u8>) -> Result<Self> {
+        let store = SyncStateStore::new_encrypted(state_path, database_key);
+        if store.state_path.exists() {
+            let state = load_state_from_encrypted_path(
+                &store.state_path,
+                store.database_key.as_deref().unwrap_or_default(),
+            )?;
+            Ok(Self {
+                state,
+                store: Some(store),
+            })
+        } else {
+            let coordinator = Self {
+                state: PersistedSyncState::default(),
+                store: Some(store),
+            };
+            coordinator.save_state()?;
+            Ok(coordinator)
+        }
+    }
+
     pub fn save_state(&self) -> Result<()> {
         let Some(store) = &self.store else {
             return Ok(());
         };
-        save_state_to_path(&store.state_path, &self.state)
+        save_state_to_path(&store.state_path, store.database_key.as_deref(), &self.state)
     }
 
     pub fn state_path(&self) -> Option<&Path> {
         self.store.as_ref().map(|store| store.state_path.as_path())
+    }
+
+    pub(crate) fn replace_with(&mut self, other: &Self) -> Result<()> {
+        self.state = other.state.clone();
+        self.save_state()
     }
 
     pub fn snapshot(&self) -> Result<SyncStateSnapshot> {
@@ -1204,8 +1230,12 @@ fn current_unix_seconds() -> Result<u64> {
 
 const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
 
-fn save_state_to_path(path: &Path, state: &PersistedSyncState) -> Result<()> {
-    let mut connection = open_sync_sqlite(path)?;
+fn save_state_to_path(
+    path: &Path,
+    database_key: Option<&[u8]>,
+    state: &PersistedSyncState,
+) -> Result<()> {
+    let mut connection = open_sync_sqlite(path, database_key)?;
     let transaction = connection
         .transaction()
         .context("failed to start sync state transaction")?;
@@ -1263,11 +1293,22 @@ fn save_state_to_path(path: &Path, state: &PersistedSyncState) -> Result<()> {
 fn load_state_from_path(path: &Path) -> Result<PersistedSyncState> {
     if !is_sqlite_database(path)? {
         let state = load_legacy_json_state_from_path(path)?;
-        save_state_to_path(path, &state)?;
+        save_state_to_path(path, None, &state)?;
         return Ok(state);
     }
 
-    let connection = open_sync_sqlite(path)?;
+    load_state_from_sqlite(path, None)
+}
+
+fn load_state_from_encrypted_path(path: &Path, database_key: &[u8]) -> Result<PersistedSyncState> {
+    load_state_from_sqlite(path, Some(database_key))
+}
+
+fn load_state_from_sqlite(
+    path: &Path,
+    database_key: Option<&[u8]>,
+) -> Result<PersistedSyncState> {
+    let connection = open_sync_sqlite(path, database_key)?;
     let version = connection
         .query_row(
             r#"
@@ -1363,19 +1404,27 @@ fn load_legacy_json_state_from_path(path: &Path) -> Result<PersistedSyncState> {
     Ok(state)
 }
 
-fn open_sync_sqlite(path: &Path) -> Result<Connection> {
+fn open_sync_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Connection> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| {
             format!("failed to create sync state directory {}", parent.display())
         })?;
     }
-    if path.exists() && !is_sqlite_database(path)? {
+    if database_key.is_none() && path.exists() && !is_sqlite_database(path)? {
         fs::remove_file(path)
             .with_context(|| format!("failed to replace legacy sync state {}", path.display()))?;
     }
 
     let connection = Connection::open(path)
         .with_context(|| format!("failed to open sync state database {}", path.display()))?;
+    if let Some(database_key) = database_key {
+        configure_sqlcipher_connection(
+            &connection,
+            path,
+            database_key,
+            "sync state",
+        )?;
+    }
     connection.pragma_update(None, "journal_mode", "WAL")?;
     connection.pragma_update(None, "synchronous", "NORMAL")?;
     connection.execute_batch(
@@ -1397,6 +1446,30 @@ fn open_sync_sqlite(path: &Path) -> Result<Connection> {
     Ok(connection)
 }
 
+fn configure_sqlcipher_connection(
+    connection: &Connection,
+    path: &Path,
+    database_key: &[u8],
+    label: &str,
+) -> Result<()> {
+    let encoded_key = encode_hex(database_key);
+    connection
+        .execute_batch(&format!(
+            "PRAGMA key = \"x'{encoded_key}'\"; PRAGMA cipher_compatibility = 4;"
+        ))
+        .with_context(|| format!("failed to configure SQLCipher for {label} {}", path.display()))?;
+    connection
+        .query_row("SELECT count(*) FROM sqlite_master", [], |row| row.get::<_, i64>(0))
+        .map(|_| ())
+        .with_context(|| {
+            format!(
+                "{label} database key rejected or database is corrupted: {}",
+                path.display()
+            )
+        })?;
+    Ok(())
+}
+
 fn is_sqlite_database(path: &Path) -> Result<bool> {
     if !path.exists() {
         return Ok(false);
@@ -1413,6 +1486,16 @@ fn is_sqlite_database(path: &Path) -> Result<bool> {
 
 fn u64_to_i64(value: u64, field: &str) -> Result<i64> {
     i64::try_from(value).with_context(|| format!("{field} exceeds SQLite integer range"))
+}
+
+fn encode_hex(input: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(input.len() * 2);
+    for byte in input {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
 }
 
 fn i64_to_u64(value: i64, field: &str) -> Result<u64> {
@@ -1471,5 +1554,38 @@ mod tests {
         assert!(is_sqlite_database(&state_path).unwrap());
 
         fs::remove_file(state_path).ok();
+    }
+
+    #[test]
+    fn encrypted_sync_coordinator_round_trips_with_same_key() {
+        let state_path = env::temp_dir().join(format!("trix-sync-encrypted-{}.db", Uuid::new_v4()));
+        let chat_id = ChatId(Uuid::new_v4());
+        let mut coordinator = SyncCoordinator::new_encrypted(&state_path, vec![9u8; 32]).unwrap();
+
+        coordinator.record_chat_server_seq(chat_id, 77).unwrap();
+        coordinator.record_acked_inbox_ids(&[15]).unwrap();
+
+        let restored = SyncCoordinator::new_encrypted(&state_path, vec![9u8; 32]).unwrap();
+        assert_eq!(restored.chat_cursor(chat_id), Some(77));
+        assert_eq!(restored.last_acked_inbox_id(), Some(15));
+
+        cleanup_sqlite_test_path(&state_path);
+    }
+
+    #[test]
+    fn encrypted_sync_coordinator_rejects_wrong_key() {
+        let state_path = env::temp_dir().join(format!("trix-sync-wrong-key-{}.db", Uuid::new_v4()));
+        SyncCoordinator::new_encrypted(&state_path, vec![3u8; 32]).unwrap();
+
+        let error = SyncCoordinator::new_encrypted(&state_path, vec![4u8; 32]).unwrap_err();
+        assert!(error.to_string().contains("database key rejected") || error.to_string().contains("corrupted"));
+
+        cleanup_sqlite_test_path(&state_path);
+    }
+
+    fn cleanup_sqlite_test_path(path: &std::path::Path) {
+        fs::remove_file(path).ok();
+        fs::remove_file(format!("{}-wal", path.display())).ok();
+        fs::remove_file(format!("{}-shm", path.display())).ok();
     }
 }

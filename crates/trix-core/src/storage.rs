@@ -45,12 +45,21 @@ impl MlsStateStore {
 #[derive(Debug, Clone)]
 pub struct SyncStateStore {
     pub state_path: PathBuf,
+    pub database_key: Option<Vec<u8>>,
 }
 
 impl SyncStateStore {
     pub fn new(state_path: impl Into<PathBuf>) -> Self {
         Self {
             state_path: state_path.into(),
+            database_key: None,
+        }
+    }
+
+    pub fn new_encrypted(state_path: impl Into<PathBuf>, database_key: Vec<u8>) -> Self {
+        Self {
+            state_path: state_path.into(),
+            database_key: Some(database_key),
         }
     }
 }
@@ -146,16 +155,54 @@ pub struct LocalOutgoingMessageApplyOutcome {
     pub projected_message: LocalProjectedMessage,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalOutboxStatus {
+    Pending,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalOutboxAttachmentDraft {
+    pub local_path: String,
+    pub mime_type: String,
+    pub file_name: Option<String>,
+    pub width_px: Option<u32>,
+    pub height_px: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LocalOutboxPayload {
+    Body { body: MessageBody },
+    AttachmentDraft { attachment: LocalOutboxAttachmentDraft },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LocalOutboxMessage {
+    pub message_id: MessageId,
+    pub chat_id: ChatId,
+    pub sender_account_id: trix_types::AccountId,
+    pub sender_device_id: trix_types::DeviceId,
+    pub payload: LocalOutboxPayload,
+    pub queued_at_unix: u64,
+    pub status: LocalOutboxStatus,
+    pub failure_message: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct LocalHistoryStore {
     state: PersistedLocalHistoryState,
     database_path: Option<PathBuf>,
+    database_key: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PersistedLocalHistoryState {
     version: u32,
     chats: BTreeMap<String, PersistedChatState>,
+    #[serde(default)]
+    outbox: BTreeMap<String, LocalOutboxMessage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,6 +251,7 @@ impl Default for PersistedLocalHistoryState {
         Self {
             version: 1,
             chats: BTreeMap::new(),
+            outbox: BTreeMap::new(),
         }
     }
 }
@@ -219,6 +267,7 @@ impl LocalHistoryStore {
         Self {
             state: PersistedLocalHistoryState::default(),
             database_path: None,
+            database_key: None,
         }
     }
 
@@ -228,11 +277,32 @@ impl LocalHistoryStore {
             Ok(Self {
                 state: load_state_from_path(&database_path)?,
                 database_path: Some(database_path),
+                database_key: None,
             })
         } else {
             let store = Self {
                 state: PersistedLocalHistoryState::default(),
                 database_path: Some(database_path),
+                database_key: None,
+            };
+            store.save_state()?;
+            Ok(store)
+        }
+    }
+
+    pub fn new_encrypted(database_path: impl Into<PathBuf>, database_key: Vec<u8>) -> Result<Self> {
+        let database_path = database_path.into();
+        if database_path.exists() {
+            Ok(Self {
+                state: load_state_from_encrypted_path(&database_path, &database_key)?,
+                database_path: Some(database_path),
+                database_key: Some(database_key),
+            })
+        } else {
+            let store = Self {
+                state: PersistedLocalHistoryState::default(),
+                database_path: Some(database_path),
+                database_key: Some(database_key),
             };
             store.save_state()?;
             Ok(store)
@@ -247,7 +317,12 @@ impl LocalHistoryStore {
         let Some(database_path) = &self.database_path else {
             return Ok(());
         };
-        save_state_to_path(database_path, &self.state)
+        save_state_to_path(database_path, self.database_key.as_deref(), &self.state)
+    }
+
+    pub(crate) fn replace_with(&mut self, other: &Self) -> Result<()> {
+        self.state = other.state.clone();
+        self.save_state()
     }
 
     pub fn list_chats(&self) -> Vec<ChatSummary> {
@@ -606,6 +681,110 @@ impl LocalHistoryStore {
         messages
     }
 
+    pub fn list_outbox_messages(&self, chat_id: Option<ChatId>) -> Vec<LocalOutboxMessage> {
+        let mut messages = self
+            .state
+            .outbox
+            .values()
+            .filter(|message| chat_id.map(|value| value == message.chat_id).unwrap_or(true))
+            .cloned()
+            .collect::<Vec<_>>();
+        messages.sort_by(|left, right| {
+            left.queued_at_unix
+                .cmp(&right.queued_at_unix)
+                .then_with(|| left.message_id.0.cmp(&right.message_id.0))
+        });
+        messages
+    }
+
+    pub fn enqueue_outbox_message(
+        &mut self,
+        chat_id: ChatId,
+        sender_account_id: trix_types::AccountId,
+        sender_device_id: trix_types::DeviceId,
+        message_id: MessageId,
+        body: MessageBody,
+        queued_at_unix: u64,
+    ) -> Result<LocalOutboxMessage> {
+        self.ensure_chat_exists(chat_id);
+        let queued = LocalOutboxMessage {
+            message_id,
+            chat_id,
+            sender_account_id,
+            sender_device_id,
+            payload: LocalOutboxPayload::Body { body },
+            queued_at_unix,
+            status: LocalOutboxStatus::Pending,
+            failure_message: None,
+        };
+        self.state
+            .outbox
+            .insert(message_id.0.to_string(), queued.clone());
+        self.save_state()?;
+        Ok(queued)
+    }
+
+    pub fn enqueue_outbox_attachment(
+        &mut self,
+        chat_id: ChatId,
+        sender_account_id: trix_types::AccountId,
+        sender_device_id: trix_types::DeviceId,
+        message_id: MessageId,
+        attachment: LocalOutboxAttachmentDraft,
+        queued_at_unix: u64,
+    ) -> Result<LocalOutboxMessage> {
+        self.ensure_chat_exists(chat_id);
+        let queued = LocalOutboxMessage {
+            message_id,
+            chat_id,
+            sender_account_id,
+            sender_device_id,
+            payload: LocalOutboxPayload::AttachmentDraft { attachment },
+            queued_at_unix,
+            status: LocalOutboxStatus::Pending,
+            failure_message: None,
+        };
+        self.state
+            .outbox
+            .insert(message_id.0.to_string(), queued.clone());
+        self.save_state()?;
+        Ok(queued)
+    }
+
+    pub fn clear_outbox_failure(&mut self, message_id: MessageId) -> Result<()> {
+        let Some(message) = self.state.outbox.get_mut(&message_id.0.to_string()) else {
+            return Ok(());
+        };
+        let changed =
+            message.status != LocalOutboxStatus::Pending || message.failure_message.is_some();
+        message.status = LocalOutboxStatus::Pending;
+        message.failure_message = None;
+        self.persist_if_needed(changed)
+    }
+
+    pub fn mark_outbox_failure(
+        &mut self,
+        message_id: MessageId,
+        failure_message: impl Into<String>,
+    ) -> Result<()> {
+        let message = self
+            .state
+            .outbox
+            .get_mut(&message_id.0.to_string())
+            .ok_or_else(|| anyhow!("outbox message {} is missing", message_id.0))?;
+        let failure_message = failure_message.into();
+        let changed = message.status != LocalOutboxStatus::Failed
+            || message.failure_message.as_deref() != Some(failure_message.as_str());
+        message.status = LocalOutboxStatus::Failed;
+        message.failure_message = Some(failure_message);
+        self.persist_if_needed(changed)
+    }
+
+    pub fn remove_outbox_message(&mut self, message_id: MessageId) -> Result<()> {
+        let removed = self.state.outbox.remove(&message_id.0.to_string()).is_some();
+        self.persist_if_needed(removed)
+    }
+
     pub fn project_chat_messages(
         &mut self,
         chat_id: ChatId,
@@ -708,6 +887,29 @@ impl LocalHistoryStore {
             projected_messages_upserted,
             advanced_to_server_seq,
         })
+    }
+
+    fn ensure_chat_exists(&mut self, chat_id: ChatId) {
+        self.state
+            .chats
+            .entry(chat_id.0.to_string())
+            .or_insert_with(|| PersistedChatState {
+                chat_type: ChatType::Dm,
+                title: None,
+                last_server_seq: 0,
+                pending_message_count: 0,
+                last_message: None,
+                epoch: 0,
+                last_commit_message_id: None,
+                participant_profiles: Vec::new(),
+                members: Vec::new(),
+                device_members: Vec::new(),
+                mls_group_id_b64: None,
+                messages: BTreeMap::new(),
+                read_cursor_server_seq: 0,
+                projected_cursor_server_seq: 0,
+                projected_messages: BTreeMap::new(),
+            });
     }
 
     pub fn apply_chat_list(
@@ -1021,6 +1223,58 @@ impl LocalHistoryStore {
             report,
             projected_message,
         })
+    }
+
+    pub fn apply_local_projection(
+        &mut self,
+        envelope: &MessageEnvelope,
+        projection_kind: LocalProjectionKind,
+        payload: Option<Vec<u8>>,
+        merged_epoch: Option<u64>,
+    ) -> Result<LocalStoreApplyReport> {
+        let mut report = self.apply_chat_history(&ChatHistoryResponse {
+            chat_id: envelope.chat_id,
+            messages: vec![envelope.clone()],
+        })?;
+
+        let chat = self
+            .state
+            .chats
+            .get_mut(&envelope.chat_id.0.to_string())
+            .ok_or_else(|| anyhow!("chat {} is missing from local store", envelope.chat_id.0))?;
+        let projected = persisted_projected_message_from(LocalProjectedMessage {
+            server_seq: envelope.server_seq,
+            message_id: envelope.message_id,
+            sender_account_id: envelope.sender_account_id,
+            sender_device_id: envelope.sender_device_id,
+            epoch: envelope.epoch,
+            message_kind: envelope.message_kind,
+            content_type: envelope.content_type,
+            projection_kind,
+            payload,
+            merged_epoch,
+            created_at_unix: envelope.created_at_unix,
+        });
+
+        let mut changed = false;
+        let entry_changed = match chat.projected_messages.get(&envelope.server_seq) {
+            Some(existing) => existing != &projected,
+            None => true,
+        };
+        if entry_changed {
+            chat.projected_messages.insert(envelope.server_seq, projected);
+            changed = true;
+        }
+        if envelope.server_seq > chat.projected_cursor_server_seq {
+            chat.projected_cursor_server_seq = envelope.server_seq;
+            changed = true;
+        }
+
+        self.persist_if_needed(changed)?;
+        if changed && !report.changed_chat_ids.contains(&envelope.chat_id) {
+            report.changed_chat_ids.push(envelope.chat_id);
+        }
+        Ok(report)
     }
 
     fn persist_if_needed(&self, changed: bool) -> Result<()> {
@@ -1563,8 +1817,12 @@ fn projected_message_counts_as_unread(
 
 const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
 
-fn save_state_to_path(path: &Path, state: &PersistedLocalHistoryState) -> Result<()> {
-    let mut connection = open_history_sqlite(path)?;
+fn save_state_to_path(
+    path: &Path,
+    database_key: Option<&[u8]>,
+    state: &PersistedLocalHistoryState,
+) -> Result<()> {
+    let mut connection = open_history_sqlite(path, database_key)?;
     let transaction = connection
         .transaction()
         .context("failed to start local history transaction")?;
@@ -1575,6 +1833,7 @@ fn save_state_to_path(path: &Path, state: &PersistedLocalHistoryState) -> Result
         DELETE FROM local_history_chats;
         DELETE FROM local_history_messages;
         DELETE FROM local_history_projected_messages;
+        DELETE FROM local_history_outbox;
         "#,
     )?;
 
@@ -1616,6 +1875,12 @@ fn save_state_to_path(path: &Path, state: &PersistedLocalHistoryState) -> Result
         r#"
         INSERT INTO local_history_projected_messages (chat_id, server_seq, projected_json)
         VALUES (?1, ?2, ?3)
+        "#,
+    )?;
+    let mut outbox_statement = transaction.prepare(
+        r#"
+        INSERT INTO local_history_outbox (message_id, outbox_json)
+        VALUES (?1, ?2)
         "#,
     )?;
 
@@ -1661,6 +1926,11 @@ fn save_state_to_path(path: &Path, state: &PersistedLocalHistoryState) -> Result
         }
     }
 
+    for (message_id, outbox_message) in &state.outbox {
+        outbox_statement.execute(params![message_id, serde_json::to_string(outbox_message)?])?;
+    }
+
+    drop(outbox_statement);
     drop(projected_statement);
     drop(message_statement);
     drop(chat_statement);
@@ -1673,11 +1943,22 @@ fn save_state_to_path(path: &Path, state: &PersistedLocalHistoryState) -> Result
 fn load_state_from_path(path: &Path) -> Result<PersistedLocalHistoryState> {
     if !is_sqlite_database(path)? {
         let state = load_legacy_json_state_from_path(path)?;
-        save_state_to_path(path, &state)?;
+        save_state_to_path(path, None, &state)?;
         return Ok(state);
     }
 
-    let connection = open_history_sqlite(path)?;
+    load_state_from_sqlite(path, None)
+}
+
+fn load_state_from_encrypted_path(path: &Path, database_key: &[u8]) -> Result<PersistedLocalHistoryState> {
+    load_state_from_sqlite(path, Some(database_key))
+}
+
+fn load_state_from_sqlite(
+    path: &Path,
+    database_key: Option<&[u8]>,
+) -> Result<PersistedLocalHistoryState> {
+    let connection = open_history_sqlite(path, database_key)?;
     let version = connection
         .query_row(
             r#"
@@ -1703,6 +1984,7 @@ fn load_state_from_path(path: &Path) -> Result<PersistedLocalHistoryState> {
     let mut state = PersistedLocalHistoryState {
         version,
         chats: BTreeMap::new(),
+        outbox: BTreeMap::new(),
     };
 
     let mut chats_statement = connection.prepare(
@@ -1838,6 +2120,24 @@ fn load_state_from_path(path: &Path) -> Result<PersistedLocalHistoryState> {
         );
     }
 
+    let mut outbox_statement = connection.prepare(
+        r#"
+        SELECT message_id, outbox_json
+        FROM local_history_outbox
+        ORDER BY message_id
+        "#,
+    )?;
+    let outbox_rows = outbox_statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for row in outbox_rows {
+        let (message_id, outbox_json) = row?;
+        state.outbox.insert(
+            message_id,
+            serde_json::from_str(&outbox_json).context("failed to parse local outbox message")?,
+        );
+    }
+
     Ok(state)
 }
 
@@ -1856,7 +2156,7 @@ fn load_legacy_json_state_from_path(path: &Path) -> Result<PersistedLocalHistory
     Ok(state)
 }
 
-fn open_history_sqlite(path: &Path) -> Result<Connection> {
+fn open_history_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Connection> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| {
             format!(
@@ -1865,7 +2165,7 @@ fn open_history_sqlite(path: &Path) -> Result<Connection> {
             )
         })?;
     }
-    if path.exists() && !is_sqlite_database(path)? {
+    if database_key.is_none() && path.exists() && !is_sqlite_database(path)? {
         fs::remove_file(path).with_context(|| {
             format!("failed to replace legacy local history {}", path.display())
         })?;
@@ -1873,6 +2173,14 @@ fn open_history_sqlite(path: &Path) -> Result<Connection> {
 
     let connection = Connection::open(path)
         .with_context(|| format!("failed to open local history database {}", path.display()))?;
+    if let Some(database_key) = database_key {
+        configure_sqlcipher_connection(
+            &connection,
+            path,
+            database_key,
+            "local history",
+        )?;
+    }
     connection.pragma_update(None, "journal_mode", "WAL")?;
     connection.pragma_update(None, "synchronous", "NORMAL")?;
     connection.execute_batch(
@@ -1909,9 +2217,37 @@ fn open_history_sqlite(path: &Path) -> Result<Connection> {
             projected_json TEXT NOT NULL,
             PRIMARY KEY (chat_id, server_seq)
         );
+        CREATE TABLE IF NOT EXISTS local_history_outbox (
+            message_id TEXT PRIMARY KEY,
+            outbox_json TEXT NOT NULL
+        );
         "#,
     )?;
     Ok(connection)
+}
+
+fn configure_sqlcipher_connection(
+    connection: &Connection,
+    path: &Path,
+    database_key: &[u8],
+    label: &str,
+) -> Result<()> {
+    let encoded_key = encode_hex(database_key);
+    connection
+        .execute_batch(&format!(
+            "PRAGMA key = \"x'{encoded_key}'\"; PRAGMA cipher_compatibility = 4;"
+        ))
+        .with_context(|| format!("failed to configure SQLCipher for {label} {}", path.display()))?;
+    connection
+        .query_row("SELECT count(*) FROM sqlite_master", [], |row| row.get::<_, i64>(0))
+        .map(|_| ())
+        .with_context(|| {
+            format!(
+                "{label} database key rejected or database is corrupted: {}",
+                path.display()
+            )
+        })?;
+    Ok(())
 }
 
 fn is_sqlite_database(path: &Path) -> Result<bool> {
@@ -1940,6 +2276,16 @@ fn sqlite_anyhow_error(err: anyhow::Error) -> rusqlite::Error {
     )
 }
 
+fn encode_hex(input: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(input.len() * 2);
+    for byte in input {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
+
 fn parse_message_id_string(value: &str) -> Result<MessageId> {
     Ok(MessageId(Uuid::parse_str(value).with_context(|| {
         format!("invalid message id `{value}`")
@@ -1962,7 +2308,7 @@ fn parse_chat_id(value: &str) -> Result<ChatId> {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, env, fs};
+    use std::{collections::BTreeMap, env, fs, path::Path};
 
     use serde_json::json;
     use trix_types::{AccountId, ContentType, DeviceId, MessageKind};
@@ -2047,6 +2393,80 @@ mod tests {
     }
 
     #[test]
+    fn encrypted_local_history_store_round_trips_with_same_key() {
+        let database_path = env::temp_dir().join(format!("trix-history-encrypted-{}.db", Uuid::new_v4()));
+        let database_key = vec![7u8; 32];
+        let chat_id = ChatId(Uuid::new_v4());
+        let mut store = LocalHistoryStore::new_encrypted(&database_path, database_key.clone()).unwrap();
+
+        store
+            .apply_chat_list(&ChatListResponse {
+                chats: vec![ChatSummary {
+                    chat_id,
+                    chat_type: ChatType::Dm,
+                    title: Some("Encrypted".to_owned()),
+                    last_server_seq: 0,
+                    epoch: 1,
+                    pending_message_count: 0,
+                    last_message: None,
+                    participant_profiles: Vec::new(),
+                }],
+            })
+            .unwrap();
+
+        let restored = LocalHistoryStore::new_encrypted(&database_path, database_key).unwrap();
+        assert_eq!(restored.get_chat(chat_id).and_then(|chat| chat.title), Some("Encrypted".to_owned()));
+
+        cleanup_sqlite_test_path(&database_path);
+    }
+
+    #[test]
+    fn encrypted_local_history_store_rejects_wrong_key() {
+        let database_path = env::temp_dir().join(format!("trix-history-wrong-key-{}.db", Uuid::new_v4()));
+        LocalHistoryStore::new_encrypted(&database_path, vec![1u8; 32]).unwrap();
+
+        let error = LocalHistoryStore::new_encrypted(&database_path, vec![2u8; 32]).unwrap_err();
+        assert!(error.to_string().contains("database key rejected") || error.to_string().contains("corrupted"));
+
+        cleanup_sqlite_test_path(&database_path);
+    }
+
+    #[test]
+    fn local_history_store_persists_outbox_messages() {
+        let database_path = env::temp_dir().join(format!("trix-history-outbox-{}.db", Uuid::new_v4()));
+        let chat_id = ChatId(Uuid::new_v4());
+        let account_id = AccountId(Uuid::new_v4());
+        let device_id = DeviceId(Uuid::new_v4());
+        let message_id = MessageId(Uuid::new_v4());
+        let mut store = LocalHistoryStore::new_encrypted(&database_path, vec![5u8; 32]).unwrap();
+
+        store
+            .enqueue_outbox_message(
+                chat_id,
+                account_id,
+                device_id,
+                message_id,
+                MessageBody::Text(crate::TextMessageBody {
+                    text: "queued".to_owned(),
+                }),
+                42,
+            )
+            .unwrap();
+        store
+            .mark_outbox_failure(message_id, "offline")
+            .unwrap();
+
+        let restored = LocalHistoryStore::new_encrypted(&database_path, vec![5u8; 32]).unwrap();
+        let queued = restored.list_outbox_messages(Some(chat_id));
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].message_id, message_id);
+        assert_eq!(queued[0].status, LocalOutboxStatus::Failed);
+        assert_eq!(queued[0].failure_message.as_deref(), Some("offline"));
+
+        cleanup_sqlite_test_path(&database_path);
+    }
+
+    #[test]
     fn local_history_store_migrates_legacy_json_state_to_sqlite() {
         let database_path =
             env::temp_dir().join(format!("trix-history-legacy-{}.json", Uuid::new_v4()));
@@ -2087,6 +2507,7 @@ mod tests {
                     projected_messages: BTreeMap::new(),
                 },
             )]),
+            outbox: BTreeMap::new(),
         };
         let file = File::create(&database_path).unwrap();
         serde_json::to_writer_pretty(file, &state).unwrap();
@@ -2585,5 +3006,11 @@ mod tests {
             }))
         );
         assert_eq!(item.body_parse_error, None);
+    }
+
+    fn cleanup_sqlite_test_path(path: &Path) {
+        fs::remove_file(path).ok();
+        fs::remove_file(format!("{}-wal", path.display())).ok();
+        fs::remove_file(format!("{}-shm", path.display())).ok();
     }
 }

@@ -1,6 +1,7 @@
 pub mod attachments;
 pub mod config;
 pub mod crypto;
+pub mod device_transfer;
 pub mod ffi;
 pub mod message;
 pub mod realtime;
@@ -20,6 +21,10 @@ pub use crypto::{
     AccountRootMaterial, DEFAULT_CIPHERSUITE, DeviceKeyMaterial, MlsCommitBundle, MlsConversation,
     MlsFacade, MlsMemberIdentity, MlsProcessResult,
 };
+pub use device_transfer::{
+    CreateDeviceTransferBundleInput, ImportedDeviceTransferBundle, create_device_transfer_bundle,
+    decrypt_device_transfer_bundle,
+};
 pub use ffi::*;
 pub use message::{
     AttachmentMessageBody, ChatEventMessageBody, MessageBody, ReactionAction, ReactionMessageBody,
@@ -31,6 +36,7 @@ pub use realtime::{
 pub use signatures::{account_bootstrap_message, device_revoke_message};
 pub use storage::{
     AttachmentStore, LocalChatListItem, LocalChatReadState, LocalHistoryStore,
+    LocalOutboxAttachmentDraft, LocalOutboxMessage, LocalOutboxPayload, LocalOutboxStatus,
     LocalOutgoingMessageApplyOutcome, LocalProjectedMessage, LocalProjectionApplyReport,
     LocalProjectionKind, LocalStoreApplyReport, LocalTimelineItem, MlsStateStore, SyncStateStore,
 };

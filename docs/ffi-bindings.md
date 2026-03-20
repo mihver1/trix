@@ -98,12 +98,13 @@ See `docs/bot-harness.md` for runtime setup and payload examples.
 - Persistent MLS state is stored under the provided root as `storage.json` and `metadata.json`.
 - `FfiSyncCoordinator` now supports persistent sync state via `new_persistent(state_path)`, plus `state_snapshot()`, `sync_chat_histories()`, `lease_inbox()`, `ack_inbox()`, and `record_chat_server_seq()`.
 - Persistent sync state is now stored in a SQLite-backed file at the provided `state_path`.
-- `FfiLocalHistoryStore` now supports persistent local encrypted-envelope history via `new_persistent(database_path)`, plus `list_chats()`, `get_chat()`, `get_chat_history()`, `apply_chat_history()`, and `apply_leased_inbox()`.
+- `FfiLocalHistoryStore` now supports persistent local encrypted-envelope history via `new_persistent(database_path)`, plus `list_chats()`, `get_chat()`, `get_chat_history()`, `apply_chat_detail()`, `apply_chat_history()`, and `apply_leased_inbox()`.
 - Persistent local history is now stored in a SQLite-backed file at `database_path`.
 - Legacy JSON files passed to `new_persistent(...)` are migrated in place on first load, so old `history-store.json` / `sync-state.json` paths remain readable even though new installs should use `.sqlite` names.
 - `FfiSyncCoordinator` also exposes high-level convenience flows: `sync_chat_histories_into_store()` and `lease_inbox_into_store()`.
 - `FfiLocalHistoryStore` now also exposes projected local timeline APIs: `projected_cursor()`, `project_chat_messages()`, and `get_projected_messages()`.
 - `FfiLocalHistoryStore` also persists optional `chat -> MLS group_id` mapping and exposes `chat_mls_group_id()` / `set_chat_mls_group_id()`.
+- `FfiLocalHistoryStore` also exposes `apply_local_projection()` for client-generated messages that should appear in the projected timeline immediately without replaying them back through MLS.
 - The projection layer persists decrypted/application results separately from raw encrypted envelopes, so clients can build timeline UIs without replaying MLS on every screen load.
 - `trix-core` now exposes a typed message body model through `ffi_serialize_message_body()` and `ffi_parse_message_body()`.
 - `FfiServerApiClient` now exposes `search_account_directory(query, limit, exclude_self)` for authenticated handle/profile discovery.
