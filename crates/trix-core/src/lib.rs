@@ -3,6 +3,7 @@ pub mod config;
 pub mod crypto;
 pub mod ffi;
 pub mod message;
+pub mod signatures;
 pub mod storage;
 pub mod sync;
 pub mod transport;
@@ -23,6 +24,7 @@ pub use message::{
     AttachmentMessageBody, ChatEventMessageBody, MessageBody, ReactionAction, ReactionMessageBody,
     ReceiptMessageBody, ReceiptType, TextMessageBody,
 };
+pub use signatures::{account_bootstrap_message, device_revoke_message};
 pub use storage::{
     AttachmentStore, LocalChatListItem, LocalChatReadState, LocalHistoryStore,
     LocalOutgoingMessageApplyOutcome, LocalProjectedMessage, LocalProjectionApplyReport,
