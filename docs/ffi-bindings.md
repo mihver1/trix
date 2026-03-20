@@ -42,10 +42,25 @@ cargo run -p trix-core --bin uniffi-bindgen -- generate \
   --out-dir bindings
 ```
 
+## Make Targets
+
+```bash
+make ffi-bindings
+make ffi-bindings-swift
+make ffi-bindings-kotlin
+make ffi-bindings OUT=/tmp/trix-bindings
+```
+
 ## Notes
 
 - The exported API is defined in [ffi.rs](/Users/m.verhovyh/Projects/trix/crates/trix-core/src/ffi.rs).
 - The crate now builds as `lib`, `cdylib`, and `staticlib`.
 - The current FFI surface is synchronous on purpose; client apps should call it off the UI thread.
+- `FfiMlsFacade` now supports persistent state via `new_persistent(storage_root)`, `load_persistent(storage_root)`, `save_state()`, and `storage_root()`.
+- Persistent MLS state is stored under the provided root as `storage.json` and `metadata.json`.
+- `FfiSyncCoordinator` now supports persistent sync state via `new_persistent(state_path)`, plus `state_snapshot()`, `sync_chat_histories()`, `lease_inbox()`, `ack_inbox()`, and `record_chat_server_seq()`.
+- Persistent sync state is stored as a JSON snapshot at the provided `state_path`.
+- `FfiLocalHistoryStore` now supports persistent local encrypted-envelope history via `new_persistent(database_path)`, plus `list_chats()`, `get_chat()`, `get_chat_history()`, `apply_chat_history()`, and `apply_leased_inbox()`.
+- `FfiSyncCoordinator` also exposes high-level convenience flows: `sync_chat_histories_into_store()` and `lease_inbox_into_store()`.
 - Kotlin generation works without `ktlint`, but UniFFI will print a non-fatal formatting warning if `ktlint` is not installed.
 - Kotlin sources are generated under `bindings/uniffi/trix_core/`.

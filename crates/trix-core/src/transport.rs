@@ -15,12 +15,13 @@ use trix_types::{
     CreateAccountRequest, CreateAccountResponse, CreateBlobUploadRequest, CreateBlobUploadResponse,
     CreateChatRequest, CreateChatResponse, CreateLinkIntentResponse, CreateMessageRequest,
     CreateMessageResponse, DeviceApprovePayloadResponse, DeviceId, DeviceListResponse,
-    DeviceStatus, DeviceTransferBundleResponse, ErrorResponse, HistorySyncChunkListResponse,
-    HistorySyncChunkSummary, HistorySyncJobListResponse, HistorySyncJobRole, HistorySyncJobStatus,
-    LeaseInboxRequest, LeaseInboxResponse, MessageId, ModifyChatDevicesRequest,
-    ModifyChatDevicesResponse, ModifyChatMembersRequest, ModifyChatMembersResponse,
-    PublishKeyPackageItem, PublishKeyPackagesRequest, PublishKeyPackagesResponse,
-    ReserveKeyPackagesRequest, RevokeDeviceRequest, RevokeDeviceResponse,
+    DeviceStatus, DeviceTransferBundleResponse, ErrorResponse, HealthResponse,
+    HistorySyncChunkListResponse, HistorySyncChunkSummary, HistorySyncJobListResponse,
+    HistorySyncJobRole, HistorySyncJobStatus, LeaseInboxRequest, LeaseInboxResponse, MessageId,
+    ModifyChatDevicesRequest, ModifyChatDevicesResponse, ModifyChatMembersRequest,
+    ModifyChatMembersResponse, PublishKeyPackageItem, PublishKeyPackagesRequest,
+    PublishKeyPackagesResponse, ReserveKeyPackagesRequest, RevokeDeviceRequest,
+    RevokeDeviceResponse, VersionResponse,
 };
 
 #[derive(Debug, Error)]
@@ -229,6 +230,16 @@ impl ServerApiClient {
                 }),
         )
         .await
+    }
+
+    pub async fn get_health(&self) -> Result<HealthResponse, ServerApiError> {
+        self.send_json(self.request(Method::GET, "v0/system/health")?)
+            .await
+    }
+
+    pub async fn get_version(&self) -> Result<VersionResponse, ServerApiError> {
+        self.send_json(self.request(Method::GET, "v0/system/version")?)
+            .await
     }
 
     pub async fn create_auth_challenge(
