@@ -656,6 +656,8 @@ external fun uniffi_trix_core_checksum_func_ffi_serialize_message_body(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiaccountrootmaterial_account_bootstrap_payload(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffiaccountrootmaterial_create_device_transfer_bundle(
+): Short
 external fun uniffi_trix_core_checksum_method_ffiaccountrootmaterial_device_revoke_payload(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiaccountrootmaterial_private_key_bytes(
@@ -669,6 +671,8 @@ external fun uniffi_trix_core_checksum_method_ffiaccountrootmaterial_sign_accoun
 external fun uniffi_trix_core_checksum_method_ffiaccountrootmaterial_sign_device_revoke(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiaccountrootmaterial_verify(
+): Short
+external fun uniffi_trix_core_checksum_method_ffidevicekeymaterial_decrypt_device_transfer_bundle(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffidevicekeymaterial_private_key_bytes(
 ): Short
@@ -954,6 +958,8 @@ external fun uniffi_trix_core_fn_constructor_ffiaccountrootmaterial_generate(uni
 ): Long
 external fun uniffi_trix_core_fn_method_ffiaccountrootmaterial_account_bootstrap_payload(`ptr`: Long,`transportPubkey`: RustBuffer.ByValue,`credentialIdentity`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffiaccountrootmaterial_create_device_transfer_bundle(`ptr`: Long,`params`: RustBuffer.ByValue,`senderDeviceKeys`: Long,`recipientTransportPubkey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiaccountrootmaterial_device_revoke_payload(`ptr`: Long,`deviceId`: RustBuffer.ByValue,`reason`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiaccountrootmaterial_private_key_bytes(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -976,6 +982,8 @@ external fun uniffi_trix_core_fn_constructor_ffidevicekeymaterial_from_private_k
 ): Long
 external fun uniffi_trix_core_fn_constructor_ffidevicekeymaterial_generate(uniffi_out_err: UniffiRustCallStatus, 
 ): Long
+external fun uniffi_trix_core_fn_method_ffidevicekeymaterial_decrypt_device_transfer_bundle(`ptr`: Long,`bundle`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffidevicekeymaterial_private_key_bytes(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffidevicekeymaterial_public_key_bytes(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -1406,6 +1414,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffiaccountrootmaterial_account_bootstrap_payload() != 37556.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffiaccountrootmaterial_create_device_transfer_bundle() != 37674.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffiaccountrootmaterial_device_revoke_payload() != 52349.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1425,6 +1436,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffiaccountrootmaterial_verify() != 58382.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffidevicekeymaterial_decrypt_device_transfer_bundle() != 56144.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffidevicekeymaterial_private_key_bytes() != 49132.toShort()) {
@@ -2213,6 +2227,8 @@ public interface FfiAccountRootMaterialInterface {
     
     fun `accountBootstrapPayload`(`transportPubkey`: kotlin.ByteArray, `credentialIdentity`: kotlin.ByteArray): kotlin.ByteArray
     
+    fun `createDeviceTransferBundle`(`params`: FfiCreateDeviceTransferBundleParams, `senderDeviceKeys`: FfiDeviceKeyMaterial, `recipientTransportPubkey`: kotlin.ByteArray): kotlin.ByteArray
+    
     fun `deviceRevokePayload`(`deviceId`: kotlin.String, `reason`: kotlin.String): kotlin.ByteArray
     
     fun `privateKeyBytes`(): kotlin.ByteArray
@@ -2333,6 +2349,20 @@ open class FfiAccountRootMaterial: Disposable, AutoCloseable, FfiAccountRootMate
     UniffiLib.uniffi_trix_core_fn_method_ffiaccountrootmaterial_account_bootstrap_payload(
         it,
         FfiConverterByteArray.lower(`transportPubkey`),FfiConverterByteArray.lower(`credentialIdentity`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `createDeviceTransferBundle`(`params`: FfiCreateDeviceTransferBundleParams, `senderDeviceKeys`: FfiDeviceKeyMaterial, `recipientTransportPubkey`: kotlin.ByteArray): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiaccountrootmaterial_create_device_transfer_bundle(
+        it,
+        FfiConverterTypeFfiCreateDeviceTransferBundleParams.lower(`params`),FfiConverterTypeFfiDeviceKeyMaterial.lower(`senderDeviceKeys`),FfiConverterByteArray.lower(`recipientTransportPubkey`),_status)
 }
     }
     )
@@ -2589,6 +2619,8 @@ public object FfiConverterTypeFfiAccountRootMaterial: FfiConverter<FfiAccountRoo
 
 public interface FfiDeviceKeyMaterialInterface {
     
+    fun `decryptDeviceTransferBundle`(`bundle`: kotlin.ByteArray): FfiImportedDeviceTransferBundle
+    
     fun `privateKeyBytes`(): kotlin.ByteArray
     
     fun `publicKeyBytes`(): kotlin.ByteArray
@@ -2697,6 +2729,20 @@ open class FfiDeviceKeyMaterial: Disposable, AutoCloseable, FfiDeviceKeyMaterial
             UniffiLib.uniffi_trix_core_fn_clone_ffidevicekeymaterial(handle, status)
         }
     }
+
+    
+    @Throws(TrixFfiException::class)override fun `decryptDeviceTransferBundle`(`bundle`: kotlin.ByteArray): FfiImportedDeviceTransferBundle {
+            return FfiConverterTypeFfiImportedDeviceTransferBundle.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffidevicekeymaterial_decrypt_device_transfer_bundle(
+        it,
+        FfiConverterByteArray.lower(`bundle`),_status)
+}
+    }
+    )
+    }
+    
 
     override fun `privateKeyBytes`(): kotlin.ByteArray {
             return FfiConverterByteArray.lift(
@@ -7336,6 +7382,54 @@ public object FfiConverterTypeFfiCreateChatResponse: FfiConverterRustBuffer<FfiC
 
 
 
+data class FfiCreateDeviceTransferBundleParams (
+    var `accountId`: kotlin.String
+    , 
+    var `sourceDeviceId`: kotlin.String
+    , 
+    var `targetDeviceId`: kotlin.String
+    , 
+    var `accountSyncChatId`: kotlin.String?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiCreateDeviceTransferBundleParams: FfiConverterRustBuffer<FfiCreateDeviceTransferBundleParams> {
+    override fun read(buf: ByteBuffer): FfiCreateDeviceTransferBundleParams {
+        return FfiCreateDeviceTransferBundleParams(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiCreateDeviceTransferBundleParams) = (
+            FfiConverterString.allocationSize(value.`accountId`) +
+            FfiConverterString.allocationSize(value.`sourceDeviceId`) +
+            FfiConverterString.allocationSize(value.`targetDeviceId`) +
+            FfiConverterOptionalString.allocationSize(value.`accountSyncChatId`)
+    )
+
+    override fun write(value: FfiCreateDeviceTransferBundleParams, buf: ByteBuffer) {
+            FfiConverterString.write(value.`accountId`, buf)
+            FfiConverterString.write(value.`sourceDeviceId`, buf)
+            FfiConverterString.write(value.`targetDeviceId`, buf)
+            FfiConverterOptionalString.write(value.`accountSyncChatId`, buf)
+    }
+}
+
+
+
 data class FfiCreateLinkIntentResponse (
     var `linkIntentId`: kotlin.String
     , 
@@ -7937,6 +8031,64 @@ public object FfiConverterTypeFfiHistorySyncJob: FfiConverterRustBuffer<FfiHisto
             FfiConverterString.write(value.`cursorJson`, buf)
             FfiConverterULong.write(value.`createdAtUnix`, buf)
             FfiConverterULong.write(value.`updatedAtUnix`, buf)
+    }
+}
+
+
+
+data class FfiImportedDeviceTransferBundle (
+    var `accountId`: kotlin.String
+    , 
+    var `sourceDeviceId`: kotlin.String
+    , 
+    var `targetDeviceId`: kotlin.String
+    , 
+    var `accountSyncChatId`: kotlin.String?
+    , 
+    var `accountRootPrivateKey`: kotlin.ByteArray
+    , 
+    var `accountRootPublicKey`: kotlin.ByteArray
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiImportedDeviceTransferBundle: FfiConverterRustBuffer<FfiImportedDeviceTransferBundle> {
+    override fun read(buf: ByteBuffer): FfiImportedDeviceTransferBundle {
+        return FfiImportedDeviceTransferBundle(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterByteArray.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiImportedDeviceTransferBundle) = (
+            FfiConverterString.allocationSize(value.`accountId`) +
+            FfiConverterString.allocationSize(value.`sourceDeviceId`) +
+            FfiConverterString.allocationSize(value.`targetDeviceId`) +
+            FfiConverterOptionalString.allocationSize(value.`accountSyncChatId`) +
+            FfiConverterByteArray.allocationSize(value.`accountRootPrivateKey`) +
+            FfiConverterByteArray.allocationSize(value.`accountRootPublicKey`)
+    )
+
+    override fun write(value: FfiImportedDeviceTransferBundle, buf: ByteBuffer) {
+            FfiConverterString.write(value.`accountId`, buf)
+            FfiConverterString.write(value.`sourceDeviceId`, buf)
+            FfiConverterString.write(value.`targetDeviceId`, buf)
+            FfiConverterOptionalString.write(value.`accountSyncChatId`, buf)
+            FfiConverterByteArray.write(value.`accountRootPrivateKey`, buf)
+            FfiConverterByteArray.write(value.`accountRootPublicKey`, buf)
     }
 }
 

@@ -2,6 +2,7 @@ package chat.trix.android.core.devices
 
 import android.content.Context
 import chat.trix.android.core.auth.AuthenticatedSession
+import chat.trix.android.core.auth.DeviceTransferBundleInput
 import chat.trix.android.core.auth.Ed25519KeyMaterial
 import chat.trix.android.core.ffi.FfiDeviceStatus
 import chat.trix.android.core.ffi.FfiDeviceSummary
@@ -41,11 +42,24 @@ class DeviceRepository(
 
     suspend fun approveDevice(deviceId: String): DeviceInventory = withContext(Dispatchers.IO) {
         runFfi("Failed to approve pending device") {
+            val client = authenticatedClient()
             val accountRoot = restoreAccountRoot()
-            authenticatedClient().approveDeviceWithAccountRoot(
+            val transportKey = restoreTransportKey()
+            val approvePayload = client.getDeviceApprovePayload(deviceId)
+            val transferBundle = accountRoot.createDeviceTransferBundle(
+                input = DeviceTransferBundleInput(
+                    accountId = session.localState.accountId,
+                    sourceDeviceId = session.localState.deviceId,
+                    targetDeviceId = deviceId,
+                    accountSyncChatId = session.localState.accountSyncChatId,
+                ),
+                senderDeviceKey = transportKey,
+                recipientTransportPubkey = approvePayload.transportPubkey,
+            )
+            client.approveDeviceWithAccountRoot(
                 deviceId = deviceId,
                 accountRoot = accountRoot.requireAccountRootMaterial(),
-                transferBundle = null,
+                transferBundle = transferBundle,
             )
             loadInventoryInternal()
         }
@@ -111,6 +125,12 @@ class DeviceRepository(
             )
         return Ed25519KeyMaterial.fromAccountRootPrivateSeed(
             privateSeed,
+        )
+    }
+
+    private fun restoreTransportKey(): Ed25519KeyMaterial {
+        return Ed25519KeyMaterial.fromDevicePrivateSeed(
+            session.localState.transportPrivateSeed,
         )
     }
 

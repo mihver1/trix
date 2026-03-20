@@ -41,3 +41,4 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt"] }
 uniffi = "0.31.0"
 uuid = { version = "1.17.0", features = ["serde", "v4"] }
+x25519-dalek = "2.0.1"

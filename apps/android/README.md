@@ -53,8 +53,10 @@ The better tradeoff for this PoC is still:
 - paste a raw device-link payload from another trusted client and register a pending Android device
 - generate local `account root` and `transport` Ed25519 key material through `trix-core` FFI
 - generate persistent MLS key packages locally during linked-device bootstrap through `FfiMlsFacade`
+- encrypt a transfer bundle for the pending device during trusted-device approval, so account-root material can move without passing through the server in plaintext
 - sign the bootstrap payload expected by the backend through Rust key material
 - open an auth challenge/session for the stored device through `FfiServerApiClient`
+- auto-import the encrypted transfer bundle on the first successful reconnect after approval, promoting the linked Android client into a full trusted device
 - persist bootstrap state locally in an encrypted file protected by Android Keystore
 - restore a saved device session on app launch
 - sync cached chats and inbox items into the local Rust-backed history store

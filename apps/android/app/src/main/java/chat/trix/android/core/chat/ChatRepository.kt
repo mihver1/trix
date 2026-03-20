@@ -1,8 +1,10 @@
 package chat.trix.android.core.chat
 
 import android.content.Context
+import android.net.Uri
 import chat.trix.android.core.ffi.FfiChatParticipantProfile
 import chat.trix.android.core.auth.AuthenticatedSession
+import chat.trix.android.core.ffi.FfiContentType
 import chat.trix.android.core.ffi.FfiChatDetail
 import chat.trix.android.core.ffi.FfiChatType
 import chat.trix.android.core.ffi.FfiCreateChatControlInput
@@ -62,6 +64,12 @@ class ChatRepository(
                 mlsStorageRoot.absolutePath,
             )
         }
+    }
+    private val attachmentRepositoryDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        AttachmentRepository(
+            context = appContext,
+            session = session,
+        )
     }
 
     suspend fun loadOverview(): ChatOverview = withContext(Dispatchers.IO) {
@@ -214,6 +222,59 @@ class ChatRepository(
                 conversation.close()
             }
         }
+    }
+
+    suspend fun sendAttachment(
+        chatId: String,
+        contentUri: Uri,
+    ): ChatSendResult = withContext(Dispatchers.IO) {
+        runFfi("Failed to send attachment") {
+            val client = client()
+            val store = historyStore()
+            val syncCoordinator = syncCoordinator()
+            val facade = mlsFacade()
+
+            client.setAccessToken(session.accessToken)
+            val uploadedAttachment = attachmentRepository().uploadAttachment(
+                chatId = chatId,
+                contentUri = contentUri,
+            )
+            val conversation = getOrCreateSendConversation(chatId)
+                ?: throw IOException("Local MLS state is not available for this conversation")
+
+            try {
+                syncCoordinator.sendMessageBody(
+                    client = client,
+                    store = store,
+                    facade = facade,
+                    conversation = conversation,
+                    input = FfiSendMessageInput(
+                        senderAccountId = session.localState.accountId,
+                        senderDeviceId = session.localState.deviceId,
+                        chatId = chatId,
+                        messageId = UUID.randomUUID().toString(),
+                        body = uploadedAttachment.body,
+                        aadJson = EMPTY_AAD_JSON,
+                    ),
+                )
+
+                ChatSendResult(
+                    overview = buildOverview(),
+                    conversation = buildConversation(chatId)
+                        ?: throw IOException("Conversation $chatId is no longer available"),
+                )
+            } finally {
+                conversation.close()
+            }
+        }
+    }
+
+    suspend fun openAttachment(attachment: ChatAttachment) = withContext(Dispatchers.IO) {
+        attachmentRepository().openAttachment(attachment)
+    }
+
+    suspend fun shareAttachment(attachment: ChatAttachment) = withContext(Dispatchers.IO) {
+        attachmentRepository().shareAttachment(attachment)
     }
 
     suspend fun markConversationRead(chatId: String): ChatReadResult = withContext(Dispatchers.IO) {
@@ -421,6 +482,8 @@ class ChatRepository(
 
     private fun mlsFacade(): FfiMlsFacade = mlsFacadeDelegate.value
 
+    private fun attachmentRepository(): AttachmentRepository = attachmentRepositoryDelegate.value
+
     private fun mlsMetadataFile(): File = File(mlsStorageRoot, "metadata.json")
 
     private fun mlsStorageFile(): File = File(mlsStorageRoot, "storage.json")
@@ -557,6 +620,7 @@ class ChatRepository(
     }
 
     private fun mapTimelineMessage(message: FfiLocalTimelineItem): ChatTimelineMessage {
+        val attachment = attachmentFrom(message)
         return ChatTimelineMessage(
             id = message.messageId,
             author = if (message.isOutgoing) {
@@ -569,6 +633,27 @@ class ChatRepository(
             timestampLabel = message.createdAtUnix.toLong().formatChatTimestamp(),
             isMine = message.isOutgoing,
             note = timelineNote(message),
+            contentType = message.contentType,
+            attachment = attachment,
+        )
+    }
+
+    private fun attachmentFrom(message: FfiLocalTimelineItem): ChatAttachment? {
+        val body = message.body ?: return null
+        if (body.kind != FfiMessageBodyKind.ATTACHMENT) {
+            return null
+        }
+        val blobId = body.blobId ?: return null
+        val mimeType = body.mimeType ?: return null
+        return ChatAttachment(
+            messageId = message.messageId,
+            blobId = blobId,
+            mimeType = mimeType,
+            fileName = body.fileName,
+            sizeBytes = body.sizeBytes?.toLong(),
+            widthPx = body.widthPx?.toInt(),
+            heightPx = body.heightPx?.toInt(),
+            body = body,
         )
     }
 
@@ -729,4 +814,17 @@ data class ChatTimelineMessage(
     val timestampLabel: String,
     val isMine: Boolean,
     val note: String?,
+    val contentType: FfiContentType,
+    val attachment: ChatAttachment? = null,
+)
+
+data class ChatAttachment(
+    val messageId: String,
+    val blobId: String,
+    val mimeType: String,
+    val fileName: String?,
+    val sizeBytes: Long?,
+    val widthPx: Int?,
+    val heightPx: Int?,
+    val body: FfiMessageBody,
 )

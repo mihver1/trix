@@ -139,6 +139,15 @@ class AuthBootstrapCoordinator(
             deviceId = localState.deviceId,
             deviceKey = transportKey,
         )
+        val importedTransferBundle = if (!localState.hasAccountRootMaterial && authSession.deviceStatus == "active") {
+            authApiClient.importDeviceTransferBundle(
+                accessToken = authSession.accessToken,
+                deviceId = localState.deviceId,
+                deviceKey = transportKey,
+            )
+        } else {
+            null
+        }
         val accountProfile = authApiClient.getCurrentAccount(authSession.accessToken)
         if (authSession.accountId != localState.accountId) {
             throw IOException("Session account id does not match local device state")
@@ -149,11 +158,22 @@ class AuthBootstrapCoordinator(
         if (accountProfile.deviceId != localState.deviceId) {
             throw IOException("Profile device id does not match local device state")
         }
+        if (importedTransferBundle != null) {
+            if (importedTransferBundle.accountId != localState.accountId) {
+                throw IOException("Transfer bundle account id does not match local device state")
+            }
+            if (importedTransferBundle.targetDeviceId != localState.deviceId) {
+                throw IOException("Transfer bundle target device id does not match local device state")
+            }
+        }
         val updatedLocalState = localState.copy(
+            accountSyncChatId = importedTransferBundle?.accountSyncChatId ?: localState.accountSyncChatId,
             deviceStatus = accountProfile.deviceStatus,
             handle = accountProfile.handle,
             profileName = accountProfile.profileName,
             profileBio = accountProfile.profileBio,
+            accountRootPrivateSeed = importedTransferBundle?.accountRootPrivateKey ?: localState.accountRootPrivateSeed,
+            accountRootPublicKey = importedTransferBundle?.accountRootPublicKey ?: localState.accountRootPublicKey,
             accessToken = authSession.accessToken,
             accessTokenExpiresAtUnix = authSession.expiresAtUnix,
         )

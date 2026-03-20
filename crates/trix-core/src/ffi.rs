@@ -11,15 +11,16 @@ use crate::{
     CompletedLinkIntentMaterial, CreateAccountParams, CreateChatControlInput,
     CreateChatControlOutcome, DeviceApprovePayloadMaterial, DeviceKeyMaterial,
     DeviceTransferBundleMaterial, DirectoryAccountMaterial, HistorySyncChunkMaterial,
-    InboxApplyOutcome, LocalChatListItem, LocalChatReadState, LocalHistoryStore,
-    LocalProjectedMessage, LocalProjectionApplyReport, LocalProjectionKind, LocalStoreApplyReport,
-    LocalTimelineItem, MessageBody, MlsCommitBundle, MlsFacade, MlsMemberIdentity,
-    MlsProcessResult, ModifyChatDevicesControlInput, ModifyChatDevicesControlOutcome,
-    ModifyChatMembersControlInput, ModifyChatMembersControlOutcome, PreparedAttachmentUpload,
-    PublishKeyPackageMaterial, ReactionAction, ReceiptType, ReservedKeyPackageMaterial,
-    SendMessageOutcome, ServerApiClient, SyncChatCursor, SyncCoordinator, SyncStateSnapshot,
-    UpdateAccountProfileParams, account_bootstrap_message, decrypt_attachment_payload,
-    device_revoke_message, prepare_attachment_upload,
+    ImportedDeviceTransferBundle, InboxApplyOutcome, LocalChatListItem, LocalChatReadState,
+    LocalHistoryStore, LocalProjectedMessage, LocalProjectionApplyReport, LocalProjectionKind,
+    LocalStoreApplyReport, LocalTimelineItem, MessageBody, MlsCommitBundle, MlsFacade,
+    MlsMemberIdentity, MlsProcessResult, ModifyChatDevicesControlInput,
+    ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
+    ModifyChatMembersControlOutcome, PreparedAttachmentUpload, PublishKeyPackageMaterial,
+    ReactionAction, ReceiptType, ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient,
+    SyncChatCursor, SyncCoordinator, SyncStateSnapshot, UpdateAccountProfileParams,
+    account_bootstrap_message, create_device_transfer_bundle, decrypt_attachment_payload,
+    decrypt_device_transfer_bundle, device_revoke_message, prepare_attachment_upload,
 };
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -215,6 +216,24 @@ pub struct FfiCreateLinkIntentResponse {
     pub link_intent_id: String,
     pub qr_payload: String,
     pub expires_at_unix: u64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiCreateDeviceTransferBundleParams {
+    pub account_id: String,
+    pub source_device_id: String,
+    pub target_device_id: String,
+    pub account_sync_chat_id: Option<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiImportedDeviceTransferBundle {
+    pub account_id: String,
+    pub source_device_id: String,
+    pub target_device_id: String,
+    pub account_sync_chat_id: Option<String>,
+    pub account_root_private_key: Vec<u8>,
+    pub account_root_public_key: Vec<u8>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -1875,6 +1894,26 @@ impl FfiAccountRootMaterial {
         )))
     }
 
+    pub fn create_device_transfer_bundle(
+        &self,
+        params: FfiCreateDeviceTransferBundleParams,
+        sender_device_keys: Arc<FfiDeviceKeyMaterial>,
+        recipient_transport_pubkey: Vec<u8>,
+    ) -> Result<Vec<u8>, TrixFfiError> {
+        create_device_transfer_bundle(
+            crate::CreateDeviceTransferBundleInput {
+                account_id: params.account_id,
+                source_device_id: params.source_device_id,
+                target_device_id: params.target_device_id,
+                account_sync_chat_id: params.account_sync_chat_id,
+            },
+            &self.inner,
+            &sender_device_keys.inner,
+            &recipient_transport_pubkey,
+        )
+        .map_err(ffi_error)
+    }
+
     pub fn verify(&self, payload: Vec<u8>, signature: Vec<u8>) -> Result<(), TrixFfiError> {
         self.inner.verify(&payload, &signature).map_err(ffi_error)
     }
@@ -1911,6 +1950,15 @@ impl FfiDeviceKeyMaterial {
 
     pub fn sign_auth_challenge(&self, challenge: Vec<u8>) -> Vec<u8> {
         self.inner.sign(&challenge)
+    }
+
+    pub fn decrypt_device_transfer_bundle(
+        &self,
+        bundle: Vec<u8>,
+    ) -> Result<FfiImportedDeviceTransferBundle, TrixFfiError> {
+        decrypt_device_transfer_bundle(&bundle, &self.inner)
+            .map(imported_device_transfer_bundle_to_ffi)
+            .map_err(ffi_error)
     }
 
     pub fn verify(&self, payload: Vec<u8>, signature: Vec<u8>) -> Result<(), TrixFfiError> {
@@ -3008,6 +3056,19 @@ fn device_transfer_bundle_to_ffi(value: DeviceTransferBundleMaterial) -> FfiDevi
         device_id: value.device_id.0.to_string(),
         transfer_bundle: value.transfer_bundle,
         uploaded_at_unix: value.uploaded_at_unix,
+    }
+}
+
+fn imported_device_transfer_bundle_to_ffi(
+    value: ImportedDeviceTransferBundle,
+) -> FfiImportedDeviceTransferBundle {
+    FfiImportedDeviceTransferBundle {
+        account_id: value.account_id,
+        source_device_id: value.source_device_id,
+        target_device_id: value.target_device_id,
+        account_sync_chat_id: value.account_sync_chat_id,
+        account_root_private_key: value.account_root_private_key,
+        account_root_public_key: value.account_root_public_key,
     }
 }
 

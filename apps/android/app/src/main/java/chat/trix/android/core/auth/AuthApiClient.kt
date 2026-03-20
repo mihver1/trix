@@ -131,6 +131,26 @@ class AuthApiClient(
         }
     }
 
+    suspend fun importDeviceTransferBundle(
+        accessToken: String,
+        deviceId: String,
+        deviceKey: Ed25519KeyMaterial,
+    ): ImportedDeviceTransferBundle? = withContext(Dispatchers.IO) {
+        try {
+            runFfi("Failed to import device transfer bundle") {
+                ffiClient.setAccessToken(accessToken)
+                val bundle = ffiClient.getDeviceTransferBundle(deviceId)
+                deviceKey.decryptDeviceTransferBundle(bundle.transferBundle)
+            }
+        } catch (error: IOException) {
+            if (error.message?.contains("transfer bundle not found", ignoreCase = true) == true) {
+                null
+            } else {
+                throw error
+            }
+        }
+    }
+
     suspend fun updateCurrentAccount(
         accessToken: String,
         request: UpdateAccountProfilePayload,

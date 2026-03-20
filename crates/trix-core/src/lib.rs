@@ -1,6 +1,7 @@
 pub mod attachments;
 pub mod config;
 pub mod crypto;
+pub mod device_transfer;
 pub mod ffi;
 pub mod message;
 pub mod signatures;
@@ -18,6 +19,10 @@ pub use config::CoreConfig;
 pub use crypto::{
     AccountRootMaterial, DEFAULT_CIPHERSUITE, DeviceKeyMaterial, MlsCommitBundle, MlsConversation,
     MlsFacade, MlsMemberIdentity, MlsProcessResult,
+};
+pub use device_transfer::{
+    CreateDeviceTransferBundleInput, ImportedDeviceTransferBundle, create_device_transfer_bundle,
+    decrypt_device_transfer_bundle,
 };
 pub use ffi::*;
 pub use message::{

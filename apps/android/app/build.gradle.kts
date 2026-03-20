@@ -6,8 +6,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val workspaceDir = rootProject.projectDir.parentFile.parentFile
-val trixCoreCrateDir = File(workspaceDir, "crates/trix-core")
+val workspaceRoot = rootProject.projectDir.parentFile.parentFile
+val trixCoreCrateDir = File(workspaceRoot, "crates/trix-core")
 val trixCoreUniffiConfig = File(trixCoreCrateDir, "uniffi.toml")
 val trixAndroidNdkVersion = "29.0.14206865"
 val generatedUniffiDir = layout.buildDirectory.dir("generated/source/uniffi/main")
@@ -33,12 +33,12 @@ fun hostRustLibraryName(): String {
     }
 }
 
-val androidSdkRoot = providers.environmentVariable("ANDROID_SDK_ROOT")
+val androidSdkRootValue = providers.environmentVariable("ANDROID_SDK_ROOT")
     .orElse(providers.environmentVariable("ANDROID_HOME"))
     .orElse(loadLocalProperty("sdk.dir") ?: "")
     .get()
-val androidNdkRoot = File(androidSdkRoot, "ndk/$trixAndroidNdkVersion")
-val hostRustLibrary = File(workspaceDir, "target/debug/${hostRustLibraryName()}")
+val androidNdkRootDir = File(androidSdkRootValue, "ndk/$trixAndroidNdkVersion")
+val hostRustLibrary = File(workspaceRoot, "target/debug/${hostRustLibraryName()}")
 
 val trixBaseUrl = providers.gradleProperty("trixBaseUrl")
     .orElse(providers.environmentVariable("TRIX_BASE_URL"))
@@ -65,6 +65,26 @@ android {
         buildConfig = true
     }
 
+    buildTypes {
+        debug {
+            versionNameSuffix = "-debug"
+            ndk {
+                abiFilters += setOf("arm64-v8a", "x86_64")
+            }
+        }
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            ndk {
+                abiFilters += setOf("arm64-v8a")
+            }
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -78,20 +98,20 @@ android {
 
     sourceSets {
         getByName("main") {
-            jniLibs.setSrcDirs(listOf(generatedJniLibsDir.get().asFile))
+            jniLibs.srcDirs(generatedJniLibsDir.get().asFile)
         }
     }
 }
 
 val buildTrixCoreHostLib by tasks.registering(Exec::class) {
-    workingDir = workspaceDir
+    workingDir = workspaceRoot
     commandLine("cargo", "build", "-p", "trix-core", "--lib")
     outputs.file(hostRustLibrary)
 }
 
 val generateTrixCoreKotlinBindings by tasks.registering(Exec::class) {
     dependsOn(buildTrixCoreHostLib)
-    workingDir = workspaceDir
+    workingDir = workspaceRoot
     val outDir = generatedUniffiDir.get().asFile
     inputs.file(trixCoreUniffiConfig)
     outputs.dir(outDir)
@@ -119,38 +139,14 @@ val generateTrixCoreKotlinBindings by tasks.registering(Exec::class) {
     )
 }
 
-val buildTrixCoreAndroidLibs by tasks.registering(Exec::class) {
-    notCompatibleWithConfigurationCache("Uses local cargo-ndk/NDK toolchain state")
-    workingDir = workspaceDir
-    val outDir = generatedJniLibsDir.get().asFile
-    outputs.dir(outDir)
-    doFirst {
-        if (!androidNdkRoot.exists()) {
-            error("Android NDK $trixAndroidNdkVersion is not installed under $androidNdkRoot")
-        }
-        outDir.deleteRecursively()
-        outDir.mkdirs()
-    }
-    environment("ANDROID_HOME", androidSdkRoot)
-    environment("ANDROID_SDK_ROOT", androidSdkRoot)
-    environment("ANDROID_NDK_HOME", androidNdkRoot.absolutePath)
-    environment("ANDROID_NDK_ROOT", androidNdkRoot.absolutePath)
-    commandLine(
-        "cargo",
-        "ndk",
-        "--platform",
-        "28",
-        "-t",
-        "arm64-v8a",
-        "-t",
-        "x86_64",
-        "-o",
-        outDir.absolutePath,
-        "build",
-        "-p",
-        "trix-core",
-        "--lib",
-    )
+val buildTrixCoreAndroidLibs by tasks.registering(CargoNdkBuildTask::class) {
+    workspaceDir.set(layout.dir(provider { workspaceRoot }))
+    androidSdkRoot.set(androidSdkRootValue)
+    androidNdkRoot.set(androidNdkRootDir.absolutePath)
+    crateName.set("trix-core")
+    platformLevel.set(28)
+    targets.set(listOf("arm64-v8a", "x86_64"))
+    outputDir.set(generatedJniLibsDir)
 }
 
 tasks.named("preBuild") {
@@ -171,6 +167,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("com.google.android.material:material:1.12.0")
+    implementation("androidx.work:work-runtime-ktx:2.11.0")
     implementation("net.java.dev.jna:jna:5.18.1@aar")
     implementation("androidx.window:window:1.5.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")

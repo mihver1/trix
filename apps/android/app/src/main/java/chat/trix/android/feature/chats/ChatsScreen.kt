@@ -1,7 +1,10 @@
 package chat.trix.android.feature.chats
 
 import android.graphics.Rect
+import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,8 +31,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
+import androidx.compose.material.icons.rounded.AttachFile
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.MarkUnreadChatAlt
 import androidx.compose.material.icons.rounded.PersonAddAlt1
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
@@ -45,9 +51,11 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
@@ -72,6 +80,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import chat.trix.android.R
+import chat.trix.android.core.chat.ChatAttachment
 import chat.trix.android.core.auth.AuthenticatedSession
 import chat.trix.android.core.chat.ChatConversation
 import chat.trix.android.core.chat.ChatConversationSummary
@@ -92,6 +101,8 @@ import kotlinx.coroutines.launch
 fun ChatsScreen(
     windowInfo: TrixAdaptiveInfo,
     session: AuthenticatedSession,
+    requestedConversationId: String? = null,
+    onConversationRequestConsumed: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current.applicationContext
@@ -118,6 +129,8 @@ fun ChatsScreen(
     var isDirectorySheetVisible by rememberSaveable(session.localState.deviceId) { mutableStateOf(false) }
     var directoryQuery by rememberSaveable(session.localState.deviceId) { mutableStateOf("") }
     var directoryState by remember(repository) { mutableStateOf(ChatsDirectoryState()) }
+    var activeAttachmentMessageId by remember(repository) { mutableStateOf<String?>(null) }
+    var attachmentErrorMessage by remember(repository) { mutableStateOf<String?>(null) }
 
     suspend fun loadCachedOverview(): ChatOverview? {
         return try {
@@ -206,6 +219,42 @@ fun ChatsScreen(
         }
     }
 
+    suspend fun sendAttachment(contentUri: Uri) {
+        val chatId = selectedConversationId ?: return
+        val conversation = detailState.conversation?.takeIf { it.chatId == chatId } ?: return
+        if (!conversation.canSend || detailState.isSending) {
+            return
+        }
+
+        detailState = detailState.copy(
+            isSending = true,
+            sendErrorMessage = null,
+            errorMessage = null,
+        )
+        attachmentErrorMessage = null
+
+        try {
+            val result = repository.sendAttachment(chatId, contentUri)
+            overviewState = overviewState.copy(
+                overview = result.overview,
+                errorMessage = null,
+            )
+            overviewVersion += 1
+            detailState = detailState.copy(
+                conversation = result.conversation,
+                isLoading = false,
+                isSending = false,
+                errorMessage = null,
+                sendErrorMessage = null,
+            )
+        } catch (error: IOException) {
+            detailState = detailState.copy(
+                isSending = false,
+                sendErrorMessage = error.message ?: "Failed to send attachment",
+            )
+        }
+    }
+
     suspend fun markConversationRead(chatId: String) {
         try {
             val result = repository.markConversationRead(chatId)
@@ -277,6 +326,41 @@ fun ChatsScreen(
         }
     }
 
+    suspend fun openAttachment(attachment: ChatAttachment) {
+        activeAttachmentMessageId = attachment.messageId
+        attachmentErrorMessage = null
+        try {
+            repository.openAttachment(attachment)
+        } catch (error: IOException) {
+            attachmentErrorMessage = error.message ?: "Failed to open attachment"
+        } finally {
+            activeAttachmentMessageId = null
+        }
+    }
+
+    suspend fun shareAttachment(attachment: ChatAttachment) {
+        activeAttachmentMessageId = attachment.messageId
+        attachmentErrorMessage = null
+        try {
+            repository.shareAttachment(attachment)
+        } catch (error: IOException) {
+            attachmentErrorMessage = error.message ?: "Failed to share attachment"
+        } finally {
+            activeAttachmentMessageId = null
+        }
+    }
+
+    val attachmentPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+        onResult = { contentUri ->
+            if (contentUri != null) {
+                coroutineScope.launch {
+                    sendAttachment(contentUri)
+                }
+            }
+        },
+    )
+
     DisposableEffect(repository) {
         onDispose {
             repository.close()
@@ -293,6 +377,14 @@ fun ChatsScreen(
             overviewVersion += 1
         }
         syncChats()
+    }
+
+    LaunchedEffect(requestedConversationId) {
+        val requestedChatId = requestedConversationId ?: return@LaunchedEffect
+        if (selectedConversationId != requestedChatId) {
+            selectedConversationId = requestedChatId
+        }
+        onConversationRequestConsumed(requestedChatId)
     }
 
     LaunchedEffect(repository, isDirectorySheetVisible, directoryQuery) {
@@ -324,6 +416,7 @@ fun ChatsScreen(
         val chatId = selectedConversationId
         if (chatId == null) {
             detailState = ChatsDetailState()
+            attachmentErrorMessage = null
             return@LaunchedEffect
         }
 
@@ -343,6 +436,7 @@ fun ChatsScreen(
                 isLoading = false,
                 errorMessage = null,
             )
+            attachmentErrorMessage = null
             if ((overviewState.overview?.conversations?.firstOrNull { it.chatId == chatId }?.unreadCount ?: 0) > 0) {
                 markConversationRead(chatId)
             }
@@ -453,7 +547,20 @@ fun ChatsScreen(
                     onComposerDraftChange = { composerDraft = it },
                     isSending = detailState.isSending,
                     sendErrorMessage = detailState.sendErrorMessage,
+                    attachmentErrorMessage = attachmentErrorMessage,
+                    activeAttachmentMessageId = activeAttachmentMessageId,
+                    onPickAttachment = { attachmentPickerLauncher.launch(arrayOf("*/*")) },
                     onSend = { coroutineScope.launch { sendDraftMessage() } },
+                    onOpenAttachment = { attachment ->
+                        coroutineScope.launch {
+                            openAttachment(attachment)
+                        }
+                    },
+                    onShareAttachment = { attachment ->
+                        coroutineScope.launch {
+                            shareAttachment(attachment)
+                        }
+                    },
                     modifier = contentModifier,
                 )
             }
@@ -470,7 +577,20 @@ fun ChatsScreen(
                     onComposerDraftChange = { composerDraft = it },
                     isSending = detailState.isSending,
                     sendErrorMessage = detailState.sendErrorMessage,
+                    attachmentErrorMessage = attachmentErrorMessage,
+                    activeAttachmentMessageId = activeAttachmentMessageId,
+                    onPickAttachment = { attachmentPickerLauncher.launch(arrayOf("*/*")) },
                     onSend = { coroutineScope.launch { sendDraftMessage() } },
+                    onOpenAttachment = { attachment ->
+                        coroutineScope.launch {
+                            openAttachment(attachment)
+                        }
+                    },
+                    onShareAttachment = { attachment ->
+                        coroutineScope.launch {
+                            shareAttachment(attachment)
+                        }
+                    },
                     foldPosture = windowInfo.foldPosture,
                     foldBounds = windowInfo.foldBounds,
                     modifier = contentModifier,
@@ -486,7 +606,20 @@ fun ChatsScreen(
                     onComposerDraftChange = { composerDraft = it },
                     isSending = detailState.isSending,
                     sendErrorMessage = detailState.sendErrorMessage,
+                    attachmentErrorMessage = attachmentErrorMessage,
+                    activeAttachmentMessageId = activeAttachmentMessageId,
+                    onPickAttachment = { attachmentPickerLauncher.launch(arrayOf("*/*")) },
                     onSend = { coroutineScope.launch { sendDraftMessage() } },
+                    onOpenAttachment = { attachment ->
+                        coroutineScope.launch {
+                            openAttachment(attachment)
+                        }
+                    },
+                    onShareAttachment = { attachment ->
+                        coroutineScope.launch {
+                            shareAttachment(attachment)
+                        }
+                    },
                     modifier = contentModifier,
                 )
             }
@@ -822,7 +955,12 @@ private fun WideConversationLayout(
     onComposerDraftChange: (String) -> Unit,
     isSending: Boolean,
     sendErrorMessage: String?,
+    attachmentErrorMessage: String?,
+    activeAttachmentMessageId: String?,
+    onPickAttachment: () -> Unit,
     onSend: () -> Unit,
+    onOpenAttachment: (ChatAttachment) -> Unit,
+    onShareAttachment: (ChatAttachment) -> Unit,
     foldPosture: TrixFoldPosture,
     foldBounds: Rect?,
     modifier: Modifier = Modifier,
@@ -871,7 +1009,12 @@ private fun WideConversationLayout(
                 onComposerDraftChange = onComposerDraftChange,
                 isSending = isSending,
                 sendErrorMessage = sendErrorMessage,
+                attachmentErrorMessage = attachmentErrorMessage,
+                activeAttachmentMessageId = activeAttachmentMessageId,
+                onPickAttachment = onPickAttachment,
                 onSend = onSend,
+                onOpenAttachment = onOpenAttachment,
+                onShareAttachment = onShareAttachment,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight(),
@@ -889,7 +1032,12 @@ private fun TabletopConversationLayout(
     onComposerDraftChange: (String) -> Unit,
     isSending: Boolean,
     sendErrorMessage: String?,
+    attachmentErrorMessage: String?,
+    activeAttachmentMessageId: String?,
+    onPickAttachment: () -> Unit,
     onSend: () -> Unit,
+    onOpenAttachment: (ChatAttachment) -> Unit,
+    onShareAttachment: (ChatAttachment) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -903,7 +1051,12 @@ private fun TabletopConversationLayout(
             onComposerDraftChange = onComposerDraftChange,
             isSending = isSending,
             sendErrorMessage = sendErrorMessage,
+            attachmentErrorMessage = attachmentErrorMessage,
+            activeAttachmentMessageId = activeAttachmentMessageId,
+            onPickAttachment = onPickAttachment,
             onSend = onSend,
+            onOpenAttachment = onOpenAttachment,
+            onShareAttachment = onShareAttachment,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
@@ -940,8 +1093,12 @@ private fun TabletopConversationLayout(
                         onDraftChange = onComposerDraftChange,
                         isSending = isSending,
                         sendErrorMessage = sendErrorMessage,
+                        attachmentErrorMessage = attachmentErrorMessage,
                         errorMessage = errorMessage,
+                        onPickAttachment = onPickAttachment,
                         onSend = onSend,
+                        onOpenAttachment = onOpenAttachment,
+                        onShareAttachment = onShareAttachment,
                     )
                 } else if (errorMessage != null) {
                     Text(
@@ -1211,7 +1368,12 @@ private fun ConversationDetailPane(
     onComposerDraftChange: (String) -> Unit,
     isSending: Boolean,
     sendErrorMessage: String?,
+    attachmentErrorMessage: String?,
+    activeAttachmentMessageId: String?,
+    onPickAttachment: () -> Unit,
     onSend: () -> Unit,
+    onOpenAttachment: (ChatAttachment) -> Unit,
+    onShareAttachment: (ChatAttachment) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     ConversationDetailContent(
@@ -1222,7 +1384,12 @@ private fun ConversationDetailPane(
         onComposerDraftChange = onComposerDraftChange,
         isSending = isSending,
         sendErrorMessage = sendErrorMessage,
+        attachmentErrorMessage = attachmentErrorMessage,
+        activeAttachmentMessageId = activeAttachmentMessageId,
+        onPickAttachment = onPickAttachment,
         onSend = onSend,
+        onOpenAttachment = onOpenAttachment,
+        onShareAttachment = onShareAttachment,
         modifier = modifier,
         showComposer = true,
         compactHeader = true,
@@ -1238,7 +1405,12 @@ private fun ConversationDetailContent(
     onComposerDraftChange: (String) -> Unit,
     isSending: Boolean,
     sendErrorMessage: String?,
+    attachmentErrorMessage: String?,
+    activeAttachmentMessageId: String?,
+    onPickAttachment: () -> Unit,
     onSend: () -> Unit,
+    onOpenAttachment: (ChatAttachment) -> Unit,
+    onShareAttachment: (ChatAttachment) -> Unit,
     modifier: Modifier = Modifier,
     showComposer: Boolean,
     compactHeader: Boolean,
@@ -1301,6 +1473,9 @@ private fun ConversationDetailContent(
             else -> {
                 ConversationTranscript(
                     conversation = conversation,
+                    activeAttachmentMessageId = activeAttachmentMessageId,
+                    onOpenAttachment = onOpenAttachment,
+                    onShareAttachment = onShareAttachment,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
@@ -1315,8 +1490,12 @@ private fun ConversationDetailContent(
                         onDraftChange = onComposerDraftChange,
                         isSending = isSending,
                         sendErrorMessage = sendErrorMessage,
+                        attachmentErrorMessage = attachmentErrorMessage,
                         errorMessage = errorMessage,
+                        onPickAttachment = onPickAttachment,
                         onSend = onSend,
+                        onOpenAttachment = onOpenAttachment,
+                        onShareAttachment = onShareAttachment,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -1328,6 +1507,9 @@ private fun ConversationDetailContent(
 @Composable
 private fun ConversationTranscript(
     conversation: ChatConversation,
+    activeAttachmentMessageId: String?,
+    onOpenAttachment: (ChatAttachment) -> Unit,
+    onShareAttachment: (ChatAttachment) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (conversation.messages.isEmpty()) {
@@ -1381,6 +1563,42 @@ private fun ConversationTranscript(
                             text = message.body,
                             style = MaterialTheme.typography.bodyLarge,
                         )
+                        if (message.attachment != null) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                TextButton(
+                                    onClick = { onOpenAttachment(message.attachment) },
+                                    enabled = activeAttachmentMessageId != message.id,
+                                ) {
+                                    if (activeAttachmentMessageId == message.id) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidth = 2.dp,
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Rounded.FolderOpen,
+                                            contentDescription = null,
+                                        )
+                                    }
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Open")
+                                }
+                                OutlinedButton(
+                                    onClick = { onShareAttachment(message.attachment) },
+                                    enabled = activeAttachmentMessageId != message.id,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Share,
+                                        contentDescription = null,
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Share")
+                                }
+                            }
+                        }
                         if (message.note != null) {
                             Text(
                                 text = message.note,
@@ -1407,8 +1625,12 @@ private fun ConversationComposerPane(
     onDraftChange: (String) -> Unit,
     isSending: Boolean,
     sendErrorMessage: String?,
+    attachmentErrorMessage: String?,
     errorMessage: String? = null,
+    onPickAttachment: () -> Unit,
     onSend: () -> Unit,
+    onOpenAttachment: (ChatAttachment) -> Unit,
+    onShareAttachment: (ChatAttachment) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -1423,6 +1645,16 @@ private fun ConversationComposerPane(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.Bottom,
             ) {
+                FilledTonalIconButton(
+                    onClick = onPickAttachment,
+                    enabled = !isSending,
+                    modifier = Modifier.size(56.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.AttachFile,
+                        contentDescription = "Attach file",
+                    )
+                }
                 OutlinedTextField(
                     value = draftText,
                     onValueChange = onDraftChange,
@@ -1485,6 +1717,13 @@ private fun ConversationComposerPane(
         if (sendErrorMessage != null) {
             Text(
                 text = sendErrorMessage,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        if (attachmentErrorMessage != null) {
+            Text(
+                text = attachmentErrorMessage,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.error,
             )

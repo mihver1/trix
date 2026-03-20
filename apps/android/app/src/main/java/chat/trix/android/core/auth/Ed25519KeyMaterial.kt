@@ -1,7 +1,9 @@
 package chat.trix.android.core.auth
 
 import chat.trix.android.core.ffi.FfiAccountRootMaterial
+import chat.trix.android.core.ffi.FfiCreateDeviceTransferBundleParams
 import chat.trix.android.core.ffi.FfiDeviceKeyMaterial
+import chat.trix.android.core.ffi.FfiImportedDeviceTransferBundle
 import chat.trix.android.core.ffi.TrixFfiException
 import java.io.IOException
 
@@ -42,6 +44,31 @@ class Ed25519KeyMaterial private constructor(
                 deviceMaterial != null -> deviceMaterial.sign(message)
                 else -> error("Missing key material")
             }
+        }
+    }
+
+    fun createDeviceTransferBundle(
+        input: DeviceTransferBundleInput,
+        senderDeviceKey: Ed25519KeyMaterial,
+        recipientTransportPubkey: ByteArray,
+    ): ByteArray {
+        return runCryptoFfi("Failed to create device transfer bundle") {
+            requireAccountRootMaterial().createDeviceTransferBundle(
+                FfiCreateDeviceTransferBundleParams(
+                    accountId = input.accountId,
+                    sourceDeviceId = input.sourceDeviceId,
+                    targetDeviceId = input.targetDeviceId,
+                    accountSyncChatId = input.accountSyncChatId,
+                ),
+                senderDeviceKey.requireDeviceMaterial(),
+                recipientTransportPubkey,
+            )
+        }
+    }
+
+    fun decryptDeviceTransferBundle(payload: ByteArray): ImportedDeviceTransferBundle {
+        return runCryptoFfi("Failed to decrypt device transfer bundle") {
+            requireDeviceMaterial().decryptDeviceTransferBundle(payload).toImportedDeviceTransferBundle()
         }
     }
 
@@ -98,5 +125,32 @@ class Ed25519KeyMaterial private constructor(
                 throw IOException(fallbackMessage, error)
             }
         }
+
+        private fun FfiImportedDeviceTransferBundle.toImportedDeviceTransferBundle(): ImportedDeviceTransferBundle {
+            return ImportedDeviceTransferBundle(
+                accountId = accountId,
+                sourceDeviceId = sourceDeviceId,
+                targetDeviceId = targetDeviceId,
+                accountSyncChatId = accountSyncChatId,
+                accountRootPrivateKey = accountRootPrivateKey,
+                accountRootPublicKey = accountRootPublicKey,
+            )
+        }
     }
 }
+
+data class DeviceTransferBundleInput(
+    val accountId: String,
+    val sourceDeviceId: String,
+    val targetDeviceId: String,
+    val accountSyncChatId: String?,
+)
+
+data class ImportedDeviceTransferBundle(
+    val accountId: String,
+    val sourceDeviceId: String,
+    val targetDeviceId: String,
+    val accountSyncChatId: String?,
+    val accountRootPrivateKey: ByteArray,
+    val accountRootPublicKey: ByteArray,
+)

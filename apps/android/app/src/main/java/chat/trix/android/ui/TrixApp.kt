@@ -1,6 +1,12 @@
 package chat.trix.android.ui
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.content.Context
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,7 +56,12 @@ import chat.trix.android.core.auth.LinkExistingAccountInput
 import chat.trix.android.core.auth.LocalAuthStateStore
 import chat.trix.android.core.auth.parseLinkIntentPayload
 import chat.trix.android.core.auth.StoredDeviceSummary
+import chat.trix.android.core.notifications.TrixNotificationRouter
+import chat.trix.android.core.runtime.BackgroundSyncScheduler
 import chat.trix.android.core.system.BackendConfigStore
+import chat.trix.android.core.system.DESTINATION_CHATS
+import chat.trix.android.core.system.EXTRA_OPEN_CHAT_ID
+import chat.trix.android.core.system.EXTRA_OPEN_DESTINATION
 import chat.trix.android.designsystem.theme.TrixTheme
 import chat.trix.android.feature.bootstrap.BootstrapScreen
 import chat.trix.android.feature.chats.ChatsScreen
@@ -62,15 +73,23 @@ import chat.trix.android.ui.adaptive.rememberTrixAdaptiveInfo
 import chat.trix.android.ui.navigation.TrixDestination
 import java.io.IOException
 import java.net.URI
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.launch
 
 @Composable
-fun TrixApp() {
+fun TrixApp(
+    launchIntent: Intent? = null,
+) {
     TrixTheme {
         val context = LocalContext.current.applicationContext
         val windowInfo = rememberTrixAdaptiveInfo()
         val backendConfigStore = remember(context) { BackendConfigStore(context) }
         val localAuthStateStore = remember(context) { LocalAuthStateStore(context) }
+        val notificationRouter = remember(context) { TrixNotificationRouter(context) }
+        val notificationPermissionLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.RequestPermission(),
+            onResult = {},
+        )
         var configuredBaseUrl by rememberSaveable {
             mutableStateOf(backendConfigStore.readBaseUrl() ?: BuildConfig.TRIX_BASE_URL)
         }
@@ -82,13 +101,48 @@ fun TrixApp() {
         }
         val coroutineScope = rememberCoroutineScope()
         var destination by rememberSaveable { mutableStateOf(TrixDestination.Chats) }
+        var requestedConversationId by rememberSaveable { mutableStateOf<String?>(null) }
         var reloadSignal by rememberSaveable { mutableIntStateOf(0) }
         var authState by remember { mutableStateOf<TrixAuthState>(TrixAuthState.Loading("Restoring local device")) }
         var backendConfigError by remember { mutableStateOf<String?>(null) }
+        var notificationPermissionRequested by rememberSaveable { mutableStateOf(false) }
 
         LaunchedEffect(authCoordinator, reloadSignal) {
             authState = TrixAuthState.Loading("Restoring local device")
             authState = loadInitialAuthState(authCoordinator)
+        }
+
+        LaunchedEffect(launchIntent) {
+            val requestedDestination = launchIntent?.getStringExtra(EXTRA_OPEN_DESTINATION)
+            val requestedChatId = launchIntent?.getStringExtra(EXTRA_OPEN_CHAT_ID)
+            if (requestedDestination == DESTINATION_CHATS || !requestedChatId.isNullOrBlank()) {
+                destination = TrixDestination.Chats
+            }
+            if (!requestedChatId.isNullOrBlank()) {
+                requestedConversationId = requestedChatId
+            }
+        }
+
+        LaunchedEffect(authState) {
+            notificationRouter.ensureChannels()
+            when (authState) {
+                is TrixAuthState.SignedIn -> {
+                    BackgroundSyncScheduler.schedule(context)
+                    if (
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                        !notificationPermissionRequested &&
+                        ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.POST_NOTIFICATIONS,
+                        ) != PackageManager.PERMISSION_GRANTED
+                    ) {
+                        notificationPermissionRequested = true
+                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                }
+
+                else -> BackgroundSyncScheduler.cancel(context)
+            }
         }
 
         Surface(
@@ -173,6 +227,12 @@ fun TrixApp() {
                             onDestinationChange = { destination = it },
                             windowInfo = windowInfo,
                             session = session,
+                            requestedConversationId = requestedConversationId,
+                            onConversationRequestConsumed = { consumedChatId ->
+                                if (requestedConversationId == consumedChatId) {
+                                    requestedConversationId = null
+                                }
+                            },
                             onPersistAccountProfile = { updatedProfile ->
                                 val updatedLocalState = session.localState.copy(
                                     handle = updatedProfile.handle,
@@ -193,6 +253,12 @@ fun TrixApp() {
                             onDestinationChange = { destination = it },
                             windowInfo = windowInfo,
                             session = session,
+                            requestedConversationId = requestedConversationId,
+                            onConversationRequestConsumed = { consumedChatId ->
+                                if (requestedConversationId == consumedChatId) {
+                                    requestedConversationId = null
+                                }
+                            },
                             onPersistAccountProfile = { updatedProfile ->
                                 val updatedLocalState = session.localState.copy(
                                     handle = updatedProfile.handle,
@@ -213,6 +279,12 @@ fun TrixApp() {
                             onDestinationChange = { destination = it },
                             windowInfo = windowInfo,
                             session = session,
+                            requestedConversationId = requestedConversationId,
+                            onConversationRequestConsumed = { consumedChatId ->
+                                if (requestedConversationId == consumedChatId) {
+                                    requestedConversationId = null
+                                }
+                            },
                             onPersistAccountProfile = { updatedProfile ->
                                 val updatedLocalState = session.localState.copy(
                                     handle = updatedProfile.handle,
@@ -398,6 +470,8 @@ private fun BottomBarLayout(
     onDestinationChange: (TrixDestination) -> Unit,
     windowInfo: TrixAdaptiveInfo,
     session: AuthenticatedSession,
+    requestedConversationId: String?,
+    onConversationRequestConsumed: (String) -> Unit,
     onPersistAccountProfile: suspend (AccountProfile) -> Unit,
 ) {
     androidx.compose.material3.Scaffold(
@@ -424,6 +498,8 @@ private fun BottomBarLayout(
             destination = destination,
             windowInfo = windowInfo,
             session = session,
+            requestedConversationId = requestedConversationId,
+            onConversationRequestConsumed = onConversationRequestConsumed,
             onPersistAccountProfile = onPersistAccountProfile,
             modifier = Modifier.padding(innerPadding),
         )
@@ -436,6 +512,8 @@ private fun RailLayout(
     onDestinationChange: (TrixDestination) -> Unit,
     windowInfo: TrixAdaptiveInfo,
     session: AuthenticatedSession,
+    requestedConversationId: String?,
+    onConversationRequestConsumed: (String) -> Unit,
     onPersistAccountProfile: suspend (AccountProfile) -> Unit,
 ) {
     Row(
@@ -464,6 +542,8 @@ private fun RailLayout(
             destination = destination,
             windowInfo = windowInfo,
             session = session,
+            requestedConversationId = requestedConversationId,
+            onConversationRequestConsumed = onConversationRequestConsumed,
             onPersistAccountProfile = onPersistAccountProfile,
             modifier = Modifier
                 .weight(1f)
@@ -478,6 +558,8 @@ private fun DrawerLayout(
     onDestinationChange: (TrixDestination) -> Unit,
     windowInfo: TrixAdaptiveInfo,
     session: AuthenticatedSession,
+    requestedConversationId: String?,
+    onConversationRequestConsumed: (String) -> Unit,
     onPersistAccountProfile: suspend (AccountProfile) -> Unit,
 ) {
     PermanentNavigationDrawer(
@@ -530,6 +612,8 @@ private fun DrawerLayout(
                 destination = destination,
                 windowInfo = windowInfo,
                 session = session,
+                requestedConversationId = requestedConversationId,
+                onConversationRequestConsumed = onConversationRequestConsumed,
                 onPersistAccountProfile = onPersistAccountProfile,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -542,6 +626,8 @@ private fun DestinationContent(
     destination: TrixDestination,
     windowInfo: TrixAdaptiveInfo,
     session: AuthenticatedSession,
+    requestedConversationId: String?,
+    onConversationRequestConsumed: (String) -> Unit,
     onPersistAccountProfile: suspend (AccountProfile) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -549,6 +635,8 @@ private fun DestinationContent(
         TrixDestination.Chats -> ChatsScreen(
             windowInfo = windowInfo,
             session = session,
+            requestedConversationId = requestedConversationId,
+            onConversationRequestConsumed = onConversationRequestConsumed,
             modifier = modifier,
         )
         TrixDestination.Devices -> DevicesScreen(
