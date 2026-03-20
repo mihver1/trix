@@ -1,10 +1,13 @@
 package chat.trix.android.feature.devices
 
+import android.content.Intent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -21,6 +24,7 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Pending
 import androidx.compose.material.icons.rounded.PhoneAndroid
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.TabletAndroid
 import androidx.compose.material.icons.rounded.Warning
@@ -51,6 +55,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -67,13 +72,13 @@ import chat.trix.android.core.devices.AccountDeviceStatus
 import chat.trix.android.core.devices.DeviceInventory
 import chat.trix.android.core.devices.DeviceLinkIntent
 import chat.trix.android.core.devices.DeviceRepository
+import chat.trix.android.core.devices.formatLinkExpiry
+import chat.trix.android.core.devices.prettyPrintJsonOrRaw
+import chat.trix.android.core.devices.shortDeviceIdentifier
+import chat.trix.android.core.system.renderQrCodeBitmap
 import chat.trix.android.ui.adaptive.TrixAdaptiveInfo
 import java.io.IOException
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.launch
-import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -280,6 +285,21 @@ fun DevicesScreen(
                                     lastActionMessage = "Link payload copied to the clipboard.",
                                 )
                             },
+                            onSharePayload = { payload ->
+                                context.startActivity(
+                                    Intent.createChooser(
+                                        Intent(Intent.ACTION_SEND).apply {
+                                            type = "text/plain"
+                                            putExtra(Intent.EXTRA_TEXT, payload)
+                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        },
+                                        "Share link payload",
+                                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                )
+                                uiState = uiState.copy(
+                                    lastActionMessage = "Link payload sent to the system share sheet.",
+                                )
+                            },
                         )
                     }
 
@@ -426,7 +446,7 @@ private fun DevicesSummaryCard(
                 inventory?.accountId?.let { accountId ->
                     AssistChip(
                         onClick = {},
-                        label = { Text("Account ${shortId(accountId)}") },
+                        label = { Text("Account ${shortDeviceIdentifier(accountId)}") },
                     )
                 }
             }
@@ -460,6 +480,7 @@ private fun LinkIntentCard(
     isBusy: Boolean,
     onCreateLinkIntent: () -> Unit,
     onCopyPayload: (String) -> Unit,
+    onSharePayload: (String) -> Unit,
 ) {
     Surface(
         shape = MaterialTheme.shapes.extraLarge,
@@ -486,7 +507,7 @@ private fun LinkIntentCard(
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "Generate a fresh link intent from this trusted device. The payload stays raw JSON for now so it can be copied into other clients or test tooling.",
+                        text = "Generate a fresh link intent from this trusted device, render it as a QR code, and keep the raw JSON as a copy/share fallback.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -508,11 +529,14 @@ private fun LinkIntentCard(
             }
 
             if (linkIntent != null) {
+                val qrBitmap = remember(linkIntent.qrPayload) {
+                    runCatching { renderQrCodeBitmap(linkIntent.qrPayload) }.getOrNull()
+                }
                 HorizontalDivider()
 
                 AssistChip(
                     onClick = {},
-                    label = { Text("Expires ${linkIntent.expiresAtUnix.formatLinkExpiry()}") },
+                    label = { Text("Expires ${formatLinkExpiry(linkIntent.expiresAtUnix)}") },
                 )
 
                 Text(
@@ -521,6 +545,31 @@ private fun LinkIntentCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
 
+                if (qrBitmap != null) {
+                    Surface(
+                        shape = MaterialTheme.shapes.large,
+                        color = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Image(
+                                bitmap = qrBitmap.asImageBitmap(),
+                                contentDescription = "Device link QR code",
+                                modifier = Modifier.size(240.dp),
+                            )
+                            Text(
+                                text = "Scan this QR from the new Android device.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+
                 SelectionContainer {
                     Surface(
                         shape = MaterialTheme.shapes.large,
@@ -528,7 +577,7 @@ private fun LinkIntentCard(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
-                            text = linkIntent.qrPayload.prettyJsonOrRaw(),
+                            text = prettyPrintJsonOrRaw(linkIntent.qrPayload),
                             modifier = Modifier.padding(16.dp),
                             style = MaterialTheme.typography.bodySmall.copy(
                                 fontFamily = FontFamily.Monospace,
@@ -537,15 +586,29 @@ private fun LinkIntentCard(
                     }
                 }
 
-                OutlinedButton(
-                    onClick = { onCopyPayload(linkIntent.qrPayload) },
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.ContentCopy,
-                        contentDescription = null,
-                    )
-                    androidx.compose.foundation.layout.Spacer(Modifier.size(8.dp))
-                    Text("Copy Payload")
+                    OutlinedButton(
+                        onClick = { onCopyPayload(linkIntent.qrPayload) },
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.ContentCopy,
+                            contentDescription = null,
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Text("Copy Payload")
+                    }
+                    OutlinedButton(
+                        onClick = { onSharePayload(linkIntent.qrPayload) },
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Share,
+                            contentDescription = null,
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Text("Share")
+                    }
                 }
             }
         }
@@ -607,7 +670,7 @@ private fun DeviceCard(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = "${device.platform.ifBlank { "unknown platform" }} · ${shortId(device.deviceId)}",
+                text = "${device.platform.ifBlank { "unknown platform" }} · ${shortDeviceIdentifier(device.deviceId)}",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -767,24 +830,4 @@ private fun AccountDeviceStatus.icon(): ImageVector {
         AccountDeviceStatus.Active -> Icons.Rounded.CheckCircle
         AccountDeviceStatus.Revoked -> Icons.Rounded.Warning
     }
-}
-
-private fun shortId(value: String): String {
-    return if (value.length <= 10) {
-        value
-    } else {
-        "${value.take(6)}…${value.takeLast(4)}"
-    }
-}
-
-private fun String.prettyJsonOrRaw(): String {
-    return runCatching {
-        JSONObject(this).toString(2)
-    }.getOrDefault(this)
-}
-
-private fun Long.formatLinkExpiry(): String {
-    return DateTimeFormatter.ofPattern("MMM d, HH:mm")
-        .withZone(ZoneId.systemDefault())
-        .format(Instant.ofEpochSecond(this))
 }

@@ -7,8 +7,10 @@ import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
+import org.gradle.api.tasks.UntrackedTask
 import org.gradle.process.ExecOperations
 
+@UntrackedTask(because = "Cargo manages native build outputs outside Gradle's incremental model")
 abstract class CargoNdkBuildTask @Inject constructor(
     private val execOperations: ExecOperations,
 ) : DefaultTask() {

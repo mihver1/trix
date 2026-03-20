@@ -50,7 +50,7 @@ The better tradeoff for this PoC is still:
 ## Current Live Flow
 
 - create a new account from Android
-- paste a raw device-link payload from another trusted client and register a pending Android device
+- scan a QR code or paste/share a raw device-link payload from another trusted client and register a pending Android device
 - generate local `account root` and `transport` Ed25519 key material through `trix-core` FFI
 - generate persistent MLS key packages locally during linked-device bootstrap through `FfiMlsFacade`
 - encrypt a transfer bundle for the pending device during trusted-device approval, so account-root material can move without passing through the server in plaintext
@@ -62,6 +62,7 @@ The better tradeoff for this PoC is still:
 - sync cached chats and inbox items into the local Rust-backed history store
 - project decryptable transcripts through persistent `FfiMlsFacade` state when this device has the group locally
 - send text messages into chats backed by local MLS state, with local projection applied immediately after server accept
+- render trusted-device link intents as QR codes and share/copy them from Android
 - list linked devices, create link intents, and approve/revoke devices when this Android client has local account-root material
 
 ## FFI Build Requirements

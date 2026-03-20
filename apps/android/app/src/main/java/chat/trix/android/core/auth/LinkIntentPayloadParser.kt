@@ -2,30 +2,33 @@ package chat.trix.android.core.auth
 
 import java.io.IOException
 import java.net.URI
-import org.json.JSONObject
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 fun parseLinkIntentPayload(
     rawPayload: String,
     fallbackBaseUrl: String,
 ): ParsedLinkIntentPayload {
     val payload = runCatching {
-        JSONObject(rawPayload.trim())
+        Json.parseToJsonElement(rawPayload.trim()).jsonObject
     }.getOrElse { error ->
         throw IOException("Link payload must be valid JSON", error)
     }
 
-    val linkIntentId = payload.optString("link_intent_id").trim()
+    val linkIntentId = payload["link_intent_id"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
     if (linkIntentId.isEmpty()) {
         throw IOException("Link payload is missing link_intent_id")
     }
 
-    val linkToken = payload.optString("link_token").trim()
+    val linkToken = payload["link_token"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
     if (linkToken.isEmpty()) {
         throw IOException("Link payload is missing link_token")
     }
 
-    val baseUrl = payload.optString("base_url")
-        .takeIf { it.isNotBlank() }
+    val baseUrl = payload["base_url"]?.jsonPrimitive?.contentOrNull
+        ?.takeIf { it.isNotBlank() }
         ?.let(::normalizeBackendUrl)
         ?: normalizeBackendUrl(fallbackBaseUrl)
 

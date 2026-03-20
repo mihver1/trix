@@ -18,22 +18,31 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedAssistChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import chat.trix.android.core.auth.BootstrapInput
 import chat.trix.android.core.auth.LinkExistingAccountInput
 import chat.trix.android.core.auth.StoredDeviceSummary
+import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.common.api.CommonStatusCodes
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 
 @Composable
 fun BootstrapScreen(
@@ -49,6 +58,8 @@ fun BootstrapScreen(
     onForgetStoredDevice: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     var profileName by rememberSaveable { mutableStateOf("") }
     var handle by rememberSaveable { mutableStateOf("") }
     var profileBio by rememberSaveable { mutableStateOf("") }
@@ -56,7 +67,53 @@ fun BootstrapScreen(
     var linkPayload by rememberSaveable { mutableStateOf("") }
     var linkDeviceDisplayName by rememberSaveable { mutableStateOf(defaultDeviceName()) }
     var editableBaseUrl by rememberSaveable(baseUrl) { mutableStateOf(baseUrl) }
+    var linkImportStatusMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var linkImportHasError by rememberSaveable { mutableStateOf(false) }
     val isBusy = busyMessage != null
+    val qrScanner = remember(context) {
+        GmsBarcodeScanning.getClient(
+            context,
+            GmsBarcodeScannerOptions.Builder()
+                .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+                .enableAutoZoom()
+                .build(),
+        )
+    }
+
+    fun importLinkPayload(rawValue: String, sourceLabel: String) {
+        val normalizedPayload = rawValue.trim()
+        if (normalizedPayload.isBlank()) {
+            linkImportStatusMessage = "$sourceLabel did not provide a link payload."
+            linkImportHasError = true
+            return
+        }
+        linkPayload = normalizedPayload
+        linkImportStatusMessage = "Link payload imported from $sourceLabel."
+        linkImportHasError = false
+    }
+
+    fun importLinkPayloadFromClipboard() {
+        val clipboardPayload = clipboard.getText()?.text.orEmpty()
+        importLinkPayload(clipboardPayload, "clipboard")
+    }
+
+    fun startQrScan() {
+        if (isBusy) {
+            return
+        }
+        linkImportStatusMessage = null
+        qrScanner.startScan()
+            .addOnSuccessListener { barcode ->
+                importLinkPayload(barcode.rawValue.orEmpty(), "QR scan")
+            }
+            .addOnFailureListener { error ->
+                if (error is ApiException && error.statusCode == CommonStatusCodes.CANCELED) {
+                    return@addOnFailureListener
+                }
+                linkImportStatusMessage = error.message ?: "QR scan failed"
+                linkImportHasError = true
+            }
+    }
 
     Box(
         modifier = modifier
@@ -139,11 +196,19 @@ fun BootstrapScreen(
 
                 LinkExistingAccountCard(
                     linkPayload = linkPayload,
-                    onLinkPayloadChange = { linkPayload = it },
+                    onLinkPayloadChange = {
+                        linkPayload = it
+                        linkImportStatusMessage = null
+                        linkImportHasError = false
+                    },
                     deviceDisplayName = linkDeviceDisplayName,
                     onDeviceDisplayNameChange = { linkDeviceDisplayName = it },
                     isBusy = isBusy,
                     busyMessage = busyMessage,
+                    importStatusMessage = linkImportStatusMessage,
+                    importStatusIsError = linkImportHasError,
+                    onScanQr = ::startQrScan,
+                    onPasteFromClipboard = ::importLinkPayloadFromClipboard,
                     onCompleteLinkIntent = {
                         onCompleteLinkIntent(
                             LinkExistingAccountInput(
@@ -430,6 +495,10 @@ private fun LinkExistingAccountCard(
     onDeviceDisplayNameChange: (String) -> Unit,
     isBusy: Boolean,
     busyMessage: String?,
+    importStatusMessage: String?,
+    importStatusIsError: Boolean,
+    onScanQr: () -> Unit,
+    onPasteFromClipboard: () -> Unit,
     onCompleteLinkIntent: () -> Unit,
 ) {
     Surface(
@@ -447,10 +516,35 @@ private fun LinkExistingAccountCard(
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = "Paste the raw link payload created on a trusted device. If the payload carries a different backend URL, Android will adopt it automatically after a successful import.",
+                text = "Scan the QR code from a trusted device first. Raw JSON paste stays available as a fallback, and Android will adopt the payload's backend URL after a successful import.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(
+                    onClick = onScanQr,
+                    enabled = !isBusy,
+                ) {
+                    Text("Scan QR")
+                }
+                OutlinedButton(
+                    onClick = onPasteFromClipboard,
+                    enabled = !isBusy,
+                ) {
+                    Text("Paste Clipboard")
+                }
+            }
+            if (!importStatusMessage.isNullOrBlank()) {
+                Text(
+                    text = importStatusMessage,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (importStatusIsError) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
             OutlinedTextField(
                 value = linkPayload,
                 onValueChange = onLinkPayloadChange,
