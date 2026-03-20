@@ -132,6 +132,8 @@ make ffi-bindings OUT=/tmp/trix-bindings
   - `FfiServerWebSocketClient.send_typing_update(...)`
   - `FfiServerWebSocketClient.send_history_sync_progress(...)`
   - `FfiServerWebSocketClient.close()`
+- For `v0`, websocket is treated as a low-latency inbox delivery transport, not as a general realtime bus.
+- `send_typing_update(...)` and `send_history_sync_progress(...)` remain available only as compatibility no-ops for in-flight client branches; they are not part of the guaranteed `v0` realtime contract.
 - `next_frame()` returns a typed `FfiWebSocketServerFrame` with `kind` plus payload fields for:
   - `hello`
   - `inbox`

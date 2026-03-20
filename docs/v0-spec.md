@@ -361,7 +361,6 @@ Fields:
 - `attachment_blobs`
 - `attachment_blob_chat_refs`
 - `history_sync_jobs`
-- `idempotency_keys`
 - `auth_challenges`
 
 ### Required Indexes
@@ -437,10 +436,6 @@ Fields:
 
 - index on `(target_device_id, job_status)`
 - index on `(account_id, job_status)`
-
-### idempotency_keys
-
-- unique index on `(scope, key)`
 
 ### auth_challenges
 
@@ -527,8 +522,7 @@ Used for:
 - device session establishment
 - low-latency inbox delivery
 - acks
-- typing and receipt updates
-- background sync coordination
+- presence heartbeats
 
 The WebSocket channel carries server envelopes only. Decryption happens entirely on the client.
 
@@ -694,6 +688,7 @@ Rules:
 
 - only the target authenticated device can fetch it
 - payload remains opaque to the server
+- ciphertext is single-consume and is cleared after the first successful fetch
 
 ### `POST /v0/devices/{device_id}/revoke`
 
@@ -874,18 +869,18 @@ Request:
 - `content_type`
 - `ciphertext`
 - `aad_json`
-- idempotency key
 
 Response:
 
+- `message_id`
 - `server_seq`
-- `accepted_at`
 
 Rules:
 
 - server validates sender device is an active member of the chat
 - server serializes commit application per chat
-- idempotent retries return the existing accepted message
+- duplicate `message_id` with the same payload is idempotent and returns the existing result
+- duplicate `message_id` with a different payload returns `409`
 
 ### `GET /v0/inbox?limit=...&after_inbox_id=...`
 
@@ -955,17 +950,21 @@ Returns blob metadata as headers.
 
 ### Server Frames
 
+- `hello`
 - `inbox_items`
-- `device_log_update`
-- `chat_state_update`
-- `history_sync_update`
+- `acked`
+- `pong`
 - `session_replaced`
+- `error`
 
 ### Client Frames
 
 - `ack`
-- `typing_update`
 - `presence_ping`
+
+Compatibility-only client frames accepted as no-ops in `v0`:
+
+- `typing_update`
 - `history_sync_progress`
 
 ## Sequence Flows

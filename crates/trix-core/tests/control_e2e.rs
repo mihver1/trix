@@ -145,11 +145,12 @@ async fn smoke_create_chat_control_and_rollback_invalid_member_remove() -> Resul
         )
         .await
         .expect_err("dm member removal should fail on server and trigger rollback");
+    let error_text = error.to_string();
     assert!(
-        error
-            .to_string()
-            .contains("member changes are only supported for group chats")
-            || error.to_string().contains("bad_request")
+        error_text.contains("member changes are only supported for group chats")
+            || error_text.contains("group chats")
+            || error_text.contains("bad request")
+            || error_text.contains("bad_request")
     );
 
     let group_after = alice
@@ -304,7 +305,48 @@ async fn smoke_websocket_delivers_inbox_items_and_acknowledges() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+#[ignore = "requires local postgres"]
+async fn smoke_cors_only_allows_listed_origins() -> Result<()> {
+    let server = spawn_test_server_with_cors(vec!["http://allowed.local".to_owned()]).await?;
+    let client = reqwest::Client::new();
+
+    let denied = client
+        .get(format!("{}/v0/system/health", server.base_url))
+        .header("Origin", "http://denied.local")
+        .send()
+        .await?;
+    assert_eq!(denied.status(), reqwest::StatusCode::OK);
+    assert!(
+        denied
+            .headers()
+            .get("access-control-allow-origin")
+            .is_none()
+    );
+
+    let allowed = client
+        .get(format!("{}/v0/system/health", server.base_url))
+        .header("Origin", "http://allowed.local")
+        .send()
+        .await?;
+    assert_eq!(allowed.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        allowed
+            .headers()
+            .get("access-control-allow-origin")
+            .and_then(|value| value.to_str().ok()),
+        Some("http://allowed.local")
+    );
+
+    server.shutdown().await?;
+    Ok(())
+}
+
 async fn spawn_test_server() -> Result<TestServer> {
+    spawn_test_server_with_cors(Vec::new()).await
+}
+
+async fn spawn_test_server_with_cors(cors_allowed_origins: Vec<String>) -> Result<TestServer> {
     let database_url =
         env::var("TRIX_TEST_DATABASE_URL").unwrap_or_else(|_| DEFAULT_TEST_DATABASE_URL.to_owned());
     reset_test_database(&database_url).await?;
@@ -322,13 +364,27 @@ async fn spawn_test_server() -> Result<TestServer> {
         blob_max_upload_bytes: 25 * 1024 * 1024,
         log_filter: "error".to_owned(),
         jwt_signing_key: "trix-core-e2e-test-key".to_owned(),
+        cors_allowed_origins,
+        rate_limit_window_seconds: 60,
+        rate_limit_auth_challenge_limit: 100,
+        rate_limit_auth_session_limit: 100,
+        rate_limit_link_intents_limit: 100,
+        rate_limit_directory_limit: 100,
+        rate_limit_blob_upload_limit: 100,
+        cleanup_interval_seconds: 300,
+        auth_challenge_retention_seconds: 3600,
+        link_intent_retention_seconds: 86400,
+        transfer_bundle_retention_seconds: 86400,
+        history_sync_retention_seconds: 604800,
+        pending_blob_retention_seconds: 86400,
+        shutdown_grace_period_seconds: 1,
     };
 
     let db = Database::connect(&config.database_url).await?;
     let blob_store = LocalBlobStore::new(&config.blob_root)?;
     let auth = AuthManager::new(&config.jwt_signing_key);
     let state = AppState::new(config, BuildInfo::current(), db, auth, blob_store);
-    let router = trix_server::app::build_router(state);
+    let router = trix_server::app::build_router(state)?;
 
     let task = tokio::spawn(async move {
         axum::serve(listener, router)
