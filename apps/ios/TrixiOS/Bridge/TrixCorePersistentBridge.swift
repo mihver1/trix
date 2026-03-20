@@ -401,6 +401,10 @@ enum TrixCorePersistentBridge {
     ) throws -> ModifyChatMembersResponse {
         let context = try loadOrCreateContext(identity: identity)
         let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        _ = try prepareConversationIfNeeded(
+            context: context,
+            chatId: chatId
+        )
         let outcome = try context.syncCoordinator.addChatMembersControl(
             client: client,
             store: context.historyStore,
@@ -432,6 +436,10 @@ enum TrixCorePersistentBridge {
     ) throws -> ModifyChatMembersResponse {
         let context = try loadOrCreateContext(identity: identity)
         let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        _ = try prepareConversationIfNeeded(
+            context: context,
+            chatId: chatId
+        )
         let outcome = try context.syncCoordinator.removeChatMembersControl(
             client: client,
             store: context.historyStore,
@@ -463,6 +471,10 @@ enum TrixCorePersistentBridge {
     ) throws -> ModifyChatDevicesResponse {
         let context = try loadOrCreateContext(identity: identity)
         let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        _ = try prepareConversationIfNeeded(
+            context: context,
+            chatId: chatId
+        )
         let outcome = try context.syncCoordinator.addChatDevicesControl(
             client: client,
             store: context.historyStore,
@@ -494,6 +506,10 @@ enum TrixCorePersistentBridge {
     ) throws -> ModifyChatDevicesResponse {
         let context = try loadOrCreateContext(identity: identity)
         let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        _ = try prepareConversationIfNeeded(
+            context: context,
+            chatId: chatId
+        )
         let outcome = try context.syncCoordinator.removeChatDevicesControl(
             client: client,
             store: context.historyStore,
@@ -793,17 +809,41 @@ private extension TrixCorePersistentBridge {
         chatId: String
     ) throws -> PersistentConversationContext {
         let context = try loadOrCreateContext(identity: identity)
-        guard let groupId = try context.historyStore.chatMlsGroupId(chatId: chatId) else {
-            throw TrixCorePersistentBridgeError.missingMlsGroupID(chatId: chatId)
-        }
-        guard let conversation = try context.mlsFacade.loadGroup(groupId: groupId) else {
-            throw TrixCorePersistentBridgeError.missingConversationState(chatId: chatId)
-        }
+        let conversation = try prepareConversationIfNeeded(
+            context: context,
+            chatId: chatId
+        )
 
         return PersistentConversationContext(
             context: context,
             conversation: conversation
         )
+    }
+
+    static func prepareConversationIfNeeded(
+        context: PersistentCoreContext,
+        chatId: String,
+        projectionLimit: Int = 500
+    ) throws -> FfiMlsConversation {
+        if let groupId = try context.historyStore.chatMlsGroupId(chatId: chatId),
+           let conversation = try context.mlsFacade.loadGroup(groupId: groupId) {
+            return conversation
+        }
+
+        guard let conversation = try context.historyStore.loadOrBootstrapChatConversation(
+            chatId: chatId,
+            facade: context.mlsFacade
+        ) else {
+            throw TrixCorePersistentBridgeError.missingMlsGroupID(chatId: chatId)
+        }
+
+        _ = try context.historyStore.projectChatMessages(
+            chatId: chatId,
+            facade: context.mlsFacade,
+            conversation: conversation,
+            limit: UInt32(min(max(projectionLimit, 1), 500))
+        )
+        return conversation
     }
 
     static func saveContextState(_ context: PersistentCoreContext) throws {

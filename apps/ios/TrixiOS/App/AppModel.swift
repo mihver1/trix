@@ -1150,8 +1150,42 @@ final class AppModel: ObservableObject {
             limit: 100
         )
 
+        if let existingHistory = localHistory {
+            let localHistoryServerSeq = existingHistory.messages.map(\.serverSeq).max() ?? 0
+            let localTimelineServerSeq = localTimelineItems.map(\.serverSeq).max() ?? 0
+            let needsProjectionCatchUp = localHistoryServerSeq > localTimelineServerSeq
+
+            if needsProjectionCatchUp {
+                let projected = (try? TrixCorePersistentBridge.projectChatMessagesIfPossible(
+                    identity: context.identity,
+                    chatId: chatId,
+                    limit: 500
+                )) ?? false
+                if !projected {
+                    _ = try? TrixCorePersistentBridge.recoverConversationProjectionIfNeeded(
+                        identity: context.identity,
+                        chatId: chatId,
+                        historyMessages: existingHistory.messages,
+                        limit: 500
+                    )
+                }
+
+                localTimelineItems = try TrixCorePersistentBridge.loadLocalTimeline(
+                    identity: context.identity,
+                    chatId: chatId,
+                    limit: 150
+                )
+                localHistory = try TrixCorePersistentBridge.loadLocalChatHistory(
+                    identity: context.identity,
+                    chatId: chatId,
+                    limit: 100
+                )
+            }
+        }
+
         let localServerSeq = localHistory?.messages.map(\.serverSeq).max() ?? 0
-        let needsProjectionBootstrap = localTimelineItems.isEmpty
+        let localTimelineServerSeq = localTimelineItems.map(\.serverSeq).max() ?? 0
+        let needsProjectionBootstrap = localTimelineItems.isEmpty || localServerSeq > localTimelineServerSeq
         let shouldBackfillFromServer = localHistory == nil
             || localServerSeq < detail.lastServerSeq
             || needsProjectionBootstrap
@@ -1677,6 +1711,8 @@ final class AppModel: ObservableObject {
         } catch {
             realtimeClient = nil
             realtimeAccessToken = nil
+            errorMessage = error.localizedDescription
+            scheduleBackgroundRefresh(delayNanoseconds: 300_000_000)
         }
     }
 
@@ -1787,6 +1823,7 @@ final class AppModel: ObservableObject {
 
             guard !self.isLoading else {
                 self.finishBackgroundRefresh()
+                self.scheduleBackgroundRefresh(delayNanoseconds: 300_000_000)
                 return
             }
 

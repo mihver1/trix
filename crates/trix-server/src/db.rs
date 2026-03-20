@@ -2671,6 +2671,14 @@ impl Database {
             .map_err(map_db_error)?;
         }
 
+        let reserved_target_device_ids = active_device_rows
+            .iter()
+            .map(|row| row_uuid(row, "device_id"))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|device_id| *device_id != input.creator_device_id)
+            .collect::<Vec<_>>();
+
         for (leaf_index, row) in active_device_rows.into_iter().enumerate() {
             sqlx::query(
                 r#"
@@ -2699,11 +2707,11 @@ impl Database {
         .await
         .map_err(map_db_error)?;
 
-        consume_reserved_key_packages_tx(
+        consume_reserved_key_packages_for_devices_tx(
             &mut tx,
             input.creator_account_id,
             chat_id,
-            &target_account_ids,
+            &reserved_target_device_ids,
             &input.reserved_key_package_ids,
         )
         .await?;
@@ -5735,6 +5743,131 @@ mod tests {
                 .is_some(),
             "primary device must keep access after secondary removal"
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn create_chat_consumes_reserved_packages_for_creator_secondary_device() {
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [11; 32],
+                [12; 32],
+            ))
+            .await
+            .expect("create alice account");
+        let bob = db
+            .create_account(make_account_input("bob", "Bob Primary", [21; 32], [22; 32]))
+            .await
+            .expect("create bob account");
+
+        let intent = db
+            .create_link_intent(alice.account_id, alice.device_id)
+            .await
+            .expect("create link intent");
+        let completed = db
+            .complete_link_intent(CompleteLinkIntentInput {
+                link_intent_id: intent.link_intent_id,
+                link_token: intent.link_token,
+                device_display_name: "Alice Secondary".to_owned(),
+                platform: "macos".to_owned(),
+                credential_identity: b"alice-secondary-credential".to_vec(),
+                transport_pubkey: vec![32; 32],
+                key_packages: vec![KeyPackageBytesInput {
+                    cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                    key_package_bytes: b"alice-secondary-kp".to_vec(),
+                }],
+            })
+            .await
+            .expect("complete link intent");
+
+        db.approve_pending_device(ApprovePendingDeviceInput {
+            actor_account_id: alice.account_id,
+            actor_device_id: alice.device_id,
+            target_device_id: completed.pending_device_id,
+            account_root_signature: vec![99; 64],
+            transfer_bundle_ciphertext: None,
+        })
+        .await
+        .expect("approve secondary device");
+
+        db.publish_key_packages(
+            bob.device_id,
+            vec![PublishKeyPackageInput {
+                device_id: bob.device_id,
+                cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                key_package_bytes: b"bob-primary-kp".to_vec(),
+            }],
+        )
+        .await
+        .expect("publish bob key package");
+
+        let alice_reserved = db
+            .reserve_key_packages_for_devices(
+                alice.account_id,
+                alice.account_id,
+                vec![completed.pending_device_id],
+            )
+            .await
+            .expect("reserve alice secondary key package");
+        let bob_reserved = db
+            .reserve_key_packages_for_account(alice.account_id, bob.account_id)
+            .await
+            .expect("reserve bob key package");
+
+        let reserved_key_package_ids = alice_reserved
+            .iter()
+            .chain(bob_reserved.iter())
+            .map(|package| package.key_package_id)
+            .collect::<Vec<_>>();
+
+        let dm = db
+            .create_chat(CreateChatInput {
+                creator_account_id: alice.account_id,
+                creator_device_id: alice.device_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                participant_account_ids: vec![bob.account_id],
+                reserved_key_package_ids: reserved_key_package_ids.clone(),
+                initial_commit: Some(make_control_message("dm-create-commit")),
+                welcome_message: Some(make_control_message("dm-create-welcome")),
+            })
+            .await
+            .expect("create dm with creator secondary device");
+
+        assert_eq!(dm.epoch, 1);
+        assert!(
+            db.get_chat_detail_for_device(dm.chat_id, completed.pending_device_id)
+                .await
+                .expect("secondary device lookup succeeds")
+                .is_some(),
+            "creator secondary device must be present in the newly created chat"
+        );
+        assert!(
+            db.get_chat_detail_for_device(dm.chat_id, bob.device_id)
+                .await
+                .expect("bob lookup succeeds")
+                .is_some(),
+            "participant device must be present in the newly created chat"
+        );
+
+        let consumed_count: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*)
+            FROM device_key_packages
+            WHERE key_package_id = ANY($1)
+              AND status = 'consumed'::key_package_status
+            "#,
+        )
+        .bind(&reserved_key_package_ids)
+        .fetch_one(&db.pool)
+        .await
+        .expect("read consumed key package count");
+        assert_eq!(consumed_count, reserved_key_package_ids.len() as i64);
     }
 
     #[tokio::test]

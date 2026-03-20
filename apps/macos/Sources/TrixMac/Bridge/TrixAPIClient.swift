@@ -579,12 +579,11 @@ struct TrixAPIClient {
                 storageRoot: mlsStorageRoot,
                 credentialIdentity: credentialIdentity
             )
-            guard let groupId = try store.chatMlsGroupId(chatId: chatId.uuidString) else {
-                throw TrixAPIError.invalidPayload("Этот чат ещё не готов к отправке с этого Mac.")
-            }
-            guard let conversation = try facade.loadGroup(groupId: groupId) else {
-                throw TrixAPIError.invalidPayload("Локальное MLS-состояние для этого чата ещё не восстановлено.")
-            }
+            let conversation = try Self.prepareConversationIfNeeded(
+                store: store,
+                facade: facade,
+                chatId: chatId
+            )
 
             let outcome = try coordinator.sendMessageBody(
                 client: client,
@@ -661,6 +660,11 @@ struct TrixAPIClient {
                 storageRoot: mlsStorageRoot,
                 credentialIdentity: credentialIdentity
             )
+            _ = try Self.prepareConversationIfNeeded(
+                store: store,
+                facade: facade,
+                chatId: chatId
+            )
             let outcome = try coordinator.addChatMembersControl(
                 client: client,
                 store: store,
@@ -698,6 +702,11 @@ struct TrixAPIClient {
             let facade = try Self.makePersistentMlsFacade(
                 storageRoot: mlsStorageRoot,
                 credentialIdentity: credentialIdentity
+            )
+            _ = try Self.prepareConversationIfNeeded(
+                store: store,
+                facade: facade,
+                chatId: chatId
             )
             let outcome = try coordinator.removeChatMembersControl(
                 client: client,
@@ -737,6 +746,11 @@ struct TrixAPIClient {
                 storageRoot: mlsStorageRoot,
                 credentialIdentity: credentialIdentity
             )
+            _ = try Self.prepareConversationIfNeeded(
+                store: store,
+                facade: facade,
+                chatId: chatId
+            )
             let outcome = try coordinator.addChatDevicesControl(
                 client: client,
                 store: store,
@@ -774,6 +788,11 @@ struct TrixAPIClient {
             let facade = try Self.makePersistentMlsFacade(
                 storageRoot: mlsStorageRoot,
                 credentialIdentity: credentialIdentity
+            )
+            _ = try Self.prepareConversationIfNeeded(
+                store: store,
+                facade: facade,
+                chatId: chatId
             )
             let outcome = try coordinator.removeChatDevicesControl(
                 client: client,
@@ -1180,6 +1199,33 @@ struct TrixAPIClient {
             credentialIdentity: credentialIdentity,
             storageRoot: storageRoot.path
         )
+    }
+
+    private static func prepareConversationIfNeeded(
+        store: FfiLocalHistoryStore,
+        facade: FfiMlsFacade,
+        chatId: UUID,
+        projectionLimit: Int = 500
+    ) throws -> FfiMlsConversation {
+        if let groupId = try store.chatMlsGroupId(chatId: chatId.uuidString),
+           let conversation = try facade.loadGroup(groupId: groupId) {
+            return conversation
+        }
+
+        guard let conversation = try store.loadOrBootstrapChatConversation(
+            chatId: chatId.uuidString,
+            facade: facade
+        ) else {
+            throw TrixAPIError.invalidPayload("Этот чат ещё не готов к отправке с этого Mac.")
+        }
+
+        _ = try store.projectChatMessages(
+            chatId: chatId.uuidString,
+            facade: facade,
+            conversation: conversation,
+            limit: try TrixCoreCodec.uint32(projectionLimit, label: "bootstrap projection limit")
+        )
+        return conversation
     }
 
     private func decode<Response: Decodable>(data: Data, response: URLResponse) throws -> Response {

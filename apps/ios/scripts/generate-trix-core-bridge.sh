@@ -11,7 +11,9 @@ ARTIFACTS_DIR="$IOS_DIR/Vendor"
 XCFRAMEWORK_PATH="$ARTIFACTS_DIR/TrixCoreFFI.xcframework"
 
 IOS_DEVICE_TARGET="aarch64-apple-ios"
-IOS_SIMULATOR_TARGET="aarch64-apple-ios-sim"
+IOS_SIMULATOR_ARM_TARGET="aarch64-apple-ios-sim"
+IOS_SIMULATOR_X86_TARGET="x86_64-apple-ios"
+SIMULATOR_UNIVERSAL_DIR="$REPO_ROOT/target/ios-simulator-universal/release"
 IOS_DEPLOYMENT_TARGET="17.0"
 
 ensure_target() {
@@ -25,7 +27,8 @@ ensure_target() {
 mkdir -p "$GENERATED_DIR" "$ARTIFACTS_DIR"
 
 ensure_target "$IOS_DEVICE_TARGET"
-ensure_target "$IOS_SIMULATOR_TARGET"
+ensure_target "$IOS_SIMULATOR_ARM_TARGET"
+ensure_target "$IOS_SIMULATOR_X86_TARGET"
 
 pushd "$REPO_ROOT" >/dev/null
 
@@ -41,14 +44,22 @@ cp "$GENERATED_DIR/trix_coreFFI.modulemap" "$GENERATED_DIR/module.modulemap"
 IPHONEOS_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET" \
   cargo build -p trix-core --target "$IOS_DEVICE_TARGET" --release --lib
 IPHONEOS_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET" \
-  cargo build -p trix-core --target "$IOS_SIMULATOR_TARGET" --release --lib
+  cargo build -p trix-core --target "$IOS_SIMULATOR_ARM_TARGET" --release --lib
+IPHONEOS_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET" \
+  cargo build -p trix-core --target "$IOS_SIMULATOR_X86_TARGET" --release --lib
+
+mkdir -p "$SIMULATOR_UNIVERSAL_DIR"
+lipo -create \
+  "$REPO_ROOT/target/$IOS_SIMULATOR_ARM_TARGET/release/libtrix_core.a" \
+  "$REPO_ROOT/target/$IOS_SIMULATOR_X86_TARGET/release/libtrix_core.a" \
+  -output "$SIMULATOR_UNIVERSAL_DIR/libtrix_core.a"
 
 rm -rf "$XCFRAMEWORK_PATH"
 
 xcodebuild -create-xcframework \
   -library "$REPO_ROOT/target/$IOS_DEVICE_TARGET/release/libtrix_core.a" \
   -headers "$GENERATED_DIR" \
-  -library "$REPO_ROOT/target/$IOS_SIMULATOR_TARGET/release/libtrix_core.a" \
+  -library "$SIMULATOR_UNIVERSAL_DIR/libtrix_core.a" \
   -headers "$GENERATED_DIR" \
   -output "$XCFRAMEWORK_PATH"
 

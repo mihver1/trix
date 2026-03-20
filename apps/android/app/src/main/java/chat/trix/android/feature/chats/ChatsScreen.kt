@@ -159,9 +159,35 @@ fun ChatsScreen(
         directoryState = ChatsDirectoryState()
     }
 
+    suspend fun <T> withFreshRepository(
+        block: suspend (ChatRepository) -> T,
+    ): T {
+        val freshRepository = ChatRepository(
+            context = context,
+            session = session,
+        )
+        return try {
+            block(freshRepository)
+        } finally {
+            freshRepository.close()
+        }
+    }
+
     suspend fun loadCachedOverview(): ChatOverview? {
         return try {
-            repository.loadOverview()
+            withFreshRepository { freshRepository ->
+                freshRepository.loadOverview()
+            }
+        } catch (_: IOException) {
+            null
+        }
+    }
+
+    suspend fun loadCachedConversation(chatId: String): ChatConversation? {
+        return try {
+            withFreshRepository { freshRepository ->
+                freshRepository.loadConversation(chatId)
+            }
         } catch (_: IOException) {
             null
         }
@@ -555,7 +581,7 @@ fun ChatsScreen(
         )
 
         detailState = try {
-            val conversation = repository.loadConversation(chatId)
+            val conversation = loadCachedConversation(chatId)
             val loadedState = ChatsDetailState(
                 conversation = conversation,
                 isLoading = false,
@@ -581,7 +607,7 @@ fun ChatsScreen(
         }
 
         val localOverview = runCatching {
-            repository.loadOverview()
+            loadCachedOverview()
         }.getOrNull()
 
         if (localOverview != null) {
@@ -597,7 +623,7 @@ fun ChatsScreen(
             (realtimeChangedChatIds.isEmpty() || selectedChatId in realtimeChangedChatIds)
         ) {
             val refreshedConversation = runCatching {
-                repository.loadConversation(selectedChatId)
+                loadCachedConversation(selectedChatId)
             }.getOrNull()
 
             if (refreshedConversation != null) {

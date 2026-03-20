@@ -406,7 +406,7 @@ struct ChatDetailView: View {
                     .disabled(isLoadingSnapshot || model.isLoading)
             }
         }
-        .task(id: chatSummary.chatId) {
+        .task(id: liveSnapshotRefreshToken) {
             await loadSnapshot()
         }
         .refreshable {
@@ -433,6 +433,17 @@ struct ChatDetailView: View {
         }
 
         return chatSummary.resolvedTitle(currentAccountId: model.localIdentity?.accountId)
+    }
+
+    private var liveSnapshotRefreshToken: String {
+        let dashboardServerSeq = model.dashboard?
+            .chats
+            .first { $0.chatId == chatSummary.chatId }?
+            .lastServerSeq ?? chatSummary.lastServerSeq
+        let localChatItem = model.localCoreState?.chatListItem(for: chatSummary.chatId)
+        let localServerSeq = localChatItem?.lastServerSeq ?? 0
+        let localPreviewSeq = localChatItem?.previewServerSeq ?? 0
+        return "\(chatSummary.chatId)|\(dashboardServerSeq)|\(localServerSeq)|\(localPreviewSeq)"
     }
 
     private func reload() {
