@@ -14,6 +14,9 @@ import chat.trix.android.core.ffi.FfiCreateChatControlInput
 import chat.trix.android.core.ffi.FfiDirectoryAccount
 import chat.trix.android.core.ffi.FfiLocalChatListItem
 import chat.trix.android.core.ffi.FfiLocalHistoryStore
+import chat.trix.android.core.ffi.FfiLocalOutboxAttachmentDraft
+import chat.trix.android.core.ffi.FfiLocalOutboxItem
+import chat.trix.android.core.ffi.FfiLocalOutboxStatus
 import chat.trix.android.core.ffi.FfiLocalProjectionKind
 import chat.trix.android.core.ffi.FfiLocalTimelineItem
 import chat.trix.android.core.ffi.FfiMessageBody
@@ -21,6 +24,7 @@ import chat.trix.android.core.ffi.FfiMessageBodyKind
 import chat.trix.android.core.ffi.FfiModifyChatMembersControlInput
 import chat.trix.android.core.ffi.FfiMlsConversation
 import chat.trix.android.core.ffi.FfiMlsFacade
+import chat.trix.android.core.ffi.FfiReceiptType
 import chat.trix.android.core.ffi.FfiSendMessageInput
 import chat.trix.android.core.ffi.FfiServerApiClient
 import chat.trix.android.core.ffi.FfiSyncCoordinator
@@ -115,6 +119,7 @@ class ChatRepository(
             )
             val hydratedChatDetails = hydrateChatDetails(client, store)
             val projectedChatTimelines = projectChatsWithLocalMlsState(store)
+            val flushedOutboxCount = flushPendingOutboxNow()
 
             ChatRefreshResult(
                 overview = buildOverview(),
@@ -123,7 +128,14 @@ class ChatRepository(
                 ackedInboxCount = inboxOutcome.ackedInboxIds.size,
                 hydratedChatDetails = hydratedChatDetails,
                 projectedChatTimelines = projectedChatTimelines,
+                flushedOutboxCount = flushedOutboxCount,
             )
+        }
+    }
+
+    suspend fun flushPendingOutbox(): Int = withContext(Dispatchers.IO) {
+        runFfi("Failed to flush local outbox") {
+            flushPendingOutboxNow()
         }
     }
 
@@ -305,58 +317,41 @@ class ChatRepository(
         }
 
         runFfi("Failed to send message") {
-            val client = client()
             val store = historyStore()
-            val syncCoordinator = syncCoordinator()
-            val facade = mlsFacade()
+            store.enqueueOutboxMessage(
+                chatId = chatId,
+                senderAccountId = session.localState.accountId,
+                senderDeviceId = session.localState.deviceId,
+                messageId = UUID.randomUUID().toString(),
+                body = FfiMessageBody(
+                    kind = FfiMessageBodyKind.TEXT,
+                    text = normalizedDraft,
+                    targetMessageId = null,
+                    emoji = null,
+                    reactionAction = null,
+                    receiptType = null,
+                    receiptAtUnix = null,
+                    blobId = null,
+                    mimeType = null,
+                    sizeBytes = null,
+                    sha256 = null,
+                    fileName = null,
+                    widthPx = null,
+                    heightPx = null,
+                    fileKey = null,
+                    nonce = null,
+                    eventType = null,
+                    eventJson = null,
+                ),
+                queuedAtUnix = currentUnixSeconds().toULong(),
+            )
+            flushPendingOutboxNow(chatId)
 
-            client.setAccessToken(session.accessToken)
-            val conversation = getOrCreateSendConversation(chatId)
-                ?: throw IOException("Local MLS state is not available for this conversation")
-
-            try {
-                syncCoordinator.sendMessageBody(
-                    client = client,
-                    store = store,
-                    facade = facade,
-                    conversation = conversation,
-                    input = FfiSendMessageInput(
-                        senderAccountId = session.localState.accountId,
-                        senderDeviceId = session.localState.deviceId,
-                        chatId = chatId,
-                        messageId = UUID.randomUUID().toString(),
-                        body = FfiMessageBody(
-                            kind = FfiMessageBodyKind.TEXT,
-                            text = normalizedDraft,
-                            targetMessageId = null,
-                            emoji = null,
-                            reactionAction = null,
-                            receiptType = null,
-                            receiptAtUnix = null,
-                            blobId = null,
-                            mimeType = null,
-                            sizeBytes = null,
-                            sha256 = null,
-                            fileName = null,
-                            widthPx = null,
-                            heightPx = null,
-                            fileKey = null,
-                            nonce = null,
-                            eventType = null,
-                            eventJson = null,
-                        ),
-                        aadJson = EMPTY_AAD_JSON,
-                    ),
-                )
-
-                ChatSendResult(
-                    overview = buildOverview(),
-                    conversation = buildConversation(chatId)
-                        ?: throw IOException("Conversation $chatId is no longer available"),
-                )
-            } finally {
-                conversation.close()
-            }
+            ChatSendResult(
+                overview = buildOverview(),
+                conversation = buildConversation(chatId)
+                    ?: throw IOException("Conversation $chatId is no longer available"),
+            )
         }
     }
 
@@ -365,43 +360,33 @@ class ChatRepository(
         contentUri: Uri,
     ): ChatSendResult = withContext(Dispatchers.IO) {
         runFfi("Failed to send attachment") {
-            val client = client()
             val store = historyStore()
-            val syncCoordinator = syncCoordinator()
-            val facade = mlsFacade()
-
-            client.setAccessToken(session.accessToken)
-            val uploadedAttachment = attachmentRepository().uploadAttachment(
-                chatId = chatId,
+            val messageId = UUID.randomUUID().toString()
+            val stagedAttachment = attachmentRepository().stageAttachmentForOutbox(
                 contentUri = contentUri,
+                messageId = messageId,
             )
-            val conversation = getOrCreateSendConversation(chatId)
-                ?: throw IOException("Local MLS state is not available for this conversation")
+            store.enqueueOutboxAttachment(
+                chatId = chatId,
+                senderAccountId = session.localState.accountId,
+                senderDeviceId = session.localState.deviceId,
+                messageId = messageId,
+                attachment = FfiLocalOutboxAttachmentDraft(
+                    localPath = stagedAttachment.localPath,
+                    mimeType = stagedAttachment.mimeType,
+                    fileName = stagedAttachment.fileName,
+                    widthPx = stagedAttachment.widthPx?.toUInt(),
+                    heightPx = stagedAttachment.heightPx?.toUInt(),
+                ),
+                queuedAtUnix = currentUnixSeconds().toULong(),
+            )
+            flushPendingOutboxNow(chatId)
 
-            try {
-                syncCoordinator.sendMessageBody(
-                    client = client,
-                    store = store,
-                    facade = facade,
-                    conversation = conversation,
-                    input = FfiSendMessageInput(
-                        senderAccountId = session.localState.accountId,
-                        senderDeviceId = session.localState.deviceId,
-                        chatId = chatId,
-                        messageId = UUID.randomUUID().toString(),
-                        body = uploadedAttachment.body,
-                        aadJson = EMPTY_AAD_JSON,
-                    ),
-                )
-
-                ChatSendResult(
-                    overview = buildOverview(),
-                    conversation = buildConversation(chatId)
-                        ?: throw IOException("Conversation $chatId is no longer available"),
-                )
-            } finally {
-                conversation.close()
-            }
+            ChatSendResult(
+                overview = buildOverview(),
+                conversation = buildConversation(chatId)
+                    ?: throw IOException("Conversation $chatId is no longer available"),
+            )
         }
     }
 
@@ -416,8 +401,21 @@ class ChatRepository(
     suspend fun markConversationRead(chatId: String): ChatReadResult = withContext(Dispatchers.IO) {
         runFfi("Failed to update chat read state") {
             val store = historyStore()
-            val previous = store.getChatReadState(chatId, session.localState.accountId)
-            val updated = store.markChatRead(chatId, null, session.localState.accountId)
+            val selfAccountId = session.localState.accountId
+            val previous = store.getChatReadState(chatId, selfAccountId)
+            val updated = store.markChatRead(chatId, null, selfAccountId)
+            val previousReadCursor = previous?.readCursorServerSeq?.toLong()
+            val updatedReadCursor = updated.readCursorServerSeq.toLong()
+            if (updatedReadCursor > 0 && updatedReadCursor > (previousReadCursor ?: 0L)) {
+                enqueueReadReceiptIfNeeded(
+                    chatId = chatId,
+                    selfAccountId = selfAccountId,
+                    readCursorServerSeq = updatedReadCursor,
+                    previousReadCursorServerSeq = previousReadCursor,
+                    store = store,
+                )
+                flushPendingOutboxNow(chatId)
+            }
 
             ChatReadResult(
                 overview = buildOverview(),
@@ -452,12 +450,25 @@ class ChatRepository(
         val syncSnapshot = syncCoordinator().stateSnapshot()
         val conversations = store.listLocalChatListItems(selfAccountId).map { item ->
             val detail = store.getChat(item.chatId)
+            val pendingOutboxMessages = store.listOutboxMessages(item.chatId)
+            val previewCreatedAtUnix = item.previewCreatedAtUnix?.toLong()
             val messageCount = store.getLocalTimelineItems(
                 item.chatId,
                 selfAccountId,
                 null,
                 null,
-            ).size
+            ).size + pendingOutboxMessages.size
+            val pendingPreview = pendingOutboxPreview(pendingOutboxMessages)
+            val previewText = when {
+                pendingPreview != null && (previewCreatedAtUnix == null || pendingPreview.queuedAtUnix >= previewCreatedAtUnix) ->
+                    pendingPreview.previewText
+                else -> chatPreviewLabel(item)
+            }
+            val timestampLabel = when {
+                pendingPreview != null && (previewCreatedAtUnix == null || pendingPreview.queuedAtUnix >= previewCreatedAtUnix) ->
+                    pendingPreview.queuedAtUnix.formatChatTimestamp()
+                else -> previewCreatedAtUnix?.formatChatTimestamp() ?: "Pending"
+            }
 
             ChatConversationSummary(
                 chatId = item.chatId,
@@ -467,8 +478,8 @@ class ChatRepository(
                     item = item,
                     detail = detail,
                 ),
-                lastMessagePreview = chatPreviewLabel(item),
-                timestampLabel = item.previewCreatedAtUnix?.toLong()?.formatChatTimestamp() ?: "Pending",
+                lastMessagePreview = previewText,
+                timestampLabel = timestampLabel,
                 messageCount = messageCount,
                 unreadCount = item.unreadCount.toInt(),
                 hasProjectedTimeline = messageCount > 0,
@@ -482,6 +493,7 @@ class ChatRepository(
                 cachedChatCount = conversations.size,
                 cachedMessageCount = conversations.sumOf { it.messageCount },
                 projectedChatCount = conversations.count { it.hasProjectedTimeline },
+                pendingOutboxCount = store.listOutboxMessages(null).size,
                 lastAckedInboxId = syncSnapshot.lastAckedInboxId?.toLong(),
                 leaseOwner = syncSnapshot.leaseOwner,
                 historyStorePath = store.databasePath(),
@@ -496,9 +508,11 @@ class ChatRepository(
         val item = store.getLocalChatListItem(chatId, selfAccountId) ?: return null
         val detail = store.getChat(chatId)
         val timelineItems = store.getLocalTimelineItems(chatId, selfAccountId, null, null)
+        val pendingOutboxItems = store.listOutboxMessages(chatId)
         val hasLocalMlsState = hasLocalConversation(chatId)
         val canSend = item.chatType == FfiChatType.ACCOUNT_SYNC || hasLocalMlsState
-        val messages = timelineItems.map(::mapTimelineMessage)
+        val messages = timelineItems.map(::mapTimelineMessage) +
+            pendingOutboxItems.map(::mapOutboxMessage)
         val members = conversationMembers(item, detail)
 
         return ChatConversation(
@@ -509,7 +523,7 @@ class ChatRepository(
                 item = item,
                 detail = detail,
             ),
-            timelineLabel = conversationTimelineLabel(item, timelineItems),
+            timelineLabel = conversationTimelineLabel(item, timelineItems, pendingOutboxItems),
             isAccountSyncChat = chatId == session.localState.accountSyncChatId,
             canSend = canSend,
             canManageMembers = item.chatType == FfiChatType.GROUP && canSend,
@@ -518,6 +532,7 @@ class ChatRepository(
                     "Messages use this device's local MLS state for the account sync thread."
                 }
 
+                pendingOutboxItems.isNotEmpty() -> "Queued messages retry automatically when the device reconnects."
                 canSend -> "Send through the local MLS state already present on this device."
                 else -> "Sending is disabled until this device has local MLS state for this chat."
             },
@@ -579,6 +594,164 @@ class ChatRepository(
         return projectedChatTimelines
     }
 
+    private fun flushPendingOutboxNow(chatId: String? = null): Int {
+        val store = historyStore()
+        val pendingItems = store.listOutboxMessages(chatId)
+        if (pendingItems.isEmpty()) {
+            return 0
+        }
+
+        val client = client()
+        val syncCoordinator = syncCoordinator()
+        val facade = mlsFacade()
+        client.setAccessToken(session.accessToken)
+
+        var flushed = 0
+        for (queued in pendingItems) {
+            try {
+                store.clearOutboxFailure(queued.messageId)
+                flushOutboxItem(
+                    queued = queued,
+                    client = client,
+                    syncCoordinator = syncCoordinator,
+                    facade = facade,
+                    store = store,
+                )
+                store.removeOutboxMessage(queued.messageId)
+                queued.attachmentDraft?.localPath?.let { localPath ->
+                    kotlinx.coroutines.runBlocking {
+                        attachmentRepository().deleteStagedAttachment(localPath)
+                    }
+                }
+                flushed += 1
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: IOException) {
+                store.markOutboxFailure(
+                    queued.messageId,
+                    error.message ?: "Retry pending",
+                )
+            }
+        }
+
+        return flushed
+    }
+
+    private fun enqueueReadReceiptIfNeeded(
+        chatId: String,
+        selfAccountId: String,
+        readCursorServerSeq: Long,
+        previousReadCursorServerSeq: Long?,
+        store: FfiLocalHistoryStore,
+    ) {
+        if (!canQueueReceipt(chatId)) {
+            return
+        }
+
+        val targetMessage = store.getLocalTimelineItems(chatId, selfAccountId, null, null)
+            .asReversed()
+            .firstOrNull { item ->
+                !item.isOutgoing &&
+                    item.serverSeq.toLong() <= readCursorServerSeq &&
+                    item.contentType != FfiContentType.RECEIPT &&
+                    item.body?.kind != FfiMessageBodyKind.RECEIPT
+            }
+            ?: return
+        if (previousReadCursorServerSeq != null && targetMessage.serverSeq.toLong() <= previousReadCursorServerSeq) {
+            return
+        }
+
+        val duplicateQueuedReceipt = store.listOutboxMessages(chatId).any { queued ->
+            val queuedBody = queued.body ?: return@any false
+            queuedBody.kind == FfiMessageBodyKind.RECEIPT &&
+                queuedBody.targetMessageId == targetMessage.messageId &&
+                queuedBody.receiptType == FfiReceiptType.READ
+        }
+        if (duplicateQueuedReceipt) {
+            return
+        }
+
+        val queuedAtUnix = currentUnixSeconds().toULong()
+        store.enqueueOutboxMessage(
+            chatId = chatId,
+            senderAccountId = session.localState.accountId,
+            senderDeviceId = session.localState.deviceId,
+            messageId = UUID.randomUUID().toString(),
+            body = FfiMessageBody(
+                kind = FfiMessageBodyKind.RECEIPT,
+                text = null,
+                targetMessageId = targetMessage.messageId,
+                emoji = null,
+                reactionAction = null,
+                receiptType = FfiReceiptType.READ,
+                receiptAtUnix = queuedAtUnix,
+                blobId = null,
+                mimeType = null,
+                sizeBytes = null,
+                sha256 = null,
+                fileName = null,
+                widthPx = null,
+                heightPx = null,
+                fileKey = null,
+                nonce = null,
+                eventType = null,
+                eventJson = null,
+            ),
+            queuedAtUnix = queuedAtUnix,
+        )
+    }
+
+    private fun flushOutboxItem(
+        queued: FfiLocalOutboxItem,
+        client: FfiServerApiClient,
+        syncCoordinator: FfiSyncCoordinator,
+        facade: FfiMlsFacade,
+        store: FfiLocalHistoryStore,
+    ) {
+        val conversation = getOrCreateSendConversation(queued.chatId)
+            ?: throw IOException("Local MLS state is not available for this conversation")
+        try {
+            val queuedBody = queued.body
+            val queuedAttachmentDraft = queued.attachmentDraft
+            val body = when {
+                queuedBody != null -> queuedBody
+                queuedAttachmentDraft != null -> {
+                    kotlinx.coroutines.runBlocking {
+                        attachmentRepository().uploadStagedAttachment(
+                            chatId = queued.chatId,
+                            draft = StagedAttachmentDraft(
+                                localPath = queuedAttachmentDraft.localPath,
+                                mimeType = queuedAttachmentDraft.mimeType,
+                                fileName = queuedAttachmentDraft.fileName,
+                                widthPx = queuedAttachmentDraft.widthPx?.toInt(),
+                                heightPx = queuedAttachmentDraft.heightPx?.toInt(),
+                            ),
+                        ).body
+                    }
+                }
+
+                else -> throw IOException("Outbox message is missing payload")
+            }
+
+            syncCoordinator.sendMessageBody(
+                client = client,
+                store = store,
+                facade = facade,
+                conversation = conversation,
+                input = FfiSendMessageInput(
+                    senderAccountId = queued.senderAccountId,
+                    senderDeviceId = queued.senderDeviceId,
+                    chatId = queued.chatId,
+                    messageId = queued.messageId,
+                    body = body,
+                    aadJson = EMPTY_AAD_JSON,
+                ),
+            )
+        } finally {
+            conversation.close()
+        }
+    }
+
     private fun getOrCreateSendConversation(chatId: String): FfiMlsConversation? {
         val existing = loadLocalConversation(chatId)
         if (existing != null) {
@@ -589,6 +762,16 @@ class ChatRepository(
         }
         val groupId = resolveChatGroupId(chatId) ?: return null
         return mlsFacade().createGroup(groupId)
+    }
+
+    private fun canQueueReceipt(chatId: String): Boolean {
+        if (chatId == session.localState.accountSyncChatId) {
+            return true
+        }
+
+        val conversation = loadLocalConversation(chatId) ?: return false
+        conversation.close()
+        return true
     }
 
     private fun hasLocalConversation(chatId: String): Boolean {
@@ -793,8 +976,12 @@ class ChatRepository(
     private fun conversationTimelineLabel(
         item: FfiLocalChatListItem,
         timelineItems: List<FfiLocalTimelineItem>,
+        pendingOutboxItems: List<FfiLocalOutboxItem>,
     ): String {
         if (timelineItems.isEmpty()) {
+            if (pendingOutboxItems.isNotEmpty()) {
+                return "Queued locally"
+            }
             return if (item.previewText != null) {
                 "Encrypted cache only"
             } else {
@@ -809,6 +996,8 @@ class ChatRepository(
 
         return if (timelineItems.any { it.projectionKind != FfiLocalProjectionKind.APPLICATION_MESSAGE }) {
             "Projected + MLS events"
+        } else if (pendingOutboxItems.isNotEmpty()) {
+            "Projected timeline + queued outbox"
         } else {
             "Projected timeline"
         }
@@ -830,6 +1019,27 @@ class ChatRepository(
             note = timelineNote(message),
             contentType = message.contentType,
             attachment = attachment,
+        )
+    }
+
+    private fun mapOutboxMessage(message: FfiLocalOutboxItem): ChatTimelineMessage {
+        val attachmentLabel = message.attachmentDraft?.fileName
+            ?: message.attachmentDraft?.mimeType
+            ?: "Attachment"
+        val body = message.body?.let(::structuredBodyText) ?: attachmentLabel
+        val note = when (message.status) {
+            FfiLocalOutboxStatus.PENDING -> "Queued for delivery"
+            FfiLocalOutboxStatus.FAILED -> message.failureMessage ?: "Delivery failed, will retry"
+        }
+        return ChatTimelineMessage(
+            id = message.messageId,
+            author = "You",
+            body = body,
+            timestampLabel = message.queuedAtUnix.toLong().formatChatTimestamp(),
+            isMine = true,
+            note = note,
+            contentType = message.body?.let(::ffiContentTypeForBody) ?: FfiContentType.ATTACHMENT,
+            attachment = null,
         )
     }
 
@@ -893,6 +1103,30 @@ class ChatRepository(
         }
     }
 
+    private fun pendingOutboxPreview(
+        pendingOutboxMessages: List<FfiLocalOutboxItem>,
+    ): PendingOutboxPreview? {
+        val latest = pendingOutboxMessages.maxByOrNull(FfiLocalOutboxItem::queuedAtUnix) ?: return null
+        val previewText = latest.body?.let(::structuredBodyText)
+            ?: latest.attachmentDraft?.fileName
+            ?: latest.attachmentDraft?.mimeType
+            ?: "Queued attachment"
+        return PendingOutboxPreview(
+            previewText = previewText,
+            queuedAtUnix = latest.queuedAtUnix.toLong(),
+        )
+    }
+
+    private fun ffiContentTypeForBody(body: FfiMessageBody): FfiContentType {
+        return when (body.kind) {
+            FfiMessageBodyKind.TEXT -> FfiContentType.TEXT
+            FfiMessageBodyKind.REACTION -> FfiContentType.REACTION
+            FfiMessageBodyKind.RECEIPT -> FfiContentType.RECEIPT
+            FfiMessageBodyKind.ATTACHMENT -> FfiContentType.ATTACHMENT
+            FfiMessageBodyKind.CHAT_EVENT -> FfiContentType.CHAT_EVENT
+        }
+    }
+
     private fun shortAccountId(accountId: String): String {
         return if (accountId.length <= 10) {
             accountId
@@ -930,6 +1164,8 @@ class ChatRepository(
         }
     }
 
+    private fun currentUnixSeconds(): Long = Instant.now().epochSecond
+
     companion object {
         private const val MAX_VISIBLE_MEMBERS = 3
         private val DIRECTORY_SEARCH_LIMIT = 20u
@@ -953,6 +1189,7 @@ data class ChatDiagnostics(
     val cachedChatCount: Int,
     val cachedMessageCount: Int,
     val projectedChatCount: Int,
+    val pendingOutboxCount: Int,
     val lastAckedInboxId: Long?,
     val leaseOwner: String,
     val historyStorePath: String?,
@@ -966,6 +1203,7 @@ data class ChatRefreshResult(
     val ackedInboxCount: Int,
     val hydratedChatDetails: Int,
     val projectedChatTimelines: Int,
+    val flushedOutboxCount: Int,
 )
 
 data class ChatSendResult(
@@ -1039,6 +1277,11 @@ data class ChatTimelineMessage(
     val note: String?,
     val contentType: FfiContentType,
     val attachment: ChatAttachment? = null,
+)
+
+private data class PendingOutboxPreview(
+    val previewText: String,
+    val queuedAtUnix: Long,
 )
 
 data class ChatAttachment(

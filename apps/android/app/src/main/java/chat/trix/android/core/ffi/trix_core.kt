@@ -716,7 +716,13 @@ external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_chat_read_cur
 ): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_chat_unread_count(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_clear_outbox_failure(
+): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_database_path(
+): Short
+external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_enqueue_outbox_attachment(
+): Short
+external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_enqueue_outbox_message(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_get_chat(
 ): Short
@@ -736,11 +742,17 @@ external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_list_chats(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_list_local_chat_list_items(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_list_outbox_messages(
+): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_mark_chat_read(
+): Short
+external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_mark_outbox_failure(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_project_chat_messages(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_projected_cursor(
+): Short
+external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_remove_outbox_message(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_save_state(
 ): Short
@@ -1102,7 +1114,13 @@ external fun uniffi_trix_core_fn_method_ffilocalhistorystore_chat_read_cursor(`p
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_chat_unread_count(`ptr`: Long,`chatId`: RustBuffer.ByValue,`selfAccountId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_clear_outbox_failure(`ptr`: Long,`messageId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_database_path(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_enqueue_outbox_attachment(`ptr`: Long,`chatId`: RustBuffer.ByValue,`senderAccountId`: RustBuffer.ByValue,`senderDeviceId`: RustBuffer.ByValue,`messageId`: RustBuffer.ByValue,`attachment`: RustBuffer.ByValue,`queuedAtUnix`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_enqueue_outbox_message(`ptr`: Long,`chatId`: RustBuffer.ByValue,`senderAccountId`: RustBuffer.ByValue,`senderDeviceId`: RustBuffer.ByValue,`messageId`: RustBuffer.ByValue,`body`: RustBuffer.ByValue,`queuedAtUnix`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_get_chat(`ptr`: Long,`chatId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1122,12 +1140,18 @@ external fun uniffi_trix_core_fn_method_ffilocalhistorystore_list_chats(`ptr`: L
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_list_local_chat_list_items(`ptr`: Long,`selfAccountId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_list_outbox_messages(`ptr`: Long,`chatId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_mark_chat_read(`ptr`: Long,`chatId`: RustBuffer.ByValue,`throughServerSeq`: RustBuffer.ByValue,`selfAccountId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_mark_outbox_failure(`ptr`: Long,`messageId`: RustBuffer.ByValue,`failureMessage`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_project_chat_messages(`ptr`: Long,`chatId`: RustBuffer.ByValue,`facade`: Long,`conversation`: Long,`limit`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_projected_cursor(`ptr`: Long,`chatId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_remove_outbox_message(`ptr`: Long,`messageId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_save_state(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 external fun uniffi_trix_core_fn_method_ffilocalhistorystore_set_chat_mls_group_id(`ptr`: Long,`chatId`: RustBuffer.ByValue,`groupId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1632,7 +1656,16 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_chat_unread_count() != 15308.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_clear_outbox_failure() != 63960.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_database_path() != 21137.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_enqueue_outbox_attachment() != 23677.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_enqueue_outbox_message() != 41416.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_get_chat() != 41372.toShort()) {
@@ -1662,13 +1695,22 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_list_local_chat_list_items() != 16869.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_list_outbox_messages() != 16845.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_mark_chat_read() != 49850.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_mark_outbox_failure() != 57229.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_project_chat_messages() != 40538.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_projected_cursor() != 55925.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_remove_outbox_message() != 21712.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_save_state() != 61222.toShort()) {
@@ -3562,7 +3604,13 @@ public interface FfiLocalHistoryStoreInterface {
     
     fun `chatUnreadCount`(`chatId`: kotlin.String, `selfAccountId`: kotlin.String?): kotlin.ULong?
     
+    fun `clearOutboxFailure`(`messageId`: kotlin.String)
+    
     fun `databasePath`(): kotlin.String?
+    
+    fun `enqueueOutboxAttachment`(`chatId`: kotlin.String, `senderAccountId`: kotlin.String, `senderDeviceId`: kotlin.String, `messageId`: kotlin.String, `attachment`: FfiLocalOutboxAttachmentDraft, `queuedAtUnix`: kotlin.ULong): FfiLocalOutboxItem
+    
+    fun `enqueueOutboxMessage`(`chatId`: kotlin.String, `senderAccountId`: kotlin.String, `senderDeviceId`: kotlin.String, `messageId`: kotlin.String, `body`: FfiMessageBody, `queuedAtUnix`: kotlin.ULong): FfiLocalOutboxItem
     
     fun `getChat`(`chatId`: kotlin.String): FfiChatDetail?
     
@@ -3582,11 +3630,17 @@ public interface FfiLocalHistoryStoreInterface {
     
     fun `listLocalChatListItems`(`selfAccountId`: kotlin.String?): List<FfiLocalChatListItem>
     
+    fun `listOutboxMessages`(`chatId`: kotlin.String?): List<FfiLocalOutboxItem>
+    
     fun `markChatRead`(`chatId`: kotlin.String, `throughServerSeq`: kotlin.ULong?, `selfAccountId`: kotlin.String?): FfiLocalChatReadState
+    
+    fun `markOutboxFailure`(`messageId`: kotlin.String, `failureMessage`: kotlin.String)
     
     fun `projectChatMessages`(`chatId`: kotlin.String, `facade`: FfiMlsFacade, `conversation`: FfiMlsConversation, `limit`: kotlin.UInt?): FfiLocalProjectionApplyReport
     
     fun `projectedCursor`(`chatId`: kotlin.String): kotlin.ULong?
+    
+    fun `removeOutboxMessage`(`messageId`: kotlin.String)
     
     fun `saveState`()
     
@@ -3828,6 +3882,19 @@ open class FfiLocalHistoryStore: Disposable, AutoCloseable, FfiLocalHistoryStore
     
 
     
+    @Throws(TrixFfiException::class)override fun `clearOutboxFailure`(`messageId`: kotlin.String)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_clear_outbox_failure(
+        it,
+        FfiConverterString.lower(`messageId`),_status)
+}
+    }
+    
+    
+
+    
     @Throws(TrixFfiException::class)override fun `databasePath`(): kotlin.String? {
             return FfiConverterOptionalString.lift(
     callWithHandle {
@@ -3835,6 +3902,34 @@ open class FfiLocalHistoryStore: Disposable, AutoCloseable, FfiLocalHistoryStore
     UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_database_path(
         it,
         _status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `enqueueOutboxAttachment`(`chatId`: kotlin.String, `senderAccountId`: kotlin.String, `senderDeviceId`: kotlin.String, `messageId`: kotlin.String, `attachment`: FfiLocalOutboxAttachmentDraft, `queuedAtUnix`: kotlin.ULong): FfiLocalOutboxItem {
+            return FfiConverterTypeFfiLocalOutboxItem.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_enqueue_outbox_attachment(
+        it,
+        FfiConverterString.lower(`chatId`),FfiConverterString.lower(`senderAccountId`),FfiConverterString.lower(`senderDeviceId`),FfiConverterString.lower(`messageId`),FfiConverterTypeFfiLocalOutboxAttachmentDraft.lower(`attachment`),FfiConverterULong.lower(`queuedAtUnix`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `enqueueOutboxMessage`(`chatId`: kotlin.String, `senderAccountId`: kotlin.String, `senderDeviceId`: kotlin.String, `messageId`: kotlin.String, `body`: FfiMessageBody, `queuedAtUnix`: kotlin.ULong): FfiLocalOutboxItem {
+            return FfiConverterTypeFfiLocalOutboxItem.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_enqueue_outbox_message(
+        it,
+        FfiConverterString.lower(`chatId`),FfiConverterString.lower(`senderAccountId`),FfiConverterString.lower(`senderDeviceId`),FfiConverterString.lower(`messageId`),FfiConverterTypeFfiMessageBody.lower(`body`),FfiConverterULong.lower(`queuedAtUnix`),_status)
 }
     }
     )
@@ -3968,6 +4063,20 @@ open class FfiLocalHistoryStore: Disposable, AutoCloseable, FfiLocalHistoryStore
     
 
     
+    @Throws(TrixFfiException::class)override fun `listOutboxMessages`(`chatId`: kotlin.String?): List<FfiLocalOutboxItem> {
+            return FfiConverterSequenceTypeFfiLocalOutboxItem.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_list_outbox_messages(
+        it,
+        FfiConverterOptionalString.lower(`chatId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(TrixFfiException::class)override fun `markChatRead`(`chatId`: kotlin.String, `throughServerSeq`: kotlin.ULong?, `selfAccountId`: kotlin.String?): FfiLocalChatReadState {
             return FfiConverterTypeFfiLocalChatReadState.lift(
     callWithHandle {
@@ -3979,6 +4088,19 @@ open class FfiLocalHistoryStore: Disposable, AutoCloseable, FfiLocalHistoryStore
     }
     )
     }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `markOutboxFailure`(`messageId`: kotlin.String, `failureMessage`: kotlin.String)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_mark_outbox_failure(
+        it,
+        FfiConverterString.lower(`messageId`),FfiConverterString.lower(`failureMessage`),_status)
+}
+    }
+    
     
 
     
@@ -4007,6 +4129,19 @@ open class FfiLocalHistoryStore: Disposable, AutoCloseable, FfiLocalHistoryStore
     }
     )
     }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `removeOutboxMessage`(`messageId`: kotlin.String)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_remove_outbox_message(
+        it,
+        FfiConverterString.lower(`messageId`),_status)
+}
+    }
+    
     
 
     
@@ -9837,6 +9972,132 @@ public object FfiConverterTypeFfiLocalChatReadState: FfiConverterRustBuffer<FfiL
 
 
 
+data class FfiLocalOutboxAttachmentDraft (
+    var `localPath`: kotlin.String
+    , 
+    var `mimeType`: kotlin.String
+    , 
+    var `fileName`: kotlin.String?
+    , 
+    var `widthPx`: kotlin.UInt?
+    , 
+    var `heightPx`: kotlin.UInt?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiLocalOutboxAttachmentDraft: FfiConverterRustBuffer<FfiLocalOutboxAttachmentDraft> {
+    override fun read(buf: ByteBuffer): FfiLocalOutboxAttachmentDraft {
+        return FfiLocalOutboxAttachmentDraft(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiLocalOutboxAttachmentDraft) = (
+            FfiConverterString.allocationSize(value.`localPath`) +
+            FfiConverterString.allocationSize(value.`mimeType`) +
+            FfiConverterOptionalString.allocationSize(value.`fileName`) +
+            FfiConverterOptionalUInt.allocationSize(value.`widthPx`) +
+            FfiConverterOptionalUInt.allocationSize(value.`heightPx`)
+    )
+
+    override fun write(value: FfiLocalOutboxAttachmentDraft, buf: ByteBuffer) {
+            FfiConverterString.write(value.`localPath`, buf)
+            FfiConverterString.write(value.`mimeType`, buf)
+            FfiConverterOptionalString.write(value.`fileName`, buf)
+            FfiConverterOptionalUInt.write(value.`widthPx`, buf)
+            FfiConverterOptionalUInt.write(value.`heightPx`, buf)
+    }
+}
+
+
+
+data class FfiLocalOutboxItem (
+    var `messageId`: kotlin.String
+    , 
+    var `chatId`: kotlin.String
+    , 
+    var `senderAccountId`: kotlin.String
+    , 
+    var `senderDeviceId`: kotlin.String
+    , 
+    var `body`: FfiMessageBody?
+    , 
+    var `attachmentDraft`: FfiLocalOutboxAttachmentDraft?
+    , 
+    var `queuedAtUnix`: kotlin.ULong
+    , 
+    var `status`: FfiLocalOutboxStatus
+    , 
+    var `failureMessage`: kotlin.String?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiLocalOutboxItem: FfiConverterRustBuffer<FfiLocalOutboxItem> {
+    override fun read(buf: ByteBuffer): FfiLocalOutboxItem {
+        return FfiLocalOutboxItem(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalTypeFfiMessageBody.read(buf),
+            FfiConverterOptionalTypeFfiLocalOutboxAttachmentDraft.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterTypeFfiLocalOutboxStatus.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiLocalOutboxItem) = (
+            FfiConverterString.allocationSize(value.`messageId`) +
+            FfiConverterString.allocationSize(value.`chatId`) +
+            FfiConverterString.allocationSize(value.`senderAccountId`) +
+            FfiConverterString.allocationSize(value.`senderDeviceId`) +
+            FfiConverterOptionalTypeFfiMessageBody.allocationSize(value.`body`) +
+            FfiConverterOptionalTypeFfiLocalOutboxAttachmentDraft.allocationSize(value.`attachmentDraft`) +
+            FfiConverterULong.allocationSize(value.`queuedAtUnix`) +
+            FfiConverterTypeFfiLocalOutboxStatus.allocationSize(value.`status`) +
+            FfiConverterOptionalString.allocationSize(value.`failureMessage`)
+    )
+
+    override fun write(value: FfiLocalOutboxItem, buf: ByteBuffer) {
+            FfiConverterString.write(value.`messageId`, buf)
+            FfiConverterString.write(value.`chatId`, buf)
+            FfiConverterString.write(value.`senderAccountId`, buf)
+            FfiConverterString.write(value.`senderDeviceId`, buf)
+            FfiConverterOptionalTypeFfiMessageBody.write(value.`body`, buf)
+            FfiConverterOptionalTypeFfiLocalOutboxAttachmentDraft.write(value.`attachmentDraft`, buf)
+            FfiConverterULong.write(value.`queuedAtUnix`, buf)
+            FfiConverterTypeFfiLocalOutboxStatus.write(value.`status`, buf)
+            FfiConverterOptionalString.write(value.`failureMessage`, buf)
+    }
+}
+
+
+
 data class FfiLocalProjectedMessage (
     var `serverSeq`: kotlin.ULong
     , 
@@ -12111,6 +12372,40 @@ public object FfiConverterTypeFfiHistorySyncJobType: FfiConverterRustBuffer<FfiH
 
 
 
+enum class FfiLocalOutboxStatus {
+    
+    PENDING,
+    FAILED;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiLocalOutboxStatus: FfiConverterRustBuffer<FfiLocalOutboxStatus> {
+    override fun read(buf: ByteBuffer) = try {
+        FfiLocalOutboxStatus.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: FfiLocalOutboxStatus) = 4UL
+
+    override fun write(value: FfiLocalOutboxStatus, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
 enum class FfiLocalProjectionKind {
     
     APPLICATION_MESSAGE,
@@ -12845,6 +13140,38 @@ public object FfiConverterOptionalTypeFfiLocalChatReadState: FfiConverterRustBuf
         } else {
             buf.put(1)
             FfiConverterTypeFfiLocalChatReadState.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeFfiLocalOutboxAttachmentDraft: FfiConverterRustBuffer<FfiLocalOutboxAttachmentDraft?> {
+    override fun read(buf: ByteBuffer): FfiLocalOutboxAttachmentDraft? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeFfiLocalOutboxAttachmentDraft.read(buf)
+    }
+
+    override fun allocationSize(value: FfiLocalOutboxAttachmentDraft?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeFfiLocalOutboxAttachmentDraft.allocationSize(value)
+        }
+    }
+
+    override fun write(value: FfiLocalOutboxAttachmentDraft?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeFfiLocalOutboxAttachmentDraft.write(value, buf)
         }
     }
 }
@@ -13709,6 +14036,34 @@ public object FfiConverterSequenceTypeFfiLocalChatReadState: FfiConverterRustBuf
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeFfiLocalChatReadState.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiLocalOutboxItem: FfiConverterRustBuffer<List<FfiLocalOutboxItem>> {
+    override fun read(buf: ByteBuffer): List<FfiLocalOutboxItem> {
+        val len = buf.getInt()
+        return List<FfiLocalOutboxItem>(len) {
+            FfiConverterTypeFfiLocalOutboxItem.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiLocalOutboxItem>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiLocalOutboxItem.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiLocalOutboxItem>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiLocalOutboxItem.write(it, buf)
         }
     }
 }

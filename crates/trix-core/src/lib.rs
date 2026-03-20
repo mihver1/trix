@@ -36,6 +36,7 @@ pub use realtime::{
 pub use signatures::{account_bootstrap_message, device_revoke_message};
 pub use storage::{
     AttachmentStore, LocalChatListItem, LocalChatReadState, LocalHistoryStore,
+    LocalOutboxAttachmentDraft, LocalOutboxMessage, LocalOutboxPayload, LocalOutboxStatus,
     LocalOutgoingMessageApplyOutcome, LocalProjectedMessage, LocalProjectionApplyReport,
     LocalProjectionKind, LocalStoreApplyReport, LocalTimelineItem, MlsStateStore, SyncStateStore,
 };

@@ -74,6 +74,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -1631,7 +1632,9 @@ private fun ConversationListPane(
                     MaterialTheme.colorScheme.surfaceContainerLow
                 },
                 tonalElevation = if (selected) 2.dp else 0.dp,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("chat-row:${conversation.chatId}"),
                 onClick = { onConversationClick(conversation.chatId) },
             ) {
                 ListItem(
@@ -2291,6 +2294,68 @@ private enum class DirectorySheetMode {
     GROUP_ADD_MEMBERS,
 }
 
+@Composable
+internal fun ConversationListPaneForTesting(
+    overview: ChatOverview,
+    selectedConversationId: String? = null,
+    isRefreshing: Boolean = false,
+    errorMessage: String? = null,
+    lastRefreshSummary: String? = null,
+    onConversationClick: (String) -> Unit = {},
+    onRefresh: () -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
+    ConversationListPane(
+        overviewState = ChatsOverviewState(
+            overview = overview,
+            isRefreshing = isRefreshing,
+            errorMessage = errorMessage,
+            lastRefreshSummary = lastRefreshSummary,
+        ),
+        selectedConversationId = selectedConversationId,
+        onConversationClick = onConversationClick,
+        onRefresh = onRefresh,
+        modifier = modifier,
+    )
+}
+
+@Composable
+internal fun ConversationDetailPaneForTesting(
+    conversation: ChatConversation?,
+    isLoading: Boolean = false,
+    errorMessage: String? = null,
+    composerDraft: String = "",
+    isSending: Boolean = false,
+    sendErrorMessage: String? = null,
+    attachmentErrorMessage: String? = null,
+    activeAttachmentMessageId: String? = null,
+    onComposerDraftChange: (String) -> Unit = {},
+    onPickAttachment: () -> Unit = {},
+    onSend: () -> Unit = {},
+    onOpenAttachment: (ChatAttachment) -> Unit = {},
+    onShareAttachment: (ChatAttachment) -> Unit = {},
+    onManageMembers: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+) {
+    ConversationDetailPane(
+        conversation = conversation,
+        isLoading = isLoading,
+        errorMessage = errorMessage,
+        composerDraft = composerDraft,
+        onComposerDraftChange = onComposerDraftChange,
+        isSending = isSending,
+        sendErrorMessage = sendErrorMessage,
+        attachmentErrorMessage = attachmentErrorMessage,
+        activeAttachmentMessageId = activeAttachmentMessageId,
+        onPickAttachment = onPickAttachment,
+        onSend = onSend,
+        onOpenAttachment = onOpenAttachment,
+        onShareAttachment = onShareAttachment,
+        onManageMembers = onManageMembers,
+        modifier = modifier,
+    )
+}
+
 private fun ChatRefreshResult.toSummary(): String {
     return buildString {
         append("Refresh applied ")
@@ -2303,6 +2368,8 @@ private fun ChatRefreshResult.toSummary(): String {
         append(hydratedChatDetails)
         append(" chat details, projected ")
         append(projectedChatTimelines)
-        append(" local MLS timelines.")
+        append(" local MLS timelines, flushed ")
+        append(flushedOutboxCount)
+        append(" queued outbox items.")
     }
 }

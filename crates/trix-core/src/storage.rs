@@ -155,6 +155,41 @@ pub struct LocalOutgoingMessageApplyOutcome {
     pub projected_message: LocalProjectedMessage,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalOutboxStatus {
+    Pending,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalOutboxAttachmentDraft {
+    pub local_path: String,
+    pub mime_type: String,
+    pub file_name: Option<String>,
+    pub width_px: Option<u32>,
+    pub height_px: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LocalOutboxPayload {
+    Body { body: MessageBody },
+    AttachmentDraft { attachment: LocalOutboxAttachmentDraft },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LocalOutboxMessage {
+    pub message_id: MessageId,
+    pub chat_id: ChatId,
+    pub sender_account_id: trix_types::AccountId,
+    pub sender_device_id: trix_types::DeviceId,
+    pub payload: LocalOutboxPayload,
+    pub queued_at_unix: u64,
+    pub status: LocalOutboxStatus,
+    pub failure_message: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct LocalHistoryStore {
     state: PersistedLocalHistoryState,
@@ -166,6 +201,8 @@ pub struct LocalHistoryStore {
 struct PersistedLocalHistoryState {
     version: u32,
     chats: BTreeMap<String, PersistedChatState>,
+    #[serde(default)]
+    outbox: BTreeMap<String, LocalOutboxMessage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -214,6 +251,7 @@ impl Default for PersistedLocalHistoryState {
         Self {
             version: 1,
             chats: BTreeMap::new(),
+            outbox: BTreeMap::new(),
         }
     }
 }
@@ -643,6 +681,110 @@ impl LocalHistoryStore {
         messages
     }
 
+    pub fn list_outbox_messages(&self, chat_id: Option<ChatId>) -> Vec<LocalOutboxMessage> {
+        let mut messages = self
+            .state
+            .outbox
+            .values()
+            .filter(|message| chat_id.map(|value| value == message.chat_id).unwrap_or(true))
+            .cloned()
+            .collect::<Vec<_>>();
+        messages.sort_by(|left, right| {
+            left.queued_at_unix
+                .cmp(&right.queued_at_unix)
+                .then_with(|| left.message_id.0.cmp(&right.message_id.0))
+        });
+        messages
+    }
+
+    pub fn enqueue_outbox_message(
+        &mut self,
+        chat_id: ChatId,
+        sender_account_id: trix_types::AccountId,
+        sender_device_id: trix_types::DeviceId,
+        message_id: MessageId,
+        body: MessageBody,
+        queued_at_unix: u64,
+    ) -> Result<LocalOutboxMessage> {
+        self.ensure_chat_exists(chat_id);
+        let queued = LocalOutboxMessage {
+            message_id,
+            chat_id,
+            sender_account_id,
+            sender_device_id,
+            payload: LocalOutboxPayload::Body { body },
+            queued_at_unix,
+            status: LocalOutboxStatus::Pending,
+            failure_message: None,
+        };
+        self.state
+            .outbox
+            .insert(message_id.0.to_string(), queued.clone());
+        self.save_state()?;
+        Ok(queued)
+    }
+
+    pub fn enqueue_outbox_attachment(
+        &mut self,
+        chat_id: ChatId,
+        sender_account_id: trix_types::AccountId,
+        sender_device_id: trix_types::DeviceId,
+        message_id: MessageId,
+        attachment: LocalOutboxAttachmentDraft,
+        queued_at_unix: u64,
+    ) -> Result<LocalOutboxMessage> {
+        self.ensure_chat_exists(chat_id);
+        let queued = LocalOutboxMessage {
+            message_id,
+            chat_id,
+            sender_account_id,
+            sender_device_id,
+            payload: LocalOutboxPayload::AttachmentDraft { attachment },
+            queued_at_unix,
+            status: LocalOutboxStatus::Pending,
+            failure_message: None,
+        };
+        self.state
+            .outbox
+            .insert(message_id.0.to_string(), queued.clone());
+        self.save_state()?;
+        Ok(queued)
+    }
+
+    pub fn clear_outbox_failure(&mut self, message_id: MessageId) -> Result<()> {
+        let Some(message) = self.state.outbox.get_mut(&message_id.0.to_string()) else {
+            return Ok(());
+        };
+        let changed =
+            message.status != LocalOutboxStatus::Pending || message.failure_message.is_some();
+        message.status = LocalOutboxStatus::Pending;
+        message.failure_message = None;
+        self.persist_if_needed(changed)
+    }
+
+    pub fn mark_outbox_failure(
+        &mut self,
+        message_id: MessageId,
+        failure_message: impl Into<String>,
+    ) -> Result<()> {
+        let message = self
+            .state
+            .outbox
+            .get_mut(&message_id.0.to_string())
+            .ok_or_else(|| anyhow!("outbox message {} is missing", message_id.0))?;
+        let failure_message = failure_message.into();
+        let changed = message.status != LocalOutboxStatus::Failed
+            || message.failure_message.as_deref() != Some(failure_message.as_str());
+        message.status = LocalOutboxStatus::Failed;
+        message.failure_message = Some(failure_message);
+        self.persist_if_needed(changed)
+    }
+
+    pub fn remove_outbox_message(&mut self, message_id: MessageId) -> Result<()> {
+        let removed = self.state.outbox.remove(&message_id.0.to_string()).is_some();
+        self.persist_if_needed(removed)
+    }
+
     pub fn project_chat_messages(
         &mut self,
         chat_id: ChatId,
@@ -745,6 +887,29 @@ impl LocalHistoryStore {
             projected_messages_upserted,
             advanced_to_server_seq,
         })
+    }
+
+    fn ensure_chat_exists(&mut self, chat_id: ChatId) {
+        self.state
+            .chats
+            .entry(chat_id.0.to_string())
+            .or_insert_with(|| PersistedChatState {
+                chat_type: ChatType::Dm,
+                title: None,
+                last_server_seq: 0,
+                pending_message_count: 0,
+                last_message: None,
+                epoch: 0,
+                last_commit_message_id: None,
+                participant_profiles: Vec::new(),
+                members: Vec::new(),
+                device_members: Vec::new(),
+                mls_group_id_b64: None,
+                messages: BTreeMap::new(),
+                read_cursor_server_seq: 0,
+                projected_cursor_server_seq: 0,
+                projected_messages: BTreeMap::new(),
+            });
     }
 
     pub fn apply_chat_list(
@@ -1668,6 +1833,7 @@ fn save_state_to_path(
         DELETE FROM local_history_chats;
         DELETE FROM local_history_messages;
         DELETE FROM local_history_projected_messages;
+        DELETE FROM local_history_outbox;
         "#,
     )?;
 
@@ -1709,6 +1875,12 @@ fn save_state_to_path(
         r#"
         INSERT INTO local_history_projected_messages (chat_id, server_seq, projected_json)
         VALUES (?1, ?2, ?3)
+        "#,
+    )?;
+    let mut outbox_statement = transaction.prepare(
+        r#"
+        INSERT INTO local_history_outbox (message_id, outbox_json)
+        VALUES (?1, ?2)
         "#,
     )?;
 
@@ -1754,6 +1926,11 @@ fn save_state_to_path(
         }
     }
 
+    for (message_id, outbox_message) in &state.outbox {
+        outbox_statement.execute(params![message_id, serde_json::to_string(outbox_message)?])?;
+    }
+
+    drop(outbox_statement);
     drop(projected_statement);
     drop(message_statement);
     drop(chat_statement);
@@ -1807,6 +1984,7 @@ fn load_state_from_sqlite(
     let mut state = PersistedLocalHistoryState {
         version,
         chats: BTreeMap::new(),
+        outbox: BTreeMap::new(),
     };
 
     let mut chats_statement = connection.prepare(
@@ -1942,6 +2120,24 @@ fn load_state_from_sqlite(
         );
     }
 
+    let mut outbox_statement = connection.prepare(
+        r#"
+        SELECT message_id, outbox_json
+        FROM local_history_outbox
+        ORDER BY message_id
+        "#,
+    )?;
+    let outbox_rows = outbox_statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for row in outbox_rows {
+        let (message_id, outbox_json) = row?;
+        state.outbox.insert(
+            message_id,
+            serde_json::from_str(&outbox_json).context("failed to parse local outbox message")?,
+        );
+    }
+
     Ok(state)
 }
 
@@ -2020,6 +2216,10 @@ fn open_history_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Conne
             server_seq INTEGER NOT NULL,
             projected_json TEXT NOT NULL,
             PRIMARY KEY (chat_id, server_seq)
+        );
+        CREATE TABLE IF NOT EXISTS local_history_outbox (
+            message_id TEXT PRIMARY KEY,
+            outbox_json TEXT NOT NULL
         );
         "#,
     )?;
@@ -2232,6 +2432,41 @@ mod tests {
     }
 
     #[test]
+    fn local_history_store_persists_outbox_messages() {
+        let database_path = env::temp_dir().join(format!("trix-history-outbox-{}.db", Uuid::new_v4()));
+        let chat_id = ChatId(Uuid::new_v4());
+        let account_id = AccountId(Uuid::new_v4());
+        let device_id = DeviceId(Uuid::new_v4());
+        let message_id = MessageId(Uuid::new_v4());
+        let mut store = LocalHistoryStore::new_encrypted(&database_path, vec![5u8; 32]).unwrap();
+
+        store
+            .enqueue_outbox_message(
+                chat_id,
+                account_id,
+                device_id,
+                message_id,
+                MessageBody::Text(crate::TextMessageBody {
+                    text: "queued".to_owned(),
+                }),
+                42,
+            )
+            .unwrap();
+        store
+            .mark_outbox_failure(message_id, "offline")
+            .unwrap();
+
+        let restored = LocalHistoryStore::new_encrypted(&database_path, vec![5u8; 32]).unwrap();
+        let queued = restored.list_outbox_messages(Some(chat_id));
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].message_id, message_id);
+        assert_eq!(queued[0].status, LocalOutboxStatus::Failed);
+        assert_eq!(queued[0].failure_message.as_deref(), Some("offline"));
+
+        cleanup_sqlite_test_path(&database_path);
+    }
+
+    #[test]
     fn local_history_store_migrates_legacy_json_state_to_sqlite() {
         let database_path =
             env::temp_dir().join(format!("trix-history-legacy-{}.json", Uuid::new_v4()));
@@ -2272,6 +2507,7 @@ mod tests {
                     projected_messages: BTreeMap::new(),
                 },
             )]),
+            outbox: BTreeMap::new(),
         };
         let file = File::create(&database_path).unwrap();
         serde_json::to_writer_pretty(file, &state).unwrap();

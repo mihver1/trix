@@ -33,6 +33,7 @@ class AttachmentRepository(
         deviceId = session.localState.deviceId,
     )
     private val decryptedAttachmentRoot = storageLayout.decryptedAttachmentRoot
+    private val stagedAttachmentRoot = File(storageLayout.attachmentCacheRoot, "outbox")
     private val clientDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         FfiServerApiClient(session.baseUrl)
     }
@@ -57,6 +58,58 @@ class AttachmentRepository(
                     heightPx = metadata.heightPx?.toUInt(),
                 ),
             )
+        }
+    }
+
+    suspend fun stageAttachmentForOutbox(
+        contentUri: Uri,
+        messageId: String,
+    ): StagedAttachmentDraft = withContext(Dispatchers.IO) {
+        runFfi("Failed to stage attachment") {
+            val contentResolver = appContext.contentResolver
+            val payload = contentResolver.openInputStream(contentUri)?.use { stream ->
+                stream.readBytes()
+            } ?: throw IOException("Attachment content is no longer readable")
+            val metadata = readAttachmentMetadata(contentUri, payload)
+            val safeName = sanitizeFileName(metadata.fileName ?: fallbackFileName(contentUri, metadata.mimeType))
+            val stagedFile = File(stagedAttachmentRoot, "$messageId-$safeName")
+            stagedFile.parentFile?.mkdirs()
+            stagedFile.writeBytes(payload)
+            StagedAttachmentDraft(
+                localPath = stagedFile.absolutePath,
+                mimeType = metadata.mimeType,
+                fileName = metadata.fileName,
+                widthPx = metadata.widthPx,
+                heightPx = metadata.heightPx,
+            )
+        }
+    }
+
+    suspend fun uploadStagedAttachment(
+        chatId: String,
+        draft: StagedAttachmentDraft,
+    ): FfiUploadedAttachment = withContext(Dispatchers.IO) {
+        runFfi("Failed to upload staged attachment") {
+            val stagedFile = File(draft.localPath)
+            if (!stagedFile.exists()) {
+                throw IOException("Staged attachment is missing from local storage")
+            }
+            authenticatedClient().uploadAttachment(
+                chatId = chatId,
+                payload = stagedFile.readBytes(),
+                params = FfiAttachmentUploadParams(
+                    mimeType = draft.mimeType,
+                    fileName = draft.fileName,
+                    widthPx = draft.widthPx?.toUInt(),
+                    heightPx = draft.heightPx?.toUInt(),
+                ),
+            )
+        }
+    }
+
+    suspend fun deleteStagedAttachment(localPath: String) = withContext(Dispatchers.IO) {
+        runCatching {
+            File(localPath).takeIf(File::exists)?.delete()
         }
     }
 
@@ -218,6 +271,14 @@ class AttachmentRepository(
         return value.replace(Regex("[^a-zA-Z0-9._-]"), "_")
     }
 }
+
+data class StagedAttachmentDraft(
+    val localPath: String,
+    val mimeType: String,
+    val fileName: String?,
+    val widthPx: Int?,
+    val heightPx: Int?,
+)
 
 private data class AttachmentUploadMetadata(
     val mimeType: String,

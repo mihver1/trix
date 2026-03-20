@@ -192,6 +192,7 @@ class RealtimeSessionManager(
         when (event.kind) {
             FfiRealtimeEventKind.HELLO -> {
                 telemetry.info(TAG, "websocket hello received")
+                flushPendingOutbox()
             }
 
             FfiRealtimeEventKind.INBOX_ITEMS,
@@ -201,6 +202,7 @@ class RealtimeSessionManager(
                     TAG,
                     "realtime event=${event.kind.name.lowercase()} changed=${event.report?.changedChatIds?.size ?: 0}",
                 )
+                flushPendingOutbox()
                 publishUnreadSummary()
             }
 
@@ -248,6 +250,22 @@ class RealtimeSessionManager(
             }
         }.onFailure { error ->
             telemetry.warn(TAG, "failed to publish realtime unread summary", error)
+        }
+    }
+
+    private suspend fun flushPendingOutbox() {
+        runCatching {
+            val repository = ChatRepository(appContext, session)
+            try {
+                val flushed = repository.flushPendingOutbox()
+                if (flushed > 0) {
+                    telemetry.info(TAG, "flushed $flushed outbox message(s)")
+                }
+            } finally {
+                repository.close()
+            }
+        }.onFailure { error ->
+            telemetry.warn(TAG, "failed to flush pending outbox", error)
         }
     }
 

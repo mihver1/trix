@@ -16,7 +16,8 @@ use crate::{
     CreateChatControlOutcome, DeviceApprovePayloadMaterial, DeviceKeyMaterial,
     DeviceTransferBundleMaterial, DirectoryAccountMaterial, HistorySyncChunkMaterial,
     ImportedDeviceTransferBundle, InboxApplyOutcome, LocalChatListItem, LocalChatReadState,
-    LocalHistoryStore, LocalProjectedMessage, LocalProjectionApplyReport, LocalProjectionKind,
+    LocalHistoryStore, LocalOutboxAttachmentDraft, LocalOutboxMessage, LocalOutboxPayload,
+    LocalOutboxStatus, LocalProjectedMessage, LocalProjectionApplyReport, LocalProjectionKind,
     LocalStoreApplyReport, LocalTimelineItem, MessageBody, MlsCommitBundle, MlsFacade,
     MlsMemberIdentity, MlsProcessResult, ModifyChatDevicesControlInput,
     ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
@@ -86,6 +87,12 @@ pub enum FfiHistorySyncJobStatus {
     Completed,
     Failed,
     Canceled,
+}
+
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum FfiLocalOutboxStatus {
+    Pending,
+    Failed,
 }
 
 #[derive(Debug, Clone, Copy, uniffi::Enum)]
@@ -948,6 +955,28 @@ pub struct FfiMlsProcessResult {
     pub kind: FfiMlsProcessKind,
     pub application_message: Option<Vec<u8>>,
     pub epoch: Option<u64>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiLocalOutboxAttachmentDraft {
+    pub local_path: String,
+    pub mime_type: String,
+    pub file_name: Option<String>,
+    pub width_px: Option<u32>,
+    pub height_px: Option<u32>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiLocalOutboxItem {
+    pub message_id: String,
+    pub chat_id: String,
+    pub sender_account_id: String,
+    pub sender_device_id: String,
+    pub body: Option<FfiMessageBody>,
+    pub attachment_draft: Option<FfiLocalOutboxAttachmentDraft>,
+    pub queued_at_unix: u64,
+    pub status: FfiLocalOutboxStatus,
+    pub failure_message: Option<String>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -2427,6 +2456,85 @@ impl FfiLocalHistoryStore {
         Ok(lock(&self.inner)?
             .get_chat(parse_chat_id(&chat_id)?)
             .map(chat_detail_to_ffi))
+    }
+
+    pub fn list_outbox_messages(
+        &self,
+        chat_id: Option<String>,
+    ) -> Result<Vec<FfiLocalOutboxItem>, TrixFfiError> {
+        Ok(lock(&self.inner)?
+            .list_outbox_messages(chat_id.as_deref().map(parse_chat_id).transpose()?)
+            .into_iter()
+            .map(local_outbox_item_to_ffi)
+            .collect())
+    }
+
+    pub fn enqueue_outbox_message(
+        &self,
+        chat_id: String,
+        sender_account_id: String,
+        sender_device_id: String,
+        message_id: String,
+        body: FfiMessageBody,
+        queued_at_unix: u64,
+    ) -> Result<FfiLocalOutboxItem, TrixFfiError> {
+        Ok(local_outbox_item_to_ffi(
+            lock(&self.inner)?
+                .enqueue_outbox_message(
+                    parse_chat_id(&chat_id)?,
+                    parse_account_id(&sender_account_id)?,
+                    parse_device_id(&sender_device_id)?,
+                    parse_message_id(&message_id)?,
+                    message_body_from_ffi(body)?,
+                    queued_at_unix,
+                )
+                .map_err(ffi_error)?,
+        ))
+    }
+
+    pub fn enqueue_outbox_attachment(
+        &self,
+        chat_id: String,
+        sender_account_id: String,
+        sender_device_id: String,
+        message_id: String,
+        attachment: FfiLocalOutboxAttachmentDraft,
+        queued_at_unix: u64,
+    ) -> Result<FfiLocalOutboxItem, TrixFfiError> {
+        Ok(local_outbox_item_to_ffi(
+            lock(&self.inner)?
+                .enqueue_outbox_attachment(
+                    parse_chat_id(&chat_id)?,
+                    parse_account_id(&sender_account_id)?,
+                    parse_device_id(&sender_device_id)?,
+                    parse_message_id(&message_id)?,
+                    local_outbox_attachment_draft_from_ffi(attachment),
+                    queued_at_unix,
+                )
+                .map_err(ffi_error)?,
+        ))
+    }
+
+    pub fn clear_outbox_failure(&self, message_id: String) -> Result<(), TrixFfiError> {
+        lock(&self.inner)?
+            .clear_outbox_failure(parse_message_id(&message_id)?)
+            .map_err(ffi_error)
+    }
+
+    pub fn mark_outbox_failure(
+        &self,
+        message_id: String,
+        failure_message: String,
+    ) -> Result<(), TrixFfiError> {
+        lock(&self.inner)?
+            .mark_outbox_failure(parse_message_id(&message_id)?, failure_message)
+            .map_err(ffi_error)
+    }
+
+    pub fn remove_outbox_message(&self, message_id: String) -> Result<(), TrixFfiError> {
+        lock(&self.inner)?
+            .remove_outbox_message(parse_message_id(&message_id)?)
+            .map_err(ffi_error)
     }
 
     pub fn apply_chat_detail(
@@ -4371,6 +4479,45 @@ fn local_timeline_item_to_ffi(value: LocalTimelineItem) -> FfiLocalTimelineItem 
     }
 }
 
+fn local_outbox_item_to_ffi(value: LocalOutboxMessage) -> FfiLocalOutboxItem {
+    let (body, attachment_draft) = match value.payload {
+        LocalOutboxPayload::Body { body } => (Some(message_body_to_ffi(body)), None),
+        LocalOutboxPayload::AttachmentDraft { attachment } => (
+            None,
+            Some(FfiLocalOutboxAttachmentDraft {
+                local_path: attachment.local_path,
+                mime_type: attachment.mime_type,
+                file_name: attachment.file_name,
+                width_px: attachment.width_px,
+                height_px: attachment.height_px,
+            }),
+        ),
+    };
+    FfiLocalOutboxItem {
+        message_id: value.message_id.0.to_string(),
+        chat_id: value.chat_id.0.to_string(),
+        sender_account_id: value.sender_account_id.0.to_string(),
+        sender_device_id: value.sender_device_id.0.to_string(),
+        body,
+        attachment_draft,
+        queued_at_unix: value.queued_at_unix,
+        status: value.status.into(),
+        failure_message: value.failure_message,
+    }
+}
+
+fn local_outbox_attachment_draft_from_ffi(
+    value: FfiLocalOutboxAttachmentDraft,
+) -> LocalOutboxAttachmentDraft {
+    LocalOutboxAttachmentDraft {
+        local_path: value.local_path,
+        mime_type: value.mime_type,
+        file_name: value.file_name,
+        width_px: value.width_px,
+        height_px: value.height_px,
+    }
+}
+
 fn local_projection_apply_report_to_ffi(
     value: LocalProjectionApplyReport,
 ) -> FfiLocalProjectionApplyReport {
@@ -4759,6 +4906,15 @@ impl From<trix_types::HistorySyncJobStatus> for FfiHistorySyncJobStatus {
             trix_types::HistorySyncJobStatus::Completed => Self::Completed,
             trix_types::HistorySyncJobStatus::Failed => Self::Failed,
             trix_types::HistorySyncJobStatus::Canceled => Self::Canceled,
+        }
+    }
+}
+
+impl From<LocalOutboxStatus> for FfiLocalOutboxStatus {
+    fn from(value: LocalOutboxStatus) -> Self {
+        match value {
+            LocalOutboxStatus::Pending => Self::Pending,
+            LocalOutboxStatus::Failed => Self::Failed,
         }
     }
 }

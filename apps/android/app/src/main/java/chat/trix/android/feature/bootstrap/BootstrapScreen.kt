@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import chat.trix.android.core.auth.BootstrapInput
@@ -308,7 +309,9 @@ private fun BackendServerCard(
                 value = editableBaseUrl,
                 onValueChange = onEditableBaseUrlChange,
                 label = { Text("Base URL") },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("bootstrap:base-url-field"),
                 singleLine = true,
                 enabled = !isBusy,
             )
