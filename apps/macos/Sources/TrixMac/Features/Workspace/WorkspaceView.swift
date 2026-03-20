@@ -122,6 +122,7 @@ struct WorkspaceView: View {
                 HStack(spacing: 12) {
                     if activeSurface == .messages {
                         Button {
+                            model.resetCreateChatComposer()
                             isPresentingCreateChat = true
                         } label: {
                             Label("New Chat", systemImage: "square.and.pencil")
@@ -222,6 +223,7 @@ struct WorkspaceView: View {
                     EmptyWorkspaceLabel("Pick a chat from the left rail or start a new one. The conversation canvas will take over this area once a chat exists.")
 
                     Button {
+                        model.resetCreateChatComposer()
                         isPresentingCreateChat = true
                     } label: {
                         Label("Start New Chat", systemImage: "square.and.pencil")
@@ -1105,7 +1107,7 @@ private struct CreateChatSheet: View {
                     Text("New Chat")
                         .font(.system(size: 28, weight: .bold, design: .serif))
                         .foregroundStyle(colors.ink)
-                    Text("Minimal first-run flow: paste recipient account ids, create the chat, then land directly in the conversation.")
+                    Text("Find people from the account directory, choose participants, then land directly in the conversation.")
                         .font(.subheadline)
                         .foregroundStyle(colors.inkMuted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1119,7 +1121,13 @@ private struct CreateChatSheet: View {
                 .buttonStyle(TrixActionButtonStyle(tone: .ghost))
             }
 
-            Picker("Chat Type", selection: $model.createChatDraft.chatType) {
+            Picker(
+                "Chat Type",
+                selection: Binding(
+                    get: { model.createChatDraft.chatType },
+                    set: { model.setCreateChatType($0) }
+                )
+            ) {
                 Text("Direct Message").tag(ChatType.dm)
                 Text("Group").tag(ChatType.group)
             }
@@ -1136,19 +1144,59 @@ private struct CreateChatSheet: View {
                 }
             }
 
-            TrixInputBlock(
-                "Participant Account IDs",
-                hint: participantHint
-            ) {
-                TextEditor(text: $model.createChatDraft.participantAccountIDs)
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 136)
-                    .font(.system(.footnote, design: .monospaced))
-                    .trixInputChrome()
+            if !model.createChatDraft.selectedParticipants.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Selected")
+                        .font(.caption.weight(.bold))
+                        .tracking(0.9)
+                        .foregroundStyle(colors.inkMuted)
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(model.createChatDraft.selectedParticipants) { participant in
+                                SelectedParticipantChip(
+                                    participant: participant,
+                                    remove: { model.removeCreateChatParticipant(participant.accountId) }
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
+            TrixInputBlock(
+                "Find People",
+                hint: participantHint
+            ) {
+                HStack(spacing: 12) {
+                    TextField("Search by handle or profile name", text: $model.createChatDraft.directoryQuery)
+                        .textFieldStyle(.plain)
+                        .trixInputChrome()
+                        .onSubmit {
+                            Task {
+                                await model.searchAccountDirectory()
+                            }
+                        }
+
+                    Button {
+                        Task {
+                            await model.searchAccountDirectory()
+                        }
+                    } label: {
+                        Label(
+                            model.isSearchingAccountDirectory ? "Searching…" : "Search",
+                            systemImage: "magnifyingglass"
+                        )
+                    }
+                    .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                    .disabled(model.isSearchingAccountDirectory)
+                }
+            }
+
+            directoryResults
+
             HStack(alignment: .center, spacing: 12) {
-                Text("Your own account is added automatically. The current create-chat slice still uses account UUIDs because a contact directory does not exist yet.")
+                Text(footerHint)
                     .font(.footnote)
                     .foregroundStyle(colors.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1179,20 +1227,178 @@ private struct CreateChatSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 560)
+        .frame(width: 620)
         .background(colors.panelStrong, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+        .task {
+            await model.prepareCreateChatSheet()
+        }
     }
 
     private var participantHint: String {
         switch model.createChatDraft.chatType {
         case .dm:
-            return "Paste the recipient account UUID."
+            return "Pick exactly one account for the direct message."
         case .group:
-            return "Paste one account UUID per line or comma-separated."
+            return "Pick one or more accounts for the group."
         case .accountSync:
             return "Account sync chats are created by the server."
         }
     }
+
+    private var footerHint: String {
+        switch model.createChatDraft.chatType {
+        case .dm:
+            return "Your own account is excluded from search and is added automatically."
+        case .group:
+            return "Your own account is excluded from search and will be added automatically to the group."
+        case .accountSync:
+            return "Account sync chats are created by the server."
+        }
+    }
+
+    @ViewBuilder
+    private var directoryResults: some View {
+        if model.isSearchingAccountDirectory && model.accountDirectoryResults.isEmpty {
+            HStack(spacing: 10) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Searching directory…")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(colors.inkMuted)
+            }
+            .padding(.vertical, 8)
+        } else if model.isCreateChatDirectoryEmpty {
+            EmptyWorkspaceLabel(emptyDirectoryMessage)
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    ForEach(model.accountDirectoryResults) { account in
+                        DirectoryAccountRow(
+                            account: account,
+                            isSelected: model.createChatParticipantAccountIDs.contains(account.accountId),
+                            selectionMode: model.createChatDraft.chatType
+                        ) {
+                            model.toggleCreateChatParticipant(account)
+                        }
+                    }
+                }
+            }
+            .frame(minHeight: 220, maxHeight: 280)
+        }
+    }
+
+    private var emptyDirectoryMessage: String {
+        if trimmedValue(model.createChatDraft.directoryQuery) != nil {
+            return "No accounts matched the current search."
+        }
+
+        return "No other accounts are visible in the directory yet."
+    }
+}
+
+private struct DirectoryAccountRow: View {
+    @Environment(\.trixColors) private var colors
+    let account: DirectoryAccountSummary
+    let isSelected: Bool
+    let selectionMode: ChatType
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text(account.profileName)
+                            .font(.headline)
+                            .foregroundStyle(colors.ink)
+
+                        if let handle = trimmedValue(account.handle) {
+                            Text("@\(handle)")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(colors.accent)
+                        }
+                    }
+
+                    if let profileBio = trimmedValue(account.profileBio) {
+                        Text(profileBio)
+                            .font(.subheadline)
+                            .foregroundStyle(colors.inkMuted)
+                            .lineLimit(2)
+                    }
+
+                    Text(String(account.accountId.uuidString.prefix(8)).lowercased())
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(colors.inkMuted)
+                }
+
+                Spacer(minLength: 12)
+
+                Text(isSelected ? "Selected" : selectionLabel)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(isSelected ? colors.accent : colors.inkMuted)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isSelected ? colors.accentSoft.opacity(0.16) : colors.tileFill,
+                in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(isSelected ? colors.accent.opacity(0.4) : colors.outline, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var selectionLabel: String {
+        selectionMode == .dm ? "Choose" : "Add"
+    }
+}
+
+private struct SelectedParticipantChip: View {
+    @Environment(\.trixColors) private var colors
+    let participant: DirectoryAccountSummary
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(participant.profileName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(colors.ink)
+
+                if let handle = trimmedValue(participant.handle) {
+                    Text("@\(handle)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(colors.inkMuted)
+                }
+            }
+
+            Button(action: remove) {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(colors.inkMuted)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(colors.tileFill, in: Capsule())
+        .overlay {
+            Capsule()
+                .stroke(colors.outline, lineWidth: 1)
+        }
+    }
+}
+
+private func trimmedValue(_ rawValue: String?) -> String? {
+    guard let rawValue else {
+        return nil
+    }
+
+    let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
 }
 
 private struct PublishedKeyPackageRow: View {

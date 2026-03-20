@@ -22,6 +22,7 @@ final class AppModel: ObservableObject {
     @Published var keyPackagePublishDraft = KeyPackagePublishDraft()
     @Published var keyPackageReserveDraft = KeyPackageReserveDraft()
     @Published var createChatDraft = CreateChatDraft()
+    @Published var accountDirectoryResults: [DirectoryAccountSummary] = []
     @Published var publishedKeyPackages: [PublishedKeyPackage] = []
     @Published var reservedKeyPackages: [ReservedKeyPackage] = []
     @Published var reservedKeyPackagesAccountID: UUID?
@@ -41,6 +42,7 @@ final class AppModel: ObservableObject {
     @Published var isRestoringSession = false
     @Published var isRefreshingWorkspace = false
     @Published var isCreatingChat = false
+    @Published var isSearchingAccountDirectory = false
     @Published var isRefreshingInbox = false
     @Published var isLeasingInbox = false
     @Published var isAckingInbox = false
@@ -104,7 +106,18 @@ final class AppModel: ObservableObject {
     }
 
     var canCreateChat: Bool {
-        createChatDraft.participantAccountIDs.nonEmptyTrimmed != nil && !isCreatingChat
+        guard !isCreatingChat else {
+            return false
+        }
+
+        switch createChatDraft.chatType {
+        case .dm:
+            return createChatParticipantAccountIDs.count == 1
+        case .group:
+            return !createChatParticipantAccountIDs.isEmpty
+        case .accountSync:
+            return false
+        }
     }
 
     var canReserveKeyPackages: Bool {
@@ -141,6 +154,21 @@ final class AppModel: ObservableObject {
 
     var hasProjectedTimelineData: Bool {
         !selectedChatProjectedMessages.isEmpty
+    }
+
+    var isCreateChatDirectoryEmpty: Bool {
+        !isSearchingAccountDirectory && accountDirectoryResults.isEmpty
+    }
+
+    var createChatParticipantAccountIDs: [UUID] {
+        var seen = Set<UUID>()
+        return createChatDraft.selectedParticipants.compactMap { participant in
+            guard seen.insert(participant.accountId).inserted else {
+                return nil
+            }
+
+            return participant.accountId
+        }
     }
 
     func start() async {
@@ -417,12 +445,8 @@ final class AppModel: ObservableObject {
         defer { isCreatingChat = false }
 
         do {
-            let participantAccountIDs = try decodeUUIDList(
-                createChatDraft.participantAccountIDs,
-                label: "participant account ids"
-            )
             var seenParticipantIDs = Set<UUID>()
-            let uniqueParticipants = participantAccountIDs.filter { participantAccountID in
+            let uniqueParticipants = createChatParticipantAccountIDs.filter { participantAccountID in
                 guard participantAccountID != creatorAccountID else {
                     return false
                 }
@@ -469,7 +493,7 @@ final class AppModel: ObservableObject {
                 )
             )
 
-            createChatDraft = CreateChatDraft()
+            resetCreateChatComposer()
             try await loadWorkspace(client: client, accessToken: token)
             try await loadSelectedChat(
                 client: client,
@@ -489,6 +513,74 @@ final class AppModel: ObservableObject {
         }
 
         return false
+    }
+
+    func searchAccountDirectory() async {
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
+
+        isSearchingAccountDirectory = true
+        lastErrorMessage = nil
+        defer { isSearchingAccountDirectory = false }
+
+        do {
+            let response = try await client.fetchAccountDirectory(
+                accessToken: token,
+                query: createChatDraft.directoryQuery.nonEmptyTrimmed
+            )
+            accountDirectoryResults = response.accounts
+        } catch let error as TrixAPIError {
+            if error.isCredentialFailure {
+                accessToken = nil
+                await restoreSession()
+            } else {
+                lastErrorMessage = error.userFacingMessage
+            }
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    func toggleCreateChatParticipant(_ participant: DirectoryAccountSummary) {
+        switch createChatDraft.chatType {
+        case .dm:
+            createChatDraft.selectedParticipants = [participant]
+        case .group:
+            if createChatDraft.selectedParticipants.contains(where: { $0.accountId == participant.accountId }) {
+                createChatDraft.selectedParticipants.removeAll { $0.accountId == participant.accountId }
+            } else {
+                createChatDraft.selectedParticipants.append(participant)
+            }
+        case .accountSync:
+            break
+        }
+    }
+
+    func removeCreateChatParticipant(_ participantID: UUID) {
+        createChatDraft.selectedParticipants.removeAll { $0.accountId == participantID }
+    }
+
+    func setCreateChatType(_ chatType: ChatType) {
+        createChatDraft.chatType = chatType
+        normalizeCreateChatSelectionForType()
+    }
+
+    func prepareCreateChatSheet() async {
+        normalizeCreateChatSelectionForType()
+
+        if accountDirectoryResults.isEmpty && !isSearchingAccountDirectory {
+            await searchAccountDirectory()
+        }
+    }
+
+    func resetCreateChatComposer() {
+        createChatDraft = CreateChatDraft()
+        accountDirectoryResults = []
     }
 
     func refreshHistorySyncJobs() async {
@@ -1133,6 +1225,7 @@ final class AppModel: ObservableObject {
         currentAccount = nil
         devices = []
         chats = []
+        accountDirectoryResults = []
         inboxItems = []
         activeInboxLease = nil
         lastInboxCursor = nil
@@ -1145,6 +1238,7 @@ final class AppModel: ObservableObject {
         reservedKeyPackages = []
         reservedKeyPackagesAccountID = nil
         clearSelectedChat()
+        createChatDraft = CreateChatDraft()
     }
 
     private func refreshLocalIdentityState(reportErrors: Bool) {
@@ -1432,6 +1526,13 @@ final class AppModel: ObservableObject {
         let prefix = String(deviceId.uuidString.prefix(8)).lowercased()
         return "macos-alpha:\(prefix)"
     }
+
+    private func normalizeCreateChatSelectionForType() {
+        if createChatDraft.chatType == .dm,
+           createChatDraft.selectedParticipants.count > 1 {
+            createChatDraft.selectedParticipants = Array(createChatDraft.selectedParticipants.prefix(1))
+        }
+    }
 }
 
 enum OnboardingMode: String {
@@ -1463,7 +1564,8 @@ struct LinkDeviceDraft {
 struct CreateChatDraft {
     var chatType: ChatType = .dm
     var title = ""
-    var participantAccountIDs = ""
+    var directoryQuery = ""
+    var selectedParticipants: [DirectoryAccountSummary] = []
 }
 
 enum KeyPackageReserveMode: String {

@@ -367,6 +367,23 @@ extension AccountProfileResponse {
     }
 }
 
+extension DirectoryAccountSummary {
+    init(ffiValue: FfiDirectoryAccount) throws {
+        self.init(
+            accountId: try TrixCoreCodec.uuid(ffiValue.accountId, label: "account_id"),
+            handle: ffiValue.handle,
+            profileName: ffiValue.profileName,
+            profileBio: ffiValue.profileBio
+        )
+    }
+}
+
+extension AccountDirectoryResponse {
+    init(ffiValue: FfiAccountDirectory) throws {
+        self.init(accounts: try ffiValue.accounts.map { try DirectoryAccountSummary(ffiValue: $0) })
+    }
+}
+
 extension DeviceSummary {
     init(ffiValue: FfiDeviceSummary) throws {
         self.init(

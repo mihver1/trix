@@ -118,6 +118,23 @@ struct TrixAPIClient {
         }
     }
 
+    func fetchAccountDirectory(
+        accessToken: String,
+        query: String? = nil,
+        limit: Int? = 20,
+        excludeSelf: Bool = true
+    ) async throws -> AccountDirectoryResponse {
+        try await callFFI(accessToken: accessToken) { client in
+            try AccountDirectoryResponse(
+                ffiValue: client.searchAccountDirectory(
+                    query: query,
+                    limit: try limit.map { try TrixCoreCodec.uint32($0, label: "directory limit") },
+                    excludeSelf: excludeSelf
+                )
+            )
+        }
+    }
+
     func fetchDevices(accessToken: String) async throws -> DeviceListResponse {
         try await callFFI(accessToken: accessToken) { client in
             try DeviceListResponse(ffiValue: client.listDevices())

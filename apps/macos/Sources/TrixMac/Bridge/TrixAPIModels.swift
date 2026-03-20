@@ -90,6 +90,35 @@ struct AccountProfileResponse: Codable {
     let deviceStatus: DeviceStatus
 }
 
+struct DirectoryAccountSummary: Codable, Identifiable, Hashable {
+    let accountId: UUID
+    let handle: String?
+    let profileName: String
+    let profileBio: String?
+
+    var id: UUID { accountId }
+
+    var primaryLabel: String {
+        if let handle, !handle.isEmpty {
+            return "@\(handle)"
+        }
+
+        return profileName
+    }
+
+    var secondaryLabel: String {
+        if let handle, !handle.isEmpty {
+            return profileName
+        }
+
+        return String(accountId.uuidString.prefix(8)).lowercased()
+    }
+}
+
+struct AccountDirectoryResponse: Codable {
+    let accounts: [DirectoryAccountSummary]
+}
+
 struct DeviceListResponse: Codable {
     let accountId: UUID
     let devices: [DeviceSummary]
