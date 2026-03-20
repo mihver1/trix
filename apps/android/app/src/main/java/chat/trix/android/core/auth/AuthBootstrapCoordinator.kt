@@ -46,6 +46,7 @@ class AuthBootstrapCoordinator(
         val localState = LocalAuthState(
             accountId = created.accountId,
             deviceId = created.deviceId,
+            accountSyncChatId = created.accountSyncChatId,
             handle = input.handle.nullIfBlank(),
             profileName = input.profileName.trim(),
             profileBio = input.profileBio.nullIfBlank(),

@@ -640,6 +640,10 @@ internal object IntegrityCheckingUniffiLib {
     }
     external fun uniffi_trix_core_checksum_func_ffi_default_ciphersuite_label(
     ): Short
+    external fun uniffi_trix_core_checksum_func_ffi_parse_message_body(
+    ): Short
+    external fun uniffi_trix_core_checksum_func_ffi_serialize_message_body(
+    ): Short
     external fun uniffi_trix_core_checksum_method_ffiaccountrootmaterial_private_key_bytes(
     ): Short
     external fun uniffi_trix_core_checksum_method_ffiaccountrootmaterial_public_key_bytes(
@@ -655,6 +659,28 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_trix_core_checksum_method_ffidevicekeymaterial_sign(
     ): Short
     external fun uniffi_trix_core_checksum_method_ffidevicekeymaterial_verify(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_apply_chat_detail(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_apply_chat_history(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_apply_leased_inbox(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_database_path(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_get_chat(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_get_chat_history(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_get_projected_messages(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_list_chats(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_project_chat_messages(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_projected_cursor(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffilocalhistorystore_save_state(
     ): Short
     external fun uniffi_trix_core_checksum_method_ffimlsconversation_epoch(
     ): Short
@@ -774,6 +800,30 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_trix_core_checksum_method_ffiserverapiclient_upload_blob(
     ): Short
+    external fun uniffi_trix_core_checksum_method_ffisynccoordinator_ack_inbox(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffisynccoordinator_chat_cursor(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffisynccoordinator_last_acked_inbox_id(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffisynccoordinator_lease_inbox(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffisynccoordinator_lease_inbox_into_store(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffisynccoordinator_lease_owner(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffisynccoordinator_record_chat_server_seq(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffisynccoordinator_save_state(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffisynccoordinator_state_path(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffisynccoordinator_state_snapshot(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffisynccoordinator_sync_chat_histories(
+    ): Short
+    external fun uniffi_trix_core_checksum_method_ffisynccoordinator_sync_chat_histories_into_store(
+    ): Short
     external fun uniffi_trix_core_checksum_constructor_ffiaccountrootmaterial_from_private_key(
     ): Short
     external fun uniffi_trix_core_checksum_constructor_ffiaccountrootmaterial_generate(
@@ -782,6 +832,10 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_trix_core_checksum_constructor_ffidevicekeymaterial_generate(
     ): Short
+    external fun uniffi_trix_core_checksum_constructor_ffilocalhistorystore_new(
+    ): Short
+    external fun uniffi_trix_core_checksum_constructor_ffilocalhistorystore_new_persistent(
+    ): Short
     external fun uniffi_trix_core_checksum_constructor_ffimlsfacade_load_persistent(
     ): Short
     external fun uniffi_trix_core_checksum_constructor_ffimlsfacade_new(
@@ -789,6 +843,10 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_trix_core_checksum_constructor_ffimlsfacade_new_persistent(
     ): Short
     external fun uniffi_trix_core_checksum_constructor_ffiserverapiclient_new(
+    ): Short
+    external fun uniffi_trix_core_checksum_constructor_ffisynccoordinator_new(
+    ): Short
+    external fun uniffi_trix_core_checksum_constructor_ffisynccoordinator_new_persistent(
     ): Short
     external fun ffi_trix_core_uniffi_contract_version(
     ): Int
@@ -839,6 +897,36 @@ external fun uniffi_trix_core_fn_method_ffidevicekeymaterial_public_key_bytes(`p
 external fun uniffi_trix_core_fn_method_ffidevicekeymaterial_sign(`ptr`: Long,`payload`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffidevicekeymaterial_verify(`ptr`: Long,`payload`: RustBuffer.ByValue,`signature`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_trix_core_fn_clone_ffilocalhistorystore(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_trix_core_fn_free_ffilocalhistorystore(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_trix_core_fn_constructor_ffilocalhistorystore_new(uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_trix_core_fn_constructor_ffilocalhistorystore_new_persistent(`databasePath`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_apply_chat_detail(`ptr`: Long,`detail`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_apply_chat_history(`ptr`: Long,`history`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_apply_leased_inbox(`ptr`: Long,`lease`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_database_path(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_get_chat(`ptr`: Long,`chatId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_get_chat_history(`ptr`: Long,`chatId`: RustBuffer.ByValue,`afterServerSeq`: RustBuffer.ByValue,`limit`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_get_projected_messages(`ptr`: Long,`chatId`: RustBuffer.ByValue,`afterServerSeq`: RustBuffer.ByValue,`limit`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_list_chats(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_project_chat_messages(`ptr`: Long,`chatId`: RustBuffer.ByValue,`facade`: Long,`conversation`: Long,`limit`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_projected_cursor(`ptr`: Long,`chatId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffilocalhistorystore_save_state(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 external fun uniffi_trix_core_fn_clone_ffimlsconversation(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Long
@@ -978,7 +1066,43 @@ external fun uniffi_trix_core_fn_method_ffiserverapiclient_set_access_token(`ptr
 ): Unit
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_upload_blob(`ptr`: Long,`blobId`: RustBuffer.ByValue,`payload`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_clone_ffisynccoordinator(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_trix_core_fn_free_ffisynccoordinator(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_trix_core_fn_constructor_ffisynccoordinator_new(uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_trix_core_fn_constructor_ffisynccoordinator_new_persistent(`statePath`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_trix_core_fn_method_ffisynccoordinator_ack_inbox(`ptr`: Long,`client`: Long,`inboxIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffisynccoordinator_chat_cursor(`ptr`: Long,`chatId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffisynccoordinator_last_acked_inbox_id(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffisynccoordinator_lease_inbox(`ptr`: Long,`client`: Long,`limit`: RustBuffer.ByValue,`leaseTtlSeconds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffisynccoordinator_lease_inbox_into_store(`ptr`: Long,`client`: Long,`store`: Long,`limit`: RustBuffer.ByValue,`leaseTtlSeconds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffisynccoordinator_lease_owner(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffisynccoordinator_record_chat_server_seq(`ptr`: Long,`chatId`: RustBuffer.ByValue,`serverSeq`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
+external fun uniffi_trix_core_fn_method_ffisynccoordinator_save_state(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_trix_core_fn_method_ffisynccoordinator_state_path(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffisynccoordinator_state_snapshot(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffisynccoordinator_sync_chat_histories(`ptr`: Long,`client`: Long,`limitPerChat`: Int,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffisynccoordinator_sync_chat_histories_into_store(`ptr`: Long,`client`: Long,`store`: Long,`limitPerChat`: Int,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_func_ffi_default_ciphersuite_label(uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_func_ffi_parse_message_body(`contentType`: RustBuffer.ByValue,`payload`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_func_ffi_serialize_message_body(`body`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun ffi_trix_core_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1102,6 +1226,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_func_ffi_default_ciphersuite_label() != 38150.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_func_ffi_parse_message_body() != 17067.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_func_ffi_serialize_message_body() != 25632.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffiaccountrootmaterial_private_key_bytes() != 60131.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1124,6 +1254,39 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffidevicekeymaterial_verify() != 11630.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_apply_chat_detail() != 52493.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_apply_chat_history() != 30010.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_apply_leased_inbox() != 20144.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_database_path() != 21137.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_get_chat() != 41372.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_get_chat_history() != 45987.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_get_projected_messages() != 59100.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_list_chats() != 27009.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_project_chat_messages() != 40538.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_projected_cursor() != 55925.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffilocalhistorystore_save_state() != 61222.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimlsconversation_epoch() != 3593.toShort()) {
@@ -1303,6 +1466,42 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_upload_blob() != 30342.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_ack_inbox() != 23451.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_chat_cursor() != 10370.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_last_acked_inbox_id() != 19172.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_lease_inbox() != 39845.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_lease_inbox_into_store() != 40587.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_lease_owner() != 50562.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_record_chat_server_seq() != 40744.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_save_state() != 12201.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_state_path() != 32831.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_state_snapshot() != 19633.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_sync_chat_histories() != 27012.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_sync_chat_histories_into_store() != 26906.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_constructor_ffiaccountrootmaterial_from_private_key() != 9414.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1315,6 +1514,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_constructor_ffidevicekeymaterial_generate() != 39874.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_constructor_ffilocalhistorystore_new() != 36949.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_constructor_ffilocalhistorystore_new_persistent() != 16055.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_constructor_ffimlsfacade_load_persistent() != 20880.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1325,6 +1530,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_constructor_ffiserverapiclient_new() != 35642.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_constructor_ffisynccoordinator_new() != 18306.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_constructor_ffisynccoordinator_new_persistent() != 12494.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -2257,6 +2468,434 @@ public object FfiConverterTypeFfiDeviceKeyMaterial: FfiConverter<FfiDeviceKeyMat
     override fun allocationSize(value: FfiDeviceKeyMaterial) = 8UL
 
     override fun write(value: FfiDeviceKeyMaterial, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+public interface FfiLocalHistoryStoreInterface {
+    
+    fun `applyChatDetail`(`detail`: FfiChatDetail): FfiLocalStoreApplyReport
+    
+    fun `applyChatHistory`(`history`: FfiChatHistory): FfiLocalStoreApplyReport
+    
+    fun `applyLeasedInbox`(`lease`: FfiLeaseInboxResponse): FfiLocalStoreApplyReport
+    
+    fun `databasePath`(): kotlin.String?
+    
+    fun `getChat`(`chatId`: kotlin.String): FfiChatDetail?
+    
+    fun `getChatHistory`(`chatId`: kotlin.String, `afterServerSeq`: kotlin.ULong?, `limit`: kotlin.UInt?): FfiChatHistory
+    
+    fun `getProjectedMessages`(`chatId`: kotlin.String, `afterServerSeq`: kotlin.ULong?, `limit`: kotlin.UInt?): List<FfiLocalProjectedMessage>
+    
+    fun `listChats`(): List<FfiChatSummary>
+    
+    fun `projectChatMessages`(`chatId`: kotlin.String, `facade`: FfiMlsFacade, `conversation`: FfiMlsConversation, `limit`: kotlin.UInt?): FfiLocalProjectionApplyReport
+    
+    fun `projectedCursor`(`chatId`: kotlin.String): kotlin.ULong?
+    
+    fun `saveState`()
+    
+    companion object
+}
+
+open class FfiLocalHistoryStore: Disposable, AutoCloseable, FfiLocalHistoryStoreInterface
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+    constructor() :
+        this(UniffiWithHandle, 
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_trix_core_fn_constructor_ffilocalhistorystore_new(
+    
+        _status)
+}
+    )
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_trix_core_fn_free_ffilocalhistorystore(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_trix_core_fn_clone_ffilocalhistorystore(handle, status)
+        }
+    }
+
+    
+    @Throws(TrixFfiException::class)override fun `applyChatDetail`(`detail`: FfiChatDetail): FfiLocalStoreApplyReport {
+            return FfiConverterTypeFfiLocalStoreApplyReport.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_apply_chat_detail(
+        it,
+        FfiConverterTypeFfiChatDetail.lower(`detail`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `applyChatHistory`(`history`: FfiChatHistory): FfiLocalStoreApplyReport {
+            return FfiConverterTypeFfiLocalStoreApplyReport.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_apply_chat_history(
+        it,
+        FfiConverterTypeFfiChatHistory.lower(`history`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `applyLeasedInbox`(`lease`: FfiLeaseInboxResponse): FfiLocalStoreApplyReport {
+            return FfiConverterTypeFfiLocalStoreApplyReport.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_apply_leased_inbox(
+        it,
+        FfiConverterTypeFfiLeaseInboxResponse.lower(`lease`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `databasePath`(): kotlin.String? {
+            return FfiConverterOptionalString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_database_path(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `getChat`(`chatId`: kotlin.String): FfiChatDetail? {
+            return FfiConverterOptionalTypeFfiChatDetail.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_get_chat(
+        it,
+        FfiConverterString.lower(`chatId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `getChatHistory`(`chatId`: kotlin.String, `afterServerSeq`: kotlin.ULong?, `limit`: kotlin.UInt?): FfiChatHistory {
+            return FfiConverterTypeFfiChatHistory.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_get_chat_history(
+        it,
+        FfiConverterString.lower(`chatId`),FfiConverterOptionalULong.lower(`afterServerSeq`),FfiConverterOptionalUInt.lower(`limit`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `getProjectedMessages`(`chatId`: kotlin.String, `afterServerSeq`: kotlin.ULong?, `limit`: kotlin.UInt?): List<FfiLocalProjectedMessage> {
+            return FfiConverterSequenceTypeFfiLocalProjectedMessage.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_get_projected_messages(
+        it,
+        FfiConverterString.lower(`chatId`),FfiConverterOptionalULong.lower(`afterServerSeq`),FfiConverterOptionalUInt.lower(`limit`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `listChats`(): List<FfiChatSummary> {
+            return FfiConverterSequenceTypeFfiChatSummary.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_list_chats(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `projectChatMessages`(`chatId`: kotlin.String, `facade`: FfiMlsFacade, `conversation`: FfiMlsConversation, `limit`: kotlin.UInt?): FfiLocalProjectionApplyReport {
+            return FfiConverterTypeFfiLocalProjectionApplyReport.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_project_chat_messages(
+        it,
+        FfiConverterString.lower(`chatId`),FfiConverterTypeFfiMlsFacade.lower(`facade`),FfiConverterTypeFfiMlsConversation.lower(`conversation`),FfiConverterOptionalUInt.lower(`limit`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `projectedCursor`(`chatId`: kotlin.String): kotlin.ULong? {
+            return FfiConverterOptionalULong.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_projected_cursor(
+        it,
+        FfiConverterString.lower(`chatId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `saveState`()
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffilocalhistorystore_save_state(
+        it,
+        _status)
+}
+    }
+    
+    
+
+    
+
+    
+
+
+    
+    companion object {
+        
+    @Throws(TrixFfiException::class) fun `newPersistent`(`databasePath`: kotlin.String): FfiLocalHistoryStore {
+            return FfiConverterTypeFfiLocalHistoryStore.lift(
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_constructor_ffilocalhistorystore_new_persistent(
+    
+        FfiConverterString.lower(`databasePath`),_status)
+}
+    )
+    }
+    
+
+        
+    }
+    
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiLocalHistoryStore: FfiConverter<FfiLocalHistoryStore, Long> {
+    override fun lower(value: FfiLocalHistoryStore): Long {
+        return value.uniffiCloneHandle()
+    }
+
+    override fun lift(value: Long): FfiLocalHistoryStore {
+        return FfiLocalHistoryStore(UniffiWithHandle, value)
+    }
+
+    override fun read(buf: ByteBuffer): FfiLocalHistoryStore {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: FfiLocalHistoryStore) = 8UL
+
+    override fun write(value: FfiLocalHistoryStore, buf: ByteBuffer) {
         buf.putLong(lower(value))
     }
 }
@@ -3946,6 +4585,450 @@ public object FfiConverterTypeFfiServerApiClient: FfiConverter<FfiServerApiClien
 }
 
 
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+public interface FfiSyncCoordinatorInterface {
+    
+    fun `ackInbox`(`client`: FfiServerApiClient, `inboxIds`: List<kotlin.ULong>): FfiAckInboxResponse
+    
+    fun `chatCursor`(`chatId`: kotlin.String): kotlin.ULong?
+    
+    fun `lastAckedInboxId`(): kotlin.ULong?
+    
+    fun `leaseInbox`(`client`: FfiServerApiClient, `limit`: kotlin.UInt?, `leaseTtlSeconds`: kotlin.ULong?): FfiLeaseInboxResponse
+    
+    fun `leaseInboxIntoStore`(`client`: FfiServerApiClient, `store`: FfiLocalHistoryStore, `limit`: kotlin.UInt?, `leaseTtlSeconds`: kotlin.ULong?): FfiInboxApplyOutcome
+    
+    fun `leaseOwner`(): kotlin.String
+    
+    fun `recordChatServerSeq`(`chatId`: kotlin.String, `serverSeq`: kotlin.ULong): kotlin.Boolean
+    
+    fun `saveState`()
+    
+    fun `statePath`(): kotlin.String?
+    
+    fun `stateSnapshot`(): FfiSyncStateSnapshot
+    
+    fun `syncChatHistories`(`client`: FfiServerApiClient, `limitPerChat`: kotlin.UInt): List<FfiChatHistory>
+    
+    fun `syncChatHistoriesIntoStore`(`client`: FfiServerApiClient, `store`: FfiLocalHistoryStore, `limitPerChat`: kotlin.UInt): FfiLocalStoreApplyReport
+    
+    companion object
+}
+
+open class FfiSyncCoordinator: Disposable, AutoCloseable, FfiSyncCoordinatorInterface
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+    constructor() :
+        this(UniffiWithHandle, 
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_constructor_ffisynccoordinator_new(
+    
+        _status)
+}
+    )
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_trix_core_fn_free_ffisynccoordinator(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_trix_core_fn_clone_ffisynccoordinator(handle, status)
+        }
+    }
+
+    
+    @Throws(TrixFfiException::class)override fun `ackInbox`(`client`: FfiServerApiClient, `inboxIds`: List<kotlin.ULong>): FfiAckInboxResponse {
+            return FfiConverterTypeFfiAckInboxResponse.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffisynccoordinator_ack_inbox(
+        it,
+        FfiConverterTypeFfiServerApiClient.lower(`client`),FfiConverterSequenceULong.lower(`inboxIds`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `chatCursor`(`chatId`: kotlin.String): kotlin.ULong? {
+            return FfiConverterOptionalULong.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffisynccoordinator_chat_cursor(
+        it,
+        FfiConverterString.lower(`chatId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `lastAckedInboxId`(): kotlin.ULong? {
+            return FfiConverterOptionalULong.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffisynccoordinator_last_acked_inbox_id(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `leaseInbox`(`client`: FfiServerApiClient, `limit`: kotlin.UInt?, `leaseTtlSeconds`: kotlin.ULong?): FfiLeaseInboxResponse {
+            return FfiConverterTypeFfiLeaseInboxResponse.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffisynccoordinator_lease_inbox(
+        it,
+        FfiConverterTypeFfiServerApiClient.lower(`client`),FfiConverterOptionalUInt.lower(`limit`),FfiConverterOptionalULong.lower(`leaseTtlSeconds`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `leaseInboxIntoStore`(`client`: FfiServerApiClient, `store`: FfiLocalHistoryStore, `limit`: kotlin.UInt?, `leaseTtlSeconds`: kotlin.ULong?): FfiInboxApplyOutcome {
+            return FfiConverterTypeFfiInboxApplyOutcome.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffisynccoordinator_lease_inbox_into_store(
+        it,
+        FfiConverterTypeFfiServerApiClient.lower(`client`),FfiConverterTypeFfiLocalHistoryStore.lower(`store`),FfiConverterOptionalUInt.lower(`limit`),FfiConverterOptionalULong.lower(`leaseTtlSeconds`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `leaseOwner`(): kotlin.String {
+            return FfiConverterString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffisynccoordinator_lease_owner(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `recordChatServerSeq`(`chatId`: kotlin.String, `serverSeq`: kotlin.ULong): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffisynccoordinator_record_chat_server_seq(
+        it,
+        FfiConverterString.lower(`chatId`),FfiConverterULong.lower(`serverSeq`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `saveState`()
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffisynccoordinator_save_state(
+        it,
+        _status)
+}
+    }
+    
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `statePath`(): kotlin.String? {
+            return FfiConverterOptionalString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffisynccoordinator_state_path(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `stateSnapshot`(): FfiSyncStateSnapshot {
+            return FfiConverterTypeFfiSyncStateSnapshot.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffisynccoordinator_state_snapshot(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `syncChatHistories`(`client`: FfiServerApiClient, `limitPerChat`: kotlin.UInt): List<FfiChatHistory> {
+            return FfiConverterSequenceTypeFfiChatHistory.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffisynccoordinator_sync_chat_histories(
+        it,
+        FfiConverterTypeFfiServerApiClient.lower(`client`),FfiConverterUInt.lower(`limitPerChat`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `syncChatHistoriesIntoStore`(`client`: FfiServerApiClient, `store`: FfiLocalHistoryStore, `limitPerChat`: kotlin.UInt): FfiLocalStoreApplyReport {
+            return FfiConverterTypeFfiLocalStoreApplyReport.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffisynccoordinator_sync_chat_histories_into_store(
+        it,
+        FfiConverterTypeFfiServerApiClient.lower(`client`),FfiConverterTypeFfiLocalHistoryStore.lower(`store`),FfiConverterUInt.lower(`limitPerChat`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+
+    
+
+
+    
+    companion object {
+        
+    @Throws(TrixFfiException::class) fun `newPersistent`(`statePath`: kotlin.String): FfiSyncCoordinator {
+            return FfiConverterTypeFfiSyncCoordinator.lift(
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_constructor_ffisynccoordinator_new_persistent(
+    
+        FfiConverterString.lower(`statePath`),_status)
+}
+    )
+    }
+    
+
+        
+    }
+    
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiSyncCoordinator: FfiConverter<FfiSyncCoordinator, Long> {
+    override fun lower(value: FfiSyncCoordinator): Long {
+        return value.uniffiCloneHandle()
+    }
+
+    override fun lift(value: Long): FfiSyncCoordinator {
+        return FfiSyncCoordinator(UniffiWithHandle, value)
+    }
+
+    override fun read(buf: ByteBuffer): FfiSyncCoordinator {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: FfiSyncCoordinator) = 8UL
+
+    override fun write(value: FfiSyncCoordinator, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
 
 data class FfiAccountProfile (
     var `accountId`: kotlin.String
@@ -5533,6 +6616,54 @@ public object FfiConverterTypeFfiInbox: FfiConverterRustBuffer<FfiInbox> {
 
 
 
+data class FfiInboxApplyOutcome (
+    var `leaseOwner`: kotlin.String
+    , 
+    var `leaseExpiresAtUnix`: kotlin.ULong
+    , 
+    var `ackedInboxIds`: List<kotlin.ULong>
+    , 
+    var `report`: FfiLocalStoreApplyReport
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiInboxApplyOutcome: FfiConverterRustBuffer<FfiInboxApplyOutcome> {
+    override fun read(buf: ByteBuffer): FfiInboxApplyOutcome {
+        return FfiInboxApplyOutcome(
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterSequenceULong.read(buf),
+            FfiConverterTypeFfiLocalStoreApplyReport.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiInboxApplyOutcome) = (
+            FfiConverterString.allocationSize(value.`leaseOwner`) +
+            FfiConverterULong.allocationSize(value.`leaseExpiresAtUnix`) +
+            FfiConverterSequenceULong.allocationSize(value.`ackedInboxIds`) +
+            FfiConverterTypeFfiLocalStoreApplyReport.allocationSize(value.`report`)
+    )
+
+    override fun write(value: FfiInboxApplyOutcome, buf: ByteBuffer) {
+            FfiConverterString.write(value.`leaseOwner`, buf)
+            FfiConverterULong.write(value.`leaseExpiresAtUnix`, buf)
+            FfiConverterSequenceULong.write(value.`ackedInboxIds`, buf)
+            FfiConverterTypeFfiLocalStoreApplyReport.write(value.`report`, buf)
+    }
+}
+
+
+
 data class FfiInboxItem (
     var `inboxId`: kotlin.ULong
     , 
@@ -5657,6 +6788,308 @@ public object FfiConverterTypeFfiLeaseInboxResponse: FfiConverterRustBuffer<FfiL
             FfiConverterString.write(value.`leaseOwner`, buf)
             FfiConverterULong.write(value.`leaseExpiresAtUnix`, buf)
             FfiConverterSequenceTypeFfiInboxItem.write(value.`items`, buf)
+    }
+}
+
+
+
+data class FfiLocalProjectedMessage (
+    var `serverSeq`: kotlin.ULong
+    , 
+    var `messageId`: kotlin.String
+    , 
+    var `senderAccountId`: kotlin.String
+    , 
+    var `senderDeviceId`: kotlin.String
+    , 
+    var `epoch`: kotlin.ULong
+    , 
+    var `messageKind`: FfiMessageKind
+    , 
+    var `contentType`: FfiContentType
+    , 
+    var `projectionKind`: FfiLocalProjectionKind
+    , 
+    var `payload`: kotlin.ByteArray?
+    , 
+    var `body`: FfiMessageBody?
+    , 
+    var `bodyParseError`: kotlin.String?
+    , 
+    var `mergedEpoch`: kotlin.ULong?
+    , 
+    var `createdAtUnix`: kotlin.ULong
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiLocalProjectedMessage: FfiConverterRustBuffer<FfiLocalProjectedMessage> {
+    override fun read(buf: ByteBuffer): FfiLocalProjectedMessage {
+        return FfiLocalProjectedMessage(
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterTypeFfiMessageKind.read(buf),
+            FfiConverterTypeFfiContentType.read(buf),
+            FfiConverterTypeFfiLocalProjectionKind.read(buf),
+            FfiConverterOptionalByteArray.read(buf),
+            FfiConverterOptionalTypeFfiMessageBody.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiLocalProjectedMessage) = (
+            FfiConverterULong.allocationSize(value.`serverSeq`) +
+            FfiConverterString.allocationSize(value.`messageId`) +
+            FfiConverterString.allocationSize(value.`senderAccountId`) +
+            FfiConverterString.allocationSize(value.`senderDeviceId`) +
+            FfiConverterULong.allocationSize(value.`epoch`) +
+            FfiConverterTypeFfiMessageKind.allocationSize(value.`messageKind`) +
+            FfiConverterTypeFfiContentType.allocationSize(value.`contentType`) +
+            FfiConverterTypeFfiLocalProjectionKind.allocationSize(value.`projectionKind`) +
+            FfiConverterOptionalByteArray.allocationSize(value.`payload`) +
+            FfiConverterOptionalTypeFfiMessageBody.allocationSize(value.`body`) +
+            FfiConverterOptionalString.allocationSize(value.`bodyParseError`) +
+            FfiConverterOptionalULong.allocationSize(value.`mergedEpoch`) +
+            FfiConverterULong.allocationSize(value.`createdAtUnix`)
+    )
+
+    override fun write(value: FfiLocalProjectedMessage, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`serverSeq`, buf)
+            FfiConverterString.write(value.`messageId`, buf)
+            FfiConverterString.write(value.`senderAccountId`, buf)
+            FfiConverterString.write(value.`senderDeviceId`, buf)
+            FfiConverterULong.write(value.`epoch`, buf)
+            FfiConverterTypeFfiMessageKind.write(value.`messageKind`, buf)
+            FfiConverterTypeFfiContentType.write(value.`contentType`, buf)
+            FfiConverterTypeFfiLocalProjectionKind.write(value.`projectionKind`, buf)
+            FfiConverterOptionalByteArray.write(value.`payload`, buf)
+            FfiConverterOptionalTypeFfiMessageBody.write(value.`body`, buf)
+            FfiConverterOptionalString.write(value.`bodyParseError`, buf)
+            FfiConverterOptionalULong.write(value.`mergedEpoch`, buf)
+            FfiConverterULong.write(value.`createdAtUnix`, buf)
+    }
+}
+
+
+
+data class FfiLocalProjectionApplyReport (
+    var `chatId`: kotlin.String
+    , 
+    var `processedMessages`: kotlin.ULong
+    , 
+    var `projectedMessagesUpserted`: kotlin.ULong
+    , 
+    var `advancedToServerSeq`: kotlin.ULong?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiLocalProjectionApplyReport: FfiConverterRustBuffer<FfiLocalProjectionApplyReport> {
+    override fun read(buf: ByteBuffer): FfiLocalProjectionApplyReport {
+        return FfiLocalProjectionApplyReport(
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterOptionalULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiLocalProjectionApplyReport) = (
+            FfiConverterString.allocationSize(value.`chatId`) +
+            FfiConverterULong.allocationSize(value.`processedMessages`) +
+            FfiConverterULong.allocationSize(value.`projectedMessagesUpserted`) +
+            FfiConverterOptionalULong.allocationSize(value.`advancedToServerSeq`)
+    )
+
+    override fun write(value: FfiLocalProjectionApplyReport, buf: ByteBuffer) {
+            FfiConverterString.write(value.`chatId`, buf)
+            FfiConverterULong.write(value.`processedMessages`, buf)
+            FfiConverterULong.write(value.`projectedMessagesUpserted`, buf)
+            FfiConverterOptionalULong.write(value.`advancedToServerSeq`, buf)
+    }
+}
+
+
+
+data class FfiLocalStoreApplyReport (
+    var `chatsUpserted`: kotlin.ULong
+    , 
+    var `messagesUpserted`: kotlin.ULong
+    , 
+    var `changedChatIds`: List<kotlin.String>
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiLocalStoreApplyReport: FfiConverterRustBuffer<FfiLocalStoreApplyReport> {
+    override fun read(buf: ByteBuffer): FfiLocalStoreApplyReport {
+        return FfiLocalStoreApplyReport(
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterSequenceString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiLocalStoreApplyReport) = (
+            FfiConverterULong.allocationSize(value.`chatsUpserted`) +
+            FfiConverterULong.allocationSize(value.`messagesUpserted`) +
+            FfiConverterSequenceString.allocationSize(value.`changedChatIds`)
+    )
+
+    override fun write(value: FfiLocalStoreApplyReport, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`chatsUpserted`, buf)
+            FfiConverterULong.write(value.`messagesUpserted`, buf)
+            FfiConverterSequenceString.write(value.`changedChatIds`, buf)
+    }
+}
+
+
+
+data class FfiMessageBody (
+    var `kind`: FfiMessageBodyKind
+    , 
+    var `text`: kotlin.String?
+    , 
+    var `targetMessageId`: kotlin.String?
+    , 
+    var `emoji`: kotlin.String?
+    , 
+    var `reactionAction`: FfiReactionAction?
+    , 
+    var `receiptType`: FfiReceiptType?
+    , 
+    var `receiptAtUnix`: kotlin.ULong?
+    , 
+    var `blobId`: kotlin.String?
+    , 
+    var `mimeType`: kotlin.String?
+    , 
+    var `sizeBytes`: kotlin.ULong?
+    , 
+    var `sha256`: kotlin.ByteArray?
+    , 
+    var `fileName`: kotlin.String?
+    , 
+    var `widthPx`: kotlin.UInt?
+    , 
+    var `heightPx`: kotlin.UInt?
+    , 
+    var `fileKey`: kotlin.ByteArray?
+    , 
+    var `nonce`: kotlin.ByteArray?
+    , 
+    var `eventType`: kotlin.String?
+    , 
+    var `eventJson`: kotlin.String?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiMessageBody: FfiConverterRustBuffer<FfiMessageBody> {
+    override fun read(buf: ByteBuffer): FfiMessageBody {
+        return FfiMessageBody(
+            FfiConverterTypeFfiMessageBodyKind.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalTypeFfiReactionAction.read(buf),
+            FfiConverterOptionalTypeFfiReceiptType.read(buf),
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterOptionalByteArray.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalByteArray.read(buf),
+            FfiConverterOptionalByteArray.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiMessageBody) = (
+            FfiConverterTypeFfiMessageBodyKind.allocationSize(value.`kind`) +
+            FfiConverterOptionalString.allocationSize(value.`text`) +
+            FfiConverterOptionalString.allocationSize(value.`targetMessageId`) +
+            FfiConverterOptionalString.allocationSize(value.`emoji`) +
+            FfiConverterOptionalTypeFfiReactionAction.allocationSize(value.`reactionAction`) +
+            FfiConverterOptionalTypeFfiReceiptType.allocationSize(value.`receiptType`) +
+            FfiConverterOptionalULong.allocationSize(value.`receiptAtUnix`) +
+            FfiConverterOptionalString.allocationSize(value.`blobId`) +
+            FfiConverterOptionalString.allocationSize(value.`mimeType`) +
+            FfiConverterOptionalULong.allocationSize(value.`sizeBytes`) +
+            FfiConverterOptionalByteArray.allocationSize(value.`sha256`) +
+            FfiConverterOptionalString.allocationSize(value.`fileName`) +
+            FfiConverterOptionalUInt.allocationSize(value.`widthPx`) +
+            FfiConverterOptionalUInt.allocationSize(value.`heightPx`) +
+            FfiConverterOptionalByteArray.allocationSize(value.`fileKey`) +
+            FfiConverterOptionalByteArray.allocationSize(value.`nonce`) +
+            FfiConverterOptionalString.allocationSize(value.`eventType`) +
+            FfiConverterOptionalString.allocationSize(value.`eventJson`)
+    )
+
+    override fun write(value: FfiMessageBody, buf: ByteBuffer) {
+            FfiConverterTypeFfiMessageBodyKind.write(value.`kind`, buf)
+            FfiConverterOptionalString.write(value.`text`, buf)
+            FfiConverterOptionalString.write(value.`targetMessageId`, buf)
+            FfiConverterOptionalString.write(value.`emoji`, buf)
+            FfiConverterOptionalTypeFfiReactionAction.write(value.`reactionAction`, buf)
+            FfiConverterOptionalTypeFfiReceiptType.write(value.`receiptType`, buf)
+            FfiConverterOptionalULong.write(value.`receiptAtUnix`, buf)
+            FfiConverterOptionalString.write(value.`blobId`, buf)
+            FfiConverterOptionalString.write(value.`mimeType`, buf)
+            FfiConverterOptionalULong.write(value.`sizeBytes`, buf)
+            FfiConverterOptionalByteArray.write(value.`sha256`, buf)
+            FfiConverterOptionalString.write(value.`fileName`, buf)
+            FfiConverterOptionalUInt.write(value.`widthPx`, buf)
+            FfiConverterOptionalUInt.write(value.`heightPx`, buf)
+            FfiConverterOptionalByteArray.write(value.`fileKey`, buf)
+            FfiConverterOptionalByteArray.write(value.`nonce`, buf)
+            FfiConverterOptionalString.write(value.`eventType`, buf)
+            FfiConverterOptionalString.write(value.`eventJson`, buf)
     }
 }
 
@@ -6276,6 +7709,87 @@ public object FfiConverterTypeFfiRevokeDeviceResponse: FfiConverterRustBuffer<Ff
 
 
 
+data class FfiSyncChatCursor (
+    var `chatId`: kotlin.String
+    , 
+    var `lastServerSeq`: kotlin.ULong
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiSyncChatCursor: FfiConverterRustBuffer<FfiSyncChatCursor> {
+    override fun read(buf: ByteBuffer): FfiSyncChatCursor {
+        return FfiSyncChatCursor(
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiSyncChatCursor) = (
+            FfiConverterString.allocationSize(value.`chatId`) +
+            FfiConverterULong.allocationSize(value.`lastServerSeq`)
+    )
+
+    override fun write(value: FfiSyncChatCursor, buf: ByteBuffer) {
+            FfiConverterString.write(value.`chatId`, buf)
+            FfiConverterULong.write(value.`lastServerSeq`, buf)
+    }
+}
+
+
+
+data class FfiSyncStateSnapshot (
+    var `leaseOwner`: kotlin.String
+    , 
+    var `lastAckedInboxId`: kotlin.ULong?
+    , 
+    var `chatCursors`: List<FfiSyncChatCursor>
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiSyncStateSnapshot: FfiConverterRustBuffer<FfiSyncStateSnapshot> {
+    override fun read(buf: ByteBuffer): FfiSyncStateSnapshot {
+        return FfiSyncStateSnapshot(
+            FfiConverterString.read(buf),
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterSequenceTypeFfiSyncChatCursor.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiSyncStateSnapshot) = (
+            FfiConverterString.allocationSize(value.`leaseOwner`) +
+            FfiConverterOptionalULong.allocationSize(value.`lastAckedInboxId`) +
+            FfiConverterSequenceTypeFfiSyncChatCursor.allocationSize(value.`chatCursors`)
+    )
+
+    override fun write(value: FfiSyncStateSnapshot, buf: ByteBuffer) {
+            FfiConverterString.write(value.`leaseOwner`, buf)
+            FfiConverterOptionalULong.write(value.`lastAckedInboxId`, buf)
+            FfiConverterSequenceTypeFfiSyncChatCursor.write(value.`chatCursors`, buf)
+    }
+}
+
+
+
 data class FfiVersionResponse (
     var `service`: kotlin.String
     , 
@@ -6567,6 +8081,80 @@ public object FfiConverterTypeFfiHistorySyncJobType: FfiConverterRustBuffer<FfiH
 
 
 
+enum class FfiLocalProjectionKind {
+    
+    APPLICATION_MESSAGE,
+    PROPOSAL_QUEUED,
+    COMMIT_MERGED,
+    WELCOME_REF,
+    SYSTEM;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiLocalProjectionKind: FfiConverterRustBuffer<FfiLocalProjectionKind> {
+    override fun read(buf: ByteBuffer) = try {
+        FfiLocalProjectionKind.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: FfiLocalProjectionKind) = 4UL
+
+    override fun write(value: FfiLocalProjectionKind, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
+enum class FfiMessageBodyKind {
+    
+    TEXT,
+    REACTION,
+    RECEIPT,
+    ATTACHMENT,
+    CHAT_EVENT;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiMessageBodyKind: FfiConverterRustBuffer<FfiMessageBodyKind> {
+    override fun read(buf: ByteBuffer) = try {
+        FfiMessageBodyKind.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: FfiMessageBodyKind) = 4UL
+
+    override fun write(value: FfiMessageBodyKind, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
 enum class FfiMessageKind {
     
     APPLICATION,
@@ -6629,6 +8217,74 @@ public object FfiConverterTypeFfiMlsProcessKind: FfiConverterRustBuffer<FfiMlsPr
     override fun allocationSize(value: FfiMlsProcessKind) = 4UL
 
     override fun write(value: FfiMlsProcessKind, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
+enum class FfiReactionAction {
+    
+    ADD,
+    REMOVE;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiReactionAction: FfiConverterRustBuffer<FfiReactionAction> {
+    override fun read(buf: ByteBuffer) = try {
+        FfiReactionAction.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: FfiReactionAction) = 4UL
+
+    override fun write(value: FfiReactionAction, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
+enum class FfiReceiptType {
+    
+    DELIVERED,
+    READ;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiReceiptType: FfiConverterRustBuffer<FfiReceiptType> {
+    override fun read(buf: ByteBuffer) = try {
+        FfiReceiptType.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: FfiReceiptType) = 4UL
+
+    override fun write(value: FfiReceiptType, buf: ByteBuffer) {
         buf.putInt(value.ordinal + 1)
     }
 }
@@ -6897,6 +8553,38 @@ public object FfiConverterOptionalTypeFfiMlsConversation: FfiConverterRustBuffer
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeFfiChatDetail: FfiConverterRustBuffer<FfiChatDetail?> {
+    override fun read(buf: ByteBuffer): FfiChatDetail? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeFfiChatDetail.read(buf)
+    }
+
+    override fun allocationSize(value: FfiChatDetail?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeFfiChatDetail.allocationSize(value)
+        }
+    }
+
+    override fun write(value: FfiChatDetail?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeFfiChatDetail.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeFfiControlMessage: FfiConverterRustBuffer<FfiControlMessage?> {
     override fun read(buf: ByteBuffer): FfiControlMessage? {
         if (buf.get().toInt() == 0) {
@@ -6919,6 +8607,38 @@ public object FfiConverterOptionalTypeFfiControlMessage: FfiConverterRustBuffer<
         } else {
             buf.put(1)
             FfiConverterTypeFfiControlMessage.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeFfiMessageBody: FfiConverterRustBuffer<FfiMessageBody?> {
+    override fun read(buf: ByteBuffer): FfiMessageBody? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeFfiMessageBody.read(buf)
+    }
+
+    override fun allocationSize(value: FfiMessageBody?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeFfiMessageBody.allocationSize(value)
+        }
+    }
+
+    override fun write(value: FfiMessageBody?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeFfiMessageBody.write(value, buf)
         }
     }
 }
@@ -6983,6 +8703,70 @@ public object FfiConverterOptionalTypeFfiHistorySyncJobStatus: FfiConverterRustB
         } else {
             buf.put(1)
             FfiConverterTypeFfiHistorySyncJobStatus.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeFfiReactionAction: FfiConverterRustBuffer<FfiReactionAction?> {
+    override fun read(buf: ByteBuffer): FfiReactionAction? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeFfiReactionAction.read(buf)
+    }
+
+    override fun allocationSize(value: FfiReactionAction?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeFfiReactionAction.allocationSize(value)
+        }
+    }
+
+    override fun write(value: FfiReactionAction?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeFfiReactionAction.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeFfiReceiptType: FfiConverterRustBuffer<FfiReceiptType?> {
+    override fun read(buf: ByteBuffer): FfiReceiptType? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeFfiReceiptType.read(buf)
+    }
+
+    override fun allocationSize(value: FfiReceiptType?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeFfiReceiptType.allocationSize(value)
+        }
+    }
+
+    override fun write(value: FfiReceiptType?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeFfiReceiptType.write(value, buf)
         }
     }
 }
@@ -7095,6 +8879,34 @@ public object FfiConverterSequenceByteArray: FfiConverterRustBuffer<List<kotlin.
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterByteArray.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiChatHistory: FfiConverterRustBuffer<List<FfiChatHistory>> {
+    override fun read(buf: ByteBuffer): List<FfiChatHistory> {
+        val len = buf.getInt()
+        return List<FfiChatHistory>(len) {
+            FfiConverterTypeFfiChatHistory.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiChatHistory>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiChatHistory.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiChatHistory>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiChatHistory.write(it, buf)
         }
     }
 }
@@ -7273,6 +9085,34 @@ public object FfiConverterSequenceTypeFfiInboxItem: FfiConverterRustBuffer<List<
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeFfiLocalProjectedMessage: FfiConverterRustBuffer<List<FfiLocalProjectedMessage>> {
+    override fun read(buf: ByteBuffer): List<FfiLocalProjectedMessage> {
+        val len = buf.getInt()
+        return List<FfiLocalProjectedMessage>(len) {
+            FfiConverterTypeFfiLocalProjectedMessage.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiLocalProjectedMessage>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiLocalProjectedMessage.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiLocalProjectedMessage>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiLocalProjectedMessage.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeFfiMessageEnvelope: FfiConverterRustBuffer<List<FfiMessageEnvelope>> {
     override fun read(buf: ByteBuffer): List<FfiMessageEnvelope> {
         val len = buf.getInt()
@@ -7405,12 +9245,62 @@ public object FfiConverterSequenceTypeFfiReservedKeyPackage: FfiConverterRustBuf
             FfiConverterTypeFfiReservedKeyPackage.write(it, buf)
         }
     }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiSyncChatCursor: FfiConverterRustBuffer<List<FfiSyncChatCursor>> {
+    override fun read(buf: ByteBuffer): List<FfiSyncChatCursor> {
+        val len = buf.getInt()
+        return List<FfiSyncChatCursor>(len) {
+            FfiConverterTypeFfiSyncChatCursor.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiSyncChatCursor>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiSyncChatCursor.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiSyncChatCursor>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiSyncChatCursor.write(it, buf)
+        }
+    }
 } fun `ffiDefaultCiphersuiteLabel`(): kotlin.String {
             return FfiConverterString.lift(
     uniffiRustCall() { _status ->
     UniffiLib.uniffi_trix_core_fn_func_ffi_default_ciphersuite_label(
     
         _status)
+}
+    )
+    }
+    
+
+    @Throws(TrixFfiException::class) fun `ffiParseMessageBody`(`contentType`: FfiContentType, `payload`: kotlin.ByteArray): FfiMessageBody {
+            return FfiConverterTypeFfiMessageBody.lift(
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_func_ffi_parse_message_body(
+    
+        FfiConverterTypeFfiContentType.lower(`contentType`),FfiConverterByteArray.lower(`payload`),_status)
+}
+    )
+    }
+    
+
+    @Throws(TrixFfiException::class) fun `ffiSerializeMessageBody`(`body`: FfiMessageBody): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_func_ffi_serialize_message_body(
+    
+        FfiConverterTypeFfiMessageBody.lower(`body`),_status)
 }
     )
     }

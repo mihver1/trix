@@ -90,7 +90,7 @@ fun SettingsScreen(
             item {
                 SettingsCard(
                     title = "Backend wiring",
-                    body = "The Android client now runs through create account, auth challenge, auth session, and accounts/me against the live backend.",
+                    body = "The Android client now runs through create account, auth challenge, auth session, accounts/me, and a Rust-backed local chat cache plus sync coordinator against the live backend.",
                 )
             }
             item {
@@ -102,7 +102,7 @@ fun SettingsScreen(
             item {
                 SettingsCard(
                     title = "Next build-out",
-                    body = "Move MLS persistence and device linking onto the new Rust surface, then layer thread caching and inbox-driven sync on top.",
+                    body = "Wire persistent MLS group state and outgoing message creation, then move from read-only cached transcripts to full send, link, and device approval flows.",
                 )
             }
         }
@@ -130,7 +130,13 @@ private fun SessionCard(session: AuthenticatedSession) {
                 style = MaterialTheme.typography.bodyLarge,
             )
             Text(
-                text = "Account ${session.accountProfile.accountId}\nDevice ${session.accountProfile.deviceId}",
+                text = buildString {
+                    append("Account ${session.accountProfile.accountId}\n")
+                    append("Device ${session.accountProfile.deviceId}")
+                    session.localState.accountSyncChatId?.let {
+                        append("\nAccount sync chat $it")
+                    }
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )

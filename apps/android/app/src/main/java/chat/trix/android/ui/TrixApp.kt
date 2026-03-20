@@ -373,6 +373,7 @@ private fun DestinationContent(
     when (destination) {
         TrixDestination.Chats -> ChatsScreen(
             windowInfo = windowInfo,
+            session = session,
             modifier = modifier,
         )
         TrixDestination.Devices -> DevicesScreen(

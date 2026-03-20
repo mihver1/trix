@@ -1468,6 +1468,18 @@ impl FfiLocalHistoryStore {
             .collect())
     }
 
+    pub fn apply_chat_detail(
+        &self,
+        detail: FfiChatDetail,
+    ) -> Result<FfiLocalStoreApplyReport, TrixFfiError> {
+        let detail = ffi_chat_detail_to_api(detail)?;
+        Ok(local_store_apply_report_to_ffi(
+            lock(&self.inner)?
+                .apply_chat_detail(&detail)
+                .map_err(ffi_error)?,
+        ))
+    }
+
     pub fn apply_chat_history(
         &self,
         history: FfiChatHistory,
@@ -2084,6 +2096,33 @@ fn chat_history_to_ffi(value: trix_types::ChatHistoryResponse) -> FfiChatHistory
             .map(message_envelope_to_ffi)
             .collect(),
     }
+}
+
+fn ffi_chat_detail_to_api(
+    value: FfiChatDetail,
+) -> Result<trix_types::ChatDetailResponse, TrixFfiError> {
+    Ok(trix_types::ChatDetailResponse {
+        chat_id: parse_chat_id(&value.chat_id)?,
+        chat_type: value.chat_type.into(),
+        title: value.title,
+        last_server_seq: value.last_server_seq,
+        epoch: value.epoch,
+        last_commit_message_id: value
+            .last_commit_message_id
+            .map(|message_id| parse_message_id(&message_id))
+            .transpose()?,
+        members: value
+            .members
+            .into_iter()
+            .map(|member| {
+                Ok(trix_types::ChatMemberSummary {
+                    account_id: parse_account_id(&member.account_id)?,
+                    role: member.role,
+                    membership_status: member.membership_status,
+                })
+            })
+            .collect::<Result<Vec<_>, TrixFfiError>>()?,
+    })
 }
 
 fn ffi_chat_history_to_api(

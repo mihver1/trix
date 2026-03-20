@@ -106,6 +106,7 @@ class LocalAuthStateStore(
 data class LocalAuthState(
     val accountId: String,
     val deviceId: String,
+    val accountSyncChatId: String?,
     val handle: String?,
     val profileName: String,
     val profileBio: String?,
@@ -131,6 +132,7 @@ data class LocalAuthState(
         return JSONObject().apply {
             put("account_id", accountId)
             put("device_id", deviceId)
+            put("account_sync_chat_id", accountSyncChatId)
             put("handle", handle)
             put("profile_name", profileName)
             put("profile_bio", profileBio)
@@ -150,6 +152,7 @@ data class LocalAuthState(
             return LocalAuthState(
                 accountId = json.getString("account_id"),
                 deviceId = json.getString("device_id"),
+                accountSyncChatId = json.optNullableString("account_sync_chat_id"),
                 handle = json.optNullableString("handle"),
                 profileName = json.getString("profile_name"),
                 profileBio = json.optNullableString("profile_bio"),

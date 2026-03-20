@@ -35,6 +35,7 @@ class AuthApiClient(
             CreateAccountResult(
                 accountId = response.accountId,
                 deviceId = response.deviceId,
+                accountSyncChatId = response.accountSyncChatId,
             )
         }
     }
@@ -125,6 +126,7 @@ data class CreateAccountPayload(
 data class CreateAccountResult(
     val accountId: String,
     val deviceId: String,
+    val accountSyncChatId: String,
 )
 
 data class AuthChallengeResult(

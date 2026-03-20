@@ -24,14 +24,14 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.MarkUnreadChatAlt
-import androidx.compose.material.icons.rounded.Send
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.Badge
+import androidx.compose.material3.Button
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ElevatedAssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
@@ -39,23 +39,25 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -63,44 +65,174 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import chat.trix.android.R
+import chat.trix.android.core.auth.AuthenticatedSession
+import chat.trix.android.core.chat.ChatConversation
+import chat.trix.android.core.chat.ChatConversationSummary
+import chat.trix.android.core.chat.ChatDiagnostics
+import chat.trix.android.core.chat.ChatOverview
+import chat.trix.android.core.chat.ChatRefreshResult
+import chat.trix.android.core.chat.ChatRepository
+import chat.trix.android.core.chat.ChatTimelineMessage
 import chat.trix.android.ui.adaptive.TrixAdaptiveInfo
 import chat.trix.android.ui.adaptive.TrixFoldPosture
+import java.io.IOException
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatsScreen(
     windowInfo: TrixAdaptiveInfo,
+    session: AuthenticatedSession,
     modifier: Modifier = Modifier,
 ) {
-    val conversations = remember {
-        mutableStateListOf<ConversationUiModel>().apply {
-            addAll(sampleConversations())
-        }
+    val context = LocalContext.current.applicationContext
+    val repository = remember(
+        context,
+        session.localState.accountId,
+        session.localState.deviceId,
+        session.accessToken,
+        session.baseUrl,
+    ) {
+        ChatRepository(
+            context = context,
+            session = session,
+        )
     }
-    var selectedConversationId by rememberSaveable { mutableStateOf<String?>(null) }
-    val selectedConversation = conversations.firstOrNull { it.id == selectedConversationId }
+    val coroutineScope = rememberCoroutineScope()
     val showTwoPane = windowInfo.prefersTwoPaneChat
 
-    LaunchedEffect(showTwoPane, conversations.size) {
-        if (showTwoPane && selectedConversationId == null && conversations.isNotEmpty()) {
-            selectedConversationId = conversations.first().id
+    var selectedConversationId by rememberSaveable(session.localState.deviceId) { mutableStateOf<String?>(null) }
+    var overviewVersion by remember(repository) { mutableIntStateOf(0) }
+    var overviewState by remember(repository) { mutableStateOf(ChatsOverviewState(isRefreshing = true)) }
+    var detailState by remember(repository) { mutableStateOf(ChatsDetailState()) }
+
+    suspend fun loadCachedOverview(): ChatOverview? {
+        return try {
+            repository.loadOverview()
+        } catch (_: IOException) {
+            null
         }
     }
 
-    BackHandler(enabled = !showTwoPane && selectedConversation != null) {
-        selectedConversationId = null
+    suspend fun syncChats() {
+        val cachedOverview = loadCachedOverview()
+        if (cachedOverview != null && overviewState.overview == null) {
+            overviewState = overviewState.copy(
+                overview = cachedOverview,
+                isRefreshing = true,
+                errorMessage = null,
+            )
+            overviewVersion += 1
+        } else {
+            overviewState = overviewState.copy(
+                isRefreshing = true,
+                errorMessage = null,
+            )
+        }
+
+        try {
+            val result = repository.refresh()
+            overviewState = ChatsOverviewState(
+                overview = result.overview,
+                isRefreshing = false,
+                errorMessage = null,
+                lastRefreshSummary = result.toSummary(),
+            )
+            overviewVersion += 1
+        } catch (error: IOException) {
+            val fallbackOverview = loadCachedOverview() ?: overviewState.overview
+            overviewState = overviewState.copy(
+                overview = fallbackOverview,
+                isRefreshing = false,
+                errorMessage = error.message ?: "Chat sync failed",
+            )
+            if (fallbackOverview != null) {
+                overviewVersion += 1
+            }
+        }
     }
 
-    val detailOnly = !showTwoPane && selectedConversation != null
+    DisposableEffect(repository) {
+        onDispose {
+            repository.close()
+        }
+    }
+
+    LaunchedEffect(repository) {
+        val cachedOverview = loadCachedOverview()
+        if (cachedOverview != null) {
+            overviewState = overviewState.copy(
+                overview = cachedOverview,
+                isRefreshing = true,
+            )
+            overviewVersion += 1
+        }
+        syncChats()
+    }
+
+    LaunchedEffect(showTwoPane, overviewVersion) {
+        val conversationIds = overviewState.overview?.conversations.orEmpty().map { it.chatId }
+        if (conversationIds.isEmpty()) {
+            selectedConversationId = null
+            return@LaunchedEffect
+        }
+
+        if (selectedConversationId !in conversationIds) {
+            selectedConversationId = null
+        }
+
+        if (showTwoPane && selectedConversationId == null) {
+            selectedConversationId = conversationIds.first()
+        }
+    }
+
+    LaunchedEffect(repository, selectedConversationId, overviewVersion) {
+        val chatId = selectedConversationId
+        if (chatId == null) {
+            detailState = ChatsDetailState()
+            return@LaunchedEffect
+        }
+
+        val currentConversation = detailState.conversation?.takeIf { it.chatId == chatId }
+        detailState = detailState.copy(
+            conversation = currentConversation,
+            isLoading = true,
+            errorMessage = null,
+        )
+
+        detailState = try {
+            ChatsDetailState(
+                conversation = repository.loadConversation(chatId),
+                isLoading = false,
+                errorMessage = null,
+            )
+        } catch (error: IOException) {
+            ChatsDetailState(
+                conversation = currentConversation,
+                isLoading = false,
+                errorMessage = error.message ?: "Failed to load conversation",
+            )
+        }
+    }
+
+    val conversations = overviewState.overview?.conversations.orEmpty()
+    val selectedConversationSummary = conversations.firstOrNull { it.chatId == selectedConversationId }
+    val selectedConversation = detailState.conversation
+        ?.takeIf { it.chatId == selectedConversationId }
+    val detailOnly = !showTwoPane && selectedConversationId != null
+
+    BackHandler(enabled = detailOnly) {
+        selectedConversationId = null
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
-            if (detailOnly && selectedConversation != null) {
+            if (detailOnly) {
                 TopAppBar(
                     title = {
                         Text(
-                            text = selectedConversation.title,
+                            text = selectedConversation?.title ?: selectedConversationSummary?.title ?: "",
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -108,22 +240,26 @@ fun ChatsScreen(
                     navigationIcon = {
                         IconButton(onClick = { selectedConversationId = null }) {
                             Icon(
-                                imageVector = Icons.Rounded.ArrowBack,
+                                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                                 contentDescription = stringResource(R.string.action_back),
                             )
                         }
+                    },
+                    actions = {
+                        RefreshAction(
+                            isRefreshing = overviewState.isRefreshing,
+                            onRefresh = { coroutineScope.launch { syncChats() } },
+                        )
                     },
                 )
             } else {
                 CenterAlignedTopAppBar(
                     title = { Text(stringResource(R.string.screen_chats)) },
                     actions = {
-                        FilledTonalIconButton(onClick = {}) {
-                            Icon(
-                                imageVector = Icons.Rounded.Edit,
-                                contentDescription = null,
-                            )
-                        }
+                        RefreshAction(
+                            isRefreshing = overviewState.isRefreshing,
+                            onRefresh = { coroutineScope.launch { syncChats() } },
+                        )
                     },
                 )
             }
@@ -134,59 +270,57 @@ fun ChatsScreen(
             .padding(innerPadding)
 
         when {
-            windowInfo.foldPosture == TrixFoldPosture.Tabletop && selectedConversation != null -> {
+            overviewState.overview == null && overviewState.isRefreshing -> {
+                LoadingChatsPane(modifier = contentModifier)
+            }
+
+            conversations.isEmpty() -> {
+                EmptyChatCachePane(
+                    errorMessage = overviewState.errorMessage,
+                    isRefreshing = overviewState.isRefreshing,
+                    onRefresh = { coroutineScope.launch { syncChats() } },
+                    modifier = contentModifier,
+                )
+            }
+
+            windowInfo.foldPosture == TrixFoldPosture.Tabletop && selectedConversationId != null -> {
                 TabletopConversationLayout(
                     conversation = selectedConversation,
-                    onSendMessage = { draft ->
-                        appendOutgoingMessage(
-                            conversations = conversations,
-                            conversationId = selectedConversation.id,
-                            draft = draft,
-                        )
-                    },
+                    isLoading = detailState.isLoading,
+                    errorMessage = detailState.errorMessage,
                     modifier = contentModifier,
                 )
             }
 
             showTwoPane -> {
                 WideConversationLayout(
-                    conversations = conversations,
+                    overviewState = overviewState,
                     selectedConversationId = selectedConversationId,
+                    selectedConversation = selectedConversation,
+                    detailState = detailState,
                     onConversationClick = { selectedConversationId = it },
-                    onSendMessage = { draft ->
-                        selectedConversationId?.let { conversationId ->
-                            appendOutgoingMessage(
-                                conversations = conversations,
-                                conversationId = conversationId,
-                                draft = draft,
-                            )
-                        }
-                    },
+                    onRefresh = { coroutineScope.launch { syncChats() } },
                     foldPosture = windowInfo.foldPosture,
                     foldBounds = windowInfo.foldBounds,
                     modifier = contentModifier,
                 )
             }
 
-            selectedConversation != null -> {
+            selectedConversationId != null -> {
                 ConversationDetailPane(
                     conversation = selectedConversation,
-                    onSendMessage = { draft ->
-                        appendOutgoingMessage(
-                            conversations = conversations,
-                            conversationId = selectedConversation.id,
-                            draft = draft,
-                        )
-                    },
+                    isLoading = detailState.isLoading,
+                    errorMessage = detailState.errorMessage,
                     modifier = contentModifier,
                 )
             }
 
             else -> {
                 ConversationListPane(
-                    conversations = conversations,
+                    overviewState = overviewState,
                     selectedConversationId = selectedConversationId,
                     onConversationClick = { selectedConversationId = it },
+                    onRefresh = { coroutineScope.launch { syncChats() } },
                     modifier = contentModifier,
                 )
             }
@@ -195,16 +329,118 @@ fun ChatsScreen(
 }
 
 @Composable
+private fun RefreshAction(
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
+) {
+    if (isRefreshing) {
+        Box(
+            modifier = Modifier
+                .padding(horizontal = 12.dp)
+                .size(24.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            CircularProgressIndicator(strokeWidth = 2.dp)
+        }
+    } else {
+        FilledTonalIconButton(onClick = onRefresh) {
+            Icon(
+                imageVector = Icons.Rounded.Sync,
+                contentDescription = "Refresh chats",
+            )
+        }
+    }
+}
+
+@Composable
+private fun LoadingChatsPane(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            CircularProgressIndicator()
+            Text(
+                text = "Restoring local chat cache",
+                style = MaterialTheme.typography.titleMedium,
+            )
+        }
+    }
+}
+
+@Composable
+private fun EmptyChatCachePane(
+    errorMessage: String?,
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surfaceContainerLowest),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier.widthIn(max = 420.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primaryContainer,
+                modifier = Modifier.size(68.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Rounded.MarkUnreadChatAlt,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                }
+            }
+            Text(
+                text = if (errorMessage == null) "No chats in local cache" else "Chat sync failed",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                text = errorMessage
+                    ?: "This Android slice now reads from the Rust local store. Once the backend has threads for this account, refresh will pull them into the on-device cache.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (errorMessage == null) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.error
+                },
+                textAlign = TextAlign.Center,
+            )
+            Button(
+                onClick = onRefresh,
+                enabled = !isRefreshing,
+            ) {
+                Text(if (isRefreshing) "Refreshing" else "Refresh")
+            }
+        }
+    }
+}
+
+@Composable
 private fun WideConversationLayout(
-    conversations: List<ConversationUiModel>,
+    overviewState: ChatsOverviewState,
     selectedConversationId: String?,
+    selectedConversation: ChatConversation?,
+    detailState: ChatsDetailState,
     onConversationClick: (String) -> Unit,
-    onSendMessage: (String) -> Unit,
+    onRefresh: () -> Unit,
     foldPosture: TrixFoldPosture,
     foldBounds: Rect?,
     modifier: Modifier = Modifier,
 ) {
-    val selectedConversation = conversations.firstOrNull { it.id == selectedConversationId }
     val foldGap = if (foldPosture == TrixFoldPosture.Book && foldBounds != null && foldBounds.width() > 0) {
         with(LocalDensity.current) { foldBounds.width().toDp() }
     } else {
@@ -219,9 +455,10 @@ private fun WideConversationLayout(
                 .fillMaxHeight(),
         ) {
             ConversationListPane(
-                conversations = conversations,
+                overviewState = overviewState,
                 selectedConversationId = selectedConversationId,
                 onConversationClick = onConversationClick,
+                onRefresh = onRefresh,
             )
         }
 
@@ -231,8 +468,10 @@ private fun WideConversationLayout(
             VerticalDivider()
         }
 
-        if (selectedConversation == null) {
+        if (selectedConversationId == null) {
             EmptyConversationPane(
+                title = "Select a conversation",
+                body = "Expanded layouts keep the local thread list and the selected transcript visible together.",
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight(),
@@ -240,7 +479,8 @@ private fun WideConversationLayout(
         } else {
             ConversationDetailPane(
                 conversation = selectedConversation,
-                onSendMessage = onSendMessage,
+                isLoading = detailState.isLoading,
+                errorMessage = detailState.errorMessage,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight(),
@@ -251,18 +491,22 @@ private fun WideConversationLayout(
 
 @Composable
 private fun TabletopConversationLayout(
-    conversation: ConversationUiModel,
-    onSendMessage: (String) -> Unit,
+    conversation: ChatConversation?,
+    isLoading: Boolean,
+    errorMessage: String?,
     modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier.fillMaxSize(),
     ) {
-        ConversationTranscript(
+        ConversationDetailContent(
             conversation = conversation,
+            isLoading = isLoading,
+            errorMessage = errorMessage,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
+            compactHeader = false,
         )
         HorizontalDivider()
         Surface(
@@ -283,14 +527,11 @@ private fun TabletopConversationLayout(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "The transcript stays above the hinge while compose actions and thread context stay below it.",
+                    text = "The transcript stays above the hinge while refresh and compose diagnostics stay below it.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                ConversationComposer(
-                    conversation = conversation,
-                    onSendMessage = onSendMessage,
-                )
+                ReadOnlyComposerPane()
             }
         }
     }
@@ -298,42 +539,31 @@ private fun TabletopConversationLayout(
 
 @Composable
 private fun ConversationListPane(
-    conversations: List<ConversationUiModel>,
+    overviewState: ChatsOverviewState,
     selectedConversationId: String?,
     onConversationClick: (String) -> Unit,
+    onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val overview = overviewState.overview ?: return
+
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item {
-            Surface(
-                shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.secondaryContainer,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "Universal chat layout",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = "List-detail on wide windows, full-screen detail on compact windows, and hinge-safe behavior on foldables.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                    )
-                }
-            }
+            ChatCacheCard(
+                diagnostics = overview.diagnostics,
+                isRefreshing = overviewState.isRefreshing,
+                lastRefreshSummary = overviewState.lastRefreshSummary,
+                errorMessage = overviewState.errorMessage,
+                onRefresh = onRefresh,
+            )
         }
 
-        items(conversations, key = { it.id }) { conversation ->
-            val selected = conversation.id == selectedConversationId
+        items(overview.conversations, key = { it.chatId }) { conversation ->
+            val selected = conversation.chatId == selectedConversationId
             Surface(
                 shape = RoundedCornerShape(24.dp),
                 color = if (selected) {
@@ -343,7 +573,7 @@ private fun ConversationListPane(
                 },
                 tonalElevation = if (selected) 2.dp else 0.dp,
                 modifier = Modifier.fillMaxWidth(),
-                onClick = { onConversationClick(conversation.id) },
+                onClick = { onConversationClick(conversation.chatId) },
             ) {
                 ListItem(
                     leadingContent = {
@@ -358,9 +588,19 @@ private fun ConversationListPane(
                         )
                     },
                     supportingContent = {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                if (conversation.isAccountSyncChat) {
+                                    TimelineBadge(label = "Account sync")
+                                }
+                                if (conversation.hasProjectedTimeline) {
+                                    TimelineBadge(label = "Projected")
+                                }
+                            }
                             Text(
-                                text = conversation.participants,
+                                text = conversation.participantsLabel,
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -377,13 +617,13 @@ private fun ConversationListPane(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Text(
-                                text = conversation.timestamp,
+                                text = conversation.timestampLabel,
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            if (conversation.unreadCount > 0) {
+                            if (conversation.messageCount > 0) {
                                 Badge {
-                                    Text(text = conversation.unreadCount.toString())
+                                    Text(text = conversation.messageCount.toString())
                                 }
                             }
                         }
@@ -395,7 +635,102 @@ private fun ConversationListPane(
 }
 
 @Composable
-private fun EmptyConversationPane(modifier: Modifier = Modifier) {
+private fun ChatCacheCard(
+    diagnostics: ChatDiagnostics,
+    isRefreshing: Boolean,
+    lastRefreshSummary: String?,
+    errorMessage: String?,
+    onRefresh: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = "Local chat cache",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "${diagnostics.cachedChatCount} chats cached, ${diagnostics.cachedMessageCount} messages, ${diagnostics.projectedChatCount} projected timelines.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+
+                if (isRefreshing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(22.dp),
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    FilledTonalIconButton(onClick = onRefresh) {
+                        Icon(
+                            imageVector = Icons.Rounded.Sync,
+                            contentDescription = "Refresh chat cache",
+                        )
+                    }
+                }
+            }
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TimelineBadge(
+                    label = diagnostics.lastAckedInboxId?.let { "Inbox ack #$it" } ?: "No inbox ack yet",
+                )
+                TimelineBadge(
+                    label = "Lease ${diagnostics.leaseOwner.take(8)}",
+                )
+            }
+
+            if (lastRefreshSummary != null) {
+                Text(
+                    text = lastRefreshSummary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
+
+            if (errorMessage != null) {
+                Text(
+                    text = errorMessage,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimelineBadge(label: String) {
+    ElevatedAssistChip(
+        onClick = {},
+        label = { Text(label) },
+    )
+}
+
+@Composable
+private fun EmptyConversationPane(
+    title: String,
+    body: String,
+    modifier: Modifier = Modifier,
+) {
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -420,12 +755,12 @@ private fun EmptyConversationPane(modifier: Modifier = Modifier) {
                 }
             }
             Text(
-                text = "Select a conversation",
+                text = title,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = "Expanded layouts keep the thread list and transcript visible together.",
+                text = body,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -436,65 +771,116 @@ private fun EmptyConversationPane(modifier: Modifier = Modifier) {
 
 @Composable
 private fun ConversationDetailPane(
-    conversation: ConversationUiModel,
-    onSendMessage: (String) -> Unit,
+    conversation: ChatConversation?,
+    isLoading: Boolean,
+    errorMessage: String?,
     modifier: Modifier = Modifier,
+) {
+    ConversationDetailContent(
+        conversation = conversation,
+        isLoading = isLoading,
+        errorMessage = errorMessage,
+        modifier = modifier,
+        compactHeader = true,
+    )
+}
+
+@Composable
+private fun ConversationDetailContent(
+    conversation: ChatConversation?,
+    isLoading: Boolean,
+    errorMessage: String?,
+    modifier: Modifier = Modifier,
+    compactHeader: Boolean,
 ) {
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surface),
     ) {
-        Surface(
-            tonalElevation = 1.dp,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+        if (conversation != null) {
+            Surface(
+                tonalElevation = 1.dp,
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(
-                    text = conversation.title,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                Column(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    AssistChip(
-                        onClick = {},
-                        label = { Text(conversation.participants) },
-                        colors = AssistChipDefaults.assistChipColors(),
+                    Text(
+                        text = conversation.title,
+                        style = if (compactHeader) {
+                            MaterialTheme.typography.headlineSmall
+                        } else {
+                            MaterialTheme.typography.titleLarge
+                        },
+                        fontWeight = FontWeight.SemiBold,
                     )
-                    AssistChip(
-                        onClick = {},
-                        label = { Text("E2EE draft flow") },
-                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        TimelineBadge(label = conversation.participantsLabel)
+                        TimelineBadge(label = conversation.timelineLabel)
+                        if (conversation.isAccountSyncChat) {
+                            TimelineBadge(label = "Account sync")
+                        }
+                    }
                 }
             }
         }
 
-        ConversationTranscript(
-            conversation = conversation,
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-        )
+        when {
+            isLoading && conversation == null -> {
+                LoadingChatsPane(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                )
+            }
 
-        HorizontalDivider()
+            conversation == null -> {
+                EmptyConversationPane(
+                    title = "Conversation unavailable",
+                    body = errorMessage ?: "The local cache could not load this conversation.",
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                )
+            }
 
-        ConversationComposer(
-            conversation = conversation,
-            onSendMessage = onSendMessage,
-        )
+            else -> {
+                ConversationTranscript(
+                    conversation = conversation,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                )
+
+                HorizontalDivider()
+
+                ReadOnlyComposerPane(
+                    errorMessage = errorMessage,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
     }
 }
 
 @Composable
 private fun ConversationTranscript(
-    conversation: ConversationUiModel,
+    conversation: ChatConversation,
     modifier: Modifier = Modifier,
 ) {
+    if (conversation.messages.isEmpty()) {
+        EmptyConversationPane(
+            title = "No local messages yet",
+            body = "The chat exists in cache, but there are no synced envelopes for this thread on the device yet.",
+            modifier = modifier,
+        )
+        return
+    }
+
     val listState = rememberLazyListState()
 
     LaunchedEffect(conversation.messages.size) {
@@ -537,8 +923,15 @@ private fun ConversationTranscript(
                             text = message.body,
                             style = MaterialTheme.typography.bodyLarge,
                         )
+                        if (message.note != null) {
+                            Text(
+                                text = message.note,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         Text(
-                            text = message.timestamp,
+                            text = message.timestampLabel,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -550,44 +943,43 @@ private fun ConversationTranscript(
 }
 
 @Composable
-private fun ConversationComposer(
-    conversation: ConversationUiModel,
-    onSendMessage: (String) -> Unit,
+private fun ReadOnlyComposerPane(
+    errorMessage: String? = null,
+    modifier: Modifier = Modifier,
 ) {
-    var draft by rememberSaveable(conversation.id) { mutableStateOf("") }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
+    Column(
+        modifier = modifier
             .imePadding()
             .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.Bottom,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        OutlinedTextField(
-            value = draft,
-            onValueChange = { draft = it },
-            modifier = Modifier.weight(1f),
-            minLines = 2,
-            maxLines = 5,
-            placeholder = {
-                Text(text = "Write an encrypted message draft")
-            },
-        )
-        FilledTonalIconButton(
-            onClick = {
-                if (draft.isNotBlank()) {
-                    onSendMessage(draft.trim())
-                    draft = ""
-                }
-            },
-            enabled = draft.isNotBlank(),
-            modifier = Modifier.size(56.dp),
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            modifier = Modifier.fillMaxWidth(),
         ) {
-            Icon(
-                imageVector = Icons.Rounded.Send,
-                contentDescription = stringResource(R.string.action_send),
-            )
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = "Read-only sync preview",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = "This slice renders the Rust-backed cache and sync coordinator first. Outgoing MLS send turns on after persistent group state and message creation land on Android.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (errorMessage != null) {
+                    Text(
+                        text = errorMessage,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
         }
     }
 }
@@ -612,88 +1004,29 @@ private fun ConversationAvatar(name: String) {
     }
 }
 
-private fun appendOutgoingMessage(
-    conversations: MutableList<ConversationUiModel>,
-    conversationId: String,
-    draft: String,
-) {
-    val index = conversations.indexOfFirst { it.id == conversationId }
-    if (index == -1) {
-        return
+private data class ChatsOverviewState(
+    val overview: ChatOverview? = null,
+    val isRefreshing: Boolean = false,
+    val errorMessage: String? = null,
+    val lastRefreshSummary: String? = null,
+)
+
+private data class ChatsDetailState(
+    val conversation: ChatConversation? = null,
+    val isLoading: Boolean = false,
+    val errorMessage: String? = null,
+)
+
+private fun ChatRefreshResult.toSummary(): String {
+    return buildString {
+        append("Refresh applied ")
+        append(historyMessagesUpserted)
+        append(" history messages, ")
+        append(inboxMessagesUpserted)
+        append(" inbox messages, acked ")
+        append(ackedInboxCount)
+        append(" inbox ids, hydrated ")
+        append(hydratedChatDetails)
+        append(" chat details.")
     }
-
-    val conversation = conversations[index]
-    val updated = conversation.copy(
-        lastMessagePreview = "You: $draft",
-        timestamp = "Now",
-        unreadCount = 0,
-        messages = conversation.messages + MessageUiModel(
-            id = "msg-${conversation.messages.size + 1}",
-            author = "You",
-            body = draft,
-            timestamp = "Now",
-            isMine = true,
-        ),
-    )
-
-    conversations.removeAt(index)
-    conversations.add(0, updated)
 }
-
-private data class ConversationUiModel(
-    val id: String,
-    val title: String,
-    val participants: String,
-    val lastMessagePreview: String,
-    val timestamp: String,
-    val unreadCount: Int,
-    val messages: List<MessageUiModel>,
-)
-
-private data class MessageUiModel(
-    val id: String,
-    val author: String,
-    val body: String,
-    val timestamp: String,
-    val isMine: Boolean,
-)
-
-private fun sampleConversations(): List<ConversationUiModel> = listOf(
-    ConversationUiModel(
-        id = "ops",
-        title = "Server PoC",
-        participants = "Maks, Rita, Alex",
-        lastMessagePreview = "Auth challenge path is stable. We can wire Android next.",
-        timestamp = "09:42",
-        unreadCount = 2,
-        messages = listOf(
-            MessageUiModel("1", "Rita", "Server health and version endpoints are enough for the first Android vertical slice.", "09:11", false),
-            MessageUiModel("2", "Alex", "Keep the shell native, but move the stable crypto and transport paths behind Rust FFI.", "09:16", false),
-            MessageUiModel("3", "You", "Agreed. I'll shape the client around adaptive navigation and a messaging-first layout.", "09:21", true),
-        ),
-    ),
-    ConversationUiModel(
-        id = "design",
-        title = "Adaptive UI",
-        participants = "Product, Design",
-        lastMessagePreview = "Phone gets bottom nav, tablets get rail, wide screens get permanent drawer.",
-        timestamp = "Yesterday",
-        unreadCount = 0,
-        messages = listOf(
-            MessageUiModel("4", "Design", "Messaging should always feel native, not like a responsive website wrapped into a shell.", "Yesterday", false),
-            MessageUiModel("5", "You", "Using canonical Android layouts keeps the UX predictable across phone, tablet, and foldable.", "Yesterday", true),
-        ),
-    ),
-    ConversationUiModel(
-        id = "security",
-        title = "Crypto backlog",
-        participants = "Security",
-        lastMessagePreview = "Key storage belongs in Android Keystore once device auth is wired.",
-        timestamp = "Tue",
-        unreadCount = 1,
-        messages = listOf(
-            MessageUiModel("6", "Security", "Do not back up local keys through Android cloud backup.", "Tue", false),
-            MessageUiModel("7", "You", "Manifest backup stays disabled by default for the app scaffold.", "Tue", true),
-        ),
-    ),
-)
