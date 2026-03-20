@@ -1,6 +1,7 @@
 package chat.trix.android.core.auth
 
 import android.content.Context
+import android.util.Base64
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.io.File
@@ -109,11 +110,11 @@ data class LocalAuthState(
     val profileName: String,
     val profileBio: String?,
     val deviceDisplayName: String,
-    val credentialIdentityB64: String,
-    val accountRootPrivateSeedB64: String,
-    val accountRootPublicKeyB64: String,
-    val transportPrivateSeedB64: String,
-    val transportPublicKeyB64: String,
+    val credentialIdentity: ByteArray,
+    val accountRootPrivateSeed: ByteArray,
+    val accountRootPublicKey: ByteArray,
+    val transportPrivateSeed: ByteArray,
+    val transportPublicKey: ByteArray,
     val accessToken: String?,
     val accessTokenExpiresAtUnix: Long?,
 ) {
@@ -134,11 +135,11 @@ data class LocalAuthState(
             put("profile_name", profileName)
             put("profile_bio", profileBio)
             put("device_display_name", deviceDisplayName)
-            put("credential_identity_b64", credentialIdentityB64)
-            put("account_root_private_seed_b64", accountRootPrivateSeedB64)
-            put("account_root_public_key_b64", accountRootPublicKeyB64)
-            put("transport_private_seed_b64", transportPrivateSeedB64)
-            put("transport_public_key_b64", transportPublicKeyB64)
+            put("credential_identity_b64", credentialIdentity.encodeBase64())
+            put("account_root_private_seed_b64", accountRootPrivateSeed.encodeBase64())
+            put("account_root_public_key_b64", accountRootPublicKey.encodeBase64())
+            put("transport_private_seed_b64", transportPrivateSeed.encodeBase64())
+            put("transport_public_key_b64", transportPublicKey.encodeBase64())
             put("access_token", accessToken)
             put("access_token_expires_at_unix", accessTokenExpiresAtUnix)
         }
@@ -153,11 +154,11 @@ data class LocalAuthState(
                 profileName = json.getString("profile_name"),
                 profileBio = json.optNullableString("profile_bio"),
                 deviceDisplayName = json.getString("device_display_name"),
-                credentialIdentityB64 = json.getString("credential_identity_b64"),
-                accountRootPrivateSeedB64 = json.getString("account_root_private_seed_b64"),
-                accountRootPublicKeyB64 = json.getString("account_root_public_key_b64"),
-                transportPrivateSeedB64 = json.getString("transport_private_seed_b64"),
-                transportPublicKeyB64 = json.getString("transport_public_key_b64"),
+                credentialIdentity = json.requireBase64("credential_identity_b64"),
+                accountRootPrivateSeed = json.requireBase64("account_root_private_seed_b64"),
+                accountRootPublicKey = json.requireBase64("account_root_public_key_b64"),
+                transportPrivateSeed = json.requireBase64("transport_private_seed_b64"),
+                transportPublicKey = json.requireBase64("transport_public_key_b64"),
                 accessToken = json.optNullableString("access_token"),
                 accessTokenExpiresAtUnix = json.optNullableLong("access_token_expires_at_unix"),
             )
@@ -183,4 +184,17 @@ private fun JSONObject.optNullableLong(key: String): Long? {
         is Number -> value.toLong()
         else -> null
     }
+}
+
+private fun JSONObject.requireBase64(key: String): ByteArray {
+    val value = getString(key)
+    return runCatching {
+        Base64.decode(value, Base64.DEFAULT)
+    }.getOrElse { error ->
+        throw IOException("Invalid base64 payload for $key", error)
+    }
+}
+
+private fun ByteArray.encodeBase64(): String {
+    return Base64.encodeToString(this, Base64.NO_WRAP)
 }

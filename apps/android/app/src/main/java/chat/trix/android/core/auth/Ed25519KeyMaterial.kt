@@ -1,41 +1,61 @@
 package chat.trix.android.core.auth
 
-import java.security.SecureRandom
-import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
-import org.bouncycastle.math.ec.rfc8032.Ed25519
+import chat.trix.android.core.ffi.FfiAccountRootMaterial
+import chat.trix.android.core.ffi.FfiDeviceKeyMaterial
 
 class Ed25519KeyMaterial private constructor(
-    private val privateKey: Ed25519PrivateKeyParameters,
+    private val accountRootMaterial: FfiAccountRootMaterial?,
+    private val deviceMaterial: FfiDeviceKeyMaterial?,
 ) {
     val privateSeed: ByteArray
-        get() = privateKey.encoded
+        get() = when {
+            accountRootMaterial != null -> accountRootMaterial.privateKeyBytes()
+            deviceMaterial != null -> deviceMaterial.privateKeyBytes()
+            else -> error("Missing key material")
+        }
 
     val publicKey: ByteArray
-        get() = privateKey.generatePublicKey().encoded
+        get() = when {
+            accountRootMaterial != null -> accountRootMaterial.publicKeyBytes()
+            deviceMaterial != null -> deviceMaterial.publicKeyBytes()
+            else -> error("Missing key material")
+        }
 
     fun sign(message: ByteArray): ByteArray {
-        val signature = ByteArray(Ed25519PrivateKeyParameters.SIGNATURE_SIZE)
-        privateKey.sign(
-            Ed25519.Algorithm.Ed25519,
-            null,
-            message,
-            0,
-            message.size,
-            signature,
-            0,
-        )
-        return signature
+        return when {
+            accountRootMaterial != null -> accountRootMaterial.sign(message)
+            deviceMaterial != null -> deviceMaterial.sign(message)
+            else -> error("Missing key material")
+        }
     }
 
     companion object {
-        private val secureRandom = SecureRandom()
-
-        fun generate(): Ed25519KeyMaterial {
-            return Ed25519KeyMaterial(Ed25519PrivateKeyParameters(secureRandom))
+        fun generateAccountRoot(): Ed25519KeyMaterial {
+            return Ed25519KeyMaterial(
+                accountRootMaterial = FfiAccountRootMaterial.generate(),
+                deviceMaterial = null,
+            )
         }
 
-        fun fromPrivateSeed(privateSeed: ByteArray): Ed25519KeyMaterial {
-            return Ed25519KeyMaterial(Ed25519PrivateKeyParameters(privateSeed))
+        fun fromAccountRootPrivateSeed(privateSeed: ByteArray): Ed25519KeyMaterial {
+            return Ed25519KeyMaterial(
+                accountRootMaterial = FfiAccountRootMaterial.fromPrivateKey(privateSeed),
+                deviceMaterial = null,
+            )
+        }
+
+        fun generateDevice(): Ed25519KeyMaterial {
+            return Ed25519KeyMaterial(
+                accountRootMaterial = null,
+                deviceMaterial = FfiDeviceKeyMaterial.generate(),
+            )
+        }
+
+        fun fromDevicePrivateSeed(privateSeed: ByteArray): Ed25519KeyMaterial {
+            return Ed25519KeyMaterial(
+                accountRootMaterial = null,
+                deviceMaterial = FfiDeviceKeyMaterial.fromPrivateKey(privateSeed),
+            )
         }
     }
 }

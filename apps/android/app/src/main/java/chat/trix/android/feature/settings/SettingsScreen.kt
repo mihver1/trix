@@ -102,7 +102,7 @@ fun SettingsScreen(
             item {
                 SettingsCard(
                     title = "Next build-out",
-                    body = "Add device linking, secure token rotation, and thread caching before moving MLS state through a shared Rust boundary.",
+                    body = "Move MLS persistence and device linking onto the new Rust surface, then layer thread caching and inbox-driven sync on top.",
                 )
             }
         }

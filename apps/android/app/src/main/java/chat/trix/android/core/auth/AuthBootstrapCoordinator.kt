@@ -4,7 +4,6 @@ import android.content.Context
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.security.SecureRandom
-import java.util.Base64
 
 class AuthBootstrapCoordinator(
     context: Context,
@@ -12,8 +11,6 @@ class AuthBootstrapCoordinator(
 ) {
     private val stateStore = LocalAuthStateStore(context)
     private val authApiClient = AuthApiClient(baseUrl)
-    private val base64 = Base64.getEncoder()
-    private val base64Decoder = Base64.getDecoder()
     private val random = SecureRandom()
 
     suspend fun peekStoredDevice(): StoredDeviceSummary? = stateStore.read()?.toSummary()
@@ -23,8 +20,8 @@ class AuthBootstrapCoordinator(
     }
 
     suspend fun createAccount(input: BootstrapInput): AuthenticatedSession {
-        val accountRootKey = Ed25519KeyMaterial.generate()
-        val transportKey = Ed25519KeyMaterial.generate()
+        val accountRootKey = Ed25519KeyMaterial.generateAccountRoot()
+        val transportKey = Ed25519KeyMaterial.generateDevice()
         val credentialIdentity = ByteArray(32).also(random::nextBytes)
         val bootstrapMessage = buildBootstrapMessage(
             transportPubkey = transportKey.publicKey,
@@ -39,10 +36,10 @@ class AuthBootstrapCoordinator(
                 profileBio = input.profileBio.nullIfBlank(),
                 deviceDisplayName = input.deviceDisplayName.trim(),
                 platform = "android",
-                credentialIdentityB64 = base64.encodeToString(credentialIdentity),
-                accountRootPubkeyB64 = base64.encodeToString(accountRootKey.publicKey),
-                accountRootSignatureB64 = base64.encodeToString(accountRootSignature),
-                transportPubkeyB64 = base64.encodeToString(transportKey.publicKey),
+                credentialIdentity = credentialIdentity,
+                accountRootPubkey = accountRootKey.publicKey,
+                accountRootSignature = accountRootSignature,
+                transportPubkey = transportKey.publicKey,
             ),
         )
 
@@ -53,11 +50,11 @@ class AuthBootstrapCoordinator(
             profileName = input.profileName.trim(),
             profileBio = input.profileBio.nullIfBlank(),
             deviceDisplayName = input.deviceDisplayName.trim(),
-            credentialIdentityB64 = base64.encodeToString(credentialIdentity),
-            accountRootPrivateSeedB64 = base64.encodeToString(accountRootKey.privateSeed),
-            accountRootPublicKeyB64 = base64.encodeToString(accountRootKey.publicKey),
-            transportPrivateSeedB64 = base64.encodeToString(transportKey.privateSeed),
-            transportPublicKeyB64 = base64.encodeToString(transportKey.publicKey),
+            credentialIdentity = credentialIdentity,
+            accountRootPrivateSeed = accountRootKey.privateSeed,
+            accountRootPublicKey = accountRootKey.publicKey,
+            transportPrivateSeed = transportKey.privateSeed,
+            transportPublicKey = transportKey.publicKey,
             accessToken = null,
             accessTokenExpiresAtUnix = null,
         )
@@ -75,23 +72,17 @@ class AuthBootstrapCoordinator(
     }
 
     private suspend fun signIn(localState: LocalAuthState): AuthenticatedSession {
-        val transportPrivateSeed = try {
-            base64Decoder.decode(localState.transportPrivateSeedB64)
-        } catch (error: IllegalArgumentException) {
+        val transportKey = try {
+            Ed25519KeyMaterial.fromDevicePrivateSeed(privateSeed = localState.transportPrivateSeed)
+        } catch (error: RuntimeException) {
             throw IOException("Invalid stored transport key material", error)
         }
-        val transportKey = Ed25519KeyMaterial.fromPrivateSeed(privateSeed = transportPrivateSeed)
         val challenge = authApiClient.createChallenge(localState.deviceId)
-        val challengeBytes = try {
-            base64Decoder.decode(challenge.challengeB64)
-        } catch (error: IllegalArgumentException) {
-            throw IOException("Invalid challenge payload from server", error)
-        }
-        val signature = transportKey.sign(challengeBytes)
+        val signature = transportKey.sign(challenge.challenge)
         val authSession = authApiClient.createSession(
             deviceId = localState.deviceId,
             challengeId = challenge.challengeId,
-            signatureB64 = base64.encodeToString(signature),
+            signature = signature,
         )
         val accountProfile = authApiClient.getCurrentAccount(authSession.accessToken)
         if (authSession.accountId != localState.accountId) {

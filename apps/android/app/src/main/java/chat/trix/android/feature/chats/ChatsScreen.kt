@@ -668,7 +668,7 @@ private fun sampleConversations(): List<ConversationUiModel> = listOf(
         unreadCount = 2,
         messages = listOf(
             MessageUiModel("1", "Rita", "Server health and version endpoints are enough for the first Android vertical slice.", "09:11", false),
-            MessageUiModel("2", "Alex", "Let's keep the app Kotlin-first until the Rust core stops being a stub.", "09:16", false),
+            MessageUiModel("2", "Alex", "Keep the shell native, but move the stable crypto and transport paths behind Rust FFI.", "09:16", false),
             MessageUiModel("3", "You", "Agreed. I'll shape the client around adaptive navigation and a messaging-first layout.", "09:21", true),
         ),
     ),

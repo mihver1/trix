@@ -6,7 +6,7 @@ This directory now contains a standalone Android project for the future Trix cli
 
 - Kotlin + Jetpack Compose first, not KMP or Flutter
 - native adaptive layouts for phone, tablet, foldable, and resizable windows
-- no Rust FFI on Android yet because `trix-core` is still a stub and would add coupling without product value
+- native Android shell first, with Rust FFI now used where the boundary has stabilized
 - messaging-first UX using canonical Android patterns instead of a single stretched phone screen
 
 ## Current Layout Decisions
@@ -23,28 +23,50 @@ This directory now contains a standalone Android project for the future Trix cli
   - Android backup disabled in the manifest
   - no cloud restore assumptions for device keys
 
-## Why Kotlin-First For Now
+## Why The Boundary Is Split
 
-The repository has a `trix-core` crate, but it does not yet provide real sync, storage, or crypto behavior. Building Android around JNI/UniFFI right now would mostly freeze an interface over placeholders. The better tradeoff for the PoC is:
+The UI, lifecycle, adaptive navigation, and Android-secure local persistence still belong on the platform side. The Rust boundary is now useful for:
+
+- account root and transport Ed25519 key material
+- server transport calls already exposed via `FfiServerApiClient`
+- MLS state and persistent group storage through `FfiMlsFacade`
+
+The Android project now generates Kotlin bindings from UniFFI during the Gradle build and cross-compiles `libtrix_core.so` for `arm64-v8a` and `x86_64` via `cargo ndk`.
+
+## Why Kotlin-First Around It
+
+The better tradeoff for this PoC is still:
 
 1. ship a real Android-native shell with adaptive UX
-2. wire the backend vertical slices that already exist
-3. move stable crypto/sync surfaces into shared Rust only when they stop changing every few days
+2. move the narrow, already-stable crypto/transport surfaces behind Rust FFI
+3. keep windowing, session orchestration, and device-local UX native on Android
 
 ## Next Android Tasks
 
 - introduce thread caching and message timeline syncing
-- decide where Android-specific storage ends and shared Rust begins
-- implement device linking and trusted-device approval flows
+- persist MLS state and ratchet trees through `FfiMlsFacade`
+- implement device linking and trusted-device approval flows on top of the FFI server client
 
 ## Current Live Flow
 
 - create a new account from Android
-- generate local `account root` and `transport` Ed25519 key material
-- sign the bootstrap payload expected by the backend
-- open an auth challenge/session for the stored device
+- generate local `account root` and `transport` Ed25519 key material through `trix-core` FFI
+- sign the bootstrap payload expected by the backend through Rust key material
+- open an auth challenge/session for the stored device through `FfiServerApiClient`
 - persist bootstrap state locally in an encrypted file protected by Android Keystore
 - restore a saved device session on app launch
+
+## FFI Build Requirements
+
+- Android SDK with:
+  - `platform-tools`
+  - `platforms;android-36`
+  - `build-tools;36.0.0`
+  - `ndk;29.0.14206865`
+- Rust targets:
+  - `aarch64-linux-android`
+  - `x86_64-linux-android`
+- `cargo-ndk`
 
 ## Local Backend Wiring
 
