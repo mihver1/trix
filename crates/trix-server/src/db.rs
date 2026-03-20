@@ -2453,8 +2453,6 @@ impl Database {
             ));
         }
 
-        let created_epoch = u64::from(input.initial_commit.is_some());
-
         let mut target_account_ids = BTreeSet::new();
         target_account_ids.extend(
             input
