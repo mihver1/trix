@@ -26,6 +26,8 @@ final class AppModel: ObservableObject {
     @Published var reservedKeyPackagesAccountID: UUID?
     @Published var selectedChatID: UUID?
     @Published var selectedChatDetail: ChatDetailResponse?
+    @Published var selectedChatProjectedCursor: UInt64?
+    @Published var selectedChatProjectedMessages: [LocalProjectedMessage] = []
     @Published var selectedChatHistory: [MessageEnvelope] = []
     @Published var outgoingLinkIntent: DeviceLinkIntentState?
     @Published var hasAccountRootKey = false
@@ -129,6 +131,10 @@ final class AppModel: ObservableObject {
         }
 
         return chats.first { $0.chatId == selectedChatID }
+    }
+
+    var hasProjectedTimelineData: Bool {
+        !selectedChatProjectedMessages.isEmpty
     }
 
     func start() async {
@@ -907,6 +913,8 @@ final class AppModel: ObservableObject {
     ) async throws {
         selectedChatID = chatId
         selectedChatDetail = nil
+        selectedChatProjectedCursor = nil
+        selectedChatProjectedMessages = []
         selectedChatHistory = []
         isLoadingSelectedChat = true
         defer { isLoadingSelectedChat = false }
@@ -916,18 +924,34 @@ final class AppModel: ObservableObject {
 
         do {
             let storePaths = try workspaceStorePaths()
-            let localHistory = try await client.fetchLocalChatHistory(
+            async let localHistory = client.fetchLocalChatHistory(
                 databasePath: storePaths.localHistoryURL,
                 chatId: chatId
             )
-            if localHistory.messages.isEmpty && loadedDetail.lastServerSeq > 0 {
+            async let projectedCursor = client.fetchLocalProjectedCursor(
+                databasePath: storePaths.localHistoryURL,
+                chatId: chatId
+            )
+            async let projectedMessages = client.fetchLocalProjectedMessages(
+                databasePath: storePaths.localHistoryURL,
+                chatId: chatId
+            )
+
+            let loadedProjectedCursor = try await projectedCursor
+            let loadedProjectedMessages = try await projectedMessages
+            let loadedLocalHistory = try await localHistory
+
+            selectedChatProjectedCursor = loadedProjectedCursor
+            selectedChatProjectedMessages = loadedProjectedMessages
+
+            if loadedLocalHistory.messages.isEmpty && loadedDetail.lastServerSeq > 0 {
                 let remoteHistory = try await client.fetchChatHistory(
                     accessToken: accessToken,
                     chatId: chatId
                 )
                 selectedChatHistory = remoteHistory.messages
             } else {
-                selectedChatHistory = localHistory.messages
+                selectedChatHistory = loadedLocalHistory.messages
             }
         } catch {
             let remoteHistory = try await client.fetchChatHistory(
@@ -1280,6 +1304,8 @@ final class AppModel: ObservableObject {
     private func clearSelectedChat() {
         selectedChatID = nil
         selectedChatDetail = nil
+        selectedChatProjectedCursor = nil
+        selectedChatProjectedMessages = []
         selectedChatHistory = []
     }
 

@@ -465,6 +465,13 @@ struct WorkspaceView: View {
                                     value: "\(detail.members.count)",
                                     footnote: detail.lastCommitMessageId.map { "commit \(shortID($0))" }
                                 )
+                                TrixMetricTile(
+                                    label: "Projected",
+                                    value: model.selectedChatProjectedCursor.map(String.init) ?? "none",
+                                    footnote: model.hasProjectedTimelineData
+                                        ? "\(model.selectedChatProjectedMessages.count) projected item(s)"
+                                        : "MLS restore path still missing"
+                                )
                             }
 
                             VStack(alignment: .leading, spacing: 10) {
@@ -505,8 +512,33 @@ struct WorkspaceView: View {
                 }
 
                 TrixPanel(
+                    title: "Projected Timeline",
+                    subtitle: "Typed local timeline projection is wired in, but application payloads still depend on restored MLS conversation state."
+                ) {
+                    if model.isLoadingSelectedChat && model.selectedChatProjectedMessages.isEmpty {
+                        HStack(spacing: 12) {
+                            ProgressView()
+                            Text("Checking projected timeline…")
+                                .foregroundStyle(colors.inkMuted)
+                        }
+                    } else if model.selectedChatProjectedMessages.isEmpty {
+                        EmptyWorkspaceLabel(
+                            model.selectedChatHistory.isEmpty
+                                ? "No projected items are stored for this chat yet."
+                                : "Projected timeline is empty. The local store has encrypted history, but macOS still cannot restore the MLS conversation for this chat."
+                        )
+                    } else {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(model.selectedChatProjectedMessages) { message in
+                                ProjectedMessageRow(message: message)
+                            }
+                        }
+                    }
+                }
+
+                TrixPanel(
                     title: "Encrypted History",
-                    subtitle: "Raw encrypted metadata persisted through the local history store. Message decryption and compose flow come next."
+                    subtitle: "Raw encrypted metadata persisted through the local history store. This remains the fallback until MLS restore lands."
                 ) {
                     if model.isLoadingSelectedChat && model.selectedChatHistory.isEmpty {
                         HStack(spacing: 12) {
@@ -1080,6 +1112,68 @@ private struct MessageHistoryRow: View {
                 InlineMeta(label: message.contentType.label)
                 InlineMeta(label: "\(message.ciphertextSizeBytes) bytes")
                 InlineMeta(label: message.aadSummary)
+            }
+        }
+        .padding(16)
+        .background(colors.tileFill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(colors.outline, lineWidth: 1)
+        }
+    }
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter
+    }()
+}
+
+private struct ProjectedMessageRow: View {
+    @Environment(\.trixColors) private var colors
+    let message: LocalProjectedMessage
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("seq \(message.serverSeq) • \(message.projectionKind.label)")
+                        .font(.headline)
+                        .foregroundStyle(colors.ink)
+                    Text("sender \(message.senderShortID) • epoch \(message.epoch)")
+                        .font(.subheadline)
+                        .foregroundStyle(colors.inkMuted)
+                }
+                Spacer()
+                Text(Self.relativeFormatter.localizedString(for: message.createdAt, relativeTo: .now))
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(colors.inkMuted)
+            }
+
+            if let body = message.body {
+                Text(body.summary)
+                    .font(.body)
+                    .foregroundStyle(colors.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let parseError = message.bodyParseError {
+                Text(parseError)
+                    .font(.subheadline)
+                    .foregroundStyle(colors.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 10) {
+                InlineMeta(label: message.messageKind.label)
+                InlineMeta(label: message.contentType.label)
+                if let body = message.body {
+                    InlineMeta(label: body.kind.label)
+                }
+                if let mergedEpoch = message.mergedEpoch {
+                    InlineMeta(label: "merged \(mergedEpoch)")
+                }
+                if message.payloadSizeBytes > 0 {
+                    InlineMeta(label: "\(message.payloadSizeBytes) bytes")
+                }
             }
         }
         .padding(16)

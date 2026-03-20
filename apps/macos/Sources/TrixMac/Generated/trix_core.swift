@@ -2127,6 +2127,8 @@ public protocol FfiSyncCoordinatorProtocol: AnyObject, Sendable {
     
     func saveState() throws 
     
+    func sendMessageBody(client: FfiServerApiClient, store: FfiLocalHistoryStore, facade: FfiMlsFacade, conversation: FfiMlsConversation, input: FfiSendMessageInput) throws  -> FfiSendMessageOutcome
+    
     func statePath() throws  -> String?
     
     func stateSnapshot() throws  -> FfiSyncStateSnapshot
@@ -2277,6 +2279,19 @@ open func saveState()throws   {try rustCallWithError(FfiConverterTypeTrixFfiErro
             self.uniffiCloneHandle(),$0
     )
 }
+}
+    
+open func sendMessageBody(client: FfiServerApiClient, store: FfiLocalHistoryStore, facade: FfiMlsFacade, conversation: FfiMlsConversation, input: FfiSendMessageInput)throws  -> FfiSendMessageOutcome  {
+    return try  FfiConverterTypeFfiSendMessageOutcome_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffisynccoordinator_send_message_body(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiServerApiClient_lower(client),
+        FfiConverterTypeFfiLocalHistoryStore_lower(store),
+        FfiConverterTypeFfiMlsFacade_lower(facade),
+        FfiConverterTypeFfiMlsConversation_lower(conversation),
+        FfiConverterTypeFfiSendMessageInput_lower(input),$0
+    )
+})
 }
     
 open func statePath()throws  -> String?  {
@@ -5758,6 +5773,142 @@ public func FfiConverterTypeFfiRevokeDeviceResponse_lower(_ value: FfiRevokeDevi
 }
 
 
+public struct FfiSendMessageInput: Equatable, Hashable {
+    public var senderAccountId: String
+    public var senderDeviceId: String
+    public var chatId: String
+    public var messageId: String?
+    public var body: FfiMessageBody
+    public var aadJson: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(senderAccountId: String, senderDeviceId: String, chatId: String, messageId: String?, body: FfiMessageBody, aadJson: String?) {
+        self.senderAccountId = senderAccountId
+        self.senderDeviceId = senderDeviceId
+        self.chatId = chatId
+        self.messageId = messageId
+        self.body = body
+        self.aadJson = aadJson
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiSendMessageInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSendMessageInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSendMessageInput {
+        return
+            try FfiSendMessageInput(
+                senderAccountId: FfiConverterString.read(from: &buf), 
+                senderDeviceId: FfiConverterString.read(from: &buf), 
+                chatId: FfiConverterString.read(from: &buf), 
+                messageId: FfiConverterOptionString.read(from: &buf), 
+                body: FfiConverterTypeFfiMessageBody.read(from: &buf), 
+                aadJson: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiSendMessageInput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.senderAccountId, into: &buf)
+        FfiConverterString.write(value.senderDeviceId, into: &buf)
+        FfiConverterString.write(value.chatId, into: &buf)
+        FfiConverterOptionString.write(value.messageId, into: &buf)
+        FfiConverterTypeFfiMessageBody.write(value.body, into: &buf)
+        FfiConverterOptionString.write(value.aadJson, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSendMessageInput_lift(_ buf: RustBuffer) throws -> FfiSendMessageInput {
+    return try FfiConverterTypeFfiSendMessageInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSendMessageInput_lower(_ value: FfiSendMessageInput) -> RustBuffer {
+    return FfiConverterTypeFfiSendMessageInput.lower(value)
+}
+
+
+public struct FfiSendMessageOutcome: Equatable, Hashable {
+    public var chatId: String
+    public var messageId: String
+    public var serverSeq: UInt64
+    public var report: FfiLocalStoreApplyReport
+    public var projectedMessage: FfiLocalProjectedMessage
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(chatId: String, messageId: String, serverSeq: UInt64, report: FfiLocalStoreApplyReport, projectedMessage: FfiLocalProjectedMessage) {
+        self.chatId = chatId
+        self.messageId = messageId
+        self.serverSeq = serverSeq
+        self.report = report
+        self.projectedMessage = projectedMessage
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiSendMessageOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSendMessageOutcome: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSendMessageOutcome {
+        return
+            try FfiSendMessageOutcome(
+                chatId: FfiConverterString.read(from: &buf), 
+                messageId: FfiConverterString.read(from: &buf), 
+                serverSeq: FfiConverterUInt64.read(from: &buf), 
+                report: FfiConverterTypeFfiLocalStoreApplyReport.read(from: &buf), 
+                projectedMessage: FfiConverterTypeFfiLocalProjectedMessage.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiSendMessageOutcome, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.chatId, into: &buf)
+        FfiConverterString.write(value.messageId, into: &buf)
+        FfiConverterUInt64.write(value.serverSeq, into: &buf)
+        FfiConverterTypeFfiLocalStoreApplyReport.write(value.report, into: &buf)
+        FfiConverterTypeFfiLocalProjectedMessage.write(value.projectedMessage, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSendMessageOutcome_lift(_ buf: RustBuffer) throws -> FfiSendMessageOutcome {
+    return try FfiConverterTypeFfiSendMessageOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSendMessageOutcome_lower(_ value: FfiSendMessageOutcome) -> RustBuffer {
+    return FfiConverterTypeFfiSendMessageOutcome.lower(value)
+}
+
+
 public struct FfiSyncChatCursor: Equatable, Hashable {
     public var chatId: String
     public var lastServerSeq: UInt64
@@ -8101,6 +8252,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_save_state() != 12201) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffisynccoordinator_send_message_body() != 5920) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_state_path() != 32831) {

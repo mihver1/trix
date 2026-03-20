@@ -389,6 +389,144 @@ enum ContentType: String, Codable {
     }
 }
 
+enum LocalProjectionKind: String, Sendable {
+    case applicationMessage = "application_message"
+    case proposalQueued = "proposal_queued"
+    case commitMerged = "commit_merged"
+    case welcomeRef = "welcome_ref"
+    case system
+
+    var label: String {
+        switch self {
+        case .applicationMessage:
+            return "Application"
+        case .proposalQueued:
+            return "Proposal"
+        case .commitMerged:
+            return "Commit"
+        case .welcomeRef:
+            return "Welcome"
+        case .system:
+            return "System"
+        }
+    }
+}
+
+enum TypedMessageBodyKind: String, Sendable {
+    case text
+    case reaction
+    case receipt
+    case attachment
+    case chatEvent = "chat_event"
+
+    var label: String {
+        switch self {
+        case .text:
+            return "Text"
+        case .reaction:
+            return "Reaction"
+        case .receipt:
+            return "Receipt"
+        case .attachment:
+            return "Attachment"
+        case .chatEvent:
+            return "Chat Event"
+        }
+    }
+}
+
+enum ReactionAction: String, Sendable {
+    case add
+    case remove
+
+    var label: String {
+        rawValue.capitalized
+    }
+}
+
+enum ReceiptType: String, Sendable {
+    case delivered
+    case read
+
+    var label: String {
+        rawValue.capitalized
+    }
+}
+
+struct TypedMessageBody: Sendable {
+    let kind: TypedMessageBodyKind
+    let text: String?
+    let targetMessageId: UUID?
+    let emoji: String?
+    let reactionAction: ReactionAction?
+    let receiptType: ReceiptType?
+    let receiptAtUnix: UInt64?
+    let blobId: String?
+    let mimeType: String?
+    let sizeBytes: UInt64?
+    let sha256: Data?
+    let fileName: String?
+    let widthPx: UInt32?
+    let heightPx: UInt32?
+    let fileKey: Data?
+    let nonce: Data?
+    let eventType: String?
+    let eventJson: String?
+
+    var summary: String {
+        switch kind {
+        case .text:
+            return text?.isEmpty == false ? text! : "Empty text"
+        case .reaction:
+            let emojiPart = emoji ?? "?"
+            let targetPart = targetMessageId.map { String($0.uuidString.prefix(8)).lowercased() } ?? "unknown"
+            let actionPart = reactionAction?.label.lowercased() ?? "update"
+            return "\(emojiPart) \(actionPart) \(targetPart)"
+        case .receipt:
+            let targetPart = targetMessageId.map { String($0.uuidString.prefix(8)).lowercased() } ?? "unknown"
+            return "\(receiptType?.label ?? "Receipt") for \(targetPart)"
+        case .attachment:
+            return fileName ?? blobId ?? (mimeType ?? "Attachment")
+        case .chatEvent:
+            return eventType ?? "Chat event"
+        }
+    }
+}
+
+struct LocalProjectedMessage: Identifiable, Sendable {
+    let serverSeq: UInt64
+    let messageId: UUID
+    let senderAccountId: UUID
+    let senderDeviceId: UUID
+    let epoch: UInt64
+    let messageKind: MessageKind
+    let contentType: ContentType
+    let projectionKind: LocalProjectionKind
+    let payloadB64: String?
+    let body: TypedMessageBody?
+    let bodyParseError: String?
+    let mergedEpoch: UInt64?
+    let createdAtUnix: UInt64
+
+    var id: UUID { messageId }
+
+    var createdAt: Date {
+        Date(timeIntervalSince1970: TimeInterval(createdAtUnix))
+    }
+
+    var senderShortID: String {
+        String(senderAccountId.uuidString.prefix(8)).lowercased()
+    }
+
+    var payloadSizeBytes: Int {
+        guard let payloadB64 else {
+            return 0
+        }
+
+        return Data(base64Encoded: payloadB64)?.count ?? 0
+    }
+}
+
 struct ChatHistoryResponse: Codable {
     let chatId: UUID
     let messages: [MessageEnvelope]

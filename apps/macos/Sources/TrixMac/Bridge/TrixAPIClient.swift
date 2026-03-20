@@ -490,6 +490,51 @@ struct TrixAPIClient {
         }
     }
 
+    func fetchLocalProjectedMessages(
+        databasePath: URL,
+        chatId: UUID,
+        limit: Int = 100
+    ) async throws -> [LocalProjectedMessage] {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            return try store.getProjectedMessages(
+                chatId: chatId.uuidString,
+                afterServerSeq: nil,
+                limit: try TrixCoreCodec.uint32(limit, label: "projected message limit")
+            ).map { try LocalProjectedMessage(ffiValue: $0) }
+        }
+    }
+
+    func fetchLocalProjectedCursor(
+        databasePath: URL,
+        chatId: UUID
+    ) async throws -> UInt64? {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            return try store.projectedCursor(chatId: chatId.uuidString)
+        }
+    }
+
+    func parseMessageBody(
+        contentType: ContentType,
+        payload: Data
+    ) async throws -> TypedMessageBody {
+        try await callFFI { _ in
+            try TypedMessageBody(
+                ffiValue: ffiParseMessageBody(
+                    contentType: contentType.ffiValue,
+                    payload: payload
+                )
+            )
+        }
+    }
+
+    func serializeMessageBody(_ body: TypedMessageBody) async throws -> Data {
+        try await callFFI { _ in
+            try ffiSerializeMessageBody(body: body.ffiValue())
+        }
+    }
+
     func fetchSyncStateSnapshot(statePath: URL) async throws -> SyncStateSnapshot {
         try await callFFI { _ in
             let coordinator = try Self.makeSyncCoordinator(statePath: statePath)

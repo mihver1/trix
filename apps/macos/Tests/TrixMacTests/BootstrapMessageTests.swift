@@ -79,3 +79,51 @@ func ffiKeyMaterialSignsAndVerifies() throws {
     #expect(!signature.isEmpty)
     #expect(!keyMaterial.publicKeyBytes().isEmpty)
 }
+
+@Test
+func ffiParsesPlaintextTextBody() throws {
+    let body = try TypedMessageBody(
+        ffiValue: ffiParseMessageBody(
+            contentType: .text,
+            payload: Data("hello from ffi".utf8)
+        )
+    )
+
+    #expect(body.kind == .text)
+    #expect(body.text == "hello from ffi")
+}
+
+@Test
+func ffiSerializesAndParsesReactionBodyRoundTrip() throws {
+    let targetMessageId = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!
+    let original = TypedMessageBody(
+        kind: .reaction,
+        text: nil,
+        targetMessageId: targetMessageId,
+        emoji: "🔥",
+        reactionAction: .add,
+        receiptType: nil,
+        receiptAtUnix: nil,
+        blobId: nil,
+        mimeType: nil,
+        sizeBytes: nil,
+        sha256: nil,
+        fileName: nil,
+        widthPx: nil,
+        heightPx: nil,
+        fileKey: nil,
+        nonce: nil,
+        eventType: nil,
+        eventJson: nil
+    )
+
+    let encoded = try ffiSerializeMessageBody(body: original.ffiValue())
+    let decoded = try TypedMessageBody(
+        ffiValue: ffiParseMessageBody(contentType: .reaction, payload: encoded)
+    )
+
+    #expect(decoded.kind == .reaction)
+    #expect(decoded.targetMessageId == targetMessageId)
+    #expect(decoded.emoji == "🔥")
+    #expect(decoded.reactionAction == .add)
+}

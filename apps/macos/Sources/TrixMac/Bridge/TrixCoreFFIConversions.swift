@@ -56,6 +56,110 @@ extension ContentType {
             self = .chatEvent
         }
     }
+
+    var ffiValue: FfiContentType {
+        switch self {
+        case .text:
+            return .text
+        case .reaction:
+            return .reaction
+        case .receipt:
+            return .receipt
+        case .attachment:
+            return .attachment
+        case .chatEvent:
+            return .chatEvent
+        }
+    }
+}
+
+extension LocalProjectionKind {
+    init(_ ffiValue: FfiLocalProjectionKind) {
+        switch ffiValue {
+        case .applicationMessage:
+            self = .applicationMessage
+        case .proposalQueued:
+            self = .proposalQueued
+        case .commitMerged:
+            self = .commitMerged
+        case .welcomeRef:
+            self = .welcomeRef
+        case .system:
+            self = .system
+        }
+    }
+}
+
+extension TypedMessageBodyKind {
+    init(_ ffiValue: FfiMessageBodyKind) {
+        switch ffiValue {
+        case .text:
+            self = .text
+        case .reaction:
+            self = .reaction
+        case .receipt:
+            self = .receipt
+        case .attachment:
+            self = .attachment
+        case .chatEvent:
+            self = .chatEvent
+        }
+    }
+
+    var ffiValue: FfiMessageBodyKind {
+        switch self {
+        case .text:
+            return .text
+        case .reaction:
+            return .reaction
+        case .receipt:
+            return .receipt
+        case .attachment:
+            return .attachment
+        case .chatEvent:
+            return .chatEvent
+        }
+    }
+}
+
+extension ReactionAction {
+    init(_ ffiValue: FfiReactionAction) {
+        switch ffiValue {
+        case .add:
+            self = .add
+        case .remove:
+            self = .remove
+        }
+    }
+
+    var ffiValue: FfiReactionAction {
+        switch self {
+        case .add:
+            return .add
+        case .remove:
+            return .remove
+        }
+    }
+}
+
+extension ReceiptType {
+    init(_ ffiValue: FfiReceiptType) {
+        switch ffiValue {
+        case .delivered:
+            self = .delivered
+        case .read:
+            self = .read
+        }
+    }
+
+    var ffiValue: FfiReceiptType {
+        switch self {
+        case .delivered:
+            return .delivered
+        case .read:
+            return .read
+        }
+    }
 }
 
 extension HistorySyncJobType {
@@ -155,6 +259,56 @@ extension LeaseInboxRequest {
 extension CompleteHistorySyncJobRequest {
     func ffiCursorJSONString() throws -> String? {
         try TrixCoreCodec.encodeJSONString(cursorJson)
+    }
+}
+
+extension TypedMessageBody {
+    init(ffiValue: FfiMessageBody) throws {
+        self.init(
+            kind: TypedMessageBodyKind(ffiValue.kind),
+            text: ffiValue.text,
+            targetMessageId: try ffiValue.targetMessageId.map {
+                try TrixCoreCodec.uuid($0, label: "target_message_id")
+            },
+            emoji: ffiValue.emoji,
+            reactionAction: ffiValue.reactionAction.map(ReactionAction.init),
+            receiptType: ffiValue.receiptType.map(ReceiptType.init),
+            receiptAtUnix: ffiValue.receiptAtUnix,
+            blobId: ffiValue.blobId,
+            mimeType: ffiValue.mimeType,
+            sizeBytes: ffiValue.sizeBytes,
+            sha256: ffiValue.sha256,
+            fileName: ffiValue.fileName,
+            widthPx: ffiValue.widthPx,
+            heightPx: ffiValue.heightPx,
+            fileKey: ffiValue.fileKey,
+            nonce: ffiValue.nonce,
+            eventType: ffiValue.eventType,
+            eventJson: ffiValue.eventJson
+        )
+    }
+
+    func ffiValue() -> FfiMessageBody {
+        FfiMessageBody(
+            kind: kind.ffiValue,
+            text: text,
+            targetMessageId: targetMessageId?.uuidString,
+            emoji: emoji,
+            reactionAction: reactionAction?.ffiValue,
+            receiptType: receiptType?.ffiValue,
+            receiptAtUnix: receiptAtUnix,
+            blobId: blobId,
+            mimeType: mimeType,
+            sizeBytes: sizeBytes,
+            sha256: sha256,
+            fileName: fileName,
+            widthPx: widthPx,
+            heightPx: heightPx,
+            fileKey: fileKey,
+            nonce: nonce,
+            eventType: eventType,
+            eventJson: eventJson
+        )
     }
 }
 
@@ -436,6 +590,26 @@ extension HistorySyncJobSummary {
 extension HistorySyncJobListResponse {
     init(ffiValues: [FfiHistorySyncJob]) throws {
         self.init(jobs: try ffiValues.map { try HistorySyncJobSummary(ffiValue: $0) })
+    }
+}
+
+extension LocalProjectedMessage {
+    init(ffiValue: FfiLocalProjectedMessage) throws {
+        self.init(
+            serverSeq: ffiValue.serverSeq,
+            messageId: try TrixCoreCodec.uuid(ffiValue.messageId, label: "message_id"),
+            senderAccountId: try TrixCoreCodec.uuid(ffiValue.senderAccountId, label: "sender_account_id"),
+            senderDeviceId: try TrixCoreCodec.uuid(ffiValue.senderDeviceId, label: "sender_device_id"),
+            epoch: ffiValue.epoch,
+            messageKind: MessageKind(ffiValue.messageKind),
+            contentType: ContentType(ffiValue.contentType),
+            projectionKind: LocalProjectionKind(ffiValue.projectionKind),
+            payloadB64: ffiValue.payload?.base64EncodedString(),
+            body: try ffiValue.body.map { try TypedMessageBody(ffiValue: $0) },
+            bodyParseError: ffiValue.bodyParseError,
+            mergedEpoch: ffiValue.mergedEpoch,
+            createdAtUnix: ffiValue.createdAtUnix
+        )
     }
 }
 
