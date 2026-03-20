@@ -56,6 +56,7 @@ import chat.trix.android.core.auth.LinkExistingAccountInput
 import chat.trix.android.core.auth.LocalAuthStateStore
 import chat.trix.android.core.auth.parseLinkIntentPayload
 import chat.trix.android.core.auth.StoredDeviceSummary
+import chat.trix.android.core.auth.restoreSessionErrorMessage
 import chat.trix.android.core.notifications.TrixNotificationRouter
 import chat.trix.android.core.runtime.BackgroundSyncScheduler
 import chat.trix.android.core.system.BackendConfigStore
@@ -416,17 +417,6 @@ private fun normalizeBaseUrl(value: String): String {
     }
 
     return normalized
-}
-
-private fun restoreSessionErrorMessage(
-    storedDevice: StoredDeviceSummary,
-    error: IOException,
-): String {
-    if (storedDevice.deviceStatus == "pending" || error.message?.contains("device is not active") == true) {
-        return "This device is still pending approval. Approve it from a trusted device, then tap Check Approval."
-    }
-
-    return error.message ?: "Session restore failed"
 }
 
 @Composable

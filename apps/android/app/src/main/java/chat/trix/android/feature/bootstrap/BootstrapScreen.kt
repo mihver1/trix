@@ -37,7 +37,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import chat.trix.android.core.auth.BootstrapInput
 import chat.trix.android.core.auth.LinkExistingAccountInput
+import chat.trix.android.core.auth.parseStoredDeviceStatus
 import chat.trix.android.core.auth.StoredDeviceSummary
+import chat.trix.android.core.auth.StoredDeviceStatus
+import chat.trix.android.core.auth.storedDevicePresentation
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.common.api.CommonStatusCodes
 import com.google.mlkit.vision.barcode.common.Barcode
@@ -334,9 +337,19 @@ private fun StoredDeviceCard(
     onReconnectStoredDevice: (() -> Unit)?,
     onForgetStoredDevice: (() -> Unit)?,
 ) {
+    val devicePresentation = storedDevicePresentation(storedDevice)
+    val storedDeviceStatus = parseStoredDeviceStatus(storedDevice.deviceStatus)
+    val cardColor = when (storedDeviceStatus) {
+        StoredDeviceStatus.Pending -> MaterialTheme.colorScheme.tertiaryContainer
+        StoredDeviceStatus.Revoked -> MaterialTheme.colorScheme.errorContainer
+        StoredDeviceStatus.Active,
+        StoredDeviceStatus.Unknown,
+        -> MaterialTheme.colorScheme.surfaceContainerHigh
+    }
+
     Surface(
         shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        color = cardColor,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
@@ -344,7 +357,7 @@ private fun StoredDeviceCard(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = "Stored device found",
+                text = devicePresentation.title,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -364,11 +377,7 @@ private fun StoredDeviceCard(
                 )
             }
             Text(
-                text = if (storedDevice.deviceStatus == "pending") {
-                    "This device has finished the link handshake and is waiting for approval from a trusted device. After approval, use reconnect to open the real session."
-                } else {
-                    "A locally encrypted device state already exists on this Android client. You can reconnect it or forget it and start over."
-                },
+                text = devicePresentation.body,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -380,11 +389,13 @@ private fun StoredDeviceCard(
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(
-                    onClick = { onReconnectStoredDevice?.invoke() },
-                    enabled = !isBusy && onReconnectStoredDevice != null,
-                ) {
-                    Text(if (storedDevice.deviceStatus == "pending") "Check Approval" else "Reconnect")
+                if (devicePresentation.primaryActionLabel != null) {
+                    Button(
+                        onClick = { onReconnectStoredDevice?.invoke() },
+                        enabled = !isBusy && onReconnectStoredDevice != null && devicePresentation.canReconnect,
+                    ) {
+                        Text(devicePresentation.primaryActionLabel)
+                    }
                 }
                 TextButton(
                     onClick = { onForgetStoredDevice?.invoke() },
