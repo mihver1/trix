@@ -100,6 +100,19 @@ pub struct AccountProfileResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DirectoryAccountSummary {
+    pub account_id: AccountId,
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountDirectoryResponse {
+    pub accounts: Vec<DirectoryAccountSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceSummary {
     pub device_id: DeviceId,
     pub display_name: String,

@@ -10,10 +10,11 @@ use crate::{
     AccountRootMaterial, AuthChallengeMaterial, CompleteLinkIntentParams,
     CompletedLinkIntentMaterial, CreateAccountParams, CreateChatControlInput,
     CreateChatControlOutcome, DeviceApprovePayloadMaterial, DeviceKeyMaterial,
-    DeviceTransferBundleMaterial, HistorySyncChunkMaterial, InboxApplyOutcome, LocalHistoryStore,
-    LocalProjectedMessage, LocalProjectionApplyReport, LocalProjectionKind, LocalStoreApplyReport,
-    MessageBody, MlsCommitBundle, MlsFacade, MlsMemberIdentity, MlsProcessResult,
-    ModifyChatDevicesControlInput, ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
+    DeviceTransferBundleMaterial, DirectoryAccountMaterial, HistorySyncChunkMaterial,
+    InboxApplyOutcome, LocalHistoryStore, LocalProjectedMessage, LocalProjectionApplyReport,
+    LocalProjectionKind, LocalStoreApplyReport, MessageBody, MlsCommitBundle, MlsFacade,
+    MlsMemberIdentity, MlsProcessResult, ModifyChatDevicesControlInput,
+    ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
     ModifyChatMembersControlOutcome, PublishKeyPackageMaterial, ReactionAction, ReceiptType,
     ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient, SyncChatCursor,
     SyncCoordinator, SyncStateSnapshot,
@@ -161,6 +162,19 @@ pub struct FfiAccountProfile {
     pub profile_bio: Option<String>,
     pub device_id: String,
     pub device_status: FfiDeviceStatus,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiDirectoryAccount {
+    pub account_id: String,
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiAccountDirectory {
+    pub accounts: Vec<FfiDirectoryAccount>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -857,6 +871,24 @@ impl FfiServerApiClient {
         let client = clone_server_api_client(&self.inner)?;
         let response = self.runtime.block_on(client.get_me())?;
         Ok(account_profile_to_ffi(response))
+    }
+
+    pub fn search_account_directory(
+        &self,
+        query: Option<String>,
+        limit: Option<u32>,
+        exclude_self: bool,
+    ) -> Result<FfiAccountDirectory, TrixFfiError> {
+        let client = clone_server_api_client(&self.inner)?;
+        let response = self.runtime.block_on(client.search_account_directory(
+            query,
+            limit.map(|value| value as usize),
+            exclude_self,
+        ))?;
+
+        Ok(FfiAccountDirectory {
+            accounts: response.into_iter().map(directory_account_to_ffi).collect(),
+        })
     }
 
     pub fn list_devices(&self) -> Result<FfiDeviceList, TrixFfiError> {
@@ -2300,6 +2332,15 @@ fn account_profile_to_ffi(value: trix_types::AccountProfileResponse) -> FfiAccou
         profile_bio: value.profile_bio,
         device_id: value.device_id.0.to_string(),
         device_status: value.device_status.into(),
+    }
+}
+
+fn directory_account_to_ffi(value: DirectoryAccountMaterial) -> FfiDirectoryAccount {
+    FfiDirectoryAccount {
+        account_id: value.account_id.0.to_string(),
+        handle: value.handle,
+        profile_name: value.profile_name,
+        profile_bio: value.profile_bio,
     }
 }
 

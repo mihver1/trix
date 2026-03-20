@@ -27,3 +27,8 @@ tokio.workspace = true
 trix-types = { path = "../trix-types" }
 uniffi = { workspace = true, features = ["tokio", "cli"] }
 uuid.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+sqlx.workspace = true
+trix-server = { path = "../trix-server" }

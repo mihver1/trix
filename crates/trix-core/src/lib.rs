@@ -32,7 +32,8 @@ pub use sync::{
 pub use transport::{
     AuthChallengeMaterial, BlobHeadMaterial, BlobMetadataMaterial, CompleteLinkIntentParams,
     CompletedLinkIntentMaterial, CreateAccountParams, DeviceApprovePayloadMaterial,
-    DeviceTransferBundleMaterial, HistorySyncChunkMaterial, PublishKeyPackageMaterial,
-    ReservedKeyPackageMaterial, ServerApiClient, ServerApiError, decode_b64_field, encode_b64,
-    make_control_message_input, make_create_message_request, make_publish_key_package_item,
+    DeviceTransferBundleMaterial, DirectoryAccountMaterial, HistorySyncChunkMaterial,
+    PublishKeyPackageMaterial, ReservedKeyPackageMaterial, ServerApiClient, ServerApiError,
+    decode_b64_field, encode_b64, make_control_message_input, make_create_message_request,
+    make_publish_key_package_item,
 };

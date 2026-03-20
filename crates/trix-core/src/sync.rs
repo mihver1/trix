@@ -526,9 +526,7 @@ impl SyncCoordinator {
             Ok(response) => response,
             Err(err) => {
                 facade.restore_snapshot(&snapshot).with_context(|| {
-                    format!(
-                        "failed to rollback MLS state after server rejected create_chat: {err}"
-                    )
+                    format!("failed to rollback MLS state after server rejected create_chat: {err}")
                 })?;
                 return Err(err.into());
             }
@@ -645,9 +643,7 @@ impl SyncCoordinator {
             Ok(response) => response,
             Err(err) => {
                 facade.restore_snapshot(&snapshot).with_context(|| {
-                    format!(
-                        "failed to rollback MLS state after server rejected members:add: {err}"
-                    )
+                    format!("failed to rollback MLS state after server rejected members:add: {err}")
                 })?;
                 return Err(err.into());
             }
@@ -828,9 +824,7 @@ impl SyncCoordinator {
             Ok(response) => response,
             Err(err) => {
                 facade.restore_snapshot(&snapshot).with_context(|| {
-                    format!(
-                        "failed to rollback MLS state after server rejected devices:add: {err}"
-                    )
+                    format!("failed to rollback MLS state after server rejected devices:add: {err}")
                 })?;
                 return Err(err.into());
             }
