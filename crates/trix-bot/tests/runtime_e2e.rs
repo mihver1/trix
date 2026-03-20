@@ -9,12 +9,13 @@ use trix_bot::{Bot, BotEvent, BotInitConfig, BotLoadConfig, ConnectionMode};
 use trix_core::{
     AccountRootMaterial, CreateAccountParams, CreateChatControlInput, DeviceKeyMaterial,
     LocalHistoryStore, MessageBody, MlsFacade, ServerApiClient, SyncCoordinator, TextMessageBody,
+    prepare_attachment_upload,
 };
 use trix_server::{
     auth::AuthManager, blobs::LocalBlobStore, build::BuildInfo, config::AppConfig, db::Database,
     signatures::account_bootstrap_message, state::AppState,
 };
-use trix_types::{AccountId, ChatId, ChatType, DeviceId};
+use trix_types::{AccountId, ChatId, ChatType, DeviceId, MessageId};
 use uuid::Uuid;
 
 const DEFAULT_TEST_DATABASE_URL: &str = "postgres://trix:trix@localhost:5432/trix";
@@ -238,6 +239,89 @@ async fn bot_can_manually_republish_key_packages() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+#[ignore = "requires local postgres"]
+async fn bot_receives_and_downloads_file_attachments() -> Result<()> {
+    let server = spawn_test_server().await?;
+    let state_dir = env::temp_dir().join(format!("trix-bot-files-{}", Uuid::new_v4()));
+    let bot = Bot::init(BotInitConfig {
+        server_url: server.base_url.clone(),
+        state_dir: state_dir.clone(),
+        profile_name: "File Bot".to_owned(),
+        handle: Some("file-bot".to_owned()),
+        master_secret_env: None,
+        plaintext_dev_store: true,
+    })
+    .await?;
+
+    let mut bot_events = bot.subscribe();
+    bot.start().await?;
+    wait_for_ready(&mut bot_events).await?;
+
+    let mut alice = create_authenticated_identity(&server.base_url, "alice").await?;
+    let mut alice_store = LocalHistoryStore::new();
+    let mut alice_sync = SyncCoordinator::new();
+    let create_outcome = alice_sync
+        .create_chat_control(
+            &alice.client,
+            &mut alice_store,
+            &mut alice.facade,
+            CreateChatControlInput {
+                creator_account_id: alice.account_id,
+                creator_device_id: alice.device_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                participant_account_ids: vec![parse_account_id(&bot.identity().account_id)?],
+                group_id: None,
+                commit_aad_json: None,
+                welcome_aad_json: None,
+            },
+        )
+        .await?;
+
+    wait_for_chat(&bot, create_outcome.chat_id).await?;
+
+    let payload = b"hello attachment".to_vec();
+    send_attachment_from_identity(
+        &alice,
+        &mut alice_store,
+        &mut alice_sync,
+        create_outcome.chat_id,
+        &payload,
+        "text/plain",
+        Some("note.txt".to_owned()),
+    )
+    .await?;
+
+    let received = wait_for_file_message(&mut bot_events).await?;
+    assert_eq!(received.chat_id, create_outcome.chat_id.0.to_string());
+    assert_eq!(received.sender_account_id, alice.account_id.0.to_string());
+    assert_eq!(received.sender_device_id, alice.device_id.0.to_string());
+    assert!(received.server_seq > 0);
+    assert_eq!(received.mime_type, "text/plain");
+    assert_eq!(received.file_name.as_deref(), Some("note.txt"));
+    assert!(received.size_bytes > 0);
+    assert_eq!(received.width_px, None);
+    assert_eq!(received.height_px, None);
+    assert!(!received.blob_id.is_empty());
+    assert!(received.created_at_unix > 0);
+
+    let downloaded = bot
+        .download_attachment(
+            create_outcome.chat_id,
+            parse_message_id(&received.message_id)?,
+        )
+        .await?;
+    assert_eq!(downloaded.plaintext, payload);
+    assert_eq!(downloaded.mime_type, "text/plain");
+    assert_eq!(downloaded.file_name.as_deref(), Some("note.txt"));
+
+    bot.stop().await?;
+    server.shutdown().await?;
+    fs::remove_dir_all(state_dir).ok();
+    Ok(())
+}
+
 async fn spawn_test_server() -> Result<TestServer> {
     let database_url =
         env::var("TRIX_TEST_DATABASE_URL").unwrap_or_else(|_| DEFAULT_TEST_DATABASE_URL.to_owned());
@@ -421,6 +505,48 @@ async fn wait_for_text_message(
     Err(anyhow!("bot did not emit a text message event"))
 }
 
+async fn wait_for_file_message(
+    events: &mut broadcast::Receiver<BotEvent>,
+) -> Result<FileMessageEvent> {
+    for _ in 0..40 {
+        match tokio::time::timeout(Duration::from_secs(1), events.recv()).await {
+            Ok(Ok(BotEvent::FileMessage {
+                chat_id,
+                message_id,
+                server_seq,
+                sender_account_id,
+                sender_device_id,
+                blob_id,
+                mime_type,
+                size_bytes,
+                file_name,
+                width_px,
+                height_px,
+                created_at_unix,
+            })) => {
+                return Ok(FileMessageEvent {
+                    chat_id,
+                    message_id,
+                    server_seq,
+                    sender_account_id,
+                    sender_device_id,
+                    blob_id,
+                    mime_type,
+                    size_bytes,
+                    file_name,
+                    width_px,
+                    height_px,
+                    created_at_unix,
+                });
+            }
+            Ok(Ok(_)) => continue,
+            Ok(Err(err)) => return Err(anyhow!("bot event stream failed: {err}")),
+            Err(_) => return Err(anyhow!("timed out waiting for file message event")),
+        }
+    }
+    Err(anyhow!("bot did not emit a file message event"))
+}
+
 async fn assert_no_text_message(events: &mut broadcast::Receiver<BotEvent>) -> Result<()> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
     while tokio::time::Instant::now() < deadline {
@@ -486,6 +612,63 @@ fn parse_account_id(value: &str) -> Result<AccountId> {
     })?))
 }
 
+fn parse_message_id(value: &str) -> Result<MessageId> {
+    Ok(MessageId(Uuid::parse_str(value).with_context(|| {
+        format!("invalid message id `{value}`")
+    })?))
+}
+
+async fn send_attachment_from_identity(
+    identity: &TestIdentity,
+    store: &mut LocalHistoryStore,
+    sync: &mut SyncCoordinator,
+    chat_id: ChatId,
+    payload: &[u8],
+    mime_type: &str,
+    file_name: Option<String>,
+) -> Result<()> {
+    let group_id = store
+        .chat_mls_group_id(chat_id)
+        .ok_or_else(|| anyhow!("chat {} must have an MLS group id", chat_id.0))?;
+    let mut group = identity
+        .facade
+        .load_group(&group_id)?
+        .ok_or_else(|| anyhow!("chat {} group should load", chat_id.0))?;
+    let prepared = prepare_attachment_upload(payload, mime_type, file_name, None, None)?;
+    let create = identity
+        .client
+        .create_blob_upload(
+            chat_id,
+            prepared.mime_type.clone(),
+            prepared.encrypted_size_bytes,
+            &prepared.encrypted_sha256,
+        )
+        .await?;
+    if create.needs_upload {
+        identity
+            .client
+            .upload_blob(create.blob_id.clone(), &prepared.encrypted_payload)
+            .await?;
+    } else {
+        identity.client.head_blob(create.blob_id.clone()).await?;
+    }
+
+    sync.send_message_body(
+        &identity.client,
+        store,
+        &identity.facade,
+        &mut group,
+        identity.account_id,
+        identity.device_id,
+        chat_id,
+        None,
+        &MessageBody::Attachment(prepared.into_message_body(create.blob_id)),
+        None,
+    )
+    .await?;
+    Ok(())
+}
+
 #[derive(Debug)]
 struct TextMessageEvent {
     chat_id: String,
@@ -494,6 +677,22 @@ struct TextMessageEvent {
     sender_account_id: String,
     sender_device_id: String,
     text: String,
+    created_at_unix: u64,
+}
+
+#[derive(Debug)]
+struct FileMessageEvent {
+    chat_id: String,
+    message_id: String,
+    server_seq: u64,
+    sender_account_id: String,
+    sender_device_id: String,
+    blob_id: String,
+    mime_type: String,
+    size_bytes: u64,
+    file_name: Option<String>,
+    width_px: Option<u32>,
+    height_px: Option<u32>,
     created_at_unix: u64,
 }
 

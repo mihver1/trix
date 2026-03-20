@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -16,6 +17,13 @@ type textMessage struct {
 	ChatID          string `json:"chat_id"`
 	SenderAccountID string `json:"sender_account_id"`
 	Text            string `json:"text"`
+}
+
+type fileMessage struct {
+	ChatID          string  `json:"chat_id"`
+	MessageID       string  `json:"message_id"`
+	SenderAccountID string  `json:"sender_account_id"`
+	FileName        *string `json:"file_name"`
 }
 
 type botError struct {
@@ -54,6 +62,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	downloadsDir := filepath.Join(stateDir, "downloads")
 	identity, err := client.Init(ctx, trixbot.InitParams{
 		ServerURL:         serverURL,
 		StateDir:          stateDir,
@@ -91,6 +100,24 @@ func run() error {
 				if _, err := client.SendText(ctx, message.ChatID, "echo: "+message.Text); err != nil {
 					return err
 				}
+			case "bot.v1.file_message":
+				var message fileMessage
+				if err := json.Unmarshal(notification.Params, &message); err != nil {
+					return err
+				}
+				if message.SenderAccountID == identity.AccountID {
+					continue
+				}
+				if err := os.MkdirAll(downloadsDir, 0o755); err != nil {
+					return err
+				}
+				target := filepath.Join(downloadsDir, downloadName(message.MessageID, message.FileName))
+				if _, err := client.DownloadFile(ctx, message.ChatID, message.MessageID, target); err != nil {
+					return err
+				}
+				if _, err := client.SendText(ctx, message.ChatID, "saved file: "+filepath.Base(target)); err != nil {
+					return err
+				}
 			case "bot.v1.error":
 				var event botError
 				if err := json.Unmarshal(notification.Params, &event); err != nil {
@@ -122,6 +149,14 @@ func envOrDefault(name, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func downloadName(messageID string, fileName *string) string {
+	name := "attachment.bin"
+	if fileName != nil && *fileName != "" {
+		name = filepath.Base(*fileName)
+	}
+	return messageID + "-" + name
 }
 
 func envFlag(name string) bool {

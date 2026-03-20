@@ -1,9 +1,9 @@
-use std::{env, path::PathBuf};
+use std::{env, fs, path::PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 use tokio::sync::broadcast::error::RecvError;
 use trix_bot::{Bot, BotEvent, BotInitConfig};
-use trix_types::ChatId;
+use trix_types::{ChatId, MessageId};
 use uuid::Uuid;
 
 #[tokio::main]
@@ -17,7 +17,7 @@ async fn main() -> Result<()> {
 
     let bot = Bot::init(BotInitConfig {
         server_url,
-        state_dir,
+        state_dir: state_dir.clone(),
         profile_name,
         handle,
         master_secret_env,
@@ -58,6 +58,31 @@ async fn main() -> Result<()> {
                         let reply = format!("echo: {text}");
                         bot.send_text(parse_chat_id(&chat_id)?, reply).await?;
                     }
+                    Ok(BotEvent::FileMessage {
+                        chat_id,
+                        message_id,
+                        sender_account_id,
+                        file_name,
+                        ..
+                    }) => {
+                        if sender_account_id == self_account_id {
+                            continue;
+                        }
+                        let download = bot
+                            .download_attachment(parse_chat_id(&chat_id)?, parse_message_id(&message_id)?)
+                            .await?;
+                        let output_path = download_target(&state_dir, &message_id, file_name.as_deref());
+                        if let Some(parent) = output_path.parent() {
+                            fs::create_dir_all(parent)?;
+                        }
+                        fs::write(&output_path, &download.plaintext)?;
+                        bot
+                            .send_text(
+                                parse_chat_id(&chat_id)?,
+                                format!("saved file: {}", output_path.display()),
+                            )
+                            .await?;
+                    }
                     Ok(BotEvent::UnsupportedMessage {
                         chat_id,
                         content_type,
@@ -95,4 +120,20 @@ fn parse_chat_id(value: &str) -> Result<ChatId> {
     Ok(ChatId(
         Uuid::parse_str(value).with_context(|| format!("invalid chat id `{value}`"))?,
     ))
+}
+
+fn parse_message_id(value: &str) -> Result<MessageId> {
+    Ok(MessageId(Uuid::parse_str(value).with_context(|| {
+        format!("invalid message id `{value}`")
+    })?))
+}
+
+fn download_target(state_dir: &PathBuf, message_id: &str, file_name: Option<&str>) -> PathBuf {
+    let safe_name = file_name
+        .map(PathBuf::from)
+        .and_then(|value| value.file_name().map(|name| name.to_owned()))
+        .unwrap_or_else(|| "attachment.bin".into());
+    state_dir
+        .join("downloads")
+        .join(format!("{message_id}-{}", safe_name.to_string_lossy()))
 }

@@ -57,20 +57,24 @@ The repository currently contains a compile-ready scaffold plus the first workin
 - JWT-based device session tokens
 - persistent local history, projection, and MLS state in `trix-core`
 - control-plane chat membership flows on top of `OpenMLS`
-- headless `E2EE` bot runtime with websocket/polling sync and `JSON-RPC` stdio bindings
+- headless `E2EE` bot runtime with websocket/polling sync, file attachment helpers, and `JSON-RPC` stdio bindings
 - initial migration draft
 - single-node `docker compose` setup
 
 ## Next Steps
 
+<<<<<<< HEAD
 - add `OpenMLS` group state management into `trix-core`
 - implement device linking and revocation flows
 - implement chat creation and encrypted message append paths
 - generate `UniFFI` bindings for the future `macOS` app
 - wire Android health/version and auth/device flows on top of the adaptive scaffold
 - extend bot events beyond text-only delivery
+=======
+>>>>>>> origin/main
 - implement device linking and revocation flows for all client types
+- extend bot events beyond text/file delivery
+- add mobile clients on top of the same `trix-core` primitives
 - implement chat creation and encrypted message append paths across Apple clients and bots
-- expand mobile clients on top of the same `trix-core` primitives
 - keep hardening the `UniFFI`/client bridge surface
 - harden production ops around blob storage, retries, and observability
