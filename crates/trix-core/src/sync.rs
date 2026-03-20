@@ -18,7 +18,8 @@ use uuid::Uuid;
 use crate::{
     LocalHistoryStore, LocalOutgoingMessageApplyOutcome, LocalProjectedMessage,
     LocalProjectionKind, LocalStoreApplyReport, MessageBody, MlsConversation, MlsFacade,
-    ServerApiClient, SyncStateStore, decode_b64_field, encode_b64, make_create_message_request,
+    ServerApiClient, SyncStateStore, decode_b64_field, encode_b64,
+    make_control_message_input_with_ratchet_tree, make_create_message_request,
 };
 
 fn empty_json_object() -> Value {
@@ -532,10 +533,11 @@ impl SyncCoordinator {
                     input.commit_aad_json,
                 )),
                 welcome_message: add_bundle.welcome_message.as_ref().map(|welcome| {
-                    crate::make_control_message_input(
+                    make_control_message_input_with_ratchet_tree(
                         welcome_message_id,
                         welcome,
                         input.welcome_aad_json,
+                        add_bundle.ratchet_tree.as_deref(),
                     )
                 }),
             })
@@ -648,10 +650,11 @@ impl SyncCoordinator {
                         input.commit_aad_json,
                     )),
                     welcome_message: add_bundle.welcome_message.as_ref().map(|welcome| {
-                        crate::make_control_message_input(
+                        make_control_message_input_with_ratchet_tree(
                             welcome_message_id,
                             welcome,
                             input.welcome_aad_json,
+                            add_bundle.ratchet_tree.as_deref(),
                         )
                     }),
                 },
@@ -829,10 +832,11 @@ impl SyncCoordinator {
                         input.commit_aad_json,
                     )),
                     welcome_message: add_bundle.welcome_message.as_ref().map(|welcome| {
-                        crate::make_control_message_input(
+                        make_control_message_input_with_ratchet_tree(
                             welcome_message_id,
                             welcome,
                             input.welcome_aad_json,
+                            add_bundle.ratchet_tree.as_deref(),
                         )
                     }),
                 },
