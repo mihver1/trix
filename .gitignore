@@ -1,5 +1,7 @@
 .DS_Store
 /target
+.build/
+.swiftpm/
 /.idea
 /.vscode
 .env
@@ -9,3 +11,9 @@
 **/build/
 blobs/
 postgres-data/
+DerivedData/
+*.xcuserdata/
+*.xccheckout
+*.xcscmblueprint
+apps/ios/Vendor/
+apps/ios/TrixiOS/Bridge/Artifacts/

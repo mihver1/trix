@@ -111,6 +111,19 @@ impl LocalBlobStore {
             .with_context(|| format!("failed to stat blob {}", path.display()))
     }
 
+    pub async fn delete_if_exists(&self, blob_id: &str) -> Result<()> {
+        let path = self.blob_path(blob_id)?;
+        if fs::try_exists(&path)
+            .await
+            .with_context(|| format!("failed to stat blob {}", path.display()))?
+        {
+            fs::remove_file(&path)
+                .await
+                .with_context(|| format!("failed to delete blob {}", path.display()))?;
+        }
+        Ok(())
+    }
+
     fn blob_path(&self, blob_id: &str) -> Result<PathBuf> {
         Ok(self.root.join(Self::relative_path_for_blob_id(blob_id)?))
     }

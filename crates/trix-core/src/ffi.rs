@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use serde_json::Value;
 use thiserror::Error;
 use tokio::runtime::{Builder, Runtime};
-use trix_types::{AccountId, ChatId, DeviceId, MessageId};
+use trix_types::{AccountId, ChatId, DeviceId, MessageId, WebSocketServerFrame};
 use uuid::Uuid;
 
 use crate::{
@@ -21,6 +21,7 @@ use crate::{
     SyncChatCursor, SyncCoordinator, SyncStateSnapshot, UpdateAccountProfileParams,
     account_bootstrap_message, create_device_transfer_bundle, decrypt_attachment_payload,
     decrypt_device_transfer_bundle, device_revoke_message, prepare_attachment_upload,
+    ServerWebSocketClient,
 };
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -98,6 +99,16 @@ pub enum FfiBlobUploadStatus {
 pub enum FfiServiceStatus {
     Ok,
     Degraded,
+}
+
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum FfiWebSocketServerFrameKind {
+    Hello,
+    InboxItems,
+    Acked,
+    Pong,
+    SessionReplaced,
+    Error,
 }
 
 #[derive(Debug, Clone, Copy, uniffi::Enum)]
@@ -365,6 +376,7 @@ pub struct FfiChatSummary {
     pub chat_type: FfiChatType,
     pub title: Option<String>,
     pub last_server_seq: u64,
+    pub epoch: u64,
     pub pending_message_count: u64,
     pub last_message: Option<FfiMessageEnvelope>,
     pub participant_profiles: Vec<FfiChatParticipantProfile>,
@@ -535,6 +547,45 @@ pub struct FfiAckInboxResponse {
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiWebSocketHello {
+    pub session_id: String,
+    pub account_id: String,
+    pub device_id: String,
+    pub lease_owner: String,
+    pub lease_ttl_seconds: u64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiWebSocketInboxItems {
+    pub lease_owner: String,
+    pub lease_expires_at_unix: u64,
+    pub items: Vec<FfiInboxItem>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiWebSocketPong {
+    pub nonce: Option<String>,
+    pub server_unix: u64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiWebSocketErrorFrame {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiWebSocketServerFrame {
+    pub kind: FfiWebSocketServerFrameKind,
+    pub hello: Option<FfiWebSocketHello>,
+    pub inbox: Option<FfiWebSocketInboxItems>,
+    pub acked_inbox_ids: Vec<u64>,
+    pub pong: Option<FfiWebSocketPong>,
+    pub session_replaced_reason: Option<String>,
+    pub error: Option<FfiWebSocketErrorFrame>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct FfiSyncChatCursor {
     pub chat_id: String,
     pub last_server_seq: u64,
@@ -568,6 +619,7 @@ pub struct FfiLocalChatListItem {
     pub title: Option<String>,
     pub display_title: String,
     pub last_server_seq: u64,
+    pub epoch: u64,
     pub pending_message_count: u64,
     pub unread_count: u64,
     pub preview_text: Option<String>,
@@ -858,6 +910,12 @@ pub struct FfiServerApiClient {
 }
 
 #[derive(uniffi::Object)]
+pub struct FfiServerWebSocketClient {
+    inner: Mutex<ServerWebSocketClient>,
+    runtime: Runtime,
+}
+
+#[derive(uniffi::Object)]
 pub struct FfiAccountRootMaterial {
     inner: AccountRootMaterial,
 }
@@ -987,6 +1045,15 @@ impl FfiServerApiClient {
 
     pub fn access_token(&self) -> Result<Option<String>, TrixFfiError> {
         Ok(lock(&self.inner)?.access_token().map(ToOwned::to_owned))
+    }
+
+    pub fn connect_websocket(&self) -> Result<Arc<FfiServerWebSocketClient>, TrixFfiError> {
+        let client = clone_server_api_client(&self.inner)?;
+        let websocket = self.runtime.block_on(client.connect_websocket())?;
+        Ok(Arc::new(FfiServerWebSocketClient {
+            inner: Mutex::new(websocket),
+            runtime: build_runtime()?,
+        }))
     }
 
     pub fn create_account(
@@ -1825,6 +1892,55 @@ impl FfiServerApiClient {
 }
 
 #[uniffi::export]
+impl FfiServerWebSocketClient {
+    pub fn next_frame(&self) -> Result<Option<FfiWebSocketServerFrame>, TrixFfiError> {
+        let mut websocket = lock(&self.inner)?;
+        let frame = self.runtime.block_on(websocket.next_frame())?;
+        Ok(frame.map(websocket_server_frame_to_ffi))
+    }
+
+    pub fn send_ack(&self, inbox_ids: Vec<u64>) -> Result<(), TrixFfiError> {
+        let mut websocket = lock(&self.inner)?;
+        self.runtime.block_on(websocket.send_ack(inbox_ids))?;
+        Ok(())
+    }
+
+    pub fn send_presence_ping(&self, nonce: Option<String>) -> Result<(), TrixFfiError> {
+        let mut websocket = lock(&self.inner)?;
+        self.runtime.block_on(websocket.send_presence_ping(nonce))?;
+        Ok(())
+    }
+
+    pub fn send_typing_update(&self, chat_id: String, is_typing: bool) -> Result<(), TrixFfiError> {
+        let mut websocket = lock(&self.inner)?;
+        self.runtime
+            .block_on(websocket.send_typing_update(parse_chat_id(&chat_id)?, is_typing))?;
+        Ok(())
+    }
+
+    pub fn send_history_sync_progress(
+        &self,
+        job_id: String,
+        cursor_json: Option<String>,
+        completed_chunks: Option<u64>,
+    ) -> Result<(), TrixFfiError> {
+        let mut websocket = lock(&self.inner)?;
+        self.runtime.block_on(websocket.send_history_sync_progress(
+            job_id,
+            parse_optional_json(cursor_json)?,
+            completed_chunks,
+        ))?;
+        Ok(())
+    }
+
+    pub fn close(&self) -> Result<(), TrixFfiError> {
+        let mut websocket = lock(&self.inner)?;
+        self.runtime.block_on(websocket.close())?;
+        Ok(())
+    }
+}
+
+#[uniffi::export]
 impl FfiAccountRootMaterial {
     #[uniffi::constructor]
     pub fn generate() -> Arc<Self> {
@@ -1843,6 +1959,18 @@ impl FfiAccountRootMaterial {
 
     pub fn private_key_bytes(&self) -> Vec<u8> {
         self.inner.private_key_bytes().to_vec()
+    }
+
+    // Temporary bridge until encrypted transfer bundles land in trix-core.
+    // The server already stores opaque bytes, so iOS can round-trip root-capable
+    // linked-device upgrades without inventing a separate wire format first.
+    #[uniffi::constructor]
+    pub fn from_transfer_bundle(transfer_bundle: Vec<u8>) -> Result<Arc<Self>, TrixFfiError> {
+        Self::from_private_key(transfer_bundle)
+    }
+
+    pub fn transfer_bundle(&self) -> Vec<u8> {
+        self.private_key_bytes()
     }
 
     pub fn public_key_bytes(&self) -> Vec<u8> {
@@ -2000,6 +2128,22 @@ impl FfiLocalHistoryStore {
             .collect())
     }
 
+    pub fn apply_chat_list(
+        &self,
+        chats: Vec<FfiChatSummary>,
+    ) -> Result<FfiLocalStoreApplyReport, TrixFfiError> {
+        Ok(local_store_apply_report_to_ffi(
+            lock(&self.inner)?
+                .apply_chat_list(&trix_types::ChatListResponse {
+                    chats: chats
+                        .into_iter()
+                        .map(ffi_chat_summary_to_api)
+                        .collect::<Result<Vec<_>, _>>()?,
+                })
+                .map_err(ffi_error)?,
+        ))
+    }
+
     pub fn list_local_chat_list_items(
         &self,
         self_account_id: Option<String>,
@@ -2036,6 +2180,17 @@ impl FfiLocalHistoryStore {
         Ok(lock(&self.inner)?
             .get_chat(parse_chat_id(&chat_id)?)
             .map(chat_detail_to_ffi))
+    }
+
+    pub fn apply_chat_detail(
+        &self,
+        detail: FfiChatDetail,
+    ) -> Result<FfiLocalStoreApplyReport, TrixFfiError> {
+        Ok(local_store_apply_report_to_ffi(
+            lock(&self.inner)?
+                .apply_chat_detail(&ffi_chat_detail_to_api(detail)?)
+                .map_err(ffi_error)?,
+        ))
     }
 
     pub fn get_chat_history(
@@ -2086,18 +2241,6 @@ impl FfiLocalHistoryStore {
             .collect())
     }
 
-    pub fn apply_chat_detail(
-        &self,
-        detail: FfiChatDetail,
-    ) -> Result<FfiLocalStoreApplyReport, TrixFfiError> {
-        let detail = ffi_chat_detail_to_api(detail)?;
-        Ok(local_store_apply_report_to_ffi(
-            lock(&self.inner)?
-                .apply_chat_detail(&detail)
-                .map_err(ffi_error)?,
-        ))
-    }
-
     pub fn apply_local_projection(
         &self,
         envelope: FfiMessageEnvelope,
@@ -2114,6 +2257,22 @@ impl FfiLocalHistoryStore {
                     payload,
                     merged_epoch,
                 )
+                .map_err(ffi_error)?,
+        ))
+    }
+
+    pub fn apply_projected_messages(
+        &self,
+        chat_id: String,
+        projected_messages: Vec<FfiLocalProjectedMessage>,
+    ) -> Result<FfiLocalProjectionApplyReport, TrixFfiError> {
+        let projected_messages = projected_messages
+            .into_iter()
+            .map(ffi_local_projected_message_to_storage)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(local_projection_apply_report_to_ffi(
+            lock(&self.inner)?
+                .apply_projected_messages(parse_chat_id(&chat_id)?, &projected_messages)
                 .map_err(ffi_error)?,
         ))
     }
@@ -2412,6 +2571,42 @@ impl FfiSyncCoordinator {
         Ok(FfiAckInboxResponse {
             acked_inbox_ids: response.acked_inbox_ids,
         })
+    }
+
+    pub fn record_acked_inbox_ids(&self, acked_inbox_ids: Vec<u64>) -> Result<(), TrixFfiError> {
+        lock(&self.inner)?
+            .record_acked_inbox_ids(&acked_inbox_ids)
+            .map_err(ffi_error)
+    }
+
+    pub fn apply_inbox_items_into_store(
+        &self,
+        store: Arc<FfiLocalHistoryStore>,
+        items: Vec<FfiInboxItem>,
+    ) -> Result<FfiLocalStoreApplyReport, TrixFfiError> {
+        let items = items
+            .into_iter()
+            .map(ffi_inbox_item_to_api)
+            .collect::<Result<Vec<_>, _>>()?;
+        let report = {
+            let mut coordinator = lock(&self.inner)?;
+            let mut store = lock(&store.inner)?;
+            coordinator
+                .apply_inbox_items_into_store(&mut store, &items)
+                .map_err(ffi_error)?
+        };
+        Ok(local_store_apply_report_to_ffi(report))
+    }
+
+    pub fn apply_websocket_inbox_frame(
+        &self,
+        store: Arc<FfiLocalHistoryStore>,
+        frame: FfiWebSocketServerFrame,
+    ) -> Result<Option<FfiLocalStoreApplyReport>, TrixFfiError> {
+        let Some(inbox) = frame.inbox else {
+            return Ok(None);
+        };
+        Ok(Some(self.apply_inbox_items_into_store(store, inbox.items)?))
     }
 
     pub fn lease_inbox_into_store(
@@ -3112,6 +3307,7 @@ fn chat_summary_to_ffi(value: trix_types::ChatSummary) -> FfiChatSummary {
         chat_type: value.chat_type.into(),
         title: value.title,
         last_server_seq: value.last_server_seq,
+        epoch: value.epoch,
         pending_message_count: value.pending_message_count,
         last_message: value.last_message.map(message_envelope_to_ffi),
         participant_profiles: value
@@ -3260,6 +3456,91 @@ fn ffi_chat_history_to_api(
     })
 }
 
+fn ffi_chat_summary_to_api(
+    value: FfiChatSummary,
+) -> Result<trix_types::ChatSummary, TrixFfiError> {
+    Ok(trix_types::ChatSummary {
+        chat_id: parse_chat_id(&value.chat_id)?,
+        chat_type: value.chat_type.into(),
+        title: value.title,
+        last_server_seq: value.last_server_seq,
+        epoch: value.epoch,
+        pending_message_count: value.pending_message_count,
+        last_message: value
+            .last_message
+            .map(ffi_message_envelope_to_api)
+            .transpose()?,
+        participant_profiles: value
+            .participant_profiles
+            .into_iter()
+            .map(ffi_chat_participant_profile_to_api)
+            .collect::<Result<Vec<_>, _>>()?,
+    })
+}
+
+fn ffi_chat_detail_to_api(
+    value: FfiChatDetail,
+) -> Result<trix_types::ChatDetailResponse, TrixFfiError> {
+    Ok(trix_types::ChatDetailResponse {
+        chat_id: parse_chat_id(&value.chat_id)?,
+        chat_type: value.chat_type.into(),
+        title: value.title,
+        last_server_seq: value.last_server_seq,
+        pending_message_count: value.pending_message_count,
+        epoch: value.epoch,
+        last_commit_message_id: value
+            .last_commit_message_id
+            .as_deref()
+            .map(parse_message_id)
+            .transpose()?,
+        last_message: value
+            .last_message
+            .map(ffi_message_envelope_to_api)
+            .transpose()?,
+        participant_profiles: value
+            .participant_profiles
+            .into_iter()
+            .map(ffi_chat_participant_profile_to_api)
+            .collect::<Result<Vec<_>, _>>()?,
+        members: value
+            .members
+            .into_iter()
+            .map(|member| {
+                Ok(trix_types::ChatMemberSummary {
+                    account_id: parse_account_id(&member.account_id)?,
+                    role: member.role,
+                    membership_status: member.membership_status,
+                })
+            })
+            .collect::<Result<Vec<_>, TrixFfiError>>()?,
+        device_members: value
+            .device_members
+            .into_iter()
+            .map(|member| {
+                Ok(trix_types::ChatDeviceSummary {
+                    device_id: parse_device_id(&member.device_id)?,
+                    account_id: parse_account_id(&member.account_id)?,
+                    display_name: member.display_name,
+                    platform: member.platform,
+                    leaf_index: member.leaf_index,
+                    credential_identity_b64: crate::encode_b64(&member.credential_identity),
+                })
+            })
+            .collect::<Result<Vec<_>, TrixFfiError>>()?,
+    })
+}
+
+fn ffi_chat_participant_profile_to_api(
+    value: FfiChatParticipantProfile,
+) -> Result<trix_types::ChatParticipantProfileSummary, TrixFfiError> {
+    Ok(trix_types::ChatParticipantProfileSummary {
+        account_id: parse_account_id(&value.account_id)?,
+        handle: value.handle,
+        profile_name: value.profile_name,
+        profile_bio: value.profile_bio,
+    })
+}
+
 fn modify_chat_members_response_to_ffi(
     value: trix_types::ModifyChatMembersResponse,
 ) -> FfiModifyChatMembersResponse {
@@ -3309,6 +3590,85 @@ fn inbox_item_to_ffi(value: trix_types::InboxItem) -> FfiInboxItem {
     FfiInboxItem {
         inbox_id: value.inbox_id,
         message: message_envelope_to_ffi(value.message),
+    }
+}
+
+fn websocket_server_frame_to_ffi(value: WebSocketServerFrame) -> FfiWebSocketServerFrame {
+    match value {
+        WebSocketServerFrame::Hello {
+            session_id,
+            account_id,
+            device_id,
+            lease_owner,
+            lease_ttl_seconds,
+        } => FfiWebSocketServerFrame {
+            kind: FfiWebSocketServerFrameKind::Hello,
+            hello: Some(FfiWebSocketHello {
+                session_id,
+                account_id: account_id.0.to_string(),
+                device_id: device_id.0.to_string(),
+                lease_owner,
+                lease_ttl_seconds,
+            }),
+            inbox: None,
+            acked_inbox_ids: Vec::new(),
+            pong: None,
+            session_replaced_reason: None,
+            error: None,
+        },
+        WebSocketServerFrame::InboxItems {
+            lease_owner,
+            lease_expires_at_unix,
+            items,
+        } => FfiWebSocketServerFrame {
+            kind: FfiWebSocketServerFrameKind::InboxItems,
+            hello: None,
+            inbox: Some(FfiWebSocketInboxItems {
+                lease_owner,
+                lease_expires_at_unix,
+                items: items.into_iter().map(inbox_item_to_ffi).collect(),
+            }),
+            acked_inbox_ids: Vec::new(),
+            pong: None,
+            session_replaced_reason: None,
+            error: None,
+        },
+        WebSocketServerFrame::Acked { acked_inbox_ids } => FfiWebSocketServerFrame {
+            kind: FfiWebSocketServerFrameKind::Acked,
+            hello: None,
+            inbox: None,
+            acked_inbox_ids,
+            pong: None,
+            session_replaced_reason: None,
+            error: None,
+        },
+        WebSocketServerFrame::Pong { nonce, server_unix } => FfiWebSocketServerFrame {
+            kind: FfiWebSocketServerFrameKind::Pong,
+            hello: None,
+            inbox: None,
+            acked_inbox_ids: Vec::new(),
+            pong: Some(FfiWebSocketPong { nonce, server_unix }),
+            session_replaced_reason: None,
+            error: None,
+        },
+        WebSocketServerFrame::SessionReplaced { reason } => FfiWebSocketServerFrame {
+            kind: FfiWebSocketServerFrameKind::SessionReplaced,
+            hello: None,
+            inbox: None,
+            acked_inbox_ids: Vec::new(),
+            pong: None,
+            session_replaced_reason: Some(reason),
+            error: None,
+        },
+        WebSocketServerFrame::Error { code, message } => FfiWebSocketServerFrame {
+            kind: FfiWebSocketServerFrameKind::Error,
+            hello: None,
+            inbox: None,
+            acked_inbox_ids: Vec::new(),
+            pong: None,
+            session_replaced_reason: None,
+            error: Some(FfiWebSocketErrorFrame { code, message }),
+        },
     }
 }
 
@@ -3537,6 +3897,7 @@ fn local_chat_list_item_to_ffi(value: LocalChatListItem) -> FfiLocalChatListItem
         title: value.title,
         display_title: value.display_title,
         last_server_seq: value.last_server_seq,
+        epoch: value.epoch,
         pending_message_count: value.pending_message_count,
         unread_count: value.unread_count,
         preview_text: value.preview_text,
@@ -3575,6 +3936,32 @@ fn local_projected_message_to_ffi(value: LocalProjectedMessage) -> FfiLocalProje
         merged_epoch: value.merged_epoch,
         created_at_unix: value.created_at_unix,
     }
+}
+
+fn ffi_local_projected_message_to_storage(
+    value: FfiLocalProjectedMessage,
+) -> Result<LocalProjectedMessage, TrixFfiError> {
+    let projection_kind = match value.projection_kind {
+        FfiLocalProjectionKind::ApplicationMessage => LocalProjectionKind::ApplicationMessage,
+        FfiLocalProjectionKind::ProposalQueued => LocalProjectionKind::ProposalQueued,
+        FfiLocalProjectionKind::CommitMerged => LocalProjectionKind::CommitMerged,
+        FfiLocalProjectionKind::WelcomeRef => LocalProjectionKind::WelcomeRef,
+        FfiLocalProjectionKind::System => LocalProjectionKind::System,
+    };
+
+    Ok(LocalProjectedMessage {
+        server_seq: value.server_seq,
+        message_id: parse_message_id(&value.message_id)?,
+        sender_account_id: parse_account_id(&value.sender_account_id)?,
+        sender_device_id: parse_device_id(&value.sender_device_id)?,
+        epoch: value.epoch,
+        message_kind: value.message_kind.into(),
+        content_type: value.content_type.into(),
+        projection_kind,
+        payload: value.payload,
+        merged_epoch: value.merged_epoch,
+        created_at_unix: value.created_at_unix,
+    })
 }
 
 fn local_timeline_item_to_ffi(value: LocalTimelineItem) -> FfiLocalTimelineItem {
@@ -4119,6 +4506,16 @@ mod tests {
             .sign_device_revoke(device_id.clone(), reason.clone())
             .unwrap();
         account_root.verify(payload, signature).unwrap();
+    }
+
+    #[test]
+    fn account_root_transfer_bundle_round_trip_restores_same_keypair() {
+        let original = FfiAccountRootMaterial::generate();
+        let transfer_bundle = original.transfer_bundle();
+        let restored = FfiAccountRootMaterial::from_transfer_bundle(transfer_bundle).unwrap();
+
+        assert_eq!(original.private_key_bytes(), restored.private_key_bytes());
+        assert_eq!(original.public_key_bytes(), restored.public_key_bytes());
     }
 
     #[test]

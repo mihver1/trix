@@ -259,6 +259,7 @@ pub struct ChatSummaryRow {
     pub chat_type: ChatType,
     pub title: Option<String>,
     pub last_server_seq: u64,
+    pub epoch: u64,
     pub pending_message_count: u64,
     pub last_message: Option<MessageEnvelopeRow>,
     pub participant_profiles: Vec<ChatParticipantProfileRow>,
@@ -426,6 +427,12 @@ pub struct BlobMetadataRow {
     pub sha256: Vec<u8>,
     pub upload_status: BlobUploadStatus,
     pub created_by_device_id: Uuid,
+    pub relative_path: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct BlobCleanupEntry {
+    pub blob_id: String,
     pub relative_path: String,
 }
 
@@ -1070,6 +1077,49 @@ impl Database {
             ));
         }
 
+        let existing_chunk = sqlx::query(
+            r#"
+            SELECT
+                chunk_id,
+                payload,
+                cursor_json,
+                is_final
+            FROM history_sync_chunks
+            WHERE job_id = $1
+              AND sequence_no = $2
+            FOR UPDATE
+            "#,
+        )
+        .bind(job_id)
+        .bind(u64_to_i64(sequence_no, "history sync sequence_no")?)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        if let Some(existing_chunk) = existing_chunk {
+            let existing_payload = row_bytes(&existing_chunk, "payload")?;
+            let existing_cursor_json = existing_chunk
+                .try_get::<Option<Value>, _>("cursor_json")
+                .map_err(|err| AppError::internal(format!("failed to read cursor_json: {err}")))?;
+            let existing_is_final: bool = existing_chunk
+                .try_get("is_final")
+                .map_err(|err| AppError::internal(format!("failed to read is_final: {err}")))?;
+
+            if existing_payload != payload
+                || existing_cursor_json != cursor_json
+                || existing_is_final != is_final
+            {
+                return Err(AppError::conflict(
+                    "history sync chunk already exists with different payload",
+                ));
+            }
+
+            return Ok(Some(AppendHistorySyncChunkOutput {
+                chunk_id: row_u64_from_i64(&existing_chunk, "chunk_id")?,
+                job_status,
+            }));
+        }
+
         let chunk_row = sqlx::query(
             r#"
             INSERT INTO history_sync_chunks (
@@ -1080,11 +1130,6 @@ impl Database {
                 is_final
             )
             VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (job_id, sequence_no) DO UPDATE
-            SET payload = EXCLUDED.payload,
-                cursor_json = EXCLUDED.cursor_json,
-                is_final = EXCLUDED.is_final,
-                uploaded_at = now()
             RETURNING
                 chunk_id,
                 extract(epoch from uploaded_at)::bigint AS uploaded_at_unix
@@ -1470,30 +1515,57 @@ impl Database {
         account_id: Uuid,
         device_id: Uuid,
     ) -> Result<Option<DeviceTransferBundleRow>, AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
         let row = sqlx::query(
             r#"
-            UPDATE device_link_intents
-            SET transfer_bundle_fetched_at = COALESCE(transfer_bundle_fetched_at, now())
-            WHERE pending_device_id = $1
-              AND account_id = $2
-              AND status = 'completed'::link_intent_status
-              AND transfer_bundle_ciphertext IS NOT NULL
-            RETURNING
+            SELECT
                 account_id,
                 pending_device_id AS device_id,
                 transfer_bundle_ciphertext,
                 extract(epoch from transfer_bundle_uploaded_at)::bigint AS uploaded_at_unix
+            FROM device_link_intents
+            WHERE pending_device_id = $1
+              AND account_id = $2
+              AND status = 'completed'::link_intent_status
+              AND transfer_bundle_ciphertext IS NOT NULL
+              AND transfer_bundle_fetched_at IS NULL
+            FOR UPDATE
             "#,
         )
         .bind(device_id)
         .bind(account_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(map_db_error)?;
 
         let Some(row) = row else {
             return Ok(None);
         };
+
+        sqlx::query(
+            r#"
+            UPDATE device_link_intents
+            SET transfer_bundle_fetched_at = now(),
+                transfer_bundle_ciphertext = NULL
+            WHERE pending_device_id = $1
+              AND account_id = $2
+              AND status = 'completed'::link_intent_status
+            "#,
+        )
+        .bind(device_id)
+        .bind(account_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        tx.commit()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
 
         Ok(Some(DeviceTransferBundleRow {
             account_id: row_uuid(&row, "account_id")?,
@@ -2286,8 +2358,11 @@ impl Database {
                 c.chat_id,
                 c.chat_type::text AS chat_type,
                 c.title,
-                c.last_server_seq
+                c.last_server_seq,
+                mgs.epoch
             FROM chats c
+            JOIN mls_group_states mgs
+              ON mgs.chat_id = c.chat_id
             JOIN chat_account_members cam
               ON cam.chat_id = c.chat_id
             JOIN chat_device_members cdm
@@ -2315,6 +2390,7 @@ impl Database {
                     chat_type: parse_chat_type(&row_text(&row, "chat_type")?)?,
                     title: row_optional_text(&row, "title")?,
                     last_server_seq: row_u64_from_i64(&row, "last_server_seq")?,
+                    epoch: row_u64_from_i64(&row, "epoch")?,
                     pending_message_count: 0,
                     last_message: None,
                     participant_profiles: Vec::new(),
@@ -2442,6 +2518,11 @@ impl Database {
                 "account sync chats are created internally",
             ));
         }
+        if input.welcome_message.is_some() && input.initial_commit.is_none() {
+            return Err(AppError::bad_request(
+                "welcome message requires an initial commit",
+            ));
+        }
 
         let mut target_account_ids = BTreeSet::new();
         target_account_ids.extend(
@@ -2456,6 +2537,7 @@ impl Database {
         participant_account_ids.insert(input.creator_account_id);
         participant_account_ids.extend(target_account_ids.iter().copied());
         let participant_account_ids: Vec<Uuid> = participant_account_ids.into_iter().collect();
+        let created_epoch = u64::from(input.initial_commit.is_some());
 
         match input.chat_type {
             ChatType::Dm if participant_account_ids.len() != 2 => {
@@ -2596,11 +2678,12 @@ impl Database {
         sqlx::query(
             r#"
             INSERT INTO mls_group_states (chat_id, group_id_bytes, epoch, state_status)
-            VALUES ($1, $2, 0, 'active'::group_state_status)
+            VALUES ($1, $2, $3, 'active'::group_state_status)
             "#,
         )
         .bind(chat_id)
         .bind(Uuid::new_v4().as_bytes().to_vec())
+        .bind(u64_to_i64(created_epoch, "created epoch")?)
         .execute(&mut *tx)
         .await
         .map_err(map_db_error)?;
@@ -2623,7 +2706,7 @@ impl Database {
                 chat_id,
                 input.creator_account_id,
                 input.creator_device_id,
-                0,
+                created_epoch,
                 MessageKind::Commit,
                 commit,
                 &recipients,
@@ -2640,7 +2723,7 @@ impl Database {
                 chat_id,
                 input.creator_account_id,
                 input.creator_device_id,
-                0,
+                created_epoch,
                 MessageKind::WelcomeRef,
                 welcome,
                 &recipients,
@@ -2655,7 +2738,7 @@ impl Database {
         Ok(CreateChatOutput {
             chat_id,
             chat_type: input.chat_type,
-            epoch: 0,
+            epoch: created_epoch,
         })
     }
 
@@ -3754,6 +3837,64 @@ impl Database {
             .await
             .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
 
+        let existing_message = sqlx::query(
+            r#"
+            SELECT
+                message_id,
+                chat_id,
+                server_seq,
+                sender_account_id,
+                sender_device_id,
+                epoch,
+                message_kind::text AS message_kind,
+                content_type::text AS content_type,
+                ciphertext,
+                aad_json
+            FROM messages
+            WHERE message_id = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(input.message_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        if let Some(existing_message) = existing_message {
+            let existing = MessageEnvelopeRow {
+                message_id: row_uuid(&existing_message, "message_id")?,
+                chat_id: row_uuid(&existing_message, "chat_id")?,
+                server_seq: row_u64_from_i64(&existing_message, "server_seq")?,
+                sender_account_id: row_uuid(&existing_message, "sender_account_id")?,
+                sender_device_id: row_uuid(&existing_message, "sender_device_id")?,
+                epoch: row_u64_from_i64(&existing_message, "epoch")?,
+                message_kind: parse_message_kind(&row_text(&existing_message, "message_kind")?)?,
+                content_type: parse_content_type(&row_text(&existing_message, "content_type")?)?,
+                ciphertext: row_bytes(&existing_message, "ciphertext")?,
+                aad_json: row_value(&existing_message, "aad_json")?,
+                created_at_unix: 0,
+            };
+
+            if existing.chat_id == input.chat_id
+                && existing.sender_account_id == input.sender_account_id
+                && existing.sender_device_id == input.sender_device_id
+                && existing.epoch == input.epoch
+                && existing.message_kind == input.message_kind
+                && existing.content_type == input.content_type
+                && existing.ciphertext == input.ciphertext
+                && existing.aad_json == input.aad_json
+            {
+                return Ok(CreateMessageOutput {
+                    message_id: existing.message_id,
+                    server_seq: existing.server_seq,
+                });
+            }
+
+            return Err(AppError::conflict(
+                "message already exists with different payload",
+            ));
+        }
+
         let membership_row = sqlx::query(
             r#"
             SELECT mgs.epoch
@@ -4115,6 +4256,239 @@ impl Database {
             .collect::<Result<Vec<_>, _>>()?;
         acked.sort_unstable();
         Ok(acked)
+    }
+
+    pub async fn list_pending_inbox_device_ids_for_chat(
+        &self,
+        chat_id: Uuid,
+    ) -> Result<Vec<Uuid>, AppError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT DISTINCT di.device_id
+            FROM device_inbox di
+            JOIN devices d
+              ON d.device_id = di.device_id
+            WHERE di.chat_id = $1
+              AND di.delivery_state = 'pending'::delivery_state
+              AND d.device_status = 'active'::device_status
+            ORDER BY di.device_id ASC
+            "#,
+        )
+        .bind(chat_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        rows.into_iter()
+            .map(|row| row_uuid(&row, "device_id"))
+            .collect()
+    }
+
+    pub async fn cleanup_expired_auth_challenges(
+        &self,
+        retention_seconds: u64,
+    ) -> Result<u64, AppError> {
+        let result = sqlx::query(
+            r#"
+            DELETE FROM auth_challenges
+            WHERE expires_at < now() - ($1 * interval '1 second')
+            "#,
+        )
+        .bind(u64_to_i64(retention_seconds, "auth challenge retention")?)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        Ok(result.rows_affected())
+    }
+
+    pub async fn expire_stale_reserved_key_packages(&self) -> Result<u64, AppError> {
+        let result = sqlx::query(
+            r#"
+            UPDATE device_key_packages
+            SET status = 'expired'::key_package_status
+            WHERE status = 'reserved'::key_package_status
+              AND reserved_at IS NOT NULL
+              AND reserved_at < now() - ($1 * interval '1 second')
+            "#,
+        )
+        .bind(i64::from(KEY_PACKAGE_RESERVATION_TTL_SECONDS))
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        Ok(result.rows_affected())
+    }
+
+    pub async fn cleanup_device_link_intents(
+        &self,
+        retention_seconds: u64,
+        transfer_bundle_retention_seconds: u64,
+    ) -> Result<u64, AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
+        let expired = sqlx::query(
+            r#"
+            UPDATE device_link_intents
+            SET status = 'expired'::link_intent_status
+            WHERE status IN (
+                'open'::link_intent_status,
+                'pending_approval'::link_intent_status
+            )
+              AND expires_at < now()
+            "#,
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+
+        sqlx::query(
+            r#"
+            UPDATE device_link_intents
+            SET transfer_bundle_ciphertext = NULL
+            WHERE transfer_bundle_ciphertext IS NOT NULL
+              AND (
+                    transfer_bundle_fetched_at IS NOT NULL
+                    OR (
+                        transfer_bundle_uploaded_at IS NOT NULL
+                        AND transfer_bundle_uploaded_at < now() - ($1 * interval '1 second')
+                    )
+                )
+            "#,
+        )
+        .bind(u64_to_i64(
+            transfer_bundle_retention_seconds,
+            "transfer bundle retention",
+        )?)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        let deleted = sqlx::query(
+            r#"
+            DELETE FROM device_link_intents
+            WHERE status IN (
+                'completed'::link_intent_status,
+                'expired'::link_intent_status,
+                'canceled'::link_intent_status
+            )
+              AND created_at < now() - ($1 * interval '1 second')
+            "#,
+        )
+        .bind(u64_to_i64(retention_seconds, "link intent retention")?)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+
+        tx.commit()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
+
+        Ok(expired + deleted)
+    }
+
+    pub async fn cleanup_history_sync_data(&self, retention_seconds: u64) -> Result<u64, AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
+        let deleted_chunks = sqlx::query(
+            r#"
+            DELETE FROM history_sync_chunks chunks
+            USING history_sync_jobs jobs
+            WHERE jobs.job_id = chunks.job_id
+              AND jobs.job_status IN (
+                    'completed'::history_sync_job_status,
+                    'failed'::history_sync_job_status,
+                    'canceled'::history_sync_job_status
+                )
+              AND jobs.updated_at < now() - ($1 * interval '1 second')
+            "#,
+        )
+        .bind(u64_to_i64(retention_seconds, "history sync retention")?)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+
+        let deleted_jobs = sqlx::query(
+            r#"
+            DELETE FROM history_sync_jobs
+            WHERE job_status IN (
+                'completed'::history_sync_job_status,
+                'failed'::history_sync_job_status,
+                'canceled'::history_sync_job_status
+            )
+              AND updated_at < now() - ($1 * interval '1 second')
+            "#,
+        )
+        .bind(u64_to_i64(retention_seconds, "history sync retention")?)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+
+        tx.commit()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
+
+        Ok(deleted_chunks + deleted_jobs)
+    }
+
+    pub async fn cleanup_orphaned_blobs(
+        &self,
+        pending_blob_retention_seconds: u64,
+    ) -> Result<Vec<BlobCleanupEntry>, AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
+        let rows = sqlx::query(
+            r#"
+            DELETE FROM attachment_blobs ab
+            WHERE ab.deleted_at IS NULL
+              AND (
+                    (
+                        ab.upload_status = 'pending_upload'::blob_upload_status
+                        AND ab.created_at < now() - ($1 * interval '1 second')
+                    )
+                    OR NOT EXISTS (
+                        SELECT 1
+                        FROM attachment_blob_chat_refs ref
+                        WHERE ref.blob_id = ab.blob_id
+                    )
+                )
+            RETURNING ab.blob_id, ab.relative_path
+            "#,
+        )
+        .bind(u64_to_i64(
+            pending_blob_retention_seconds,
+            "pending blob retention",
+        )?)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        tx.commit()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(BlobCleanupEntry {
+                    blob_id: row_text(&row, "blob_id")?,
+                    relative_path: row_text(&row, "relative_path")?,
+                })
+            })
+            .collect()
     }
 }
 
@@ -5217,6 +5591,7 @@ mod tests {
             })
             .await
             .expect("create dm");
+        assert_eq!(dm.epoch, 1);
 
         let intent = db
             .create_link_intent(alice.account_id, alice.device_id)
@@ -5293,7 +5668,7 @@ mod tests {
             .await
             .expect("add secondary device to dm");
 
-        assert_eq!(added.epoch, 1);
+        assert_eq!(added.epoch, 2);
         assert_eq!(added.changed_device_ids, vec![completed.pending_device_id]);
         assert!(
             db.get_chat_detail_for_device(dm.chat_id, completed.pending_device_id)
@@ -5330,7 +5705,7 @@ mod tests {
             .await
             .expect("remove secondary device from dm");
 
-        assert_eq!(removed.epoch, 2);
+        assert_eq!(removed.epoch, 3);
         assert_eq!(
             removed.changed_device_ids,
             vec![completed.pending_device_id]
@@ -5536,6 +5911,15 @@ mod tests {
         assert_eq!(stored_bundle.device_id, completed.pending_device_id);
         assert_eq!(stored_bundle.transfer_bundle_ciphertext, transfer_bundle);
         assert!(stored_bundle.uploaded_at_unix > 0);
+
+        let second_fetch = db
+            .get_device_transfer_bundle(alice.account_id, completed.pending_device_id)
+            .await
+            .expect("second transfer bundle fetch should succeed");
+        assert!(
+            second_fetch.is_none(),
+            "transfer bundle must be single-consume"
+        );
     }
 
     #[tokio::test]
@@ -5658,6 +6042,40 @@ mod tests {
             .expect("append first chunk")
             .expect("job must exist");
         assert_eq!(first_append.job_status, HistorySyncJobStatus::Running);
+
+        let duplicate_first_append = db
+            .append_history_sync_chunk_for_source_device(
+                alice.account_id,
+                alice.device_id,
+                initial_sync_job.job_id,
+                0,
+                b"chunk-0".to_vec(),
+                Some(json!({ "cursor": "0" })),
+                false,
+            )
+            .await
+            .expect("duplicate append first chunk")
+            .expect("job must exist");
+        assert_eq!(duplicate_first_append.chunk_id, first_append.chunk_id);
+        assert_eq!(duplicate_first_append.job_status, first_append.job_status);
+
+        let conflicting_first_append = db
+            .append_history_sync_chunk_for_source_device(
+                alice.account_id,
+                alice.device_id,
+                initial_sync_job.job_id,
+                0,
+                b"chunk-0-different".to_vec(),
+                Some(json!({ "cursor": "0" })),
+                false,
+            )
+            .await
+            .expect_err("mismatched replay must conflict");
+        assert!(
+            conflicting_first_append
+                .to_string()
+                .contains("history sync chunk already exists with different payload")
+        );
 
         let second_append = db
             .append_history_sync_chunk_for_source_device(
@@ -5910,6 +6328,8 @@ mod tests {
             .expect("list chats");
         assert_eq!(chats.len(), 1);
         assert_eq!(chats[0].chat_id, created.chat_id);
+        assert_eq!(created.epoch, 1);
+        assert_eq!(chats[0].epoch, 1);
         assert_eq!(chats[0].participant_profiles.len(), 2);
         assert_eq!(
             chats[0]
@@ -5925,6 +6345,7 @@ mod tests {
             .await
             .expect("get chat detail")
             .expect("chat detail must exist");
+        assert_eq!(detail.epoch, 1);
         assert_eq!(detail.participant_profiles.len(), 2);
         assert_eq!(
             detail
@@ -6028,6 +6449,8 @@ mod tests {
             .await
             .expect("list bob chats");
         assert_eq!(bob_chats.len(), 1);
+        assert_eq!(created.epoch, 1);
+        assert_eq!(bob_chats[0].epoch, 1);
         assert_eq!(bob_chats[0].pending_message_count, 1);
         assert_eq!(
             bob_chats[0]
@@ -6042,6 +6465,7 @@ mod tests {
             .await
             .expect("get bob detail")
             .expect("detail must exist");
+        assert_eq!(bob_detail.epoch, 1);
         assert_eq!(bob_detail.pending_message_count, 1);
         assert_eq!(
             bob_detail
@@ -6057,6 +6481,138 @@ mod tests {
                 .map(|message| message.server_seq),
             Some(sent.server_seq)
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn smoke_append_message_is_idempotent_by_message_id_and_payload() {
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [111; 32],
+                [112; 32],
+            ))
+            .await
+            .expect("create alice");
+        let bob = db
+            .create_account(make_account_input(
+                "bob",
+                "Bob Primary",
+                [113; 32],
+                [114; 32],
+            ))
+            .await
+            .expect("create bob");
+
+        db.publish_key_packages(
+            bob.device_id,
+            vec![PublishKeyPackageInput {
+                device_id: bob.device_id,
+                cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                key_package_bytes: b"bob-primary-kp".to_vec(),
+            }],
+        )
+        .await
+        .expect("publish bob key package");
+
+        let bob_reserved = db
+            .reserve_key_packages_for_account(alice.account_id, bob.account_id)
+            .await
+            .expect("reserve bob key package");
+        let created = db
+            .create_chat(CreateChatInput {
+                creator_account_id: alice.account_id,
+                creator_device_id: alice.device_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                participant_account_ids: vec![bob.account_id],
+                reserved_key_package_ids: bob_reserved
+                    .iter()
+                    .map(|package| package.key_package_id)
+                    .collect(),
+                initial_commit: Some(make_control_message("dm-create-commit")),
+                welcome_message: Some(make_control_message("dm-create-welcome")),
+            })
+            .await
+            .expect("create dm");
+
+        let bootstrap_inbox = db
+            .get_inbox_for_device(bob.device_id, None, Some(10))
+            .await
+            .expect("list bootstrap inbox");
+        db.ack_inbox_items(
+            bob.device_id,
+            bootstrap_inbox
+                .into_iter()
+                .map(|item| i64::try_from(item.inbox_id).expect("inbox id fits into i64"))
+                .collect(),
+        )
+        .await
+        .expect("ack bootstrap inbox");
+
+        let message_id = Uuid::new_v4();
+        let first = db
+            .append_message(CreateMessageInput {
+                chat_id: created.chat_id,
+                sender_account_id: alice.account_id,
+                sender_device_id: alice.device_id,
+                message_id,
+                epoch: created.epoch,
+                message_kind: MessageKind::Application,
+                content_type: ContentType::Text,
+                ciphertext: b"hello bob".to_vec(),
+                aad_json: json!({"preview":"hello bob"}),
+            })
+            .await
+            .expect("append first message");
+
+        let duplicate = db
+            .append_message(CreateMessageInput {
+                chat_id: created.chat_id,
+                sender_account_id: alice.account_id,
+                sender_device_id: alice.device_id,
+                message_id,
+                epoch: created.epoch,
+                message_kind: MessageKind::Application,
+                content_type: ContentType::Text,
+                ciphertext: b"hello bob".to_vec(),
+                aad_json: json!({"preview":"hello bob"}),
+            })
+            .await
+            .expect("append duplicate message");
+        assert_eq!(duplicate.message_id, first.message_id);
+        assert_eq!(duplicate.server_seq, first.server_seq);
+
+        let conflicting = db
+            .append_message(CreateMessageInput {
+                chat_id: created.chat_id,
+                sender_account_id: alice.account_id,
+                sender_device_id: alice.device_id,
+                message_id,
+                epoch: created.epoch,
+                message_kind: MessageKind::Application,
+                content_type: ContentType::Text,
+                ciphertext: b"hello bob but different".to_vec(),
+                aad_json: json!({"preview":"hello bob"}),
+            })
+            .await
+            .expect_err("mismatched message replay must conflict");
+        assert!(
+            conflicting
+                .to_string()
+                .contains("message already exists with different payload")
+        );
+
+        let bob_inbox = db
+            .get_inbox_for_device(bob.device_id, None, Some(10))
+            .await
+            .expect("list bob inbox after idempotent append");
+        assert_eq!(bob_inbox.len(), 1);
+        assert_eq!(bob_inbox[0].message.message_id, first.message_id);
     }
 
     async fn connect_test_db() -> Database {

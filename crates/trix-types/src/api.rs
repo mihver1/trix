@@ -280,6 +280,7 @@ pub struct ChatSummary {
     pub chat_type: ChatType,
     pub title: Option<String>,
     pub last_server_seq: u64,
+    pub epoch: u64,
     #[serde(default)]
     pub pending_message_count: u64,
     pub last_message: Option<MessageEnvelope>,
@@ -439,6 +440,57 @@ pub struct AckInboxRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AckInboxResponse {
     pub acked_inbox_ids: Vec<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WebSocketClientFrame {
+    Ack {
+        inbox_ids: Vec<u64>,
+    },
+    PresencePing {
+        nonce: Option<String>,
+    },
+    TypingUpdate {
+        chat_id: ChatId,
+        is_typing: bool,
+    },
+    HistorySyncProgress {
+        job_id: String,
+        cursor_json: Option<Value>,
+        completed_chunks: Option<u64>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WebSocketServerFrame {
+    Hello {
+        session_id: String,
+        account_id: AccountId,
+        device_id: DeviceId,
+        lease_owner: String,
+        lease_ttl_seconds: u64,
+    },
+    InboxItems {
+        lease_owner: String,
+        lease_expires_at_unix: u64,
+        items: Vec<InboxItem>,
+    },
+    Acked {
+        acked_inbox_ids: Vec<u64>,
+    },
+    Pong {
+        nonce: Option<String>,
+        server_unix: u64,
+    },
+    SessionReplaced {
+        reason: String,
+    },
+    Error {
+        code: String,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

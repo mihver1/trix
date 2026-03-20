@@ -1,11 +1,17 @@
 use base64::{Engine as _, engine::general_purpose};
+use futures_util::{SinkExt, StreamExt};
 use reqwest::{
     Client, Method, Url,
-    header::{CONTENT_LENGTH, ETAG, HeaderMap},
+    header::{AUTHORIZATION, CONTENT_LENGTH, ETAG, HeaderMap, HeaderValue},
 };
 use serde::{Serialize, de::DeserializeOwned};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use thiserror::Error;
+use tokio::net::TcpStream;
+use tokio_tungstenite::{
+    MaybeTlsStream, WebSocketStream, connect_async,
+    tungstenite::{Message, client::IntoClientRequest},
+};
 use trix_types::{
     AccountDirectoryResponse, AccountId, AccountKeyPackagesResponse, AccountProfileResponse,
     AckInboxRequest, AckInboxResponse, AppendHistorySyncChunkRequest,
@@ -22,7 +28,12 @@ use trix_types::{
     ModifyChatMembersRequest, ModifyChatMembersResponse, PublishKeyPackageItem,
     PublishKeyPackagesRequest, PublishKeyPackagesResponse, ReserveKeyPackagesRequest,
     RevokeDeviceRequest, RevokeDeviceResponse, UpdateAccountProfileRequest, VersionResponse,
+    WebSocketClientFrame, WebSocketServerFrame,
 };
+
+const CONTROL_AAD_META_KEY: &str = "_trix";
+const CONTROL_AAD_META_USER_KEY: &str = "user_aad";
+const CONTROL_AAD_META_RATCHET_TREE_B64_KEY: &str = "ratchet_tree_b64";
 
 #[derive(Debug, Error)]
 pub enum ServerApiError {
@@ -44,6 +55,8 @@ pub enum ServerApiError {
         code: String,
         message: String,
     },
+    #[error("websocket error: {0}")]
+    WebSocket(String),
 }
 
 #[derive(Debug, Clone)]
@@ -168,6 +181,10 @@ pub struct ServerApiClient {
     base_url: Url,
     http: Client,
     access_token: Option<String>,
+}
+
+pub struct ServerWebSocketClient {
+    ws: WebSocketStream<MaybeTlsStream<TcpStream>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -845,6 +862,30 @@ impl ServerApiClient {
         }
     }
 
+    pub async fn connect_websocket(&self) -> Result<ServerWebSocketClient, ServerApiError> {
+        let access_token = self.access_token.as_deref().ok_or_else(|| {
+            ServerApiError::WebSocket("missing access token for websocket connection".to_owned())
+        })?;
+        let mut request = self
+            .websocket_url()?
+            .to_string()
+            .into_client_request()
+            .map_err(|err| {
+                ServerApiError::WebSocket(format!("invalid websocket request: {err}"))
+            })?;
+        request.headers_mut().insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {access_token}")).map_err(|err| {
+                ServerApiError::WebSocket(format!("invalid authorization header: {err}"))
+            })?,
+        );
+
+        let (ws, _) = connect_async(request)
+            .await
+            .map_err(|err| ServerApiError::WebSocket(err.to_string()))?;
+        Ok(ServerWebSocketClient { ws })
+    }
+
     fn request(
         &self,
         method: Method,
@@ -860,6 +901,28 @@ impl ServerApiClient {
             Some(token) => builder.bearer_auth(token),
             None => builder,
         })
+    }
+
+    fn websocket_url(&self) -> Result<Url, ServerApiError> {
+        let mut url = self
+            .base_url
+            .join("v0/ws")
+            .map_err(|err| ServerApiError::InvalidBaseUrl(err.to_string()))?;
+        match url.scheme() {
+            "http" => url.set_scheme("ws").map_err(|_| {
+                ServerApiError::InvalidBaseUrl("failed to set ws scheme".to_owned())
+            })?,
+            "https" => url.set_scheme("wss").map_err(|_| {
+                ServerApiError::InvalidBaseUrl("failed to set wss scheme".to_owned())
+            })?,
+            "ws" | "wss" => {}
+            other => {
+                return Err(ServerApiError::InvalidBaseUrl(format!(
+                    "unsupported websocket base scheme `{other}`"
+                )));
+            }
+        }
+        Ok(url)
     }
 
     async fn send_json<T>(&self, request: reqwest::RequestBuilder) -> Result<T, ServerApiError>
@@ -890,15 +953,103 @@ impl ServerApiClient {
     }
 }
 
+impl ServerWebSocketClient {
+    pub async fn next_frame(&mut self) -> Result<Option<WebSocketServerFrame>, ServerApiError> {
+        loop {
+            match self.ws.next().await {
+                Some(Ok(Message::Text(text))) => {
+                    let frame = serde_json::from_str(text.as_ref()).map_err(|err| {
+                        ServerApiError::InvalidResponse(format!(
+                            "failed to decode websocket frame: {err}"
+                        ))
+                    })?;
+                    return Ok(Some(frame));
+                }
+                Some(Ok(Message::Close(_))) | None => return Ok(None),
+                Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => continue,
+                Some(Ok(Message::Binary(_))) => {
+                    return Err(ServerApiError::InvalidResponse(
+                        "unexpected binary websocket frame".to_owned(),
+                    ));
+                }
+                Some(Ok(_)) => continue,
+                Some(Err(err)) => return Err(ServerApiError::WebSocket(err.to_string())),
+            }
+        }
+    }
+
+    pub async fn send_frame(&mut self, frame: &WebSocketClientFrame) -> Result<(), ServerApiError> {
+        let payload = serde_json::to_string(frame).map_err(|err| {
+            ServerApiError::InvalidResponse(format!("failed to encode websocket frame: {err}"))
+        })?;
+        self.ws
+            .send(Message::Text(payload.into()))
+            .await
+            .map_err(|err| ServerApiError::WebSocket(err.to_string()))
+    }
+
+    pub async fn send_ack(&mut self, inbox_ids: Vec<u64>) -> Result<(), ServerApiError> {
+        self.send_frame(&WebSocketClientFrame::Ack { inbox_ids })
+            .await
+    }
+
+    pub async fn send_presence_ping(
+        &mut self,
+        nonce: Option<String>,
+    ) -> Result<(), ServerApiError> {
+        self.send_frame(&WebSocketClientFrame::PresencePing { nonce })
+            .await
+    }
+
+    pub async fn send_typing_update(
+        &mut self,
+        chat_id: ChatId,
+        is_typing: bool,
+    ) -> Result<(), ServerApiError> {
+        self.send_frame(&WebSocketClientFrame::TypingUpdate { chat_id, is_typing })
+            .await
+    }
+
+    pub async fn send_history_sync_progress(
+        &mut self,
+        job_id: impl Into<String>,
+        cursor_json: Option<Value>,
+        completed_chunks: Option<u64>,
+    ) -> Result<(), ServerApiError> {
+        self.send_frame(&WebSocketClientFrame::HistorySyncProgress {
+            job_id: job_id.into(),
+            cursor_json,
+            completed_chunks,
+        })
+        .await
+    }
+
+    pub async fn close(&mut self) -> Result<(), ServerApiError> {
+        self.ws
+            .close(None)
+            .await
+            .map_err(|err| ServerApiError::WebSocket(err.to_string()))
+    }
+}
+
 pub fn make_control_message_input(
     message_id: MessageId,
     ciphertext: &[u8],
     aad_json: Option<Value>,
 ) -> ControlMessageInput {
+    make_control_message_input_with_ratchet_tree(message_id, ciphertext, aad_json, None)
+}
+
+pub fn make_control_message_input_with_ratchet_tree(
+    message_id: MessageId,
+    ciphertext: &[u8],
+    aad_json: Option<Value>,
+    ratchet_tree: Option<&[u8]>,
+) -> ControlMessageInput {
     ControlMessageInput {
         message_id,
         ciphertext_b64: encode_b64(ciphertext),
-        aad_json,
+        aad_json: merge_control_aad(aad_json, ratchet_tree),
     }
 }
 
@@ -932,6 +1083,61 @@ pub fn make_publish_key_package_item(
 
 pub fn encode_b64(bytes: &[u8]) -> String {
     general_purpose::STANDARD.encode(bytes)
+}
+
+pub fn control_message_ratchet_tree(aad_json: &Value) -> Result<Option<Vec<u8>>, ServerApiError> {
+    let Some(meta) = aad_json
+        .as_object()
+        .and_then(|object| object.get(CONTROL_AAD_META_KEY))
+        .and_then(Value::as_object)
+    else {
+        return Ok(None);
+    };
+
+    let Some(value) = meta
+        .get(CONTROL_AAD_META_RATCHET_TREE_B64_KEY)
+        .and_then(Value::as_str)
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(decode_b64_field(
+        "aad_json._trix.ratchet_tree_b64",
+        value,
+    )?))
+}
+
+fn merge_control_aad(aad_json: Option<Value>, ratchet_tree: Option<&[u8]>) -> Option<Value> {
+    let Some(ratchet_tree) = ratchet_tree else {
+        return aad_json;
+    };
+
+    let mut root = match aad_json {
+        Some(Value::Object(object)) => object,
+        Some(other) => {
+            let mut object = Map::new();
+            object.insert(CONTROL_AAD_META_USER_KEY.to_owned(), other);
+            object
+        }
+        None => Map::new(),
+    };
+
+    let mut meta = match root.remove(CONTROL_AAD_META_KEY) {
+        Some(Value::Object(object)) => object,
+        Some(other) => {
+            let mut object = Map::new();
+            object.insert("raw".to_owned(), other);
+            object
+        }
+        None => Map::new(),
+    };
+    meta.insert(
+        CONTROL_AAD_META_RATCHET_TREE_B64_KEY.to_owned(),
+        Value::String(encode_b64(ratchet_tree)),
+    );
+    root.insert(CONTROL_AAD_META_KEY.to_owned(), Value::Object(meta));
+
+    Some(Value::Object(root))
 }
 
 fn directory_account_from_response(value: DirectoryAccountSummary) -> DirectoryAccountMaterial {

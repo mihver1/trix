@@ -13,7 +13,10 @@ use trix_types::{
 };
 use uuid::Uuid;
 
-use crate::{MessageBody, MlsConversation, MlsFacade, MlsProcessResult, decode_b64_field};
+use crate::{
+    MessageBody, MlsConversation, MlsFacade, MlsProcessResult, control_message_ratchet_tree,
+    decode_b64_field,
+};
 
 #[derive(Debug, Clone)]
 pub struct AttachmentStore {
@@ -104,6 +107,7 @@ pub struct LocalChatListItem {
     pub title: Option<String>,
     pub display_title: String,
     pub last_server_seq: u64,
+    pub epoch: u64,
     pub pending_message_count: u64,
     pub unread_count: u64,
     pub preview_text: Option<String>,
@@ -255,6 +259,7 @@ impl LocalHistoryStore {
                     chat_type: state.chat_type,
                     title: state.title.clone(),
                     last_server_seq: state.last_server_seq,
+                    epoch: state.epoch,
                     pending_message_count: state.pending_message_count,
                     last_message: state.last_message.clone(),
                     participant_profiles: state.participant_profiles.clone(),
@@ -394,6 +399,53 @@ impl LocalHistoryStore {
         entry.mls_group_id_b64 = Some(group_id_b64);
         self.save_state()?;
         Ok(true)
+    }
+
+    pub fn load_or_bootstrap_chat_mls_conversation(
+        &mut self,
+        chat_id: ChatId,
+        facade: &MlsFacade,
+    ) -> Result<Option<MlsConversation>> {
+        if let Some(group_id) = self.chat_mls_group_id(chat_id) {
+            return facade.load_group(&group_id).map_err(|err| {
+                anyhow!(
+                    "failed to load MLS group {} for chat {}: {err}",
+                    crate::encode_b64(&group_id),
+                    chat_id.0
+                )
+            });
+        }
+
+        let Some(bootstrap) = self.find_welcome_bootstrap(chat_id)? else {
+            return Ok(None);
+        };
+
+        let conversation = facade
+            .join_group_from_welcome(
+                &bootstrap.welcome_payload,
+                bootstrap.ratchet_tree.as_deref(),
+            )
+            .with_context(|| {
+                format!(
+                    "failed to bootstrap MLS conversation for chat {} from welcome {}",
+                    chat_id.0, bootstrap.welcome_message_id.0
+                )
+            })?;
+        self.set_chat_mls_group_id(chat_id, &conversation.group_id())?;
+        self.apply_projected_messages(chat_id, &bootstrap.synthetic_projections)?;
+        Ok(Some(conversation))
+    }
+
+    pub fn project_chat_with_facade(
+        &mut self,
+        chat_id: ChatId,
+        facade: &MlsFacade,
+        limit: Option<usize>,
+    ) -> Result<LocalProjectionApplyReport> {
+        let mut conversation = self
+            .load_or_bootstrap_chat_mls_conversation(chat_id, facade)?
+            .ok_or_else(|| anyhow!("chat {} has no bootstrappable MLS state", chat_id.0))?;
+        self.project_chat_messages(chat_id, facade, &mut conversation, limit)
     }
 
     pub fn chat_read_cursor(&self, chat_id: ChatId) -> Option<u64> {
@@ -672,9 +724,9 @@ impl LocalHistoryStore {
                     chat_type: chat.chat_type,
                     title: chat.title.clone(),
                     last_server_seq: 0,
+                    epoch: 0,
                     pending_message_count: chat.pending_message_count,
                     last_message: chat.last_message.clone(),
-                    epoch: 0,
                     last_commit_message_id: None,
                     participant_profiles: chat.participant_profiles.clone(),
                     members: Vec::new(),
@@ -697,6 +749,10 @@ impl LocalHistoryStore {
             }
             if chat.last_server_seq > entry.last_server_seq {
                 entry.last_server_seq = chat.last_server_seq;
+                changed = true;
+            }
+            if entry.epoch != chat.epoch {
+                entry.epoch = chat.epoch;
                 changed = true;
             }
             if entry.pending_message_count != chat.pending_message_count {
@@ -1023,6 +1079,54 @@ impl LocalHistoryStore {
         }
         Ok(())
     }
+
+    fn find_welcome_bootstrap(&self, chat_id: ChatId) -> Result<Option<WelcomeBootstrapMaterial>> {
+        let Some(chat) = self.state.chats.get(&chat_id.0.to_string()) else {
+            return Ok(None);
+        };
+
+        let Some(welcome) =
+            chat.messages.values().rev().find(|message| {
+                matches!(message.message_kind, trix_types::MessageKind::WelcomeRef)
+            })
+        else {
+            return Ok(None);
+        };
+
+        let welcome_payload =
+            decode_b64_field("ciphertext_b64", &welcome.ciphertext_b64).map_err(|err| {
+                anyhow!(
+                    "failed to decode welcome payload {}: {err}",
+                    welcome.message_id.0
+                )
+            })?;
+        let ratchet_tree = control_message_ratchet_tree(&welcome.aad_json).map_err(|err| {
+            anyhow!(
+                "failed to decode welcome ratchet tree {}: {err}",
+                welcome.message_id.0
+            )
+        })?;
+
+        let synthetic_projections = chat
+            .messages
+            .values()
+            .filter(|message| {
+                message.server_seq <= welcome.server_seq
+                    && matches!(
+                        message.message_kind,
+                        trix_types::MessageKind::Commit | trix_types::MessageKind::WelcomeRef
+                    )
+            })
+            .map(synthetic_control_projection_from)
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(Some(WelcomeBootstrapMaterial {
+            welcome_message_id: welcome.message_id,
+            welcome_payload,
+            ratchet_tree,
+            synthetic_projections,
+        }))
+    }
 }
 
 impl LocalProjectedMessage {
@@ -1104,6 +1208,56 @@ fn projected_message_from_persisted(value: PersistedProjectedMessage) -> LocalPr
     }
 }
 
+#[derive(Debug)]
+struct WelcomeBootstrapMaterial {
+    welcome_message_id: MessageId,
+    welcome_payload: Vec<u8>,
+    ratchet_tree: Option<Vec<u8>>,
+    synthetic_projections: Vec<LocalProjectedMessage>,
+}
+
+fn synthetic_control_projection_from(envelope: &MessageEnvelope) -> Result<LocalProjectedMessage> {
+    let (projection_kind, payload, merged_epoch) = match envelope.message_kind {
+        trix_types::MessageKind::Commit => (
+            LocalProjectionKind::CommitMerged,
+            None,
+            Some(envelope.epoch),
+        ),
+        trix_types::MessageKind::WelcomeRef => (
+            LocalProjectionKind::WelcomeRef,
+            Some(
+                decode_b64_field("ciphertext_b64", &envelope.ciphertext_b64).map_err(|err| {
+                    anyhow!(
+                        "failed to decode control payload for {}: {err}",
+                        envelope.message_id.0
+                    )
+                })?,
+            ),
+            None,
+        ),
+        _ => {
+            return Err(anyhow!(
+                "message {} is not a synthetic control message",
+                envelope.message_id.0
+            ));
+        }
+    };
+
+    Ok(LocalProjectedMessage {
+        server_seq: envelope.server_seq,
+        message_id: envelope.message_id,
+        sender_account_id: envelope.sender_account_id,
+        sender_device_id: envelope.sender_device_id,
+        epoch: envelope.epoch,
+        message_kind: envelope.message_kind,
+        content_type: envelope.content_type,
+        projection_kind,
+        payload,
+        merged_epoch,
+        created_at_unix: envelope.created_at_unix,
+    })
+}
+
 fn persisted_projected_message_from(value: LocalProjectedMessage) -> PersistedProjectedMessage {
     PersistedProjectedMessage {
         server_seq: value.server_seq,
@@ -1156,6 +1310,7 @@ fn local_chat_list_item_from(
         title: state.title.clone(),
         display_title: chat_display_title(state, self_account_id),
         last_server_seq: state.last_server_seq,
+        epoch: state.epoch,
         pending_message_count: state.pending_message_count,
         unread_count: unread_count_for_chat(state, self_account_id),
         preview_text: preview.as_ref().map(|preview| preview.preview_text.clone()),
@@ -1543,6 +1698,7 @@ mod tests {
                     chat_type: ChatType::Group,
                     title: Some("chat".to_owned()),
                     last_server_seq: 2,
+                    epoch: 2,
                     pending_message_count: 1,
                     last_message: Some(second_message.clone()),
                     participant_profiles: vec![ChatParticipantProfileSummary {
@@ -1916,6 +2072,7 @@ mod tests {
                     chat_type: ChatType::Dm,
                     title: None,
                     last_server_seq: 2,
+                    epoch: 1,
                     pending_message_count: 1,
                     last_message: None,
                     participant_profiles: vec![
@@ -2011,6 +2168,7 @@ mod tests {
                     chat_type: ChatType::Group,
                     title: Some("Group".to_owned()),
                     last_server_seq: 1,
+                    epoch: 1,
                     pending_message_count: 1,
                     last_message: None,
                     participant_profiles: vec![

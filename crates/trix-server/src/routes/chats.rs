@@ -79,6 +79,7 @@ async fn list_chats(
                 chat_type: chat.chat_type,
                 title: chat.title,
                 last_server_seq: chat.last_server_seq,
+                epoch: chat.epoch,
                 pending_message_count: chat.pending_message_count,
                 last_message: chat.last_message.map(message_to_api),
                 participant_profiles: chat
@@ -126,6 +127,8 @@ async fn create_chat(
                 .transpose()?,
         })
         .await?;
+
+    state.notify_pending_inbox_for_chat(created.chat_id).await;
 
     Ok(Json(CreateChatResponse {
         chat_id: trix_types::ChatId(created.chat_id),
@@ -213,6 +216,8 @@ async fn create_message(
         })
         .await?;
 
+    state.notify_pending_inbox_for_chat(chat_id.0).await;
+
     Ok(Json(CreateMessageResponse {
         message_id: trix_types::MessageId(created.message_id),
         server_seq: created.server_seq,
@@ -275,6 +280,8 @@ async fn add_members(
         })
         .await?;
 
+    state.notify_pending_inbox_for_chat(chat_id.0).await;
+
     Ok(Json(ModifyChatMembersResponse {
         chat_id: trix_types::ChatId(updated.chat_id),
         epoch: updated.epoch,
@@ -317,6 +324,8 @@ async fn remove_members(
                 .transpose()?,
         })
         .await?;
+
+    state.notify_pending_inbox_for_chat(chat_id.0).await;
 
     Ok(Json(ModifyChatMembersResponse {
         chat_id: trix_types::ChatId(updated.chat_id),
@@ -361,6 +370,8 @@ async fn add_devices(
         })
         .await?;
 
+    state.notify_pending_inbox_for_chat(chat_id.0).await;
+
     Ok(Json(ModifyChatDevicesResponse {
         chat_id: trix_types::ChatId(updated.chat_id),
         epoch: updated.epoch,
@@ -403,6 +414,8 @@ async fn remove_devices(
                 .transpose()?,
         })
         .await?;
+
+    state.notify_pending_inbox_for_chat(chat_id.0).await;
 
     Ok(Json(ModifyChatDevicesResponse {
         chat_id: trix_types::ChatId(updated.chat_id),

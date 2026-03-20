@@ -18,7 +18,8 @@ use uuid::Uuid;
 use crate::{
     LocalHistoryStore, LocalOutgoingMessageApplyOutcome, LocalProjectedMessage,
     LocalProjectionKind, LocalStoreApplyReport, MessageBody, MlsConversation, MlsFacade,
-    ServerApiClient, SyncStateStore, decode_b64_field, encode_b64, make_create_message_request,
+    ServerApiClient, SyncStateStore, decode_b64_field, encode_b64,
+    make_control_message_input_with_ratchet_tree, make_create_message_request,
 };
 
 fn empty_json_object() -> Value {
@@ -352,14 +353,31 @@ impl SyncCoordinator {
         inbox_ids: Vec<u64>,
     ) -> Result<AckInboxResponse> {
         let response = client.ack_inbox(inbox_ids).await?;
-        if let Some(max_inbox_id) = response.acked_inbox_ids.iter().copied().max() {
+        self.record_acked_inbox_ids(&response.acked_inbox_ids)?;
+        Ok(response)
+    }
+
+    pub fn record_acked_inbox_ids(&mut self, acked_inbox_ids: &[u64]) -> Result<()> {
+        if let Some(max_inbox_id) = acked_inbox_ids.iter().copied().max() {
             let current = self.state.last_acked_inbox_id.unwrap_or_default();
             if max_inbox_id > current {
                 self.state.last_acked_inbox_id = Some(max_inbox_id);
                 self.save_state()?;
             }
         }
-        Ok(response)
+        Ok(())
+    }
+
+    pub fn apply_inbox_items_into_store(
+        &mut self,
+        store: &mut LocalHistoryStore,
+        items: &[trix_types::InboxItem],
+    ) -> Result<LocalStoreApplyReport> {
+        let report = store.apply_inbox_items(items)?;
+        for item in items {
+            self.record_chat_server_seq(item.message.chat_id, item.message.server_seq)?;
+        }
+        Ok(report)
     }
 
     pub async fn lease_inbox_into_store(
@@ -370,10 +388,7 @@ impl SyncCoordinator {
         lease_ttl_seconds: Option<u64>,
     ) -> Result<InboxApplyOutcome> {
         let lease = self.lease_inbox(client, limit, lease_ttl_seconds).await?;
-        let report = store.apply_inbox_items(&lease.items)?;
-        for item in &lease.items {
-            self.record_chat_server_seq(item.message.chat_id, item.message.server_seq)?;
-        }
+        let report = self.apply_inbox_items_into_store(store, &lease.items)?;
         let inbox_ids = lease
             .items
             .iter()
@@ -518,10 +533,11 @@ impl SyncCoordinator {
                     input.commit_aad_json,
                 )),
                 welcome_message: add_bundle.welcome_message.as_ref().map(|welcome| {
-                    crate::make_control_message_input(
+                    make_control_message_input_with_ratchet_tree(
                         welcome_message_id,
                         welcome,
                         input.welcome_aad_json,
+                        add_bundle.ratchet_tree.as_deref(),
                     )
                 }),
             })
@@ -634,10 +650,11 @@ impl SyncCoordinator {
                         input.commit_aad_json,
                     )),
                     welcome_message: add_bundle.welcome_message.as_ref().map(|welcome| {
-                        crate::make_control_message_input(
+                        make_control_message_input_with_ratchet_tree(
                             welcome_message_id,
                             welcome,
                             input.welcome_aad_json,
+                            add_bundle.ratchet_tree.as_deref(),
                         )
                     }),
                 },
@@ -815,10 +832,11 @@ impl SyncCoordinator {
                         input.commit_aad_json,
                     )),
                     welcome_message: add_bundle.welcome_message.as_ref().map(|welcome| {
-                        crate::make_control_message_input(
+                        make_control_message_input_with_ratchet_tree(
                             welcome_message_id,
                             welcome,
                             input.welcome_aad_json,
+                            add_bundle.ratchet_tree.as_deref(),
                         )
                     }),
                 },
