@@ -79,6 +79,11 @@ make ffi-bindings OUT=/tmp/trix-bindings
   - `mark_chat_read()`
   - `set_chat_read_cursor()`
 - Local unread is derived from the projected timeline, excludes MLS control traffic and receipt payloads, and can optionally exclude messages sent by the current account.
+- `FfiLocalHistoryStore` now also exposes high-level local view-model APIs:
+  - `list_local_chat_list_items(self_account_id?)`
+  - `get_local_chat_list_item(chat_id, self_account_id?)`
+  - `get_local_timeline_items(chat_id, self_account_id?, after_server_seq?, limit?)`
+- These methods merge stored chat metadata, participant profiles, local unread state, derived `display_title`, sender display names, outgoing flags, and message preview text so clients do not need to reimplement that stitching layer.
 - `FfiLocalProjectedMessage` now includes parsed `body` and `body_parse_error`, so clients can render typed text/reaction/receipt/attachment/chat-event items directly from the projected timeline.
 - `FfiSyncCoordinator` now also exposes `send_message_body()`, which performs `MessageBody -> MLS encrypt -> POST /messages -> local store -> projected timeline` in one core call.
 - `FfiChatDetail` now includes `device_members` with `device_id`, `account_id`, `leaf_index`, and `credential_identity`, so clients can resolve removals against MLS leaf indices without a parallel side channel.
