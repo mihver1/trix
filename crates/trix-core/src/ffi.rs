@@ -17,7 +17,7 @@ use crate::{
     ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
     ModifyChatMembersControlOutcome, PublishKeyPackageMaterial, ReactionAction, ReceiptType,
     ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient, SyncChatCursor,
-    SyncCoordinator, SyncStateSnapshot,
+    SyncCoordinator, SyncStateSnapshot, UpdateAccountProfileParams,
 };
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -178,6 +178,13 @@ pub struct FfiAccountDirectory {
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiUpdateAccountProfileParams {
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct FfiDeviceSummary {
     pub device_id: String,
     pub display_name: String,
@@ -318,6 +325,15 @@ pub struct FfiChatSummary {
     pub chat_type: FfiChatType,
     pub title: Option<String>,
     pub last_server_seq: u64,
+    pub participant_profiles: Vec<FfiChatParticipantProfile>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiChatParticipantProfile {
+    pub account_id: String,
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -345,6 +361,7 @@ pub struct FfiChatDetail {
     pub last_server_seq: u64,
     pub epoch: u64,
     pub last_commit_message_id: Option<String>,
+    pub participant_profiles: Vec<FfiChatParticipantProfile>,
     pub members: Vec<FfiChatMember>,
     pub device_members: Vec<FfiChatDeviceMember>,
 }
@@ -889,6 +906,29 @@ impl FfiServerApiClient {
         Ok(FfiAccountDirectory {
             accounts: response.into_iter().map(directory_account_to_ffi).collect(),
         })
+    }
+
+    pub fn get_account(&self, account_id: String) -> Result<FfiDirectoryAccount, TrixFfiError> {
+        let client = clone_server_api_client(&self.inner)?;
+        let response = self
+            .runtime
+            .block_on(client.get_account(parse_account_id(&account_id)?))?;
+        Ok(directory_account_to_ffi(response))
+    }
+
+    pub fn update_account_profile(
+        &self,
+        params: FfiUpdateAccountProfileParams,
+    ) -> Result<FfiAccountProfile, TrixFfiError> {
+        let client = clone_server_api_client(&self.inner)?;
+        let response =
+            self.runtime
+                .block_on(client.update_account_profile(UpdateAccountProfileParams {
+                    handle: params.handle,
+                    profile_name: params.profile_name,
+                    profile_bio: params.profile_bio,
+                }))?;
+        Ok(account_profile_to_ffi(response))
     }
 
     pub fn list_devices(&self) -> Result<FfiDeviceList, TrixFfiError> {
@@ -2456,6 +2496,11 @@ fn chat_summary_to_ffi(value: trix_types::ChatSummary) -> FfiChatSummary {
         chat_type: value.chat_type.into(),
         title: value.title,
         last_server_seq: value.last_server_seq,
+        participant_profiles: value
+            .participant_profiles
+            .into_iter()
+            .map(chat_participant_profile_to_ffi)
+            .collect(),
     }
 }
 
@@ -2469,6 +2514,11 @@ fn chat_detail_to_ffi(value: trix_types::ChatDetailResponse) -> FfiChatDetail {
         last_commit_message_id: value
             .last_commit_message_id
             .map(|message_id| message_id.0.to_string()),
+        participant_profiles: value
+            .participant_profiles
+            .into_iter()
+            .map(chat_participant_profile_to_ffi)
+            .collect(),
         members: value
             .members
             .into_iter()
@@ -2494,6 +2544,17 @@ fn chat_detail_to_ffi(value: trix_types::ChatDetailResponse) -> FfiChatDetail {
                 .unwrap_or_default(),
             })
             .collect(),
+    }
+}
+
+fn chat_participant_profile_to_ffi(
+    value: trix_types::ChatParticipantProfileSummary,
+) -> FfiChatParticipantProfile {
+    FfiChatParticipantProfile {
+        account_id: value.account_id.0.to_string(),
+        handle: value.handle,
+        profile_name: value.profile_name,
+        profile_bio: value.profile_bio,
     }
 }
 

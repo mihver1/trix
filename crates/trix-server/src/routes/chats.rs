@@ -17,9 +17,10 @@ use crate::{
 };
 use trix_types::{
     ChatDetailResponse, ChatDeviceSummary, ChatHistoryResponse, ChatListResponse,
-    ChatMemberSummary, ChatSummary, ControlMessageInput, CreateChatRequest, CreateChatResponse,
-    CreateMessageRequest, CreateMessageResponse, MessageEnvelope, ModifyChatDevicesRequest,
-    ModifyChatDevicesResponse, ModifyChatMembersRequest, ModifyChatMembersResponse,
+    ChatMemberSummary, ChatParticipantProfileSummary, ChatSummary, ControlMessageInput,
+    CreateChatRequest, CreateChatResponse, CreateMessageRequest, CreateMessageResponse,
+    MessageEnvelope, ModifyChatDevicesRequest, ModifyChatDevicesResponse, ModifyChatMembersRequest,
+    ModifyChatMembersResponse,
 };
 
 pub fn router() -> Router<AppState> {
@@ -58,6 +59,16 @@ async fn list_chats(
                 chat_type: chat.chat_type,
                 title: chat.title,
                 last_server_seq: chat.last_server_seq,
+                participant_profiles: chat
+                    .participant_profiles
+                    .into_iter()
+                    .map(|profile| ChatParticipantProfileSummary {
+                        account_id: trix_types::AccountId(profile.account_id),
+                        handle: profile.handle,
+                        profile_name: profile.profile_name,
+                        profile_bio: profile.profile_bio,
+                    })
+                    .collect(),
             })
             .collect(),
     }))
@@ -120,6 +131,16 @@ async fn get_chat(
         last_server_seq: chat.last_server_seq,
         epoch: chat.epoch,
         last_commit_message_id: chat.last_commit_message_id.map(trix_types::MessageId),
+        participant_profiles: chat
+            .participant_profiles
+            .into_iter()
+            .map(|profile| ChatParticipantProfileSummary {
+                account_id: trix_types::AccountId(profile.account_id),
+                handle: profile.handle,
+                profile_name: profile.profile_name,
+                profile_bio: profile.profile_bio,
+            })
+            .collect(),
         members: chat
             .members
             .into_iter()

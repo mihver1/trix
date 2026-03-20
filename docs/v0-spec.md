@@ -599,6 +599,21 @@ Response:
 
 Returns current account profile and device list.
 
+### `PATCH /v0/accounts/me`
+
+Replaces the authenticated account profile fields used by directory and client UI.
+
+Request:
+
+- optional `handle`
+- `profile_name`
+- optional `profile_bio`
+
+Rules:
+
+- `handle` is normalized to lowercase
+- `handle` must be unique when present
+
 ### `GET /v0/accounts/directory`
 
 Returns directory entries for accounts that currently have at least one active device.
@@ -615,6 +630,10 @@ Response fields per entry:
 - `handle`
 - `profile_name`
 - `profile_bio`
+
+### `GET /v0/accounts/{account_id}`
+
+Returns one active account directory entry by `account_id`.
 
 ### `POST /v0/devices/link-intents`
 
@@ -777,12 +796,20 @@ Response:
 
 Lists chats visible to the authenticated device.
 
+Response includes per-chat:
+
+- chat identity and type
+- optional explicit `title`
+- `last_server_seq`
+- `participant_profiles` with `account_id`, `handle`, `profile_name`, `profile_bio`
+
 ### `GET /v0/chats/{chat_id}`
 
 Returns chat metadata, membership, and the latest group epoch metadata.
 
 Response includes:
 
+- `participant_profiles` for active account members
 - account-level members
 - active device-level members with `device_id`
 - `leaf_index` for each active device

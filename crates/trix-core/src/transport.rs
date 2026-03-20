@@ -21,7 +21,7 @@ use trix_types::{
     LeaseInboxResponse, MessageId, ModifyChatDevicesRequest, ModifyChatDevicesResponse,
     ModifyChatMembersRequest, ModifyChatMembersResponse, PublishKeyPackageItem,
     PublishKeyPackagesRequest, PublishKeyPackagesResponse, ReserveKeyPackagesRequest,
-    RevokeDeviceRequest, RevokeDeviceResponse, VersionResponse,
+    RevokeDeviceRequest, RevokeDeviceResponse, UpdateAccountProfileRequest, VersionResponse,
 };
 
 #[derive(Debug, Error)]
@@ -76,6 +76,13 @@ pub struct ReservedKeyPackageMaterial {
 #[derive(Debug, Clone)]
 pub struct DirectoryAccountMaterial {
     pub account_id: AccountId,
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UpdateAccountProfileParams {
     pub handle: Option<String>,
     pub profile_name: String,
     pub profile_bio: Option<String>,
@@ -319,6 +326,30 @@ impl ServerApiClient {
             .into_iter()
             .map(directory_account_from_response)
             .collect())
+    }
+
+    pub async fn get_account(
+        &self,
+        account_id: AccountId,
+    ) -> Result<DirectoryAccountMaterial, ServerApiError> {
+        let response: DirectoryAccountSummary = self
+            .send_json(self.request(Method::GET, &format!("v0/accounts/{}", account_id.0))?)
+            .await?;
+        Ok(directory_account_from_response(response))
+    }
+
+    pub async fn update_account_profile(
+        &self,
+        params: UpdateAccountProfileParams,
+    ) -> Result<AccountProfileResponse, ServerApiError> {
+        self.send_json(self.request(Method::PATCH, "v0/accounts/me")?.json(
+            &UpdateAccountProfileRequest {
+                handle: params.handle,
+                profile_name: params.profile_name,
+                profile_bio: params.profile_bio,
+            },
+        ))
+        .await
     }
 
     pub async fn list_devices(&self) -> Result<DeviceListResponse, ServerApiError> {
