@@ -7,3 +7,4 @@
 .env
 blobs/
 postgres-data/
+/apps/macos/dist/

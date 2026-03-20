@@ -14,7 +14,8 @@ struct RootView: View {
                 if model.showsWorkspace {
                     WorkspaceSidebarView(model: model)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .padding(16)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 18)
                 } else {
                     SidebarView(model: model)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -22,9 +23,9 @@ struct RootView: View {
                 }
             }
             .navigationSplitViewColumnWidth(
-                min: model.showsWorkspace ? 264 : 228,
-                ideal: model.showsWorkspace ? 304 : 244,
-                max: model.showsWorkspace ? 344 : 272
+                min: model.showsWorkspace ? 248 : 228,
+                ideal: model.showsWorkspace ? 284 : 244,
+                max: model.showsWorkspace ? 320 : 272
             )
             .background(
                 LinearGradient(
@@ -39,18 +40,14 @@ struct RootView: View {
                 ZStack {
                     TrixCanvas()
 
-                    ScrollView {
-                        if model.showsWorkspace {
-                            VStack(alignment: .leading, spacing: 16) {
-                                if let message = model.lastErrorMessage {
-                                    ErrorStrip(message: message) {
-                                        model.dismissError()
-                                    }
-                                }
-                                WorkspaceView(model: model, availableSize: proxy.size)
-                            }
-                            .padding(24)
-                        } else {
+                    if model.showsWorkspace {
+                        WorkspaceView(model: model, availableSize: proxy.size)
+                            .padding(.top, 26)
+                            .padding(.horizontal, 22)
+                            .padding(.bottom, 20)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    } else {
+                        ScrollView {
                             VStack(alignment: .leading, spacing: 20) {
                                 ContentHeader(model: model, size: proxy.size)
 
@@ -70,6 +67,12 @@ struct RootView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .environment(\.trixColors, TrixColors.resolve(for: colorScheme))
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.setApplicationActive(true)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            model.setApplicationActive(false)
+        }
     }
 }
 
@@ -78,55 +81,39 @@ private struct WorkspaceSidebarView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline) {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
                 Text("Chats")
                     .font(.system(size: 28, weight: .bold, design: .serif))
                     .foregroundStyle(colors.inverseInk)
 
-                Spacer(minLength: 12)
+                Spacer(minLength: 0)
 
-                if model.isRefreshingWorkspace {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(colors.accentSoft)
+                if !model.visibleLocalChatListItems.isEmpty {
+                    Text("\(model.visibleLocalChatListItems.count)")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(colors.inverseInkMuted)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(colors.inverseInk.opacity(0.06), in: Capsule())
                 }
             }
 
-            Button {
-                Task {
-                    await model.refreshWorkspace()
-                }
-            } label: {
-                Label(
-                    model.isRefreshingWorkspace ? "Syncing…" : "Refresh",
-                    systemImage: "arrow.triangle.2.circlepath"
-                )
-            }
-            .buttonStyle(TrixActionButtonStyle(tone: .sidebar))
-            .disabled(model.isRefreshingWorkspace)
-
-            if model.localChatListItems.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
+            if model.visibleLocalChatListItems.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
                     Text("No conversations yet")
-                        .font(.headline)
+                        .font(.subheadline.weight(.semibold))
                         .foregroundStyle(colors.inverseInk)
 
-                    Text("Create the first chat from the main canvas.")
-                        .font(.subheadline)
+                    Text("Start a new chat from the main header.")
+                        .font(.footnote)
                         .foregroundStyle(colors.inverseInkMuted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(colors.inverseInk.opacity(0.05), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .stroke(colors.inverseInk.opacity(0.06), lineWidth: 1)
-                }
+                .padding(.top, 8)
             } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(model.localChatListItems) { chat in
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    ForEach(model.visibleLocalChatListItems) { chat in
                         WorkspaceSidebarChatRow(
                             chat: chat,
                             currentAccountID: model.chatPresentationAccountID,

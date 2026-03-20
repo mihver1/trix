@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import UniformTypeIdentifiers
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -29,13 +31,17 @@ final class AppModel: ObservableObject {
     @Published var reservedKeyPackagesAccountID: UUID?
     @Published var selectedChatID: UUID?
     @Published var localChatListItems: [LocalChatListItem] = []
+    @Published var pendingOutgoingMessages: [PendingOutgoingMessage] = []
+    @Published var composerAttachmentDraft: AttachmentDraft?
     @Published var selectedChatDetail: ChatDetailResponse?
     @Published var selectedChatReadState: LocalChatReadState?
     @Published var selectedChatTimelineItems: [LocalTimelineItem] = []
     @Published var selectedChatProjectedCursor: UInt64?
     @Published var selectedChatProjectedMessages: [LocalProjectedMessage] = []
     @Published var selectedChatHistory: [MessageEnvelope] = []
+    @Published var cachedAttachmentURLs: [UUID: URL] = [:]
     @Published var outgoingLinkIntent: DeviceLinkIntentState?
+    @Published var notificationPreferences: NotificationPreferences
     @Published var hasAccountRootKey = false
     @Published var isRefreshingStatus = false
     @Published var isCreatingAccount = false
@@ -57,27 +63,49 @@ final class AppModel: ObservableObject {
     @Published var revokingDeviceIDs: Set<UUID> = []
     @Published var approvingDeviceIDs: Set<UUID> = []
     @Published var completingHistorySyncJobIDs: Set<UUID> = []
+    @Published var downloadingAttachmentMessageIDs: Set<UUID> = []
+    @Published var removingChatMemberAccountIDs: Set<UUID> = []
+    @Published var removingChatDeviceIDs: Set<UUID> = []
+    @Published var isAddingChatMembers = false
+    @Published var isAddingChatDevices = false
     @Published var lastErrorMessage: String?
 
     private let sessionStore: SessionStore
     private let keychainStore: KeychainStore
+    private let notificationPreferencesStore: NotificationPreferencesStore
+    private let notificationCoordinator: LocalNotificationCoordinator
     private let defaultDeviceName: String
     private var persistedSession: PersistedSession?
     private var accessToken: String?
     private var didStart = false
+    private var backgroundRefreshTask: Task<Void, Never>?
+    private var isApplicationActive = true
 
     init(
         sessionStore: SessionStore = SessionStore(),
-        keychainStore: KeychainStore = KeychainStore()
+        keychainStore: KeychainStore = KeychainStore(),
+        notificationPreferencesStore: NotificationPreferencesStore = NotificationPreferencesStore(),
+        notificationCoordinator: LocalNotificationCoordinator = LocalNotificationCoordinator.makeDefault()
     ) {
         self.sessionStore = sessionStore
         self.keychainStore = keychainStore
+        self.notificationPreferencesStore = notificationPreferencesStore
+        self.notificationCoordinator = notificationCoordinator
 
         let defaultDeviceName = Host.current().localizedName ?? "This Mac"
         self.defaultDeviceName = defaultDeviceName
         self.serverBaseURLString = "http://127.0.0.1:8080"
         self.draft = OnboardingDraft(deviceDisplayName: defaultDeviceName)
         self.linkDraft = LinkDeviceDraft(deviceDisplayName: defaultDeviceName)
+        self.notificationPreferences = notificationPreferencesStore.load()
+        if !notificationCoordinator.isAvailable {
+            self.notificationPreferences.permissionState = .denied
+            self.notificationPreferences.isEnabled = false
+        }
+    }
+
+    deinit {
+        backgroundRefreshTask?.cancel()
     }
 
     var isAuthenticated: Bool {
@@ -162,6 +190,10 @@ final class AppModel: ObservableObject {
         return chats.first { $0.chatId == selectedChatID }
     }
 
+    var visibleLocalChatListItems: [LocalChatListItem] {
+        localChatListItems.filter { $0.chatType != .accountSync }
+    }
+
     var selectedChatListItem: LocalChatListItem? {
         guard let selectedChatID else {
             return nil
@@ -170,8 +202,30 @@ final class AppModel: ObservableObject {
         return localChatListItems.first { $0.chatId == selectedChatID }
     }
 
+    var addableCurrentAccountDevicesForSelectedChat: [DeviceSummary] {
+        guard let detail = selectedChatDetail,
+              let accountId = currentAccount?.accountId ?? persistedSession?.accountId else {
+            return []
+        }
+
+        let existingDeviceIDs = Set(detail.deviceMembers.map(\.deviceId))
+        return devices.filter {
+            $0.deviceStatus == .active &&
+                !existingDeviceIDs.contains($0.deviceId) &&
+                detail.members.contains(where: { $0.accountId == accountId })
+        }
+    }
+
     var hasProjectedTimelineData: Bool {
         !selectedChatProjectedMessages.isEmpty
+    }
+
+    var selectedPendingOutgoingMessages: [PendingOutgoingMessage] {
+        guard let selectedChatID else {
+            return []
+        }
+
+        return pendingOutgoingMessages.filter { $0.chatId == selectedChatID }
     }
 
     var chatPresentationAccountID: UUID? {
@@ -215,6 +269,8 @@ final class AppModel: ObservableObject {
 
         refreshLocalIdentityState(reportErrors: true)
         await refreshServerStatus()
+        await refreshNotificationPermissionState()
+        startBackgroundRefreshLoopIfNeeded()
 
         if persistedSession != nil {
             await restoreSession()
@@ -238,6 +294,67 @@ final class AppModel: ObservableObject {
         } catch {
             lastErrorMessage = error.userFacingMessage
         }
+    }
+
+    func setApplicationActive(_ isActive: Bool) {
+        isApplicationActive = isActive
+
+        if isActive {
+            Task {
+                await refreshNotificationPermissionState()
+                await refreshInbox(background: false, suppressErrors: true)
+            }
+        }
+    }
+
+    func setNotificationsEnabled(_ isEnabled: Bool) {
+        notificationPreferences.isEnabled = isEnabled
+        notificationPreferencesStore.save(notificationPreferences)
+    }
+
+    func setNotificationPollingInterval(_ seconds: TimeInterval) {
+        notificationPreferences.backgroundPollingIntervalSeconds = min(max(seconds, 15), 300)
+        notificationPreferencesStore.save(notificationPreferences)
+    }
+
+    func refreshNotificationPermissionState() async {
+        notificationPreferences.permissionState = await notificationCoordinator.permissionState()
+        notificationPreferencesStore.save(notificationPreferences)
+    }
+
+    func requestNotificationPermission() async {
+        do {
+            notificationPreferences.permissionState = try await notificationCoordinator.requestAuthorization()
+            if notificationPreferences.permissionState == .authorized ||
+                notificationPreferences.permissionState == .provisional ||
+                notificationPreferences.permissionState == .ephemeral {
+                notificationPreferences.isEnabled = true
+            }
+            notificationPreferencesStore.save(notificationPreferences)
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    func importComposerAttachment(from fileURL: URL) {
+        guard fileURL.isFileURL, FileManager.default.fileExists(atPath: fileURL.path) else {
+            lastErrorMessage = "Не удалось открыть выбранный файл."
+            return
+        }
+
+        do {
+            composerAttachmentDraft = try makeAttachmentDraft(from: fileURL)
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    func clearComposerAttachment() {
+        composerAttachmentDraft = nil
+    }
+
+    func cachedAttachmentURL(for messageId: UUID) -> URL? {
+        cachedAttachmentURLs[messageId]
     }
 
     func createAccount() async {
@@ -448,6 +565,51 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func updateProfile() async {
+        guard canUpdateProfile else {
+            return
+        }
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
+        guard let profileName = editProfileDraft.profileName.nonEmptyTrimmed else {
+            lastErrorMessage = "Укажи имя профиля."
+            return
+        }
+
+        isUpdatingProfile = true
+        lastErrorMessage = nil
+        defer { isUpdatingProfile = false }
+
+        do {
+            let updated = try await client.updateAccountProfile(
+                accessToken: token,
+                request: UpdateAccountProfileRequest(
+                    handle: editProfileDraft.handle.nonEmptyTrimmed,
+                    profileName: profileName,
+                    profileBio: editProfileDraft.profileBio.nonEmptyTrimmed
+                )
+            )
+            currentAccount = updated
+            syncEditProfileDraft(with: updated)
+            try updatePersistedSessionProfile(from: updated)
+            await refreshWorkspace()
+        } catch let error as TrixAPIError {
+            if error.isCredentialFailure {
+                accessToken = nil
+                await restoreSession()
+            } else {
+                lastErrorMessage = error.userFacingMessage
+            }
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
     func createChat() async -> Bool {
         guard let token = accessToken else {
             await restoreSession()
@@ -549,7 +711,8 @@ final class AppModel: ObservableObject {
             lastErrorMessage = "Текущее устройство ещё не загружено."
             return false
         }
-        guard let text = draftText.nonEmptyTrimmed else {
+        let trimmedText = draftText.nonEmptyTrimmed
+        guard trimmedText != nil || composerAttachmentDraft != nil else {
             return false
         }
 
@@ -560,56 +723,88 @@ final class AppModel: ObservableObject {
         do {
             let identity = try loadStoredIdentity()
             let storePaths = try workspaceStorePaths()
-            _ = try await client.sendTextMessage(
-                accessToken: token,
-                databasePath: storePaths.localHistoryURL,
-                statePath: storePaths.syncStateURL,
-                mlsStorageRoot: storePaths.mlsStateRootURL,
-                credentialIdentity: identity.storedIdentity.credentialIdentity,
-                senderAccountId: senderAccountID,
-                senderDeviceId: senderDeviceID,
-                chatId: chatId,
-                text: text
-            )
+            if let attachmentDraft = composerAttachmentDraft {
+                let pendingAttachment = enqueuePendingOutgoing(
+                    chatId: chatId,
+                    payload: .attachment(attachmentDraft)
+                )
+                do {
+                    try await sendAttachmentPayload(
+                        client: client,
+                        accessToken: token,
+                        storePaths: storePaths,
+                        identity: identity,
+                        senderAccountID: senderAccountID,
+                        senderDeviceID: senderDeviceID,
+                        chatId: chatId,
+                        draft: attachmentDraft
+                    )
+                    removePendingOutgoing(pendingAttachment)
+                } catch {
+                    markPendingOutgoingFailed(
+                        pendingAttachment,
+                        errorMessage: conversationSafeMessage(error.userFacingMessage)
+                    )
+                    throw error
+                }
+            }
+
+            if let trimmedText {
+                let pendingText = enqueuePendingOutgoing(
+                    chatId: chatId,
+                    payload: .text(trimmedText)
+                )
+                do {
+                    _ = try await client.sendMessageBody(
+                        accessToken: token,
+                        databasePath: storePaths.localHistoryURL,
+                        statePath: storePaths.syncStateURL,
+                        mlsStorageRoot: storePaths.mlsStateRootURL,
+                        credentialIdentity: identity.storedIdentity.credentialIdentity,
+                        senderAccountId: senderAccountID,
+                        senderDeviceId: senderDeviceID,
+                        chatId: chatId,
+                        body: .text(trimmedText)
+                    )
+                    removePendingOutgoing(pendingText)
+                } catch {
+                    markPendingOutgoingFailed(
+                        pendingText,
+                        errorMessage: conversationSafeMessage(error.userFacingMessage)
+                    )
+                    throw error
+                }
+            }
+
             try await loadWorkspace(client: client, accessToken: token)
             try await loadSelectedChat(
                 client: client,
                 accessToken: token,
                 chatId: chatId
             )
+            composerAttachmentDraft = nil
             return true
         } catch let error as TrixAPIError {
             if error.isCredentialFailure {
                 accessToken = nil
                 await restoreSession()
             } else {
-                lastErrorMessage = error.userFacingMessage
+                lastErrorMessage = conversationSafeMessage(error.userFacingMessage)
             }
         } catch {
-            let message = error.userFacingMessage
-            if message.contains("MLS group id") || message.contains("MLS group for chat") {
-                if selectedChatDetail?.epoch == 0 &&
-                    selectedChatProjectedMessages.isEmpty &&
-                    selectedChatHistory.isEmpty {
-                    lastErrorMessage = "Этот чат создан старым flow без локального MLS состояния. Создай новый чат в текущей сборке."
-                } else {
-                    lastErrorMessage = "Этот чат ещё не готов к отправке с этого Mac."
-                }
-            } else {
-                lastErrorMessage = message
-            }
+            lastErrorMessage = conversationSafeMessage(error.userFacingMessage)
         }
 
         return false
     }
 
-    func searchAccountDirectory() async {
+    func searchAccounts(query: String?) async -> [DirectoryAccountSummary] {
         guard let token = accessToken else {
             await restoreSession()
-            return
+            return []
         }
         guard let client = makeClient() else {
-            return
+            return []
         }
 
         isSearchingAccountDirectory = true
@@ -619,9 +814,9 @@ final class AppModel: ObservableObject {
         do {
             let response = try await client.fetchAccountDirectory(
                 accessToken: token,
-                query: createChatDraft.directoryQuery.nonEmptyTrimmed
+                query: query?.nonEmptyTrimmed
             )
-            accountDirectoryResults = response.accounts
+            return response.accounts
         } catch let error as TrixAPIError {
             if error.isCredentialFailure {
                 accessToken = nil
@@ -629,6 +824,237 @@ final class AppModel: ObservableObject {
             } else {
                 lastErrorMessage = error.userFacingMessage
             }
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+
+        return []
+    }
+
+    func searchAccountDirectory() async {
+        accountDirectoryResults = await searchAccounts(query: createChatDraft.directoryQuery)
+    }
+
+    func retryPendingOutgoingMessage(_ pendingMessageID: UUID) async {
+        guard let pendingMessage = pendingOutgoingMessages.first(where: { $0.id == pendingMessageID }) else {
+            return
+        }
+
+        markPendingOutgoingSending(pendingMessageID)
+        composerAttachmentDraft = nil
+
+        let success: Bool
+        switch pendingMessage.payload {
+        case let .text(text):
+            success = await sendMessage(draftText: text)
+        case let .attachment(attachmentDraft):
+            composerAttachmentDraft = attachmentDraft
+            success = await sendMessage(draftText: "")
+        }
+
+        if success {
+            removePendingOutgoing(pendingMessageID)
+        }
+    }
+
+    func discardPendingOutgoingMessage(_ pendingMessageID: UUID) {
+        removePendingOutgoing(pendingMessageID)
+    }
+
+    func openAttachment(for message: LocalTimelineItem) async {
+        guard let body = message.body, body.kind == .attachment else {
+            return
+        }
+        if let cachedURL = cachedAttachmentURLs[message.messageId] {
+            NSWorkspace.shared.open(cachedURL)
+            return
+        }
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
+
+        downloadingAttachmentMessageIDs.insert(message.messageId)
+        defer { downloadingAttachmentMessageIDs.remove(message.messageId) }
+
+        do {
+            let downloaded = try await client.downloadAttachment(accessToken: token, body: body)
+            let destinationURL = try attachmentCacheURL(for: message.messageId, body: downloaded.body)
+            try downloaded.plaintext.write(to: destinationURL, options: .atomic)
+            cachedAttachmentURLs[message.messageId] = destinationURL
+            NSWorkspace.shared.open(destinationURL)
+        } catch let error as TrixAPIError {
+            if error.isCredentialFailure {
+                accessToken = nil
+                await restoreSession()
+            } else {
+                lastErrorMessage = error.userFacingMessage
+            }
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    func addMembersToSelectedChat(_ participantAccountIDs: [UUID]) async {
+        guard !participantAccountIDs.isEmpty else {
+            return
+        }
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
+        guard let actorAccountID = currentAccount?.accountId ?? persistedSession?.accountId,
+              let actorDeviceID = currentDeviceID,
+              let chatId = selectedChatID else {
+            lastErrorMessage = "Чат или устройство ещё не загружены."
+            return
+        }
+
+        isAddingChatMembers = true
+        defer { isAddingChatMembers = false }
+
+        do {
+            let identity = try loadStoredIdentity()
+            let storePaths = try workspaceStorePaths()
+            _ = try await client.addChatMembersControl(
+                accessToken: token,
+                databasePath: storePaths.localHistoryURL,
+                statePath: storePaths.syncStateURL,
+                mlsStorageRoot: storePaths.mlsStateRootURL,
+                credentialIdentity: identity.storedIdentity.credentialIdentity,
+                actorAccountId: actorAccountID,
+                actorDeviceId: actorDeviceID,
+                chatId: chatId,
+                participantAccountIds: participantAccountIDs
+            )
+            try await loadWorkspace(client: client, accessToken: token)
+            try await loadSelectedChat(client: client, accessToken: token, chatId: chatId)
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    func removeMemberFromSelectedChat(_ participantAccountID: UUID) async {
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
+        guard let actorAccountID = currentAccount?.accountId ?? persistedSession?.accountId,
+              let actorDeviceID = currentDeviceID,
+              let chatId = selectedChatID else {
+            lastErrorMessage = "Чат или устройство ещё не загружены."
+            return
+        }
+
+        removingChatMemberAccountIDs.insert(participantAccountID)
+        defer { removingChatMemberAccountIDs.remove(participantAccountID) }
+
+        do {
+            let identity = try loadStoredIdentity()
+            let storePaths = try workspaceStorePaths()
+            _ = try await client.removeChatMembersControl(
+                accessToken: token,
+                databasePath: storePaths.localHistoryURL,
+                statePath: storePaths.syncStateURL,
+                mlsStorageRoot: storePaths.mlsStateRootURL,
+                credentialIdentity: identity.storedIdentity.credentialIdentity,
+                actorAccountId: actorAccountID,
+                actorDeviceId: actorDeviceID,
+                chatId: chatId,
+                participantAccountIds: [participantAccountID]
+            )
+            try await loadWorkspace(client: client, accessToken: token)
+            try await loadSelectedChat(client: client, accessToken: token, chatId: chatId)
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    func addDevicesToSelectedChat(_ deviceIDs: [UUID]) async {
+        guard !deviceIDs.isEmpty else {
+            return
+        }
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
+        guard let actorAccountID = currentAccount?.accountId ?? persistedSession?.accountId,
+              let actorDeviceID = currentDeviceID,
+              let chatId = selectedChatID else {
+            lastErrorMessage = "Чат или устройство ещё не загружены."
+            return
+        }
+
+        isAddingChatDevices = true
+        defer { isAddingChatDevices = false }
+
+        do {
+            let identity = try loadStoredIdentity()
+            let storePaths = try workspaceStorePaths()
+            _ = try await client.addChatDevicesControl(
+                accessToken: token,
+                databasePath: storePaths.localHistoryURL,
+                statePath: storePaths.syncStateURL,
+                mlsStorageRoot: storePaths.mlsStateRootURL,
+                credentialIdentity: identity.storedIdentity.credentialIdentity,
+                actorAccountId: actorAccountID,
+                actorDeviceId: actorDeviceID,
+                chatId: chatId,
+                deviceIds: deviceIDs
+            )
+            try await loadWorkspace(client: client, accessToken: token)
+            try await loadSelectedChat(client: client, accessToken: token, chatId: chatId)
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    func removeDeviceFromSelectedChat(_ deviceID: UUID) async {
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
+        guard let actorAccountID = currentAccount?.accountId ?? persistedSession?.accountId,
+              let actorDeviceID = currentDeviceID,
+              let chatId = selectedChatID else {
+            lastErrorMessage = "Чат или устройство ещё не загружены."
+            return
+        }
+
+        removingChatDeviceIDs.insert(deviceID)
+        defer { removingChatDeviceIDs.remove(deviceID) }
+
+        do {
+            let identity = try loadStoredIdentity()
+            let storePaths = try workspaceStorePaths()
+            _ = try await client.removeChatDevicesControl(
+                accessToken: token,
+                databasePath: storePaths.localHistoryURL,
+                statePath: storePaths.syncStateURL,
+                mlsStorageRoot: storePaths.mlsStateRootURL,
+                credentialIdentity: identity.storedIdentity.credentialIdentity,
+                actorAccountId: actorAccountID,
+                actorDeviceId: actorDeviceID,
+                chatId: chatId,
+                deviceIds: [deviceID]
+            )
+            try await loadWorkspace(client: client, accessToken: token)
+            try await loadSelectedChat(client: client, accessToken: token, chatId: chatId)
         } catch {
             lastErrorMessage = error.userFacingMessage
         }
@@ -697,9 +1123,11 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func refreshInbox() async {
+    func refreshInbox(background: Bool = false, suppressErrors: Bool = false) async {
         guard let token = accessToken else {
-            await restoreSession()
+            if !suppressErrors {
+                await restoreSession()
+            }
             return
         }
         guard let client = makeClient() else {
@@ -711,6 +1139,7 @@ final class AppModel: ObservableObject {
         defer { isRefreshingInbox = false }
 
         do {
+            let existingInboxIDs = Set(inboxItems.map(\.inboxId))
             let parameters = try decodeInboxPollParameters()
             let storePaths = try workspaceStorePaths()
             let response = try await client.fetchInboxIntoLocalStore(
@@ -720,20 +1149,33 @@ final class AppModel: ObservableObject {
                 afterInboxId: parameters.afterInboxId,
                 limit: parameters.limit
             )
+            let currentAccountID = currentAccount?.accountId ?? persistedSession?.accountId
+            let newIncomingItems = response.items.filter { item in
+                !existingInboxIDs.contains(item.inboxId) &&
+                    item.message.senderAccountId != currentAccountID
+            }
             mergeInboxItems(response.items, autoAdvanceCursor: true)
             applyLocalStoreSnapshot(chats: response.chats, syncState: response.syncState)
             if let accountId = currentAccount?.accountId ?? persistedSession?.accountId {
                 try await refreshLocalMessengerState(client: client, accountId: accountId)
             }
+            if background {
+                await postNotificationsForNewMessages(newIncomingItems)
+            }
         } catch let error as TrixAPIError {
             if error.isCredentialFailure {
                 accessToken = nil
-                await restoreSession()
-            } else {
+                lastErrorMessage = "Session expired. Reconnect this Mac to keep syncing messages."
+                if !suppressErrors {
+                    await restoreSession()
+                }
+            } else if !suppressErrors {
                 lastErrorMessage = error.userFacingMessage
             }
         } catch {
-            lastErrorMessage = error.userFacingMessage
+            if !suppressErrors {
+                lastErrorMessage = error.userFacingMessage
+            }
         }
     }
 
@@ -1139,6 +1581,7 @@ final class AppModel: ObservableObject {
         refreshLocalIdentityState(reportErrors: false)
         syncKeyPackageDrafts(with: loadedProfile)
         syncInboxDrafts(with: loadedProfile)
+        syncEditProfileDraft(with: loadedProfile)
         try await loadHistorySyncJobs(client: client, accessToken: accessToken)
         await refreshLocalWorkspaceCache(
             client: client,
@@ -1322,6 +1765,9 @@ final class AppModel: ObservableObject {
         devices = []
         chats = []
         localChatListItems = []
+        pendingOutgoingMessages = []
+        composerAttachmentDraft = nil
+        cachedAttachmentURLs = [:]
         accountDirectoryResults = []
         inboxItems = []
         activeInboxLease = nil
@@ -1373,6 +1819,12 @@ final class AppModel: ObservableObject {
         if inboxLeaseDraft.leaseOwner.nonEmptyTrimmed == nil {
             inboxLeaseDraft.leaseOwner = defaultInboxLeaseOwner(for: profile.deviceId)
         }
+    }
+
+    private func syncEditProfileDraft(with profile: AccountProfileResponse) {
+        editProfileDraft.handle = profile.handle ?? ""
+        editProfileDraft.profileName = profile.profileName
+        editProfileDraft.profileBio = profile.profileBio ?? ""
     }
 
     private func loadHistorySyncJobs(
@@ -1435,9 +1887,9 @@ final class AppModel: ObservableObject {
         )
 
         if let selectedChatID,
-           !localChatListItems.contains(where: { $0.chatId == selectedChatID }),
-           !localChatListItems.isEmpty {
-            self.selectedChatID = localChatListItems.first?.chatId
+           !visibleLocalChatListItems.contains(where: { $0.chatId == selectedChatID }),
+           !visibleLocalChatListItems.isEmpty {
+            self.selectedChatID = visibleLocalChatListItems.first?.chatId
         }
     }
 
@@ -1610,12 +2062,13 @@ final class AppModel: ObservableObject {
     }
 
     private func preferredLocalChatSelection(from chats: [LocalChatListItem]) -> UUID? {
+        let visibleChats = chats.filter { $0.chatType != .accountSync }
         if let selectedChatID,
-           chats.contains(where: { $0.chatId == selectedChatID }) {
+           visibleChats.contains(where: { $0.chatId == selectedChatID }) {
             return selectedChatID
         }
 
-        return chats.first?.chatId
+        return visibleChats.first?.chatId
     }
 
     private func clearSelectedChat() {
@@ -1639,6 +2092,184 @@ final class AppModel: ObservableObject {
             $0.lastServerSeq > $1.lastServerSeq ||
                 ($0.lastServerSeq == $1.lastServerSeq && $0.chatId.uuidString < $1.chatId.uuidString)
         }
+    }
+
+    private func startBackgroundRefreshLoopIfNeeded() {
+        guard backgroundRefreshTask == nil else {
+            return
+        }
+
+        backgroundRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else {
+                    return
+                }
+
+                let interval = max(self.notificationPreferences.backgroundPollingIntervalSeconds, 15)
+                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+                await self.performBackgroundRefreshIfNeeded()
+            }
+        }
+    }
+
+    private func performBackgroundRefreshIfNeeded() async {
+        guard isAuthenticated,
+              !isRefreshingInbox,
+              !isLeasingInbox,
+              !isAckingInbox else {
+            return
+        }
+
+        if isApplicationActive {
+            await refreshInbox(background: false, suppressErrors: true)
+            return
+        }
+
+        guard notificationPreferences.isEnabled else {
+            return
+        }
+
+        switch notificationPreferences.permissionState {
+        case .authorized, .provisional, .ephemeral:
+            await refreshInbox(background: true, suppressErrors: true)
+        case .notDetermined, .denied:
+            break
+        }
+    }
+
+    private func postNotificationsForNewMessages(_ inboxItems: [InboxItem]) async {
+        guard notificationPreferences.isEnabled else {
+            return
+        }
+
+        switch notificationPreferences.permissionState {
+        case .authorized, .provisional, .ephemeral:
+            break
+        case .notDetermined, .denied:
+            return
+        }
+
+        let groupedByChat = Dictionary(grouping: inboxItems, by: { $0.message.chatId })
+        for (chatId, items) in groupedByChat {
+            guard let latestItem = items.max(by: { $0.inboxId < $1.inboxId }) else {
+                continue
+            }
+
+            let chatTitle = localChatListItems.first(where: { $0.chatId == chatId })?.displayTitle ?? "New message"
+            let body = localChatListItems.first(where: { $0.chatId == chatId })?.previewText ??
+                "You have \(items.count) new message\(items.count == 1 ? "" : "s")."
+            await notificationCoordinator.postMessageNotification(
+                identifier: "chat-\(chatId.uuidString)-\(latestItem.inboxId)",
+                title: chatTitle,
+                body: body
+            )
+        }
+    }
+
+    private func enqueuePendingOutgoing(chatId: UUID, payload: PendingOutgoingPayload) -> UUID {
+        let pendingMessage = PendingOutgoingMessage(chatId: chatId, payload: payload)
+        pendingOutgoingMessages.append(pendingMessage)
+        return pendingMessage.id
+    }
+
+    private func removePendingOutgoing(_ pendingMessageID: UUID) {
+        pendingOutgoingMessages.removeAll { $0.id == pendingMessageID }
+    }
+
+    private func markPendingOutgoingFailed(_ pendingMessageID: UUID, errorMessage: String) {
+        guard let index = pendingOutgoingMessages.firstIndex(where: { $0.id == pendingMessageID }) else {
+            return
+        }
+
+        pendingOutgoingMessages[index].status = .failed
+        pendingOutgoingMessages[index].errorMessage = errorMessage
+    }
+
+    private func markPendingOutgoingSending(_ pendingMessageID: UUID) {
+        guard let index = pendingOutgoingMessages.firstIndex(where: { $0.id == pendingMessageID }) else {
+            return
+        }
+
+        pendingOutgoingMessages[index].status = .sending
+        pendingOutgoingMessages[index].errorMessage = nil
+    }
+
+    private func makeAttachmentDraft(from fileURL: URL) throws -> AttachmentDraft {
+        let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey, .nameKey])
+        let fileName = resourceValues.name ?? fileURL.lastPathComponent
+        let mimeType = resourceValues.contentType?.preferredMIMEType ??
+            UTType(filenameExtension: fileURL.pathExtension)?.preferredMIMEType ??
+            "application/octet-stream"
+        let sizeBytes = UInt64(resourceValues.fileSize ?? 0)
+
+        var widthPx: UInt32?
+        var heightPx: UInt32?
+        if mimeType.hasPrefix("image/"),
+           let image = NSImage(contentsOf: fileURL) {
+            widthPx = UInt32(max(image.size.width.rounded(), 0))
+            heightPx = UInt32(max(image.size.height.rounded(), 0))
+        }
+
+        return AttachmentDraft(
+            fileURL: fileURL,
+            fileName: fileName,
+            mimeType: mimeType,
+            widthPx: widthPx,
+            heightPx: heightPx,
+            fileSizeBytes: sizeBytes
+        )
+    }
+
+    private func sendAttachmentPayload(
+        client: TrixAPIClient,
+        accessToken: String,
+        storePaths: WorkspaceStorePaths,
+        identity: DeviceIdentityMaterial,
+        senderAccountID: UUID,
+        senderDeviceID: UUID,
+        chatId: UUID,
+        draft: AttachmentDraft
+    ) async throws {
+        let payload = try Data(contentsOf: draft.fileURL)
+        let uploaded = try await client.uploadAttachment(
+            accessToken: accessToken,
+            chatId: chatId,
+            payload: payload,
+            mimeType: draft.mimeType,
+            fileName: draft.fileName,
+            widthPx: draft.widthPx,
+            heightPx: draft.heightPx
+        )
+        _ = try await client.sendMessageBody(
+            accessToken: accessToken,
+            databasePath: storePaths.localHistoryURL,
+            statePath: storePaths.syncStateURL,
+            mlsStorageRoot: storePaths.mlsStateRootURL,
+            credentialIdentity: identity.storedIdentity.credentialIdentity,
+            senderAccountId: senderAccountID,
+            senderDeviceId: senderDeviceID,
+            chatId: chatId,
+            body: uploaded.body
+        )
+    }
+
+    private func attachmentCacheURL(for messageId: UUID, body: TypedMessageBody) throws -> URL {
+        let storePaths = try workspaceStorePaths()
+        let fileName = body.fileName?.nonEmptyTrimmed ?? "\(messageId.uuidString).bin"
+        return storePaths.attachmentsRootURL.appending(path: "\(messageId.uuidString)-\(fileName)")
+    }
+
+    private func conversationSafeMessage(_ rawMessage: String) -> String {
+        let lowercased = rawMessage.lowercased()
+        if lowercased.contains("epoch") ||
+            lowercased.contains("mls") ||
+            lowercased.contains("projected") ||
+            lowercased.contains("group state") ||
+            lowercased.contains("conversation material") {
+            return "Couldn't send this message right now. Try again in a moment."
+        }
+
+        return rawMessage
     }
 
     private func markSelectedChatReadIfNeeded(
@@ -1674,6 +2305,7 @@ final class AppModel: ObservableObject {
                 title: existingItem.title,
                 displayTitle: existingItem.displayTitle,
                 lastServerSeq: existingItem.lastServerSeq,
+                epoch: existingItem.epoch,
                 pendingMessageCount: existingItem.pendingMessageCount,
                 unreadCount: updatedReadState.unreadCount,
                 previewText: existingItem.previewText,

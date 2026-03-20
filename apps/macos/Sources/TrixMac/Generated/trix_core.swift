@@ -1777,6 +1777,8 @@ public protocol FfiServerApiClientProtocol: AnyObject, Sendable {
     
     func completeLinkIntentWithDeviceKey(linkIntentId: String, params: FfiCompleteLinkIntentWithDeviceKeyParams, deviceKeys: FfiDeviceKeyMaterial) throws  -> FfiCompletedLinkIntent
     
+    func connectWebsocket() throws  -> FfiServerWebSocketClient
+    
     func createAccount(params: FfiCreateAccountParams) throws  -> FfiCreateAccountResponse
     
     func createAccountWithMaterials(params: FfiCreateAccountWithMaterialsParams, accountRoot: FfiAccountRootMaterial, deviceKeys: FfiDeviceKeyMaterial) throws  -> FfiCreateAccountResponse
@@ -2030,6 +2032,14 @@ open func completeLinkIntentWithDeviceKey(linkIntentId: String, params: FfiCompl
         FfiConverterString.lower(linkIntentId),
         FfiConverterTypeFfiCompleteLinkIntentWithDeviceKeyParams_lower(params),
         FfiConverterTypeFfiDeviceKeyMaterial_lower(deviceKeys),$0
+    )
+})
+}
+    
+open func connectWebsocket()throws  -> FfiServerWebSocketClient  {
+    return try  FfiConverterTypeFfiServerWebSocketClient_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverapiclient_connect_websocket(
+            self.uniffiCloneHandle(),$0
     )
 })
 }
@@ -2435,6 +2445,174 @@ public func FfiConverterTypeFfiServerApiClient_lower(_ value: FfiServerApiClient
 
 
 
+public protocol FfiServerWebSocketClientProtocol: AnyObject, Sendable {
+    
+    func close() throws 
+    
+    func nextFrame() throws  -> FfiWebSocketServerFrame?
+    
+    func sendAck(inboxIds: [UInt64]) throws 
+    
+    func sendHistorySyncProgress(jobId: String, cursorJson: String?, completedChunks: UInt64?) throws 
+    
+    func sendPresencePing(nonce: String?) throws 
+    
+    func sendTypingUpdate(chatId: String, isTyping: Bool) throws 
+    
+}
+open class FfiServerWebSocketClient: FfiServerWebSocketClientProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_trix_core_fn_clone_ffiserverwebsocketclient(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_trix_core_fn_free_ffiserverwebsocketclient(handle, $0) }
+    }
+
+    
+
+    
+open func close()throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverwebsocketclient_close(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+    
+open func nextFrame()throws  -> FfiWebSocketServerFrame?  {
+    return try  FfiConverterOptionTypeFfiWebSocketServerFrame.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverwebsocketclient_next_frame(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+open func sendAck(inboxIds: [UInt64])throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverwebsocketclient_send_ack(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceUInt64.lower(inboxIds),$0
+    )
+}
+}
+    
+open func sendHistorySyncProgress(jobId: String, cursorJson: String?, completedChunks: UInt64?)throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverwebsocketclient_send_history_sync_progress(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(jobId),
+        FfiConverterOptionString.lower(cursorJson),
+        FfiConverterOptionUInt64.lower(completedChunks),$0
+    )
+}
+}
+    
+open func sendPresencePing(nonce: String?)throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverwebsocketclient_send_presence_ping(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionString.lower(nonce),$0
+    )
+}
+}
+    
+open func sendTypingUpdate(chatId: String, isTyping: Bool)throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverwebsocketclient_send_typing_update(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(chatId),
+        FfiConverterBool.lower(isTyping),$0
+    )
+}
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiServerWebSocketClient: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = FfiServerWebSocketClient
+
+    public static func lift(_ handle: UInt64) throws -> FfiServerWebSocketClient {
+        return FfiServerWebSocketClient(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: FfiServerWebSocketClient) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiServerWebSocketClient {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: FfiServerWebSocketClient, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiServerWebSocketClient_lift(_ handle: UInt64) throws -> FfiServerWebSocketClient {
+    return try FfiConverterTypeFfiServerWebSocketClient.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiServerWebSocketClient_lower(_ value: FfiServerWebSocketClient) -> UInt64 {
+    return FfiConverterTypeFfiServerWebSocketClient.lower(value)
+}
+
+
+
+
+
+
 public protocol FfiSyncCoordinatorProtocol: AnyObject, Sendable {
     
     func ackInbox(client: FfiServerApiClient, inboxIds: [UInt64]) throws  -> FfiAckInboxResponse
@@ -2442,6 +2620,10 @@ public protocol FfiSyncCoordinatorProtocol: AnyObject, Sendable {
     func addChatDevicesControl(client: FfiServerApiClient, store: FfiLocalHistoryStore, facade: FfiMlsFacade, input: FfiModifyChatDevicesControlInput) throws  -> FfiModifyChatDevicesControlOutcome
     
     func addChatMembersControl(client: FfiServerApiClient, store: FfiLocalHistoryStore, facade: FfiMlsFacade, input: FfiModifyChatMembersControlInput) throws  -> FfiModifyChatMembersControlOutcome
+    
+    func applyInboxItemsIntoStore(store: FfiLocalHistoryStore, items: [FfiInboxItem]) throws  -> FfiLocalStoreApplyReport
+    
+    func applyWebsocketInboxFrame(store: FfiLocalHistoryStore, frame: FfiWebSocketServerFrame) throws  -> FfiLocalStoreApplyReport?
     
     func chatCursor(chatId: String) throws  -> UInt64?
     
@@ -2454,6 +2636,8 @@ public protocol FfiSyncCoordinatorProtocol: AnyObject, Sendable {
     func leaseInboxIntoStore(client: FfiServerApiClient, store: FfiLocalHistoryStore, limit: UInt32?, leaseTtlSeconds: UInt64?) throws  -> FfiInboxApplyOutcome
     
     func leaseOwner() throws  -> String
+    
+    func recordAckedInboxIds(ackedInboxIds: [UInt64]) throws 
     
     func recordChatServerSeq(chatId: String, serverSeq: UInt64) throws  -> Bool
     
@@ -2576,6 +2760,26 @@ open func addChatMembersControl(client: FfiServerApiClient, store: FfiLocalHisto
 })
 }
     
+open func applyInboxItemsIntoStore(store: FfiLocalHistoryStore, items: [FfiInboxItem])throws  -> FfiLocalStoreApplyReport  {
+    return try  FfiConverterTypeFfiLocalStoreApplyReport_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffisynccoordinator_apply_inbox_items_into_store(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiLocalHistoryStore_lower(store),
+        FfiConverterSequenceTypeFfiInboxItem.lower(items),$0
+    )
+})
+}
+    
+open func applyWebsocketInboxFrame(store: FfiLocalHistoryStore, frame: FfiWebSocketServerFrame)throws  -> FfiLocalStoreApplyReport?  {
+    return try  FfiConverterOptionTypeFfiLocalStoreApplyReport.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffisynccoordinator_apply_websocket_inbox_frame(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiLocalHistoryStore_lower(store),
+        FfiConverterTypeFfiWebSocketServerFrame_lower(frame),$0
+    )
+})
+}
+    
 open func chatCursor(chatId: String)throws  -> UInt64?  {
     return try  FfiConverterOptionUInt64.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffisynccoordinator_chat_cursor(
@@ -2634,6 +2838,14 @@ open func leaseOwner()throws  -> String  {
             self.uniffiCloneHandle(),$0
     )
 })
+}
+    
+open func recordAckedInboxIds(ackedInboxIds: [UInt64])throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffisynccoordinator_record_acked_inbox_ids(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceUInt64.lower(ackedInboxIds),$0
+    )
+}
 }
     
 open func recordChatServerSeq(chatId: String, serverSeq: UInt64)throws  -> Bool  {
@@ -3722,17 +3934,19 @@ public struct FfiChatSummary: Equatable, Hashable {
     public var chatType: FfiChatType
     public var title: String?
     public var lastServerSeq: UInt64
+    public var epoch: UInt64
     public var pendingMessageCount: UInt64
     public var lastMessage: FfiMessageEnvelope?
     public var participantProfiles: [FfiChatParticipantProfile]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(chatId: String, chatType: FfiChatType, title: String?, lastServerSeq: UInt64, pendingMessageCount: UInt64, lastMessage: FfiMessageEnvelope?, participantProfiles: [FfiChatParticipantProfile]) {
+    public init(chatId: String, chatType: FfiChatType, title: String?, lastServerSeq: UInt64, epoch: UInt64, pendingMessageCount: UInt64, lastMessage: FfiMessageEnvelope?, participantProfiles: [FfiChatParticipantProfile]) {
         self.chatId = chatId
         self.chatType = chatType
         self.title = title
         self.lastServerSeq = lastServerSeq
+        self.epoch = epoch
         self.pendingMessageCount = pendingMessageCount
         self.lastMessage = lastMessage
         self.participantProfiles = participantProfiles
@@ -3758,6 +3972,7 @@ public struct FfiConverterTypeFfiChatSummary: FfiConverterRustBuffer {
                 chatType: FfiConverterTypeFfiChatType.read(from: &buf), 
                 title: FfiConverterOptionString.read(from: &buf), 
                 lastServerSeq: FfiConverterUInt64.read(from: &buf), 
+                epoch: FfiConverterUInt64.read(from: &buf), 
                 pendingMessageCount: FfiConverterUInt64.read(from: &buf), 
                 lastMessage: FfiConverterOptionTypeFfiMessageEnvelope.read(from: &buf), 
                 participantProfiles: FfiConverterSequenceTypeFfiChatParticipantProfile.read(from: &buf)
@@ -3769,6 +3984,7 @@ public struct FfiConverterTypeFfiChatSummary: FfiConverterRustBuffer {
         FfiConverterTypeFfiChatType.write(value.chatType, into: &buf)
         FfiConverterOptionString.write(value.title, into: &buf)
         FfiConverterUInt64.write(value.lastServerSeq, into: &buf)
+        FfiConverterUInt64.write(value.epoch, into: &buf)
         FfiConverterUInt64.write(value.pendingMessageCount, into: &buf)
         FfiConverterOptionTypeFfiMessageEnvelope.write(value.lastMessage, into: &buf)
         FfiConverterSequenceTypeFfiChatParticipantProfile.write(value.participantProfiles, into: &buf)
@@ -5713,6 +5929,7 @@ public struct FfiLocalChatListItem: Equatable, Hashable {
     public var title: String?
     public var displayTitle: String
     public var lastServerSeq: UInt64
+    public var epoch: UInt64
     public var pendingMessageCount: UInt64
     public var unreadCount: UInt64
     public var previewText: String?
@@ -5725,12 +5942,13 @@ public struct FfiLocalChatListItem: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(chatId: String, chatType: FfiChatType, title: String?, displayTitle: String, lastServerSeq: UInt64, pendingMessageCount: UInt64, unreadCount: UInt64, previewText: String?, previewSenderAccountId: String?, previewSenderDisplayName: String?, previewIsOutgoing: Bool?, previewServerSeq: UInt64?, previewCreatedAtUnix: UInt64?, participantProfiles: [FfiChatParticipantProfile]) {
+    public init(chatId: String, chatType: FfiChatType, title: String?, displayTitle: String, lastServerSeq: UInt64, epoch: UInt64, pendingMessageCount: UInt64, unreadCount: UInt64, previewText: String?, previewSenderAccountId: String?, previewSenderDisplayName: String?, previewIsOutgoing: Bool?, previewServerSeq: UInt64?, previewCreatedAtUnix: UInt64?, participantProfiles: [FfiChatParticipantProfile]) {
         self.chatId = chatId
         self.chatType = chatType
         self.title = title
         self.displayTitle = displayTitle
         self.lastServerSeq = lastServerSeq
+        self.epoch = epoch
         self.pendingMessageCount = pendingMessageCount
         self.unreadCount = unreadCount
         self.previewText = previewText
@@ -5763,6 +5981,7 @@ public struct FfiConverterTypeFfiLocalChatListItem: FfiConverterRustBuffer {
                 title: FfiConverterOptionString.read(from: &buf), 
                 displayTitle: FfiConverterString.read(from: &buf), 
                 lastServerSeq: FfiConverterUInt64.read(from: &buf), 
+                epoch: FfiConverterUInt64.read(from: &buf), 
                 pendingMessageCount: FfiConverterUInt64.read(from: &buf), 
                 unreadCount: FfiConverterUInt64.read(from: &buf), 
                 previewText: FfiConverterOptionString.read(from: &buf), 
@@ -5781,6 +6000,7 @@ public struct FfiConverterTypeFfiLocalChatListItem: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.title, into: &buf)
         FfiConverterString.write(value.displayTitle, into: &buf)
         FfiConverterUInt64.write(value.lastServerSeq, into: &buf)
+        FfiConverterUInt64.write(value.epoch, into: &buf)
         FfiConverterUInt64.write(value.pendingMessageCount, into: &buf)
         FfiConverterUInt64.write(value.unreadCount, into: &buf)
         FfiConverterOptionString.write(value.previewText, into: &buf)
@@ -7898,6 +8118,312 @@ public func FfiConverterTypeFfiVersionResponse_lower(_ value: FfiVersionResponse
     return FfiConverterTypeFfiVersionResponse.lower(value)
 }
 
+
+public struct FfiWebSocketErrorFrame: Equatable, Hashable {
+    public var code: String
+    public var message: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(code: String, message: String) {
+        self.code = code
+        self.message = message
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiWebSocketErrorFrame: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiWebSocketErrorFrame: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiWebSocketErrorFrame {
+        return
+            try FfiWebSocketErrorFrame(
+                code: FfiConverterString.read(from: &buf), 
+                message: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiWebSocketErrorFrame, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.code, into: &buf)
+        FfiConverterString.write(value.message, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiWebSocketErrorFrame_lift(_ buf: RustBuffer) throws -> FfiWebSocketErrorFrame {
+    return try FfiConverterTypeFfiWebSocketErrorFrame.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiWebSocketErrorFrame_lower(_ value: FfiWebSocketErrorFrame) -> RustBuffer {
+    return FfiConverterTypeFfiWebSocketErrorFrame.lower(value)
+}
+
+
+public struct FfiWebSocketHello: Equatable, Hashable {
+    public var sessionId: String
+    public var accountId: String
+    public var deviceId: String
+    public var leaseOwner: String
+    public var leaseTtlSeconds: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sessionId: String, accountId: String, deviceId: String, leaseOwner: String, leaseTtlSeconds: UInt64) {
+        self.sessionId = sessionId
+        self.accountId = accountId
+        self.deviceId = deviceId
+        self.leaseOwner = leaseOwner
+        self.leaseTtlSeconds = leaseTtlSeconds
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiWebSocketHello: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiWebSocketHello: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiWebSocketHello {
+        return
+            try FfiWebSocketHello(
+                sessionId: FfiConverterString.read(from: &buf), 
+                accountId: FfiConverterString.read(from: &buf), 
+                deviceId: FfiConverterString.read(from: &buf), 
+                leaseOwner: FfiConverterString.read(from: &buf), 
+                leaseTtlSeconds: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiWebSocketHello, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.sessionId, into: &buf)
+        FfiConverterString.write(value.accountId, into: &buf)
+        FfiConverterString.write(value.deviceId, into: &buf)
+        FfiConverterString.write(value.leaseOwner, into: &buf)
+        FfiConverterUInt64.write(value.leaseTtlSeconds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiWebSocketHello_lift(_ buf: RustBuffer) throws -> FfiWebSocketHello {
+    return try FfiConverterTypeFfiWebSocketHello.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiWebSocketHello_lower(_ value: FfiWebSocketHello) -> RustBuffer {
+    return FfiConverterTypeFfiWebSocketHello.lower(value)
+}
+
+
+public struct FfiWebSocketInboxItems: Equatable, Hashable {
+    public var leaseOwner: String
+    public var leaseExpiresAtUnix: UInt64
+    public var items: [FfiInboxItem]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(leaseOwner: String, leaseExpiresAtUnix: UInt64, items: [FfiInboxItem]) {
+        self.leaseOwner = leaseOwner
+        self.leaseExpiresAtUnix = leaseExpiresAtUnix
+        self.items = items
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiWebSocketInboxItems: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiWebSocketInboxItems: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiWebSocketInboxItems {
+        return
+            try FfiWebSocketInboxItems(
+                leaseOwner: FfiConverterString.read(from: &buf), 
+                leaseExpiresAtUnix: FfiConverterUInt64.read(from: &buf), 
+                items: FfiConverterSequenceTypeFfiInboxItem.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiWebSocketInboxItems, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.leaseOwner, into: &buf)
+        FfiConverterUInt64.write(value.leaseExpiresAtUnix, into: &buf)
+        FfiConverterSequenceTypeFfiInboxItem.write(value.items, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiWebSocketInboxItems_lift(_ buf: RustBuffer) throws -> FfiWebSocketInboxItems {
+    return try FfiConverterTypeFfiWebSocketInboxItems.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiWebSocketInboxItems_lower(_ value: FfiWebSocketInboxItems) -> RustBuffer {
+    return FfiConverterTypeFfiWebSocketInboxItems.lower(value)
+}
+
+
+public struct FfiWebSocketPong: Equatable, Hashable {
+    public var nonce: String?
+    public var serverUnix: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(nonce: String?, serverUnix: UInt64) {
+        self.nonce = nonce
+        self.serverUnix = serverUnix
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiWebSocketPong: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiWebSocketPong: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiWebSocketPong {
+        return
+            try FfiWebSocketPong(
+                nonce: FfiConverterOptionString.read(from: &buf), 
+                serverUnix: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiWebSocketPong, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.nonce, into: &buf)
+        FfiConverterUInt64.write(value.serverUnix, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiWebSocketPong_lift(_ buf: RustBuffer) throws -> FfiWebSocketPong {
+    return try FfiConverterTypeFfiWebSocketPong.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiWebSocketPong_lower(_ value: FfiWebSocketPong) -> RustBuffer {
+    return FfiConverterTypeFfiWebSocketPong.lower(value)
+}
+
+
+public struct FfiWebSocketServerFrame: Equatable, Hashable {
+    public var kind: FfiWebSocketServerFrameKind
+    public var hello: FfiWebSocketHello?
+    public var inbox: FfiWebSocketInboxItems?
+    public var ackedInboxIds: [UInt64]
+    public var pong: FfiWebSocketPong?
+    public var sessionReplacedReason: String?
+    public var error: FfiWebSocketErrorFrame?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: FfiWebSocketServerFrameKind, hello: FfiWebSocketHello?, inbox: FfiWebSocketInboxItems?, ackedInboxIds: [UInt64], pong: FfiWebSocketPong?, sessionReplacedReason: String?, error: FfiWebSocketErrorFrame?) {
+        self.kind = kind
+        self.hello = hello
+        self.inbox = inbox
+        self.ackedInboxIds = ackedInboxIds
+        self.pong = pong
+        self.sessionReplacedReason = sessionReplacedReason
+        self.error = error
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiWebSocketServerFrame: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiWebSocketServerFrame: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiWebSocketServerFrame {
+        return
+            try FfiWebSocketServerFrame(
+                kind: FfiConverterTypeFfiWebSocketServerFrameKind.read(from: &buf), 
+                hello: FfiConverterOptionTypeFfiWebSocketHello.read(from: &buf), 
+                inbox: FfiConverterOptionTypeFfiWebSocketInboxItems.read(from: &buf), 
+                ackedInboxIds: FfiConverterSequenceUInt64.read(from: &buf), 
+                pong: FfiConverterOptionTypeFfiWebSocketPong.read(from: &buf), 
+                sessionReplacedReason: FfiConverterOptionString.read(from: &buf), 
+                error: FfiConverterOptionTypeFfiWebSocketErrorFrame.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiWebSocketServerFrame, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiWebSocketServerFrameKind.write(value.kind, into: &buf)
+        FfiConverterOptionTypeFfiWebSocketHello.write(value.hello, into: &buf)
+        FfiConverterOptionTypeFfiWebSocketInboxItems.write(value.inbox, into: &buf)
+        FfiConverterSequenceUInt64.write(value.ackedInboxIds, into: &buf)
+        FfiConverterOptionTypeFfiWebSocketPong.write(value.pong, into: &buf)
+        FfiConverterOptionString.write(value.sessionReplacedReason, into: &buf)
+        FfiConverterOptionTypeFfiWebSocketErrorFrame.write(value.error, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiWebSocketServerFrame_lift(_ buf: RustBuffer) throws -> FfiWebSocketServerFrame {
+    return try FfiConverterTypeFfiWebSocketServerFrame.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiWebSocketServerFrame_lower(_ value: FfiWebSocketServerFrame) -> RustBuffer {
+    return FfiConverterTypeFfiWebSocketServerFrame.lower(value)
+}
+
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
@@ -8962,6 +9488,101 @@ public func FfiConverterTypeFfiServiceStatus_lower(_ value: FfiServiceStatus) ->
 }
 
 
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum FfiWebSocketServerFrameKind: Equatable, Hashable {
+    
+    case hello
+    case inboxItems
+    case acked
+    case pong
+    case sessionReplaced
+    case error
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiWebSocketServerFrameKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiWebSocketServerFrameKind: FfiConverterRustBuffer {
+    typealias SwiftType = FfiWebSocketServerFrameKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiWebSocketServerFrameKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .hello
+        
+        case 2: return .inboxItems
+        
+        case 3: return .acked
+        
+        case 4: return .pong
+        
+        case 5: return .sessionReplaced
+        
+        case 6: return .error
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiWebSocketServerFrameKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .hello:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .inboxItems:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .acked:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .pong:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .sessionReplaced:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .error:
+            writeInt(&buf, Int32(6))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiWebSocketServerFrameKind_lift(_ buf: RustBuffer) throws -> FfiWebSocketServerFrameKind {
+    return try FfiConverterTypeFfiWebSocketServerFrameKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiWebSocketServerFrameKind_lower(_ value: FfiWebSocketServerFrameKind) -> RustBuffer {
+    return FfiConverterTypeFfiWebSocketServerFrameKind.lower(value)
+}
+
+
 
 public enum TrixFfiError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
 
@@ -9279,6 +9900,30 @@ fileprivate struct FfiConverterOptionTypeFfiLocalChatReadState: FfiConverterRust
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeFfiLocalStoreApplyReport: FfiConverterRustBuffer {
+    typealias SwiftType = FfiLocalStoreApplyReport?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiLocalStoreApplyReport.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiLocalStoreApplyReport.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeFfiMessageBody: FfiConverterRustBuffer {
     typealias SwiftType = FfiMessageBody?
 
@@ -9319,6 +9964,126 @@ fileprivate struct FfiConverterOptionTypeFfiMessageEnvelope: FfiConverterRustBuf
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeFfiMessageEnvelope.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiWebSocketErrorFrame: FfiConverterRustBuffer {
+    typealias SwiftType = FfiWebSocketErrorFrame?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiWebSocketErrorFrame.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiWebSocketErrorFrame.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiWebSocketHello: FfiConverterRustBuffer {
+    typealias SwiftType = FfiWebSocketHello?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiWebSocketHello.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiWebSocketHello.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiWebSocketInboxItems: FfiConverterRustBuffer {
+    typealias SwiftType = FfiWebSocketInboxItems?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiWebSocketInboxItems.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiWebSocketInboxItems.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiWebSocketPong: FfiConverterRustBuffer {
+    typealias SwiftType = FfiWebSocketPong?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiWebSocketPong.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiWebSocketPong.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiWebSocketServerFrame: FfiConverterRustBuffer {
+    typealias SwiftType = FfiWebSocketServerFrame?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiWebSocketServerFrame.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiWebSocketServerFrame.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -10321,6 +11086,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_complete_link_intent_with_device_key() != 64940) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffiserverapiclient_connect_websocket() != 47681) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_create_account() != 56) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -10432,6 +11200,24 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_upload_blob() != 30342) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffiserverwebsocketclient_close() != 41684) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffiserverwebsocketclient_next_frame() != 11208) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffiserverwebsocketclient_send_ack() != 32983) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffiserverwebsocketclient_send_history_sync_progress() != 27456) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffiserverwebsocketclient_send_presence_ping() != 52704) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffiserverwebsocketclient_send_typing_update() != 14554) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_ack_inbox() != 23451) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -10439,6 +11225,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_add_chat_members_control() != 24813) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffisynccoordinator_apply_inbox_items_into_store() != 49538) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffisynccoordinator_apply_websocket_inbox_frame() != 6805) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_chat_cursor() != 10370) {
@@ -10457,6 +11249,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_lease_owner() != 50562) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffisynccoordinator_record_acked_inbox_ids() != 7925) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_record_chat_server_seq() != 40744) {

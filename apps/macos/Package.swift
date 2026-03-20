@@ -4,8 +4,12 @@ import Foundation
 import PackageDescription
 
 let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-let rustArtifactsPath = packageRoot
+let rustArtifactsPath = ProcessInfo.processInfo.environment["TRIX_CORE_ARTIFACTS_PATH"] ?? packageRoot
     .appendingPathComponent("../../target/debug")
+    .standardizedFileURL
+    .path
+let rustStaticLibraryPath = URL(fileURLWithPath: rustArtifactsPath)
+    .appendingPathComponent("libtrix_core.a")
     .standardizedFileURL
     .path
 
@@ -32,7 +36,7 @@ let package = Package(
             linkerSettings: [
                 .unsafeFlags([
                     "-Xlinker",
-                    "\(rustArtifactsPath)/libtrix_core.a",
+                    rustStaticLibraryPath,
                 ]),
             ]
         ),

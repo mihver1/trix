@@ -504,6 +504,30 @@ struct TrixAPIClient {
         chatId: UUID,
         text: String
     ) async throws -> SendMessageOutcome {
+        try await sendMessageBody(
+            accessToken: accessToken,
+            databasePath: databasePath,
+            statePath: statePath,
+            mlsStorageRoot: mlsStorageRoot,
+            credentialIdentity: credentialIdentity,
+            senderAccountId: senderAccountId,
+            senderDeviceId: senderDeviceId,
+            chatId: chatId,
+            body: .text(text)
+        )
+    }
+
+    func sendMessageBody(
+        accessToken: String,
+        databasePath: URL,
+        statePath: URL,
+        mlsStorageRoot: URL,
+        credentialIdentity: Data,
+        senderAccountId: UUID,
+        senderDeviceId: UUID,
+        chatId: UUID,
+        body: TypedMessageBody
+    ) async throws -> SendMessageOutcome {
         try await callFFI(accessToken: accessToken) { client in
             let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
             let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
@@ -528,7 +552,7 @@ struct TrixAPIClient {
                     senderDeviceId: senderDeviceId.uuidString,
                     chatId: chatId.uuidString,
                     messageId: nil,
-                    body: TypedMessageBody.text(text).ffiValue(),
+                    body: body.ffiValue(),
                     aadJson: nil
                 )
             )
@@ -536,6 +560,194 @@ struct TrixAPIClient {
             try facade.saveState()
             try coordinator.saveState()
             return try SendMessageOutcome(ffiValue: outcome)
+        }
+    }
+
+    func uploadAttachment(
+        accessToken: String,
+        chatId: UUID,
+        payload: Data,
+        mimeType: String,
+        fileName: String?,
+        widthPx: UInt32? = nil,
+        heightPx: UInt32? = nil
+    ) async throws -> UploadedAttachment {
+        try await callFFI(accessToken: accessToken) { client in
+            try UploadedAttachment(
+                ffiValue: client.uploadAttachment(
+                    chatId: chatId.uuidString,
+                    payload: payload,
+                    params: FfiAttachmentUploadParams(
+                        mimeType: mimeType,
+                        fileName: fileName,
+                        widthPx: widthPx,
+                        heightPx: heightPx
+                    )
+                )
+            )
+        }
+    }
+
+    func downloadAttachment(
+        accessToken: String,
+        body: TypedMessageBody
+    ) async throws -> DownloadedAttachment {
+        try await callFFI(accessToken: accessToken) { client in
+            try DownloadedAttachment(
+                ffiValue: client.downloadAttachment(body: body.ffiValue())
+            )
+        }
+    }
+
+    func addChatMembersControl(
+        accessToken: String,
+        databasePath: URL,
+        statePath: URL,
+        mlsStorageRoot: URL,
+        credentialIdentity: Data,
+        actorAccountId: UUID,
+        actorDeviceId: UUID,
+        chatId: UUID,
+        participantAccountIds: [UUID]
+    ) async throws -> ModifyChatMembersControlOutcome {
+        try await callFFI(accessToken: accessToken) { client in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
+            let facade = try Self.makePersistentMlsFacade(
+                storageRoot: mlsStorageRoot,
+                credentialIdentity: credentialIdentity
+            )
+            let outcome = try coordinator.addChatMembersControl(
+                client: client,
+                store: store,
+                facade: facade,
+                input: FfiModifyChatMembersControlInput(
+                    actorAccountId: actorAccountId.uuidString,
+                    actorDeviceId: actorDeviceId.uuidString,
+                    chatId: chatId.uuidString,
+                    participantAccountIds: participantAccountIds.map(\.uuidString),
+                    commitAadJson: nil,
+                    welcomeAadJson: nil
+                )
+            )
+            try store.saveState()
+            try facade.saveState()
+            try coordinator.saveState()
+            return try ModifyChatMembersControlOutcome(ffiValue: outcome)
+        }
+    }
+
+    func removeChatMembersControl(
+        accessToken: String,
+        databasePath: URL,
+        statePath: URL,
+        mlsStorageRoot: URL,
+        credentialIdentity: Data,
+        actorAccountId: UUID,
+        actorDeviceId: UUID,
+        chatId: UUID,
+        participantAccountIds: [UUID]
+    ) async throws -> ModifyChatMembersControlOutcome {
+        try await callFFI(accessToken: accessToken) { client in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
+            let facade = try Self.makePersistentMlsFacade(
+                storageRoot: mlsStorageRoot,
+                credentialIdentity: credentialIdentity
+            )
+            let outcome = try coordinator.removeChatMembersControl(
+                client: client,
+                store: store,
+                facade: facade,
+                input: FfiModifyChatMembersControlInput(
+                    actorAccountId: actorAccountId.uuidString,
+                    actorDeviceId: actorDeviceId.uuidString,
+                    chatId: chatId.uuidString,
+                    participantAccountIds: participantAccountIds.map(\.uuidString),
+                    commitAadJson: nil,
+                    welcomeAadJson: nil
+                )
+            )
+            try store.saveState()
+            try facade.saveState()
+            try coordinator.saveState()
+            return try ModifyChatMembersControlOutcome(ffiValue: outcome)
+        }
+    }
+
+    func addChatDevicesControl(
+        accessToken: String,
+        databasePath: URL,
+        statePath: URL,
+        mlsStorageRoot: URL,
+        credentialIdentity: Data,
+        actorAccountId: UUID,
+        actorDeviceId: UUID,
+        chatId: UUID,
+        deviceIds: [UUID]
+    ) async throws -> ModifyChatDevicesControlOutcome {
+        try await callFFI(accessToken: accessToken) { client in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
+            let facade = try Self.makePersistentMlsFacade(
+                storageRoot: mlsStorageRoot,
+                credentialIdentity: credentialIdentity
+            )
+            let outcome = try coordinator.addChatDevicesControl(
+                client: client,
+                store: store,
+                facade: facade,
+                input: FfiModifyChatDevicesControlInput(
+                    actorAccountId: actorAccountId.uuidString,
+                    actorDeviceId: actorDeviceId.uuidString,
+                    chatId: chatId.uuidString,
+                    deviceIds: deviceIds.map(\.uuidString),
+                    commitAadJson: nil,
+                    welcomeAadJson: nil
+                )
+            )
+            try store.saveState()
+            try facade.saveState()
+            try coordinator.saveState()
+            return try ModifyChatDevicesControlOutcome(ffiValue: outcome)
+        }
+    }
+
+    func removeChatDevicesControl(
+        accessToken: String,
+        databasePath: URL,
+        statePath: URL,
+        mlsStorageRoot: URL,
+        credentialIdentity: Data,
+        actorAccountId: UUID,
+        actorDeviceId: UUID,
+        chatId: UUID,
+        deviceIds: [UUID]
+    ) async throws -> ModifyChatDevicesControlOutcome {
+        try await callFFI(accessToken: accessToken) { client in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
+            let facade = try Self.makePersistentMlsFacade(
+                storageRoot: mlsStorageRoot,
+                credentialIdentity: credentialIdentity
+            )
+            let outcome = try coordinator.removeChatDevicesControl(
+                client: client,
+                store: store,
+                facade: facade,
+                input: FfiModifyChatDevicesControlInput(
+                    actorAccountId: actorAccountId.uuidString,
+                    actorDeviceId: actorDeviceId.uuidString,
+                    chatId: chatId.uuidString,
+                    deviceIds: deviceIds.map(\.uuidString),
+                    commitAadJson: nil,
+                    welcomeAadJson: nil
+                )
+            )
+            try store.saveState()
+            try facade.saveState()
+            try coordinator.saveState()
+            return try ModifyChatDevicesControlOutcome(ffiValue: outcome)
         }
     }
 
