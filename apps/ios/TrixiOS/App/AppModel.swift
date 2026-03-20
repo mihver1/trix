@@ -25,6 +25,25 @@ struct LinkExistingAccountForm {
     }
 }
 
+@MainActor
+struct EditProfileForm {
+    var profileName = ""
+    var handle = ""
+    var profileBio = ""
+
+    init() {}
+
+    init(profile: AccountProfileResponse) {
+        profileName = profile.profileName
+        handle = profile.handle ?? ""
+        profileBio = profile.profileBio ?? ""
+    }
+
+    var canSubmit: Bool {
+        !profileName.trix_trimmed().isEmpty
+    }
+}
+
 struct DashboardData {
     let session: AuthSessionResponse
     let profile: AccountProfileResponse
@@ -71,6 +90,7 @@ final class AppModel: ObservableObject {
 
     private let identityStore: LocalDeviceIdentityStore
     private var hasStarted = false
+    private var directoryAccountCache: [String: DirectoryAccountSummary] = [:]
 
     init(identityStore: LocalDeviceIdentityStore = LocalDeviceIdentityStore()) {
         self.identityStore = identityStore
@@ -249,6 +269,7 @@ final class AppModel: ObservableObject {
             localCoreState = nil
             dashboard = nil
             activeLinkIntent = nil
+            directoryAccountCache = [:]
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -955,6 +976,137 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func lookupAccount(
+        baseURLString: String,
+        accountId: String
+    ) async throws -> DirectoryAccountSummary {
+        let accountId = accountId.trix_trimmed()
+        guard !accountId.isEmpty else {
+            throw APIError.invalidPath("/v0/accounts/{account_id}")
+        }
+
+        if let cached = directoryAccountCache[accountId] {
+            return cached
+        }
+
+        let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+        let account = try TrixCoreServerBridge.getAccount(
+            baseURLString: baseURLString,
+            accessToken: context.session.accessToken,
+            accountId: accountId
+        )
+        directoryAccountCache[account.accountId] = account
+        return account
+    }
+
+    func searchAccountDirectory(
+        baseURLString: String,
+        query: String?,
+        limit: Int = 20,
+        excludeSelf: Bool = true
+    ) async throws -> [DirectoryAccountSummary] {
+        let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+        let accounts = try TrixCoreServerBridge.searchAccountDirectory(
+            baseURLString: baseURLString,
+            accessToken: context.session.accessToken,
+            query: query,
+            limit: limit,
+            excludeSelf: excludeSelf
+        )
+        for account in accounts {
+            directoryAccountCache[account.accountId] = account
+        }
+        return accounts
+    }
+
+    func resolveDirectoryAccounts(
+        baseURLString: String,
+        accountIds: [String]
+    ) async -> [String: DirectoryAccountSummary] {
+        let accountIds = sanitizeIdentifiers(accountIds)
+        guard !accountIds.isEmpty else {
+            return [:]
+        }
+
+        var resolvedAccounts: [String: DirectoryAccountSummary] = [:]
+        var missingAccountIds: [String] = []
+
+        for accountId in accountIds {
+            if let cached = directoryAccountCache[accountId] {
+                resolvedAccounts[accountId] = cached
+            } else {
+                missingAccountIds.append(accountId)
+            }
+        }
+
+        guard !missingAccountIds.isEmpty else {
+            return resolvedAccounts
+        }
+
+        do {
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            for accountId in missingAccountIds {
+                do {
+                    let account = try TrixCoreServerBridge.getAccount(
+                        baseURLString: baseURLString,
+                        accessToken: context.session.accessToken,
+                        accountId: accountId
+                    )
+                    directoryAccountCache[account.accountId] = account
+                    resolvedAccounts[account.accountId] = account
+                } catch {
+                    continue
+                }
+            }
+        } catch {
+            return resolvedAccounts
+        }
+
+        return resolvedAccounts
+    }
+
+    @discardableResult
+    func updateAccountProfile(
+        baseURLString: String,
+        form: EditProfileForm
+    ) async -> AccountProfileResponse? {
+        guard !isLoading else {
+            return nil
+        }
+
+        guard form.canSubmit else {
+            errorMessage = "Profile name must not be empty."
+            return nil
+        }
+
+        isLoading = true
+        errorMessage = nil
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            let updated = try TrixCoreServerBridge.updateAccountProfile(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                form: form
+            )
+            directoryAccountCache[updated.accountId] = DirectoryAccountSummary(
+                accountId: updated.accountId,
+                handle: updated.handle,
+                profileName: updated.profileName,
+                profileBio: updated.profileBio
+            )
+            try await refreshAuthenticatedState(client: context.client, identity: context.identity)
+            return updated
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
     func fetchChatSnapshot(
         baseURLString: String,
         chatId: String
@@ -1100,7 +1252,7 @@ final class AppModel: ObservableObject {
         }
 
         self.systemSnapshot = try await systemSnapshot
-        dashboard = try await DashboardData(
+        let dashboard = try await DashboardData(
             session: session,
             profile: profile,
             devices: devices.devices,
@@ -1108,6 +1260,13 @@ final class AppModel: ObservableObject {
             chats: chats.chats,
             inboxItems: inbox.items
         )
+        directoryAccountCache[dashboard.profile.accountId] = DirectoryAccountSummary(
+            accountId: dashboard.profile.accountId,
+            handle: dashboard.profile.handle,
+            profileName: dashboard.profile.profileName,
+            profileBio: dashboard.profile.profileBio
+        )
+        self.dashboard = dashboard
         updateLocalCoreStateSnapshot(identity: localIdentity ?? identity)
         lastUpdatedAt = Date()
     }

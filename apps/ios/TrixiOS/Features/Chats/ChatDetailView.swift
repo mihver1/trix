@@ -13,6 +13,7 @@ struct ChatDetailView: View {
     @ObservedObject var model: AppModel
 
     @State private var snapshot: ChatSnapshot?
+    @State private var memberProfiles: [String: DirectoryAccountSummary] = [:]
     @State private var isLoadingSnapshot = false
     @State private var localErrorMessage: String?
     @State private var activityMessage: String?
@@ -79,8 +80,23 @@ struct ChatDetailView: View {
                 Section("Members") {
                     ForEach(snapshot.detail.members) { member in
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(member.accountId)
-                                .font(.system(.footnote, design: .monospaced))
+                            if let account = memberProfiles[member.accountId] {
+                                Text(account.profileName)
+                                    .font(.body.weight(.medium))
+
+                                if let handle = account.handle?.trix_trimmedOrNil() {
+                                    Text("@\(handle)")
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Text(member.accountId)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text(member.accountId)
+                                    .font(.system(.footnote, design: .monospaced))
+                            }
 
                             HStack {
                                 Text(member.role)
@@ -326,7 +342,7 @@ struct ChatDetailView: View {
                 }
             }
         }
-        .navigationTitle(chatSummary.title ?? chatSummary.chatType.label)
+        .navigationTitle(conversationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -355,6 +371,30 @@ struct ChatDetailView: View {
         return messageDraft.canSubmit
     }
 
+    private var conversationTitle: String {
+        resolvedConversationTitle ?? chatSummary.title ?? chatSummary.chatType.label
+    }
+
+    private var resolvedConversationTitle: String? {
+        if let explicitTitle = snapshot?.detail.title?.trix_trimmedOrNil() {
+            return explicitTitle
+        }
+
+        guard let detail = snapshot?.detail, detail.chatType == .dm else {
+            return nil
+        }
+
+        guard let account = otherParticipantAccount(in: detail) else {
+            return nil
+        }
+
+        if let handle = account.handle?.trix_trimmedOrNil() {
+            return "@\(handle)"
+        }
+
+        return account.profileName
+    }
+
     private func reload() {
         Task {
             await loadSnapshot()
@@ -370,11 +410,17 @@ struct ChatDetailView: View {
         }
 
         do {
-            snapshot = try await model.fetchChatSnapshot(
+            let loadedSnapshot = try await model.fetchChatSnapshot(
                 baseURLString: serverBaseURL,
                 chatId: chatSummary.chatId
             )
+            snapshot = loadedSnapshot
+            memberProfiles = await model.resolveDirectoryAccounts(
+                baseURLString: serverBaseURL,
+                accountIds: loadedSnapshot.detail.members.map(\.accountId)
+            )
         } catch {
+            memberProfiles = [:]
             localErrorMessage = error.localizedDescription
         }
     }
@@ -555,6 +601,26 @@ struct ChatDetailView: View {
         case let .failure(error):
             localErrorMessage = error.localizedDescription
         }
+    }
+
+    private func otherParticipantAccount(in detail: ChatDetailResponse) -> DirectoryAccountSummary? {
+        let currentAccountId = model.localIdentity?.accountId
+
+        if let currentAccountId {
+            for member in detail.members where member.accountId != currentAccountId {
+                if let account = memberProfiles[member.accountId] {
+                    return account
+                }
+            }
+        }
+
+        for member in detail.members {
+            if let account = memberProfiles[member.accountId] {
+                return account
+            }
+        }
+
+        return nil
     }
 }
 

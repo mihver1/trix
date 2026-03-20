@@ -15,6 +15,7 @@ struct ConsumerChatDetailView: View {
     @ObservedObject var model: AppModel
 
     @State private var snapshot: ChatSnapshot?
+    @State private var memberProfiles: [String: DirectoryAccountSummary] = [:]
     @State private var isLoadingSnapshot = false
     @State private var composerText = ""
     @State private var selectedAttachment: ConsumerAttachmentDraft?
@@ -86,7 +87,7 @@ struct ConsumerChatDetailView: View {
             }
         }
         .background(consumerChatBackground.ignoresSafeArea())
-        .navigationTitle(chatSummary.title ?? chatSummary.chatType.label)
+        .navigationTitle(conversationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -180,6 +181,30 @@ struct ConsumerChatDetailView: View {
         selectedAttachment != nil || !composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var conversationTitle: String {
+        resolvedConversationTitle ?? chatSummary.title ?? chatSummary.chatType.label
+    }
+
+    private var resolvedConversationTitle: String? {
+        if let explicitTitle = snapshot?.detail.title?.trix_trimmedOrNil() {
+            return explicitTitle
+        }
+
+        guard let detail = snapshot?.detail, detail.chatType == .dm else {
+            return nil
+        }
+
+        guard let account = otherParticipantAccount(in: detail) else {
+            return nil
+        }
+
+        if let handle = account.handle?.trix_trimmedOrNil() {
+            return "@\(handle)"
+        }
+
+        return account.profileName
+    }
+
     private func reload() {
         Task {
             await loadSnapshot()
@@ -195,11 +220,17 @@ struct ConsumerChatDetailView: View {
         }
 
         do {
-            snapshot = try await model.fetchChatSnapshot(
+            let loadedSnapshot = try await model.fetchChatSnapshot(
                 baseURLString: serverBaseURL,
                 chatId: chatSummary.chatId
             )
+            snapshot = loadedSnapshot
+            memberProfiles = await model.resolveDirectoryAccounts(
+                baseURLString: serverBaseURL,
+                accountIds: loadedSnapshot.detail.members.map(\.accountId)
+            )
         } catch {
+            memberProfiles = [:]
             localErrorMessage = error.localizedDescription
         }
     }
@@ -279,6 +310,26 @@ struct ConsumerChatDetailView: View {
         case let .failure(error):
             localErrorMessage = error.localizedDescription
         }
+    }
+
+    private func otherParticipantAccount(in detail: ChatDetailResponse) -> DirectoryAccountSummary? {
+        let currentAccountId = model.localIdentity?.accountId
+
+        if let currentAccountId {
+            for member in detail.members where member.accountId != currentAccountId {
+                if let account = memberProfiles[member.accountId] {
+                    return account
+                }
+            }
+        }
+
+        for member in detail.members {
+            if let account = memberProfiles[member.accountId] {
+                return account
+            }
+        }
+
+        return nil
     }
 }
 

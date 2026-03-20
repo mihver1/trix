@@ -194,6 +194,15 @@ struct AccountProfileResponse: Decodable {
     let deviceStatus: DeviceStatus
 }
 
+struct DirectoryAccountSummary: Identifiable, Hashable {
+    let accountId: String
+    let handle: String?
+    let profileName: String
+    let profileBio: String?
+
+    var id: String { accountId }
+}
+
 struct DeviceSummary: Decodable, Identifiable {
     let deviceId: String
     let displayName: String

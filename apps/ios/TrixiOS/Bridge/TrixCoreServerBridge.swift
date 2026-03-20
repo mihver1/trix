@@ -48,6 +48,69 @@ struct TrixCoreServerBridge {
         )
     }
 
+    static func searchAccountDirectory(
+        baseURLString: String,
+        accessToken: String,
+        query: String?,
+        limit: Int = 20,
+        excludeSelf: Bool = true
+    ) throws -> [DirectoryAccountSummary] {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        let response = try client.searchAccountDirectory(
+            query: query?.trix_trimmedOrNil(),
+            limit: limit > 0 ? UInt32(limit) : nil,
+            excludeSelf: excludeSelf
+        )
+
+        return response.accounts.map { account in
+            DirectoryAccountSummary(
+                accountId: account.accountId,
+                handle: account.handle,
+                profileName: account.profileName,
+                profileBio: account.profileBio
+            )
+        }
+    }
+
+    static func getAccount(
+        baseURLString: String,
+        accessToken: String,
+        accountId: String
+    ) throws -> DirectoryAccountSummary {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        let account = try client.getAccount(accountId: accountId)
+        return DirectoryAccountSummary(
+            accountId: account.accountId,
+            handle: account.handle,
+            profileName: account.profileName,
+            profileBio: account.profileBio
+        )
+    }
+
+    static func updateAccountProfile(
+        baseURLString: String,
+        accessToken: String,
+        form: EditProfileForm
+    ) throws -> AccountProfileResponse {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        let profile = try client.updateAccountProfile(
+            params: FfiUpdateAccountProfileParams(
+                handle: form.handle.trix_trimmedOrNil(),
+                profileName: form.profileName.trix_trimmed(),
+                profileBio: form.profileBio.trix_trimmedOrNil()
+            )
+        )
+
+        return AccountProfileResponse(
+            accountId: profile.accountId,
+            handle: profile.handle,
+            profileName: profile.profileName,
+            profileBio: profile.profileBio,
+            deviceId: profile.deviceId,
+            deviceStatus: profile.deviceStatus.trix_deviceStatus
+        )
+    }
+
     static func completeLinkIntent(
         baseURLString: String,
         payload: LinkIntentPayload,

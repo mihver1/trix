@@ -6,10 +6,45 @@ private let dashboardAccent = Color(red: 0.14, green: 0.55, blue: 0.98)
 private struct DashboardCreateChatDraft {
     var chatType: ChatType = .dm
     var title = ""
-    var participantAccountIds = ""
+    var searchQuery = ""
+    var selectedAccounts: [DirectoryAccountSummary] = []
 
     var canSubmit: Bool {
-        !dashboardParsedIdentifiers(participantAccountIds).isEmpty
+        switch chatType {
+        case .dm:
+            return selectedAccounts.count == 1
+        case .group:
+            return !selectedAccounts.isEmpty
+        case .accountSync:
+            return false
+        }
+    }
+
+    var selectedAccountIds: [String] {
+        selectedAccounts.map(\.accountId)
+    }
+
+    mutating func toggleSelection(_ account: DirectoryAccountSummary) {
+        if let existingIndex = selectedAccounts.firstIndex(of: account) {
+            selectedAccounts.remove(at: existingIndex)
+            return
+        }
+
+        if chatType == .dm {
+            selectedAccounts = [account]
+        } else {
+            selectedAccounts.append(account)
+        }
+    }
+
+    mutating func removeSelection(accountId: String) {
+        selectedAccounts.removeAll { $0.accountId == accountId }
+    }
+
+    mutating func normalizeSelectionForCurrentChatType() {
+        if chatType == .dm, selectedAccounts.count > 1 {
+            selectedAccounts = Array(selectedAccounts.prefix(1))
+        }
     }
 }
 
@@ -27,7 +62,9 @@ struct DashboardView: View {
     @State private var revokeCandidate: DeviceSummary?
     @State private var revokeReason = ""
     @State private var isPresentingCreateChat = false
+    @State private var isPresentingEditProfile = false
     @State private var createChatDraft = DashboardCreateChatDraft()
+    @State private var editProfileDraft = EditProfileForm()
 
     var body: some View {
         TabView {
@@ -51,6 +88,14 @@ struct DashboardView: View {
                     serverBaseURL: $serverBaseURL,
                     model: model,
                     onReload: reload,
+                    onEditProfile: {
+                        if let profile = model.dashboard?.profile {
+                            editProfileDraft = EditProfileForm(profile: profile)
+                        } else {
+                            editProfileDraft = EditProfileForm()
+                        }
+                        isPresentingEditProfile = true
+                    },
                     onForgetLocalDevice: {
                         isShowingForgetAlert = true
                     },
@@ -78,12 +123,26 @@ struct DashboardView: View {
         }
         .sheet(isPresented: $isPresentingCreateChat) {
             CreateChatSheet(
+                serverBaseURL: serverBaseURL,
+                model: model,
                 draft: $createChatDraft,
                 isSubmitting: model.isLoading,
                 onCancel: {
                     isPresentingCreateChat = false
                 },
                 onCreate: createChat
+            )
+            .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $isPresentingEditProfile) {
+            EditProfileSheet(
+                draft: $editProfileDraft,
+                errorMessage: model.errorMessage,
+                isSubmitting: model.isLoading,
+                onCancel: {
+                    isPresentingEditProfile = false
+                },
+                onSave: saveProfile
             )
             .presentationDetents([.medium, .large])
         }
@@ -127,14 +186,12 @@ struct DashboardView: View {
     }
 
     private func createChat() {
-        let participantAccountIds = dashboardParsedIdentifiers(createChatDraft.participantAccountIds)
-
         Task {
             if await model.createChat(
                 baseURLString: serverBaseURL,
                 chatType: createChatDraft.chatType,
                 title: createChatDraft.title,
-                participantAccountIds: participantAccountIds
+                participantAccountIds: createChatDraft.selectedAccountIds
             ) != nil {
                 isPresentingCreateChat = false
                 createChatDraft = DashboardCreateChatDraft()
@@ -154,6 +211,17 @@ struct DashboardView: View {
     private func createLinkIntent() {
         Task {
             await model.createLinkIntent(baseURLString: serverBaseURL)
+        }
+    }
+
+    private func saveProfile() {
+        Task {
+            if await model.updateAccountProfile(
+                baseURLString: serverBaseURL,
+                form: editProfileDraft
+            ) != nil {
+                isPresentingEditProfile = false
+            }
         }
     }
 
@@ -248,33 +316,25 @@ private struct ChatsHomeView: View {
                     }
                 }
                 .listStyle(.plain)
+                .refreshable {
+                    onReload()
+                }
                 .navigationTitle("Chats")
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("Refresh", action: onReload)
-                            .disabled(model.isLoading)
-                    }
-
-                    ToolbarItem(placement: .topBarTrailing) {
+                .overlay(alignment: .bottomTrailing) {
+                    if !dashboard.chats.isEmpty {
                         Button(action: onCompose) {
                             Image(systemName: "square.and.pencil")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 58, height: 58)
+                                .background(dashboardAccent)
+                                .clipShape(Circle())
+                                .shadow(color: dashboardAccent.opacity(0.28), radius: 18, y: 10)
                         }
+                        .padding(.trailing, 18)
+                        .padding(.bottom, 18)
                         .disabled(model.isLoading)
                     }
-                }
-                .overlay(alignment: .bottomTrailing) {
-                    Button(action: onCompose) {
-                        Image(systemName: "square.and.pencil")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(width: 58, height: 58)
-                            .background(dashboardAccent)
-                            .clipShape(Circle())
-                            .shadow(color: dashboardAccent.opacity(0.28), radius: 18, y: 10)
-                    }
-                    .padding(.trailing, 18)
-                    .padding(.bottom, 18)
-                    .disabled(model.isLoading)
                 }
             } else {
                 ContentUnavailableView {
@@ -298,24 +358,16 @@ private struct SettingsHomeView: View {
     @Binding var serverBaseURL: String
     @ObservedObject var model: AppModel
     let onReload: () -> Void
+    let onEditProfile: () -> Void
     let onForgetLocalDevice: () -> Void
     let onCreateLinkIntent: () -> Void
     let onApprovePendingDevice: (String) -> Void
     let onRevokeDevice: (DeviceSummary) -> Void
     let onCompleteHistorySyncJob: (String) -> Void
+    @State private var isShowingAdvanced = false
 
     var body: some View {
         List {
-            ServerConnectionSection(
-                serverBaseURL: $serverBaseURL,
-                snapshot: model.systemSnapshot,
-                lastUpdatedAt: model.lastUpdatedAt,
-                isLoading: model.isLoading,
-                errorMessage: model.errorMessage,
-                reloadTitle: "Refresh",
-                onReload: onReload
-            )
-
             if let dashboard = model.dashboard {
                 Section {
                     HStack(spacing: 14) {
@@ -342,9 +394,12 @@ private struct SettingsHomeView: View {
                         Spacer()
                     }
                     .padding(.vertical, 8)
+
+                    Button("Edit Profile", action: onEditProfile)
+                        .disabled(model.isLoading)
                 }
 
-                Section("Devices") {
+                Section("Linked Devices") {
                     Button(action: onCreateLinkIntent) {
                         if model.isLoading {
                             ProgressView()
@@ -395,82 +450,119 @@ private struct SettingsHomeView: View {
                     }
                 }
 
-                Section("Sync") {
-                    if dashboard.historySyncJobs.isEmpty {
-                        Text("No active sync jobs.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(dashboard.historySyncJobs) { job in
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Text(job.jobType.label)
-                                        .font(.body.weight(.medium))
-
-                                    Spacer()
-
-                                    HistorySyncStatusBadge(status: job.jobStatus)
-                                }
-
-                                Text(Date(timeIntervalSince1970: TimeInterval(job.updatedAtUnix)).formatted(date: .abbreviated, time: .shortened))
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-
-                                if job.jobStatus.canComplete {
-                                    Button("Mark Completed") {
-                                        onCompleteHistorySyncJob(job.jobId)
-                                    }
-                                    .disabled(model.isLoading)
-                                }
-                            }
-                            .padding(.vertical, 4)
-                        }
+                if model.localIdentity != nil {
+                    Section("App") {
+                        Button("Forget This Device", role: .destructive, action: onForgetLocalDevice)
                     }
                 }
-
-                Section("Developer Tools") {
-                    NavigationLink {
-                        MessagingLabView(
-                            serverBaseURL: $serverBaseURL,
-                            model: model
-                        )
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("MLS Lab")
-                            Text("Chats, inbox, key packages, device flows")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+            } else {
+                Section {
+                    ContentUnavailableView(
+                        "Loading Settings",
+                        systemImage: "gearshape.2.fill",
+                        description: Text(model.errorMessage ?? "Profile and device details will appear here once the session finishes loading.")
+                    )
                 }
             }
 
-            if let localIdentity = model.localIdentity {
-                Section("Local Storage") {
-                    LabeledContent("Account") {
-                        Text(localIdentity.accountId)
-                            .font(.system(.footnote, design: .monospaced))
-                            .multilineTextAlignment(.trailing)
-                    }
+            Section {
+                DisclosureGroup(isExpanded: $isShowingAdvanced) {
+                    VStack(alignment: .leading, spacing: 18) {
+                        AdvancedSettingsConnectionCard(
+                            serverBaseURL: $serverBaseURL,
+                            snapshot: model.systemSnapshot,
+                            lastUpdatedAt: model.lastUpdatedAt,
+                            isLoading: model.isLoading,
+                            errorMessage: model.errorMessage,
+                            onReload: onReload
+                        )
 
-                    if let accountSyncChatId = localIdentity.accountSyncChatId {
-                        LabeledContent("Sync Chat") {
-                            Text(accountSyncChatId)
-                                .font(.system(.footnote, design: .monospaced))
-                                .multilineTextAlignment(.trailing)
+                        if let dashboard = model.dashboard {
+                            if dashboard.historySyncJobs.isEmpty {
+                                AdvancedInfoRow(
+                                    title: "History Sync",
+                                    text: "No background sync jobs are active right now."
+                                )
+                            } else {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    Text("History Sync")
+                                        .font(.headline)
+
+                                    ForEach(dashboard.historySyncJobs) { job in
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            HStack {
+                                                Text(job.jobType.label)
+                                                    .font(.body.weight(.medium))
+
+                                                Spacer()
+
+                                                HistorySyncStatusBadge(status: job.jobStatus)
+                                            }
+
+                                            Text(Date(timeIntervalSince1970: TimeInterval(job.updatedAtUnix)).formatted(date: .abbreviated, time: .shortened))
+                                                .font(.footnote)
+                                                .foregroundStyle(.secondary)
+
+                                            if job.jobStatus.canComplete {
+                                                Button("Mark Completed") {
+                                                    onCompleteHistorySyncJob(job.jobId)
+                                                }
+                                                .disabled(model.isLoading)
+                                            }
+                                        }
+                                        .padding(.vertical, 4)
+                                    }
+                                }
+                            }
+                        }
+
+                        NavigationLink {
+                            MessagingLabView(
+                                serverBaseURL: $serverBaseURL,
+                                model: model
+                            )
+                        } label: {
+                            AdvancedInfoRow(
+                                title: "Developer Tools",
+                                text: "Open the MLS lab, inbox inspector, and low-level device tooling."
+                            )
+                        }
+                        .buttonStyle(.plain)
+
+                        if let localIdentity = model.localIdentity {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Local State")
+                                    .font(.headline)
+
+                                LabeledContent("Account") {
+                                    Text(localIdentity.accountId)
+                                        .font(.system(.footnote, design: .monospaced))
+                                        .multilineTextAlignment(.trailing)
+                                }
+
+                                if let accountSyncChatId = localIdentity.accountSyncChatId {
+                                    LabeledContent("Sync Chat") {
+                                        Text(accountSyncChatId)
+                                            .font(.system(.footnote, design: .monospaced))
+                                            .multilineTextAlignment(.trailing)
+                                    }
+                                }
+
+                                if let localCoreState = model.localCoreState {
+                                    LabeledContent("Cached Chats") {
+                                        Text("\(localCoreState.localChats.count)")
+                                    }
+
+                                    LabeledContent("Inbox Cursor") {
+                                        Text(localCoreState.lastAckedInboxId.map(String.init) ?? "None")
+                                    }
+                                }
+                            }
                         }
                     }
-
-                    if let localCoreState = model.localCoreState {
-                        LabeledContent("Cached Chats") {
-                            Text("\(localCoreState.localChats.count)")
-                        }
-
-                        LabeledContent("Inbox Cursor") {
-                            Text(localCoreState.lastAckedInboxId.map(String.init) ?? "None")
-                        }
-                    }
-
-                    Button("Forget This Device", role: .destructive, action: onForgetLocalDevice)
+                    .padding(.top, 12)
+                } label: {
+                    Label("Advanced", systemImage: "wrench.and.screwdriver")
                 }
             }
         }
@@ -483,6 +575,101 @@ private struct SettingsHomeView: View {
                 .disabled(model.isLoading)
             }
         }
+    }
+}
+
+private struct AdvancedSettingsConnectionCard: View {
+    @Binding var serverBaseURL: String
+    let snapshot: ServerSnapshot?
+    let lastUpdatedAt: Date?
+    let isLoading: Bool
+    let errorMessage: String?
+    let onReload: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Connection")
+                        .font(.headline)
+
+                    Text(connectionSummary)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                AdvancedConnectionBadge(snapshot: snapshot)
+            }
+
+            Text(serverBaseURL)
+                .font(.footnote.monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+
+            if let lastUpdatedAt {
+                Text("Last checked \(lastUpdatedAt.formatted(date: .omitted, time: .shortened))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let errorMessage {
+                Label(errorMessage, systemImage: "wifi.exclamationmark")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+
+            Button(action: onReload) {
+                if isLoading {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                } else {
+                    Text("Refresh Connection")
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .buttonStyle(.bordered)
+            .disabled(isLoading)
+        }
+    }
+
+    private var connectionSummary: String {
+        if let host = URL(string: serverBaseURL)?.host {
+            return "Connected through \(host)"
+        }
+
+        return "Custom server connection"
+    }
+}
+
+private struct AdvancedConnectionBadge: View {
+    let snapshot: ServerSnapshot?
+
+    var body: some View {
+        Text(label)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(tint.opacity(0.12))
+            .clipShape(Capsule())
+    }
+
+    private var label: String {
+        guard let snapshot else {
+            return "Unchecked"
+        }
+
+        return snapshot.health.status == .ok ? "Connected" : "Degraded"
+    }
+
+    private var tint: Color {
+        guard let snapshot else {
+            return .secondary
+        }
+
+        return snapshot.health.status == .ok ? .green : .orange
     }
 }
 
@@ -545,7 +732,7 @@ private struct EmptyChatsView: View {
             Text("No conversations yet")
                 .font(.headline)
 
-            Text("Start with a direct message or create a group. MLS and device tooling stay available in Settings, not on the main screen.")
+            Text("Start a direct message or create a group. Your conversations will show up here as soon as the first message is sent.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -554,15 +741,22 @@ private struct EmptyChatsView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(dashboardAccent)
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, minHeight: 280)
+        .padding(.vertical, 12)
     }
 }
 
 private struct CreateChatSheet: View {
+    let serverBaseURL: String
+    @ObservedObject var model: AppModel
     @Binding var draft: DashboardCreateChatDraft
     let isSubmitting: Bool
     let onCancel: () -> Void
     let onCreate: () -> Void
+
+    @State private var directoryResults: [DirectoryAccountSummary] = []
+    @State private var isSearching = false
+    @State private var searchErrorMessage: String?
 
     var body: some View {
         NavigationStack {
@@ -580,19 +774,70 @@ private struct CreateChatSheet: View {
                 }
 
                 Section {
-                    TextField("Account IDs", text: $draft.participantAccountIds, axis: .vertical)
+                    TextField("Search by name or @handle", text: $draft.searchQuery)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                        .lineLimit(4, reservesSpace: true)
-                        .font(.system(.footnote, design: .monospaced))
                 } header: {
-                    Text("Participants")
+                    Text("People")
                 } footer: {
-                    Text("For a DM, add one peer account ID. For a group, add multiple account IDs separated by commas or new lines.")
+                    Text(draft.chatType == .dm ? "Choose one person for a direct message." : "Choose one or more people for this group.")
+                }
+
+                if !draft.selectedAccounts.isEmpty {
+                    Section(draft.chatType == .dm ? "Selected Person" : "Selected People") {
+                        ForEach(draft.selectedAccounts) { account in
+                            SelectedDirectoryAccountRow(account: account) {
+                                draft.removeSelection(accountId: account.accountId)
+                            }
+                        }
+                    }
+                }
+
+                Section {
+                    if isSearching {
+                        HStack {
+                            Spacer()
+                            ProgressView()
+                            Spacer()
+                        }
+                    } else if let searchErrorMessage {
+                        Label(searchErrorMessage, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                    } else if directoryResults.isEmpty {
+                        ContentUnavailableView(
+                            draft.searchQuery.trix_trimmed().isEmpty ? "No People Yet" : "No Matches",
+                            systemImage: draft.searchQuery.trix_trimmed().isEmpty ? "person.2.slash" : "magnifyingglass",
+                            description: Text(draft.searchQuery.trix_trimmed().isEmpty ? "No active accounts are available in the directory right now." : "Try a different name or handle.")
+                        )
+                    } else {
+                        ForEach(directoryResults) { account in
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.18)) {
+                                    draft.toggleSelection(account)
+                                }
+                            } label: {
+                                DirectoryAccountPickerRow(
+                                    account: account,
+                                    isSelected: draft.selectedAccounts.contains(account)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                } header: {
+                    Text(draft.searchQuery.trix_trimmed().isEmpty ? "Suggested" : "Results")
+                } footer: {
+                    Text("The account directory only returns people who currently have at least one active device.")
                 }
             }
             .navigationTitle("New Chat")
             .navigationBarTitleDisplayMode(.inline)
+            .task(id: searchTaskID) {
+                await loadDirectoryResults()
+            }
+            .onChange(of: draft.chatType) { _, _ in
+                draft.normalizeSelectionForCurrentChatType()
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", action: onCancel)
@@ -604,6 +849,185 @@ private struct CreateChatSheet: View {
                 }
             }
         }
+    }
+
+    private var searchTaskID: String {
+        "\(draft.chatType.rawValue)|\(draft.searchQuery.trix_trimmed())"
+    }
+
+    private func loadDirectoryResults() async {
+        let trimmedQuery = draft.searchQuery.trix_trimmedOrNil()
+
+        if trimmedQuery != nil {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+
+        if Task.isCancelled {
+            return
+        }
+
+        isSearching = true
+        searchErrorMessage = nil
+
+        defer {
+            isSearching = false
+        }
+
+        do {
+            directoryResults = try await model.searchAccountDirectory(
+                baseURLString: serverBaseURL,
+                query: trimmedQuery,
+                limit: 24,
+                excludeSelf: true
+            )
+        } catch is CancellationError {
+            return
+        } catch {
+            directoryResults = []
+            searchErrorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct EditProfileSheet: View {
+    @Binding var draft: EditProfileForm
+    let errorMessage: String?
+    let isSubmitting: Bool
+    let onCancel: () -> Void
+    let onSave: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let errorMessage {
+                    Section {
+                        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                    }
+                }
+
+                Section {
+                    TextField("Profile Name", text: $draft.profileName)
+
+                    TextField("Handle", text: $draft.handle)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+
+                    TextField("Bio", text: $draft.profileBio, axis: .vertical)
+                        .lineLimit(3...6)
+                } header: {
+                    Text("Profile")
+                } footer: {
+                    Text("Leave handle empty if you do not want a public @handle.")
+                }
+            }
+            .navigationTitle("Edit Profile")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onCancel)
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    if isSubmitting {
+                        ProgressView()
+                    } else {
+                        Button("Save", action: onSave)
+                            .disabled(!draft.canSubmit)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct SelectedDirectoryAccountRow: View {
+    let account: DirectoryAccountSummary
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            AccountAvatarView(title: account.profileName, size: 38)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(account.profileName)
+                    .font(.body.weight(.medium))
+
+                Text(account.handle.map { "@\($0)" } ?? account.accountId)
+                    .font(account.handle == nil ? .system(.caption, design: .monospaced) : .caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
+private struct DirectoryAccountPickerRow: View {
+    let account: DirectoryAccountSummary
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            AccountAvatarView(title: account.profileName, size: 42)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(account.profileName)
+                        .font(.body.weight(.medium))
+
+                    if let handle = account.handle {
+                        Text("@\(handle)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let profileBio = account.profileBio?.trix_trimmedOrNil() {
+                    Text(profileBio)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                } else {
+                    Text(account.accountId)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+
+            Image(systemName: isSelected ? "checkmark.circle.fill" : "plus.circle")
+                .font(.title3)
+                .foregroundStyle(isSelected ? dashboardAccent : .secondary)
+        }
+        .contentShape(Rectangle())
+    }
+}
+
+private struct AdvancedInfoRow: View {
+    let title: String
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.body.weight(.medium))
+                .foregroundStyle(.primary)
+
+            Text(text)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -867,13 +1291,6 @@ private struct LinkIntentSheet: View {
             }
         }
     }
-}
-
-private func dashboardParsedIdentifiers(_ rawValue: String) -> [String] {
-    rawValue
-        .components(separatedBy: CharacterSet(charactersIn: ", \n\t"))
-        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        .filter { !$0.isEmpty }
 }
 
 #Preview {
