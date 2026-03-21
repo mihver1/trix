@@ -93,42 +93,6 @@ fun SettingsScreen(
             item(span = { GridItemSpan(maxLineSpan) }) {
                 SafeClientLogsCard(telemetry = telemetry)
             }
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                SettingsCard(
-                    title = "Android direction",
-                    body = "Kotlin + Compose first, canonical adaptive layouts, fold-aware posture handling, and FFI for core auth, sync, messaging, and backend diagnostics.",
-                )
-            }
-            item {
-                SettingsCard(
-                    title = "Current window",
-                    body = "Width ${windowInfo.widthClass.name.lowercase()}, height ${windowInfo.heightClass.name.lowercase()}, nav ${windowInfo.navigationLayout.name.lowercase()}, posture ${windowInfo.foldPosture.name.lowercase()}.",
-                )
-            }
-            item {
-                SettingsCard(
-                    title = "Security posture",
-                    body = "Bootstrap state is encrypted at rest with Android Keystore-backed AES-GCM. Ed25519 bootstrap material stays local to the device.",
-                )
-            }
-            item {
-                SettingsCard(
-                    title = "Backend wiring",
-                    body = "The Android client now runs through create account, auth challenge, auth session, accounts/me, and a Rust-backed local chat cache plus sync coordinator against the live backend.",
-                )
-            }
-            item {
-                SettingsCard(
-                    title = "Universal UX",
-                    body = "Compact windows use a focused single-pane flow. Medium windows add rail navigation and can switch to list-detail. Expanded windows pin navigation and keep more context visible.",
-                )
-            }
-            item {
-                SettingsCard(
-                    title = "Next build-out",
-                    body = "Expand from the current local-MLS send path into device linking, trusted-device approval, and proper group-state bridging once the backend exposes canonical MLS group identity to clients.",
-                )
-            }
         }
     }
 }
@@ -157,9 +121,6 @@ private fun SessionCard(session: AuthenticatedSession) {
                 text = buildString {
                     append("Account ${session.accountProfile.accountId}\n")
                     append("Device ${session.accountProfile.deviceId}")
-                    session.localState.accountSyncChatId?.let {
-                        append("\nAccount sync chat $it")
-                    }
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,

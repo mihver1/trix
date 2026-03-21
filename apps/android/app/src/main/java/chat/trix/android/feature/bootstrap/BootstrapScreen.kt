@@ -146,12 +146,12 @@ fun BootstrapScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     Text(
-                        text = "Android bootstrap",
+                        text = "Welcome to Trix",
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "This client now performs real account bootstrap, linked-device onboarding, and device session handshakes against `trixd`, while keeping local state encrypted at rest through Android Keystore.",
+                        text = "Create a new account or link this device to an existing one. Your messages are end-to-end encrypted and stay private.",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                     )

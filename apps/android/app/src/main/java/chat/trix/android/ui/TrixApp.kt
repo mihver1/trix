@@ -275,7 +275,7 @@ fun TrixApp(
                                         }
                                     }
                                 }
-                            },
+                            }
                         }
                         val filter = IntentFilter().apply {
                             addAction(RealtimeForegroundService.ACTION_CHATS_CHANGED)
