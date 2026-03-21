@@ -680,11 +680,10 @@ final class AppModel: ObservableObject {
             )
 
             resetCreateChatComposer()
-            try await loadWorkspace(client: client, accessToken: token)
-            try await loadSelectedChat(
+            try await loadWorkspace(
                 client: client,
                 accessToken: token,
-                chatId: created.chatId
+                selectionPreference: .force(created.chatId)
             )
             return true
         } catch let error as TrixAPIError {
@@ -786,11 +785,10 @@ final class AppModel: ObservableObject {
                 }
             }
 
-            try await loadWorkspace(client: client, accessToken: token)
-            try await loadSelectedChat(
+            try await loadWorkspace(
                 client: client,
                 accessToken: token,
-                chatId: chatId
+                selectionPreference: .prefer(chatId)
             )
             composerAttachmentDraft = nil
             return true
@@ -943,8 +941,11 @@ final class AppModel: ObservableObject {
                 chatId: chatId,
                 participantAccountIds: participantAccountIDs
             )
-            try await loadWorkspace(client: client, accessToken: token)
-            try await loadSelectedChat(client: client, accessToken: token, chatId: chatId)
+            try await loadWorkspace(
+                client: client,
+                accessToken: token,
+                selectionPreference: .prefer(chatId)
+            )
         } catch {
             lastErrorMessage = error.userFacingMessage
         }
@@ -982,8 +983,11 @@ final class AppModel: ObservableObject {
                 chatId: chatId,
                 participantAccountIds: [participantAccountID]
             )
-            try await loadWorkspace(client: client, accessToken: token)
-            try await loadSelectedChat(client: client, accessToken: token, chatId: chatId)
+            try await loadWorkspace(
+                client: client,
+                accessToken: token,
+                selectionPreference: .prefer(chatId)
+            )
         } catch {
             lastErrorMessage = error.userFacingMessage
         }
@@ -1024,8 +1028,11 @@ final class AppModel: ObservableObject {
                 chatId: chatId,
                 deviceIds: deviceIDs
             )
-            try await loadWorkspace(client: client, accessToken: token)
-            try await loadSelectedChat(client: client, accessToken: token, chatId: chatId)
+            try await loadWorkspace(
+                client: client,
+                accessToken: token,
+                selectionPreference: .prefer(chatId)
+            )
         } catch {
             lastErrorMessage = error.userFacingMessage
         }
@@ -1063,8 +1070,11 @@ final class AppModel: ObservableObject {
                 chatId: chatId,
                 deviceIds: [deviceID]
             )
-            try await loadWorkspace(client: client, accessToken: token)
-            try await loadSelectedChat(client: client, accessToken: token, chatId: chatId)
+            try await loadWorkspace(
+                client: client,
+                accessToken: token,
+                selectionPreference: .prefer(chatId)
+            )
         } catch {
             lastErrorMessage = error.userFacingMessage
         }
@@ -1557,7 +1567,12 @@ final class AppModel: ObservableObject {
         }
 
         do {
-            try await loadSelectedChat(client: client, accessToken: token, chatId: chatId)
+            try await loadSelectedChat(
+                client: client,
+                accessToken: token,
+                chatId: chatId,
+                loadMode: selectedChatID == chatId ? .preserveVisibleState : .replaceVisibleState
+            )
         } catch let error as TrixAPIError {
             if error.isCredentialFailure {
                 accessToken = nil
@@ -1620,6 +1635,14 @@ final class AppModel: ObservableObject {
     }
 
     private func loadWorkspace(client: TrixAPIClient, accessToken: String) async throws {
+        try await loadWorkspace(client: client, accessToken: accessToken, selectionPreference: .automatic)
+    }
+
+    private func loadWorkspace(
+        client: TrixAPIClient,
+        accessToken: String,
+        selectionPreference: WorkspaceSelectionPreference
+    ) async throws {
         isRefreshingWorkspace = true
         defer { isRefreshingWorkspace = false }
 
@@ -1666,11 +1689,17 @@ final class AppModel: ObservableObject {
             accountId: loadedProfile.accountId
         )
 
-        if let preferredChatID = preferredLocalChatSelection(from: localChatListItems) ?? preferredChatSelection(from: self.chats) {
+        if let preferredChatID = resolvedWorkspaceSelection(
+            selectionPreference: selectionPreference,
+            currentSelectedChatID: selectedChatID,
+            visibleLocalChatIDs: visibleLocalChatListItems.map(\.chatId),
+            serverChatIDs: self.chats.map(\.chatId)
+        ) {
             try await loadSelectedChat(
                 client: client,
                 accessToken: accessToken,
-                chatId: preferredChatID
+                chatId: preferredChatID,
+                loadMode: selectedChatID == preferredChatID ? .preserveVisibleState : .replaceVisibleState
             )
         } else {
             clearSelectedChat()
@@ -1680,15 +1709,14 @@ final class AppModel: ObservableObject {
     private func loadSelectedChat(
         client: TrixAPIClient,
         accessToken: String,
-        chatId: UUID
+        chatId: UUID,
+        loadMode: SelectedChatLoadMode = .replaceVisibleState
     ) async throws {
+        let shouldResetVisibleState = loadMode.shouldResetVisibleState || selectedChatID != chatId
         selectedChatID = chatId
-        selectedChatDetail = nil
-        selectedChatReadState = nil
-        selectedChatTimelineItems = []
-        selectedChatProjectedCursor = nil
-        selectedChatProjectedMessages = []
-        selectedChatHistory = []
+        if shouldResetVisibleState {
+            resetSelectedChatContent()
+        }
         isLoadingSelectedChat = true
         defer { isLoadingSelectedChat = false }
 
@@ -2027,9 +2055,13 @@ final class AppModel: ObservableObject {
         accountId: UUID
     ) async throws {
         let storePaths = try workspaceStorePaths(for: accountId)
-        localChatListItems = try await client.fetchLocalChatListItems(
+        let loadedItems = try await client.fetchLocalChatListItems(
             databasePath: storePaths.localHistoryURL,
             selfAccountId: accountId
+        )
+        localChatListItems = mergeLocalChatListItems(
+            existing: localChatListItems,
+            incoming: loadedItems
         )
     }
 
@@ -2051,7 +2083,8 @@ final class AppModel: ObservableObject {
             try await loadSelectedChat(
                 client: client,
                 accessToken: accessToken,
-                chatId: chatId
+                chatId: chatId,
+                loadMode: selectedChatID == chatId ? .preserveVisibleState : .replaceVisibleState
             )
         }
     }
@@ -2276,8 +2309,44 @@ final class AppModel: ObservableObject {
         return visibleChats.first?.chatId
     }
 
+    private func mergeLocalChatListItems(
+        existing: [LocalChatListItem],
+        incoming: [LocalChatListItem]
+    ) -> [LocalChatListItem] {
+        guard !existing.isEmpty else {
+            return incoming
+        }
+
+        var existingByChatID = Dictionary(uniqueKeysWithValues: existing.map { ($0.chatId, $0) })
+        return incoming.map { item in
+            guard let existingItem = existingByChatID.removeValue(forKey: item.chatId) else {
+                return item
+            }
+
+            return existingItem == item ? existingItem : item
+        }
+    }
+
+    private func resolvedWorkspaceSelection(
+        selectionPreference: WorkspaceSelectionPreference,
+        currentSelectedChatID: UUID?,
+        visibleLocalChatIDs: [UUID],
+        serverChatIDs: [UUID]
+    ) -> UUID? {
+        resolvedWorkspaceSelectedChatID(
+            selectionPreference: selectionPreference,
+            currentSelectedChatID: currentSelectedChatID,
+            visibleLocalChatIDs: visibleLocalChatIDs,
+            serverChatIDs: serverChatIDs
+        )
+    }
+
     private func clearSelectedChat() {
         selectedChatID = nil
+        resetSelectedChatContent()
+    }
+
+    private func resetSelectedChatContent() {
         selectedChatDetail = nil
         selectedChatReadState = nil
         selectedChatTimelineItems = []
@@ -2660,6 +2729,21 @@ enum SelectedChatReconciliationAction: Equatable {
     case load(UUID)
 }
 
+enum SelectedChatLoadMode {
+    case replaceVisibleState
+    case preserveVisibleState
+
+    var shouldResetVisibleState: Bool {
+        self == .replaceVisibleState
+    }
+}
+
+enum WorkspaceSelectionPreference: Equatable {
+    case automatic
+    case prefer(UUID)
+    case force(UUID)
+}
+
 func selectedChatReconciliationAction(
     selectedChatID: UUID?,
     visibleChatIDs: [UUID],
@@ -2684,6 +2768,40 @@ func selectedChatReconciliationAction(
     }
 
     return .keep
+}
+
+func resolvedWorkspaceSelectedChatID(
+    selectionPreference: WorkspaceSelectionPreference,
+    currentSelectedChatID: UUID?,
+    visibleLocalChatIDs: [UUID],
+    serverChatIDs: [UUID]
+) -> UUID? {
+    let automaticSelection: UUID? = {
+        if let currentSelectedChatID,
+           visibleLocalChatIDs.contains(currentSelectedChatID) {
+            return currentSelectedChatID
+        }
+        if let firstVisibleChatID = visibleLocalChatIDs.first {
+            return firstVisibleChatID
+        }
+        if let currentSelectedChatID,
+           serverChatIDs.contains(currentSelectedChatID) {
+            return currentSelectedChatID
+        }
+        return serverChatIDs.first
+    }()
+
+    switch selectionPreference {
+    case .automatic:
+        return automaticSelection
+    case let .prefer(chatId):
+        if visibleLocalChatIDs.contains(chatId) || serverChatIDs.contains(chatId) {
+            return chatId
+        }
+        return automaticSelection
+    case let .force(chatId):
+        return chatId
+    }
 }
 
 struct DeviceLinkIntentState: Identifiable {
