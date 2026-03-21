@@ -791,6 +791,33 @@ struct TypedMessageBody: Sendable {
             eventJson: nil
         )
     }
+
+    static func receipt(
+        targetMessageId: UUID,
+        receiptType: ReceiptType = .read,
+        receiptAtUnix: UInt64
+    ) -> TypedMessageBody {
+        TypedMessageBody(
+            kind: .receipt,
+            text: nil,
+            targetMessageId: targetMessageId,
+            emoji: nil,
+            reactionAction: nil,
+            receiptType: receiptType,
+            receiptAtUnix: receiptAtUnix,
+            blobId: nil,
+            mimeType: nil,
+            sizeBytes: nil,
+            sha256: nil,
+            fileName: nil,
+            widthPx: nil,
+            heightPx: nil,
+            fileKey: nil,
+            nonce: nil,
+            eventType: nil,
+            eventJson: nil
+        )
+    }
 }
 
 struct LocalProjectedMessage: Identifiable, Sendable {

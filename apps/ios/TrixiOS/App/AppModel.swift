@@ -82,7 +82,7 @@ struct DebugAttachmentSendOutcome {
     let fileName: String?
 }
 
-struct DownloadedAttachmentFile: Identifiable, Sendable {
+struct DownloadedAttachmentFile: Identifiable {
     let fileURL: URL
     let fileName: String
     let mimeType: String?
@@ -114,8 +114,6 @@ final class AppModel: ObservableObject {
     private var hasScheduledBackgroundRefresh = false
     private var cachedAuthSession: CachedAuthSession?
     private var realtimeAccessToken: String?
-    private var cachedAttachmentFiles: [String: DownloadedAttachmentFile] = [:]
-    private var attachmentDownloadTasks: [String: Task<DownloadedAttachmentFile, Error>] = [:]
 
     init(identityStore: LocalDeviceIdentityStore = LocalDeviceIdentityStore()) {
         self.identityStore = identityStore
@@ -175,7 +173,6 @@ final class AppModel: ObservableObject {
         }
 
         currentServerBaseURLString = normalizedBaseURLString(baseURLString)
-        logInfo("sync", "refresh start authenticated=\(localIdentity != nil)")
         isLoading = true
         errorMessage = nil
 
@@ -204,12 +201,7 @@ final class AppModel: ObservableObject {
                 systemSnapshot = try await fetchSystemSnapshot(client: client)
                 lastUpdatedAt = Date()
             }
-            logInfo(
-                "sync",
-                "refresh success dashboard=\(dashboard != nil) chats=\(dashboard?.chats.count ?? 0) devices=\(dashboard?.devices.count ?? 0)"
-            )
         } catch {
-            logWarn("sync", "refresh failed", error: error)
             errorMessage = error.localizedDescription
         }
     }
@@ -330,8 +322,6 @@ final class AppModel: ObservableObject {
         try identityStore.delete()
         localIdentity = nil
         localCoreState = nil
-        cachedAttachmentFiles = [:]
-        attachmentDownloadTasks = [:]
             dashboard = nil
             activeLinkIntent = nil
             directoryAccountCache = [:]
@@ -347,7 +337,6 @@ final class AppModel: ObservableObject {
         }
 
         currentServerBaseURLString = normalizedBaseURLString(baseURLString)
-        logInfo("devices", "create_link_intent start")
         isLoading = true
         errorMessage = nil
 
@@ -362,9 +351,7 @@ final class AppModel: ObservableObject {
                 accessToken: context.session.accessToken
             )
             activeLinkIntent = response
-            logInfo("devices", "create_link_intent success")
         } catch {
-            logWarn("devices", "create_link_intent failed", error: error)
             errorMessage = error.localizedDescription
         }
     }
@@ -390,7 +377,6 @@ final class AppModel: ObservableObject {
         }
 
         do {
-            logInfo("devices", "approve_device start device=\(shortLogID(deviceId))")
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             let response = try TrixCoreServerBridge.approvePendingDevice(
                 baseURLString: baseURLString,
@@ -400,10 +386,8 @@ final class AppModel: ObservableObject {
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
-            logInfo("devices", "approve_device success device=\(shortLogID(deviceId))")
             return response
         } catch {
-            logWarn("devices", "approve_device failed device=\(shortLogID(deviceId))", error: error)
             errorMessage = error.localizedDescription
             return nil
         }
@@ -432,7 +416,6 @@ final class AppModel: ObservableObject {
         }
 
         do {
-            logInfo("devices", "revoke_device start device=\(shortLogID(deviceId))")
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             let _: RevokeDeviceResponse = try TrixCoreServerBridge.revokeDevice(
                 baseURLString: baseURLString,
@@ -443,9 +426,7 @@ final class AppModel: ObservableObject {
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
-            logInfo("devices", "revoke_device success device=\(shortLogID(deviceId))")
         } catch {
-            logWarn("devices", "revoke_device failed device=\(shortLogID(deviceId))", error: error)
             errorMessage = error.localizedDescription
         }
     }
@@ -553,10 +534,6 @@ final class AppModel: ObservableObject {
         }
 
         do {
-            logInfo(
-                "chat",
-                "create_chat start type=\(logChatType(chatType)) participants=\(participantAccountIds.count)"
-            )
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             let response = try TrixCorePersistentBridge.createChatControl(
                 baseURLString: baseURLString,
@@ -568,10 +545,8 @@ final class AppModel: ObservableObject {
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
-            logInfo("chat", "create_chat success chat=\(shortLogID(response.chatId)) epoch=\(response.epoch)")
             return response
         } catch {
-            logWarn("chat", "create_chat failed", error: error)
             errorMessage = error.localizedDescription
             return nil
         }
@@ -602,10 +577,6 @@ final class AppModel: ObservableObject {
         }
 
         do {
-            logInfo(
-                "membership",
-                "add_members start chat=\(shortLogID(chatId)) count=\(participantAccountIds.count)"
-            )
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             let response = try TrixCorePersistentBridge.addChatMembersControl(
                 baseURLString: baseURLString,
@@ -616,13 +587,8 @@ final class AppModel: ObservableObject {
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
-            logInfo(
-                "membership",
-                "add_members success chat=\(shortLogID(chatId)) changed=\(response.changedAccountIds.count) epoch=\(response.epoch)"
-            )
             return response
         } catch {
-            logWarn("membership", "add_members failed chat=\(shortLogID(chatId))", error: error)
             errorMessage = error.localizedDescription
             return nil
         }
@@ -653,10 +619,6 @@ final class AppModel: ObservableObject {
         }
 
         do {
-            logInfo(
-                "membership",
-                "remove_members start chat=\(shortLogID(chatId)) count=\(participantAccountIds.count)"
-            )
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             let response = try TrixCorePersistentBridge.removeChatMembersControl(
                 baseURLString: baseURLString,
@@ -667,13 +629,8 @@ final class AppModel: ObservableObject {
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
-            logInfo(
-                "membership",
-                "remove_members success chat=\(shortLogID(chatId)) changed=\(response.changedAccountIds.count) epoch=\(response.epoch)"
-            )
             return response
         } catch {
-            logWarn("membership", "remove_members failed chat=\(shortLogID(chatId))", error: error)
             errorMessage = error.localizedDescription
             return nil
         }
@@ -711,10 +668,6 @@ final class AppModel: ObservableObject {
         }
 
         do {
-            logInfo(
-                "devices",
-                "add_chat_devices start chat=\(shortLogID(chatId)) count=\(deviceIds.count)"
-            )
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             let response = try TrixCorePersistentBridge.addChatDevicesControl(
                 baseURLString: baseURLString,
@@ -725,13 +678,8 @@ final class AppModel: ObservableObject {
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
-            logInfo(
-                "devices",
-                "add_chat_devices success chat=\(shortLogID(chatId)) changed=\(response.changedDeviceIds.count) epoch=\(response.epoch)"
-            )
             return response
         } catch {
-            logWarn("devices", "add_chat_devices failed chat=\(shortLogID(chatId))", error: error)
             errorMessage = error.localizedDescription
             return nil
         }
@@ -762,10 +710,6 @@ final class AppModel: ObservableObject {
         }
 
         do {
-            logInfo(
-                "devices",
-                "remove_chat_devices start chat=\(shortLogID(chatId)) count=\(deviceIds.count)"
-            )
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             let response = try TrixCorePersistentBridge.removeChatDevicesControl(
                 baseURLString: baseURLString,
@@ -776,13 +720,8 @@ final class AppModel: ObservableObject {
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
-            logInfo(
-                "devices",
-                "remove_chat_devices success chat=\(shortLogID(chatId)) changed=\(response.changedDeviceIds.count) epoch=\(response.epoch)"
-            )
             return response
         } catch {
-            logWarn("devices", "remove_chat_devices failed chat=\(shortLogID(chatId))", error: error)
             errorMessage = error.localizedDescription
             return nil
         }
@@ -812,10 +751,6 @@ final class AppModel: ObservableObject {
         }
 
         do {
-            logInfo(
-                "message",
-                "send_debug_message start chat=\(shortLogID(chatId)) kind=\(draft.kind.rawValue)"
-            )
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             let response = try TrixCorePersistentBridge.sendMessageBody(
                 baseURLString: baseURLString,
@@ -831,13 +766,8 @@ final class AppModel: ObservableObject {
                 ackedInboxIds: [],
                 changedChatIds: [chatId]
             )
-            logInfo(
-                "message",
-                "send_debug_message success chat=\(shortLogID(chatId)) message=\(shortLogID(response.messageId))"
-            )
             return response
         } catch {
-            logWarn("message", "send_debug_message failed chat=\(shortLogID(chatId))", error: error)
             errorMessage = error.localizedDescription
             return nil
         }
@@ -862,7 +792,6 @@ final class AppModel: ObservableObject {
         }
 
         do {
-            logInfo("message", "send_attachment start chat=\(shortLogID(chatId))")
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             let attachmentUpload = try TrixCoreMessageBridge.readAttachmentUploadMaterial(fileURL: fileURL)
             let blobClient = try FfiServerApiClient(
@@ -895,7 +824,6 @@ final class AppModel: ObservableObject {
                 fileName: uploadedAttachment.body.fileName
             )
         } catch {
-            logWarn("message", "send_attachment failed chat=\(shortLogID(chatId))", error: error)
             errorMessage = error.localizedDescription
             return nil
         }
@@ -918,78 +846,39 @@ final class AppModel: ObservableObject {
         }
 
         do {
-            return try await resolveAttachmentFile(
-                baseURLString: baseURLString,
-                body: body
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            let blobClient = try FfiServerApiClient(
+                baseUrl: baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
             )
-        } catch {
-            errorMessage = error.localizedDescription
-            return nil
-        }
-    }
-
-    func cachedAttachmentFile(for body: FfiMessageBody) -> DownloadedAttachmentFile? {
-        let cacheKey = attachmentCacheKey(for: body)
-        guard let cachedFile = cachedAttachmentFiles[cacheKey] else {
-            return nil
-        }
-        guard FileManager.default.fileExists(atPath: cachedFile.fileURL.path) else {
-            cachedAttachmentFiles.removeValue(forKey: cacheKey)
-            return nil
-        }
-        return cachedFile
-    }
-
-    func resolveAttachmentFile(
-        baseURLString: String,
-        body: FfiMessageBody
-    ) async throws -> DownloadedAttachmentFile {
-        if let cachedFile = cachedAttachmentFile(for: body) {
-            return cachedFile
-        }
-
-        let cacheKey = attachmentCacheKey(for: body)
-        if let existingTask = attachmentDownloadTasks[cacheKey] {
-            return try await existingTask.value
-        }
-
-        let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-        let normalizedBaseURL = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
-        let accessToken = context.session.accessToken
-
-        let task = Task { () throws -> DownloadedAttachmentFile in
-            let blobClient = try FfiServerApiClient(baseUrl: normalizedBaseURL)
-            try blobClient.setAccessToken(accessToken: accessToken)
+            try blobClient.setAccessToken(accessToken: context.session.accessToken)
 
             let downloadedAttachment = try blobClient.downloadAttachment(body: body)
             let fileName = TrixCoreMessageBridge.suggestedAttachmentFileName(for: downloadedAttachment.body)
-            let downloadsDirectory = try Self.attachmentCacheDirectory()
-            let destinationDirectory = downloadsDirectory.appendingPathComponent(cacheKey, isDirectory: true)
+            let downloadsDirectory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("TrixAttachments", isDirectory: true)
             try FileManager.default.createDirectory(
-                at: destinationDirectory,
+                at: downloadsDirectory,
                 withIntermediateDirectories: true
             )
 
-            let destinationURL = destinationDirectory.appendingPathComponent(fileName, isDirectory: false)
-            if !FileManager.default.fileExists(atPath: destinationURL.path) {
-                try downloadedAttachment.plaintext.write(to: destinationURL, options: .atomic)
-            }
+            let destinationURL = downloadsDirectory
+                .appendingPathComponent(UUID().uuidString, isDirectory: true)
+                .appendingPathComponent(fileName)
+            try FileManager.default.createDirectory(
+                at: destinationURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try downloadedAttachment.plaintext.write(to: destinationURL, options: .atomic)
 
             return DownloadedAttachmentFile(
                 fileURL: destinationURL,
                 fileName: fileName,
                 mimeType: downloadedAttachment.body.mimeType
             )
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
         }
-
-        attachmentDownloadTasks[cacheKey] = task
-        defer {
-            attachmentDownloadTasks.removeValue(forKey: cacheKey)
-        }
-
-        let downloadedFile = try await task.value
-        cachedAttachmentFiles[cacheKey] = downloadedFile
-        return downloadedFile
     }
 
     @discardableResult
@@ -1777,31 +1666,6 @@ final class AppModel: ObservableObject {
         return try await ServerSnapshot(health: health, version: version)
     }
 
-    private func attachmentCacheKey(for body: FfiMessageBody) -> String {
-        let rawValue: String
-        if let blobId = body.blobId?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !blobId.isEmpty {
-            rawValue = blobId
-        } else {
-            rawValue = TrixCoreMessageBridge.suggestedAttachmentFileName(for: body)
-        }
-        return rawValue.replacingOccurrences(
-            of: #"[^A-Za-z0-9._-]"#,
-            with: "_",
-            options: .regularExpression
-        )
-    }
-
-    private static func attachmentCacheDirectory() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("TrixAttachments", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        return directory
-    }
-
     private func makeAuthenticatedContext(baseURLString: String) async throws -> AuthenticatedContext {
         guard let identity = localIdentity else {
             throw AppModelError.localIdentityMissing
@@ -1862,9 +1726,10 @@ final class AppModel: ObservableObject {
         baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    func markChatReadLocally(chatId: String, throughServerSeq: UInt64?) {
+    @discardableResult
+    func markChatReadLocally(chatId: String, throughServerSeq: UInt64?) -> Bool {
         guard let localIdentity else {
-            return
+            return false
         }
 
         do {
@@ -1874,9 +1739,43 @@ final class AppModel: ObservableObject {
                 throughServerSeq: throughServerSeq
             )
             updateLocalCoreStateSnapshot(identity: localIdentity)
+            return true
         } catch {
             // Local read state is opportunistic; network/UI flows should not fail on it.
+            return false
         }
+    }
+
+    @discardableResult
+    func acknowledgeChatRead(
+        baseURLString: String,
+        chatId: String,
+        throughServerSeq: UInt64?,
+        receiptTargetMessageId: String?
+    ) async -> Bool {
+        guard localIdentity != nil else {
+            return false
+        }
+
+        let previousReadCursor = localCoreState?.chatReadState(for: chatId)?.readCursorServerSeq ?? 0
+        guard markChatReadLocally(chatId: chatId, throughServerSeq: throughServerSeq) else {
+            return false
+        }
+
+        guard let throughServerSeq,
+              throughServerSeq > previousReadCursor,
+              let receiptTargetMessageId = receiptTargetMessageId?.trix_trimmedOrNil()
+        else {
+            return true
+        }
+
+        await sendReadReceipt(
+            baseURLString: baseURLString,
+            chatId: chatId,
+            receiptTargetMessageId: receiptTargetMessageId
+        )
+
+        return true
     }
 
     private func makeInboxPath(afterInboxId: UInt64?, limit: Int) -> String {
@@ -2390,26 +2289,35 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func logInfo(_ category: String, _ message: String) {
-        SafeDiagnosticLogStore.shared.info(category, message)
-    }
+    private func sendReadReceipt(
+        baseURLString: String,
+        chatId: String,
+        receiptTargetMessageId: String
+    ) async {
+        do {
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            var receiptDraft = DebugMessageDraft()
+            receiptDraft.kind = .receipt
+            receiptDraft.targetMessageId = receiptTargetMessageId
+            receiptDraft.receiptKind = .read
+            receiptDraft.receiptAtUnix = String(UInt64(Date().timeIntervalSince1970))
 
-    private func logWarn(_ category: String, _ message: String, error: Error? = nil) {
-        SafeDiagnosticLogStore.shared.warn(category, message, error: error)
-    }
+            let response = try TrixCorePersistentBridge.sendMessageBody(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: context.identity,
+                chatId: chatId,
+                body: try TrixCoreMessageBridge.messageBody(for: receiptDraft)
+            )
 
-    private func shortLogID(_ value: String) -> String {
-        String(value.prefix(8)).lowercased()
-    }
-
-    private func logChatType(_ value: ChatType) -> String {
-        switch value {
-        case .dm:
-            return "dm"
-        case .group:
-            return "group"
-        case .accountSync:
-            return "account_sync"
+            updateLocalCoreStateSnapshot(identity: context.identity)
+            applyLocalCoreStateOverlay(
+                session: context.session,
+                ackedInboxIds: [],
+                changedChatIds: [response.chatId]
+            )
+        } catch {
+            // Read receipts are opportunistic; keep the chat open even if they fail.
         }
     }
 }

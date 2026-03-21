@@ -1,4 +1,3 @@
-import QuickLook
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -6,22 +5,6 @@ import UniformTypeIdentifiers
 private let consumerChatAccent = Color(red: 0.14, green: 0.55, blue: 0.98)
 private let consumerMessageClusterWindow: TimeInterval = 5 * 60
 private let consumerTimelineBottomAnchor = "consumer-timeline-bottom-anchor"
-private let consumerMessageBubbleMaxWidth: CGFloat = 320
-private let consumerMessageBubbleHorizontalPadding: CGFloat = 14
-
-private enum ConsumerAttachmentPresentation: Identifiable {
-    case preview(DownloadedAttachmentFile)
-    case share(DownloadedAttachmentFile)
-
-    var id: String {
-        switch self {
-        case let .preview(attachment):
-            return "preview-\(attachment.id)"
-        case let .share(attachment):
-            return "share-\(attachment.id)"
-        }
-    }
-}
 
 private struct ConsumerAttachmentDraft {
     let fileURL: URL
@@ -50,6 +33,24 @@ private enum ConsumerMessageClusterPosition {
     case bottom
 }
 
+private enum ConsumerReceiptStatus: Int, Comparable {
+    case delivered = 0
+    case read = 1
+
+    static func < (lhs: ConsumerReceiptStatus, rhs: ConsumerReceiptStatus) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+
+    var systemImageName: String {
+        switch self {
+        case .delivered:
+            return "checkmark"
+        case .read:
+            return "checkmark.double"
+        }
+    }
+}
+
 private struct ConsumerRenderedMessage: Identifiable {
     let id: String
     let senderAccountId: String
@@ -61,10 +62,10 @@ private struct ConsumerRenderedMessage: Identifiable {
     let attachmentBody: FfiMessageBody?
     let primaryText: String
     let secondaryText: String?
-    let receiptStatusText: String?
     let clusterPosition: ConsumerMessageClusterPosition
     let topSpacing: CGFloat
     let usesCenteredEventStyle: Bool
+    let receiptStatus: ConsumerReceiptStatus?
 }
 
 struct ConsumerChatDetailView: View {
@@ -79,7 +80,7 @@ struct ConsumerChatDetailView: View {
     @State private var isImportingAttachment = false
     @State private var localErrorMessage: String?
     @State private var activityMessage: String?
-    @State private var attachmentPresentation: ConsumerAttachmentPresentation?
+    @State private var downloadedAttachment: DownloadedAttachmentFile?
     @State private var downloadingAttachmentMessageId: String?
 
     var body: some View {
@@ -144,13 +145,8 @@ struct ConsumerChatDetailView: View {
         ) { result in
             handleAttachmentImport(result)
         }
-        .sheet(item: $attachmentPresentation) { attachmentPresentation in
-            switch attachmentPresentation {
-            case let .preview(downloadedAttachment):
-                AttachmentPreviewSheet(attachment: downloadedAttachment)
-            case let .share(downloadedAttachment):
-                AttachmentActivitySheet(items: [downloadedAttachment.fileURL])
-            }
+        .sheet(item: $downloadedAttachment) { downloadedAttachment in
+            AttachmentActivitySheet(items: [downloadedAttachment.fileURL])
         }
     }
 
@@ -172,9 +168,7 @@ struct ConsumerChatDetailView: View {
                             ConsumerTimelineRow(
                                 item: item,
                                 downloadingAttachmentMessageId: downloadingAttachmentMessageId,
-                                onOpenAttachment: openAttachment,
-                                serverBaseURL: serverBaseURL,
-                                model: model
+                                onOpenAttachment: openAttachment
                             )
                         }
                     }
@@ -337,14 +331,33 @@ struct ConsumerChatDetailView: View {
             )
             snapshot = loadedSnapshot
             if loadedSnapshot.detail.lastServerSeq > 0 {
-                model.markChatReadLocally(
+                _ = await model.acknowledgeChatRead(
+                    baseURLString: serverBaseURL,
                     chatId: loadedSnapshot.detail.chatId,
-                    throughServerSeq: loadedSnapshot.detail.lastServerSeq
+                    throughServerSeq: loadedSnapshot.detail.lastServerSeq,
+                    receiptTargetMessageId: readReceiptTargetMessageId(for: loadedSnapshot)
                 )
             }
         } catch {
             localErrorMessage = error.localizedDescription
         }
+    }
+
+    private func readReceiptTargetMessageId(for snapshot: ChatSnapshot) -> String? {
+        guard let currentAccountId = model.localIdentity?.accountId else {
+            return nil
+        }
+
+        let orderedHistory = snapshot.history.sorted {
+            if $0.serverSeq == $1.serverSeq {
+                return $0.createdAtUnix < $1.createdAtUnix
+            }
+            return $0.serverSeq < $1.serverSeq
+        }
+
+        return orderedHistory.reversed().first { message in
+            message.senderAccountId != currentAccountId && message.contentType != .receipt
+        }?.id
     }
 
     private func sendCurrentPayload() {
@@ -450,12 +463,8 @@ struct ConsumerChatDetailView: View {
                 baseURLString: serverBaseURL,
                 body: attachmentBody
             ) {
-                attachmentPresentation = downloadedAttachment.supportsLocalImagePreview
-                    ? .preview(downloadedAttachment)
-                    : .share(downloadedAttachment)
-                activityMessage = downloadedAttachment.supportsLocalImagePreview
-                    ? "Ready to preview \(downloadedAttachment.fileName)"
-                    : "Ready to share \(downloadedAttachment.fileName)"
+                self.downloadedAttachment = downloadedAttachment
+                activityMessage = "Ready to share \(downloadedAttachment.fileName)"
             } else {
                 localErrorMessage = model.errorMessage
                 activityMessage = nil
@@ -474,26 +483,35 @@ struct ConsumerChatDetailView: View {
         }
 
         let currentAccountId = model.localIdentity?.accountId
-        let sortedMessages = snapshot.history.sorted {
+        let messages = snapshot.history.sorted {
             if $0.serverSeq == $1.serverSeq {
                 return $0.createdAtUnix < $1.createdAtUnix
             }
             return $0.serverSeq < $1.serverSeq
         }
-        let receiptStatuses = receiptStatusByMessageId(
-            for: snapshot,
-            messages: sortedMessages
-        )
-        let messages = sortedMessages.filter { !isReceiptMessage($0) }
         var items: [ConsumerTimelineItem] = []
+        var receiptStatusByMessageId: [String: ConsumerReceiptStatus] = [:]
+        let presentationMessages = messages.compactMap { message -> MessageEnvelope? in
+            guard isReceiptMessage(message) else {
+                return message
+            }
+
+            if let targetMessageId = receiptTargetMessageId(for: message) {
+                receiptStatusByMessageId[targetMessageId] = mergedReceiptStatus(
+                    receiptStatusByMessageId[targetMessageId],
+                    with: receiptStatus(for: message) ?? .delivered
+                )
+            }
+            return nil
+        }
         var previousMessage: MessageEnvelope?
 
-        for (index, message) in messages.enumerated() {
+        for (index, message) in presentationMessages.enumerated() {
             if previousMessage.map({ !Calendar.current.isDate($0.createdAtDate, inSameDayAs: message.createdAtDate) }) ?? true {
                 items.append(.daySeparator(daySeparatorTitle(for: message.createdAtDate)))
             }
 
-            let nextMessage = messages.indices.contains(index + 1) ? messages[index + 1] : nil
+            let nextMessage = presentationMessages.indices.contains(index + 1) ? presentationMessages[index + 1] : nil
             let continuesFromPrevious = previousMessage.map { canCluster($0, with: message) } ?? false
             let continuesToNext = nextMessage.map { canCluster(message, with: $0) } ?? false
             let isOutgoing = currentAccountId.map { message.senderAccountId == $0 } ?? false
@@ -537,10 +555,10 @@ struct ConsumerChatDetailView: View {
                         attachmentBody: TrixCoreMessageBridge.attachmentBody(for: message),
                         primaryText: TrixCoreMessageBridge.preview(for: message)?.title ?? message.debugPreview,
                         secondaryText: TrixCoreMessageBridge.preview(for: message)?.detail ?? message.debugDetail,
-                        receiptStatusText: receiptStatuses[message.messageId],
                         clusterPosition: clusterPosition,
                         topSpacing: topSpacing,
-                        usesCenteredEventStyle: messageUsesCenteredEventStyle(message)
+                        usesCenteredEventStyle: messageUsesCenteredEventStyle(message),
+                        receiptStatus: receiptStatusByMessageId[message.id]
                     )
                 )
             )
@@ -561,17 +579,29 @@ struct ConsumerChatDetailView: View {
             }
             return $0.serverSeq < $1.serverSeq
         }
-        let receiptStatuses = receiptStatusByMessageId(for: sortedItems)
-        let visibleItems = sortedItems.filter { !isReceiptProjectedItem($0) }
         var items: [ConsumerTimelineItem] = []
+        var receiptStatusByMessageId: [String: ConsumerReceiptStatus] = [:]
+        let presentationItems = sortedItems.compactMap { item -> LocalTimelineItemSnapshot? in
+            guard isReceiptItem(item) else {
+                return item
+            }
+
+            if let targetMessageId = receiptTargetMessageId(for: item) {
+                receiptStatusByMessageId[targetMessageId] = mergedReceiptStatus(
+                    receiptStatusByMessageId[targetMessageId],
+                    with: receiptStatus(for: item) ?? .delivered
+                )
+            }
+            return nil
+        }
         var previousItem: LocalTimelineItemSnapshot?
 
-        for (index, item) in visibleItems.enumerated() {
+        for (index, item) in presentationItems.enumerated() {
             if previousItem.map({ !Calendar.current.isDate($0.createdAtDate, inSameDayAs: item.createdAtDate) }) ?? true {
                 items.append(.daySeparator(daySeparatorTitle(for: item.createdAtDate)))
             }
 
-            let nextItem = visibleItems.indices.contains(index + 1) ? visibleItems[index + 1] : nil
+            let nextItem = presentationItems.indices.contains(index + 1) ? presentationItems[index + 1] : nil
             let continuesFromPrevious = previousItem.map { canCluster($0, with: item) } ?? false
             let continuesToNext = nextItem.map { canCluster(item, with: $0) } ?? false
             let shouldShowSender = chatType == .group && !item.isOutgoing && !continuesFromPrevious
@@ -611,10 +641,10 @@ struct ConsumerChatDetailView: View {
                         attachmentBody: item.contentType == .attachment ? item.messageBody : nil,
                         primaryText: item.bodyPreview?.title ?? item.previewText,
                         secondaryText: item.bodyPreview?.detail,
-                        receiptStatusText: receiptStatuses[item.messageId],
                         clusterPosition: clusterPosition,
                         topSpacing: topSpacing,
-                        usesCenteredEventStyle: projectedItemUsesCenteredEventStyle(item)
+                        usesCenteredEventStyle: projectedItemUsesCenteredEventStyle(item),
+                        receiptStatus: receiptStatusByMessageId[item.id]
                     )
                 )
             )
@@ -623,102 +653,6 @@ struct ConsumerChatDetailView: View {
         }
 
         return items
-    }
-
-    private func isReceiptMessage(_ message: MessageEnvelope) -> Bool {
-        message.contentType == .receipt
-    }
-
-    private func isReceiptProjectedItem(_ item: LocalTimelineItemSnapshot) -> Bool {
-        item.contentType == .receipt || item.messageBody?.kind == .receipt
-    }
-
-    private func receiptStatusByMessageId(
-        for snapshot: ChatSnapshot,
-        messages: [MessageEnvelope]
-    ) -> [String: String] {
-        guard let selfAccountId = model.localIdentity?.accountId else {
-            return [:]
-        }
-
-        let messagesById = Dictionary(uniqueKeysWithValues: messages.map { ($0.messageId, $0) })
-        var summaries = [String: ReceiptSummaryAccumulator]()
-
-        for message in messages {
-            guard
-                isReceiptMessage(message),
-                message.senderAccountId != selfAccountId,
-                let body = TrixCoreMessageBridge.parsedBody(for: message),
-                body.kind == .receipt,
-                let targetMessageId = body.targetMessageId,
-                let targetMessage = messagesById[targetMessageId],
-                targetMessage.senderAccountId == selfAccountId
-            else {
-                continue
-            }
-
-            summaries[targetMessageId, default: ReceiptSummaryAccumulator()].record(
-                readerLabel(
-                    accountId: message.senderAccountId,
-                    fallbackDisplayName: nil,
-                    snapshot: snapshot
-                ),
-                receiptType: body.receiptType
-            )
-        }
-
-        return summaries.compactMapValues(\.summaryText)
-    }
-
-    private func receiptStatusByMessageId(
-        for timeline: [LocalTimelineItemSnapshot]
-    ) -> [String: String] {
-        let itemsById = Dictionary(uniqueKeysWithValues: timeline.map { ($0.messageId, $0) })
-        var summaries = [String: ReceiptSummaryAccumulator]()
-
-        for item in timeline {
-            guard
-                isReceiptProjectedItem(item),
-                !item.isOutgoing,
-                let body = item.messageBody,
-                body.kind == .receipt,
-                let targetMessageId = body.targetMessageId,
-                let targetMessage = itemsById[targetMessageId],
-                targetMessage.isOutgoing
-            else {
-                continue
-            }
-
-            let fallbackName = item.senderDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
-            summaries[targetMessageId, default: ReceiptSummaryAccumulator()].record(
-                fallbackName.isEmpty ? shortIdentifier(item.senderAccountId) : fallbackName,
-                receiptType: body.receiptType
-            )
-        }
-
-        return summaries.compactMapValues(\.summaryText)
-    }
-
-    private func readerLabel(
-        accountId: String,
-        fallbackDisplayName: String?,
-        snapshot: ChatSnapshot
-    ) -> String {
-        if let profile = snapshot.detail.participantProfile(accountId: accountId) {
-            return profile.primaryDisplayName
-        }
-        if let fallbackDisplayName,
-           !fallbackDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return fallbackDisplayName
-        }
-        return shortIdentifier(accountId)
-    }
-
-    private func shortIdentifier(_ value: String) -> String {
-        if value.count <= 10 {
-            return value
-        }
-        return "\(value.prefix(6))…"
     }
 
     private func daySeparatorTitle(for date: Date) -> String {
@@ -784,6 +718,55 @@ struct ConsumerChatDetailView: View {
             return true
         }
     }
+
+    private func receiptStatus(for message: MessageEnvelope) -> ConsumerReceiptStatus? {
+        guard message.contentType == .receipt,
+              let body = TrixCoreMessageBridge.parsedBody(for: message),
+              body.kind == .receipt else {
+            return nil
+        }
+
+        return body.receiptType == .read ? .read : .delivered
+    }
+
+    private func receiptStatus(for item: LocalTimelineItemSnapshot) -> ConsumerReceiptStatus? {
+        guard item.contentType == .receipt || item.messageBody?.kind == .receipt else {
+            return nil
+        }
+
+        return item.messageBody?.receiptType == .read ? .read : .delivered
+    }
+
+    private func isReceiptMessage(_ message: MessageEnvelope) -> Bool {
+        message.contentType == .receipt
+    }
+
+    private func isReceiptItem(_ item: LocalTimelineItemSnapshot) -> Bool {
+        item.contentType == .receipt || item.messageBody?.kind == .receipt
+    }
+
+    private func receiptTargetMessageId(for message: MessageEnvelope) -> String? {
+        guard let body = TrixCoreMessageBridge.parsedBody(for: message), body.kind == .receipt else {
+            return nil
+        }
+
+        return body.targetMessageId
+    }
+
+    private func receiptTargetMessageId(for item: LocalTimelineItemSnapshot) -> String? {
+        guard item.contentType == .receipt || item.messageBody?.kind == .receipt else {
+            return nil
+        }
+
+        return item.messageBody?.targetMessageId
+    }
+
+    private func mergedReceiptStatus(
+        _ current: ConsumerReceiptStatus?,
+        with next: ConsumerReceiptStatus
+    ) -> ConsumerReceiptStatus {
+        current.map { max($0, next) } ?? next
+    }
 }
 
 private struct ConsumerChatBanner: View {
@@ -799,49 +782,6 @@ private struct ConsumerChatBanner: View {
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(tint.opacity(0.08))
-    }
-}
-
-private struct ReceiptSummaryAccumulator {
-    private var deliveredReaders: [String] = []
-    private var readReaders: [String] = []
-
-    mutating func record(_ readerLabel: String, receiptType: FfiReceiptType?) {
-        switch receiptType {
-        case .read:
-            deliveredReaders.removeAll { $0 == readerLabel }
-            if !readReaders.contains(readerLabel) {
-                readReaders.append(readerLabel)
-            }
-        case .delivered, .none:
-            guard !readReaders.contains(readerLabel), !deliveredReaders.contains(readerLabel) else {
-                return
-            }
-            deliveredReaders.append(readerLabel)
-        }
-    }
-
-    var summaryText: String? {
-        if !readReaders.isEmpty {
-            return formatSummary(prefix: "Read by", readers: readReaders)
-        }
-        if !deliveredReaders.isEmpty {
-            return formatSummary(prefix: "Delivered to", readers: deliveredReaders)
-        }
-        return nil
-    }
-
-    private func formatSummary(prefix: String, readers: [String]) -> String {
-        switch readers.count {
-        case 0:
-            return prefix
-        case 1:
-            return "\(prefix) \(readers[0])"
-        case 2:
-            return "\(prefix) \(readers[0]), \(readers[1])"
-        default:
-            return "\(prefix) \(readers[0]), \(readers[1]) +\(readers.count - 2)"
-        }
     }
 }
 
@@ -876,8 +816,6 @@ private struct ConsumerTimelineRow: View {
     let item: ConsumerTimelineItem
     let downloadingAttachmentMessageId: String?
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
-    let serverBaseURL: String
-    let model: AppModel
 
     var body: some View {
         switch item {
@@ -890,9 +828,7 @@ private struct ConsumerTimelineRow: View {
                 ConsumerBubbleRow(
                     message: message,
                     isDownloadingAttachment: downloadingAttachmentMessageId == message.id,
-                    onOpenAttachment: onOpenAttachment,
-                    serverBaseURL: serverBaseURL,
-                    model: model
+                    onOpenAttachment: onOpenAttachment
                 )
             }
         }
@@ -923,8 +859,6 @@ private struct ConsumerBubbleRow: View {
     let message: ConsumerRenderedMessage
     let isDownloadingAttachment: Bool
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
-    let serverBaseURL: String
-    let model: AppModel
 
     var body: some View {
         HStack {
@@ -943,9 +877,7 @@ private struct ConsumerBubbleRow: View {
                 ConsumerMessageBubble(
                     message: message,
                     isDownloadingAttachment: isDownloadingAttachment,
-                    onOpenAttachment: onOpenAttachment,
-                    serverBaseURL: serverBaseURL,
-                    model: model
+                    onOpenAttachment: onOpenAttachment
                 )
             }
             .frame(maxWidth: .infinity, alignment: message.isOutgoing ? .trailing : .leading)
@@ -962,24 +894,20 @@ private struct ConsumerMessageBubble: View {
     let message: ConsumerRenderedMessage
     let isDownloadingAttachment: Bool
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
-    let serverBaseURL: String
-    let model: AppModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             switch message.contentType {
             case .text:
-                ConsumerSelectableMessageText(
-                    text: message.primaryText,
-                    textColor: message.isOutgoing ? .white : .label
-                )
+                Text(message.primaryText)
+                    .font(.body)
+                    .foregroundStyle(message.isOutgoing ? .white : .primary)
+                    .textSelection(.enabled)
             case .attachment:
                 ConsumerAttachmentBubbleContent(
                     message: message,
                     isDownloading: isDownloadingAttachment,
-                    onOpenAttachment: onOpenAttachment,
-                    serverBaseURL: serverBaseURL,
-                    model: model
+                    onOpenAttachment: onOpenAttachment
                 )
             case .reaction, .receipt, .chatEvent:
                 EmptyView()
@@ -987,22 +915,22 @@ private struct ConsumerMessageBubble: View {
 
             HStack {
                 Spacer(minLength: 0)
-                VStack(alignment: .trailing, spacing: 3) {
-                    if let receiptStatusText = message.receiptStatusText {
-                        Text(receiptStatusText)
+                HStack(spacing: 4) {
+                    if let receiptStatus = message.receiptStatus, message.isOutgoing {
+                        Image(systemName: receiptStatus.systemImageName)
                             .font(.caption2.weight(.semibold))
-                            .foregroundStyle(message.isOutgoing ? .white.opacity(0.9) : .secondary)
                     }
+
                     Text(message.createdAtDate.formatted(date: .omitted, time: .shortened))
                         .font(.caption2.weight(.medium))
                         .monospacedDigit()
-                        .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
                 }
+                .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
-        .frame(maxWidth: consumerMessageBubbleMaxWidth, alignment: message.isOutgoing ? .trailing : .leading)
+        .frame(maxWidth: 320, alignment: message.isOutgoing ? .trailing : .leading)
         .background(message.isOutgoing ? consumerChatAccent : Color.white.opacity(0.94))
         .clipShape(RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
         .shadow(
@@ -1024,123 +952,40 @@ private struct ConsumerMessageBubble: View {
     }
 }
 
-private struct ConsumerSelectableMessageText: UIViewRepresentable {
-    let text: String
-    let textColor: UIColor
-
-    func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
-        textView.backgroundColor = .clear
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.isScrollEnabled = false
-        textView.adjustsFontForContentSizeCategory = true
-        textView.textContainerInset = .zero
-        textView.textContainer.lineFragmentPadding = 0
-        textView.textContainer.widthTracksTextView = true
-        textView.textContainer.maximumNumberOfLines = 0
-        textView.textContainer.lineBreakMode = .byWordWrapping
-        textView.showsVerticalScrollIndicator = false
-        textView.showsHorizontalScrollIndicator = false
-        textView.setContentCompressionResistancePriority(.required, for: .vertical)
-        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        return textView
-    }
-
-    func updateUIView(_ textView: UITextView, context: Context) {
-        textView.font = UIFont.preferredFont(forTextStyle: .body)
-        textView.text = text
-        textView.textColor = textColor
-        textView.tintColor = textColor
-    }
-
-    func sizeThatFits(
-        _ proposal: ProposedViewSize,
-        uiView: UITextView,
-        context: Context
-    ) -> CGSize? {
-        let fallbackWidth = consumerMessageBubbleMaxWidth - (consumerMessageBubbleHorizontalPadding * 2)
-        let targetWidth = proposal.width ?? uiView.bounds.width.takeIfPositive() ?? fallbackWidth
-        guard targetWidth > 0 else {
-            return nil
-        }
-
-        let measuredSize = uiView.sizeThatFits(
-            CGSize(width: targetWidth, height: .greatestFiniteMagnitude)
-        )
-        return CGSize(width: targetWidth, height: measuredSize.height)
-    }
-}
-
-private extension CGFloat {
-    func takeIfPositive() -> CGFloat? {
-        self > 0 ? self : nil
-    }
-}
-
 private struct ConsumerAttachmentBubbleContent: View {
     let message: ConsumerRenderedMessage
     let isDownloading: Bool
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
-    let serverBaseURL: String
-    let model: AppModel
 
     var body: some View {
         Button {
             onOpenAttachment(message)
         } label: {
-            Group {
-                if isInlineImageAttachment, let attachmentBody = message.attachmentBody {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ConsumerInlineImageAttachmentPreview(
-                            model: model,
-                            serverBaseURL: serverBaseURL,
-                            messageID: message.id,
-                            attachmentBody: attachmentBody,
-                            isOutgoing: message.isOutgoing
-                        )
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(message.primaryText)
-                                .font(.body.weight(.semibold))
-                                .foregroundStyle(message.isOutgoing ? .white : .primary)
-                                .lineLimit(2)
-
-                            Text(isDownloading ? "Decrypting secure attachment..." : (message.secondaryText ?? "Tap to open"))
-                                .font(.caption)
-                                .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
-                                .lineLimit(2)
+            HStack(alignment: .top, spacing: 12) {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(message.isOutgoing ? Color.white.opacity(0.18) : consumerChatAccent.opacity(0.12))
+                    .frame(width: 42, height: 42)
+                    .overlay {
+                        if isDownloading {
+                            ProgressView()
+                                .tint(message.isOutgoing ? .white : consumerChatAccent)
+                        } else {
+                            Image(systemName: attachmentIconName)
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(message.isOutgoing ? .white : consumerChatAccent)
                         }
                     }
-                } else {
-                    HStack(alignment: .top, spacing: 12) {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(message.isOutgoing ? Color.white.opacity(0.18) : consumerChatAccent.opacity(0.12))
-                            .frame(width: 42, height: 42)
-                            .overlay {
-                                if isDownloading {
-                                    ProgressView()
-                                        .tint(message.isOutgoing ? .white : consumerChatAccent)
-                                } else {
-                                    Image(systemName: attachmentIconName)
-                                        .font(.system(size: 18, weight: .semibold))
-                                        .foregroundStyle(message.isOutgoing ? .white : consumerChatAccent)
-                                }
-                            }
 
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(message.primaryText)
-                                .font(.body.weight(.semibold))
-                                .foregroundStyle(message.isOutgoing ? .white : .primary)
-                                .lineLimit(2)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(message.primaryText)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(message.isOutgoing ? .white : .primary)
+                        .lineLimit(2)
 
-                            Text(isDownloading ? "Decrypting secure attachment..." : (message.secondaryText ?? "Tap to open"))
-                                .font(.caption)
-                                .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
-                                .lineLimit(2)
-                        }
-                    }
+                    Text(isDownloading ? "Decrypting secure attachment..." : (message.secondaryText ?? "Tap to open"))
+                        .font(.caption)
+                        .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
+                        .lineLimit(2)
                 }
             }
             .contentShape(Rectangle())
@@ -1151,10 +996,7 @@ private struct ConsumerAttachmentBubbleContent: View {
 
     private var attachmentIconName: String {
         let loweredTitle = message.primaryText.lowercased()
-        if DownloadedAttachmentFile.supportsLocalImagePreview(
-            mimeType: message.attachmentBody?.mimeType,
-            fileName: message.primaryText
-        ) {
+        if loweredTitle.hasSuffix(".jpg") || loweredTitle.hasSuffix(".jpeg") || loweredTitle.hasSuffix(".png") || loweredTitle.hasSuffix(".heic") {
             return "photo"
         }
         if loweredTitle.hasSuffix(".pdf") {
@@ -1162,110 +1004,6 @@ private struct ConsumerAttachmentBubbleContent: View {
         }
         return "paperclip"
     }
-
-    private var isInlineImageAttachment: Bool {
-        DownloadedAttachmentFile.supportsLocalImagePreview(
-            mimeType: message.attachmentBody?.mimeType,
-            fileName: message.primaryText
-        )
-    }
-}
-
-private struct ConsumerInlineImageAttachmentPreview: View {
-    let model: AppModel
-    let serverBaseURL: String
-    let messageID: String
-    let attachmentBody: FfiMessageBody
-    let isOutgoing: Bool
-
-    @State private var previewImage: UIImage?
-    @State private var isLoading = true
-    @State private var hasFailed = false
-
-    var body: some View {
-        let previewSize = inlineAttachmentPreviewSize(
-            widthPx: attachmentBody.widthPx.map(Int.init),
-            heightPx: attachmentBody.heightPx.map(Int.init)
-        )
-
-        ZStack {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(isOutgoing ? Color.white.opacity(0.16) : consumerChatAccent.opacity(0.1))
-
-            if let previewImage {
-                Image(uiImage: previewImage)
-                    .resizable()
-                    .scaledToFit()
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            } else if isLoading {
-                ProgressView()
-                    .tint(isOutgoing ? .white : consumerChatAccent)
-            } else {
-                Image(systemName: "photo")
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundStyle(isOutgoing ? .white : consumerChatAccent)
-            }
-        }
-        .frame(width: previewSize.width, height: previewSize.height)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .task(id: messageID) {
-            await loadPreview()
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if hasFailed {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.white)
-                    .padding(8)
-            }
-        }
-    }
-
-    private func loadPreview() async {
-        isLoading = true
-        hasFailed = false
-        previewImage = nil
-
-        do {
-            let attachmentFile = try await model.resolveAttachmentFile(
-                baseURLString: serverBaseURL,
-                body: attachmentBody
-            )
-            previewImage = UIImage(contentsOfFile: attachmentFile.fileURL.path)
-            hasFailed = previewImage == nil
-        } catch {
-            previewImage = nil
-            hasFailed = true
-        }
-
-        isLoading = false
-    }
-}
-
-private func inlineAttachmentPreviewSize(widthPx: Int?, heightPx: Int?) -> CGSize {
-    let maxLandscapeWidth: CGFloat = 244
-    let maxPortraitHeight: CGFloat = 228
-    let minWidth: CGFloat = 132
-    let minHeight: CGFloat = 112
-
-    let ratio: CGFloat
-    if let widthPx, let heightPx, widthPx > 0, heightPx > 0 {
-        ratio = CGFloat(widthPx) / CGFloat(heightPx)
-    } else {
-        ratio = 4 / 3
-    }
-
-    if ratio >= 1 {
-        return CGSize(
-            width: maxLandscapeWidth,
-            height: max(minHeight, min(maxPortraitHeight, maxLandscapeWidth / ratio))
-        )
-    }
-
-    return CGSize(
-        width: max(minWidth, min(maxLandscapeWidth, maxPortraitHeight * ratio)),
-        height: maxPortraitHeight
-    )
 }
 
 private struct ConsumerSystemEventRow: View {
@@ -1303,99 +1041,6 @@ private struct AttachmentActivitySheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-
-private struct AttachmentPreviewSheet: UIViewControllerRepresentable {
-    let attachment: DownloadedAttachmentFile
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(attachment: attachment)
-    }
-
-    func makeUIViewController(context: Context) -> QLPreviewController {
-        let controller = QLPreviewController()
-        controller.dataSource = context.coordinator
-        return controller
-    }
-
-    func updateUIViewController(_ uiViewController: QLPreviewController, context: Context) {
-        context.coordinator.attachment = attachment
-        uiViewController.reloadData()
-    }
-
-    final class Coordinator: NSObject, QLPreviewControllerDataSource {
-        var attachment: DownloadedAttachmentFile
-
-        init(attachment: DownloadedAttachmentFile) {
-            self.attachment = attachment
-        }
-
-        func numberOfPreviewItems(in controller: QLPreviewController) -> Int {
-            1
-        }
-
-        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
-            attachment.fileURL as NSURL
-        }
-    }
-}
-
-private extension DownloadedAttachmentFile {
-    var supportsLocalImagePreview: Bool {
-        Self.supportsLocalImagePreview(mimeType: mimeType, fileName: fileName)
-    }
-
-    static func supportsLocalImagePreview(mimeType: String?, fileName: String?) -> Bool {
-        LocalImageAttachmentSupport.supports(mimeType: mimeType, fileName: fileName)
-    }
-}
-
-private enum LocalImageAttachmentSupport {
-    private static let mimeTypes: Set<String> = [
-        "image/jpeg",
-        "image/jpg",
-        "image/png",
-        "image/gif",
-        "image/webp",
-        "image/heif",
-        "image/heic",
-        "image/heif-sequence",
-        "image/heic-sequence",
-    ]
-
-    private static let fileExtensions: Set<String> = [
-        "jpg",
-        "jpeg",
-        "png",
-        "gif",
-        "webp",
-        "heif",
-        "heic",
-    ]
-
-    static func supports(mimeType: String?, fileName: String?) -> Bool {
-        if let normalizedMimeType = mimeType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-           mimeTypes.contains(normalizedMimeType) {
-            return true
-        }
-
-        if let fileName {
-            let fileExtension = URL(fileURLWithPath: fileName)
-                .pathExtension
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-            if fileExtensions.contains(fileExtension) {
-                return true
-            }
-        }
-
-        if let fileName,
-           fileExtensions.contains(fileName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) {
-            return true
-        }
-
-        return false
-    }
 }
 
 private extension ContentType {

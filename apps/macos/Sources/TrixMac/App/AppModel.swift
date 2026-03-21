@@ -88,7 +88,19 @@ final class AppModel: ObservableObject {
     private var accessToken: String?
     private var didStart = false
     private var backgroundRefreshTask: Task<Void, Never>?
+    private var foregroundRealtimeTask: Task<Void, Never>?
+    private var foregroundRealtimeTaskID: UUID?
+    private var foregroundRealtimeAccessToken: String?
+    private var foregroundRealtimeBaseURLString: String?
+    private var foregroundRealtimeAccountID: UUID?
     private var isApplicationActive = true
+    private static let foregroundRealtimeConfig = FfiRealtimeConfig(
+        inboxLimit: 100,
+        inboxLeaseTtlSeconds: 30,
+        pollIntervalMs: 750,
+        websocketRetryDelayMs: 3_000
+    )
+    private static let foregroundRealtimeRetryDelayNanoseconds: UInt64 = 3_000_000_000
 
     init(
         sessionStore: SessionStore = SessionStore(),
@@ -115,6 +127,7 @@ final class AppModel: ObservableObject {
 
     deinit {
         backgroundRefreshTask?.cancel()
+        foregroundRealtimeTask?.cancel()
     }
 
     var isAuthenticated: Bool {
@@ -311,8 +324,11 @@ final class AppModel: ObservableObject {
         if isActive {
             Task {
                 await refreshNotificationPermissionState()
+                restartForegroundRealtimeLoopIfNeeded()
                 await refreshInbox(background: false, suppressErrors: true)
             }
+        } else {
+            stopForegroundRealtimeLoop()
         }
     }
 
@@ -1805,6 +1821,7 @@ final class AppModel: ObservableObject {
             accessToken: accessToken,
             accountId: loadedProfile.accountId
         )
+        restartForegroundRealtimeLoopIfNeeded()
 
         if let preferredChatID = resolvedWorkspaceSelection(
             selectionPreference: selectionPreference,
@@ -1949,6 +1966,7 @@ final class AppModel: ObservableObject {
             if let selfAccountId {
                 try await markSelectedChatReadIfNeeded(
                     client: client,
+                    accessToken: accessToken,
                     accountId: selfAccountId,
                     chatId: chatId,
                     timelineItems: resolvedLocalTimelineItems
@@ -2033,6 +2051,7 @@ final class AppModel: ObservableObject {
     }
 
     private func clearWorkspaceData() {
+        stopForegroundRealtimeLoop()
         currentAccount = nil
         devices = []
         chats = []
@@ -2513,7 +2532,10 @@ final class AppModel: ObservableObject {
         }
 
         if isApplicationActive {
-            await refreshInbox(background: false, suppressErrors: true)
+            restartForegroundRealtimeLoopIfNeeded()
+            if foregroundRealtimeTask == nil {
+                await refreshInbox(background: false, suppressErrors: true)
+            }
             return
         }
 
@@ -2555,6 +2577,193 @@ final class AppModel: ObservableObject {
                 title: chatTitle,
                 body: body
             )
+        }
+    }
+
+    private func restartForegroundRealtimeLoopIfNeeded() {
+        guard isApplicationActive,
+              isAuthenticated,
+              let accessToken,
+              let accountId = currentAccount?.accountId ?? persistedSession?.accountId
+        else {
+            stopForegroundRealtimeLoop()
+            return
+        }
+
+        let rawBaseURLString = persistedSession?.baseURLString ?? serverBaseURLString
+        guard let baseURL = ServerEndpoint.normalizedURL(from: rawBaseURLString) else {
+            stopForegroundRealtimeLoop()
+            return
+        }
+        let normalizedBaseURLString = baseURL.absoluteString
+
+        if foregroundRealtimeTask != nil,
+           foregroundRealtimeAccessToken == accessToken,
+           foregroundRealtimeBaseURLString == normalizedBaseURLString,
+           foregroundRealtimeAccountID == accountId {
+            return
+        }
+
+        stopForegroundRealtimeLoop()
+        foregroundRealtimeAccessToken = accessToken
+        foregroundRealtimeBaseURLString = normalizedBaseURLString
+        foregroundRealtimeAccountID = accountId
+
+        let taskID = UUID()
+        foregroundRealtimeTaskID = taskID
+        let realtimeConfig = Self.foregroundRealtimeConfig
+        let retryDelayNanoseconds = Self.foregroundRealtimeRetryDelayNanoseconds
+        let realtimeBaseURLString = normalizedBaseURLString
+
+        foregroundRealtimeTask = Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else {
+                return
+            }
+
+            let ffiClient: FfiServerApiClient
+            let realtimeDriver: FfiRealtimeDriver
+            let storePaths: WorkspaceStorePaths
+            let historyStore: FfiLocalHistoryStore
+            let syncCoordinator: FfiSyncCoordinator
+
+            do {
+                ffiClient = try FfiServerApiClient(baseUrl: normalizedBaseURLString)
+                try ffiClient.setAccessToken(accessToken: accessToken)
+                realtimeDriver = try FfiRealtimeDriver.withConfig(config: realtimeConfig)
+                storePaths = try WorkspaceStorePaths.forAccount(accountId)
+                historyStore = try FfiLocalHistoryStore.newPersistent(databasePath: storePaths.localHistoryURL.path)
+                syncCoordinator = try FfiSyncCoordinator.newPersistent(statePath: storePaths.syncStateURL.path)
+            } catch {
+                await self.finishForegroundRealtimeLoop(taskID: taskID)
+                return
+            }
+
+            var websocket: FfiServerWebSocketClient?
+
+            func closeSocket() {
+                guard let current = websocket else {
+                    return
+                }
+                try? current.closeSocket()
+                websocket = nil
+            }
+
+            while !Task.isCancelled {
+                do {
+                    let activeWebSocket: FfiServerWebSocketClient
+                    if let websocket {
+                        activeWebSocket = websocket
+                    } else {
+                        let created = try ffiClient.connectWebsocket()
+                        websocket = created
+                        activeWebSocket = created
+                    }
+
+                    guard let event = try realtimeDriver.nextWebsocketEvent(
+                        websocket: activeWebSocket,
+                        coordinator: syncCoordinator,
+                        store: historyStore,
+                        autoAck: true
+                    ) else {
+                        closeSocket()
+                        if Task.isCancelled {
+                            break
+                        }
+                        try? await Task.sleep(nanoseconds: retryDelayNanoseconds)
+                        continue
+                    }
+
+                    let shouldContinue = await self.handleForegroundRealtimeEvent(
+                        baseURLString: realtimeBaseURLString,
+                        accessToken: accessToken,
+                        accountId: accountId,
+                        event: event
+                    )
+                    if !shouldContinue {
+                        break
+                    }
+                } catch is CancellationError {
+                    break
+                } catch {
+                    closeSocket()
+                    if Task.isCancelled {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: retryDelayNanoseconds)
+                }
+            }
+
+            closeSocket()
+            await self.finishForegroundRealtimeLoop(taskID: taskID)
+        }
+    }
+
+    private func stopForegroundRealtimeLoop() {
+        foregroundRealtimeTask?.cancel()
+        foregroundRealtimeTask = nil
+        foregroundRealtimeTaskID = nil
+        foregroundRealtimeAccessToken = nil
+        foregroundRealtimeBaseURLString = nil
+        foregroundRealtimeAccountID = nil
+    }
+
+    private func finishForegroundRealtimeLoop(taskID: UUID) {
+        guard foregroundRealtimeTaskID == taskID else {
+            return
+        }
+
+        foregroundRealtimeTask = nil
+        foregroundRealtimeTaskID = nil
+        foregroundRealtimeAccessToken = nil
+        foregroundRealtimeBaseURLString = nil
+        foregroundRealtimeAccountID = nil
+    }
+
+    private func handleForegroundRealtimeEvent(
+        baseURLString: String,
+        accessToken: String,
+        accountId: UUID,
+        event: FfiRealtimeEvent
+    ) async -> Bool {
+        let ackedInboxIDs = Array(Set(event.outboundAckInboxIds + event.serverAckedInboxIds)).sorted()
+        if !ackedInboxIDs.isEmpty {
+            let acknowledgedSet = Set(ackedInboxIDs)
+            inboxItems.removeAll { acknowledgedSet.contains($0.inboxId) }
+            lastAckedInboxIDs = ackedInboxIDs
+        }
+
+        switch event.kind {
+        case .hello, .pong:
+            return true
+        case .inboxItems, .acked:
+            let changedChatIDs = Set((event.report?.changedChatIds ?? []).compactMap(UUID.init(uuidString:)))
+            guard let client = makeClient(baseURLString: baseURLString) else {
+                return true
+            }
+
+            do {
+                let storePaths = try workspaceStorePaths(for: accountId)
+                let syncState = try await client.fetchSyncStateSnapshot(statePath: storePaths.syncStateURL)
+                applySyncStateSnapshot(syncState)
+                try await refreshLocalMessengerState(client: client, accountId: accountId)
+                try await reconcileSelectedChatAfterLocalStateUpdate(
+                    client: client,
+                    accessToken: accessToken,
+                    changedChatIDs: changedChatIDs
+                )
+            } catch let error as TrixAPIError {
+                lastErrorMessage = error.userFacingMessage
+            } catch {
+                lastErrorMessage = error.userFacingMessage
+            }
+            return true
+        case .error, .disconnected:
+            return true
+        case .sessionReplaced:
+            lastErrorMessage = event.sessionReplacedReason?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                ? event.sessionReplacedReason
+                : "Эта сессия была заменена другим клиентом."
+            return false
         }
     }
 
@@ -2702,6 +2911,7 @@ final class AppModel: ObservableObject {
 
     private func markSelectedChatReadIfNeeded(
         client: TrixAPIClient,
+        accessToken: String,
         accountId: UUID,
         chatId: UUID,
         timelineItems: [LocalTimelineItem]
@@ -2710,6 +2920,7 @@ final class AppModel: ObservableObject {
             return
         }
 
+        let previousReadCursor = selectedChatReadState?.readCursorServerSeq ?? 0
         if let selectedChatReadState,
            selectedChatReadState.unreadCount == 0,
            selectedChatReadState.readCursorServerSeq >= latestServerSeq {
@@ -2745,6 +2956,55 @@ final class AppModel: ObservableObject {
                 participantProfiles: existingItem.participantProfiles
             )
         }
+
+        guard updatedReadState.readCursorServerSeq > 0,
+              updatedReadState.readCursorServerSeq > previousReadCursor,
+              let senderDeviceID = currentDeviceID,
+              let receiptTargetMessageID = readReceiptTargetMessageId(
+                timelineItems: timelineItems,
+                throughServerSeq: updatedReadState.readCursorServerSeq,
+                previousReadCursorServerSeq: previousReadCursor
+              )
+        else {
+            return
+        }
+
+        do {
+            let identity = try loadStoredIdentity()
+            _ = try await client.sendMessageBody(
+                accessToken: accessToken,
+                databasePath: storePaths.localHistoryURL,
+                statePath: storePaths.syncStateURL,
+                mlsStorageRoot: storePaths.mlsStateRootURL,
+                credentialIdentity: identity.storedIdentity.credentialIdentity,
+                senderAccountId: accountId,
+                senderDeviceId: senderDeviceID,
+                chatId: chatId,
+                body: .receipt(
+                    targetMessageId: receiptTargetMessageID,
+                    receiptAtUnix: UInt64(Date().timeIntervalSince1970)
+                )
+            )
+        } catch {
+            // Read receipts are best-effort; keep the chat usable even if they fail.
+        }
+    }
+
+    private func readReceiptTargetMessageId(
+        timelineItems: [LocalTimelineItem],
+        throughServerSeq: UInt64,
+        previousReadCursorServerSeq: UInt64
+    ) -> UUID? {
+        timelineItems
+            .reversed()
+            .first { item in
+                !item.isOutgoing &&
+                    item.serverSeq <= throughServerSeq &&
+                    item.serverSeq > previousReadCursorServerSeq &&
+                    item.contentType != .receipt &&
+                    item.body?.kind != .receipt
+            }?
+            .messageId
     }
 
     private func mergeInboxItems(_ newItems: [InboxItem], autoAdvanceCursor: Bool) {
