@@ -786,6 +786,33 @@ struct TypedMessageBody: Sendable {
             eventJson: nil
         )
     }
+
+    static func receipt(
+        targetMessageId: UUID,
+        receiptType: ReceiptType = .read,
+        receiptAtUnix: UInt64
+    ) -> TypedMessageBody {
+        TypedMessageBody(
+            kind: .receipt,
+            text: nil,
+            targetMessageId: targetMessageId,
+            emoji: nil,
+            reactionAction: nil,
+            receiptType: receiptType,
+            receiptAtUnix: receiptAtUnix,
+            blobId: nil,
+            mimeType: nil,
+            sizeBytes: nil,
+            sha256: nil,
+            fileName: nil,
+            widthPx: nil,
+            heightPx: nil,
+            fileKey: nil,
+            nonce: nil,
+            eventType: nil,
+            eventJson: nil
+        )
+    }
 }
 
 struct LocalProjectedMessage: Identifiable, Sendable {
@@ -1128,6 +1155,32 @@ struct MessageEnvelope: Codable, Identifiable {
 
     var aadSummary: String {
         aadJson.isEmpty ? "No AAD" : "\(aadJson.count) AAD field\(aadJson.count == 1 ? "" : "s")"
+    }
+}
+
+enum OutboxStatus: String, Sendable {
+    case pending
+    case failed
+
+    var label: String {
+        rawValue.capitalized
+    }
+}
+
+struct LocalOutboxItem: Identifiable, Sendable {
+    let messageId: UUID
+    let chatId: UUID
+    let senderAccountId: UUID
+    let senderDeviceId: UUID
+    let body: TypedMessageBody?
+    let queuedAtUnix: UInt64
+    let status: OutboxStatus
+    let failureMessage: String?
+
+    var id: UUID { messageId }
+
+    var queuedAt: Date {
+        Date(timeIntervalSince1970: TimeInterval(queuedAtUnix))
     }
 }
 

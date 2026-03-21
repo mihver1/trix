@@ -837,6 +837,118 @@ enum TrixCorePersistentBridge {
         return try store.projectedCursor(chatId: chatId)
     }
 
+    static func getChatReadState(
+        identity: LocalDeviceIdentity,
+        chatId: String
+    ) throws -> LocalChatReadStateSnapshot? {
+        let context = try loadOrCreateContext(identity: identity)
+        return try context.historyStore
+            .getChatReadState(chatId: chatId, selfAccountId: identity.accountId)
+            .map(\.trix_localChatReadStateSnapshot)
+    }
+
+    static func getLocalChatListItem(
+        identity: LocalDeviceIdentity,
+        chatId: String
+    ) throws -> LocalChatListItemSnapshot? {
+        let context = try loadOrCreateContext(identity: identity)
+        return try context.historyStore
+            .getLocalChatListItem(chatId: chatId, selfAccountId: identity.accountId)
+            .map(\.trix_localChatListItemSnapshot)
+    }
+
+    static func getProjectedMessages(
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        afterServerSeq: UInt64? = nil,
+        limit: Int = 100
+    ) throws -> [FfiLocalProjectedMessage] {
+        let context = try loadOrCreateContext(identity: identity)
+        return try context.historyStore.getProjectedMessages(
+            chatId: chatId,
+            afterServerSeq: afterServerSeq,
+            limit: UInt32(min(max(limit, 1), 500))
+        )
+    }
+
+    // MARK: - Outbox
+
+    static func enqueueOutboxMessage(
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        messageId: String,
+        body: FfiMessageBody,
+        queuedAtUnix: UInt64
+    ) throws -> FfiLocalOutboxItem {
+        let context = try loadOrCreateContext(identity: identity)
+        let item = try context.historyStore.enqueueOutboxMessage(
+            chatId: chatId,
+            senderAccountId: identity.accountId,
+            senderDeviceId: identity.deviceId,
+            messageId: messageId,
+            body: body,
+            queuedAtUnix: queuedAtUnix
+        )
+        try saveContextState(context)
+        return item
+    }
+
+    static func enqueueOutboxAttachment(
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        messageId: String,
+        attachment: FfiLocalOutboxAttachmentDraft,
+        queuedAtUnix: UInt64
+    ) throws -> FfiLocalOutboxItem {
+        let context = try loadOrCreateContext(identity: identity)
+        let item = try context.historyStore.enqueueOutboxAttachment(
+            chatId: chatId,
+            senderAccountId: identity.accountId,
+            senderDeviceId: identity.deviceId,
+            messageId: messageId,
+            attachment: attachment,
+            queuedAtUnix: queuedAtUnix
+        )
+        try saveContextState(context)
+        return item
+    }
+
+    static func listOutboxMessages(
+        identity: LocalDeviceIdentity,
+        chatId: String? = nil
+    ) throws -> [FfiLocalOutboxItem] {
+        let context = try loadOrCreateContext(identity: identity)
+        return try context.historyStore.listOutboxMessages(chatId: chatId)
+    }
+
+    static func markOutboxFailure(
+        identity: LocalDeviceIdentity,
+        messageId: String,
+        failureMessage: String
+    ) throws {
+        let context = try loadOrCreateContext(identity: identity)
+        try context.historyStore.markOutboxFailure(messageId: messageId, failureMessage: failureMessage)
+        try saveContextState(context)
+    }
+
+    static func clearOutboxFailure(
+        identity: LocalDeviceIdentity,
+        messageId: String
+    ) throws {
+        let context = try loadOrCreateContext(identity: identity)
+        try context.historyStore.clearOutboxFailure(messageId: messageId)
+        try saveContextState(context)
+    }
+
+    static func removeOutboxMessage(
+        identity: LocalDeviceIdentity,
+        messageId: String
+    ) throws {
+        let context = try loadOrCreateContext(identity: identity)
+        try context.historyStore.removeOutboxMessage(messageId: messageId)
+        try saveContextState(context)
+    }
+
     static func deletePersistentState(identity: LocalDeviceIdentity) throws {
         let paths = try PersistentCorePaths(identity: identity)
         guard FileManager.default.fileExists(atPath: paths.rootDirectory.path) else {

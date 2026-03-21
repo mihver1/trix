@@ -1,6 +1,6 @@
 import Foundation
 
-struct WorkspaceStorePaths {
+struct WorkspaceStorePaths: Sendable {
     let rootURL: URL
     let localHistoryURL: URL
     let syncStateURL: URL

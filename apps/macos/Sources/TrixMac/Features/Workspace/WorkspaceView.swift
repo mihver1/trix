@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -40,7 +39,6 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
 struct WorkspaceView: View {
     @Environment(\.trixColors) private var colors
     @ObservedObject var model: AppModel
-    @ObservedObject private var diagnosticLogStore = SafeDiagnosticLogStore.shared
     let availableSize: CGSize
     @State private var composerDraft = ""
     @State private var isPresentingCreateChat = false
@@ -55,11 +53,11 @@ struct WorkspaceView: View {
     }
 
     private var timelineUsesLocalData: Bool {
-        !visibleTimelineMessages.isEmpty
+        !presentedTimelineMessages.isEmpty
     }
 
     private var timelineUsesEncryptedFallback: Bool {
-        visibleTimelineMessages.isEmpty && !model.selectedChatHistory.isEmpty
+        presentedTimelineMessages.isEmpty && !presentedHistoryMessages.isEmpty
     }
 
     private var presentationAccountID: UUID? {
@@ -82,44 +80,39 @@ struct WorkspaceView: View {
         model.selectedChatListItem?.chatType ?? model.selectedChatSummary?.chatType
     }
 
-    private var visibleTimelineMessages: [DisplayedLocalTimelineMessage] {
-        let orderedMessages = model.selectedChatTimelineItems.sorted {
-            if $0.serverSeq == $1.serverSeq {
-                return $0.createdAtUnix < $1.createdAtUnix
-            }
-            return $0.serverSeq < $1.serverSeq
-        }
-        let messagesById = Dictionary(uniqueKeysWithValues: orderedMessages.map { ($0.messageId, $0) })
-        var receiptSummaries = [UUID: ReceiptSummaryAccumulator]()
-
-        for message in orderedMessages {
-            guard
-                let body = message.body,
-                body.kind == .receipt,
-                let targetMessageId = body.targetMessageId,
-                let targetMessage = messagesById[targetMessageId],
-                targetMessage.isOutgoing,
-                !message.isOutgoing
-            else {
-                continue
-            }
-
-            let readerLabel = message.senderDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
-            receiptSummaries[targetMessageId, default: ReceiptSummaryAccumulator()]
-                .record(
-                    readerLabel.isEmpty ? shortID(message.senderAccountId) : readerLabel,
-                    receiptType: body.receiptType
-                )
-        }
-
-        return orderedMessages.compactMap { message in
+    private var presentedTimelineMessages: [PresentedTimelineMessage] {
+        var receiptStatusByMessageID: [UUID: WorkspaceMessageReceiptStatus] = [:]
+        let visibleMessages = model.selectedChatTimelineItems.compactMap { message -> LocalTimelineItem? in
             guard !isReceiptTimelineMessage(message) else {
+                if let targetMessageID = message.body?.targetMessageId {
+                    receiptStatusByMessageID[targetMessageID] = mergeReceiptStatus(
+                        receiptStatusByMessageID[targetMessageID],
+                        with: receiptStatus(for: message) ?? .delivered
+                    )
+                }
                 return nil
             }
 
-            return DisplayedLocalTimelineMessage(
+            return message
+        }
+
+        return visibleMessages.map { message in
+            PresentedTimelineMessage(
                 message: message,
-                receiptStatusText: receiptSummaries[message.messageId]?.summaryText
+                receiptStatus: message.isOutgoing ? receiptStatusByMessageID[message.messageId] : nil
+            )
+        }
+    }
+
+    private var presentedHistoryMessages: [PresentedHistoryMessage] {
+        model.selectedChatHistory.compactMap { message in
+            guard message.contentType != .receipt else {
+                return nil
+            }
+
+            return PresentedHistoryMessage(
+                message: message,
+                isOutgoing: presentationAccountID.map { $0 == message.senderAccountId } ?? false
             )
         }
     }
@@ -143,9 +136,6 @@ struct WorkspaceView: View {
             }
             .sheet(isPresented: $isPresentingSettings) {
                 settingsSheet
-            }
-            .sheet(item: $model.previewedAttachment) { attachment in
-                AttachmentPreviewSheet(attachment: attachment)
             }
             .fileImporter(
                 isPresented: $isImportingAttachment,
@@ -202,12 +192,6 @@ struct WorkspaceView: View {
     private func messengerColumn(_ currentAccount: AccountProfileResponse) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             conversationHeader
-
-            if let message = model.lastErrorMessage {
-                ErrorStrip(message: message) {
-                    model.dismissError()
-                }
-            }
 
             if let selectedChatListItem = model.selectedChatListItem ?? fallbackSelectedChatListItem(currentAccountID: currentAccount.accountId) {
                 VStack(alignment: .leading, spacing: 16) {
@@ -604,7 +588,6 @@ struct WorkspaceView: View {
     private var advancedSettingsPanel: some View {
         VStack(alignment: .leading, spacing: 20) {
             controlSummaryPanel
-            diagnosticLogsPanel
 
             if prefersSingleColumn {
                 operationsColumn
@@ -846,51 +829,6 @@ struct WorkspaceView: View {
                     label: "\(model.historySyncJobs.count) history sync job\(model.historySyncJobs.count == 1 ? "" : "s")",
                     tone: .surface
                 )
-            }
-        }
-    }
-
-    private var diagnosticLogsPanel: some View {
-        TrixPanel(
-            title: "Client Logs",
-            subtitle: "Safe local diagnostics for sync, device actions, memberships, and failures. No plaintext messages or decrypted payloads are recorded."
-        ) {
-            VStack(alignment: .leading, spacing: 14) {
-                Text(diagnosticLogStore.activeLogURL.path)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(colors.inkMuted)
-                    .textSelection(.enabled)
-
-                HStack(spacing: 10) {
-                    Button("Reload") {
-                        diagnosticLogStore.reload()
-                    }
-                    .buttonStyle(TrixActionButtonStyle(tone: .secondary))
-
-                    Button("Clear") {
-                        diagnosticLogStore.clear()
-                    }
-                    .buttonStyle(TrixActionButtonStyle(tone: .ghost))
-                }
-
-                if diagnosticLogStore.entries.isEmpty {
-                    Text("No safe client logs yet.")
-                        .font(.footnote)
-                        .foregroundStyle(colors.inkMuted)
-                } else {
-                    ScrollView(.vertical, showsIndicators: true) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(Array(diagnosticLogStore.entries.reversed())) { entry in
-                                Text(entry.line)
-                                    .font(.system(.caption, design: .monospaced))
-                                    .foregroundStyle(colors.ink)
-                                    .textSelection(.enabled)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
-                    }
-                    .frame(minHeight: 180, maxHeight: 260)
-                }
             }
         }
     }
@@ -1342,12 +1280,15 @@ struct WorkspaceView: View {
                             Text("Loading history…")
                                 .foregroundStyle(colors.inkMuted)
                         }
-                    } else if model.selectedChatHistory.isEmpty {
+                    } else if presentedHistoryMessages.isEmpty {
                         EmptyWorkspaceLabel("This chat has no server-stored messages yet.")
                     } else {
                         VStack(alignment: .leading, spacing: 12) {
-                            ForEach(model.selectedChatHistory) { message in
-                                MessageHistoryRow(message: message)
+                            ForEach(presentedHistoryMessages) { message in
+                                MessageHistoryRow(
+                                    message: message.message,
+                                    isOutgoing: message.isOutgoing
+                                )
                             }
                         }
                     }
@@ -1383,7 +1324,7 @@ struct WorkspaceView: View {
 
     private func conversationTimeline() -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            if model.isLoadingSelectedChat && visibleTimelineMessages.isEmpty && model.selectedChatHistory.isEmpty {
+            if model.isLoadingSelectedChat && model.selectedChatTimelineItems.isEmpty && model.selectedChatHistory.isEmpty {
                 HStack(spacing: 12) {
                     ProgressView()
                     Text("Loading conversation…")
@@ -1400,10 +1341,10 @@ struct WorkspaceView: View {
                             .foregroundStyle(colors.inkMuted)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        ForEach(model.selectedChatHistory) { message in
+                        ForEach(presentedHistoryMessages) { message in
                             MessageHistoryRow(
-                                message: message,
-                                isOutgoing: presentationAccountID.map { $0 == message.senderAccountId } ?? false
+                                message: message.message,
+                                isOutgoing: message.isOutgoing
                             )
                         }
 
@@ -1507,12 +1448,11 @@ struct WorkspaceView: View {
     private var timelineScrollContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                ForEach(visibleTimelineMessages) { entry in
+                ForEach(presentedTimelineMessages) { entry in
                     LocalTimelineMessageRow(
-                        model: model,
                         message: entry.message,
-                        receiptStatusText: entry.receiptStatusText,
                         isOutgoing: entry.message.isOutgoing,
+                        receiptStatus: entry.receiptStatus,
                         isDownloadingAttachment: model.downloadingAttachmentMessageIDs.contains(entry.message.messageId),
                         openAttachment: entry.message.body?.kind == .attachment ? {
                             Task {
@@ -1551,11 +1491,11 @@ struct WorkspaceView: View {
 
     private var timelineBadgeLabel: String {
         if timelineUsesLocalData {
-            let total = visibleTimelineMessages.count + model.selectedPendingOutgoingMessages.count
+            let total = presentedTimelineMessages.count + model.selectedPendingOutgoingMessages.count
             return "\(total) message\(total == 1 ? "" : "s")"
         }
         if timelineUsesEncryptedFallback {
-            return "\(model.selectedChatHistory.count) encrypted"
+            return "\(presentedHistoryMessages.count) encrypted"
         }
         if !model.selectedPendingOutgoingMessages.isEmpty {
             return "\(model.selectedPendingOutgoingMessages.count) sending"
@@ -1567,6 +1507,7 @@ struct WorkspaceView: View {
         guard let summary = model.selectedChatSummary else {
             return nil
         }
+        let latestPresentedMessage = presentedTimelineMessages.last?.message
 
         return LocalChatListItem(
             chatId: summary.chatId,
@@ -1577,18 +1518,33 @@ struct WorkspaceView: View {
             epoch: summary.epoch,
             pendingMessageCount: 0,
             unreadCount: model.selectedChatReadState?.unreadCount ?? 0,
-            previewText: visibleTimelineMessages.last?.message.previewText,
-            previewSenderAccountId: visibleTimelineMessages.last?.message.senderAccountId,
-            previewSenderDisplayName: visibleTimelineMessages.last?.message.senderDisplayName,
-            previewIsOutgoing: visibleTimelineMessages.last?.message.isOutgoing,
-            previewServerSeq: visibleTimelineMessages.last?.message.serverSeq,
-            previewCreatedAtUnix: visibleTimelineMessages.last?.message.createdAtUnix,
+            previewText: latestPresentedMessage?.previewText,
+            previewSenderAccountId: latestPresentedMessage?.senderAccountId,
+            previewSenderDisplayName: latestPresentedMessage?.senderDisplayName,
+            previewIsOutgoing: latestPresentedMessage?.isOutgoing,
+            previewServerSeq: latestPresentedMessage?.serverSeq,
+            previewCreatedAtUnix: latestPresentedMessage?.createdAtUnix,
             participantProfiles: summary.participantProfiles
         )
     }
 
     private func isReceiptTimelineMessage(_ message: LocalTimelineItem) -> Bool {
         message.contentType == .receipt || message.body?.kind == .receipt
+    }
+
+    private func receiptStatus(for message: LocalTimelineItem) -> WorkspaceMessageReceiptStatus? {
+        guard isReceiptTimelineMessage(message) else {
+            return nil
+        }
+
+        return message.body?.receiptType == .read ? .read : .delivered
+    }
+
+    private func mergeReceiptStatus(
+        _ current: WorkspaceMessageReceiptStatus?,
+        with next: WorkspaceMessageReceiptStatus
+    ) -> WorkspaceMessageReceiptStatus {
+        current.map { max($0, next) } ?? next
     }
 
     private func shortID(_ uuid: UUID) -> String {
@@ -2817,6 +2773,38 @@ private struct InboxItemRow: View {
     }()
 }
 
+private enum WorkspaceMessageReceiptStatus: Int, Comparable {
+    case delivered = 0
+    case read = 1
+
+    static func < (lhs: WorkspaceMessageReceiptStatus, rhs: WorkspaceMessageReceiptStatus) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+
+    var systemImageName: String {
+        switch self {
+        case .delivered:
+            return "checkmark"
+        case .read:
+            return "checkmark.double"
+        }
+    }
+}
+
+private struct PresentedTimelineMessage: Identifiable {
+    let message: LocalTimelineItem
+    let receiptStatus: WorkspaceMessageReceiptStatus?
+
+    var id: UUID { message.messageId }
+}
+
+private struct PresentedHistoryMessage: Identifiable {
+    let message: MessageEnvelope
+    let isOutgoing: Bool
+
+    var id: UUID { message.messageId }
+}
+
 private struct MessageHistoryRow: View {
     @Environment(\.trixColors) private var colors
     let message: MessageEnvelope
@@ -3100,27 +3088,22 @@ private struct PendingOutgoingMessageRow: View {
 
 private struct LocalTimelineMessageRow: View {
     @Environment(\.trixColors) private var colors
-    let model: AppModel
     let message: LocalTimelineItem
-    let receiptStatusText: String?
     let isOutgoing: Bool
+    let receiptStatus: WorkspaceMessageReceiptStatus?
     let isDownloadingAttachment: Bool
     let openAttachment: (() -> Void)?
-    @State private var inlineAttachmentURL: URL?
-    @State private var inlineAttachmentLoadFailed = false
 
     init(
-        model: AppModel,
         message: LocalTimelineItem,
-        receiptStatusText: String? = nil,
         isOutgoing: Bool = false,
+        receiptStatus: WorkspaceMessageReceiptStatus? = nil,
         isDownloadingAttachment: Bool = false,
         openAttachment: (() -> Void)? = nil
     ) {
-        self.model = model
         self.message = message
-        self.receiptStatusText = receiptStatusText
         self.isOutgoing = isOutgoing
+        self.receiptStatus = receiptStatus
         self.isDownloadingAttachment = isDownloadingAttachment
         self.openAttachment = openAttachment
     }
@@ -3139,62 +3122,47 @@ private struct LocalTimelineMessageRow: View {
 
                     Spacer()
 
-                    Text(Self.relativeFormatter.localizedString(for: message.createdAt, relativeTo: .now))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(colors.inkMuted)
+                    HStack(spacing: 6) {
+                        if isOutgoing, let receiptStatus {
+                            Image(systemName: receiptStatus.systemImageName)
+                                .font(.caption.weight(.semibold))
+                        }
+
+                        Text(Self.relativeFormatter.localizedString(for: message.createdAt, relativeTo: .now))
+                            .font(.caption.weight(.semibold))
+                    }
+                    .foregroundStyle(colors.inkMuted)
                 }
 
                 if let body = message.body, body.kind == .attachment {
-                    VStack(alignment: .leading, spacing: 12) {
-                        if LocalImageAttachmentSupport.supports(
-                            mimeType: body.mimeType,
-                            fileName: body.fileName
-                        ) {
-                            AttachmentInlinePreview(
-                                fileURL: inlineAttachmentURL,
-                                attachmentBody: body,
-                                isOutgoing: isOutgoing,
-                                hasFailed: inlineAttachmentLoadFailed,
-                                openAttachment: openAttachment
-                            )
+                    HStack(alignment: .center, spacing: 12) {
+                        Image(systemName: body.mimeType?.hasPrefix("image/") == true ? "photo" : "paperclip")
+                            .font(.headline)
+                            .foregroundStyle(colors.accent)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(body.fileName ?? "Attachment")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(colors.ink)
+                            Text(attachmentMeta(body))
+                                .font(.footnote)
+                                .foregroundStyle(colors.inkMuted)
                         }
 
-                        HStack(alignment: .center, spacing: 12) {
-                            Image(systemName: body.mimeType?.hasPrefix("image/") == true ? "photo" : "paperclip")
-                                .font(.headline)
-                                .foregroundStyle(colors.accent)
+                        Spacer(minLength: 12)
 
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(body.fileName ?? "Attachment")
-                                    .font(.body.weight(.semibold))
-                                    .foregroundStyle(colors.ink)
-                                Text(attachmentMeta(body))
-                                    .font(.footnote)
-                                    .foregroundStyle(colors.inkMuted)
+                        if let openAttachment {
+                            Button(action: openAttachment) {
+                                Label(isDownloadingAttachment ? "Opening…" : "Open", systemImage: "arrow.down.circle")
                             }
-
-                            Spacer(minLength: 12)
-
-                            if let openAttachment {
-                                Button(action: openAttachment) {
-                                    Label(isDownloadingAttachment ? "Opening…" : "Open", systemImage: "arrow.down.circle")
-                                }
-                                .buttonStyle(TrixActionButtonStyle(tone: .ghost))
-                                .disabled(isDownloadingAttachment)
-                            }
+                            .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+                            .disabled(isDownloadingAttachment)
                         }
                     }
                 } else {
                     Text(message.bodySummary)
                         .font(.body)
                         .foregroundStyle(message.bodyParseError == nil ? colors.ink : colors.warning)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                if let receiptStatusText {
-                    Text(receiptStatusText)
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(colors.accent)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -3213,9 +3181,6 @@ private struct LocalTimelineMessageRow: View {
             .overlay {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .stroke(bubbleBorder, lineWidth: 1)
-            }
-            .task(id: message.messageId) {
-                await loadInlinePreviewIfNeeded()
             }
 
             if !isOutgoing {
@@ -3254,28 +3219,6 @@ private struct LocalTimelineMessageRow: View {
         .joined(separator: " • ")
     }
 
-    private func loadInlinePreviewIfNeeded() async {
-        guard let body = message.body,
-              body.kind == .attachment,
-              LocalImageAttachmentSupport.supports(mimeType: body.mimeType, fileName: body.fileName) else {
-            inlineAttachmentURL = nil
-            inlineAttachmentLoadFailed = false
-            return
-        }
-
-        inlineAttachmentURL = model.cachedAttachmentURL(for: message.messageId)
-        if inlineAttachmentURL != nil {
-            inlineAttachmentLoadFailed = false
-            return
-        }
-
-        inlineAttachmentURL = await model.ensureCachedAttachmentURL(
-            for: message,
-            reportErrors: false
-        )
-        inlineAttachmentLoadFailed = inlineAttachmentURL == nil
-    }
-
     private static let relativeFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
@@ -3283,132 +3226,6 @@ private struct LocalTimelineMessageRow: View {
     }()
 }
 
-private struct AttachmentInlinePreview: View {
-    @Environment(\.trixColors) private var colors
-    let fileURL: URL?
-    let attachmentBody: TypedMessageBody
-    let isOutgoing: Bool
-    let hasFailed: Bool
-    let openAttachment: (() -> Void)?
-
-    var body: some View {
-        Group {
-            if let openAttachment {
-                Button(action: openAttachment) {
-                    previewBody
-                }
-                .buttonStyle(.plain)
-            } else {
-                previewBody
-            }
-        }
-    }
-
-    private var previewBody: some View {
-        let previewSize = inlineAttachmentPreviewSize(
-            widthPx: attachmentBody.widthPx.map(Int.init),
-            heightPx: attachmentBody.heightPx.map(Int.init)
-        )
-
-        return ZStack {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(isOutgoing ? colors.accent.opacity(0.14) : colors.panel)
-
-            if let fileURL,
-               let image = NSImage(contentsOf: fileURL) {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            } else if hasFailed {
-                Image(systemName: "photo")
-                    .font(.system(size: 30, weight: .semibold))
-                    .foregroundStyle(colors.accent)
-            } else {
-                ProgressView()
-                    .controlSize(.regular)
-            }
-        }
-        .frame(width: previewSize.width, height: previewSize.height)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-    }
-}
-
-private func inlineAttachmentPreviewSize(widthPx: Int?, heightPx: Int?) -> CGSize {
-    let maxLandscapeWidth: CGFloat = 280
-    let maxPortraitHeight: CGFloat = 250
-    let minWidth: CGFloat = 150
-    let minHeight: CGFloat = 120
-
-    let ratio: CGFloat
-    if let widthPx, let heightPx, widthPx > 0, heightPx > 0 {
-        ratio = CGFloat(widthPx) / CGFloat(heightPx)
-    } else {
-        ratio = 4 / 3
-    }
-
-    if ratio >= 1 {
-        return CGSize(
-            width: maxLandscapeWidth,
-            height: max(minHeight, min(maxPortraitHeight, maxLandscapeWidth / ratio))
-        )
-    }
-
-    return CGSize(
-        width: max(minWidth, min(maxLandscapeWidth, maxPortraitHeight * ratio)),
-        height: maxPortraitHeight
-    )
-}
-
-private struct DisplayedLocalTimelineMessage: Identifiable {
-    let message: LocalTimelineItem
-    let receiptStatusText: String?
-
-    var id: UUID { message.id }
-}
-
-private struct ReceiptSummaryAccumulator {
-    private var deliveredReaders: [String] = []
-    private var readReaders: [String] = []
-
-    mutating func record(_ readerLabel: String, receiptType: ReceiptType?) {
-        switch receiptType {
-        case .read:
-            deliveredReaders.removeAll { $0 == readerLabel }
-            if !readReaders.contains(readerLabel) {
-                readReaders.append(readerLabel)
-            }
-        case .delivered, .none:
-            guard !readReaders.contains(readerLabel), !deliveredReaders.contains(readerLabel) else {
-                return
-            }
-            deliveredReaders.append(readerLabel)
-        }
-    }
-
-    var summaryText: String? {
-        if !readReaders.isEmpty {
-            return formatSummary(prefix: "Read by", readers: readReaders)
-        }
-        if !deliveredReaders.isEmpty {
-            return formatSummary(prefix: "Delivered to", readers: deliveredReaders)
-        }
-        return nil
-    }
-
-    private func formatSummary(prefix: String, readers: [String]) -> String {
-        switch readers.count {
-        case 0:
-            return prefix
-        case 1:
-            return "\(prefix) \(readers[0])"
-        case 2:
-            return "\(prefix) \(readers[0]), \(readers[1])"
-        default:
-            return "\(prefix) \(readers[0]), \(readers[1]) +\(readers.count - 2)"
-        }
-    }
-}
 private struct InlineMeta: View {
     @Environment(\.trixColors) private var colors
     let label: String

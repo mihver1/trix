@@ -1,16 +1,11 @@
 package chat.trix.android.feature.chats
 
-import android.graphics.ImageDecoder
 import android.graphics.Rect
 import android.net.Uri
-import android.graphics.drawable.AnimatedImageDrawable
-import android.graphics.drawable.Drawable
-import android.widget.ImageView
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,11 +32,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.AttachFile
-import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Done
+import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.MarkUnreadChatAlt
-import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PersonAddAlt1
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Sync
@@ -49,8 +44,6 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedAssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
@@ -78,11 +71,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -92,9 +83,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import chat.trix.android.R
 import chat.trix.android.core.chat.ChatAttachment
 import chat.trix.android.core.auth.AuthenticatedSession
@@ -106,18 +94,14 @@ import chat.trix.android.core.chat.ChatDiagnostics
 import chat.trix.android.core.chat.ChatOverview
 import chat.trix.android.core.chat.ChatRefreshResult
 import chat.trix.android.core.chat.ChatRepository
+import chat.trix.android.core.chat.ChatReceiptStatus
 import chat.trix.android.core.chat.ChatTimelineMessage
-import chat.trix.android.core.chat.LocalImagePreviewAttachment
-import chat.trix.android.core.chat.supportsLocalImagePreview
 import chat.trix.android.core.ffi.FfiChatType
 import chat.trix.android.ui.adaptive.TrixAdaptiveInfo
 import chat.trix.android.ui.adaptive.TrixFoldPosture
-import java.io.File
 import java.io.IOException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -162,7 +146,6 @@ fun ChatsScreen(
     var groupMembershipErrorMessage by remember(repository) { mutableStateOf<String?>(null) }
     var activeAttachmentMessageId by remember(repository) { mutableStateOf<String?>(null) }
     var attachmentErrorMessage by remember(repository) { mutableStateOf<String?>(null) }
-    var previewAttachment by remember(repository) { mutableStateOf<LocalImagePreviewAttachment?>(null) }
 
     fun openDirectorySheet(config: DirectorySheetConfig) {
         directorySheetConfig = config
@@ -498,11 +481,7 @@ fun ChatsScreen(
         activeAttachmentMessageId = attachment.messageId
         attachmentErrorMessage = null
         try {
-            if (attachment.supportsLocalImagePreview()) {
-                previewAttachment = repository.loadImagePreviewAttachment(attachment)
-            } else {
-                repository.openAttachment(attachment)
-            }
+            repository.openAttachment(attachment)
         } catch (error: IOException) {
             attachmentErrorMessage = error.message ?: "Failed to open attachment"
         } finally {
@@ -589,7 +568,6 @@ fun ChatsScreen(
         if (chatId == null) {
             detailState = ChatsDetailState()
             attachmentErrorMessage = null
-            previewAttachment = null
             return@LaunchedEffect
         }
 
@@ -768,18 +746,15 @@ fun ChatsScreen(
                         }
                     },
                     actions = {
-                        DetailConversationActions(
-                            canManageMembers = selectedConversation?.canManageMembers == true,
+                        NewChatActions(
                             onOpenDirectMessages = {
                                 openDirectorySheet(DirectorySheetConfig(mode = DirectorySheetMode.DIRECT_MESSAGE))
                             },
                             onOpenGroupChats = {
                                 openDirectorySheet(DirectorySheetConfig(mode = DirectorySheetMode.GROUP_CREATE))
                             },
-                            onManageMembers = {
-                                isGroupMembersSheetVisible = true
-                                groupMembershipErrorMessage = null
-                            },
+                        )
+                        RefreshAction(
                             isRefreshing = overviewState.isRefreshing,
                             onRefresh = { coroutineScope.launch { syncChats() } },
                         )
@@ -842,9 +817,6 @@ fun ChatsScreen(
                             openAttachment(attachment)
                         }
                     },
-                    loadInlinePreviewAttachment = { attachment ->
-                        repository.loadImagePreviewAttachment(attachment)
-                    },
                     onShareAttachment = { attachment ->
                         coroutineScope.launch {
                             shareAttachment(attachment)
@@ -879,9 +851,6 @@ fun ChatsScreen(
                             openAttachment(attachment)
                         }
                     },
-                    loadInlinePreviewAttachment = { attachment ->
-                        repository.loadImagePreviewAttachment(attachment)
-                    },
                     onShareAttachment = { attachment ->
                         coroutineScope.launch {
                             shareAttachment(attachment)
@@ -915,9 +884,6 @@ fun ChatsScreen(
                             openAttachment(attachment)
                         }
                     },
-                    loadInlinePreviewAttachment = { attachment ->
-                        repository.loadImagePreviewAttachment(attachment)
-                    },
                     onShareAttachment = { attachment ->
                         coroutineScope.launch {
                             shareAttachment(attachment)
@@ -927,7 +893,6 @@ fun ChatsScreen(
                         isGroupMembersSheetVisible = true
                         groupMembershipErrorMessage = null
                     },
-                    showConversationHeader = false,
                     modifier = contentModifier,
                 )
             }
@@ -942,13 +907,6 @@ fun ChatsScreen(
                 )
             }
         }
-    }
-
-    previewAttachment?.let { attachment ->
-        LocalImageAttachmentPreviewDialog(
-            attachment = attachment,
-            onDismissRequest = { previewAttachment = null },
-        )
     }
 }
 
@@ -969,60 +927,6 @@ private fun NewChatActions(
                 imageVector = Icons.Rounded.Groups,
                 contentDescription = "Create group chat",
             )
-        }
-    }
-}
-
-@Composable
-private fun DetailConversationActions(
-    canManageMembers: Boolean,
-    onOpenDirectMessages: () -> Unit,
-    onOpenGroupChats: () -> Unit,
-    onManageMembers: () -> Unit,
-    isRefreshing: Boolean,
-    onRefresh: () -> Unit,
-) {
-    var isMenuExpanded by remember { mutableStateOf(false) }
-
-    RefreshAction(
-        isRefreshing = isRefreshing,
-        onRefresh = onRefresh,
-    )
-
-    Box {
-        IconButton(onClick = { isMenuExpanded = true }) {
-            Icon(
-                imageVector = Icons.Rounded.MoreVert,
-                contentDescription = "More conversation actions",
-            )
-        }
-        DropdownMenu(
-            expanded = isMenuExpanded,
-            onDismissRequest = { isMenuExpanded = false },
-        ) {
-            DropdownMenuItem(
-                text = { Text("New direct message") },
-                onClick = {
-                    isMenuExpanded = false
-                    onOpenDirectMessages()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("Create group chat") },
-                onClick = {
-                    isMenuExpanded = false
-                    onOpenGroupChats()
-                },
-            )
-            if (canManageMembers) {
-                DropdownMenuItem(
-                    text = { Text("Manage members") },
-                    onClick = {
-                        isMenuExpanded = false
-                        onManageMembers()
-                    },
-                )
-            }
         }
     }
 }
@@ -1604,7 +1508,6 @@ private fun WideConversationLayout(
     onPickAttachment: () -> Unit,
     onSend: () -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
-    loadInlinePreviewAttachment: suspend (ChatAttachment) -> LocalImagePreviewAttachment,
     onShareAttachment: (ChatAttachment) -> Unit,
     onManageMembers: (() -> Unit)?,
     foldPosture: TrixFoldPosture,
@@ -1660,7 +1563,6 @@ private fun WideConversationLayout(
                 onPickAttachment = onPickAttachment,
                 onSend = onSend,
                 onOpenAttachment = onOpenAttachment,
-                loadInlinePreviewAttachment = loadInlinePreviewAttachment,
                 onShareAttachment = onShareAttachment,
                 onManageMembers = onManageMembers,
                 modifier = Modifier
@@ -1685,7 +1587,6 @@ private fun TabletopConversationLayout(
     onPickAttachment: () -> Unit,
     onSend: () -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
-    loadInlinePreviewAttachment: suspend (ChatAttachment) -> LocalImagePreviewAttachment,
     onShareAttachment: (ChatAttachment) -> Unit,
     onManageMembers: (() -> Unit)?,
     modifier: Modifier = Modifier,
@@ -1706,10 +1607,8 @@ private fun TabletopConversationLayout(
             onPickAttachment = onPickAttachment,
             onSend = onSend,
             onOpenAttachment = onOpenAttachment,
-            loadInlinePreviewAttachment = loadInlinePreviewAttachment,
             onShareAttachment = onShareAttachment,
             onManageMembers = onManageMembers,
-            showConversationHeader = true,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
@@ -2031,10 +1930,8 @@ private fun ConversationDetailPane(
     onPickAttachment: () -> Unit,
     onSend: () -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
-    loadInlinePreviewAttachment: suspend (ChatAttachment) -> LocalImagePreviewAttachment,
     onShareAttachment: (ChatAttachment) -> Unit,
     onManageMembers: (() -> Unit)?,
-    showConversationHeader: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     ConversationDetailContent(
@@ -2050,10 +1947,8 @@ private fun ConversationDetailPane(
         onPickAttachment = onPickAttachment,
         onSend = onSend,
         onOpenAttachment = onOpenAttachment,
-        loadInlinePreviewAttachment = loadInlinePreviewAttachment,
         onShareAttachment = onShareAttachment,
         onManageMembers = onManageMembers,
-        showConversationHeader = showConversationHeader,
         modifier = modifier,
         showComposer = true,
         compactHeader = true,
@@ -2074,10 +1969,8 @@ private fun ConversationDetailContent(
     onPickAttachment: () -> Unit,
     onSend: () -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
-    loadInlinePreviewAttachment: suspend (ChatAttachment) -> LocalImagePreviewAttachment,
     onShareAttachment: (ChatAttachment) -> Unit,
     onManageMembers: (() -> Unit)?,
-    showConversationHeader: Boolean,
     modifier: Modifier = Modifier,
     showComposer: Boolean,
     compactHeader: Boolean,
@@ -2087,7 +1980,7 @@ private fun ConversationDetailContent(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surface),
     ) {
-        if (conversation != null && showConversationHeader) {
+        if (conversation != null) {
             Surface(
                 tonalElevation = 1.dp,
                 modifier = Modifier.fillMaxWidth(),
@@ -2150,7 +2043,6 @@ private fun ConversationDetailContent(
                     conversation = conversation,
                     activeAttachmentMessageId = activeAttachmentMessageId,
                     onOpenAttachment = onOpenAttachment,
-                    loadInlinePreviewAttachment = loadInlinePreviewAttachment,
                     onShareAttachment = onShareAttachment,
                     modifier = Modifier
                         .weight(1f)
@@ -2178,7 +2070,6 @@ private fun ConversationDetailContent(
             }
         }
     }
-
 }
 
 @Composable
@@ -2186,7 +2077,6 @@ private fun ConversationTranscript(
     conversation: ChatConversation,
     activeAttachmentMessageId: String?,
     onOpenAttachment: (ChatAttachment) -> Unit,
-    loadInlinePreviewAttachment: suspend (ChatAttachment) -> LocalImagePreviewAttachment,
     onShareAttachment: (ChatAttachment) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -2214,8 +2104,6 @@ private fun ConversationTranscript(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         items(conversation.messages, key = { it.id }) { message ->
-            val attachment = message.attachment
-            val showsInlineAttachmentPreview = attachment?.supportsLocalImagePreview() == true
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = if (message.isMine) Arrangement.End else Arrangement.Start,
@@ -2239,54 +2127,43 @@ private fun ConversationTranscript(
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        if (showsInlineAttachmentPreview) {
-                            InlineImageAttachmentBubble(
-                                attachment = checkNotNull(attachment),
-                                title = message.body,
-                                isBusy = activeAttachmentMessageId == message.id,
-                                onOpenAttachment = onOpenAttachment,
-                                onShareAttachment = onShareAttachment,
-                                loadInlinePreviewAttachment = loadInlinePreviewAttachment,
-                            )
-                        } else {
-                            Text(
-                                text = message.body,
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
-                            if (attachment != null) {
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
+                        Text(
+                            text = message.body,
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                        if (message.attachment != null) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                TextButton(
+                                    onClick = { onOpenAttachment(message.attachment) },
+                                    enabled = activeAttachmentMessageId != message.id,
                                 ) {
-                                    TextButton(
-                                        onClick = { onOpenAttachment(attachment) },
-                                        enabled = activeAttachmentMessageId != message.id,
-                                    ) {
-                                        if (activeAttachmentMessageId == message.id) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(16.dp),
-                                                strokeWidth = 2.dp,
-                                            )
-                                        } else {
-                                            Icon(
-                                                imageVector = Icons.Rounded.FolderOpen,
-                                                contentDescription = null,
-                                            )
-                                        }
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("Open")
-                                    }
-                                    OutlinedButton(
-                                        onClick = { onShareAttachment(attachment) },
-                                        enabled = activeAttachmentMessageId != message.id,
-                                    ) {
+                                    if (activeAttachmentMessageId == message.id) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidth = 2.dp,
+                                        )
+                                    } else {
                                         Icon(
-                                            imageVector = Icons.Rounded.Share,
+                                            imageVector = Icons.Rounded.FolderOpen,
                                             contentDescription = null,
                                         )
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("Share")
                                     }
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Open")
+                                }
+                                OutlinedButton(
+                                    onClick = { onShareAttachment(message.attachment) },
+                                    enabled = activeAttachmentMessageId != message.id,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Share,
+                                        contentDescription = null,
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Share")
                                 }
                             }
                         }
@@ -2297,17 +2174,40 @@ private fun ConversationTranscript(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Text(
-                            text = message.timestampLabel,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (message.isMine && message.receiptStatus != null) {
+                                Icon(
+                                    imageVector = receiptStatusIcon(message.receiptStatus),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = receiptStatusTint(message.receiptStatus),
+                                )
+                            }
+                            Text(
+                                text = message.timestampLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
         }
     }
+}
 
+private fun receiptStatusIcon(status: ChatReceiptStatus) = when (status) {
+    ChatReceiptStatus.DELIVERED -> Icons.Rounded.Done
+    ChatReceiptStatus.READ -> Icons.Rounded.DoneAll
+}
+
+@Composable
+private fun receiptStatusTint(status: ChatReceiptStatus) = when (status) {
+    ChatReceiptStatus.DELIVERED -> MaterialTheme.colorScheme.onSurfaceVariant
+    ChatReceiptStatus.READ -> MaterialTheme.colorScheme.primary
 }
 
 @Composable
@@ -2491,271 +2391,6 @@ internal fun applyPassiveConversationReload(
     )
 }
 
-@Composable
-private fun InlineImageAttachmentBubble(
-    attachment: ChatAttachment,
-    title: String,
-    isBusy: Boolean,
-    onOpenAttachment: (ChatAttachment) -> Unit,
-    onShareAttachment: (ChatAttachment) -> Unit,
-    loadInlinePreviewAttachment: suspend (ChatAttachment) -> LocalImagePreviewAttachment,
-) {
-    val drawableState by produceState(
-        initialValue = ImagePreviewDrawableState(isLoading = true),
-        key1 = attachment.blobId,
-    ) {
-        value = try {
-            val localAttachment = withContext(Dispatchers.IO) {
-                loadInlinePreviewAttachment(attachment)
-            }
-            val drawable = withContext(Dispatchers.IO) {
-                decodeAttachmentPreviewDrawable(File(localAttachment.filePath))
-            }
-            ImagePreviewDrawableState(drawable = drawable)
-        } catch (error: IOException) {
-            ImagePreviewDrawableState(errorMessage = error.message ?: "Failed to load image preview")
-        }
-    }
-    val (previewWidth, previewHeight) = inlineAttachmentPreviewSize(
-        widthPx = attachment.widthPx,
-        heightPx = attachment.heightPx,
-    )
-
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Box(
-            modifier = Modifier
-                .width(previewWidth)
-                .height(previewHeight)
-                .clip(RoundedCornerShape(18.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-                .clickable(enabled = !isBusy) { onOpenAttachment(attachment) },
-            contentAlignment = Alignment.Center,
-        ) {
-            when {
-                drawableState.isLoading -> {
-                    CircularProgressIndicator()
-                }
-
-                drawableState.drawable != null -> {
-                    AndroidView(
-                        factory = { context ->
-                            ImageView(context).apply {
-                                adjustViewBounds = true
-                                scaleType = ImageView.ScaleType.FIT_CENTER
-                                setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                            }
-                        },
-                        update = { imageView ->
-                            imageView.setImageDrawable(drawableState.drawable)
-                            (drawableState.drawable as? AnimatedImageDrawable)?.apply {
-                                repeatCount = AnimatedImageDrawable.REPEAT_INFINITE
-                                start()
-                            }
-                        },
-                        modifier = Modifier.matchParentSize(),
-                    )
-                }
-
-                else -> {
-                    Text(
-                        text = drawableState.errorMessage ?: "Preview unavailable",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
-                }
-            }
-        }
-
-        Text(
-            text = title,
-            style = MaterialTheme.typography.bodyLarge,
-        )
-
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TextButton(
-                onClick = { onOpenAttachment(attachment) },
-                enabled = !isBusy,
-            ) {
-                if (isBusy) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Rounded.FolderOpen,
-                        contentDescription = null,
-                    )
-                }
-                Spacer(Modifier.width(6.dp))
-                Text("Open")
-            }
-            OutlinedButton(
-                onClick = { onShareAttachment(attachment) },
-                enabled = !isBusy,
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Share,
-                    contentDescription = null,
-                )
-                Spacer(Modifier.width(6.dp))
-                Text("Share")
-            }
-        }
-    }
-}
-
-@Composable
-private fun LocalImageAttachmentPreviewDialog(
-    attachment: LocalImagePreviewAttachment,
-    onDismissRequest: () -> Unit,
-) {
-    val drawableState by produceState(
-        initialValue = ImagePreviewDrawableState(isLoading = true),
-        key1 = attachment.filePath,
-    ) {
-        value = try {
-            val drawable = withContext(Dispatchers.IO) {
-                decodeAttachmentPreviewDrawable(File(attachment.filePath))
-            }
-            ImagePreviewDrawableState(drawable = drawable)
-        } catch (error: IOException) {
-            ImagePreviewDrawableState(errorMessage = error.message ?: "Failed to load image preview")
-        }
-    }
-
-    Dialog(
-        onDismissRequest = onDismissRequest,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = Color.Black.copy(alpha = 0.96f),
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 20.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Text(
-                            text = attachment.attachment.fileName ?: "Image attachment",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = Color.White,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = attachment.attachment.mimeType,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.72f),
-                        )
-                    }
-                    TextButton(onClick = onDismissRequest) {
-                        Icon(
-                            imageVector = Icons.Rounded.Close,
-                            contentDescription = "Close image preview",
-                            tint = Color.White,
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = "Close",
-                            color = Color.White,
-                        )
-                    }
-                }
-
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    when {
-                        drawableState.isLoading -> {
-                            CircularProgressIndicator(color = Color.White)
-                        }
-
-                        drawableState.drawable != null -> {
-                            AndroidView(
-                                factory = { context ->
-                                    ImageView(context).apply {
-                                        adjustViewBounds = true
-                                        scaleType = ImageView.ScaleType.FIT_CENTER
-                                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                                    }
-                                },
-                                update = { imageView ->
-                                    imageView.setImageDrawable(drawableState.drawable)
-                                    (drawableState.drawable as? AnimatedImageDrawable)?.apply {
-                                        repeatCount = AnimatedImageDrawable.REPEAT_INFINITE
-                                        start()
-                                    }
-                                },
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
-
-                        else -> {
-                            Text(
-                                text = drawableState.errorMessage ?: "Image preview is unavailable.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White,
-                                textAlign = TextAlign.Center,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-private fun decodeAttachmentPreviewDrawable(file: File): Drawable {
-    val source = ImageDecoder.createSource(file)
-    return ImageDecoder.decodeDrawable(source)
-}
-
-private fun inlineAttachmentPreviewSize(
-    widthPx: Int?,
-    heightPx: Int?,
-): Pair<androidx.compose.ui.unit.Dp, androidx.compose.ui.unit.Dp> {
-    val maxLandscapeWidth = 260f
-    val maxPortraitHeight = 240f
-    val minWidth = 140f
-    val minHeight = 120f
-
-    val ratio = if (widthPx != null && heightPx != null && widthPx > 0 && heightPx > 0) {
-        widthPx.toFloat() / heightPx.toFloat()
-    } else {
-        4f / 3f
-    }
-
-    return if (ratio >= 1f) {
-        maxLandscapeWidth.dp to (maxLandscapeWidth / ratio).coerceIn(minHeight, maxPortraitHeight).dp
-    } else {
-        (maxPortraitHeight * ratio).coerceIn(minWidth, maxLandscapeWidth).dp to maxPortraitHeight.dp
-    }
-}
-
-private data class ImagePreviewDrawableState(
-    val isLoading: Boolean = false,
-    val drawable: Drawable? = null,
-    val errorMessage: String? = null,
-)
-
 private data class ChatsDirectoryState(
     val accounts: List<ChatDirectoryAccount> = emptyList(),
     val isLoading: Boolean = false,
@@ -2815,15 +2450,8 @@ internal fun ConversationDetailPaneForTesting(
     onPickAttachment: () -> Unit = {},
     onSend: () -> Unit = {},
     onOpenAttachment: (ChatAttachment) -> Unit = {},
-    loadInlinePreviewAttachment: suspend (ChatAttachment) -> LocalImagePreviewAttachment = { attachment ->
-        LocalImagePreviewAttachment(
-            attachment = attachment,
-            filePath = "",
-        )
-    },
     onShareAttachment: (ChatAttachment) -> Unit = {},
     onManageMembers: (() -> Unit)? = null,
-    showConversationHeader: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     ConversationDetailPane(
@@ -2839,30 +2467,9 @@ internal fun ConversationDetailPaneForTesting(
         onPickAttachment = onPickAttachment,
         onSend = onSend,
         onOpenAttachment = onOpenAttachment,
-        loadInlinePreviewAttachment = loadInlinePreviewAttachment,
         onShareAttachment = onShareAttachment,
         onManageMembers = onManageMembers,
-        showConversationHeader = showConversationHeader,
         modifier = modifier,
-    )
-}
-
-@Composable
-internal fun DetailConversationActionsForTesting(
-    canManageMembers: Boolean,
-    onOpenDirectMessages: () -> Unit = {},
-    onOpenGroupChats: () -> Unit = {},
-    onManageMembers: () -> Unit = {},
-    isRefreshing: Boolean = false,
-    onRefresh: () -> Unit = {},
-) {
-    DetailConversationActions(
-        canManageMembers = canManageMembers,
-        onOpenDirectMessages = onOpenDirectMessages,
-        onOpenGroupChats = onOpenGroupChats,
-        onManageMembers = onManageMembers,
-        isRefreshing = isRefreshing,
-        onRefresh = onRefresh,
     )
 }
 
