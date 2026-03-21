@@ -58,6 +58,37 @@ func selectedChatReconciliationKeepsNilSelectionStable() {
 }
 
 @Test
+func workspaceSelectionPreferenceFallsBackWhenPreferredChatDisappears() {
+    let selectedChatID = UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!
+    let remainingChatID = UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!
+    let removedChatID = UUID(uuidString: "cccccccc-cccc-cccc-cccc-cccccccccccc")!
+
+    let resolved = resolvedWorkspaceSelectedChatID(
+        selectionPreference: .prefer(removedChatID),
+        currentSelectedChatID: selectedChatID,
+        visibleLocalChatIDs: [remainingChatID],
+        serverChatIDs: [remainingChatID]
+    )
+
+    #expect(resolved == remainingChatID)
+}
+
+@Test
+func workspaceSelectionPreferenceCanForceNewChatSelection() {
+    let currentSelectedChatID = UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!
+    let newChatID = UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!
+
+    let resolved = resolvedWorkspaceSelectedChatID(
+        selectionPreference: .force(newChatID),
+        currentSelectedChatID: currentSelectedChatID,
+        visibleLocalChatIDs: [currentSelectedChatID],
+        serverChatIDs: [currentSelectedChatID]
+    )
+
+    #expect(resolved == newChatID)
+}
+
+@Test
 func deviceTransferBundleTargetsRecipientTransportKey() throws {
     let sourceIdentity = try DeviceIdentityMaterial.make(
         profileName: "Source",

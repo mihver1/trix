@@ -393,7 +393,7 @@ struct LocalChatReadState: Identifiable, Sendable {
     }
 }
 
-struct LocalChatListItem: Identifiable, Sendable {
+struct LocalChatListItem: Identifiable, Sendable, Equatable {
     let chatId: UUID
     let chatType: ChatType
     let title: String?
