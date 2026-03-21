@@ -82,7 +82,7 @@ struct DebugAttachmentSendOutcome {
     let fileName: String?
 }
 
-struct DownloadedAttachmentFile: Identifiable {
+struct DownloadedAttachmentFile: Identifiable, Sendable {
     let fileURL: URL
     let fileName: String
     let mimeType: String?
@@ -114,6 +114,8 @@ final class AppModel: ObservableObject {
     private var hasScheduledBackgroundRefresh = false
     private var cachedAuthSession: CachedAuthSession?
     private var realtimeAccessToken: String?
+    private var cachedAttachmentFiles: [String: DownloadedAttachmentFile] = [:]
+    private var attachmentDownloadTasks: [String: Task<DownloadedAttachmentFile, Error>] = [:]
 
     init(identityStore: LocalDeviceIdentityStore = LocalDeviceIdentityStore()) {
         self.identityStore = identityStore
@@ -322,6 +324,8 @@ final class AppModel: ObservableObject {
         try identityStore.delete()
         localIdentity = nil
         localCoreState = nil
+        cachedAttachmentFiles = [:]
+        attachmentDownloadTasks = [:]
             dashboard = nil
             activeLinkIntent = nil
             directoryAccountCache = [:]
@@ -846,39 +850,78 @@ final class AppModel: ObservableObject {
         }
 
         do {
-            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let blobClient = try FfiServerApiClient(
-                baseUrl: baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+            return try await resolveAttachmentFile(
+                baseURLString: baseURLString,
+                body: body
             )
-            try blobClient.setAccessToken(accessToken: context.session.accessToken)
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    func cachedAttachmentFile(for body: FfiMessageBody) -> DownloadedAttachmentFile? {
+        let cacheKey = attachmentCacheKey(for: body)
+        guard let cachedFile = cachedAttachmentFiles[cacheKey] else {
+            return nil
+        }
+        guard FileManager.default.fileExists(atPath: cachedFile.fileURL.path) else {
+            cachedAttachmentFiles.removeValue(forKey: cacheKey)
+            return nil
+        }
+        return cachedFile
+    }
+
+    func resolveAttachmentFile(
+        baseURLString: String,
+        body: FfiMessageBody
+    ) async throws -> DownloadedAttachmentFile {
+        if let cachedFile = cachedAttachmentFile(for: body) {
+            return cachedFile
+        }
+
+        let cacheKey = attachmentCacheKey(for: body)
+        if let existingTask = attachmentDownloadTasks[cacheKey] {
+            return try await existingTask.value
+        }
+
+        let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+        let normalizedBaseURL = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+        let accessToken = context.session.accessToken
+
+        let task = Task { () throws -> DownloadedAttachmentFile in
+            let blobClient = try FfiServerApiClient(baseUrl: normalizedBaseURL)
+            try blobClient.setAccessToken(accessToken: accessToken)
 
             let downloadedAttachment = try blobClient.downloadAttachment(body: body)
             let fileName = TrixCoreMessageBridge.suggestedAttachmentFileName(for: downloadedAttachment.body)
-            let downloadsDirectory = FileManager.default.temporaryDirectory
-                .appendingPathComponent("TrixAttachments", isDirectory: true)
+            let downloadsDirectory = try Self.attachmentCacheDirectory()
+            let destinationDirectory = downloadsDirectory.appendingPathComponent(cacheKey, isDirectory: true)
             try FileManager.default.createDirectory(
-                at: downloadsDirectory,
+                at: destinationDirectory,
                 withIntermediateDirectories: true
             )
 
-            let destinationURL = downloadsDirectory
-                .appendingPathComponent(UUID().uuidString, isDirectory: true)
-                .appendingPathComponent(fileName)
-            try FileManager.default.createDirectory(
-                at: destinationURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try downloadedAttachment.plaintext.write(to: destinationURL, options: .atomic)
+            let destinationURL = destinationDirectory.appendingPathComponent(fileName, isDirectory: false)
+            if !FileManager.default.fileExists(atPath: destinationURL.path) {
+                try downloadedAttachment.plaintext.write(to: destinationURL, options: .atomic)
+            }
 
             return DownloadedAttachmentFile(
                 fileURL: destinationURL,
                 fileName: fileName,
                 mimeType: downloadedAttachment.body.mimeType
             )
-        } catch {
-            errorMessage = error.localizedDescription
-            return nil
         }
+
+        attachmentDownloadTasks[cacheKey] = task
+        defer {
+            attachmentDownloadTasks.removeValue(forKey: cacheKey)
+        }
+
+        let downloadedFile = try await task.value
+        cachedAttachmentFiles[cacheKey] = downloadedFile
+        return downloadedFile
     }
 
     @discardableResult
@@ -1664,6 +1707,31 @@ final class AppModel: ObservableObject {
         async let version: VersionResponse = client.get("/v0/system/version")
 
         return try await ServerSnapshot(health: health, version: version)
+    }
+
+    private func attachmentCacheKey(for body: FfiMessageBody) -> String {
+        let rawValue: String
+        if let blobId = body.blobId?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !blobId.isEmpty {
+            rawValue = blobId
+        } else {
+            rawValue = TrixCoreMessageBridge.suggestedAttachmentFileName(for: body)
+        }
+        return rawValue.replacingOccurrences(
+            of: #"[^A-Za-z0-9._-]"#,
+            with: "_",
+            options: .regularExpression
+        )
+    }
+
+    private static func attachmentCacheDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TrixAttachments", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        return directory
     }
 
     private func makeAuthenticatedContext(baseURLString: String) async throws -> AuthenticatedContext {

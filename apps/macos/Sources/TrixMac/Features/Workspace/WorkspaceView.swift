@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -99,6 +100,9 @@ struct WorkspaceView: View {
             }
             .sheet(isPresented: $isPresentingSettings) {
                 settingsSheet
+            }
+            .sheet(item: $model.previewedAttachment) { attachment in
+                AttachmentPreviewSheet(attachment: attachment)
             }
             .fileImporter(
                 isPresented: $isImportingAttachment,
@@ -1410,6 +1414,7 @@ struct WorkspaceView: View {
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(model.selectedChatTimelineItems) { message in
                     LocalTimelineMessageRow(
+                        model: model,
                         message: message,
                         isOutgoing: message.isOutgoing,
                         isDownloadingAttachment: model.downloadingAttachmentMessageIDs.contains(message.messageId),
@@ -2995,17 +3000,22 @@ private struct PendingOutgoingMessageRow: View {
 
 private struct LocalTimelineMessageRow: View {
     @Environment(\.trixColors) private var colors
+    let model: AppModel
     let message: LocalTimelineItem
     let isOutgoing: Bool
     let isDownloadingAttachment: Bool
     let openAttachment: (() -> Void)?
+    @State private var inlineAttachmentURL: URL?
+    @State private var inlineAttachmentLoadFailed = false
 
     init(
+        model: AppModel,
         message: LocalTimelineItem,
         isOutgoing: Bool = false,
         isDownloadingAttachment: Bool = false,
         openAttachment: (() -> Void)? = nil
     ) {
+        self.model = model
         self.message = message
         self.isOutgoing = isOutgoing
         self.isDownloadingAttachment = isDownloadingAttachment
@@ -3032,28 +3042,43 @@ private struct LocalTimelineMessageRow: View {
                 }
 
                 if let body = message.body, body.kind == .attachment {
-                    HStack(alignment: .center, spacing: 12) {
-                        Image(systemName: body.mimeType?.hasPrefix("image/") == true ? "photo" : "paperclip")
-                            .font(.headline)
-                            .foregroundStyle(colors.accent)
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(body.fileName ?? "Attachment")
-                                .font(.body.weight(.semibold))
-                                .foregroundStyle(colors.ink)
-                            Text(attachmentMeta(body))
-                                .font(.footnote)
-                                .foregroundStyle(colors.inkMuted)
+                    VStack(alignment: .leading, spacing: 12) {
+                        if LocalImageAttachmentSupport.supports(
+                            mimeType: body.mimeType,
+                            fileName: body.fileName
+                        ) {
+                            AttachmentInlinePreview(
+                                fileURL: inlineAttachmentURL,
+                                attachmentBody: body,
+                                isOutgoing: isOutgoing,
+                                hasFailed: inlineAttachmentLoadFailed,
+                                openAttachment: openAttachment
+                            )
                         }
 
-                        Spacer(minLength: 12)
+                        HStack(alignment: .center, spacing: 12) {
+                            Image(systemName: body.mimeType?.hasPrefix("image/") == true ? "photo" : "paperclip")
+                                .font(.headline)
+                                .foregroundStyle(colors.accent)
 
-                        if let openAttachment {
-                            Button(action: openAttachment) {
-                                Label(isDownloadingAttachment ? "Opening…" : "Open", systemImage: "arrow.down.circle")
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(body.fileName ?? "Attachment")
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(colors.ink)
+                                Text(attachmentMeta(body))
+                                    .font(.footnote)
+                                    .foregroundStyle(colors.inkMuted)
                             }
-                            .buttonStyle(TrixActionButtonStyle(tone: .ghost))
-                            .disabled(isDownloadingAttachment)
+
+                            Spacer(minLength: 12)
+
+                            if let openAttachment {
+                                Button(action: openAttachment) {
+                                    Label(isDownloadingAttachment ? "Opening…" : "Open", systemImage: "arrow.down.circle")
+                                }
+                                .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+                                .disabled(isDownloadingAttachment)
+                            }
                         }
                     }
                 } else {
@@ -3078,6 +3103,9 @@ private struct LocalTimelineMessageRow: View {
             .overlay {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .stroke(bubbleBorder, lineWidth: 1)
+            }
+            .task(id: message.messageId) {
+                await loadInlinePreviewIfNeeded()
             }
 
             if !isOutgoing {
@@ -3116,11 +3144,110 @@ private struct LocalTimelineMessageRow: View {
         .joined(separator: " • ")
     }
 
+    private func loadInlinePreviewIfNeeded() async {
+        guard let body = message.body,
+              body.kind == .attachment,
+              LocalImageAttachmentSupport.supports(mimeType: body.mimeType, fileName: body.fileName) else {
+            inlineAttachmentURL = nil
+            inlineAttachmentLoadFailed = false
+            return
+        }
+
+        inlineAttachmentURL = model.cachedAttachmentURL(for: message.messageId)
+        if inlineAttachmentURL != nil {
+            inlineAttachmentLoadFailed = false
+            return
+        }
+
+        inlineAttachmentURL = await model.ensureCachedAttachmentURL(
+            for: message,
+            reportErrors: false
+        )
+        inlineAttachmentLoadFailed = inlineAttachmentURL == nil
+    }
+
     private static let relativeFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
         return formatter
     }()
+}
+
+private struct AttachmentInlinePreview: View {
+    @Environment(\.trixColors) private var colors
+    let fileURL: URL?
+    let attachmentBody: TypedMessageBody
+    let isOutgoing: Bool
+    let hasFailed: Bool
+    let openAttachment: (() -> Void)?
+
+    var body: some View {
+        Group {
+            if let openAttachment {
+                Button(action: openAttachment) {
+                    previewBody
+                }
+                .buttonStyle(.plain)
+            } else {
+                previewBody
+            }
+        }
+    }
+
+    private var previewBody: some View {
+        let previewSize = inlineAttachmentPreviewSize(
+            widthPx: attachmentBody.widthPx.map(Int.init),
+            heightPx: attachmentBody.heightPx.map(Int.init)
+        )
+
+        return ZStack {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(isOutgoing ? colors.accent.opacity(0.14) : colors.panel)
+
+            if let fileURL,
+               let image = NSImage(contentsOf: fileURL) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            } else if hasFailed {
+                Image(systemName: "photo")
+                    .font(.system(size: 30, weight: .semibold))
+                    .foregroundStyle(colors.accent)
+            } else {
+                ProgressView()
+                    .controlSize(.regular)
+            }
+        }
+        .frame(width: previewSize.width, height: previewSize.height)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+}
+
+private func inlineAttachmentPreviewSize(widthPx: Int?, heightPx: Int?) -> CGSize {
+    let maxLandscapeWidth: CGFloat = 280
+    let maxPortraitHeight: CGFloat = 250
+    let minWidth: CGFloat = 150
+    let minHeight: CGFloat = 120
+
+    let ratio: CGFloat
+    if let widthPx, let heightPx, widthPx > 0, heightPx > 0 {
+        ratio = CGFloat(widthPx) / CGFloat(heightPx)
+    } else {
+        ratio = 4 / 3
+    }
+
+    if ratio >= 1 {
+        return CGSize(
+            width: maxLandscapeWidth,
+            height: max(minHeight, min(maxPortraitHeight, maxLandscapeWidth / ratio))
+        )
+    }
+
+    return CGSize(
+        width: max(minWidth, min(maxLandscapeWidth, maxPortraitHeight * ratio)),
+        height: maxPortraitHeight
+    )
 }
 
 private struct InlineMeta: View {

@@ -126,6 +126,15 @@ class AttachmentRepository(
         }
     }
 
+    suspend fun loadImagePreviewAttachment(attachment: ChatAttachment): LocalImagePreviewAttachment =
+        withContext(Dispatchers.IO) {
+            val file = materializeAttachment(attachment)
+            LocalImagePreviewAttachment(
+                attachment = attachment,
+                filePath = file.absolutePath,
+            )
+        }
+
     suspend fun shareAttachment(attachment: ChatAttachment) = withContext(Dispatchers.IO) {
         val file = materializeAttachment(attachment)
         val contentUri = fileUriFor(file)
@@ -280,9 +289,50 @@ data class StagedAttachmentDraft(
     val heightPx: Int?,
 )
 
+data class LocalImagePreviewAttachment(
+    val attachment: ChatAttachment,
+    val filePath: String,
+)
+
+fun ChatAttachment.supportsLocalImagePreview(): Boolean {
+    val normalizedMimeType = mimeType.trim().lowercase()
+    if (normalizedMimeType in supportedLocalImagePreviewMimeTypes) {
+        return true
+    }
+
+    val extension = fileName
+        ?.substringAfterLast('.', "")
+        ?.trim()
+        ?.lowercase()
+        ?.takeIf(String::isNotEmpty)
+    return extension != null && extension in supportedLocalImagePreviewExtensions
+}
+
 private data class AttachmentUploadMetadata(
     val mimeType: String,
     val fileName: String?,
     val widthPx: Int?,
     val heightPx: Int?,
+)
+
+private val supportedLocalImagePreviewMimeTypes = setOf(
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "image/heif",
+    "image/heic",
+    "image/heif-sequence",
+    "image/heic-sequence",
+)
+
+private val supportedLocalImagePreviewExtensions = setOf(
+    "jpg",
+    "jpeg",
+    "png",
+    "gif",
+    "webp",
+    "heif",
+    "heic",
 )
