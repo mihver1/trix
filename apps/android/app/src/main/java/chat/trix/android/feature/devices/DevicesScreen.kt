@@ -432,24 +432,6 @@ private fun DevicesSummaryCard(
                     label = { Text("Revoked $revokedCount") },
                 )
             }
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                AssistChip(
-                    onClick = {},
-                    label = {
-                        Text(
-                            text = "Layout ${windowInfo.widthClass.name.lowercase()} / ${windowInfo.foldPosture.name.lowercase()}",
-                        )
-                    },
-                )
-                inventory?.accountId?.let { accountId ->
-                    AssistChip(
-                        onClick = {},
-                        label = { Text("Account ${shortDeviceIdentifier(accountId)}") },
-                    )
-                }
-            }
             if (isRefreshing) {
                 Text(
                     text = "Refreshing device inventory…",
@@ -746,7 +728,7 @@ private fun RevokeDeviceDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    text = "This will revoke the device on the server immediately. MLS cleanup remains a follow-up step.",
+                    text = "This will revoke the device immediately. It will lose access to all conversations.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 OutlinedTextField(

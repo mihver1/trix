@@ -1465,14 +1465,14 @@ private fun EmptyChatCachePane(
                 }
             }
             Text(
-                text = if (errorMessage == null) "No chats in local cache" else "Chat sync failed",
+                text = if (errorMessage == null) "No chats yet" else "Chat sync failed",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center,
             )
             Text(
                 text = errorMessage
-                    ?: "This Android slice now reads from the Rust local store. Once the backend has threads for this account, refresh will pull them into the on-device cache.",
+                    ?: "Start a conversation and it will appear here.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (errorMessage == null) {
                     MaterialTheme.colorScheme.onSurfaceVariant
@@ -1544,7 +1544,7 @@ private fun WideConversationLayout(
         if (selectedConversationId == null) {
             EmptyConversationPane(
                 title = "Select a conversation",
-                body = "Expanded layouts keep the local thread list and the selected transcript visible together.",
+                body = "Choose a chat to view messages.",
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight(),
@@ -1679,16 +1679,6 @@ private fun ConversationListPane(
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        item {
-            ChatCacheCard(
-                diagnostics = overview.diagnostics,
-                isRefreshing = overviewState.isRefreshing,
-                lastRefreshSummary = overviewState.lastRefreshSummary,
-                errorMessage = overviewState.errorMessage,
-                onRefresh = onRefresh,
-            )
-        }
-
         items(overview.conversations, key = { it.chatId }) { conversation ->
             val selected = conversation.chatId == selectedConversationId
             Surface(
@@ -1718,28 +1708,6 @@ private fun ConversationListPane(
                     },
                     supportingContent = {
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            ) {
-                                if (conversation.isAccountSyncChat) {
-                                    TimelineBadge(label = "Account sync")
-                                }
-                                if (conversation.chatType == FfiChatType.GROUP) {
-                                    TimelineBadge(label = "Group")
-                                }
-                                if (conversation.hasProjectedTimeline) {
-                                    TimelineBadge(label = "Projected")
-                                }
-                                if (conversation.unreadCount > 0) {
-                                    TimelineBadge(
-                                        label = if (conversation.unreadCount == 1) {
-                                            "1 unread"
-                                        } else {
-                                            "${conversation.unreadCount} unread"
-                                        },
-                                    )
-                                }
-                            }
                             Text(
                                 text = conversation.participantsLabel,
                                 style = MaterialTheme.typography.labelMedium,
@@ -2002,12 +1970,8 @@ private fun ConversationDetailContent(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         TimelineBadge(label = conversation.participantsLabel)
-                        TimelineBadge(label = conversation.timelineLabel)
                         if (conversation.chatType == FfiChatType.GROUP) {
                             TimelineBadge(label = "${conversation.members.size} members")
-                        }
-                        if (conversation.isAccountSyncChat) {
-                            TimelineBadge(label = "Account sync")
                         }
                     }
                     if (conversation.canManageMembers && onManageMembers != null) {
@@ -2082,8 +2046,8 @@ private fun ConversationTranscript(
 ) {
     if (conversation.messages.isEmpty()) {
         EmptyConversationPane(
-            title = "No local messages yet",
-            body = "The chat exists in cache, but this device has not projected any local timeline items for the thread yet.",
+            title = "No messages yet",
+            body = "Send a message to start the conversation.",
             modifier = modifier,
         )
         return
