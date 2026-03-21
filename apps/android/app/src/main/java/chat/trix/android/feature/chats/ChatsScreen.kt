@@ -35,6 +35,7 @@ import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.MarkUnreadChatAlt
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PersonAddAlt1
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Sync
@@ -42,6 +43,8 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedAssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
@@ -743,15 +746,18 @@ fun ChatsScreen(
                         }
                     },
                     actions = {
-                        NewChatActions(
+                        DetailConversationActions(
+                            canManageMembers = selectedConversation?.canManageMembers == true,
                             onOpenDirectMessages = {
                                 openDirectorySheet(DirectorySheetConfig(mode = DirectorySheetMode.DIRECT_MESSAGE))
                             },
                             onOpenGroupChats = {
                                 openDirectorySheet(DirectorySheetConfig(mode = DirectorySheetMode.GROUP_CREATE))
                             },
-                        )
-                        RefreshAction(
+                            onManageMembers = {
+                                isGroupMembersSheetVisible = true
+                                groupMembershipErrorMessage = null
+                            },
                             isRefreshing = overviewState.isRefreshing,
                             onRefresh = { coroutineScope.launch { syncChats() } },
                         )
@@ -890,6 +896,7 @@ fun ChatsScreen(
                         isGroupMembersSheetVisible = true
                         groupMembershipErrorMessage = null
                     },
+                    showConversationHeader = false,
                     modifier = contentModifier,
                 )
             }
@@ -924,6 +931,60 @@ private fun NewChatActions(
                 imageVector = Icons.Rounded.Groups,
                 contentDescription = "Create group chat",
             )
+        }
+    }
+}
+
+@Composable
+private fun DetailConversationActions(
+    canManageMembers: Boolean,
+    onOpenDirectMessages: () -> Unit,
+    onOpenGroupChats: () -> Unit,
+    onManageMembers: () -> Unit,
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
+) {
+    var isMenuExpanded by remember { mutableStateOf(false) }
+
+    RefreshAction(
+        isRefreshing = isRefreshing,
+        onRefresh = onRefresh,
+    )
+
+    Box {
+        IconButton(onClick = { isMenuExpanded = true }) {
+            Icon(
+                imageVector = Icons.Rounded.MoreVert,
+                contentDescription = "More conversation actions",
+            )
+        }
+        DropdownMenu(
+            expanded = isMenuExpanded,
+            onDismissRequest = { isMenuExpanded = false },
+        ) {
+            DropdownMenuItem(
+                text = { Text("New direct message") },
+                onClick = {
+                    isMenuExpanded = false
+                    onOpenDirectMessages()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Create group chat") },
+                onClick = {
+                    isMenuExpanded = false
+                    onOpenGroupChats()
+                },
+            )
+            if (canManageMembers) {
+                DropdownMenuItem(
+                    text = { Text("Manage members") },
+                    onClick = {
+                        isMenuExpanded = false
+                        onManageMembers()
+                    },
+                )
+            }
         }
     }
 }
@@ -1606,6 +1667,7 @@ private fun TabletopConversationLayout(
             onOpenAttachment = onOpenAttachment,
             onShareAttachment = onShareAttachment,
             onManageMembers = onManageMembers,
+            showConversationHeader = true,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
@@ -1929,6 +1991,7 @@ private fun ConversationDetailPane(
     onOpenAttachment: (ChatAttachment) -> Unit,
     onShareAttachment: (ChatAttachment) -> Unit,
     onManageMembers: (() -> Unit)?,
+    showConversationHeader: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     ConversationDetailContent(
@@ -1946,6 +2009,7 @@ private fun ConversationDetailPane(
         onOpenAttachment = onOpenAttachment,
         onShareAttachment = onShareAttachment,
         onManageMembers = onManageMembers,
+        showConversationHeader = showConversationHeader,
         modifier = modifier,
         showComposer = true,
         compactHeader = true,
@@ -1968,6 +2032,7 @@ private fun ConversationDetailContent(
     onOpenAttachment: (ChatAttachment) -> Unit,
     onShareAttachment: (ChatAttachment) -> Unit,
     onManageMembers: (() -> Unit)?,
+    showConversationHeader: Boolean,
     modifier: Modifier = Modifier,
     showComposer: Boolean,
     compactHeader: Boolean,
@@ -1977,7 +2042,7 @@ private fun ConversationDetailContent(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surface),
     ) {
-        if (conversation != null) {
+        if (conversation != null && showConversationHeader) {
             Surface(
                 tonalElevation = 1.dp,
                 modifier = Modifier.fillMaxWidth(),
@@ -2425,6 +2490,7 @@ internal fun ConversationDetailPaneForTesting(
     onOpenAttachment: (ChatAttachment) -> Unit = {},
     onShareAttachment: (ChatAttachment) -> Unit = {},
     onManageMembers: (() -> Unit)? = null,
+    showConversationHeader: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     ConversationDetailPane(
@@ -2442,7 +2508,27 @@ internal fun ConversationDetailPaneForTesting(
         onOpenAttachment = onOpenAttachment,
         onShareAttachment = onShareAttachment,
         onManageMembers = onManageMembers,
+        showConversationHeader = showConversationHeader,
         modifier = modifier,
+    )
+}
+
+@Composable
+internal fun DetailConversationActionsForTesting(
+    canManageMembers: Boolean,
+    onOpenDirectMessages: () -> Unit = {},
+    onOpenGroupChats: () -> Unit = {},
+    onManageMembers: () -> Unit = {},
+    isRefreshing: Boolean = false,
+    onRefresh: () -> Unit = {},
+) {
+    DetailConversationActions(
+        canManageMembers = canManageMembers,
+        onOpenDirectMessages = onOpenDirectMessages,
+        onOpenGroupChats = onOpenGroupChats,
+        onManageMembers = onManageMembers,
+        isRefreshing = isRefreshing,
+        onRefresh = onRefresh,
     )
 }
 

@@ -1,8 +1,11 @@
 package chat.trix.android.feature.chats
 
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import chat.trix.android.core.chat.ChatAttachment
@@ -71,6 +74,51 @@ class ChatsScreenTest {
         assertEquals(1, shareClicks)
     }
 
+    @Test
+    fun conversationDetailPaneCanHideConversationHeader() {
+        composeRule.setContent {
+            TrixTheme {
+                ConversationDetailPaneForTesting(
+                    conversation = sampleConversation(title = "Mobile group"),
+                    showConversationHeader = false,
+                )
+            }
+        }
+
+        composeRule.onAllNodesWithText("Mobile group").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Manage members").assertCountEquals(0)
+        composeRule.onNodeWithText("Queued for delivery").assertIsDisplayed()
+    }
+
+    @Test
+    fun detailConversationActionsMenuShowsNewChatAndManageOptions() {
+        var directMessageClicks = 0
+        var groupChatClicks = 0
+        var manageClicks = 0
+
+        composeRule.setContent {
+            TrixTheme {
+                DetailConversationActionsForTesting(
+                    canManageMembers = true,
+                    onOpenDirectMessages = { directMessageClicks += 1 },
+                    onOpenGroupChats = { groupChatClicks += 1 },
+                    onManageMembers = { manageClicks += 1 },
+                )
+            }
+        }
+
+        composeRule.onNodeWithContentDescription("More conversation actions").performClick()
+        composeRule.onNodeWithText("New direct message").performClick()
+        composeRule.onNodeWithContentDescription("More conversation actions").performClick()
+        composeRule.onNodeWithText("Create group chat").performClick()
+        composeRule.onNodeWithContentDescription("More conversation actions").performClick()
+        composeRule.onNodeWithText("Manage members").performClick()
+
+        assertEquals(1, directMessageClicks)
+        assertEquals(1, groupChatClicks)
+        assertEquals(1, manageClicks)
+    }
+
     private fun sampleOverview(): ChatOverview {
         return ChatOverview(
             conversations = listOf(
@@ -100,7 +148,9 @@ class ChatsScreenTest {
         )
     }
 
-    private fun sampleConversation(): ChatConversation {
+    private fun sampleConversation(
+        title: String = "Group members",
+    ): ChatConversation {
         val attachmentBody = FfiMessageBody(
             kind = FfiMessageBodyKind.ATTACHMENT,
             text = null,
@@ -124,7 +174,7 @@ class ChatsScreenTest {
         return ChatConversation(
             chatId = "chat-group-1",
             chatType = FfiChatType.GROUP,
-            title = "Group members",
+            title = title,
             participantsLabel = "Alex, Sam +1",
             timelineLabel = "Projected timeline + queued outbox",
             isAccountSyncChat = false,
