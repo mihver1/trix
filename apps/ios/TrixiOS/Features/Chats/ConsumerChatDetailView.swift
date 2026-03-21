@@ -5,6 +5,8 @@ import UniformTypeIdentifiers
 private let consumerChatAccent = Color(red: 0.14, green: 0.55, blue: 0.98)
 private let consumerMessageClusterWindow: TimeInterval = 5 * 60
 private let consumerTimelineBottomAnchor = "consumer-timeline-bottom-anchor"
+private let consumerMessageBubbleMaxWidth: CGFloat = 320
+private let consumerMessageBubbleHorizontalPadding: CGFloat = 14
 
 private struct ConsumerAttachmentDraft {
     let fileURL: URL
@@ -782,10 +784,10 @@ private struct ConsumerMessageBubble: View {
         VStack(alignment: .leading, spacing: 8) {
             switch message.contentType {
             case .text:
-                Text(message.primaryText)
-                    .font(.body)
-                    .foregroundStyle(message.isOutgoing ? .white : .primary)
-                    .textSelection(.enabled)
+                ConsumerSelectableMessageText(
+                    text: message.primaryText,
+                    textColor: message.isOutgoing ? .white : .label
+                )
             case .attachment:
                 ConsumerAttachmentBubbleContent(
                     message: message,
@@ -806,7 +808,7 @@ private struct ConsumerMessageBubble: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
-        .frame(maxWidth: 320, alignment: message.isOutgoing ? .trailing : .leading)
+        .frame(maxWidth: consumerMessageBubbleMaxWidth, alignment: message.isOutgoing ? .trailing : .leading)
         .background(message.isOutgoing ? consumerChatAccent : Color.white.opacity(0.94))
         .clipShape(RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
         .shadow(
@@ -825,6 +827,61 @@ private struct ConsumerMessageBubble: View {
         case .middle:
             return 18
         }
+    }
+}
+
+private struct ConsumerSelectableMessageText: UIViewRepresentable {
+    let text: String
+    let textColor: UIColor
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.backgroundColor = .clear
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isScrollEnabled = false
+        textView.adjustsFontForContentSizeCategory = true
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.textContainer.widthTracksTextView = true
+        textView.textContainer.maximumNumberOfLines = 0
+        textView.textContainer.lineBreakMode = .byWordWrapping
+        textView.showsVerticalScrollIndicator = false
+        textView.showsHorizontalScrollIndicator = false
+        textView.setContentCompressionResistancePriority(.required, for: .vertical)
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return textView
+    }
+
+    func updateUIView(_ textView: UITextView, context: Context) {
+        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.text = text
+        textView.textColor = textColor
+        textView.tintColor = textColor
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: UITextView,
+        context: Context
+    ) -> CGSize? {
+        let fallbackWidth = consumerMessageBubbleMaxWidth - (consumerMessageBubbleHorizontalPadding * 2)
+        let targetWidth = proposal.width ?? uiView.bounds.width.takeIfPositive() ?? fallbackWidth
+        guard targetWidth > 0 else {
+            return nil
+        }
+
+        let measuredSize = uiView.sizeThatFits(
+            CGSize(width: targetWidth, height: .greatestFiniteMagnitude)
+        )
+        return CGSize(width: targetWidth, height: measuredSize.height)
+    }
+}
+
+private extension CGFloat {
+    func takeIfPositive() -> CGFloat? {
+        self > 0 ? self : nil
     }
 }
 
