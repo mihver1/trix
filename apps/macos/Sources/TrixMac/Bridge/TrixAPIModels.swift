@@ -185,6 +185,13 @@ struct RevokeDeviceResponse: Codable {
     let deviceStatus: DeviceStatus
 }
 
+struct DeviceTransferBundleResponse: Sendable {
+    let accountId: UUID
+    let deviceId: UUID
+    let transferBundle: Data
+    let uploadedAtUnix: UInt64
+}
+
 struct PublishKeyPackageItem: Codable {
     let cipherSuite: String
     let keyPackageB64: String

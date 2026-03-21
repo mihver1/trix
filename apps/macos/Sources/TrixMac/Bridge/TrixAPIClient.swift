@@ -1336,6 +1336,166 @@ struct TrixAPIClient {
         }
     }
 
+    // MARK: - FFI Parity: additional methods aligned with iOS/Android
+
+    func fetchAccount(
+        accessToken: String,
+        accountId: UUID
+    ) async throws -> DirectoryAccountSummary {
+        try await callFFI(accessToken: accessToken) { client in
+            try DirectoryAccountSummary(ffiValue: client.getAccount(accountId: accountId.uuidString))
+        }
+    }
+
+    func fetchDeviceTransferBundle(
+        accessToken: String,
+        deviceId: UUID
+    ) async throws -> DeviceTransferBundleResponse {
+        try await callFFI(accessToken: accessToken) { client in
+            let bundle = try client.getDeviceTransferBundle(deviceId: deviceId.uuidString)
+            return DeviceTransferBundleResponse(
+                accountId: try TrixCoreCodec.uuid(bundle.accountId, label: "account_id"),
+                deviceId: try TrixCoreCodec.uuid(bundle.deviceId, label: "device_id"),
+                transferBundle: bundle.transferBundle,
+                uploadedAtUnix: bundle.uploadedAtUnix
+            )
+        }
+    }
+
+    func pollOnce(
+        accessToken: String,
+        databasePath: URL,
+        statePath: URL
+    ) async throws -> LocalInboxPollResult {
+        try await callFFI(accessToken: accessToken) { client in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
+            let driver = try FfiRealtimeDriver()
+            let outcome = try driver.pollOnce(
+                client: client,
+                coordinator: coordinator,
+                store: store
+            )
+            let chats = try ChatListResponse(ffiValues: store.listChats()).chats
+            let syncState = try SyncStateSnapshot(ffiValue: coordinator.stateSnapshot())
+
+            return LocalInboxPollResult(
+                items: try outcome.ackedInboxIds.map {
+                    InboxItem(inboxId: $0, message: try MessageEnvelope(ffiValue: FfiMessageEnvelope(
+                        messageId: UUID().uuidString, chatId: UUID().uuidString, serverSeq: 0,
+                        senderAccountId: UUID().uuidString, senderDeviceId: UUID().uuidString,
+                        epoch: 0, messageKind: .system, contentType: .chatEvent,
+                        ciphertext: Data(), aadJson: "null", createdAtUnix: 0
+                    )))
+                },
+                report: try LocalStoreApplyReport(ffiValue: outcome.report),
+                syncState: syncState,
+                chats: chats
+            )
+        }
+    }
+
+    func leaseInboxIntoLocalStore(
+        accessToken: String,
+        databasePath: URL,
+        statePath: URL,
+        limit: Int? = nil,
+        leaseTtlSeconds: UInt64? = nil
+    ) async throws -> LocalInboxLeaseResult {
+        try await callFFI(accessToken: accessToken) { client in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
+            let outcome = try coordinator.leaseInboxIntoStore(
+                client: client,
+                store: store,
+                limit: try limit.map { try TrixCoreCodec.uint32($0, label: "lease limit") },
+                leaseTtlSeconds: leaseTtlSeconds
+            )
+
+            let syncState = try SyncStateSnapshot(ffiValue: coordinator.stateSnapshot())
+            let chats = try ChatListResponse(ffiValues: store.listChats()).chats
+
+            return LocalInboxLeaseResult(
+                lease: LeaseInboxResponse(
+                    leaseOwner: outcome.leaseOwner,
+                    leaseExpiresAtUnix: outcome.leaseExpiresAtUnix,
+                    items: []
+                ),
+                ackedInboxIds: outcome.ackedInboxIds.sorted(),
+                report: try LocalStoreApplyReport(ffiValue: outcome.report),
+                syncState: syncState,
+                chats: chats
+            )
+        }
+    }
+
+    func enqueueOutboxAttachment(
+        databasePath: URL,
+        chatId: UUID,
+        senderAccountId: UUID,
+        senderDeviceId: UUID,
+        messageId: UUID,
+        localPath: String,
+        mimeType: String,
+        fileName: String?,
+        widthPx: UInt32? = nil,
+        heightPx: UInt32? = nil,
+        queuedAtUnix: UInt64
+    ) async throws -> LocalOutboxItem {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            let item = try store.enqueueOutboxAttachment(
+                chatId: chatId.uuidString,
+                senderAccountId: senderAccountId.uuidString,
+                senderDeviceId: senderDeviceId.uuidString,
+                messageId: messageId.uuidString,
+                attachment: FfiLocalOutboxAttachmentDraft(
+                    localPath: localPath,
+                    mimeType: mimeType,
+                    fileName: fileName,
+                    widthPx: widthPx,
+                    heightPx: heightPx
+                ),
+                queuedAtUnix: queuedAtUnix
+            )
+            try store.saveState()
+            return try LocalOutboxItem(ffiValue: item)
+        }
+    }
+
+    func fetchMlsStorageRoot(
+        mlsStorageRoot: URL,
+        credentialIdentity: Data
+    ) async throws -> String? {
+        try await callFFI { _ in
+            let facade = try Self.makePersistentMlsFacade(
+                storageRoot: mlsStorageRoot,
+                credentialIdentity: credentialIdentity
+            )
+            return try facade.storageRoot()
+        }
+    }
+
+    func fetchMlsCredentialIdentity(
+        mlsStorageRoot: URL,
+        credentialIdentity: Data
+    ) async throws -> Data {
+        try await callFFI { _ in
+            let facade = try Self.makePersistentMlsFacade(
+                storageRoot: mlsStorageRoot,
+                credentialIdentity: credentialIdentity
+            )
+            return try facade.credentialIdentity()
+        }
+    }
+
+    func fetchSyncStatePath(statePath: URL) async throws -> String? {
+        try await callFFI { _ in
+            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
+            return try coordinator.statePath()
+        }
+    }
+
     func fetchSyncStateSnapshot(statePath: URL) async throws -> SyncStateSnapshot {
         try await callFFI { _ in
             let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
