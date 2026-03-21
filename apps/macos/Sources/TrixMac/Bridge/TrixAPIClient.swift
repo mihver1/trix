@@ -1227,6 +1227,118 @@ struct TrixAPIClient {
         }
     }
 
+    func applyChatDetailToLocalStore(
+        accessToken: String,
+        databasePath: URL,
+        chatId: UUID
+    ) async throws -> LocalStoreApplyReport {
+        try await callFFI(accessToken: accessToken) { client in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            let detail = try client.getChat(chatId: chatId.uuidString)
+            return try LocalStoreApplyReport(ffiValue: store.applyChatDetail(detail: detail))
+        }
+    }
+
+    func fetchLocalChatReadStates(
+        databasePath: URL,
+        selfAccountId: UUID?
+    ) async throws -> [LocalChatReadState] {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            return try store.listChatReadStates(
+                selfAccountId: selfAccountId?.uuidString
+            ).map { try LocalChatReadState(ffiValue: $0) }
+        }
+    }
+
+    func fetchCiphersuiteLabel(
+        mlsStorageRoot: URL,
+        credentialIdentity: Data
+    ) async throws -> String {
+        try await callFFI { _ in
+            let facade = try Self.makePersistentMlsFacade(
+                storageRoot: mlsStorageRoot,
+                credentialIdentity: credentialIdentity
+            )
+            return try facade.ciphersuiteLabel()
+        }
+    }
+
+    // MARK: - Outbox
+
+    func enqueueOutboxMessage(
+        databasePath: URL,
+        chatId: UUID,
+        senderAccountId: UUID,
+        senderDeviceId: UUID,
+        messageId: UUID,
+        body: TypedMessageBody,
+        queuedAtUnix: UInt64
+    ) async throws -> LocalOutboxItem {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            let item = try store.enqueueOutboxMessage(
+                chatId: chatId.uuidString,
+                senderAccountId: senderAccountId.uuidString,
+                senderDeviceId: senderDeviceId.uuidString,
+                messageId: messageId.uuidString,
+                body: body.ffiValue(),
+                queuedAtUnix: queuedAtUnix
+            )
+            try store.saveState()
+            return try LocalOutboxItem(ffiValue: item)
+        }
+    }
+
+    func fetchOutboxMessages(
+        databasePath: URL,
+        chatId: UUID? = nil
+    ) async throws -> [LocalOutboxItem] {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            return try store.listOutboxMessages(
+                chatId: chatId?.uuidString
+            ).map { try LocalOutboxItem(ffiValue: $0) }
+        }
+    }
+
+    func markOutboxFailure(
+        databasePath: URL,
+        messageId: UUID,
+        failureMessage: String
+    ) async throws {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            try store.markOutboxFailure(
+                messageId: messageId.uuidString,
+                failureMessage: failureMessage
+            )
+            try store.saveState()
+        }
+    }
+
+    func clearOutboxFailure(
+        databasePath: URL,
+        messageId: UUID
+    ) async throws {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            try store.clearOutboxFailure(messageId: messageId.uuidString)
+            try store.saveState()
+        }
+    }
+
+    func removeOutboxMessage(
+        databasePath: URL,
+        messageId: UUID
+    ) async throws {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            try store.removeOutboxMessage(messageId: messageId.uuidString)
+            try store.saveState()
+        }
+    }
+
     func fetchSyncStateSnapshot(statePath: URL) async throws -> SyncStateSnapshot {
         try await callFFI { _ in
             let coordinator = try Self.makeSyncCoordinator(statePath: statePath)

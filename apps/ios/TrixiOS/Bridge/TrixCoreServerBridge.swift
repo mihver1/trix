@@ -184,6 +184,79 @@ struct TrixCoreServerBridge {
         )
     }
 
+    static func getMe(
+        baseURLString: String,
+        accessToken: String
+    ) throws -> AccountProfileResponse {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        let profile = try client.getMe()
+        return AccountProfileResponse(
+            accountId: profile.accountId,
+            handle: profile.handle,
+            profileName: profile.profileName,
+            profileBio: profile.profileBio,
+            deviceId: profile.deviceId,
+            deviceStatus: profile.deviceStatus.trix_deviceStatus
+        )
+    }
+
+    static func listDevices(
+        baseURLString: String,
+        accessToken: String
+    ) throws -> DeviceListResponse {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        let response = try client.listDevices()
+        return DeviceListResponse(
+            accountId: response.accountId,
+            devices: response.devices.map { device in
+                DeviceSummary(
+                    deviceId: device.deviceId,
+                    displayName: device.displayName,
+                    platform: device.platform,
+                    deviceStatus: device.deviceStatus.trix_deviceStatus,
+                    availableKeyPackageCount: device.availableKeyPackageCount
+                )
+            }
+        )
+    }
+
+    static func getChatDetail(
+        baseURLString: String,
+        accessToken: String,
+        chatId: String
+    ) throws -> ChatDetailResponse {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        let detail = try client.getChat(chatId: chatId)
+        return ChatDetailResponse(
+            chatId: detail.chatId,
+            chatType: detail.chatType.trix_chatType,
+            title: detail.title,
+            lastServerSeq: detail.lastServerSeq,
+            pendingMessageCount: detail.pendingMessageCount,
+            epoch: detail.epoch,
+            lastCommitMessageId: detail.lastCommitMessageId,
+            lastMessage: detail.lastMessage?.trix_messageEnvelope,
+            participantProfiles: detail.participantProfiles.map(\.trix_chatParticipantProfileSummary),
+            members: detail.members.map { member in
+                ChatMemberSummary(
+                    accountId: member.accountId,
+                    role: member.role,
+                    membershipStatus: member.membershipStatus
+                )
+            },
+            deviceMembers: detail.deviceMembers.map { device in
+                ChatDeviceSummary(
+                    deviceId: device.deviceId,
+                    accountId: device.accountId,
+                    displayName: device.displayName,
+                    platform: device.platform,
+                    leafIndex: device.leafIndex,
+                    credentialIdentityB64: device.credentialIdentity.base64EncodedString()
+                )
+            }
+        )
+    }
+
     static func revokeDevice(
         baseURLString: String,
         accessToken: String,

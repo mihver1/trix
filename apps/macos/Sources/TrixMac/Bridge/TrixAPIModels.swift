@@ -1163,6 +1163,32 @@ struct MessageEnvelope: Codable, Identifiable {
     }
 }
 
+enum OutboxStatus: String, Sendable {
+    case pending
+    case failed
+
+    var label: String {
+        rawValue.capitalized
+    }
+}
+
+struct LocalOutboxItem: Identifiable, Sendable {
+    let messageId: UUID
+    let chatId: UUID
+    let senderAccountId: UUID
+    let senderDeviceId: UUID
+    let body: TypedMessageBody?
+    let queuedAtUnix: UInt64
+    let status: OutboxStatus
+    let failureMessage: String?
+
+    var id: UUID { messageId }
+
+    var queuedAt: Date {
+        Date(timeIntervalSince1970: TimeInterval(queuedAtUnix))
+    }
+}
+
 enum JSONValue: Codable, Hashable, Sendable {
     case string(String)
     case number(Double)

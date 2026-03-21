@@ -901,6 +901,32 @@ extension CompleteHistorySyncJobResponse {
     }
 }
 
+extension OutboxStatus {
+    init(_ ffiValue: FfiLocalOutboxStatus) {
+        switch ffiValue {
+        case .pending:
+            self = .pending
+        case .failed:
+            self = .failed
+        }
+    }
+}
+
+extension LocalOutboxItem {
+    init(ffiValue: FfiLocalOutboxItem) throws {
+        self.init(
+            messageId: try TrixCoreCodec.uuid(ffiValue.messageId, label: "message_id"),
+            chatId: try TrixCoreCodec.uuid(ffiValue.chatId, label: "chat_id"),
+            senderAccountId: try TrixCoreCodec.uuid(ffiValue.senderAccountId, label: "sender_account_id"),
+            senderDeviceId: try TrixCoreCodec.uuid(ffiValue.senderDeviceId, label: "sender_device_id"),
+            body: try ffiValue.body.map { try TypedMessageBody(ffiValue: $0) },
+            queuedAtUnix: ffiValue.queuedAtUnix,
+            status: OutboxStatus(ffiValue.status),
+            failureMessage: ffiValue.failureMessage
+        )
+    }
+}
+
 enum TrixCoreCodec {
     static func uuid(_ rawValue: String, label: String) throws -> UUID {
         guard let value = UUID(uuidString: rawValue) else {
