@@ -120,3 +120,10 @@ func deviceTransferBundleTargetsRecipientTransportKey() throws {
     #expect(imported.accountSyncChatId == accountSyncChatId.uuidString)
     #expect(!imported.accountRootPrivateKey.isEmpty)
 }
+
+@Test
+func websocketSessionReplacementReasonsThatShouldReconnectStayRecoverable() {
+    #expect(isRecoverableRealtimeSessionReplacement("replaced by a newer websocket session"))
+    #expect(isRecoverableRealtimeSessionReplacement("server shutting down"))
+    #expect(!isRecoverableRealtimeSessionReplacement("manual disconnect"))
+}

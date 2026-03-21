@@ -116,6 +116,7 @@ final class AppModel: ObservableObject {
     private var realtimeAccessToken: String?
     private var cachedAttachmentFiles: [String: DownloadedAttachmentFile] = [:]
     private var attachmentDownloadTasks: [String: Task<DownloadedAttachmentFile, Error>] = [:]
+    private var backgroundRealtimeTaskID: UIBackgroundTaskIdentifier = .invalid
 
     init(identityStore: LocalDeviceIdentityStore = LocalDeviceIdentityStore()) {
         self.identityStore = identityStore
@@ -212,6 +213,41 @@ final class AppModel: ObservableObject {
             logWarn("sync", "refresh failed", error: error)
             errorMessage = error.localizedDescription
         }
+    }
+
+    func handleAppDidBecomeActive(baseURLString: String) async {
+        currentServerBaseURLString = normalizedBaseURLString(baseURLString)
+        endBackgroundRealtimeTask()
+
+        guard localIdentity != nil else {
+            return
+        }
+
+        if realtimeClient != nil {
+            return
+        }
+
+        if let localIdentity,
+           let cachedAuthSession,
+           cachedAuthSession.isUsable(
+               for: localIdentity,
+               baseURLString: normalizedBaseURLString(baseURLString),
+               leewaySeconds: 60
+           ) {
+            await startRealtimeConnection(
+                baseURLString: baseURLString,
+                accessToken: cachedAuthSession.session.accessToken,
+                identity: localIdentity
+            )
+            return
+        }
+
+        await refresh(baseURLString: baseURLString)
+    }
+
+    func handleAppDidEnterBackground(baseURLString: String) {
+        currentServerBaseURLString = normalizedBaseURLString(baseURLString)
+        beginBackgroundRealtimeTask(baseURLString: baseURLString)
     }
 
     func createAccount(baseURLString: String, form: CreateAccountForm) async {
@@ -1997,14 +2033,20 @@ final class AppModel: ObservableObject {
         case .pong:
             break
         case .sessionReplaced:
-            invalidateCachedAuthSession()
             disconnectRealtimeConnection()
-            if let reason = update.event.sessionReplacedReason?.trix_trimmedOrNil() {
+            if let reason = update.event.sessionReplacedReason?.trix_trimmedOrNil(),
+               !isRecoverableRealtimeSessionReplacement(reason) {
                 errorMessage = reason
             }
-            scheduleBackgroundRefresh(delayNanoseconds: 300_000_000)
+            scheduleBackgroundRefresh(
+                delayNanoseconds: isRecoverableRealtimeSessionReplacement(update.event.sessionReplacedReason)
+                    ? 300_000_000
+                    : 1_500_000_000
+            )
         case .error:
             errorMessage = update.event.errorMessage ?? "Realtime transport error."
+            disconnectRealtimeConnection()
+            scheduleBackgroundRefresh(delayNanoseconds: 1_500_000_000)
         case .disconnected:
             disconnectRealtimeConnection()
             scheduleBackgroundRefresh(delayNanoseconds: 300_000_000)
@@ -2061,6 +2103,55 @@ final class AppModel: ObservableObject {
             }
             self.finishBackgroundRefresh()
         }
+    }
+
+    private func beginBackgroundRealtimeTask(baseURLString: String) {
+        guard localIdentity != nil else {
+            return
+        }
+
+        endBackgroundRealtimeTask()
+        backgroundRealtimeTaskID = UIApplication.shared.beginBackgroundTask(
+            withName: "chat.trix.ios.realtime.handoff"
+        ) { [weak self] in
+            Task { @MainActor in
+                guard let self else {
+                    return
+                }
+
+                await self.stopRealtimeConnection()
+                self.endBackgroundRealtimeTask()
+            }
+        }
+
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            try? await Task.sleep(nanoseconds: 25_000_000_000)
+            guard self.backgroundRealtimeTaskID != .invalid else {
+                return
+            }
+
+            let recovered = await self.runIncrementalBackgroundRecovery(
+                baseURLString: baseURLString
+            )
+            if !recovered {
+                await self.refresh(baseURLString: baseURLString)
+            }
+            await self.stopRealtimeConnection()
+            self.endBackgroundRealtimeTask()
+        }
+    }
+
+    private func endBackgroundRealtimeTask() {
+        guard backgroundRealtimeTaskID != .invalid else {
+            return
+        }
+
+        UIApplication.shared.endBackgroundTask(backgroundRealtimeTaskID)
+        backgroundRealtimeTaskID = .invalid
     }
 
     private func finishBackgroundRefresh() {
