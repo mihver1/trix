@@ -1,3 +1,4 @@
+import QuickLook
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -7,6 +8,20 @@ private let consumerMessageClusterWindow: TimeInterval = 5 * 60
 private let consumerTimelineBottomAnchor = "consumer-timeline-bottom-anchor"
 private let consumerMessageBubbleMaxWidth: CGFloat = 320
 private let consumerMessageBubbleHorizontalPadding: CGFloat = 14
+
+private enum ConsumerAttachmentPresentation: Identifiable {
+    case preview(DownloadedAttachmentFile)
+    case share(DownloadedAttachmentFile)
+
+    var id: String {
+        switch self {
+        case let .preview(attachment):
+            return "preview-\(attachment.id)"
+        case let .share(attachment):
+            return "share-\(attachment.id)"
+        }
+    }
+}
 
 private struct ConsumerAttachmentDraft {
     let fileURL: URL
@@ -63,7 +78,7 @@ struct ConsumerChatDetailView: View {
     @State private var isImportingAttachment = false
     @State private var localErrorMessage: String?
     @State private var activityMessage: String?
-    @State private var downloadedAttachment: DownloadedAttachmentFile?
+    @State private var attachmentPresentation: ConsumerAttachmentPresentation?
     @State private var downloadingAttachmentMessageId: String?
 
     var body: some View {
@@ -128,8 +143,13 @@ struct ConsumerChatDetailView: View {
         ) { result in
             handleAttachmentImport(result)
         }
-        .sheet(item: $downloadedAttachment) { downloadedAttachment in
-            AttachmentActivitySheet(items: [downloadedAttachment.fileURL])
+        .sheet(item: $attachmentPresentation) { attachmentPresentation in
+            switch attachmentPresentation {
+            case let .preview(downloadedAttachment):
+                AttachmentPreviewSheet(attachment: downloadedAttachment)
+            case let .share(downloadedAttachment):
+                AttachmentActivitySheet(items: [downloadedAttachment.fileURL])
+            }
         }
     }
 
@@ -151,7 +171,9 @@ struct ConsumerChatDetailView: View {
                             ConsumerTimelineRow(
                                 item: item,
                                 downloadingAttachmentMessageId: downloadingAttachmentMessageId,
-                                onOpenAttachment: openAttachment
+                                onOpenAttachment: openAttachment,
+                                serverBaseURL: serverBaseURL,
+                                model: model
                             )
                         }
                     }
@@ -427,8 +449,12 @@ struct ConsumerChatDetailView: View {
                 baseURLString: serverBaseURL,
                 body: attachmentBody
             ) {
-                self.downloadedAttachment = downloadedAttachment
-                activityMessage = "Ready to share \(downloadedAttachment.fileName)"
+                attachmentPresentation = downloadedAttachment.supportsLocalImagePreview
+                    ? .preview(downloadedAttachment)
+                    : .share(downloadedAttachment)
+                activityMessage = downloadedAttachment.supportsLocalImagePreview
+                    ? "Ready to preview \(downloadedAttachment.fileName)"
+                    : "Ready to share \(downloadedAttachment.fileName)"
             } else {
                 localErrorMessage = model.errorMessage
                 activityMessage = nil
@@ -701,6 +727,8 @@ private struct ConsumerTimelineRow: View {
     let item: ConsumerTimelineItem
     let downloadingAttachmentMessageId: String?
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
+    let serverBaseURL: String
+    let model: AppModel
 
     var body: some View {
         switch item {
@@ -713,7 +741,9 @@ private struct ConsumerTimelineRow: View {
                 ConsumerBubbleRow(
                     message: message,
                     isDownloadingAttachment: downloadingAttachmentMessageId == message.id,
-                    onOpenAttachment: onOpenAttachment
+                    onOpenAttachment: onOpenAttachment,
+                    serverBaseURL: serverBaseURL,
+                    model: model
                 )
             }
         }
@@ -744,6 +774,8 @@ private struct ConsumerBubbleRow: View {
     let message: ConsumerRenderedMessage
     let isDownloadingAttachment: Bool
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
+    let serverBaseURL: String
+    let model: AppModel
 
     var body: some View {
         HStack {
@@ -762,7 +794,9 @@ private struct ConsumerBubbleRow: View {
                 ConsumerMessageBubble(
                     message: message,
                     isDownloadingAttachment: isDownloadingAttachment,
-                    onOpenAttachment: onOpenAttachment
+                    onOpenAttachment: onOpenAttachment,
+                    serverBaseURL: serverBaseURL,
+                    model: model
                 )
             }
             .frame(maxWidth: .infinity, alignment: message.isOutgoing ? .trailing : .leading)
@@ -779,6 +813,8 @@ private struct ConsumerMessageBubble: View {
     let message: ConsumerRenderedMessage
     let isDownloadingAttachment: Bool
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
+    let serverBaseURL: String
+    let model: AppModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -792,7 +828,9 @@ private struct ConsumerMessageBubble: View {
                 ConsumerAttachmentBubbleContent(
                     message: message,
                     isDownloading: isDownloadingAttachment,
-                    onOpenAttachment: onOpenAttachment
+                    onOpenAttachment: onOpenAttachment,
+                    serverBaseURL: serverBaseURL,
+                    model: model
                 )
             case .reaction, .receipt, .chatEvent:
                 EmptyView()
@@ -889,36 +927,62 @@ private struct ConsumerAttachmentBubbleContent: View {
     let message: ConsumerRenderedMessage
     let isDownloading: Bool
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
+    let serverBaseURL: String
+    let model: AppModel
 
     var body: some View {
         Button {
             onOpenAttachment(message)
         } label: {
-            HStack(alignment: .top, spacing: 12) {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(message.isOutgoing ? Color.white.opacity(0.18) : consumerChatAccent.opacity(0.12))
-                    .frame(width: 42, height: 42)
-                    .overlay {
-                        if isDownloading {
-                            ProgressView()
-                                .tint(message.isOutgoing ? .white : consumerChatAccent)
-                        } else {
-                            Image(systemName: attachmentIconName)
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(message.isOutgoing ? .white : consumerChatAccent)
-                        }
+            if isInlineImageAttachment, let attachmentBody = message.attachmentBody {
+                VStack(alignment: .leading, spacing: 10) {
+                    ConsumerInlineImageAttachmentPreview(
+                        model: model,
+                        serverBaseURL: serverBaseURL,
+                        messageID: message.id,
+                        attachmentBody: attachmentBody,
+                        isOutgoing: message.isOutgoing
+                    )
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(message.primaryText)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(message.isOutgoing ? .white : .primary)
+                            .lineLimit(2)
+
+                        Text(isDownloading ? "Decrypting secure attachment..." : (message.secondaryText ?? "Tap to open"))
+                            .font(.caption)
+                            .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
+                            .lineLimit(2)
                     }
+                }
+            } else {
+                HStack(alignment: .top, spacing: 12) {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(message.isOutgoing ? Color.white.opacity(0.18) : consumerChatAccent.opacity(0.12))
+                        .frame(width: 42, height: 42)
+                        .overlay {
+                            if isDownloading {
+                                ProgressView()
+                                    .tint(message.isOutgoing ? .white : consumerChatAccent)
+                            } else {
+                                Image(systemName: attachmentIconName)
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(message.isOutgoing ? .white : consumerChatAccent)
+                            }
+                        }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(message.primaryText)
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(message.isOutgoing ? .white : .primary)
-                        .lineLimit(2)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(message.primaryText)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(message.isOutgoing ? .white : .primary)
+                            .lineLimit(2)
 
-                    Text(isDownloading ? "Decrypting secure attachment..." : (message.secondaryText ?? "Tap to open"))
-                        .font(.caption)
-                        .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
-                        .lineLimit(2)
+                        Text(isDownloading ? "Decrypting secure attachment..." : (message.secondaryText ?? "Tap to open"))
+                            .font(.caption)
+                            .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
+                            .lineLimit(2)
+                    }
                 }
             }
             .contentShape(Rectangle())
@@ -929,7 +993,10 @@ private struct ConsumerAttachmentBubbleContent: View {
 
     private var attachmentIconName: String {
         let loweredTitle = message.primaryText.lowercased()
-        if loweredTitle.hasSuffix(".jpg") || loweredTitle.hasSuffix(".jpeg") || loweredTitle.hasSuffix(".png") || loweredTitle.hasSuffix(".heic") {
+        if DownloadedAttachmentFile.supportsLocalImagePreview(
+            mimeType: message.attachmentBody?.mimeType,
+            fileName: message.primaryText
+        ) {
             return "photo"
         }
         if loweredTitle.hasSuffix(".pdf") {
@@ -937,6 +1004,110 @@ private struct ConsumerAttachmentBubbleContent: View {
         }
         return "paperclip"
     }
+
+    private var isInlineImageAttachment: Bool {
+        DownloadedAttachmentFile.supportsLocalImagePreview(
+            mimeType: message.attachmentBody?.mimeType,
+            fileName: message.primaryText
+        )
+    }
+}
+
+private struct ConsumerInlineImageAttachmentPreview: View {
+    let model: AppModel
+    let serverBaseURL: String
+    let messageID: String
+    let attachmentBody: FfiMessageBody
+    let isOutgoing: Bool
+
+    @State private var previewImage: UIImage?
+    @State private var isLoading = true
+    @State private var hasFailed = false
+
+    var body: some View {
+        let previewSize = inlineAttachmentPreviewSize(
+            widthPx: attachmentBody.widthPx.map(Int.init),
+            heightPx: attachmentBody.heightPx.map(Int.init)
+        )
+
+        ZStack {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(isOutgoing ? Color.white.opacity(0.16) : consumerChatAccent.opacity(0.1))
+
+            if let previewImage {
+                Image(uiImage: previewImage)
+                    .resizable()
+                    .scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            } else if isLoading {
+                ProgressView()
+                    .tint(isOutgoing ? .white : consumerChatAccent)
+            } else {
+                Image(systemName: "photo")
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(isOutgoing ? .white : consumerChatAccent)
+            }
+        }
+        .frame(width: previewSize.width, height: previewSize.height)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .task(id: messageID) {
+            await loadPreview()
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if hasFailed {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.white)
+                    .padding(8)
+            }
+        }
+    }
+
+    private func loadPreview() async {
+        isLoading = true
+        hasFailed = false
+        previewImage = nil
+
+        do {
+            let attachmentFile = try await model.resolveAttachmentFile(
+                baseURLString: serverBaseURL,
+                body: attachmentBody
+            )
+            previewImage = UIImage(contentsOfFile: attachmentFile.fileURL.path)
+            hasFailed = previewImage == nil
+        } catch {
+            previewImage = nil
+            hasFailed = true
+        }
+
+        isLoading = false
+    }
+}
+
+private func inlineAttachmentPreviewSize(widthPx: Int?, heightPx: Int?) -> CGSize {
+    let maxLandscapeWidth: CGFloat = 244
+    let maxPortraitHeight: CGFloat = 228
+    let minWidth: CGFloat = 132
+    let minHeight: CGFloat = 112
+
+    let ratio: CGFloat
+    if let widthPx, let heightPx, widthPx > 0, heightPx > 0 {
+        ratio = CGFloat(widthPx) / CGFloat(heightPx)
+    } else {
+        ratio = 4 / 3
+    }
+
+    if ratio >= 1 {
+        return CGSize(
+            width: maxLandscapeWidth,
+            height: max(minHeight, min(maxPortraitHeight, maxLandscapeWidth / ratio))
+        )
+    }
+
+    return CGSize(
+        width: max(minWidth, min(maxLandscapeWidth, maxPortraitHeight * ratio)),
+        height: maxPortraitHeight
+    )
 }
 
 private struct ConsumerSystemEventRow: View {
@@ -974,6 +1145,99 @@ private struct AttachmentActivitySheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+private struct AttachmentPreviewSheet: UIViewControllerRepresentable {
+    let attachment: DownloadedAttachmentFile
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(attachment: attachment)
+    }
+
+    func makeUIViewController(context: Context) -> QLPreviewController {
+        let controller = QLPreviewController()
+        controller.dataSource = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: QLPreviewController, context: Context) {
+        context.coordinator.attachment = attachment
+        uiViewController.reloadData()
+    }
+
+    final class Coordinator: NSObject, QLPreviewControllerDataSource {
+        var attachment: DownloadedAttachmentFile
+
+        init(attachment: DownloadedAttachmentFile) {
+            self.attachment = attachment
+        }
+
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int {
+            1
+        }
+
+        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
+            attachment.fileURL as NSURL
+        }
+    }
+}
+
+private extension DownloadedAttachmentFile {
+    var supportsLocalImagePreview: Bool {
+        Self.supportsLocalImagePreview(mimeType: mimeType, fileName: fileName)
+    }
+
+    static func supportsLocalImagePreview(mimeType: String?, fileName: String?) -> Bool {
+        LocalImageAttachmentSupport.supports(mimeType: mimeType, fileName: fileName)
+    }
+}
+
+private enum LocalImageAttachmentSupport {
+    private static let mimeTypes: Set<String> = [
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+        "image/heif",
+        "image/heic",
+        "image/heif-sequence",
+        "image/heic-sequence",
+    ]
+
+    private static let fileExtensions: Set<String> = [
+        "jpg",
+        "jpeg",
+        "png",
+        "gif",
+        "webp",
+        "heif",
+        "heic",
+    ]
+
+    static func supports(mimeType: String?, fileName: String?) -> Bool {
+        if let normalizedMimeType = mimeType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+           mimeTypes.contains(normalizedMimeType) {
+            return true
+        }
+
+        if let fileName {
+            let fileExtension = URL(fileURLWithPath: fileName)
+                .pathExtension
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            if fileExtensions.contains(fileExtension) {
+                return true
+            }
+        }
+
+        if let fileName,
+           fileExtensions.contains(fileName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) {
+            return true
+        }
+
+        return false
+    }
 }
 
 private extension ContentType {

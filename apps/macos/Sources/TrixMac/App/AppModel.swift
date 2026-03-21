@@ -2,6 +2,14 @@ import AppKit
 import Foundation
 import UniformTypeIdentifiers
 
+struct PreviewedAttachmentFile: Identifiable {
+    let fileURL: URL
+    let fileName: String
+    let mimeType: String?
+
+    var id: String { fileURL.absoluteString }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var serverBaseURLString: String
@@ -40,6 +48,7 @@ final class AppModel: ObservableObject {
     @Published var selectedChatProjectedMessages: [LocalProjectedMessage] = []
     @Published var selectedChatHistory: [MessageEnvelope] = []
     @Published var cachedAttachmentURLs: [UUID: URL] = [:]
+    @Published var previewedAttachment: PreviewedAttachmentFile?
     @Published var outgoingLinkIntent: DeviceLinkIntentState?
     @Published var notificationPreferences: NotificationPreferences
     @Published var hasAccountRootKey = false
@@ -354,7 +363,59 @@ final class AppModel: ObservableObject {
     }
 
     func cachedAttachmentURL(for messageId: UUID) -> URL? {
-        cachedAttachmentURLs[messageId]
+        guard let cachedURL = cachedAttachmentURLs[messageId] else {
+            return nil
+        }
+        guard FileManager.default.fileExists(atPath: cachedURL.path) else {
+            cachedAttachmentURLs.removeValue(forKey: messageId)
+            return nil
+        }
+        return cachedURL
+    }
+
+    func ensureCachedAttachmentURL(
+        for message: LocalTimelineItem,
+        reportErrors: Bool = false
+    ) async -> URL? {
+        guard let body = message.body, body.kind == .attachment else {
+            return nil
+        }
+        if let cachedURL = cachedAttachmentURLs[message.messageId],
+           FileManager.default.fileExists(atPath: cachedURL.path) {
+            return cachedURL
+        }
+        guard let token = accessToken else {
+            if reportErrors {
+                await restoreSession()
+            }
+            return nil
+        }
+        guard let client = makeClient() else {
+            return nil
+        }
+
+        do {
+            let downloaded = try await client.downloadAttachment(accessToken: token, body: body)
+            let destinationURL = try attachmentCacheURL(for: message.messageId, body: downloaded.body)
+            try downloaded.plaintext.write(to: destinationURL, options: .atomic)
+            cachedAttachmentURLs[message.messageId] = destinationURL
+            return destinationURL
+        } catch let error as TrixAPIError {
+            if error.isCredentialFailure {
+                accessToken = nil
+                if reportErrors {
+                    await restoreSession()
+                }
+            } else if reportErrors {
+                lastErrorMessage = error.userFacingMessage
+            }
+        } catch {
+            if reportErrors {
+                lastErrorMessage = error.userFacingMessage
+            }
+        }
+
+        return nil
     }
 
     func createAccount() async {
@@ -875,36 +936,14 @@ final class AppModel: ObservableObject {
         guard let body = message.body, body.kind == .attachment else {
             return
         }
-        if let cachedURL = cachedAttachmentURLs[message.messageId] {
-            NSWorkspace.shared.open(cachedURL)
-            return
-        }
-        guard let token = accessToken else {
-            await restoreSession()
-            return
-        }
-        guard let client = makeClient() else {
-            return
-        }
-
         downloadingAttachmentMessageIDs.insert(message.messageId)
         defer { downloadingAttachmentMessageIDs.remove(message.messageId) }
 
-        do {
-            let downloaded = try await client.downloadAttachment(accessToken: token, body: body)
-            let destinationURL = try attachmentCacheURL(for: message.messageId, body: downloaded.body)
-            try downloaded.plaintext.write(to: destinationURL, options: .atomic)
-            cachedAttachmentURLs[message.messageId] = destinationURL
-            NSWorkspace.shared.open(destinationURL)
-        } catch let error as TrixAPIError {
-            if error.isCredentialFailure {
-                accessToken = nil
-                await restoreSession()
-            } else {
-                lastErrorMessage = error.userFacingMessage
-            }
-        } catch {
-            lastErrorMessage = error.userFacingMessage
+        if let cachedURL = await ensureCachedAttachmentURL(
+            for: message,
+            reportErrors: true
+        ) {
+            presentAttachment(url: cachedURL, body: body)
         }
     }
 
@@ -1895,6 +1934,7 @@ final class AppModel: ObservableObject {
         pendingOutgoingMessages = []
         composerAttachmentDraft = nil
         cachedAttachmentURLs = [:]
+        previewedAttachment = nil
         accountDirectoryResults = []
         inboxItems = []
         activeInboxLease = nil
@@ -2462,6 +2502,19 @@ final class AppModel: ObservableObject {
         let storePaths = try workspaceStorePaths()
         let fileName = body.fileName?.nonEmptyTrimmed ?? "\(messageId.uuidString).bin"
         return storePaths.attachmentsRootURL.appending(path: "\(messageId.uuidString)-\(fileName)")
+    }
+
+    private func presentAttachment(url: URL, body: TypedMessageBody) {
+        if LocalImageAttachmentSupport.supports(mimeType: body.mimeType, fileName: body.fileName ?? url.lastPathComponent) {
+            previewedAttachment = PreviewedAttachmentFile(
+                fileURL: url,
+                fileName: body.fileName?.nonEmptyTrimmed ?? url.lastPathComponent,
+                mimeType: body.mimeType
+            )
+            return
+        }
+
+        NSWorkspace.shared.open(url)
     }
 
     private func conversationSafeMessage(_ rawMessage: String) -> String {

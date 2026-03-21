@@ -400,6 +400,11 @@ class ChatRepository(
         attachmentRepository().openAttachment(attachment)
     }
 
+    suspend fun loadImagePreviewAttachment(attachment: ChatAttachment): LocalImagePreviewAttachment =
+        withContext(Dispatchers.IO) {
+            attachmentRepository().loadImagePreviewAttachment(attachment)
+        }
+
     suspend fun shareAttachment(attachment: ChatAttachment) = withContext(Dispatchers.IO) {
         attachmentRepository().shareAttachment(attachment)
     }
