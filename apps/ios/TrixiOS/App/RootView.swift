@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct RootView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage(ServerConfiguration.baseURLDefaultsKey)
     private var serverBaseURL = ServerConfiguration.defaultBaseURL.absoluteString
 
@@ -31,6 +32,20 @@ struct RootView: View {
         }
         .task {
             await model.start(baseURLString: serverBaseURL)
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            switch newPhase {
+            case .active:
+                Task {
+                    await model.handleAppDidBecomeActive(baseURLString: serverBaseURL)
+                }
+            case .background:
+                model.handleAppDidEnterBackground(baseURLString: serverBaseURL)
+            case .inactive:
+                break
+            @unknown default:
+                break
+            }
         }
     }
 }

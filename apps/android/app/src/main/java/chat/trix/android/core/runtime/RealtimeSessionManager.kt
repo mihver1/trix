@@ -38,6 +38,7 @@ import kotlinx.coroutines.withContext
 class RealtimeSessionManager(
     context: Context,
     private val session: AuthenticatedSession,
+    private val observeProcessLifecycle: Boolean = true,
     private val onSessionReplaced: (String) -> Unit,
     private val onChatsChanged: (Set<String>) -> Unit = {},
 ) : DefaultLifecycleObserver, AutoCloseable {
@@ -91,7 +92,15 @@ class RealtimeSessionManager(
         )
     }
 
+    fun start() {
+        ensureLoopRunning()
+    }
+
     fun startObserving() {
+        if (!observeProcessLifecycle) {
+            ensureLoopRunning()
+            return
+        }
         lifecycle.addObserver(this)
         if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
             ensureLoopRunning()
@@ -112,8 +121,14 @@ class RealtimeSessionManager(
         }
     }
 
+    suspend fun stop() {
+        shutdownRealtimeLoop()
+    }
+
     override fun close() {
-        lifecycle.removeObserver(this)
+        if (observeProcessLifecycle) {
+            lifecycle.removeObserver(this)
+        }
         runBlocking {
             shutdownRealtimeLoop()
         }
@@ -235,6 +250,12 @@ class RealtimeSessionManager(
 
             FfiRealtimeEventKind.SESSION_REPLACED -> {
                 val reason = event.sessionReplacedReason ?: "session replaced by another client"
+                if (isRecoverableSessionReplacement(reason)) {
+                    telemetry.warn(TAG, "websocket session handoff detected; reconnecting")
+                    closeSocketQuietly()
+                    delay(WEBSOCKET_RETRY_DELAY_MS)
+                    return true
+                }
                 telemetry.error(TAG, "session replaced: $reason")
                 notificationRouter.publishDeviceStatusIssue(
                     title = "Trix session replaced",
@@ -343,6 +364,10 @@ private fun Throwable.asIoException(fallbackMessage: String): IOException {
     }
 }
 
+internal fun isRecoverableSessionReplacement(reason: String?): Boolean {
+    return reason in RECOVERABLE_SESSION_REPLACEMENT_REASONS
+}
+
 internal fun shouldDispatchChatRefresh(
     eventKind: FfiRealtimeEventKind,
     changedChatIds: Set<String>,
@@ -351,3 +376,8 @@ internal fun shouldDispatchChatRefresh(
         eventKind == FfiRealtimeEventKind.ACKED ||
         eventKind == FfiRealtimeEventKind.INBOX_ITEMS
 }
+
+private val RECOVERABLE_SESSION_REPLACEMENT_REASONS = setOf(
+    "replaced by a newer websocket session",
+    "server shutting down",
+)

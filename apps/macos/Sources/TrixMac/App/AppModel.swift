@@ -88,6 +88,11 @@ final class AppModel: ObservableObject {
     private var accessToken: String?
     private var didStart = false
     private var backgroundRefreshTask: Task<Void, Never>?
+    private var realtimeClient: RealtimeWebSocketClient?
+    private var realtimeConnectionID = UUID()
+    private var realtimeAccessToken: String?
+    private var realtimeBaseURLString: String?
+    private var hasScheduledRealtimeRecovery = false
     private var isApplicationActive = true
 
     init(
@@ -311,7 +316,15 @@ final class AppModel: ObservableObject {
         if isActive {
             Task {
                 await refreshNotificationPermissionState()
-                await refreshInbox(background: false, suppressErrors: true)
+                if let accessToken,
+                   let accountId = currentAccount?.accountId ?? persistedSession?.accountId {
+                    await startRealtimeConnection(
+                        accessToken: accessToken,
+                        accountId: accountId
+                    )
+                } else {
+                    await refreshInbox(background: false, suppressErrors: true)
+                }
             }
         }
     }
@@ -585,6 +598,7 @@ final class AppModel: ObservableObject {
         } catch let error as TrixAPIError {
             logWarn("auth", "restore_session failed device=\(shortLogID(session.deviceId))", error: error)
             if error.isCredentialFailure {
+                disconnectRealtimeConnection()
                 if session.deviceStatus == .pending {
                     if error.suggestsPendingLinkReset {
                         restartPendingLinkFlow(
@@ -640,6 +654,7 @@ final class AppModel: ObservableObject {
             logWarn("sync", "workspace_refresh failed", error: error)
             if error.isCredentialFailure {
                 accessToken = nil
+                disconnectRealtimeConnection()
                 await restoreSession()
             } else {
                 lastErrorMessage = error.userFacingMessage
@@ -1313,6 +1328,7 @@ final class AppModel: ObservableObject {
             logWarn("inbox", "refresh_inbox failed", error: error)
             if error.isCredentialFailure {
                 accessToken = nil
+                disconnectRealtimeConnection()
                 lastErrorMessage = "Session expired. Reconnect this Mac to keep syncing messages."
                 if !suppressErrors {
                     await restoreSession()
@@ -1751,6 +1767,268 @@ final class AppModel: ObservableObject {
         )
     }
 
+    private func startRealtimeConnection(
+        accessToken: String,
+        accountId: UUID
+    ) async {
+        guard let session = persistedSession else {
+            return
+        }
+
+        let normalizedBaseURL = ServerEndpoint.normalizedURL(from: session.baseURLString)?
+            .absoluteString ?? session.baseURLString
+        if realtimeClient != nil,
+           realtimeAccessToken == accessToken,
+           realtimeBaseURLString == normalizedBaseURL {
+            return
+        }
+
+        await stopRealtimeConnection()
+
+        do {
+            let storePaths = try workspaceStorePaths(for: accountId)
+            let connectionID = UUID()
+            realtimeConnectionID = connectionID
+            let client = try RealtimeWebSocketClient(
+                baseURLString: session.baseURLString,
+                accessToken: accessToken,
+                databasePath: storePaths.localHistoryURL,
+                statePath: storePaths.syncStateURL,
+                onEvent: { [weak self] update in
+                    await self?.handleRealtimeUpdate(update, connectionID: connectionID)
+                },
+                onDisconnect: { [weak self] reason in
+                    await self?.handleRealtimeDisconnect(reason, connectionID: connectionID)
+                }
+            )
+            realtimeClient = client
+            realtimeAccessToken = accessToken
+            realtimeBaseURLString = normalizedBaseURL
+            await client.start()
+        } catch {
+            realtimeClient = nil
+            realtimeAccessToken = nil
+            realtimeBaseURLString = nil
+            scheduleRealtimeRecovery(delayNanoseconds: 1_500_000_000)
+        }
+    }
+
+    private func stopRealtimeConnection() async {
+        let client = realtimeClient
+        realtimeClient = nil
+        realtimeAccessToken = nil
+        realtimeBaseURLString = nil
+        realtimeConnectionID = UUID()
+        await client?.stop()
+    }
+
+    private func disconnectRealtimeConnection() {
+        let client = realtimeClient
+        realtimeClient = nil
+        realtimeAccessToken = nil
+        realtimeBaseURLString = nil
+        realtimeConnectionID = UUID()
+
+        if let client {
+            Task {
+                await client.stop()
+            }
+        }
+    }
+
+    private func handleRealtimeUpdate(
+        _ update: RealtimeConnectionUpdate,
+        connectionID: UUID
+    ) async {
+        guard realtimeConnectionID == connectionID else {
+            return
+        }
+
+        switch update.event.kind {
+        case .hello, .pong:
+            return
+        case .inboxItems:
+            await applyRealtimeLocalUpdate(
+                changedChatIDs: Set(update.event.report?.changedChatIds.compactMap(UUID.init(uuidString:)) ?? []),
+                ackedInboxIDs: [],
+                postNotifications: !isApplicationActive
+            )
+        case .acked:
+            removeAckedInboxItems(update.event.serverAckedInboxIds)
+            do {
+                let storePaths = try workspaceStorePaths()
+                let client = try makeClientForRealtimeRefresh()
+                let syncState = try await client.fetchSyncStateSnapshot(statePath: storePaths.syncStateURL)
+                applySyncStateSnapshot(syncState)
+            } catch {
+                scheduleRealtimeRecovery(delayNanoseconds: 300_000_000)
+            }
+        case .sessionReplaced:
+            let reason = update.event.sessionReplacedReason?.nonEmptyTrimmed
+            disconnectRealtimeConnection()
+            if let reason, !isRecoverableRealtimeSessionReplacement(reason) {
+                lastErrorMessage = reason
+            }
+            scheduleRealtimeRecovery(
+                delayNanoseconds: isRecoverableRealtimeSessionReplacement(reason) ? 500_000_000 : 1_500_000_000
+            )
+        case .error:
+            if let message = update.event.errorMessage?.nonEmptyTrimmed {
+                lastErrorMessage = message
+            }
+            disconnectRealtimeConnection()
+            scheduleRealtimeRecovery(delayNanoseconds: 1_500_000_000)
+        case .disconnected:
+            disconnectRealtimeConnection()
+            scheduleRealtimeRecovery(delayNanoseconds: 1_500_000_000)
+        }
+    }
+
+    private func handleRealtimeDisconnect(
+        _ reason: String?,
+        connectionID: UUID
+    ) async {
+        guard realtimeConnectionID == connectionID else {
+            return
+        }
+
+        disconnectRealtimeConnection()
+        if let reason = reason?.nonEmptyTrimmed,
+           currentAccount == nil {
+            lastErrorMessage = reason
+        }
+        scheduleRealtimeRecovery(delayNanoseconds: 1_500_000_000)
+    }
+
+    private func applyRealtimeLocalUpdate(
+        changedChatIDs: Set<UUID>,
+        ackedInboxIDs: [UInt64],
+        postNotifications: Bool
+    ) async {
+        guard let accountId = currentAccount?.accountId ?? persistedSession?.accountId else {
+            return
+        }
+
+        do {
+            let client = try makeClientForRealtimeRefresh()
+            let storePaths = try workspaceStorePaths(for: accountId)
+            let identity = try loadStoredIdentity()
+            guard let accessToken else {
+                return
+            }
+            let previousChatListItems = Dictionary(uniqueKeysWithValues: localChatListItems.map { ($0.chatId, $0) })
+
+            for chatId in changedChatIDs {
+                _ = try await client.projectLocalChatIfPossible(
+                    databasePath: storePaths.localHistoryURL,
+                    mlsStorageRoot: storePaths.mlsStateRootURL,
+                    credentialIdentity: identity.storedIdentity.credentialIdentity,
+                    chatId: chatId
+                )
+            }
+
+            let projectedChats = try await client.fetchLocalChats(databasePath: storePaths.localHistoryURL)
+            let syncState = try await client.fetchSyncStateSnapshot(statePath: storePaths.syncStateURL)
+
+            applyLocalStoreSnapshot(chats: projectedChats.chats, syncState: syncState)
+            try await refreshLocalMessengerState(client: client, accountId: accountId)
+            removeAckedInboxItems(ackedInboxIDs)
+            try await reconcileSelectedChatAfterLocalStateUpdate(
+                client: client,
+                accessToken: accessToken,
+                changedChatIDs: changedChatIDs
+            )
+
+            if postNotifications {
+                await postRealtimeNotifications(
+                    previousChatListItems: previousChatListItems,
+                    changedChatIDs: changedChatIDs
+                )
+            }
+        } catch {
+            await refreshInbox(background: postNotifications, suppressErrors: true)
+        }
+    }
+
+    private func postRealtimeNotifications(
+        previousChatListItems: [UUID: LocalChatListItem],
+        changedChatIDs: Set<UUID>
+    ) async {
+        guard notificationPreferences.isEnabled else {
+            return
+        }
+
+        switch notificationPreferences.permissionState {
+        case .authorized, .provisional, .ephemeral:
+            break
+        case .notDetermined, .denied:
+            return
+        }
+
+        guard let currentAccountID = currentAccount?.accountId ?? persistedSession?.accountId else {
+            return
+        }
+
+        for chatId in changedChatIDs {
+            guard let currentItem = localChatListItems.first(where: { $0.chatId == chatId }) else {
+                continue
+            }
+
+            let previousServerSeq = previousChatListItems[chatId]?.lastServerSeq ?? 0
+            guard currentItem.lastServerSeq > previousServerSeq else {
+                continue
+            }
+            guard currentItem.previewSenderAccountId != currentAccountID else {
+                continue
+            }
+
+            await notificationCoordinator.postMessageNotification(
+                identifier: "chat-\(chatId.uuidString)-\(currentItem.lastServerSeq)",
+                title: currentItem.displayTitle,
+                body: currentItem.previewText ?? "You have a new message."
+            )
+        }
+    }
+
+    private func scheduleRealtimeRecovery(delayNanoseconds: UInt64) {
+        guard !hasScheduledRealtimeRecovery else {
+            return
+        }
+
+        hasScheduledRealtimeRecovery = true
+
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            if delayNanoseconds > 0 {
+                try? await Task.sleep(nanoseconds: delayNanoseconds)
+            }
+
+            defer {
+                self.hasScheduledRealtimeRecovery = false
+            }
+
+            if let accessToken,
+               let accountId = self.currentAccount?.accountId ?? self.persistedSession?.accountId {
+                await self.startRealtimeConnection(
+                    accessToken: accessToken,
+                    accountId: accountId
+                )
+            } else if self.persistedSession != nil {
+                await self.restoreSession()
+            }
+        }
+    }
+
+    private func makeClientForRealtimeRefresh() throws -> TrixAPIClient {
+        guard let client = makeClient() else {
+            throw TrixAPIError.invalidPayload("Не удалось инициализировать realtime client.")
+        }
+        return client
+    }
+
     private func loadWorkspace(client: TrixAPIClient, accessToken: String) async throws {
         try await loadWorkspace(client: client, accessToken: accessToken, selectionPreference: .automatic)
     }
@@ -1802,6 +2080,10 @@ final class AppModel: ObservableObject {
         try await loadHistorySyncJobs(client: client, accessToken: accessToken)
         await refreshLocalWorkspaceCache(
             client: client,
+            accessToken: accessToken,
+            accountId: loadedProfile.accountId
+        )
+        await startRealtimeConnection(
             accessToken: accessToken,
             accountId: loadedProfile.accountId
         )
@@ -2014,6 +2296,7 @@ final class AppModel: ObservableObject {
     }
 
     private func clearSession() throws {
+        disconnectRealtimeConnection()
         try sessionStore.clear()
         try keychainStore.removeValue(for: .accountRootSeed)
         try keychainStore.removeValue(for: .transportSeed)
@@ -2512,6 +2795,10 @@ final class AppModel: ObservableObject {
             return
         }
 
+        if realtimeClient != nil {
+            return
+        }
+
         if isApplicationActive {
             await refreshInbox(background: false, suppressErrors: true)
             return
@@ -2766,6 +3053,16 @@ final class AppModel: ObservableObject {
                 inboxLeaseDraft.afterInboxID = String(maxInboxId)
             }
         }
+    }
+
+    private func removeAckedInboxItems(_ ackedInboxIDs: [UInt64]) {
+        guard !ackedInboxIDs.isEmpty else {
+            return
+        }
+
+        let acked = Set(ackedInboxIDs)
+        inboxItems.removeAll { acked.contains($0.inboxId) }
+        lastAckedInboxIDs = ackedInboxIDs.sorted()
     }
 
     private func defaultInboxLeaseOwner(for deviceId: UUID) -> String {

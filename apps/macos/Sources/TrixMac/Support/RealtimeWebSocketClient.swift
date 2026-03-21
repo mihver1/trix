@@ -8,6 +8,7 @@ actor RealtimeWebSocketClient {
     typealias EventHandler = @Sendable (RealtimeConnectionUpdate) async -> Void
     typealias DisconnectHandler = @Sendable (String?) async -> Void
 
+    private let apiClient: FfiServerApiClient
     private let websocket: FfiServerWebSocketClient
     private let realtimeDriver: FfiRealtimeDriver
     private let historyStore: FfiLocalHistoryStore
@@ -22,19 +23,17 @@ actor RealtimeWebSocketClient {
     init(
         baseURLString: String,
         accessToken: String,
-        identity: LocalDeviceIdentity,
+        databasePath: URL,
+        statePath: URL,
         onEvent: @escaping EventHandler,
         onDisconnect: @escaping DisconnectHandler
     ) throws {
-        let bindings = try TrixCorePersistentBridge.makeRealtimeBindings(
-            baseURLString: baseURLString,
-            accessToken: accessToken,
-            identity: identity
-        )
-        websocket = bindings.websocket
-        realtimeDriver = bindings.realtimeDriver
-        historyStore = try FfiLocalHistoryStore.newPersistent(databasePath: bindings.historyDatabasePath)
-        syncCoordinator = try FfiSyncCoordinator.newPersistent(statePath: bindings.syncStatePath)
+        apiClient = try FfiServerApiClient(baseUrl: baseURLString)
+        try apiClient.setAccessToken(accessToken: accessToken)
+        websocket = try apiClient.connectWebsocket()
+        realtimeDriver = try FfiRealtimeDriver()
+        historyStore = try FfiLocalHistoryStore.newPersistent(databasePath: databasePath.path)
+        syncCoordinator = try FfiSyncCoordinator.newPersistent(statePath: statePath.path)
         self.onEvent = onEvent
         self.onDisconnect = onDisconnect
     }
@@ -45,7 +44,6 @@ actor RealtimeWebSocketClient {
         }
 
         isRunning = true
-
         receiveLoopTask = Task {
             await receiveLoop()
         }
