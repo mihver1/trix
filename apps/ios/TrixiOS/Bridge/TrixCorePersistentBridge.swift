@@ -94,11 +94,20 @@ struct LocalInboxSyncResult {
     }
 }
 
+struct LocalInboxAckResult {
+    let ackedInboxIds: [UInt64]
+}
+
 struct PersistentRealtimeBindings {
     let websocket: FfiServerWebSocketClient
     let realtimeDriver: FfiRealtimeDriver
     let historyDatabasePath: String
     let syncStatePath: String
+}
+
+struct PreparedLinkedDeviceState {
+    let provisionalIdentity: LocalDeviceIdentity
+    let keyPackages: [FfiPublishKeyPackage]
 }
 
 struct LocalCoreStateSnapshot {
@@ -156,12 +165,12 @@ enum TrixCorePersistentBridge {
             .trix_publishKeyPackagesResponse
     }
 
-    static func prepareLinkedDeviceKeyPackages(
+    static func prepareLinkedDeviceState(
         payload: LinkIntentPayload,
         form: LinkExistingAccountForm,
         bootstrapMaterial: DeviceBootstrapMaterial,
         count: Int = 32
-    ) throws -> [FfiPublishKeyPackage] {
+    ) throws -> PreparedLinkedDeviceState {
         let provisionalIdentity = bootstrapMaterial.makeLinkedLocalIdentity(
             accountId: payload.accountId,
             deviceId: UUID().uuidString,
@@ -173,7 +182,90 @@ enum TrixCorePersistentBridge {
             count: UInt32(max(count, 0))
         )
         try context.mlsFacade.saveState()
-        return packages
+        return PreparedLinkedDeviceState(
+            provisionalIdentity: provisionalIdentity,
+            keyPackages: packages
+        )
+    }
+
+    static func finalizeLinkedDeviceState(
+        preparedState: PreparedLinkedDeviceState,
+        pendingDeviceId: String
+    ) throws -> LocalDeviceIdentity {
+        let finalizedIdentity = LocalDeviceIdentity(
+            accountId: preparedState.provisionalIdentity.accountId,
+            deviceId: pendingDeviceId,
+            accountSyncChatId: preparedState.provisionalIdentity.accountSyncChatId,
+            deviceDisplayName: preparedState.provisionalIdentity.deviceDisplayName,
+            platform: preparedState.provisionalIdentity.platform,
+            credentialIdentity: preparedState.provisionalIdentity.credentialIdentity,
+            accountRootPrivateKeyRaw: preparedState.provisionalIdentity.accountRootPrivateKeyRaw,
+            transportPrivateKeyRaw: preparedState.provisionalIdentity.transportPrivateKeyRaw,
+            trustState: preparedState.provisionalIdentity.trustState,
+            capabilityState: preparedState.provisionalIdentity.capabilityState
+        )
+        try relocatePersistentState(
+            from: preparedState.provisionalIdentity,
+            to: finalizedIdentity,
+            requireSource: true
+        )
+        return finalizedIdentity
+    }
+
+    @discardableResult
+    static func repairLinkedDevicePersistentStateIfNeeded(
+        identity: LocalDeviceIdentity
+    ) throws -> Bool {
+        let fileManager = FileManager.default
+        let targetPaths = try PersistentCorePaths(identity: identity)
+        if fileManager.fileExists(atPath: targetPaths.mlsStorageRoot.path) {
+            return false
+        }
+        guard fileManager.fileExists(atPath: targetPaths.accountDirectory.path) else {
+            return false
+        }
+
+        let candidateDirectories = try fileManager.contentsOfDirectory(
+            at: targetPaths.accountDirectory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )
+
+        for candidateRoot in candidateDirectories.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            guard candidateRoot.lastPathComponent != identity.deviceId else {
+                continue
+            }
+            guard (try candidateRoot.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
+                continue
+            }
+
+            let candidateMlsRoot = candidateRoot.appendingPathComponent("mls", isDirectory: true)
+            guard fileManager.fileExists(atPath: candidateMlsRoot.path) else {
+                continue
+            }
+            guard let facade = try? FfiMlsFacade.loadPersistent(storageRoot: candidateMlsRoot.path),
+                  (try? facade.credentialIdentity()) == identity.credentialIdentity
+            else {
+                continue
+            }
+
+            let provisionalIdentity = LocalDeviceIdentity(
+                accountId: identity.accountId,
+                deviceId: candidateRoot.lastPathComponent,
+                accountSyncChatId: identity.accountSyncChatId,
+                deviceDisplayName: identity.deviceDisplayName,
+                platform: identity.platform,
+                credentialIdentity: identity.credentialIdentity,
+                accountRootPrivateKeyRaw: identity.accountRootPrivateKeyRaw,
+                transportPrivateKeyRaw: identity.transportPrivateKeyRaw,
+                trustState: identity.trustState,
+                capabilityState: identity.capabilityState
+            )
+            try relocatePersistentState(from: provisionalIdentity, to: identity)
+            return true
+        }
+
+        return false
     }
 
     static func syncChatHistoriesIntoStore(
@@ -189,6 +281,12 @@ enum TrixCorePersistentBridge {
             store: context.historyStore,
             limitPerChat: UInt32(limitPerChat)
         )
+        _ = try projectChatsIfPossible(
+            context: context,
+            chatIds: report.changedChatIds,
+            limit: limitPerChat
+        )
+        try saveContextState(context)
         return report.trix_localStoreSyncResult
     }
 
@@ -207,6 +305,12 @@ enum TrixCorePersistentBridge {
             limit: limit.map(UInt32.init),
             leaseTtlSeconds: leaseTtlSeconds
         )
+        _ = try projectChatsIfPossible(
+            context: context,
+            chatIds: outcome.report.changedChatIds,
+            limit: 500
+        )
+        try saveContextState(context)
         return outcome.trix_localInboxSyncResult
     }
 
@@ -223,8 +327,31 @@ enum TrixCorePersistentBridge {
             coordinator: context.syncCoordinator,
             store: context.historyStore
         )
+        _ = try projectChatsIfPossible(
+            context: context,
+            chatIds: outcome.report.changedChatIds,
+            limit: 500
+        )
         try saveContextState(context)
         return outcome.trix_localInboxSyncResult
+    }
+
+    static func ackInboxIntoSyncState(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        inboxIds: [UInt64]
+    ) throws -> LocalInboxAckResult {
+        let dedupedInboxIds = Array(Set(inboxIds)).sorted()
+        guard !dedupedInboxIds.isEmpty else {
+            return LocalInboxAckResult(ackedInboxIds: [])
+        }
+
+        let context = try loadOrCreateContext(identity: identity)
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        let response = try context.syncCoordinator.ackInbox(client: client, inboxIds: dedupedInboxIds)
+        try saveContextState(context)
+        return LocalInboxAckResult(ackedInboxIds: response.ackedInboxIds.sorted())
     }
 
     static func makeRealtimeBindings(
@@ -247,6 +374,19 @@ enum TrixCorePersistentBridge {
     static func localStateSnapshot(identity: LocalDeviceIdentity) throws -> LocalCoreStateSnapshot {
         let context = try loadOrCreateContext(identity: identity)
         let syncState = try context.syncCoordinator.stateSnapshot()
+        let storedChats = try context.historyStore.listChats()
+        let chatIdsNeedingProjection = try storedChats.compactMap { chat in
+            let projectedCursor = try context.historyStore.projectedCursor(chatId: chat.chatId) ?? 0
+            return chat.lastServerSeq > projectedCursor ? chat.chatId : nil
+        }
+        if !chatIdsNeedingProjection.isEmpty {
+            _ = try projectChatsIfPossible(
+                context: context,
+                chatIds: chatIdsNeedingProjection,
+                limit: 500
+            )
+        }
+
         let chats = try context.historyStore.listChats()
             .map(\.trix_chatSummary)
         let localChatListItems = try context.historyStore
@@ -299,6 +439,11 @@ enum TrixCorePersistentBridge {
     ) throws -> LocalStoreSyncResult {
         let context = try loadOrCreateContext(identity: identity)
         let report = try context.historyStore.applyChatDetail(detail: try detail.trix_ffiChatDetail())
+        _ = try projectChatsIfPossible(
+            context: context,
+            chatIds: report.changedChatIds,
+            limit: 500
+        )
         try saveContextState(context)
         return report.trix_localStoreSyncResult
     }
@@ -323,6 +468,11 @@ enum TrixCorePersistentBridge {
             )
         }
 
+        _ = try projectChatsIfPossible(
+            context: context,
+            chatIds: report.changedChatIds,
+            limit: 500
+        )
         try saveContextState(context)
         return report.trix_localStoreSyncResult
     }
@@ -354,6 +504,11 @@ enum TrixCorePersistentBridge {
             )
         }
 
+        _ = try projectChatsIfPossible(
+            context: context,
+            chatIds: report.changedChatIds,
+            limit: 500
+        )
         try saveContextState(context)
         return report.trix_localStoreSyncResult
     }
@@ -572,18 +727,15 @@ enum TrixCorePersistentBridge {
         limit: Int = 200
     ) throws -> Bool {
         let context = try loadOrCreateContext(identity: identity)
-        guard let groupId = try context.historyStore.chatMlsGroupId(chatId: chatId),
-              let conversation = try context.mlsFacade.loadGroup(groupId: groupId)
-        else {
+        let projectedChatIds = try projectChatsIfPossible(
+            context: context,
+            chatIds: [chatId],
+            limit: limit
+        )
+        guard projectedChatIds.contains(chatId) else {
             return false
         }
 
-        _ = try context.historyStore.projectChatMessages(
-            chatId: chatId,
-            facade: context.mlsFacade,
-            conversation: conversation,
-            limit: UInt32(min(max(limit, 1), 500))
-        )
         try saveContextState(context)
         return true
     }
@@ -597,14 +749,12 @@ enum TrixCorePersistentBridge {
     ) throws -> Bool {
         let context = try loadOrCreateContext(identity: identity)
 
-        if let groupId = try context.historyStore.chatMlsGroupId(chatId: chatId),
-           let conversation = try context.mlsFacade.loadGroup(groupId: groupId) {
-            _ = try context.historyStore.projectChatMessages(
-                chatId: chatId,
-                facade: context.mlsFacade,
-                conversation: conversation,
-                limit: UInt32(min(max(limit, 1), 500))
-            )
+        let projectedChatIds = try projectChatsIfPossible(
+            context: context,
+            chatIds: [chatId],
+            limit: limit
+        )
+        if projectedChatIds.contains(chatId) {
             try saveContextState(context)
             return true
         }
@@ -672,6 +822,19 @@ enum TrixCorePersistentBridge {
         }
 
         return history.trix_chatHistoryResponse
+    }
+
+    static func projectedCursor(
+        identity: LocalDeviceIdentity,
+        chatId: String
+    ) throws -> UInt64? {
+        let paths = try PersistentCorePaths(identity: identity)
+        guard FileManager.default.fileExists(atPath: paths.historyDatabasePath.path) else {
+            return nil
+        }
+
+        let store = try FfiLocalHistoryStore.newPersistent(databasePath: paths.historyDatabasePath.path)
+        return try store.projectedCursor(chatId: chatId)
     }
 
     static func deletePersistentState(identity: LocalDeviceIdentity) throws {
@@ -742,6 +905,7 @@ private struct PersistentConversationContext {
 }
 
 private struct PersistentCorePaths {
+    let accountDirectory: URL
     let rootDirectory: URL
     let mlsStorageRoot: URL
     let historyDatabasePath: URL
@@ -754,12 +918,14 @@ private struct PersistentCorePaths {
             appropriateFor: nil,
             create: true
         )
-        let rootDirectory = appSupportRoot
+        let accountDirectory = appSupportRoot
             .appendingPathComponent("TrixiOS", isDirectory: true)
             .appendingPathComponent("CoreState", isDirectory: true)
             .appendingPathComponent(identity.accountId, isDirectory: true)
+        let rootDirectory = accountDirectory
             .appendingPathComponent(identity.deviceId, isDirectory: true)
 
+        self.accountDirectory = accountDirectory
         self.rootDirectory = rootDirectory
         mlsStorageRoot = rootDirectory.appendingPathComponent("mls", isDirectory: true)
         historyDatabasePath = rootDirectory.appendingPathComponent("history-store.sqlite")
@@ -776,6 +942,7 @@ private struct PersistentCorePaths {
 
 private enum TrixCorePersistentBridgeError: LocalizedError {
     case credentialIdentityMismatch
+    case missingPersistentState(deviceId: String)
     case missingMlsGroupID(chatId: String)
     case missingConversationState(chatId: String)
     case invalidBase64Field(String)
@@ -784,6 +951,8 @@ private enum TrixCorePersistentBridgeError: LocalizedError {
         switch self {
         case .credentialIdentityMismatch:
             return "Persisted trix-core state does not match the current device credential identity."
+        case let .missingPersistentState(deviceId):
+            return "Persisted trix-core state is missing for device \(deviceId)."
         case let .missingMlsGroupID(chatId):
             return "This chat is not ready for MLS messaging on this device yet (\(chatId))."
         case let .missingConversationState(chatId):
@@ -804,6 +973,35 @@ private extension FfiPublishKeyPackagesResponse {
 }
 
 private extension TrixCorePersistentBridge {
+    static func relocatePersistentState(
+        from sourceIdentity: LocalDeviceIdentity,
+        to destinationIdentity: LocalDeviceIdentity,
+        requireSource: Bool = false
+    ) throws {
+        let fileManager = FileManager.default
+        let sourcePaths = try PersistentCorePaths(identity: sourceIdentity)
+        let destinationPaths = try PersistentCorePaths(identity: destinationIdentity)
+
+        guard sourcePaths.rootDirectory.path != destinationPaths.rootDirectory.path else {
+            return
+        }
+        guard fileManager.fileExists(atPath: sourcePaths.rootDirectory.path) else {
+            if requireSource {
+                throw TrixCorePersistentBridgeError.missingPersistentState(deviceId: sourceIdentity.deviceId)
+            }
+            return
+        }
+
+        if fileManager.fileExists(atPath: destinationPaths.rootDirectory.path) {
+            try fileManager.removeItem(at: destinationPaths.rootDirectory)
+        }
+        try fileManager.createDirectory(
+            at: destinationPaths.accountDirectory,
+            withIntermediateDirectories: true
+        )
+        try fileManager.moveItem(at: sourcePaths.rootDirectory, to: destinationPaths.rootDirectory)
+    }
+
     static func loadConversationContext(
         identity: LocalDeviceIdentity,
         chatId: String
@@ -852,6 +1050,30 @@ private extension TrixCorePersistentBridge {
         try context.syncCoordinator.saveState()
     }
 
+    static func projectChatsIfPossible(
+        context: PersistentCoreContext,
+        chatIds: [String],
+        limit: Int = 500
+    ) throws -> Set<String> {
+        let clampedLimit = UInt32(min(max(limit, 1), 500))
+        var projectedChatIds = Set<String>()
+
+        for chatId in Set(chatIds) {
+            do {
+                _ = try context.historyStore.projectChatWithFacade(
+                    chatId: chatId,
+                    facade: context.mlsFacade,
+                    limit: clampedLimit
+                )
+                projectedChatIds.insert(chatId)
+            } catch {
+                continue
+            }
+        }
+
+        return projectedChatIds
+    }
+
     static func rebuildConversationProjectionFromHistory(
         context: PersistentCoreContext,
         chatId: String,
@@ -875,7 +1097,7 @@ private extension TrixCorePersistentBridge {
             do {
                 let conversation = try context.mlsFacade.joinGroupFromWelcome(
                     welcomeMessage: try welcomeMessage.ciphertextB64.trix_decodedBase64(fieldName: "ciphertext_b64"),
-                    ratchetTree: nil
+                    ratchetTree: controlMessageRatchetTree(from: welcomeMessage.aadJson)
                 )
                 let groupId = try conversation.groupId()
                 _ = try context.historyStore.setChatMlsGroupId(chatId: chatId, groupId: groupId)
@@ -911,14 +1133,32 @@ private extension TrixCorePersistentBridge {
         facade: FfiMlsFacade,
         conversation: FfiMlsConversation
     ) throws -> [FfiLocalProjectedMessage] {
-        var projectedMessages: [FfiLocalProjectedMessage] = [
-            try makeProjectedMessage(
-                from: welcomeMessage,
-                projectionKind: .welcomeRef,
-                payload: welcomeMessage.ciphertextB64.trix_decodedBase64(fieldName: "ciphertext_b64"),
-                mergedEpoch: nil
-            )
-        ]
+        var projectedMessages: [FfiLocalProjectedMessage] = []
+
+        for message in allMessages where message.serverSeq <= welcomeMessage.serverSeq {
+            switch message.messageKind {
+            case .commit:
+                projectedMessages.append(
+                    try makeProjectedMessage(
+                        from: message,
+                        projectionKind: .commitMerged,
+                        payload: nil,
+                        mergedEpoch: message.epoch
+                    )
+                )
+            case .welcomeRef:
+                projectedMessages.append(
+                    try makeProjectedMessage(
+                        from: message,
+                        projectionKind: .welcomeRef,
+                        payload: message.ciphertextB64.trix_decodedBase64(fieldName: "ciphertext_b64"),
+                        mergedEpoch: nil
+                    )
+                )
+            case .application, .system:
+                continue
+            }
+        }
 
         for message in allMessages where message.serverSeq > welcomeMessage.serverSeq {
             let ciphertext = try message.ciphertextB64.trix_decodedBase64(fieldName: "ciphertext_b64")
@@ -980,6 +1220,17 @@ private extension TrixCorePersistentBridge {
         }
 
         return projectedMessages
+    }
+
+    static func controlMessageRatchetTree(from aadJson: JSONValue) -> Data? {
+        guard case let .object(root) = aadJson,
+              case let .object(meta)? = root["_trix"],
+              case let .string(ratchetTreeB64)? = meta["ratchet_tree_b64"]
+        else {
+            return nil
+        }
+
+        return try? ratchetTreeB64.trix_decodedBase64(fieldName: "aadJson._trix.ratchet_tree_b64")
     }
 
     static func makeProjectedMessage(

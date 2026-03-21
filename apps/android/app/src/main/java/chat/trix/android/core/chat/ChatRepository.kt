@@ -133,6 +133,12 @@ class ChatRepository(
         }
     }
 
+    suspend fun hydrateChangedChats(chatIds: Set<String>): Int = withContext(Dispatchers.IO) {
+        runFfi("Failed to hydrate changed chats") {
+            hydrateChangedChatsNow(chatIds)
+        }
+    }
+
     suspend fun flushPendingOutbox(): Int = withContext(Dispatchers.IO) {
         runFfi("Failed to flush local outbox") {
             flushPendingOutboxNow()
@@ -514,8 +520,10 @@ class ChatRepository(
         val pendingOutboxItems = store.listOutboxMessages(chatId)
         val hasLocalMlsState = hasLocalConversation(chatId)
         val canSend = item.chatType == FfiChatType.ACCOUNT_SYNC || hasLocalMlsState
-        val messages = timelineItems.map(::mapTimelineMessage) +
-            pendingOutboxItems.map(::mapOutboxMessage)
+        val messages = mergeTimelineMessages(
+            timelineItems = timelineItems,
+            pendingOutboxItems = pendingOutboxItems,
+        )
         val members = conversationMembers(item, detail)
 
         return ChatConversation(
@@ -568,6 +576,22 @@ class ChatRepository(
         return report.chatsUpserted.toInt()
     }
 
+    private fun hydrateChangedChatsNow(chatIds: Set<String>): Int {
+        if (chatIds.isEmpty()) {
+            return 0
+        }
+
+        val client = client()
+        val store = historyStore()
+        client.setAccessToken(session.accessToken)
+
+        var hydratedChats = 0
+        for (chatId in chatIds.sorted()) {
+            hydratedChats += hydrateChatDetail(client, store, chatId)
+        }
+        return hydratedChats
+    }
+
     private fun projectChatsWithLocalMlsState(store: FfiLocalHistoryStore): Int {
         var projectedChatTimelines = 0
 
@@ -582,6 +606,29 @@ class ChatRepository(
         }
 
         return projectedChatTimelines
+    }
+
+    private fun mergeTimelineMessages(
+        timelineItems: List<FfiLocalTimelineItem>,
+        pendingOutboxItems: List<FfiLocalOutboxItem>,
+    ): List<ChatTimelineMessage> {
+        val orderedMessages = timelineItems.mapIndexed { index, message ->
+            TimedChatTimelineMessage(
+                sortUnix = message.createdAtUnix.toLong(),
+                sourcePriority = 0,
+                sourceOrder = index,
+                message = mapTimelineMessage(message),
+            )
+        } + pendingOutboxItems.mapIndexed { index, message ->
+            TimedChatTimelineMessage(
+                sortUnix = message.queuedAtUnix.toLong(),
+                sourcePriority = 1,
+                sourceOrder = index,
+                message = mapOutboxMessage(message),
+            )
+        }
+
+        return mergeChatTimelineMessages(orderedMessages)
     }
 
     private fun flushPendingOutboxNow(chatId: String? = null): Int {

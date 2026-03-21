@@ -374,6 +374,14 @@ struct OnboardingView: View {
                                 .buttonStyle(TrixActionButtonStyle(tone: .primary))
                                 .frame(maxWidth: 280)
                                 .disabled(model.isRestoringSession)
+
+                                Button(role: .destructive) {
+                                    model.restartPendingLinkFlow()
+                                } label: {
+                                    Label("Restart Link", systemImage: "arrow.uturn.backward.circle")
+                                }
+                                .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+                                .frame(maxWidth: 220)
                             }
                         } else {
                             HStack(spacing: 12) {
@@ -398,6 +406,14 @@ struct OnboardingView: View {
                                 .buttonStyle(TrixActionButtonStyle(tone: .primary))
                                 .frame(maxWidth: 280)
                                 .disabled(model.isRestoringSession)
+
+                                Button(role: .destructive) {
+                                    model.restartPendingLinkFlow()
+                                } label: {
+                                    Label("Restart Link", systemImage: "arrow.uturn.backward.circle")
+                                }
+                                .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+                                .frame(maxWidth: 220)
                             }
                         }
                     }

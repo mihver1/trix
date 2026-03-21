@@ -519,10 +519,18 @@ final class AppModel: ObservableObject {
         } catch let error as TrixAPIError {
             if error.isCredentialFailure {
                 if session.deviceStatus == .pending {
-                    accessToken = nil
-                    clearWorkspaceData()
-                    refreshLocalIdentityState(reportErrors: false)
-                    lastErrorMessage = "This device is still pending approval. Approve it from any active trusted device in the device directory, then reconnect."
+                    if error.suggestsPendingLinkReset {
+                        restartPendingLinkFlow(
+                            baseURLString: session.baseURLString,
+                            deviceDisplayName: session.deviceDisplayName,
+                            errorMessage: "This linked-device session is no longer valid on the server. Start the link flow again on this Mac."
+                        )
+                    } else {
+                        accessToken = nil
+                        clearWorkspaceData()
+                        refreshLocalIdentityState(reportErrors: false)
+                        lastErrorMessage = "This device is still pending approval. Approve it from any active trusted device in the device directory, then reconnect. If that link was rejected or revoked, restart the link flow on this Mac."
+                    }
                 } else {
                     try? clearSession()
                     serverBaseURLString = session.baseURLString
@@ -1151,15 +1159,31 @@ final class AppModel: ObservableObject {
                 afterInboxId: parameters.afterInboxId,
                 limit: parameters.limit
             )
+            let changedChatIDs = Set(response.report.changedChatIDs)
+            let identity = try loadStoredIdentity()
+            for chatId in changedChatIDs {
+                _ = try await client.projectLocalChatIfPossible(
+                    databasePath: storePaths.localHistoryURL,
+                    mlsStorageRoot: storePaths.mlsStateRootURL,
+                    credentialIdentity: identity.storedIdentity.credentialIdentity,
+                    chatId: chatId
+                )
+            }
+            let projectedChats = try await client.fetchLocalChats(databasePath: storePaths.localHistoryURL)
             let currentAccountID = currentAccount?.accountId ?? persistedSession?.accountId
             let newIncomingItems = response.items.filter { item in
                 !existingInboxIDs.contains(item.inboxId) &&
                     item.message.senderAccountId != currentAccountID
             }
             mergeInboxItems(response.items, autoAdvanceCursor: true)
-            applyLocalStoreSnapshot(chats: response.chats, syncState: response.syncState)
+            applyLocalStoreSnapshot(chats: projectedChats.chats, syncState: response.syncState)
             if let accountId = currentAccount?.accountId ?? persistedSession?.accountId {
                 try await refreshLocalMessengerState(client: client, accountId: accountId)
+                try await reconcileSelectedChatAfterLocalStateUpdate(
+                    client: client,
+                    accessToken: token,
+                    changedChatIDs: changedChatIDs
+                )
             }
             if background {
                 await postNotificationsForNewMessages(newIncomingItems)
@@ -1206,14 +1230,30 @@ final class AppModel: ObservableObject {
                 afterInboxId: parameters.afterInboxId,
                 leaseTtlSeconds: parameters.leaseTtlSeconds
             )
+            let changedChatIDs = Set(response.report.changedChatIDs)
+            let identity = try loadStoredIdentity()
+            for chatId in changedChatIDs {
+                _ = try await client.projectLocalChatIfPossible(
+                    databasePath: storePaths.localHistoryURL,
+                    mlsStorageRoot: storePaths.mlsStateRootURL,
+                    credentialIdentity: identity.storedIdentity.credentialIdentity,
+                    chatId: chatId
+                )
+            }
+            let projectedChats = try await client.fetchLocalChats(databasePath: storePaths.localHistoryURL)
             activeInboxLease = InboxLeaseState(
                 owner: response.lease.leaseOwner,
                 expiresAt: response.lease.leaseExpiresAt
             )
             mergeInboxItems(response.lease.items, autoAdvanceCursor: true)
-            applyLocalStoreSnapshot(chats: response.chats, syncState: response.syncState)
+            applyLocalStoreSnapshot(chats: projectedChats.chats, syncState: response.syncState)
             if let accountId = currentAccount?.accountId ?? persistedSession?.accountId {
                 try await refreshLocalMessengerState(client: client, accountId: accountId)
+                try await reconcileSelectedChatAfterLocalStateUpdate(
+                    client: client,
+                    accessToken: token,
+                    changedChatIDs: changedChatIDs
+                )
             }
         } catch let error as TrixAPIError {
             if error.isCredentialFailure {
@@ -1438,10 +1478,19 @@ final class AppModel: ObservableObject {
 
         do {
             let identity = try loadStoredIdentity(requireAccountRoot: true)
+            let approvePayload = try await client.fetchDeviceApprovePayload(
+                accessToken: token,
+                deviceId: device.deviceId
+            )
+            let transferBundle = try makeApproveTransferBundle(
+                approvePayload: approvePayload,
+                identity: identity
+            )
             _ = try await client.approveDevice(
                 accessToken: token,
                 deviceId: device.deviceId,
-                identity: identity
+                identity: identity,
+                transferBundle: transferBundle
             )
 
             await refreshWorkspace()
@@ -1528,6 +1577,17 @@ final class AppModel: ObservableObject {
         } catch {
             lastErrorMessage = error.userFacingMessage
         }
+    }
+
+    func restartPendingLinkFlow() {
+        guard let session = persistedSession else {
+            return
+        }
+
+        restartPendingLinkFlow(
+            baseURLString: session.baseURLString,
+            deviceDisplayName: session.deviceDisplayName
+        )
     }
 
     func dismissError() {
@@ -1672,14 +1732,64 @@ final class AppModel: ObservableObject {
             let loadedProjectedCursor = try await projectedCursor
             let loadedProjectedMessages = try await projectedMessages
             let loadedLocalHistory = try await localHistory
+            let localHistoryServerSeq = loadedLocalHistory.messages.map(\.serverSeq).max() ?? 0
+            let localProjectedCursor = loadedProjectedCursor ?? 0
 
-            if let loadedLocalChatListItem {
-                upsertLocalChatListItem(loadedLocalChatListItem)
+            var resolvedLocalChatListItem = loadedLocalChatListItem
+            var resolvedLocalTimelineItems = loadedLocalTimelineItems
+            var resolvedLocalReadState = loadedLocalReadState
+            var resolvedProjectedCursor = loadedProjectedCursor
+            var resolvedProjectedMessages = loadedProjectedMessages
+
+            if localHistoryServerSeq > localProjectedCursor {
+                let identity = try loadStoredIdentity()
+                let projected = try await client.projectLocalChatIfPossible(
+                    databasePath: storePaths.localHistoryURL,
+                    mlsStorageRoot: storePaths.mlsStateRootURL,
+                    credentialIdentity: identity.storedIdentity.credentialIdentity,
+                    chatId: chatId
+                )
+
+                if projected {
+                    async let refreshedLocalChatListItem = client.fetchLocalChatListItem(
+                        databasePath: storePaths.localHistoryURL,
+                        chatId: chatId,
+                        selfAccountId: selfAccountId
+                    )
+                    async let refreshedLocalTimelineItems = client.fetchLocalTimelineItems(
+                        databasePath: storePaths.localHistoryURL,
+                        chatId: chatId,
+                        selfAccountId: selfAccountId
+                    )
+                    async let refreshedLocalReadState = client.fetchLocalChatReadState(
+                        databasePath: storePaths.localHistoryURL,
+                        chatId: chatId,
+                        selfAccountId: selfAccountId
+                    )
+                    async let refreshedProjectedCursor = client.fetchLocalProjectedCursor(
+                        databasePath: storePaths.localHistoryURL,
+                        chatId: chatId
+                    )
+                    async let refreshedProjectedMessages = client.fetchLocalProjectedMessages(
+                        databasePath: storePaths.localHistoryURL,
+                        chatId: chatId
+                    )
+
+                    resolvedLocalChatListItem = try await refreshedLocalChatListItem
+                    resolvedLocalTimelineItems = try await refreshedLocalTimelineItems
+                    resolvedLocalReadState = try await refreshedLocalReadState
+                    resolvedProjectedCursor = try await refreshedProjectedCursor
+                    resolvedProjectedMessages = try await refreshedProjectedMessages
+                }
             }
-            selectedChatTimelineItems = loadedLocalTimelineItems
-            selectedChatReadState = loadedLocalReadState
-            selectedChatProjectedCursor = loadedProjectedCursor
-            selectedChatProjectedMessages = loadedProjectedMessages
+
+            if let resolvedLocalChatListItem {
+                upsertLocalChatListItem(resolvedLocalChatListItem)
+            }
+            selectedChatTimelineItems = resolvedLocalTimelineItems
+            selectedChatReadState = resolvedLocalReadState
+            selectedChatProjectedCursor = resolvedProjectedCursor
+            selectedChatProjectedMessages = resolvedProjectedMessages
 
             if loadedLocalHistory.messages.isEmpty && loadedDetail.lastServerSeq > 0 {
                 let remoteHistory = try await client.fetchChatHistory(
@@ -1696,7 +1806,7 @@ final class AppModel: ObservableObject {
                     client: client,
                     accountId: selfAccountId,
                     chatId: chatId,
-                    timelineItems: loadedLocalTimelineItems
+                    timelineItems: resolvedLocalTimelineItems
                 )
             }
         } catch {
@@ -1864,12 +1974,31 @@ final class AppModel: ObservableObject {
     ) async {
         do {
             let storePaths = try workspaceStorePaths(for: accountId)
-            let localResult = try await client.syncChatHistoriesIntoLocalStore(
-                accessToken: accessToken,
+            let identity = try loadStoredIdentity()
+            var syncedState: SyncStateSnapshot?
+
+            do {
+                let localResult = try await client.syncChatHistoriesIntoLocalStore(
+                    accessToken: accessToken,
+                    databasePath: storePaths.localHistoryURL,
+                    statePath: storePaths.syncStateURL
+                )
+                syncedState = localResult.syncState
+            } catch {
+                lastErrorMessage = error.userFacingMessage
+            }
+
+            _ = try await client.projectLocalChatsIfPossible(
                 databasePath: storePaths.localHistoryURL,
-                statePath: storePaths.syncStateURL
+                mlsStorageRoot: storePaths.mlsStateRootURL,
+                credentialIdentity: identity.storedIdentity.credentialIdentity
             )
-            applyLocalStoreSnapshot(chats: localResult.chats, syncState: localResult.syncState)
+            let projectedChats = try await client.fetchLocalChats(databasePath: storePaths.localHistoryURL)
+            if let syncedState {
+                applyLocalStoreSnapshot(chats: projectedChats.chats, syncState: syncedState)
+            } else if !projectedChats.chats.isEmpty {
+                self.chats = projectedChats.chats.sorted(by: chatSort)
+            }
             try await refreshLocalMessengerState(client: client, accountId: accountId)
         } catch {
             lastErrorMessage = error.userFacingMessage
@@ -1902,11 +2031,70 @@ final class AppModel: ObservableObject {
             databasePath: storePaths.localHistoryURL,
             selfAccountId: accountId
         )
+    }
 
-        if let selectedChatID,
-           !visibleLocalChatListItems.contains(where: { $0.chatId == selectedChatID }),
-           !visibleLocalChatListItems.isEmpty {
-            self.selectedChatID = visibleLocalChatListItems.first?.chatId
+    private func reconcileSelectedChatAfterLocalStateUpdate(
+        client: TrixAPIClient,
+        accessToken: String,
+        changedChatIDs: Set<UUID> = []
+    ) async throws {
+        switch selectedChatReconciliationAction(
+            selectedChatID: selectedChatID,
+            visibleChatIDs: visibleLocalChatListItems.map(\.chatId),
+            changedChatIDs: changedChatIDs
+        ) {
+        case .keep:
+            return
+        case .clear:
+            clearSelectedChat()
+        case let .load(chatId):
+            try await loadSelectedChat(
+                client: client,
+                accessToken: accessToken,
+                chatId: chatId
+            )
+        }
+    }
+
+    private func makeApproveTransferBundle(
+        approvePayload: DeviceApprovePayloadResponse,
+        identity: DeviceIdentityMaterial
+    ) throws -> Data {
+        guard let sourceAccountID = currentAccount?.accountId ?? persistedSession?.accountId else {
+            throw TrixAPIError.invalidPayload("Аккаунт ещё не загружен.")
+        }
+        guard let sourceDeviceID = currentDeviceID else {
+            throw TrixAPIError.invalidPayload("Текущее устройство ещё не загружено.")
+        }
+
+        return try identity.createDeviceTransferBundle(
+            DeviceTransferBundleInput(
+                accountId: sourceAccountID,
+                sourceDeviceId: sourceDeviceID,
+                targetDeviceId: approvePayload.deviceId,
+                accountSyncChatId: persistedSession?.accountSyncChatId,
+                recipientTransportPubkey: try TrixCoreCodec.decodeBase64(
+                    approvePayload.transportPubkeyB64,
+                    label: "transport_pubkey_b64"
+                )
+            )
+        )
+    }
+
+    private func restartPendingLinkFlow(
+        baseURLString: String,
+        deviceDisplayName: String,
+        errorMessage: String? = nil
+    ) {
+        do {
+            try clearSession()
+            serverBaseURLString = baseURLString
+            linkDraft = LinkDeviceDraft(deviceDisplayName: deviceDisplayName)
+            draft.deviceDisplayName = deviceDisplayName
+            onboardingMode = .linkExisting
+            lastErrorMessage = errorMessage
+        } catch {
+            lastErrorMessage = error.userFacingMessage
         }
     }
 
@@ -2466,6 +2654,38 @@ private struct InboxPollParameters {
     let leaseTtlSeconds: UInt64
 }
 
+enum SelectedChatReconciliationAction: Equatable {
+    case keep
+    case clear
+    case load(UUID)
+}
+
+func selectedChatReconciliationAction(
+    selectedChatID: UUID?,
+    visibleChatIDs: [UUID],
+    changedChatIDs: Set<UUID>
+) -> SelectedChatReconciliationAction {
+    let firstVisibleChatID = visibleChatIDs.first
+
+    guard let selectedChatID else {
+        return .keep
+    }
+
+    guard visibleChatIDs.contains(selectedChatID) else {
+        if let firstVisibleChatID {
+            return .load(firstVisibleChatID)
+        }
+
+        return .clear
+    }
+
+    if changedChatIDs.contains(selectedChatID) {
+        return .load(selectedChatID)
+    }
+
+    return .keep
+}
+
 struct DeviceLinkIntentState: Identifiable {
     let id = UUID()
     let payload: String
@@ -2486,5 +2706,16 @@ private extension Error {
             return description
         }
         return localizedDescription
+    }
+}
+
+private extension TrixAPIError {
+    var suggestsPendingLinkReset: Bool {
+        guard case let .server(code, message, _) = self else {
+            return false
+        }
+
+        let combined = "\(code) \(message)".lowercased()
+        return combined.contains("revoked") || combined.contains("deleted")
     }
 }

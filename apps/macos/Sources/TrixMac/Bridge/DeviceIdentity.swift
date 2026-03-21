@@ -6,6 +6,14 @@ struct StoredDeviceIdentity {
     let credentialIdentity: Data
 }
 
+struct DeviceTransferBundleInput {
+    let accountId: UUID
+    let sourceDeviceId: UUID
+    let targetDeviceId: UUID
+    let accountSyncChatId: UUID?
+    let recipientTransportPubkey: Data
+}
+
 struct DeviceIdentityMaterial {
     static let platform = "macos"
 
@@ -165,6 +173,23 @@ struct DeviceIdentityMaterial {
             payload: Self.revokeMessage(deviceID: deviceID, reason: reason)
         )
         return signature.base64EncodedString()
+    }
+
+    func createDeviceTransferBundle(_ input: DeviceTransferBundleInput) throws -> Data {
+        guard let accountRootMaterial else {
+            throw TrixAPIError.invalidPayload("Approve доступен только на root-capable устройстве.")
+        }
+
+        return try accountRootMaterial.createDeviceTransferBundle(
+            params: FfiCreateDeviceTransferBundleParams(
+                accountId: input.accountId.uuidString,
+                sourceDeviceId: input.sourceDeviceId.uuidString,
+                targetDeviceId: input.targetDeviceId.uuidString,
+                accountSyncChatId: input.accountSyncChatId?.uuidString
+            ),
+            senderDeviceKeys: transportMaterial,
+            recipientTransportPubkey: input.recipientTransportPubkey
+        )
     }
 
     var hasAccountRootKey: Bool {

@@ -131,6 +131,7 @@ fun ChatsScreen(
     var overviewVersion by remember(repository) { mutableIntStateOf(0) }
     var overviewState by remember(repository) { mutableStateOf(ChatsOverviewState(isRefreshing = true)) }
     var detailState by remember(repository) { mutableStateOf(ChatsDetailState()) }
+    var sendState by remember(selectedConversationId) { mutableStateOf(ChatSendState()) }
     var composerDraft by rememberSaveable(selectedConversationId) { mutableStateOf("") }
     var directorySheetConfig by remember(session.localState.deviceId) { mutableStateOf<DirectorySheetConfig?>(null) }
     var directoryQuery by rememberSaveable(session.localState.deviceId) { mutableStateOf("") }
@@ -234,7 +235,7 @@ fun ChatsScreen(
     suspend fun sendDraftMessage() {
         val chatId = selectedConversationId ?: return
         val conversation = detailState.conversation?.takeIf { it.chatId == chatId } ?: return
-        if (!conversation.canSend || detailState.isSending) {
+        if (!conversation.canSend || sendState.isSending) {
             return
         }
 
@@ -243,11 +244,7 @@ fun ChatsScreen(
             return
         }
 
-        detailState = detailState.copy(
-            isSending = true,
-            sendErrorMessage = null,
-            errorMessage = null,
-        )
+        sendState = sendState.copy(isSending = true, sendErrorMessage = null)
 
         try {
             val result = repository.sendTextMessage(chatId, draft)
@@ -260,12 +257,14 @@ fun ChatsScreen(
             detailState = detailState.copy(
                 conversation = result.conversation,
                 isLoading = false,
-                isSending = false,
                 errorMessage = null,
+            )
+            sendState = sendState.copy(
+                isSending = false,
                 sendErrorMessage = null,
             )
         } catch (error: IOException) {
-            detailState = detailState.copy(
+            sendState = sendState.copy(
                 isSending = false,
                 sendErrorMessage = error.message ?: "Failed to send message",
             )
@@ -275,15 +274,11 @@ fun ChatsScreen(
     suspend fun sendAttachment(contentUri: Uri) {
         val chatId = selectedConversationId ?: return
         val conversation = detailState.conversation?.takeIf { it.chatId == chatId } ?: return
-        if (!conversation.canSend || detailState.isSending) {
+        if (!conversation.canSend || sendState.isSending) {
             return
         }
 
-        detailState = detailState.copy(
-            isSending = true,
-            sendErrorMessage = null,
-            errorMessage = null,
-        )
+        sendState = sendState.copy(isSending = true, sendErrorMessage = null)
         attachmentErrorMessage = null
 
         try {
@@ -296,12 +291,14 @@ fun ChatsScreen(
             detailState = detailState.copy(
                 conversation = result.conversation,
                 isLoading = false,
-                isSending = false,
                 errorMessage = null,
+            )
+            sendState = sendState.copy(
+                isSending = false,
                 sendErrorMessage = null,
             )
         } catch (error: IOException) {
-            detailState = detailState.copy(
+            sendState = sendState.copy(
                 isSending = false,
                 sendErrorMessage = error.message ?: "Failed to send attachment",
             )
@@ -576,28 +573,29 @@ fun ChatsScreen(
             conversation = currentConversation,
             isLoading = true,
             errorMessage = null,
-            isSending = false,
-            sendErrorMessage = null,
         )
 
         detailState = try {
             val conversation = loadCachedConversation(chatId)
-            val loadedState = ChatsDetailState(
+            val loadedState = applyPassiveConversationReload(
+                currentDetailState = detailState,
+                currentSendState = sendState,
                 conversation = conversation,
-                isLoading = false,
                 errorMessage = null,
             )
             attachmentErrorMessage = null
             if ((overviewState.overview?.conversations?.firstOrNull { it.chatId == chatId }?.unreadCount ?: 0) > 0) {
                 markConversationRead(chatId)
             }
-            loadedState
+            sendState = loadedState.sendState
+            loadedState.detailState
         } catch (error: IOException) {
-            ChatsDetailState(
+            applyPassiveConversationReload(
+                currentDetailState = detailState,
+                currentSendState = sendState,
                 conversation = currentConversation,
-                isLoading = false,
                 errorMessage = error.message ?: "Failed to load conversation",
-            )
+            ).detailState
         }
     }
 
@@ -627,11 +625,14 @@ fun ChatsScreen(
             }.getOrNull()
 
             if (refreshedConversation != null) {
-                detailState = detailState.copy(
+                val loadedState = applyPassiveConversationReload(
+                    currentDetailState = detailState,
+                    currentSendState = sendState,
                     conversation = refreshedConversation,
-                    isLoading = false,
                     errorMessage = null,
                 )
+                sendState = loadedState.sendState
+                detailState = loadedState.detailState
             }
         }
     }
@@ -802,8 +803,8 @@ fun ChatsScreen(
                     errorMessage = detailState.errorMessage,
                     composerDraft = composerDraft,
                     onComposerDraftChange = { composerDraft = it },
-                    isSending = detailState.isSending,
-                    sendErrorMessage = detailState.sendErrorMessage,
+                    isSending = sendState.isSending,
+                    sendErrorMessage = sendState.sendErrorMessage,
                     attachmentErrorMessage = attachmentErrorMessage,
                     activeAttachmentMessageId = activeAttachmentMessageId,
                     onPickAttachment = { attachmentPickerLauncher.launch(arrayOf("*/*")) },
@@ -836,8 +837,8 @@ fun ChatsScreen(
                     onRefresh = { coroutineScope.launch { syncChats() } },
                     composerDraft = composerDraft,
                     onComposerDraftChange = { composerDraft = it },
-                    isSending = detailState.isSending,
-                    sendErrorMessage = detailState.sendErrorMessage,
+                    isSending = sendState.isSending,
+                    sendErrorMessage = sendState.sendErrorMessage,
                     attachmentErrorMessage = attachmentErrorMessage,
                     activeAttachmentMessageId = activeAttachmentMessageId,
                     onPickAttachment = { attachmentPickerLauncher.launch(arrayOf("*/*")) },
@@ -869,8 +870,8 @@ fun ChatsScreen(
                     errorMessage = detailState.errorMessage,
                     composerDraft = composerDraft,
                     onComposerDraftChange = { composerDraft = it },
-                    isSending = detailState.isSending,
-                    sendErrorMessage = detailState.sendErrorMessage,
+                    isSending = sendState.isSending,
+                    sendErrorMessage = sendState.sendErrorMessage,
                     attachmentErrorMessage = attachmentErrorMessage,
                     activeAttachmentMessageId = activeAttachmentMessageId,
                     onPickAttachment = { attachmentPickerLauncher.launch(arrayOf("*/*")) },
@@ -2329,13 +2330,39 @@ private data class ChatsOverviewState(
     val lastRefreshSummary: String? = null,
 )
 
-private data class ChatsDetailState(
+internal data class ChatsDetailState(
     val conversation: ChatConversation? = null,
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
     val isSending: Boolean = false,
     val sendErrorMessage: String? = null,
 )
+
+internal data class ChatSendState(
+    val isSending: Boolean = false,
+    val sendErrorMessage: String? = null,
+)
+
+internal data class PassiveConversationReloadState(
+    val detailState: ChatsDetailState,
+    val sendState: ChatSendState,
+)
+
+internal fun applyPassiveConversationReload(
+    currentDetailState: ChatsDetailState,
+    currentSendState: ChatSendState,
+    conversation: ChatConversation?,
+    errorMessage: String?,
+): PassiveConversationReloadState {
+    return PassiveConversationReloadState(
+        detailState = currentDetailState.copy(
+            conversation = conversation,
+            isLoading = false,
+            errorMessage = errorMessage,
+        ),
+        sendState = currentSendState,
+    )
+}
 
 private data class ChatsDirectoryState(
     val accounts: List<ChatDirectoryAccount> = emptyList(),

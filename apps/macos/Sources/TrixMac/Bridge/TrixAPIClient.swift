@@ -380,7 +380,7 @@ struct TrixAPIClient {
         accessToken: String,
         deviceId: UUID,
         identity: DeviceIdentityMaterial,
-        transferBundleB64: String? = nil
+        transferBundle: Data? = nil
     ) async throws -> ApproveDeviceResponse {
         guard let accountRoot = identity.accountRootKeyMaterial else {
             throw TrixAPIError.invalidPayload("Approve доступен только на root-capable устройстве.")
@@ -391,9 +391,7 @@ struct TrixAPIClient {
                 ffiValue: try client.approveDeviceWithAccountRoot(
                     deviceId: deviceId.uuidString,
                     accountRoot: accountRoot,
-                    transferBundle: try transferBundleB64.map {
-                        try TrixCoreCodec.decodeBase64($0, label: "transfer_bundle_b64")
-                    }
+                    transferBundle: transferBundle
                 )
             )
         }
@@ -863,6 +861,69 @@ struct TrixAPIClient {
         }
     }
 
+    func projectLocalChatsIfPossible(
+        databasePath: URL,
+        mlsStorageRoot: URL,
+        credentialIdentity: Data,
+        limit: Int = 500
+    ) async throws -> Int {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            let facade = try Self.makePersistentMlsFacade(
+                storageRoot: mlsStorageRoot,
+                credentialIdentity: credentialIdentity
+            )
+            let clampedLimit = try TrixCoreCodec.uint32(limit, label: "projection limit")
+            var projectedChatCount = 0
+
+            for chat in try store.listChats() {
+                do {
+                    _ = try store.projectChatWithFacade(
+                        chatId: chat.chatId,
+                        facade: facade,
+                        limit: clampedLimit
+                    )
+                    projectedChatCount += 1
+                } catch {
+                    continue
+                }
+            }
+
+            try store.saveState()
+            try facade.saveState()
+            return projectedChatCount
+        }
+    }
+
+    func projectLocalChatIfPossible(
+        databasePath: URL,
+        mlsStorageRoot: URL,
+        credentialIdentity: Data,
+        chatId: UUID,
+        limit: Int = 500
+    ) async throws -> Bool {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            let facade = try Self.makePersistentMlsFacade(
+                storageRoot: mlsStorageRoot,
+                credentialIdentity: credentialIdentity
+            )
+
+            do {
+                _ = try store.projectChatWithFacade(
+                    chatId: chatId.uuidString,
+                    facade: facade,
+                    limit: try TrixCoreCodec.uint32(limit, label: "projection limit")
+                )
+                try store.saveState()
+                try facade.saveState()
+                return true
+            } catch {
+                return false
+            }
+        }
+    }
+
     func fetchInboxIntoLocalStore(
         accessToken: String,
         databasePath: URL,
@@ -964,6 +1025,10 @@ struct TrixAPIClient {
     func fetchLocalChats(databasePath: URL) async throws -> ChatListResponse {
         try await callFFI { _ in
             let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            try Self.repairLocalProjectionsIfPossible(
+                store: store,
+                databasePath: databasePath
+            )
             return try ChatListResponse(ffiValues: store.listChats())
         }
     }
@@ -974,6 +1039,10 @@ struct TrixAPIClient {
     ) async throws -> [LocalChatListItem] {
         try await callFFI { _ in
             let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            try Self.repairLocalProjectionsIfPossible(
+                store: store,
+                databasePath: databasePath
+            )
             return try store.listLocalChatListItems(
                 selfAccountId: selfAccountId?.uuidString
             ).map { try LocalChatListItem(ffiValue: $0) }
@@ -987,6 +1056,11 @@ struct TrixAPIClient {
     ) async throws -> LocalChatListItem? {
         try await callFFI { _ in
             let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            try Self.repairLocalProjectionsIfPossible(
+                store: store,
+                databasePath: databasePath,
+                chatIds: [chatId.uuidString]
+            )
             guard let item = try store.getLocalChatListItem(
                 chatId: chatId.uuidString,
                 selfAccountId: selfAccountId?.uuidString
@@ -1004,6 +1078,11 @@ struct TrixAPIClient {
     ) async throws -> ChatDetailResponse? {
         try await callFFI { _ in
             let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            try Self.repairLocalProjectionsIfPossible(
+                store: store,
+                databasePath: databasePath,
+                chatIds: [chatId.uuidString]
+            )
             guard let detail = try store.getChat(chatId: chatId.uuidString) else {
                 return nil
             }
@@ -1038,6 +1117,11 @@ struct TrixAPIClient {
     ) async throws -> [LocalTimelineItem] {
         try await callFFI { _ in
             let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            try Self.repairLocalProjectionsIfPossible(
+                store: store,
+                databasePath: databasePath,
+                chatIds: [chatId.uuidString]
+            )
             return try store.getLocalTimelineItems(
                 chatId: chatId.uuidString,
                 selfAccountId: selfAccountId?.uuidString,
@@ -1054,6 +1138,11 @@ struct TrixAPIClient {
     ) async throws -> LocalChatReadState? {
         try await callFFI { _ in
             let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            try Self.repairLocalProjectionsIfPossible(
+                store: store,
+                databasePath: databasePath,
+                chatIds: [chatId.uuidString]
+            )
             guard let state = try store.getChatReadState(
                 chatId: chatId.uuidString,
                 selfAccountId: selfAccountId?.uuidString
@@ -1090,6 +1179,11 @@ struct TrixAPIClient {
     ) async throws -> [LocalProjectedMessage] {
         try await callFFI { _ in
             let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            try Self.repairLocalProjectionsIfPossible(
+                store: store,
+                databasePath: databasePath,
+                chatIds: [chatId.uuidString]
+            )
             return try store.getProjectedMessages(
                 chatId: chatId.uuidString,
                 afterServerSeq: nil,
@@ -1104,6 +1198,11 @@ struct TrixAPIClient {
     ) async throws -> UInt64? {
         try await callFFI { _ in
             let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            try Self.repairLocalProjectionsIfPossible(
+                store: store,
+                databasePath: databasePath,
+                chatIds: [chatId.uuidString]
+            )
             return try store.projectedCursor(chatId: chatId.uuidString)
         }
     }
@@ -1199,6 +1298,53 @@ struct TrixAPIClient {
             credentialIdentity: credentialIdentity,
             storageRoot: storageRoot.path
         )
+    }
+
+    private static func repairLocalProjectionsIfPossible(
+        store: FfiLocalHistoryStore,
+        databasePath: URL,
+        chatIds: [String]? = nil,
+        limit: Int = 500
+    ) throws {
+        let workspaceRoot = databasePath.deletingLastPathComponent()
+        let mlsStorageRoot = workspaceRoot.appendingPathComponent("mls-state", isDirectory: true)
+        guard let facade = try? FfiMlsFacade.loadPersistent(storageRoot: mlsStorageRoot.path) else {
+            return
+        }
+
+        let targetChatIds = chatIds.map(Set.init)
+        let clampedLimit = try TrixCoreCodec.uint32(limit, label: "projection limit")
+        var didMutate = false
+
+        for chat in try store.listChats() {
+            if let targetChatIds, !targetChatIds.contains(chat.chatId) {
+                continue
+            }
+
+            let projectedCursor = try store.projectedCursor(chatId: chat.chatId) ?? 0
+            if chat.lastServerSeq <= projectedCursor {
+                continue
+            }
+
+            do {
+                let report = try store.projectChatWithFacade(
+                    chatId: chat.chatId,
+                    facade: facade,
+                    limit: clampedLimit
+                )
+                let refreshedCursor = try store.projectedCursor(chatId: chat.chatId) ?? 0
+                if refreshedCursor > projectedCursor || report.projectedMessagesUpserted > 0 {
+                    didMutate = true
+                }
+            } catch {
+                continue
+            }
+        }
+
+        if didMutate {
+            try store.saveState()
+            try facade.saveState()
+        }
     }
 
     private static func prepareConversationIfNeeded(

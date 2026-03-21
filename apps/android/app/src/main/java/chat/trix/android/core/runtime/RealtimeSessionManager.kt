@@ -205,6 +205,9 @@ class RealtimeSessionManager(
                     "realtime event=${event.kind.name.lowercase()} changed=${changedChatIds.size}",
                 )
                 if (changedChatIds.isNotEmpty()) {
+                    hydrateChangedChats(changedChatIds)
+                }
+                if (shouldDispatchChatRefresh(event.kind, changedChatIds)) {
                     withContext(Dispatchers.Main) {
                         onChatsChanged(changedChatIds)
                     }
@@ -276,6 +279,26 @@ class RealtimeSessionManager(
         }
     }
 
+    private suspend fun hydrateChangedChats(chatIds: Set<String>) {
+        if (chatIds.isEmpty()) {
+            return
+        }
+
+        runCatching {
+            val repository = ChatRepository(appContext, session)
+            try {
+                val hydratedChats = repository.hydrateChangedChats(chatIds)
+                if (hydratedChats > 0) {
+                    telemetry.info(TAG, "hydrated $hydratedChats chat detail row(s) from realtime")
+                }
+            } finally {
+                repository.close()
+            }
+        }.onFailure { error ->
+            telemetry.warn(TAG, "failed to hydrate realtime chat changes", error)
+        }
+    }
+
     private fun ensureWebSocket(): FfiServerWebSocketClient {
         val existing = websocket
         if (existing != null) {
@@ -318,4 +341,13 @@ private fun Throwable.asIoException(fallbackMessage: String): IOException {
         is UnsatisfiedLinkError -> IOException("Rust FFI library is not available in the Android app bundle", this)
         else -> IOException(fallbackMessage, this)
     }
+}
+
+internal fun shouldDispatchChatRefresh(
+    eventKind: FfiRealtimeEventKind,
+    changedChatIds: Set<String>,
+): Boolean {
+    return changedChatIds.isNotEmpty() ||
+        eventKind == FfiRealtimeEventKind.ACKED ||
+        eventKind == FfiRealtimeEventKind.INBOX_ITEMS
 }

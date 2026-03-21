@@ -283,17 +283,20 @@ final class AppModel: ObservableObject {
         do {
             let client = try APIClient(baseURLString: baseURLString)
             let bootstrapMaterial = try DeviceBootstrapMaterial.generate()
-            let response = try TrixCoreServerBridge.completeLinkIntent(
-                baseURLString: baseURLString,
+            let preparedState = try TrixCorePersistentBridge.prepareLinkedDeviceState(
                 payload: payload,
                 form: form,
                 bootstrapMaterial: bootstrapMaterial
             )
-            let localIdentity = bootstrapMaterial.makeLinkedLocalIdentity(
-                accountId: response.accountId,
-                deviceId: response.pendingDeviceId,
-                deviceDisplayName: deviceDisplayName,
-                platform: form.platform
+            let response = try TrixCoreServerBridge.completeLinkIntent(
+                baseURLString: baseURLString,
+                payload: payload,
+                form: form,
+                preparedState: preparedState
+            )
+            let localIdentity = try TrixCorePersistentBridge.finalizeLinkedDeviceState(
+                preparedState: preparedState,
+                pendingDeviceId: response.pendingDeviceId
             )
 
             try identityStore.save(localIdentity)
@@ -1149,11 +1152,14 @@ final class AppModel: ObservableObject {
             chatId: chatId,
             limit: 100
         )
+        var localProjectedCursor = try TrixCorePersistentBridge.projectedCursor(
+            identity: context.identity,
+            chatId: chatId
+        ) ?? 0
 
         if let existingHistory = localHistory {
             let localHistoryServerSeq = existingHistory.messages.map(\.serverSeq).max() ?? 0
-            let localTimelineServerSeq = localTimelineItems.map(\.serverSeq).max() ?? 0
-            let needsProjectionCatchUp = localHistoryServerSeq > localTimelineServerSeq
+            let needsProjectionCatchUp = localHistoryServerSeq > localProjectedCursor
 
             if needsProjectionCatchUp {
                 let projected = (try? TrixCorePersistentBridge.projectChatMessagesIfPossible(
@@ -1180,12 +1186,16 @@ final class AppModel: ObservableObject {
                     chatId: chatId,
                     limit: 100
                 )
+                localProjectedCursor = try TrixCorePersistentBridge.projectedCursor(
+                    identity: context.identity,
+                    chatId: chatId
+                ) ?? 0
+                updateLocalCoreStateSnapshot(identity: context.identity)
             }
         }
 
         let localServerSeq = localHistory?.messages.map(\.serverSeq).max() ?? 0
-        let localTimelineServerSeq = localTimelineItems.map(\.serverSeq).max() ?? 0
-        let needsProjectionBootstrap = localTimelineItems.isEmpty || localServerSeq > localTimelineServerSeq
+        let needsProjectionBootstrap = localTimelineItems.isEmpty || localServerSeq > localProjectedCursor
         let shouldBackfillFromServer = localHistory == nil
             || localServerSeq < detail.lastServerSeq
             || needsProjectionBootstrap
@@ -1436,6 +1446,9 @@ final class AppModel: ObservableObject {
             accessToken: session.accessToken,
             identity: identity
         )
+        _ = try? TrixCorePersistentBridge.repairLinkedDevicePersistentStateIfNeeded(
+            identity: effectiveIdentity
+        )
 
         do {
             _ = try TrixCorePersistentBridge.ensureOwnDeviceKeyPackages(
@@ -1475,12 +1488,26 @@ final class AppModel: ObservableObject {
         let resolvedChats = try await chats
         let resolvedInbox = try await inbox
 
-        applyServerStateToLocalStore(
+        let changedChatIds = applyServerStateToLocalStore(
             identity: effectiveIdentity,
             chats: resolvedChats.chats,
             inboxItems: resolvedInbox.items
         )
+        await hydrateAndProjectChangedChats(
+            client: client,
+            accessToken: session.accessToken,
+            identity: effectiveIdentity,
+            chatIds: changedChatIds
+        )
+        let acknowledgedInboxIds = await acknowledgeInboxIntoLocalSyncStateIfPossible(
+            baseURLString: try client.baseURLString(),
+            accessToken: session.accessToken,
+            identity: effectiveIdentity,
+            inboxItems: resolvedInbox.items
+        )
         updateLocalCoreStateSnapshot(identity: effectiveIdentity)
+        let acknowledgedSet = Set(acknowledgedInboxIds)
+        let remainingInboxItems = resolvedInbox.items.filter { !acknowledgedSet.contains($0.inboxId) }
 
         self.systemSnapshot = resolvedSystemSnapshot
         let dashboard = DashboardData(
@@ -1490,9 +1517,9 @@ final class AppModel: ObservableObject {
             historySyncJobs: resolvedHistorySyncJobs.jobs,
             chats: mergeChatSummaries(
                 existing: resolvedChats.chats,
-                inboxItems: resolvedInbox.items
+                inboxItems: remainingInboxItems
             ),
-            inboxItems: resolvedInbox.items
+            inboxItems: remainingInboxItems
         )
         directoryAccountCache[dashboard.profile.accountId] = DirectoryAccountSummary(
             accountId: dashboard.profile.accountId,
@@ -1564,20 +1591,71 @@ final class AppModel: ObservableObject {
         identity: LocalDeviceIdentity,
         chats: [ChatSummary],
         inboxItems: [InboxItem]
-    ) {
+    ) -> Set<String> {
         do {
-            _ = try TrixCorePersistentBridge.applyChatList(
+            let chatListReport = try TrixCorePersistentBridge.applyChatList(
                 identity: identity,
                 chats: chats
             )
+            var changedChatIds = Set(chatListReport.changedChatIds)
             if !inboxItems.isEmpty {
-                _ = try TrixCorePersistentBridge.applyInboxItems(
+                let inboxReport = try TrixCorePersistentBridge.applyInboxItems(
                     identity: identity,
                     items: inboxItems
                 )
+                changedChatIds.formUnion(inboxReport.changedChatIds)
             }
+            return changedChatIds
         } catch {
             errorMessage = error.localizedDescription
+            return []
+        }
+    }
+
+    private func hydrateAndProjectChangedChats(
+        client: APIClient,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        chatIds: Set<String>
+    ) async {
+        for chatId in chatIds.sorted() {
+            do {
+                let detail: ChatDetailResponse = try await client.get(
+                    "/v0/chats/\(chatId)",
+                    accessToken: accessToken
+                )
+                seedDirectoryAccountCache(with: detail.participantProfiles)
+                _ = try TrixCorePersistentBridge.applyChatDetail(
+                    identity: identity,
+                    detail: detail
+                )
+            } catch {
+                continue
+            }
+        }
+    }
+
+    private func acknowledgeInboxIntoLocalSyncStateIfPossible(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        inboxItems: [InboxItem]
+    ) async -> [UInt64] {
+        let inboxIds = Array(Set(inboxItems.map(\.inboxId))).sorted()
+        guard !inboxIds.isEmpty else {
+            return []
+        }
+
+        do {
+            let response = try TrixCorePersistentBridge.ackInboxIntoSyncState(
+                baseURLString: baseURLString,
+                accessToken: accessToken,
+                identity: identity,
+                inboxIds: inboxIds
+            )
+            return response.ackedInboxIds
+        } catch {
+            return []
         }
     }
 
@@ -1745,15 +1823,24 @@ final class AppModel: ObservableObject {
             return
         }
 
-        if let localIdentity,
-           update.event.report != nil || update.event.kind == .acked {
-            updateLocalCoreStateSnapshot(identity: localIdentity)
-        }
-
         switch update.event.kind {
         case .hello:
             lastUpdatedAt = Date()
         case .inboxItems:
+            if let localIdentity,
+               let baseURLString = currentServerBaseURLString,
+               let accessToken = realtimeAccessToken,
+               let client = try? APIClient(baseURLString: baseURLString) {
+                await hydrateAndProjectChangedChats(
+                    client: client,
+                    accessToken: accessToken,
+                    identity: localIdentity,
+                    chatIds: Set(update.event.report?.changedChatIds ?? [])
+                )
+                updateLocalCoreStateSnapshot(identity: localIdentity)
+            } else if let localIdentity {
+                updateLocalCoreStateSnapshot(identity: localIdentity)
+            }
             if let dashboard {
                 let applied = applyLocalCoreStateOverlay(
                     session: dashboard.session,
@@ -1767,6 +1854,9 @@ final class AppModel: ObservableObject {
                 scheduleBackgroundRefresh(delayNanoseconds: 300_000_000)
             }
         case .acked:
+            if let localIdentity {
+                updateLocalCoreStateSnapshot(identity: localIdentity)
+            }
             removeDashboardInboxItems(update.event.serverAckedInboxIds)
         case .pong:
             break
@@ -1853,10 +1943,19 @@ final class AppModel: ObservableObject {
                 accessToken: context.session.accessToken,
                 identity: context.identity
             )
+            _ = try? TrixCorePersistentBridge.repairLinkedDevicePersistentStateIfNeeded(
+                identity: effectiveIdentity
+            )
             let result = try TrixCorePersistentBridge.pollRealtimeOnce(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: effectiveIdentity
+            )
+            await hydrateAndProjectChangedChats(
+                client: context.client,
+                accessToken: context.session.accessToken,
+                identity: effectiveIdentity,
+                chatIds: Set(result.report.changedChatIds)
             )
             updateLocalCoreStateSnapshot(identity: effectiveIdentity)
             let applied = applyLocalCoreStateOverlay(
