@@ -49,6 +49,7 @@ make ffi-bindings
 make ffi-bindings-swift
 make ffi-bindings-kotlin
 make ffi-bindings OUT=/tmp/trix-bindings
+make ffi-parity-audit
 ```
 
 ## Bot Harness Bindings
@@ -194,5 +195,6 @@ See `docs/bot-harness.md` for runtime setup and payload examples.
   - `process_websocket_frame(...)`
   - `next_websocket_event(...)`
 - `FfiRealtimeDriver` is the intended shared boundary for websocket/polling inbox delivery, reconnect pacing, local apply, and outbound ack bookkeeping. App clients and the bot runtime can now use the same core realtime flow instead of separate websocket loops.
+- `scripts/ffi_parity_audit.py` audits the exported `ffi.rs` surface against non-generated iOS, macOS, and Android client code. It reports orphaned exports plus platform gaps, and supports `--strict` for fail-on-gap / fail-on-orphan enforcement once the clients are fully aligned.
 - Kotlin generation works without `ktlint`, but UniFFI will print a non-fatal formatting warning if `ktlint` is not installed.
 - Kotlin sources are generated under `bindings/uniffi/trix_core/`.

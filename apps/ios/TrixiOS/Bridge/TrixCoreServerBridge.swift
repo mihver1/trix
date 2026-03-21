@@ -1,6 +1,19 @@
 import Foundation
 
 struct TrixCoreServerBridge {
+    static func fetchSystemSnapshot(
+        baseURLString: String
+    ) async throws -> ServerSnapshot {
+        let client = try makeClient(baseURLString: baseURLString)
+        let health = try client.getHealth()
+        let version = try client.getVersion()
+
+        return ServerSnapshot(
+            health: health.trix_serverHealthResponse,
+            version: version.trix_serverVersionResponse
+        )
+    }
+
     static func createAccount(
         baseURLString: String,
         form: CreateAccountForm,
@@ -99,7 +112,7 @@ struct TrixCoreServerBridge {
             profileName: profile.profileName,
             profileBio: profile.profileBio,
             deviceId: profile.deviceId,
-            deviceStatus: profile.deviceStatus.trix_deviceStatus
+            deviceStatus: profile.deviceStatus.trix_serverDeviceStatus
         )
     }
 
@@ -125,7 +138,7 @@ struct TrixCoreServerBridge {
         return CompleteLinkIntentResponse(
             accountId: response.accountId,
             pendingDeviceId: response.pendingDeviceId,
-            deviceStatus: response.deviceStatus.trix_deviceStatus,
+            deviceStatus: response.deviceStatus.trix_serverDeviceStatus,
             bootstrapPayloadB64: response.bootstrapPayload.base64EncodedString()
         )
     }
@@ -145,8 +158,124 @@ struct TrixCoreServerBridge {
             accessToken: session.accessToken,
             expiresAtUnix: session.expiresAtUnix,
             accountId: session.accountId,
-            deviceStatus: session.deviceStatus.trix_deviceStatus
+            deviceStatus: session.deviceStatus.trix_serverDeviceStatus
         )
+    }
+
+    static func getAccountProfile(
+        baseURLString: String,
+        accessToken: String
+    ) async throws -> AccountProfileResponse {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        return try client.getMe().trix_serverAccountProfileResponse
+    }
+
+    static func listDevices(
+        baseURLString: String,
+        accessToken: String
+    ) async throws -> DeviceListResponse {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        return try client.listDevices().trix_serverDeviceListResponse
+    }
+
+    static func listHistorySyncJobs(
+        baseURLString: String,
+        accessToken: String,
+        limit: Int = 50
+    ) async throws -> HistorySyncJobListResponse {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        let clampedLimit = limit > 0 ? UInt32(limit) : nil
+        return try client.listHistorySyncJobs(
+            role: nil,
+            status: nil,
+            limit: clampedLimit
+        ).trix_serverHistorySyncJobListResponse
+    }
+
+    static func listChats(
+        baseURLString: String,
+        accessToken: String
+    ) async throws -> ChatListResponse {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        return ChatListResponse(chats: try client.listChats().map(\.trix_serverChatSummary))
+    }
+
+    static func getChat(
+        baseURLString: String,
+        accessToken: String,
+        chatId: String
+    ) async throws -> ChatDetailResponse {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        return try client.getChat(chatId: chatId).trix_serverChatDetailResponse
+    }
+
+    static func getChatHistory(
+        baseURLString: String,
+        accessToken: String,
+        chatId: String,
+        afterServerSeq: UInt64? = nil,
+        limit: Int = 500
+    ) async throws -> ChatHistoryResponse {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        let clampedLimit = limit > 0 ? UInt32(limit) : nil
+        return try client.getChatHistory(
+            chatId: chatId,
+            afterServerSeq: afterServerSeq,
+            limit: clampedLimit
+        ).trix_serverChatHistoryResponse
+    }
+
+    static func getInbox(
+        baseURLString: String,
+        accessToken: String,
+        afterInboxId: UInt64? = nil,
+        limit: Int = 50
+    ) async throws -> InboxResponse {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        let clampedLimit = limit > 0 ? UInt32(limit) : nil
+        return try client.getInbox(afterInboxId: afterInboxId, limit: clampedLimit).trix_serverInboxResponse
+    }
+
+    static func leaseInbox(
+        baseURLString: String,
+        accessToken: String,
+        leaseOwner: String? = nil,
+        limit: Int = 25,
+        afterInboxId: UInt64? = nil,
+        leaseTtlSeconds: UInt64? = nil
+    ) async throws -> LeaseInboxResponse {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        let response = try client.leaseInbox(
+            params: FfiLeaseInboxParams(
+                leaseOwner: leaseOwner.flatMap { $0.trix_trimmedOrNil() },
+                limit: limit > 0 ? UInt32(limit) : nil,
+                afterInboxId: afterInboxId,
+                leaseTtlSeconds: leaseTtlSeconds
+            )
+        )
+        return response.trix_serverLeaseInboxResponse
+    }
+
+    static func ackInbox(
+        baseURLString: String,
+        accessToken: String,
+        inboxIds: [UInt64]
+    ) async throws -> AckInboxResponse {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        return try client.ackInbox(inboxIds: inboxIds).trix_serverAckInboxResponse
+    }
+
+    static func completeHistorySyncJob(
+        baseURLString: String,
+        accessToken: String,
+        jobId: String,
+        cursorJson: String? = nil
+    ) async throws -> CompleteHistorySyncJobResponse {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        return try client.completeHistorySyncJob(
+            jobId: jobId,
+            cursorJson: cursorJson
+        ).trix_serverCompleteHistorySyncJobResponse
     }
 
     static func approvePendingDevice(
@@ -165,7 +294,7 @@ struct TrixCoreServerBridge {
         return ApproveDeviceResponse(
             accountId: response.accountId,
             deviceId: response.deviceId,
-            deviceStatus: response.deviceStatus.trix_deviceStatus
+            deviceStatus: response.deviceStatus.trix_serverDeviceStatus
         )
     }
 
@@ -201,7 +330,7 @@ struct TrixCoreServerBridge {
         return RevokeDeviceResponse(
             accountId: response.accountId,
             deviceId: response.deviceId,
-            deviceStatus: response.deviceStatus.trix_deviceStatus
+            deviceStatus: response.deviceStatus.trix_serverDeviceStatus
         )
     }
 
@@ -218,7 +347,7 @@ struct TrixCoreServerBridge {
 }
 
 private extension FfiDeviceStatus {
-    var trix_deviceStatus: DeviceStatus {
+    var trix_serverDeviceStatus: DeviceStatus {
         switch self {
         case .pending:
             return .pending
@@ -227,5 +356,311 @@ private extension FfiDeviceStatus {
         case .revoked:
             return .revoked
         }
+    }
+}
+
+private extension FfiServiceStatus {
+    var trix_serverServiceStatus: ServiceStatus {
+        switch self {
+        case .ok:
+            return .ok
+        case .degraded:
+            return .degraded
+        }
+    }
+}
+
+private extension FfiHealthResponse {
+    var trix_serverHealthResponse: HealthResponse {
+        HealthResponse(
+            service: service,
+            status: status.trix_serverServiceStatus,
+            version: version,
+            uptimeMs: uptimeMs
+        )
+    }
+}
+
+private extension FfiVersionResponse {
+    var trix_serverVersionResponse: VersionResponse {
+        VersionResponse(
+            service: service,
+            version: version,
+            gitSha: gitSha
+        )
+    }
+}
+
+private extension FfiChatType {
+    var trix_serverChatType: ChatType {
+        switch self {
+        case .dm:
+            return .dm
+        case .group:
+            return .group
+        case .accountSync:
+            return .accountSync
+        }
+    }
+}
+
+private extension FfiMessageKind {
+    var trix_serverMessageKind: MessageKind {
+        switch self {
+        case .application:
+            return .application
+        case .commit:
+            return .commit
+        case .welcomeRef:
+            return .welcomeRef
+        case .system:
+            return .system
+        }
+    }
+}
+
+private extension FfiContentType {
+    var trix_serverContentType: ContentType {
+        switch self {
+        case .text:
+            return .text
+        case .reaction:
+            return .reaction
+        case .receipt:
+            return .receipt
+        case .attachment:
+            return .attachment
+        case .chatEvent:
+            return .chatEvent
+        }
+    }
+}
+
+private extension FfiChatParticipantProfile {
+    var trix_serverChatParticipantProfileSummary: ChatParticipantProfileSummary {
+        ChatParticipantProfileSummary(
+            accountId: accountId,
+            handle: handle,
+            profileName: profileName,
+            profileBio: profileBio
+        )
+    }
+}
+
+private extension FfiChatSummary {
+    var trix_serverChatSummary: ChatSummary {
+        ChatSummary(
+            chatId: chatId,
+            chatType: chatType.trix_serverChatType,
+            title: title,
+            lastServerSeq: lastServerSeq,
+            epoch: epoch,
+            pendingMessageCount: pendingMessageCount,
+            lastMessage: lastMessage?.trix_serverMessageEnvelope,
+            participantProfiles: participantProfiles.map(\.trix_serverChatParticipantProfileSummary)
+        )
+    }
+}
+
+private extension FfiMessageEnvelope {
+    var trix_serverMessageEnvelope: MessageEnvelope {
+        MessageEnvelope(
+            messageId: messageId,
+            chatId: chatId,
+            serverSeq: serverSeq,
+            senderAccountId: senderAccountId,
+            senderDeviceId: senderDeviceId,
+            epoch: epoch,
+            messageKind: messageKind.trix_serverMessageKind,
+            contentType: contentType.trix_serverContentType,
+            ciphertextB64: ciphertext.base64EncodedString(),
+            aadJson: aadJson.trix_serverJSONValue,
+            createdAtUnix: createdAtUnix
+        )
+    }
+}
+
+private extension FfiChatHistory {
+    var trix_serverChatHistoryResponse: ChatHistoryResponse {
+        ChatHistoryResponse(
+            chatId: chatId,
+            messages: messages.map(\.trix_serverMessageEnvelope)
+        )
+    }
+}
+
+private extension FfiHistorySyncJobType {
+    var trix_serverHistorySyncJobType: HistorySyncJobType {
+        switch self {
+        case .initialSync:
+            return .initialSync
+        case .chatBackfill:
+            return .chatBackfill
+        case .deviceRekey:
+            return .deviceRekey
+        }
+    }
+}
+
+private extension FfiHistorySyncJobStatus {
+    var trix_serverHistorySyncJobStatus: HistorySyncJobStatus {
+        switch self {
+        case .pending:
+            return .pending
+        case .running:
+            return .running
+        case .completed:
+            return .completed
+        case .failed:
+            return .failed
+        case .canceled:
+            return .canceled
+        }
+    }
+}
+
+private extension FfiAccountProfile {
+    var trix_serverAccountProfileResponse: AccountProfileResponse {
+        AccountProfileResponse(
+            accountId: accountId,
+            handle: handle,
+            profileName: profileName,
+            profileBio: profileBio,
+            deviceId: deviceId,
+            deviceStatus: deviceStatus.trix_serverDeviceStatus
+        )
+    }
+}
+
+private extension FfiDeviceSummary {
+    var trix_serverDeviceSummary: DeviceSummary {
+        DeviceSummary(
+            deviceId: deviceId,
+            displayName: displayName,
+            platform: platform,
+            deviceStatus: deviceStatus.trix_serverDeviceStatus,
+            availableKeyPackageCount: availableKeyPackageCount
+        )
+    }
+}
+
+private extension FfiDeviceList {
+    var trix_serverDeviceListResponse: DeviceListResponse {
+        DeviceListResponse(
+            accountId: accountId,
+            devices: devices.map(\.trix_serverDeviceSummary)
+        )
+    }
+}
+
+private extension FfiHistorySyncJob {
+    var trix_serverHistorySyncJobSummary: HistorySyncJobSummary {
+        HistorySyncJobSummary(
+            jobId: jobId,
+            jobType: jobType.trix_serverHistorySyncJobType,
+            jobStatus: jobStatus.trix_serverHistorySyncJobStatus,
+            sourceDeviceId: sourceDeviceId,
+            targetDeviceId: targetDeviceId,
+            chatId: chatId,
+            createdAtUnix: createdAtUnix,
+            updatedAtUnix: updatedAtUnix
+        )
+    }
+}
+
+private extension Array where Element == FfiHistorySyncJob {
+    var trix_serverHistorySyncJobListResponse: HistorySyncJobListResponse {
+        HistorySyncJobListResponse(jobs: map(\.trix_serverHistorySyncJobSummary))
+    }
+}
+
+private extension FfiChatMember {
+    var trix_serverChatMemberSummary: ChatMemberSummary {
+        ChatMemberSummary(
+            accountId: accountId,
+            role: role,
+            membershipStatus: membershipStatus
+        )
+    }
+}
+
+private extension FfiChatDeviceMember {
+    var trix_serverChatDeviceSummary: ChatDeviceSummary {
+        ChatDeviceSummary(
+            deviceId: deviceId,
+            accountId: accountId,
+            displayName: displayName,
+            platform: platform,
+            leafIndex: leafIndex,
+            credentialIdentityB64: credentialIdentity.base64EncodedString()
+        )
+    }
+}
+
+private extension FfiChatDetail {
+    var trix_serverChatDetailResponse: ChatDetailResponse {
+        ChatDetailResponse(
+            chatId: chatId,
+            chatType: chatType.trix_serverChatType,
+            title: title,
+            lastServerSeq: lastServerSeq,
+            pendingMessageCount: pendingMessageCount,
+            epoch: epoch,
+            lastCommitMessageId: lastCommitMessageId,
+            lastMessage: lastMessage?.trix_serverMessageEnvelope,
+            participantProfiles: participantProfiles.map(\.trix_serverChatParticipantProfileSummary),
+            members: members.map(\.trix_serverChatMemberSummary),
+            deviceMembers: deviceMembers.map(\.trix_serverChatDeviceSummary)
+        )
+    }
+}
+
+private extension FfiInboxItem {
+    var trix_serverInboxItem: InboxItem {
+        InboxItem(
+            inboxId: inboxId,
+            message: message.trix_serverMessageEnvelope
+        )
+    }
+}
+
+private extension FfiInbox {
+    var trix_serverInboxResponse: InboxResponse {
+        InboxResponse(items: items.map(\.trix_serverInboxItem))
+    }
+}
+
+private extension FfiLeaseInboxResponse {
+    var trix_serverLeaseInboxResponse: LeaseInboxResponse {
+        LeaseInboxResponse(
+            leaseOwner: leaseOwner,
+            leaseExpiresAtUnix: leaseExpiresAtUnix,
+            items: items.map(\.trix_serverInboxItem)
+        )
+    }
+}
+
+private extension FfiAckInboxResponse {
+    var trix_serverAckInboxResponse: AckInboxResponse {
+        AckInboxResponse(ackedInboxIds: ackedInboxIds)
+    }
+}
+
+private extension FfiCompleteHistorySyncJobResponse {
+    var trix_serverCompleteHistorySyncJobResponse: CompleteHistorySyncJobResponse {
+        CompleteHistorySyncJobResponse(
+            jobId: jobId,
+            jobStatus: jobStatus.trix_serverHistorySyncJobStatus
+        )
+    }
+}
+
+private extension String {
+    var trix_serverJSONValue: JSONValue {
+        guard let data = data(using: .utf8) else {
+            return .string(self)
+        }
+
+        return (try? JSONDecoder().decode(JSONValue.self, from: data)) ?? .string(self)
     }
 }

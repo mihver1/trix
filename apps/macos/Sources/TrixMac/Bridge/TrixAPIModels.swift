@@ -18,11 +18,6 @@ struct VersionResponse: Codable {
     let gitSha: String?
 }
 
-struct ErrorResponse: Codable {
-    let code: String
-    let message: String
-}
-
 struct CreateAccountRequest: Codable {
     let handle: String?
     let profileName: String

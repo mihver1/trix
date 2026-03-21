@@ -334,6 +334,35 @@ extension TypedMessageBody {
     }
 }
 
+extension HealthResponse {
+    init(ffiValue: FfiHealthResponse) {
+        let status: ServiceStatus
+        switch ffiValue.status {
+        case .ok:
+            status = .ok
+        case .degraded:
+            status = .degraded
+        }
+
+        self.init(
+            service: ffiValue.service,
+            status: status,
+            version: ffiValue.version,
+            uptimeMs: ffiValue.uptimeMs
+        )
+    }
+}
+
+extension VersionResponse {
+    init(ffiValue: FfiVersionResponse) {
+        self.init(
+            service: ffiValue.service,
+            version: ffiValue.version,
+            gitSha: ffiValue.gitSha
+        )
+    }
+}
+
 extension CreateAccountResponse {
     init(ffiValue: FfiCreateAccountResponse) throws {
         self.init(

@@ -96,7 +96,7 @@ fun SettingsScreen(
             item(span = { GridItemSpan(maxLineSpan) }) {
                 SettingsCard(
                     title = "Android direction",
-                    body = "Kotlin + Compose first, canonical adaptive layouts, fold-aware posture handling, and no shared FFI until trix-core becomes meaningful on the client side.",
+                    body = "Kotlin + Compose first, canonical adaptive layouts, fold-aware posture handling, and FFI for core auth, sync, messaging, and backend diagnostics.",
                 )
             }
             item {
@@ -392,7 +392,7 @@ private fun BackendDiagnosticsCard(baseUrl: String) {
                 BackendProbeState.Loading -> {
                     ElevatedAssistChip(
                         onClick = {},
-                        label = { Text("Checking /v0/system/*") },
+                        label = { Text("Checking backend health and version") },
                     )
                 }
 

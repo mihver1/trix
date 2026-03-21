@@ -23,3 +23,6 @@ ffi-bindings-kotlin: build-trix-core-lib
 ffi-bindings: build-trix-core-lib
 	mkdir -p $(OUT)
 	cargo run -p trix-core --bin uniffi-bindgen -- generate --library target/debug/libtrix_core.dylib --language swift --language kotlin --out-dir $(OUT)
+
+ffi-parity-audit:
+	python3 scripts/ffi_parity_audit.py

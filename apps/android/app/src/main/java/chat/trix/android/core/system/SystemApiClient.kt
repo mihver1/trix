@@ -1,12 +1,14 @@
 package chat.trix.android.core.system
 
+import chat.trix.android.core.ffi.FfiHealthResponse
+import chat.trix.android.core.ffi.FfiServerApiClient
+import chat.trix.android.core.ffi.FfiServiceStatus
+import chat.trix.android.core.ffi.FfiVersionResponse
+import chat.trix.android.core.ffi.TrixFfiException
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.json.JSONException
-import org.json.JSONObject
 
 class SystemApiClient(
     baseUrl: String,
@@ -14,64 +16,53 @@ class SystemApiClient(
     private val normalizedBaseUrl = baseUrl.trimEnd('/')
 
     suspend fun fetchSnapshot(): SystemSnapshot = withContext(Dispatchers.IO) {
-        val health = fetchHealth()
-        val version = fetchVersion()
-        SystemSnapshot(
-            health = health,
-            version = version,
-            baseUrl = normalizedBaseUrl,
-        )
-    }
-
-    private fun fetchHealth(): HealthStatus {
-        val payload = readJson("/v0/system/health")
-        return HealthStatus(
-            service = payload.getString("service"),
-            status = ServiceStatus.fromWire(payload.getString("status")),
-            version = payload.getString("version"),
-            uptimeMs = payload.getLong("uptime_ms"),
-        )
-    }
-
-    private fun fetchVersion(): VersionInfo {
-        val payload = readJson("/v0/system/version")
-        return VersionInfo(
-            service = payload.getString("service"),
-            version = payload.getString("version"),
-            gitSha = payload.optNullableString("git_sha"),
-        )
-    }
-
-    private fun readJson(path: String): JSONObject {
-        val connection = (URL("$normalizedBaseUrl$path").openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 5_000
-            readTimeout = 5_000
-            setRequestProperty("Accept", "application/json")
-        }
-
-        return try {
-            val statusCode = connection.responseCode
-            val body = connection.readResponseBody(statusCode)
-            if (statusCode !in 200..299) {
-                throw IOException(body.ifBlank { "HTTP $statusCode" })
+        runFfi("Failed to fetch backend diagnostics") {
+            FfiServerApiClient(normalizedBaseUrl).use { client ->
+                val health = client.getHealth().toHealthStatus()
+                val version = client.getVersion().toVersionInfo()
+                SystemSnapshot(
+                    health = health,
+                    version = version,
+                    baseUrl = normalizedBaseUrl,
+                )
             }
-            JSONObject(body)
-        } catch (error: JSONException) {
-            throw IOException("Malformed JSON from $path", error)
-        } finally {
-            connection.disconnect()
         }
     }
 
-    private fun HttpURLConnection.readResponseBody(statusCode: Int): String {
-        val stream = if (statusCode in 200..299) inputStream else errorStream
-        return stream?.bufferedReader()?.use { it.readText().trim() }.orEmpty()
+    private inline fun <T> runFfi(
+        fallbackMessage: String,
+        block: () -> T,
+    ): T {
+        return try {
+            block()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: IOException) {
+            throw error
+        } catch (error: TrixFfiException) {
+            throw IOException(error.message ?: fallbackMessage, error)
+        } catch (error: UnsatisfiedLinkError) {
+            throw IOException("Rust FFI library is not available in the Android app bundle", error)
+        } catch (error: RuntimeException) {
+            throw IOException(fallbackMessage, error)
+        }
     }
 
-    private fun JSONObject.optNullableString(key: String): String? {
-        val value = opt(key)
-        return if (value is String && value.isNotBlank()) value else null
+    private fun FfiHealthResponse.toHealthStatus(): HealthStatus {
+        return HealthStatus(
+            service = service,
+            status = status.toServiceStatus(),
+            version = version,
+            uptimeMs = uptimeMs.toLong(),
+        )
+    }
+
+    private fun FfiVersionResponse.toVersionInfo(): VersionInfo {
+        return VersionInfo(
+            service = service,
+            version = version,
+            gitSha = gitSha,
+        )
     }
 }
 
@@ -99,10 +90,13 @@ enum class ServiceStatus {
     Degraded;
 
     companion object {
-        fun fromWire(raw: String): ServiceStatus = when (raw) {
-            "ok" -> Ok
-            "degraded" -> Degraded
-            else -> throw IOException("Unknown service status: $raw")
+        fun fromFfi(raw: FfiServiceStatus): ServiceStatus = when (raw) {
+            FfiServiceStatus.OK -> Ok
+            FfiServiceStatus.DEGRADED -> Degraded
         }
     }
+}
+
+private fun FfiServiceStatus.toServiceStatus(): ServiceStatus {
+    return ServiceStatus.fromFfi(this)
 }

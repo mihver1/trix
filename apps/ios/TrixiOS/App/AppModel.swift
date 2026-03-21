@@ -467,11 +467,11 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-
-            let _: CompleteHistorySyncJobResponse = try await context.client.post(
-                "/v0/history-sync/jobs/\(jobId)/complete",
-                body: CompleteHistorySyncJobRequest(cursorJson: nil),
-                accessToken: context.session.accessToken
+            let _: CompleteHistorySyncJobResponse = try await TrixCoreServerBridge.completeHistorySyncJob(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                jobId: jobId,
+                cursorJson: nil
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
@@ -826,7 +826,7 @@ final class AppModel: ObservableObject {
             )
 
             updateLocalCoreStateSnapshot(identity: context.identity)
-            applyLocalCoreStateOverlay(
+            _ = applyLocalCoreStateOverlay(
                 session: context.session,
                 ackedInboxIds: [],
                 changedChatIds: [chatId]
@@ -884,7 +884,7 @@ final class AppModel: ObservableObject {
             )
 
             updateLocalCoreStateSnapshot(identity: context.identity)
-            applyLocalCoreStateOverlay(
+            _ = applyLocalCoreStateOverlay(
                 session: context.session,
                 ackedInboxIds: [],
                 changedChatIds: [chatId]
@@ -1016,10 +1016,10 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response: AckInboxResponse = try await context.client.post(
-                "/v0/inbox/ack",
-                body: AckInboxRequest(inboxIds: inboxIds),
-                accessToken: context.session.accessToken
+            let response = try await TrixCoreServerBridge.ackInbox(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                inboxIds: inboxIds
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
@@ -1048,12 +1048,11 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response: InboxResponse = try await context.client.get(
-                makeInboxPath(
-                    afterInboxId: dashboard?.maxInboxId,
-                    limit: limit
-                ),
-                accessToken: context.session.accessToken
+            let response = try await TrixCoreServerBridge.getInbox(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                afterInboxId: dashboard?.maxInboxId,
+                limit: limit
             )
 
             if !response.items.isEmpty {
@@ -1088,15 +1087,13 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response: LeaseInboxResponse = try await context.client.post(
-                "/v0/inbox/lease",
-                body: LeaseInboxRequest(
-                    leaseOwner: leaseOwner,
-                    limit: limit,
-                    afterInboxId: afterInboxId,
-                    leaseTtlSeconds: leaseTtlSeconds
-                ),
-                accessToken: context.session.accessToken
+            let response = try await TrixCoreServerBridge.leaseInbox(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                leaseOwner: leaseOwner,
+                limit: limit,
+                afterInboxId: afterInboxId,
+                leaseTtlSeconds: leaseTtlSeconds
             )
 
             lastUpdatedAt = Date()
@@ -1243,9 +1240,10 @@ final class AppModel: ObservableObject {
         chatId: String
     ) async throws -> ChatSnapshot {
         let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-        let detail: ChatDetailResponse = try await context.client.get(
-            "/v0/chats/\(chatId)",
-            accessToken: context.session.accessToken
+        let detail = try await TrixCoreServerBridge.getChat(
+            baseURLString: baseURLString,
+            accessToken: context.session.accessToken,
+            chatId: chatId
         )
         seedDirectoryAccountCache(with: detail.participantProfiles)
         _ = try? TrixCorePersistentBridge.applyChatDetail(
@@ -1370,19 +1368,19 @@ final class AppModel: ObservableObject {
         pageLimit: Int = 500,
         recentWindowLimit: Int = 150
     ) async throws -> ChatHistoryBackfillResult {
+        let baseURLString = try client.baseURLString()
         var afterServerSeq = startAfterServerSeq
         var bootstrapHistoryMessages: [MessageEnvelope] = []
         var recentMessages: [MessageEnvelope] = []
         var hasRecoveredProjection = !bootstrapProjection
 
         while afterServerSeq < targetLastServerSeq {
-            let page: ChatHistoryResponse = try await client.get(
-                makeChatHistoryPath(
-                    chatId: chatId,
-                    afterServerSeq: afterServerSeq,
-                    limit: pageLimit
-                ),
-                accessToken: accessToken
+            let page = try await TrixCoreServerBridge.getChatHistory(
+                baseURLString: baseURLString,
+                accessToken: accessToken,
+                chatId: chatId,
+                afterServerSeq: afterServerSeq,
+                limit: pageLimit
             )
 
             guard !page.messages.isEmpty else {
@@ -1432,19 +1430,6 @@ final class AppModel: ObservableObject {
         }
 
         return ChatHistoryBackfillResult(recentMessages: recentMessages)
-    }
-
-    private func makeChatHistoryPath(
-        chatId: String,
-        afterServerSeq: UInt64,
-        limit: Int
-    ) -> String {
-        let clampedLimit = min(max(limit, 1), 500)
-        if afterServerSeq > 0 {
-            return "/v0/chats/\(chatId)/history?after_server_seq=\(afterServerSeq)&limit=\(clampedLimit)"
-        }
-
-        return "/v0/chats/\(chatId)/history?limit=\(clampedLimit)"
     }
 
     private func appendRecentHistoryMessages(
@@ -1546,14 +1531,18 @@ final class AppModel: ObservableObject {
         session existingSession: AuthSessionResponse? = nil,
         restartRealtime: Bool = true
     ) async throws {
-        async let systemSnapshot = fetchSystemSnapshot(client: client)
+        let baseURLString = try client.baseURLString()
+
+        async let systemSnapshot = TrixCoreServerBridge.fetchSystemSnapshot(
+            baseURLString: baseURLString
+        )
         let session = try await resolveAuthenticatedSession(
             client: client,
             identity: identity,
             existingSession: existingSession
         )
         let effectiveIdentity = try reconcileAuthenticatedIdentity(
-            baseURLString: try client.baseURLString(),
+            baseURLString: baseURLString,
             accessToken: session.accessToken,
             identity: identity
         )
@@ -1563,7 +1552,7 @@ final class AppModel: ObservableObject {
 
         do {
             _ = try TrixCorePersistentBridge.ensureOwnDeviceKeyPackages(
-                baseURLString: try client.baseURLString(),
+                baseURLString: baseURLString,
                 accessToken: session.accessToken,
                 identity: effectiveIdentity
             )
@@ -1571,25 +1560,27 @@ final class AppModel: ObservableObject {
             errorMessage = error.localizedDescription
         }
 
-        async let profile: AccountProfileResponse = client.get(
-            "/v0/accounts/me",
+        async let profile = TrixCoreServerBridge.getAccountProfile(
+            baseURLString: baseURLString,
             accessToken: session.accessToken
         )
-        async let devices: DeviceListResponse = client.get(
-            "/v0/devices",
+        async let devices = TrixCoreServerBridge.listDevices(
+            baseURLString: baseURLString,
             accessToken: session.accessToken
         )
-        async let historySyncJobs: HistorySyncJobListResponse = client.get(
-            "/v0/history-sync/jobs?limit=50",
+        async let historySyncJobs = TrixCoreServerBridge.listHistorySyncJobs(
+            baseURLString: baseURLString,
             accessToken: session.accessToken
         )
-        async let chats: ChatListResponse = client.get(
-            "/v0/chats",
+        async let chats = TrixCoreServerBridge.listChats(
+            baseURLString: baseURLString,
             accessToken: session.accessToken
         )
-        async let inbox: InboxResponse = client.get(
-            makeInboxPath(afterInboxId: nil, limit: 50),
-            accessToken: session.accessToken
+        async let inbox = TrixCoreServerBridge.getInbox(
+            baseURLString: baseURLString,
+            accessToken: session.accessToken,
+            afterInboxId: nil,
+            limit: 50
         )
 
         let resolvedSystemSnapshot = try await systemSnapshot
@@ -1646,7 +1637,7 @@ final class AppModel: ObservableObject {
 
         if restartRealtime {
             await startRealtimeConnection(
-                baseURLString: try client.baseURLString(),
+                baseURLString: baseURLString,
                 accessToken: session.accessToken,
                 identity: effectiveIdentity
             )
@@ -1729,11 +1720,15 @@ final class AppModel: ObservableObject {
         identity: LocalDeviceIdentity,
         chatIds: Set<String>
     ) async {
+        guard let baseURLString = try? client.baseURLString() else {
+            return
+        }
         for chatId in chatIds.sorted() {
             do {
-                let detail: ChatDetailResponse = try await client.get(
-                    "/v0/chats/\(chatId)",
-                    accessToken: accessToken
+                let detail = try await TrixCoreServerBridge.getChat(
+                    baseURLString: baseURLString,
+                    accessToken: accessToken,
+                    chatId: chatId
                 )
                 seedDirectoryAccountCache(with: detail.participantProfiles)
                 _ = try TrixCorePersistentBridge.applyChatDetail(
@@ -1771,10 +1766,8 @@ final class AppModel: ObservableObject {
     }
 
     private func fetchSystemSnapshot(client: APIClient) async throws -> ServerSnapshot {
-        async let health: HealthResponse = client.get("/v0/system/health")
-        async let version: VersionResponse = client.get("/v0/system/version")
-
-        return try await ServerSnapshot(health: health, version: version)
+        let baseURLString = try client.baseURLString()
+        return try await TrixCoreServerBridge.fetchSystemSnapshot(baseURLString: baseURLString)
     }
 
     private func attachmentCacheKey(for body: FfiMessageBody) -> String {
@@ -1877,16 +1870,6 @@ final class AppModel: ObservableObject {
         } catch {
             // Local read state is opportunistic; network/UI flows should not fail on it.
         }
-    }
-
-    private func makeInboxPath(afterInboxId: UInt64?, limit: Int) -> String {
-        let clampedLimit = min(max(limit, 1), 500)
-
-        if let afterInboxId {
-            return "/v0/inbox?after_inbox_id=\(afterInboxId)&limit=\(clampedLimit)"
-        }
-
-        return "/v0/inbox?limit=\(clampedLimit)"
     }
 
     private func startRealtimeConnection(

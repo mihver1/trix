@@ -1351,7 +1351,7 @@ private extension FfiLocalTimelineItem {
     }
 }
 
-private extension FfiChatHistory {
+extension FfiChatHistory {
     var trix_chatHistoryResponse: ChatHistoryResponse {
         ChatHistoryResponse(
             chatId: chatId,
@@ -1360,7 +1360,7 @@ private extension FfiChatHistory {
     }
 }
 
-private extension FfiChatSummary {
+extension FfiChatSummary {
     var trix_chatSummary: ChatSummary {
         ChatSummary(
             chatId: chatId,
@@ -1375,7 +1375,7 @@ private extension FfiChatSummary {
     }
 }
 
-private extension FfiChatParticipantProfile {
+extension FfiChatParticipantProfile {
     var trix_chatParticipantProfileSummary: ChatParticipantProfileSummary {
         ChatParticipantProfileSummary(
             accountId: accountId,
@@ -1386,7 +1386,7 @@ private extension FfiChatParticipantProfile {
     }
 }
 
-private extension FfiMessageEnvelope {
+extension FfiMessageEnvelope {
     var trix_messageEnvelope: MessageEnvelope {
         MessageEnvelope(
             messageId: messageId,
@@ -1404,7 +1404,7 @@ private extension FfiMessageEnvelope {
     }
 }
 
-private extension FfiChatType {
+extension FfiChatType {
     var trix_chatType: ChatType {
         switch self {
         case .dm:
@@ -1430,7 +1430,7 @@ private extension ChatType {
     }
 }
 
-private extension FfiMessageKind {
+extension FfiMessageKind {
     var trix_messageKind: MessageKind {
         switch self {
         case .application:
@@ -1445,7 +1445,7 @@ private extension FfiMessageKind {
     }
 }
 
-private extension FfiContentType {
+extension FfiContentType {
     var trix_contentType: ContentType {
         switch self {
         case .text:

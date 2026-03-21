@@ -54,17 +54,10 @@ enum ServerEndpoint {
 struct TrixAPIClient {
     let baseURL: URL
 
-    private let session: URLSession
-    private let decoder: JSONDecoder
     private let ffiClient: FfiServerApiClient
 
-    init(baseURL: URL, session: URLSession = .shared) throws {
+    init(baseURL: URL) throws {
         self.baseURL = baseURL
-        self.session = session
-
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        self.decoder = decoder
 
         do {
             self.ffiClient = try FfiServerApiClient(baseUrl: baseURL.absoluteString)
@@ -74,11 +67,15 @@ struct TrixAPIClient {
     }
 
     func fetchHealth() async throws -> HealthResponse {
-        try await systemGet("v0/system/health")
+        try await callFFI { client in
+            try HealthResponse(ffiValue: client.getHealth())
+        }
     }
 
     func fetchVersion() async throws -> VersionResponse {
-        try await systemGet("v0/system/version")
+        try await callFFI { client in
+            try VersionResponse(ffiValue: client.getVersion())
+        }
     }
 
     func createAccount(_ request: CreateAccountRequest) async throws -> CreateAccountResponse {
@@ -1234,20 +1231,6 @@ struct TrixAPIClient {
         }
     }
 
-    private func systemGet<Response: Decodable>(_ path: String) async throws -> Response {
-        let url = baseURL.appendingPathComponent(path)
-        let request = URLRequest(url: url)
-        let (data, response): (Data, URLResponse)
-
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw TrixAPIError.transport(error)
-        }
-
-        return try decode(data: data, response: response)
-    }
-
     private func callFFI<Response: Sendable>(
         accessToken: String? = nil,
         _ operation: @escaping @Sendable (FfiServerApiClient) throws -> Response
@@ -1372,30 +1355,6 @@ struct TrixAPIClient {
             limit: try TrixCoreCodec.uint32(projectionLimit, label: "bootstrap projection limit")
         )
         return conversation
-    }
-
-    private func decode<Response: Decodable>(data: Data, response: URLResponse) throws -> Response {
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw TrixAPIError.invalidResponse
-        }
-
-        guard (200 ..< 300).contains(httpResponse.statusCode) else {
-            if let apiError = try? decoder.decode(ErrorResponse.self, from: data) {
-                throw TrixAPIError.server(
-                    code: apiError.code,
-                    message: apiError.message,
-                    statusCode: httpResponse.statusCode
-                )
-            }
-
-            throw TrixAPIError.invalidResponse
-        }
-
-        do {
-            return try decoder.decode(Response.self, from: data)
-        } catch {
-            throw TrixAPIError.transport(error)
-        }
     }
 
     private static func mapFFIError(_ error: Error) -> TrixAPIError {
