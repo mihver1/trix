@@ -9,7 +9,6 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import chat.trix.android.R
 import chat.trix.android.core.auth.AuthenticatedSession
 import chat.trix.android.core.chat.ChatOverview
 import chat.trix.android.core.system.chatLaunchPendingIntent
@@ -41,9 +40,30 @@ class TrixNotificationRouter(
             ).apply {
                 description = "Device approval, revocation, and session status updates"
             },
+            NotificationChannel(
+                CHANNEL_REALTIME,
+                "Realtime sync",
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = "Persistent notification that keeps Trix realtime delivery running"
+            },
         )
         notificationManager.createNotificationChannels(channels)
     }
+
+    fun buildRealtimeServiceNotification(
+        title: String,
+        body: String,
+    ) = NotificationCompat.Builder(appContext, CHANNEL_REALTIME)
+        .setSmallIcon(android.R.drawable.stat_notify_sync)
+        .setContentTitle(title)
+        .setContentText(body)
+        .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+        .setContentIntent(chatLaunchPendingIntent(appContext, null))
+        .setOngoing(true)
+        .setOnlyAlertOnce(true)
+        .setSilent(true)
+        .build()
 
     fun publishUnreadSummary(
         session: AuthenticatedSession,
@@ -129,6 +149,7 @@ class TrixNotificationRouter(
     companion object {
         private const val CHANNEL_MESSAGES = "messages"
         private const val CHANNEL_SYSTEM = "system"
+        private const val CHANNEL_REALTIME = "realtime"
         private const val TAG_MESSAGES = "trix.messages"
         private const val TAG_SYSTEM = "trix.system"
         private const val NOTIFICATION_UNREAD_SUMMARY = 1001
