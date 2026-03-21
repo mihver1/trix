@@ -33,6 +33,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -41,6 +42,7 @@ import chat.trix.android.core.auth.AccountProfile
 import chat.trix.android.core.auth.AuthApiClient
 import chat.trix.android.core.auth.AuthenticatedSession
 import chat.trix.android.core.auth.UpdateAccountProfilePayload
+import chat.trix.android.core.system.AppTelemetry
 import chat.trix.android.core.system.ServiceStatus
 import chat.trix.android.core.system.SystemApiClient
 import chat.trix.android.core.system.SystemSnapshot
@@ -56,6 +58,9 @@ fun SettingsScreen(
     onPersistAccountProfile: suspend (AccountProfile) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    val telemetry = remember(context) { AppTelemetry(context) }
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
@@ -84,6 +89,9 @@ fun SettingsScreen(
             }
             item(span = { GridItemSpan(maxLineSpan) }) {
                 BackendDiagnosticsCard(baseUrl = session.baseUrl)
+            }
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                SafeClientLogsCard(telemetry = telemetry)
             }
             item(span = { GridItemSpan(maxLineSpan) }) {
                 SettingsCard(
@@ -403,6 +411,86 @@ private fun BackendDiagnosticsCard(baseUrl: String) {
 
                 is BackendProbeState.Ready -> {
                     BackendSnapshotContent(snapshot = state.snapshot)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SafeClientLogsCard(telemetry: AppTelemetry) {
+    var refreshTick by rememberSaveable { mutableIntStateOf(0) }
+    val logLines by produceState(
+        initialValue = emptyList<String>(),
+        key1 = telemetry,
+        key2 = refreshTick,
+    ) {
+        value = telemetry.readRecentLines()
+    }
+
+    Surface(
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(
+                    modifier = Modifier.widthIn(max = 560.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = "Client logs",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "Only safe diagnostics are stored here: lifecycle, sync, memberships, device actions, short IDs, counters, and failures. No decrypted payloads or message plaintext are written.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            Text(
+                text = telemetry.activeLogPath(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onClick = { refreshTick += 1 }) {
+                    Text("Reload")
+                }
+                Button(onClick = {
+                    telemetry.clear()
+                    refreshTick += 1
+                }) {
+                    Text("Clear")
+                }
+            }
+
+            if (logLines.isEmpty()) {
+                Text(
+                    text = "No safe client logs yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    logLines.asReversed().forEach { line ->
+                        Text(
+                            text = line,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
                 }
             }
         }

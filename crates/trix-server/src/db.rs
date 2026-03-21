@@ -2826,12 +2826,6 @@ impl Database {
             ));
         }
 
-        if row_text(&actor_row, "role")? != "owner" {
-            return Err(AppError::unauthorized(
-                "only chat owners can change membership",
-            ));
-        }
-
         let current_epoch = row_u64_from_i64(&actor_row, "epoch")?;
         if current_epoch != input.epoch {
             return Err(AppError::conflict("chat epoch is out of date"));
@@ -3111,12 +3105,6 @@ impl Database {
         if chat_type != ChatType::Group {
             return Err(AppError::bad_request(
                 "member changes are only supported for group chats",
-            ));
-        }
-
-        if row_text(&actor_row, "role")? != "owner" {
-            return Err(AppError::unauthorized(
-                "only chat owners can change membership",
             ));
         }
 

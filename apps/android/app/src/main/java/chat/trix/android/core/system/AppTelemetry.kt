@@ -39,6 +39,26 @@ class AppTelemetry(
         append("ERROR", tag, message, error)
     }
 
+    fun activeLogPath(): String = activeLogFile.absolutePath
+
+    @Synchronized
+    fun readRecentLines(limit: Int = 160): List<String> {
+        return buildList {
+            addAll(readLines(rotatedLogFile))
+            addAll(readLines(activeLogFile))
+        }.takeLast(limit)
+    }
+
+    @Synchronized
+    fun clear() {
+        if (activeLogFile.exists()) {
+            activeLogFile.delete()
+        }
+        if (rotatedLogFile.exists()) {
+            rotatedLogFile.delete()
+        }
+    }
+
     @Synchronized
     private fun append(
         level: String,
@@ -49,7 +69,7 @@ class AppTelemetry(
         runCatching {
             rotateIfNeeded()
             logDir.mkdirs()
-            val suffix = error?.let { " | ${it.javaClass.simpleName}: ${it.message.orEmpty()}" }.orEmpty()
+            val suffix = error?.let { " | ${safeErrorDescription(it)}" }.orEmpty()
             val line = "${timestamp()} ${level.padEnd(5)} ${tag.take(32)} | $message$suffix\n"
             activeLogFile.appendText(line)
         }
@@ -70,6 +90,24 @@ class AppTelemetry(
 
     private fun timestamp(): String {
         return TIMESTAMP_FORMATTER.format(Instant.now())
+    }
+
+    private fun readLines(file: File): List<String> {
+        if (!file.exists()) {
+            return emptyList()
+        }
+        return runCatching { file.readLines() }.getOrDefault(emptyList())
+    }
+
+    private fun safeErrorDescription(error: Throwable): String {
+        val components = mutableListOf<String>()
+        components += error.javaClass.simpleName.ifBlank { "Throwable" }
+
+        error.cause?.javaClass?.simpleName
+            ?.takeIf(String::isNotBlank)
+            ?.let { components += "cause=$it" }
+
+        return components.joinToString(separator = " ")
     }
 
     companion object {

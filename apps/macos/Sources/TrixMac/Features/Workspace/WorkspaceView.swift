@@ -40,6 +40,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
 struct WorkspaceView: View {
     @Environment(\.trixColors) private var colors
     @ObservedObject var model: AppModel
+    @ObservedObject private var diagnosticLogStore = SafeDiagnosticLogStore.shared
     let availableSize: CGSize
     @State private var composerDraft = ""
     @State private var isPresentingCreateChat = false
@@ -54,11 +55,11 @@ struct WorkspaceView: View {
     }
 
     private var timelineUsesLocalData: Bool {
-        !model.selectedChatTimelineItems.isEmpty
+        !visibleTimelineMessages.isEmpty
     }
 
     private var timelineUsesEncryptedFallback: Bool {
-        model.selectedChatTimelineItems.isEmpty && !model.selectedChatHistory.isEmpty
+        visibleTimelineMessages.isEmpty && !model.selectedChatHistory.isEmpty
     }
 
     private var presentationAccountID: UUID? {
@@ -79,6 +80,48 @@ struct WorkspaceView: View {
 
     private var selectedChatType: ChatType? {
         model.selectedChatListItem?.chatType ?? model.selectedChatSummary?.chatType
+    }
+
+    private var visibleTimelineMessages: [DisplayedLocalTimelineMessage] {
+        let orderedMessages = model.selectedChatTimelineItems.sorted {
+            if $0.serverSeq == $1.serverSeq {
+                return $0.createdAtUnix < $1.createdAtUnix
+            }
+            return $0.serverSeq < $1.serverSeq
+        }
+        let messagesById = Dictionary(uniqueKeysWithValues: orderedMessages.map { ($0.messageId, $0) })
+        var receiptSummaries = [UUID: ReceiptSummaryAccumulator]()
+
+        for message in orderedMessages {
+            guard
+                let body = message.body,
+                body.kind == .receipt,
+                let targetMessageId = body.targetMessageId,
+                let targetMessage = messagesById[targetMessageId],
+                targetMessage.isOutgoing,
+                !message.isOutgoing
+            else {
+                continue
+            }
+
+            let readerLabel = message.senderDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            receiptSummaries[targetMessageId, default: ReceiptSummaryAccumulator()]
+                .record(
+                    readerLabel.isEmpty ? shortID(message.senderAccountId) : readerLabel,
+                    receiptType: body.receiptType
+                )
+        }
+
+        return orderedMessages.compactMap { message in
+            guard !isReceiptTimelineMessage(message) else {
+                return nil
+            }
+
+            return DisplayedLocalTimelineMessage(
+                message: message,
+                receiptStatusText: receiptSummaries[message.messageId]?.summaryText
+            )
+        }
     }
 
     var body: some View {
@@ -159,6 +202,12 @@ struct WorkspaceView: View {
     private func messengerColumn(_ currentAccount: AccountProfileResponse) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             conversationHeader
+
+            if let message = model.lastErrorMessage {
+                ErrorStrip(message: message) {
+                    model.dismissError()
+                }
+            }
 
             if let selectedChatListItem = model.selectedChatListItem ?? fallbackSelectedChatListItem(currentAccountID: currentAccount.accountId) {
                 VStack(alignment: .leading, spacing: 16) {
@@ -555,6 +604,7 @@ struct WorkspaceView: View {
     private var advancedSettingsPanel: some View {
         VStack(alignment: .leading, spacing: 20) {
             controlSummaryPanel
+            diagnosticLogsPanel
 
             if prefersSingleColumn {
                 operationsColumn
@@ -796,6 +846,51 @@ struct WorkspaceView: View {
                     label: "\(model.historySyncJobs.count) history sync job\(model.historySyncJobs.count == 1 ? "" : "s")",
                     tone: .surface
                 )
+            }
+        }
+    }
+
+    private var diagnosticLogsPanel: some View {
+        TrixPanel(
+            title: "Client Logs",
+            subtitle: "Safe local diagnostics for sync, device actions, memberships, and failures. No plaintext messages or decrypted payloads are recorded."
+        ) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text(diagnosticLogStore.activeLogURL.path)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(colors.inkMuted)
+                    .textSelection(.enabled)
+
+                HStack(spacing: 10) {
+                    Button("Reload") {
+                        diagnosticLogStore.reload()
+                    }
+                    .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+
+                    Button("Clear") {
+                        diagnosticLogStore.clear()
+                    }
+                    .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+                }
+
+                if diagnosticLogStore.entries.isEmpty {
+                    Text("No safe client logs yet.")
+                        .font(.footnote)
+                        .foregroundStyle(colors.inkMuted)
+                } else {
+                    ScrollView(.vertical, showsIndicators: true) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(Array(diagnosticLogStore.entries.reversed())) { entry in
+                                Text(entry.line)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(colors.ink)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                    }
+                    .frame(minHeight: 180, maxHeight: 260)
+                }
             }
         }
     }
@@ -1288,7 +1383,7 @@ struct WorkspaceView: View {
 
     private func conversationTimeline() -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            if model.isLoadingSelectedChat && model.selectedChatTimelineItems.isEmpty && model.selectedChatHistory.isEmpty {
+            if model.isLoadingSelectedChat && visibleTimelineMessages.isEmpty && model.selectedChatHistory.isEmpty {
                 HStack(spacing: 12) {
                     ProgressView()
                     Text("Loading conversation…")
@@ -1412,15 +1507,16 @@ struct WorkspaceView: View {
     private var timelineScrollContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                ForEach(model.selectedChatTimelineItems) { message in
+                ForEach(visibleTimelineMessages) { entry in
                     LocalTimelineMessageRow(
                         model: model,
-                        message: message,
-                        isOutgoing: message.isOutgoing,
-                        isDownloadingAttachment: model.downloadingAttachmentMessageIDs.contains(message.messageId),
-                        openAttachment: message.body?.kind == .attachment ? {
+                        message: entry.message,
+                        receiptStatusText: entry.receiptStatusText,
+                        isOutgoing: entry.message.isOutgoing,
+                        isDownloadingAttachment: model.downloadingAttachmentMessageIDs.contains(entry.message.messageId),
+                        openAttachment: entry.message.body?.kind == .attachment ? {
                             Task {
-                                await model.openAttachment(for: message)
+                                await model.openAttachment(for: entry.message)
                             }
                         } : nil
                     )
@@ -1455,7 +1551,7 @@ struct WorkspaceView: View {
 
     private var timelineBadgeLabel: String {
         if timelineUsesLocalData {
-            let total = model.selectedChatTimelineItems.count + model.selectedPendingOutgoingMessages.count
+            let total = visibleTimelineMessages.count + model.selectedPendingOutgoingMessages.count
             return "\(total) message\(total == 1 ? "" : "s")"
         }
         if timelineUsesEncryptedFallback {
@@ -1481,14 +1577,18 @@ struct WorkspaceView: View {
             epoch: summary.epoch,
             pendingMessageCount: 0,
             unreadCount: model.selectedChatReadState?.unreadCount ?? 0,
-            previewText: model.selectedChatTimelineItems.last?.previewText,
-            previewSenderAccountId: model.selectedChatTimelineItems.last?.senderAccountId,
-            previewSenderDisplayName: model.selectedChatTimelineItems.last?.senderDisplayName,
-            previewIsOutgoing: model.selectedChatTimelineItems.last?.isOutgoing,
-            previewServerSeq: model.selectedChatTimelineItems.last?.serverSeq,
-            previewCreatedAtUnix: model.selectedChatTimelineItems.last?.createdAtUnix,
+            previewText: visibleTimelineMessages.last?.message.previewText,
+            previewSenderAccountId: visibleTimelineMessages.last?.message.senderAccountId,
+            previewSenderDisplayName: visibleTimelineMessages.last?.message.senderDisplayName,
+            previewIsOutgoing: visibleTimelineMessages.last?.message.isOutgoing,
+            previewServerSeq: visibleTimelineMessages.last?.message.serverSeq,
+            previewCreatedAtUnix: visibleTimelineMessages.last?.message.createdAtUnix,
             participantProfiles: summary.participantProfiles
         )
+    }
+
+    private func isReceiptTimelineMessage(_ message: LocalTimelineItem) -> Bool {
+        message.contentType == .receipt || message.body?.kind == .receipt
     }
 
     private func shortID(_ uuid: UUID) -> String {
@@ -3002,6 +3102,7 @@ private struct LocalTimelineMessageRow: View {
     @Environment(\.trixColors) private var colors
     let model: AppModel
     let message: LocalTimelineItem
+    let receiptStatusText: String?
     let isOutgoing: Bool
     let isDownloadingAttachment: Bool
     let openAttachment: (() -> Void)?
@@ -3011,12 +3112,14 @@ private struct LocalTimelineMessageRow: View {
     init(
         model: AppModel,
         message: LocalTimelineItem,
+        receiptStatusText: String? = nil,
         isOutgoing: Bool = false,
         isDownloadingAttachment: Bool = false,
         openAttachment: (() -> Void)? = nil
     ) {
         self.model = model
         self.message = message
+        self.receiptStatusText = receiptStatusText
         self.isOutgoing = isOutgoing
         self.isDownloadingAttachment = isDownloadingAttachment
         self.openAttachment = openAttachment
@@ -3085,6 +3188,13 @@ private struct LocalTimelineMessageRow: View {
                     Text(message.bodySummary)
                         .font(.body)
                         .foregroundStyle(message.bodyParseError == nil ? colors.ink : colors.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if let receiptStatusText {
+                    Text(receiptStatusText)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(colors.accent)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -3250,6 +3360,55 @@ private func inlineAttachmentPreviewSize(widthPx: Int?, heightPx: Int?) -> CGSiz
     )
 }
 
+private struct DisplayedLocalTimelineMessage: Identifiable {
+    let message: LocalTimelineItem
+    let receiptStatusText: String?
+
+    var id: UUID { message.id }
+}
+
+private struct ReceiptSummaryAccumulator {
+    private var deliveredReaders: [String] = []
+    private var readReaders: [String] = []
+
+    mutating func record(_ readerLabel: String, receiptType: ReceiptType?) {
+        switch receiptType {
+        case .read:
+            deliveredReaders.removeAll { $0 == readerLabel }
+            if !readReaders.contains(readerLabel) {
+                readReaders.append(readerLabel)
+            }
+        case .delivered, .none:
+            guard !readReaders.contains(readerLabel), !deliveredReaders.contains(readerLabel) else {
+                return
+            }
+            deliveredReaders.append(readerLabel)
+        }
+    }
+
+    var summaryText: String? {
+        if !readReaders.isEmpty {
+            return formatSummary(prefix: "Read by", readers: readReaders)
+        }
+        if !deliveredReaders.isEmpty {
+            return formatSummary(prefix: "Delivered to", readers: deliveredReaders)
+        }
+        return nil
+    }
+
+    private func formatSummary(prefix: String, readers: [String]) -> String {
+        switch readers.count {
+        case 0:
+            return prefix
+        case 1:
+            return "\(prefix) \(readers[0])"
+        case 2:
+            return "\(prefix) \(readers[0]), \(readers[1])"
+        default:
+            return "\(prefix) \(readers[0]), \(readers[1]) +\(readers.count - 2)"
+        }
+    }
+}
 private struct InlineMeta: View {
     @Environment(\.trixColors) private var colors
     let label: String

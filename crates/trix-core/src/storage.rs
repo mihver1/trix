@@ -1603,12 +1603,8 @@ fn latest_preview_from_chat(
     state: &PersistedChatState,
     self_account_id: Option<trix_types::AccountId>,
 ) -> Option<LocalChatPreview> {
-    let projected = state
-        .projected_messages
-        .iter()
-        .next_back()
-        .map(|(_, message)| message);
-    let raw = state.last_message.as_ref();
+    let projected = latest_non_receipt_projected_message(state);
+    let raw = latest_non_receipt_raw_message(state);
 
     match (projected, raw) {
         (Some(projected), Some(raw)) if raw.server_seq > projected.server_seq => {
@@ -1622,6 +1618,29 @@ fn latest_preview_from_chat(
         (None, Some(raw)) => Some(preview_from_envelope(raw, state, self_account_id)),
         (None, None) => None,
     }
+}
+
+fn latest_non_receipt_projected_message(
+    state: &PersistedChatState,
+) -> Option<&PersistedProjectedMessage> {
+    state
+        .projected_messages
+        .values()
+        .rev()
+        .find(|message| message.content_type != trix_types::ContentType::Receipt)
+}
+
+fn latest_non_receipt_raw_message(state: &PersistedChatState) -> Option<&MessageEnvelope> {
+    state
+        .messages
+        .values()
+        .rev()
+        .find(|message| message.content_type != trix_types::ContentType::Receipt)
+        .or_else(|| {
+            state.last_message.as_ref().filter(|message| {
+                message.content_type != trix_types::ContentType::Receipt
+            })
+        })
 }
 
 fn preview_from_projected_message(
@@ -3056,6 +3075,95 @@ mod tests {
         assert_eq!(item.preview_sender_display_name.as_deref(), Some("Me"));
         assert_eq!(item.preview_is_outgoing, Some(true));
         assert_eq!(item.preview_server_seq, Some(2));
+    }
+
+    #[test]
+    fn local_chat_list_preview_ignores_receipt_messages() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let self_account_id = AccountId(Uuid::new_v4());
+        let other_account_id = AccountId(Uuid::new_v4());
+        let self_device_id = DeviceId(Uuid::new_v4());
+        let other_device_id = DeviceId(Uuid::new_v4());
+        let first_message_id = MessageId(Uuid::new_v4());
+
+        store
+            .apply_chat_list(&ChatListResponse {
+                chats: vec![ChatSummary {
+                    chat_id,
+                    chat_type: ChatType::Dm,
+                    title: None,
+                    last_server_seq: 2,
+                    epoch: 1,
+                    pending_message_count: 0,
+                    last_message: None,
+                    participant_profiles: vec![
+                        ChatParticipantProfileSummary {
+                            account_id: self_account_id,
+                            handle: Some("me".to_owned()),
+                            profile_name: "Me".to_owned(),
+                            profile_bio: None,
+                        },
+                        ChatParticipantProfileSummary {
+                            account_id: other_account_id,
+                            handle: Some("bob".to_owned()),
+                            profile_name: "Bob".to_owned(),
+                            profile_bio: None,
+                        },
+                    ],
+                }],
+            })
+            .unwrap();
+
+        store
+            .apply_projected_messages(
+                chat_id,
+                &[
+                    LocalProjectedMessage {
+                        server_seq: 1,
+                        message_id: first_message_id,
+                        sender_account_id: self_account_id,
+                        sender_device_id: self_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        projection_kind: LocalProjectionKind::ApplicationMessage,
+                        payload: Some(b"hello".to_vec()),
+                        merged_epoch: None,
+                        created_at_unix: 10,
+                    },
+                    LocalProjectedMessage {
+                        server_seq: 2,
+                        message_id: MessageId(Uuid::new_v4()),
+                        sender_account_id: other_account_id,
+                        sender_device_id: other_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Receipt,
+                        projection_kind: LocalProjectionKind::ApplicationMessage,
+                        payload: Some(
+                            MessageBody::Receipt(crate::ReceiptMessageBody {
+                                target_message_id: first_message_id,
+                                receipt_type: crate::ReceiptType::Read,
+                                at_unix: Some(20),
+                            })
+                            .to_bytes()
+                            .unwrap(),
+                        ),
+                        merged_epoch: None,
+                        created_at_unix: 20,
+                    },
+                ],
+            )
+            .unwrap();
+
+        let item = store
+            .get_local_chat_list_item(chat_id, Some(self_account_id))
+            .unwrap();
+        assert_eq!(item.preview_text.as_deref(), Some("hello"));
+        assert_eq!(item.preview_is_outgoing, Some(true));
+        assert_eq!(item.preview_server_seq, Some(1));
+        assert_eq!(item.preview_created_at_unix, Some(10));
     }
 
     #[test]

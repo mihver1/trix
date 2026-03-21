@@ -560,6 +560,7 @@ final class AppModel: ObservableObject {
             return
         }
 
+        logInfo("auth", "restore_session start device=\(shortLogID(session.deviceId))")
         isRestoringSession = true
         lastErrorMessage = nil
         defer { isRestoringSession = false }
@@ -577,7 +578,12 @@ final class AppModel: ObservableObject {
 
             try save(identity: identity, authSession: authSession, persistedSession: updatedSession)
             try await loadWorkspace(client: client, accessToken: authSession.accessToken)
+            logInfo(
+                "auth",
+                "restore_session success device=\(shortLogID(session.deviceId)) status=\(authSession.deviceStatus.label.lowercased())"
+            )
         } catch let error as TrixAPIError {
+            logWarn("auth", "restore_session failed device=\(shortLogID(session.deviceId))", error: error)
             if error.isCredentialFailure {
                 if session.deviceStatus == .pending {
                     if error.suggestsPendingLinkReset {
@@ -605,6 +611,7 @@ final class AppModel: ObservableObject {
                 lastErrorMessage = error.userFacingMessage
             }
         } catch {
+            logWarn("auth", "restore_session failed device=\(shortLogID(session.deviceId))", error: error)
             lastErrorMessage = error.userFacingMessage
         }
     }
@@ -618,13 +625,19 @@ final class AppModel: ObservableObject {
             return
         }
 
+        logInfo("sync", "workspace_refresh start")
         isRefreshingWorkspace = true
         defer { isRefreshingWorkspace = false }
 
         do {
             try await loadWorkspace(client: client, accessToken: token)
             await refreshServerStatus()
+            logInfo(
+                "sync",
+                "workspace_refresh success chats=\(chats.count) devices=\(devices.count) inbox=\(inboxItems.count)"
+            )
         } catch let error as TrixAPIError {
+            logWarn("sync", "workspace_refresh failed", error: error)
             if error.isCredentialFailure {
                 accessToken = nil
                 await restoreSession()
@@ -632,6 +645,7 @@ final class AppModel: ObservableObject {
                 lastErrorMessage = error.userFacingMessage
             }
         } catch {
+            logWarn("sync", "workspace_refresh failed", error: error)
             lastErrorMessage = error.userFacingMessage
         }
     }
@@ -726,6 +740,10 @@ final class AppModel: ObservableObject {
                 throw TrixAPIError.invalidPayload("Account sync chats создаются только сервером.")
             }
 
+            logInfo(
+                "chat",
+                "create_chat start type=\(logChatType(createChatDraft.chatType)) participants=\(uniqueParticipants.count)"
+            )
             let storePaths = try workspaceStorePaths()
             let created = try await client.createChatControl(
                 accessToken: token,
@@ -746,8 +764,13 @@ final class AppModel: ObservableObject {
                 accessToken: token,
                 selectionPreference: .force(created.chatId)
             )
+            logInfo(
+                "chat",
+                "create_chat success chat=\(shortLogID(created.chatId)) epoch=\(created.epoch)"
+            )
             return true
         } catch let error as TrixAPIError {
+            logWarn("chat", "create_chat failed", error: error)
             if error.isCredentialFailure {
                 accessToken = nil
                 await restoreSession()
@@ -755,6 +778,7 @@ final class AppModel: ObservableObject {
                 lastErrorMessage = error.userFacingMessage
             }
         } catch {
+            logWarn("chat", "create_chat failed", error: error)
             lastErrorMessage = error.userFacingMessage
         }
 
@@ -791,6 +815,10 @@ final class AppModel: ObservableObject {
         defer { isSendingMessage = false }
 
         do {
+            logInfo(
+                "message",
+                "send_message start chat=\(shortLogID(chatId)) text=\(trimmedText != nil) attachment=\(composerAttachmentDraft != nil)"
+            )
             let identity = try loadStoredIdentity()
             let storePaths = try workspaceStorePaths()
             if let attachmentDraft = composerAttachmentDraft {
@@ -852,8 +880,10 @@ final class AppModel: ObservableObject {
                 selectionPreference: .prefer(chatId)
             )
             composerAttachmentDraft = nil
+            logInfo("message", "send_message success chat=\(shortLogID(chatId))")
             return true
         } catch let error as TrixAPIError {
+            logWarn("message", "send_message failed chat=\(shortLogID(chatId))", error: error)
             if error.isCredentialFailure {
                 accessToken = nil
                 await restoreSession()
@@ -861,6 +891,7 @@ final class AppModel: ObservableObject {
                 lastErrorMessage = conversationSafeMessage(error.userFacingMessage)
             }
         } catch {
+            logWarn("message", "send_message failed chat=\(shortLogID(chatId))", error: error)
             lastErrorMessage = conversationSafeMessage(error.userFacingMessage)
         }
 
@@ -967,9 +998,13 @@ final class AppModel: ObservableObject {
         defer { isAddingChatMembers = false }
 
         do {
+            logInfo(
+                "membership",
+                "add_members start chat=\(shortLogID(chatId)) count=\(participantAccountIDs.count)"
+            )
             let identity = try loadStoredIdentity()
             let storePaths = try workspaceStorePaths()
-            _ = try await client.addChatMembersControl(
+            let outcome = try await client.addChatMembersControl(
                 accessToken: token,
                 databasePath: storePaths.localHistoryURL,
                 statePath: storePaths.syncStateURL,
@@ -985,7 +1020,12 @@ final class AppModel: ObservableObject {
                 accessToken: token,
                 selectionPreference: .prefer(chatId)
             )
+            logInfo(
+                "membership",
+                "add_members success chat=\(shortLogID(chatId)) changed=\(outcome.changedParticipantAccountIDs.count) epoch=\(outcome.epoch)"
+            )
         } catch {
+            logWarn("membership", "add_members failed chat=\(shortLogID(chatId))", error: error)
             lastErrorMessage = error.userFacingMessage
         }
     }
@@ -1009,9 +1049,13 @@ final class AppModel: ObservableObject {
         defer { removingChatMemberAccountIDs.remove(participantAccountID) }
 
         do {
+            logInfo(
+                "membership",
+                "remove_member start chat=\(shortLogID(chatId)) account=\(shortLogID(participantAccountID))"
+            )
             let identity = try loadStoredIdentity()
             let storePaths = try workspaceStorePaths()
-            _ = try await client.removeChatMembersControl(
+            let outcome = try await client.removeChatMembersControl(
                 accessToken: token,
                 databasePath: storePaths.localHistoryURL,
                 statePath: storePaths.syncStateURL,
@@ -1027,7 +1071,12 @@ final class AppModel: ObservableObject {
                 accessToken: token,
                 selectionPreference: .prefer(chatId)
             )
+            logInfo(
+                "membership",
+                "remove_member success chat=\(shortLogID(chatId)) changed=\(outcome.changedParticipantAccountIDs.count) epoch=\(outcome.epoch)"
+            )
         } catch {
+            logWarn("membership", "remove_member failed chat=\(shortLogID(chatId))", error: error)
             lastErrorMessage = error.userFacingMessage
         }
     }
@@ -1054,9 +1103,13 @@ final class AppModel: ObservableObject {
         defer { isAddingChatDevices = false }
 
         do {
+            logInfo(
+                "devices",
+                "add_devices start chat=\(shortLogID(chatId)) count=\(deviceIDs.count)"
+            )
             let identity = try loadStoredIdentity()
             let storePaths = try workspaceStorePaths()
-            _ = try await client.addChatDevicesControl(
+            let outcome = try await client.addChatDevicesControl(
                 accessToken: token,
                 databasePath: storePaths.localHistoryURL,
                 statePath: storePaths.syncStateURL,
@@ -1072,7 +1125,12 @@ final class AppModel: ObservableObject {
                 accessToken: token,
                 selectionPreference: .prefer(chatId)
             )
+            logInfo(
+                "devices",
+                "add_devices success chat=\(shortLogID(chatId)) changed=\(outcome.changedDeviceIDs.count) epoch=\(outcome.epoch)"
+            )
         } catch {
+            logWarn("devices", "add_devices failed chat=\(shortLogID(chatId))", error: error)
             lastErrorMessage = error.userFacingMessage
         }
     }
@@ -1096,9 +1154,13 @@ final class AppModel: ObservableObject {
         defer { removingChatDeviceIDs.remove(deviceID) }
 
         do {
+            logInfo(
+                "devices",
+                "remove_device start chat=\(shortLogID(chatId)) device=\(shortLogID(deviceID))"
+            )
             let identity = try loadStoredIdentity()
             let storePaths = try workspaceStorePaths()
-            _ = try await client.removeChatDevicesControl(
+            let outcome = try await client.removeChatDevicesControl(
                 accessToken: token,
                 databasePath: storePaths.localHistoryURL,
                 statePath: storePaths.syncStateURL,
@@ -1114,7 +1176,12 @@ final class AppModel: ObservableObject {
                 accessToken: token,
                 selectionPreference: .prefer(chatId)
             )
+            logInfo(
+                "devices",
+                "remove_device success chat=\(shortLogID(chatId)) changed=\(outcome.changedDeviceIDs.count) epoch=\(outcome.epoch)"
+            )
         } catch {
+            logWarn("devices", "remove_device failed chat=\(shortLogID(chatId))", error: error)
             lastErrorMessage = error.userFacingMessage
         }
     }
@@ -1198,6 +1265,7 @@ final class AppModel: ObservableObject {
         defer { isRefreshingInbox = false }
 
         do {
+            logInfo("inbox", "refresh_inbox start background=\(background)")
             let existingInboxIDs = Set(inboxItems.map(\.inboxId))
             let parameters = try decodeInboxPollParameters()
             let storePaths = try workspaceStorePaths()
@@ -1237,7 +1305,12 @@ final class AppModel: ObservableObject {
             if background {
                 await postNotificationsForNewMessages(newIncomingItems)
             }
+            logInfo(
+                "inbox",
+                "refresh_inbox success items=\(response.items.count) changed_chats=\(changedChatIDs.count)"
+            )
         } catch let error as TrixAPIError {
+            logWarn("inbox", "refresh_inbox failed", error: error)
             if error.isCredentialFailure {
                 accessToken = nil
                 lastErrorMessage = "Session expired. Reconnect this Mac to keep syncing messages."
@@ -1248,6 +1321,7 @@ final class AppModel: ObservableObject {
                 lastErrorMessage = error.userFacingMessage
             }
         } catch {
+            logWarn("inbox", "refresh_inbox failed", error: error)
             if !suppressErrors {
                 lastErrorMessage = error.userFacingMessage
             }
@@ -1605,6 +1679,7 @@ final class AppModel: ObservableObject {
             return
         }
 
+        logInfo("chat", "select_chat start chat=\(shortLogID(chatId))")
         do {
             try await loadSelectedChat(
                 client: client,
@@ -1612,7 +1687,9 @@ final class AppModel: ObservableObject {
                 chatId: chatId,
                 loadMode: selectedChatID == chatId ? .preserveVisibleState : .replaceVisibleState
             )
+            logInfo("chat", "select_chat success chat=\(shortLogID(chatId))")
         } catch let error as TrixAPIError {
+            logWarn("chat", "select_chat failed chat=\(shortLogID(chatId))", error: error)
             if error.isCredentialFailure {
                 accessToken = nil
                 await restoreSession()
@@ -1620,6 +1697,7 @@ final class AppModel: ObservableObject {
                 lastErrorMessage = error.userFacingMessage
             }
         } catch {
+            logWarn("chat", "select_chat failed chat=\(shortLogID(chatId))", error: error)
             lastErrorMessage = error.userFacingMessage
         }
     }
@@ -2597,6 +2675,29 @@ final class AppModel: ObservableObject {
         }
 
         return rawMessage
+    }
+
+    private func logInfo(_ category: String, _ message: String) {
+        SafeDiagnosticLogStore.shared.info(category, message)
+    }
+
+    private func logWarn(_ category: String, _ message: String, error: Error? = nil) {
+        SafeDiagnosticLogStore.shared.warn(category, message, error: error)
+    }
+
+    private func shortLogID(_ value: UUID) -> String {
+        String(value.uuidString.prefix(8)).lowercased()
+    }
+
+    private func logChatType(_ value: ChatType) -> String {
+        switch value {
+        case .dm:
+            return "dm"
+        case .group:
+            return "group"
+        case .accountSync:
+            return "account_sync"
+        }
     }
 
     private func markSelectedChatReadIfNeeded(

@@ -506,6 +506,16 @@ private struct SettingsHomeView: View {
                         }
                         .buttonStyle(.plain)
 
+                        NavigationLink {
+                            DiagnosticsLogView(logStore: SafeDiagnosticLogStore.shared)
+                        } label: {
+                            AdvancedInfoRow(
+                                title: "Client Logs",
+                                text: "Review safe diagnostics for sync, device actions, memberships, and failures without exposing decrypted content."
+                            )
+                        }
+                        .buttonStyle(.plain)
+
                         if let localIdentity = model.localIdentity {
                             VStack(alignment: .leading, spacing: 12) {
                                 Text("Local State")

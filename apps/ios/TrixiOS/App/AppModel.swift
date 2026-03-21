@@ -175,6 +175,7 @@ final class AppModel: ObservableObject {
         }
 
         currentServerBaseURLString = normalizedBaseURLString(baseURLString)
+        logInfo("sync", "refresh start authenticated=\(localIdentity != nil)")
         isLoading = true
         errorMessage = nil
 
@@ -203,7 +204,12 @@ final class AppModel: ObservableObject {
                 systemSnapshot = try await fetchSystemSnapshot(client: client)
                 lastUpdatedAt = Date()
             }
+            logInfo(
+                "sync",
+                "refresh success dashboard=\(dashboard != nil) chats=\(dashboard?.chats.count ?? 0) devices=\(dashboard?.devices.count ?? 0)"
+            )
         } catch {
+            logWarn("sync", "refresh failed", error: error)
             errorMessage = error.localizedDescription
         }
     }
@@ -341,6 +347,7 @@ final class AppModel: ObservableObject {
         }
 
         currentServerBaseURLString = normalizedBaseURLString(baseURLString)
+        logInfo("devices", "create_link_intent start")
         isLoading = true
         errorMessage = nil
 
@@ -355,7 +362,9 @@ final class AppModel: ObservableObject {
                 accessToken: context.session.accessToken
             )
             activeLinkIntent = response
+            logInfo("devices", "create_link_intent success")
         } catch {
+            logWarn("devices", "create_link_intent failed", error: error)
             errorMessage = error.localizedDescription
         }
     }
@@ -381,6 +390,7 @@ final class AppModel: ObservableObject {
         }
 
         do {
+            logInfo("devices", "approve_device start device=\(shortLogID(deviceId))")
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             let response = try TrixCoreServerBridge.approvePendingDevice(
                 baseURLString: baseURLString,
@@ -390,8 +400,10 @@ final class AppModel: ObservableObject {
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
+            logInfo("devices", "approve_device success device=\(shortLogID(deviceId))")
             return response
         } catch {
+            logWarn("devices", "approve_device failed device=\(shortLogID(deviceId))", error: error)
             errorMessage = error.localizedDescription
             return nil
         }
@@ -420,6 +432,7 @@ final class AppModel: ObservableObject {
         }
 
         do {
+            logInfo("devices", "revoke_device start device=\(shortLogID(deviceId))")
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             let _: RevokeDeviceResponse = try TrixCoreServerBridge.revokeDevice(
                 baseURLString: baseURLString,
@@ -430,7 +443,9 @@ final class AppModel: ObservableObject {
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
+            logInfo("devices", "revoke_device success device=\(shortLogID(deviceId))")
         } catch {
+            logWarn("devices", "revoke_device failed device=\(shortLogID(deviceId))", error: error)
             errorMessage = error.localizedDescription
         }
     }
@@ -538,6 +553,10 @@ final class AppModel: ObservableObject {
         }
 
         do {
+            logInfo(
+                "chat",
+                "create_chat start type=\(logChatType(chatType)) participants=\(participantAccountIds.count)"
+            )
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             let response = try TrixCorePersistentBridge.createChatControl(
                 baseURLString: baseURLString,
@@ -549,8 +568,10 @@ final class AppModel: ObservableObject {
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
+            logInfo("chat", "create_chat success chat=\(shortLogID(response.chatId)) epoch=\(response.epoch)")
             return response
         } catch {
+            logWarn("chat", "create_chat failed", error: error)
             errorMessage = error.localizedDescription
             return nil
         }
@@ -581,6 +602,10 @@ final class AppModel: ObservableObject {
         }
 
         do {
+            logInfo(
+                "membership",
+                "add_members start chat=\(shortLogID(chatId)) count=\(participantAccountIds.count)"
+            )
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             let response = try TrixCorePersistentBridge.addChatMembersControl(
                 baseURLString: baseURLString,
@@ -591,8 +616,13 @@ final class AppModel: ObservableObject {
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
+            logInfo(
+                "membership",
+                "add_members success chat=\(shortLogID(chatId)) changed=\(response.changedAccountIds.count) epoch=\(response.epoch)"
+            )
             return response
         } catch {
+            logWarn("membership", "add_members failed chat=\(shortLogID(chatId))", error: error)
             errorMessage = error.localizedDescription
             return nil
         }
@@ -623,6 +653,10 @@ final class AppModel: ObservableObject {
         }
 
         do {
+            logInfo(
+                "membership",
+                "remove_members start chat=\(shortLogID(chatId)) count=\(participantAccountIds.count)"
+            )
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             let response = try TrixCorePersistentBridge.removeChatMembersControl(
                 baseURLString: baseURLString,
@@ -633,8 +667,13 @@ final class AppModel: ObservableObject {
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
+            logInfo(
+                "membership",
+                "remove_members success chat=\(shortLogID(chatId)) changed=\(response.changedAccountIds.count) epoch=\(response.epoch)"
+            )
             return response
         } catch {
+            logWarn("membership", "remove_members failed chat=\(shortLogID(chatId))", error: error)
             errorMessage = error.localizedDescription
             return nil
         }
@@ -672,6 +711,10 @@ final class AppModel: ObservableObject {
         }
 
         do {
+            logInfo(
+                "devices",
+                "add_chat_devices start chat=\(shortLogID(chatId)) count=\(deviceIds.count)"
+            )
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             let response = try TrixCorePersistentBridge.addChatDevicesControl(
                 baseURLString: baseURLString,
@@ -682,8 +725,13 @@ final class AppModel: ObservableObject {
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
+            logInfo(
+                "devices",
+                "add_chat_devices success chat=\(shortLogID(chatId)) changed=\(response.changedDeviceIds.count) epoch=\(response.epoch)"
+            )
             return response
         } catch {
+            logWarn("devices", "add_chat_devices failed chat=\(shortLogID(chatId))", error: error)
             errorMessage = error.localizedDescription
             return nil
         }
@@ -714,6 +762,10 @@ final class AppModel: ObservableObject {
         }
 
         do {
+            logInfo(
+                "devices",
+                "remove_chat_devices start chat=\(shortLogID(chatId)) count=\(deviceIds.count)"
+            )
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             let response = try TrixCorePersistentBridge.removeChatDevicesControl(
                 baseURLString: baseURLString,
@@ -724,8 +776,13 @@ final class AppModel: ObservableObject {
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
+            logInfo(
+                "devices",
+                "remove_chat_devices success chat=\(shortLogID(chatId)) changed=\(response.changedDeviceIds.count) epoch=\(response.epoch)"
+            )
             return response
         } catch {
+            logWarn("devices", "remove_chat_devices failed chat=\(shortLogID(chatId))", error: error)
             errorMessage = error.localizedDescription
             return nil
         }
@@ -755,6 +812,10 @@ final class AppModel: ObservableObject {
         }
 
         do {
+            logInfo(
+                "message",
+                "send_debug_message start chat=\(shortLogID(chatId)) kind=\(draft.kind.rawValue)"
+            )
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             let response = try TrixCorePersistentBridge.sendMessageBody(
                 baseURLString: baseURLString,
@@ -770,8 +831,13 @@ final class AppModel: ObservableObject {
                 ackedInboxIds: [],
                 changedChatIds: [chatId]
             )
+            logInfo(
+                "message",
+                "send_debug_message success chat=\(shortLogID(chatId)) message=\(shortLogID(response.messageId))"
+            )
             return response
         } catch {
+            logWarn("message", "send_debug_message failed chat=\(shortLogID(chatId))", error: error)
             errorMessage = error.localizedDescription
             return nil
         }
@@ -796,6 +862,7 @@ final class AppModel: ObservableObject {
         }
 
         do {
+            logInfo("message", "send_attachment start chat=\(shortLogID(chatId))")
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             let attachmentUpload = try TrixCoreMessageBridge.readAttachmentUploadMaterial(fileURL: fileURL)
             let blobClient = try FfiServerApiClient(
@@ -828,6 +895,7 @@ final class AppModel: ObservableObject {
                 fileName: uploadedAttachment.body.fileName
             )
         } catch {
+            logWarn("message", "send_attachment failed chat=\(shortLogID(chatId))", error: error)
             errorMessage = error.localizedDescription
             return nil
         }
@@ -2319,6 +2387,29 @@ final class AppModel: ObservableObject {
         } catch {
             localCoreState = nil
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func logInfo(_ category: String, _ message: String) {
+        SafeDiagnosticLogStore.shared.info(category, message)
+    }
+
+    private func logWarn(_ category: String, _ message: String, error: Error? = nil) {
+        SafeDiagnosticLogStore.shared.warn(category, message, error: error)
+    }
+
+    private func shortLogID(_ value: String) -> String {
+        String(value.prefix(8)).lowercased()
+    }
+
+    private func logChatType(_ value: ChatType) -> String {
+        switch value {
+        case .dm:
+            return "dm"
+        case .group:
+            return "group"
+        case .accountSync:
+            return "account_sync"
         }
     }
 }

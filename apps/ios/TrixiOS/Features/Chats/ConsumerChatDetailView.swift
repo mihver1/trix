@@ -61,6 +61,7 @@ private struct ConsumerRenderedMessage: Identifiable {
     let attachmentBody: FfiMessageBody?
     let primaryText: String
     let secondaryText: String?
+    let receiptStatusText: String?
     let clusterPosition: ConsumerMessageClusterPosition
     let topSpacing: CGFloat
     let usesCenteredEventStyle: Bool
@@ -473,12 +474,17 @@ struct ConsumerChatDetailView: View {
         }
 
         let currentAccountId = model.localIdentity?.accountId
-        let messages = snapshot.history.sorted {
+        let sortedMessages = snapshot.history.sorted {
             if $0.serverSeq == $1.serverSeq {
                 return $0.createdAtUnix < $1.createdAtUnix
             }
             return $0.serverSeq < $1.serverSeq
         }
+        let receiptStatuses = receiptStatusByMessageId(
+            for: snapshot,
+            messages: sortedMessages
+        )
+        let messages = sortedMessages.filter { !isReceiptMessage($0) }
         var items: [ConsumerTimelineItem] = []
         var previousMessage: MessageEnvelope?
 
@@ -531,6 +537,7 @@ struct ConsumerChatDetailView: View {
                         attachmentBody: TrixCoreMessageBridge.attachmentBody(for: message),
                         primaryText: TrixCoreMessageBridge.preview(for: message)?.title ?? message.debugPreview,
                         secondaryText: TrixCoreMessageBridge.preview(for: message)?.detail ?? message.debugDetail,
+                        receiptStatusText: receiptStatuses[message.messageId],
                         clusterPosition: clusterPosition,
                         topSpacing: topSpacing,
                         usesCenteredEventStyle: messageUsesCenteredEventStyle(message)
@@ -554,15 +561,17 @@ struct ConsumerChatDetailView: View {
             }
             return $0.serverSeq < $1.serverSeq
         }
+        let receiptStatuses = receiptStatusByMessageId(for: sortedItems)
+        let visibleItems = sortedItems.filter { !isReceiptProjectedItem($0) }
         var items: [ConsumerTimelineItem] = []
         var previousItem: LocalTimelineItemSnapshot?
 
-        for (index, item) in sortedItems.enumerated() {
+        for (index, item) in visibleItems.enumerated() {
             if previousItem.map({ !Calendar.current.isDate($0.createdAtDate, inSameDayAs: item.createdAtDate) }) ?? true {
                 items.append(.daySeparator(daySeparatorTitle(for: item.createdAtDate)))
             }
 
-            let nextItem = sortedItems.indices.contains(index + 1) ? sortedItems[index + 1] : nil
+            let nextItem = visibleItems.indices.contains(index + 1) ? visibleItems[index + 1] : nil
             let continuesFromPrevious = previousItem.map { canCluster($0, with: item) } ?? false
             let continuesToNext = nextItem.map { canCluster(item, with: $0) } ?? false
             let shouldShowSender = chatType == .group && !item.isOutgoing && !continuesFromPrevious
@@ -602,6 +611,7 @@ struct ConsumerChatDetailView: View {
                         attachmentBody: item.contentType == .attachment ? item.messageBody : nil,
                         primaryText: item.bodyPreview?.title ?? item.previewText,
                         secondaryText: item.bodyPreview?.detail,
+                        receiptStatusText: receiptStatuses[item.messageId],
                         clusterPosition: clusterPosition,
                         topSpacing: topSpacing,
                         usesCenteredEventStyle: projectedItemUsesCenteredEventStyle(item)
@@ -613,6 +623,102 @@ struct ConsumerChatDetailView: View {
         }
 
         return items
+    }
+
+    private func isReceiptMessage(_ message: MessageEnvelope) -> Bool {
+        message.contentType == .receipt
+    }
+
+    private func isReceiptProjectedItem(_ item: LocalTimelineItemSnapshot) -> Bool {
+        item.contentType == .receipt || item.messageBody?.kind == .receipt
+    }
+
+    private func receiptStatusByMessageId(
+        for snapshot: ChatSnapshot,
+        messages: [MessageEnvelope]
+    ) -> [String: String] {
+        guard let selfAccountId = model.localIdentity?.accountId else {
+            return [:]
+        }
+
+        let messagesById = Dictionary(uniqueKeysWithValues: messages.map { ($0.messageId, $0) })
+        var summaries = [String: ReceiptSummaryAccumulator]()
+
+        for message in messages {
+            guard
+                isReceiptMessage(message),
+                message.senderAccountId != selfAccountId,
+                let body = TrixCoreMessageBridge.parsedBody(for: message),
+                body.kind == .receipt,
+                let targetMessageId = body.targetMessageId,
+                let targetMessage = messagesById[targetMessageId],
+                targetMessage.senderAccountId == selfAccountId
+            else {
+                continue
+            }
+
+            summaries[targetMessageId, default: ReceiptSummaryAccumulator()].record(
+                readerLabel(
+                    accountId: message.senderAccountId,
+                    fallbackDisplayName: nil,
+                    snapshot: snapshot
+                ),
+                receiptType: body.receiptType
+            )
+        }
+
+        return summaries.compactMapValues(\.summaryText)
+    }
+
+    private func receiptStatusByMessageId(
+        for timeline: [LocalTimelineItemSnapshot]
+    ) -> [String: String] {
+        let itemsById = Dictionary(uniqueKeysWithValues: timeline.map { ($0.messageId, $0) })
+        var summaries = [String: ReceiptSummaryAccumulator]()
+
+        for item in timeline {
+            guard
+                isReceiptProjectedItem(item),
+                !item.isOutgoing,
+                let body = item.messageBody,
+                body.kind == .receipt,
+                let targetMessageId = body.targetMessageId,
+                let targetMessage = itemsById[targetMessageId],
+                targetMessage.isOutgoing
+            else {
+                continue
+            }
+
+            let fallbackName = item.senderDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            summaries[targetMessageId, default: ReceiptSummaryAccumulator()].record(
+                fallbackName.isEmpty ? shortIdentifier(item.senderAccountId) : fallbackName,
+                receiptType: body.receiptType
+            )
+        }
+
+        return summaries.compactMapValues(\.summaryText)
+    }
+
+    private func readerLabel(
+        accountId: String,
+        fallbackDisplayName: String?,
+        snapshot: ChatSnapshot
+    ) -> String {
+        if let profile = snapshot.detail.participantProfile(accountId: accountId) {
+            return profile.primaryDisplayName
+        }
+        if let fallbackDisplayName,
+           !fallbackDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return fallbackDisplayName
+        }
+        return shortIdentifier(accountId)
+    }
+
+    private func shortIdentifier(_ value: String) -> String {
+        if value.count <= 10 {
+            return value
+        }
+        return "\(value.prefix(6))…"
     }
 
     private func daySeparatorTitle(for date: Date) -> String {
@@ -693,6 +799,49 @@ private struct ConsumerChatBanner: View {
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(tint.opacity(0.08))
+    }
+}
+
+private struct ReceiptSummaryAccumulator {
+    private var deliveredReaders: [String] = []
+    private var readReaders: [String] = []
+
+    mutating func record(_ readerLabel: String, receiptType: FfiReceiptType?) {
+        switch receiptType {
+        case .read:
+            deliveredReaders.removeAll { $0 == readerLabel }
+            if !readReaders.contains(readerLabel) {
+                readReaders.append(readerLabel)
+            }
+        case .delivered, .none:
+            guard !readReaders.contains(readerLabel), !deliveredReaders.contains(readerLabel) else {
+                return
+            }
+            deliveredReaders.append(readerLabel)
+        }
+    }
+
+    var summaryText: String? {
+        if !readReaders.isEmpty {
+            return formatSummary(prefix: "Read by", readers: readReaders)
+        }
+        if !deliveredReaders.isEmpty {
+            return formatSummary(prefix: "Delivered to", readers: deliveredReaders)
+        }
+        return nil
+    }
+
+    private func formatSummary(prefix: String, readers: [String]) -> String {
+        switch readers.count {
+        case 0:
+            return prefix
+        case 1:
+            return "\(prefix) \(readers[0])"
+        case 2:
+            return "\(prefix) \(readers[0]), \(readers[1])"
+        default:
+            return "\(prefix) \(readers[0]), \(readers[1]) +\(readers.count - 2)"
+        }
     }
 }
 
@@ -838,10 +987,17 @@ private struct ConsumerMessageBubble: View {
 
             HStack {
                 Spacer(minLength: 0)
-                Text(message.createdAtDate.formatted(date: .omitted, time: .shortened))
-                    .font(.caption2.weight(.medium))
-                    .monospacedDigit()
-                    .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
+                VStack(alignment: .trailing, spacing: 3) {
+                    if let receiptStatusText = message.receiptStatusText {
+                        Text(receiptStatusText)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(message.isOutgoing ? .white.opacity(0.9) : .secondary)
+                    }
+                    Text(message.createdAtDate.formatted(date: .omitted, time: .shortened))
+                        .font(.caption2.weight(.medium))
+                        .monospacedDigit()
+                        .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
+                }
             }
         }
         .padding(.horizontal, 14)
@@ -934,54 +1090,56 @@ private struct ConsumerAttachmentBubbleContent: View {
         Button {
             onOpenAttachment(message)
         } label: {
-            if isInlineImageAttachment, let attachmentBody = message.attachmentBody {
-                VStack(alignment: .leading, spacing: 10) {
-                    ConsumerInlineImageAttachmentPreview(
-                        model: model,
-                        serverBaseURL: serverBaseURL,
-                        messageID: message.id,
-                        attachmentBody: attachmentBody,
-                        isOutgoing: message.isOutgoing
-                    )
+            Group {
+                if isInlineImageAttachment, let attachmentBody = message.attachmentBody {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ConsumerInlineImageAttachmentPreview(
+                            model: model,
+                            serverBaseURL: serverBaseURL,
+                            messageID: message.id,
+                            attachmentBody: attachmentBody,
+                            isOutgoing: message.isOutgoing
+                        )
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(message.primaryText)
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(message.isOutgoing ? .white : .primary)
-                            .lineLimit(2)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(message.primaryText)
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(message.isOutgoing ? .white : .primary)
+                                .lineLimit(2)
 
-                        Text(isDownloading ? "Decrypting secure attachment..." : (message.secondaryText ?? "Tap to open"))
-                            .font(.caption)
-                            .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
-                            .lineLimit(2)
-                    }
-                }
-            } else {
-                HStack(alignment: .top, spacing: 12) {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(message.isOutgoing ? Color.white.opacity(0.18) : consumerChatAccent.opacity(0.12))
-                        .frame(width: 42, height: 42)
-                        .overlay {
-                            if isDownloading {
-                                ProgressView()
-                                    .tint(message.isOutgoing ? .white : consumerChatAccent)
-                            } else {
-                                Image(systemName: attachmentIconName)
-                                    .font(.system(size: 18, weight: .semibold))
-                                    .foregroundStyle(message.isOutgoing ? .white : consumerChatAccent)
-                            }
+                            Text(isDownloading ? "Decrypting secure attachment..." : (message.secondaryText ?? "Tap to open"))
+                                .font(.caption)
+                                .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
+                                .lineLimit(2)
                         }
+                    }
+                } else {
+                    HStack(alignment: .top, spacing: 12) {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(message.isOutgoing ? Color.white.opacity(0.18) : consumerChatAccent.opacity(0.12))
+                            .frame(width: 42, height: 42)
+                            .overlay {
+                                if isDownloading {
+                                    ProgressView()
+                                        .tint(message.isOutgoing ? .white : consumerChatAccent)
+                                } else {
+                                    Image(systemName: attachmentIconName)
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .foregroundStyle(message.isOutgoing ? .white : consumerChatAccent)
+                                }
+                            }
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(message.primaryText)
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(message.isOutgoing ? .white : .primary)
-                            .lineLimit(2)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(message.primaryText)
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(message.isOutgoing ? .white : .primary)
+                                .lineLimit(2)
 
-                        Text(isDownloading ? "Decrypting secure attachment..." : (message.secondaryText ?? "Tap to open"))
-                            .font(.caption)
-                            .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
-                            .lineLimit(2)
+                            Text(isDownloading ? "Decrypting secure attachment..." : (message.secondaryText ?? "Tap to open"))
+                                .font(.caption)
+                                .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
+                                .lineLimit(2)
+                        }
                     }
                 }
             }

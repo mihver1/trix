@@ -29,6 +29,7 @@ import chat.trix.android.core.ffi.FfiSendMessageInput
 import chat.trix.android.core.ffi.FfiServerApiClient
 import chat.trix.android.core.ffi.FfiSyncCoordinator
 import chat.trix.android.core.ffi.TrixFfiException
+import chat.trix.android.core.system.AppTelemetry
 import chat.trix.android.core.system.deviceStorageLayout
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -86,6 +87,7 @@ class ChatRepository(
             session = session,
         )
     }
+    private val telemetry = AppTelemetry(appContext)
 
     suspend fun loadOverview(): ChatOverview = withContext(Dispatchers.IO) {
         runFfi("Failed to read local chat cache") {
@@ -100,7 +102,13 @@ class ChatRepository(
     }
 
     suspend fun refresh(): ChatRefreshResult = withContext(Dispatchers.IO) {
-        runFfi("Failed to sync chats") {
+        runLogged(
+            operation = "refresh",
+            fallbackMessage = "Failed to sync chats",
+            successMessage = { result ->
+                "refresh success history=${result.historyMessagesUpserted} inbox=${result.inboxMessagesUpserted} hydrated=${result.hydratedChatDetails} projected=${result.projectedChatTimelines} outbox=${result.flushedOutboxCount}"
+            },
+        ) {
             val client = client()
             val store = historyStore()
             val syncCoordinator = syncCoordinator()
@@ -146,7 +154,12 @@ class ChatRepository(
     }
 
     suspend fun searchAccountDirectory(query: String): List<ChatDirectoryAccount> = withContext(Dispatchers.IO) {
-        runFfi("Failed to search account directory") {
+        runLogged(
+            operation = "search_directory",
+            fallbackMessage = "Failed to search account directory",
+            startMessage = "search_directory start query_present=${query.isNotBlank()}",
+            successMessage = { results -> "search_directory success results=${results.size}" },
+        ) {
             val client = client()
             client.setAccessToken(session.accessToken)
             client.searchAccountDirectory(
@@ -165,7 +178,12 @@ class ChatRepository(
             throw IOException("Choose a valid account to start a direct message")
         }
 
-        runFfi("Failed to create direct message") {
+        runLogged(
+            operation = "create_dm",
+            fallbackMessage = "Failed to create direct message",
+            startMessage = "create_dm start peer=${shortId(normalizedParticipants.first())}",
+            successMessage = { result -> "create_dm success chat=${shortId(result.conversation.chatId)}" },
+        ) {
             val client = client()
             val store = historyStore()
             val syncCoordinator = syncCoordinator()
@@ -206,7 +224,12 @@ class ChatRepository(
             throw IOException("Select at least $MIN_GROUP_PARTICIPANTS people for a group chat")
         }
 
-        runFfi("Failed to create group chat") {
+        runLogged(
+            operation = "create_group",
+            fallbackMessage = "Failed to create group chat",
+            startMessage = "create_group start participants=${normalizedParticipants.size}",
+            successMessage = { result -> "create_group success chat=${shortId(result.conversation.chatId)}" },
+        ) {
             val client = client()
             val store = historyStore()
             val syncCoordinator = syncCoordinator()
@@ -247,7 +270,12 @@ class ChatRepository(
             throw IOException("Select at least one person to add")
         }
 
-        runFfi("Failed to add group members") {
+        runLogged(
+            operation = "add_members",
+            fallbackMessage = "Failed to add group members",
+            startMessage = "add_members start chat=${shortId(chatId)} count=${normalizedParticipants.size}",
+            successMessage = { result -> "add_members success chat=${shortId(result.conversation.chatId)} members=${result.conversation.members.size}" },
+        ) {
             val client = client()
             val store = historyStore()
             val syncCoordinator = syncCoordinator()
@@ -286,7 +314,12 @@ class ChatRepository(
             throw IOException("Choose a valid member to remove")
         }
 
-        runFfi("Failed to remove group member") {
+        runLogged(
+            operation = "remove_member",
+            fallbackMessage = "Failed to remove group member",
+            startMessage = "remove_member start chat=${shortId(chatId)} account=${shortId(normalizedParticipants.first())}",
+            successMessage = { result -> "remove_member success chat=${shortId(result.conversation.chatId)} members=${result.conversation.members.size}" },
+        ) {
             val client = client()
             val store = historyStore()
             val syncCoordinator = syncCoordinator()
@@ -322,7 +355,12 @@ class ChatRepository(
             throw IOException("Message is empty")
         }
 
-        runFfi("Failed to send message") {
+        runLogged(
+            operation = "send_text",
+            fallbackMessage = "Failed to send message",
+            startMessage = "send_text start chat=${shortId(chatId)}",
+            successMessage = { result -> "send_text success chat=${shortId(result.conversation.chatId)} messages=${result.conversation.messages.size}" },
+        ) {
             val store = historyStore()
             store.enqueueOutboxMessage(
                 chatId = chatId,
@@ -365,7 +403,12 @@ class ChatRepository(
         chatId: String,
         contentUri: Uri,
     ): ChatSendResult = withContext(Dispatchers.IO) {
-        runFfi("Failed to send attachment") {
+        runLogged(
+            operation = "send_attachment",
+            fallbackMessage = "Failed to send attachment",
+            startMessage = "send_attachment start chat=${shortId(chatId)}",
+            successMessage = { result -> "send_attachment success chat=${shortId(result.conversation.chatId)} messages=${result.conversation.messages.size}" },
+        ) {
             val store = historyStore()
             val messageId = UUID.randomUUID().toString()
             val stagedAttachment = attachmentRepository().stageAttachmentForOutbox(
@@ -410,7 +453,12 @@ class ChatRepository(
     }
 
     suspend fun markConversationRead(chatId: String): ChatReadResult = withContext(Dispatchers.IO) {
-        runFfi("Failed to update chat read state") {
+        runLogged(
+            operation = "mark_read",
+            fallbackMessage = "Failed to update chat read state",
+            startMessage = "mark_read start chat=${shortId(chatId)}",
+            successMessage = { result -> "mark_read success chat=${shortId(chatId)} changed=${result.changed}" },
+        ) {
             val store = historyStore()
             val selfAccountId = session.localState.accountId
             val previous = store.getChatReadState(chatId, selfAccountId)
@@ -462,13 +510,17 @@ class ChatRepository(
         val conversations = store.listLocalChatListItems(selfAccountId).map { item ->
             val detail = store.getChat(item.chatId)
             val pendingOutboxMessages = store.listOutboxMessages(item.chatId)
-            val previewCreatedAtUnix = item.previewCreatedAtUnix?.toLong()
-            val messageCount = store.getLocalTimelineItems(
+            val timelineItems = store.getLocalTimelineItems(
                 item.chatId,
                 selfAccountId,
                 null,
                 null,
-            ).size + pendingOutboxMessages.size
+            )
+            val messages = mergeTimelineMessages(
+                timelineItems = timelineItems,
+                pendingOutboxItems = pendingOutboxMessages,
+            )
+            val previewCreatedAtUnix = item.previewCreatedAtUnix?.toLong()
             val pendingPreview = pendingOutboxPreview(pendingOutboxMessages)
             val previewText = when {
                 pendingPreview != null && (previewCreatedAtUnix == null || pendingPreview.queuedAtUnix >= previewCreatedAtUnix) ->
@@ -491,9 +543,9 @@ class ChatRepository(
                 ),
                 lastMessagePreview = previewText,
                 timestampLabel = timestampLabel,
-                messageCount = messageCount,
+                messageCount = messages.size,
                 unreadCount = item.unreadCount.toInt(),
-                hasProjectedTimeline = messageCount > 0,
+                hasProjectedTimeline = messages.isNotEmpty(),
                 isAccountSyncChat = item.chatId == session.localState.accountSyncChatId,
             )
         }
@@ -523,6 +575,7 @@ class ChatRepository(
         val detail = store.getChat(chatId)
         val timelineItems = store.getLocalTimelineItems(chatId, selfAccountId, null, null)
         val pendingOutboxItems = store.listOutboxMessages(chatId)
+        val visiblePendingOutboxItems = pendingOutboxItems.filterNot(::isReceiptOutboxMessage)
         val hasLocalMlsState = hasLocalConversation(chatId)
         val canSend = item.chatType == FfiChatType.ACCOUNT_SYNC || hasLocalMlsState
         val messages = mergeTimelineMessages(
@@ -548,7 +601,7 @@ class ChatRepository(
                     "Messages use this device's local MLS state for the account sync thread."
                 }
 
-                pendingOutboxItems.isNotEmpty() -> "Queued messages retry automatically when the device reconnects."
+                visiblePendingOutboxItems.isNotEmpty() -> "Queued messages retry automatically when the device reconnects."
                 canSend -> "Send through the local MLS state already present on this device."
                 else -> "Sending is disabled until this device has local MLS state for this chat."
             },
@@ -617,14 +670,27 @@ class ChatRepository(
         timelineItems: List<FfiLocalTimelineItem>,
         pendingOutboxItems: List<FfiLocalOutboxItem>,
     ): List<ChatTimelineMessage> {
-        val orderedMessages = timelineItems.mapIndexed { index, message ->
+        val orderedTimelineItems = timelineItems.sortedWith(
+            compareBy<FfiLocalTimelineItem> { it.serverSeq.toLong() }
+                .thenBy { it.createdAtUnix.toLong() }
+                .thenBy { it.messageId },
+        )
+        val receiptStatuses = receiptStatusByMessageId(orderedTimelineItems)
+        val orderedMessages = orderedTimelineItems
+            .filterNot(::isReceiptTimelineItem)
+            .mapIndexed { index, message ->
             TimedChatTimelineMessage(
                 sortUnix = message.createdAtUnix.toLong(),
                 sourcePriority = 0,
                 sourceOrder = index,
-                message = mapTimelineMessage(message),
+                message = mapTimelineMessage(
+                    message = message,
+                    receiptStatus = receiptStatuses[message.messageId],
+                ),
             )
-        } + pendingOutboxItems.mapIndexed { index, message ->
+        } + pendingOutboxItems
+            .filterNot(::isReceiptOutboxMessage)
+            .mapIndexed { index, message ->
             TimedChatTimelineMessage(
                 sortUnix = message.queuedAtUnix.toLong(),
                 sourcePriority = 1,
@@ -909,6 +975,26 @@ class ChatRepository(
         }
     }
 
+    private inline fun <T> runLogged(
+        operation: String,
+        fallbackMessage: String,
+        startMessage: String = "$operation start",
+        successMessage: (T) -> String = { "$operation success" },
+        block: () -> T,
+    ): T {
+        telemetry.info(TAG, startMessage)
+        return try {
+            val result = runFfi(fallbackMessage, block)
+            telemetry.info(TAG, successMessage(result))
+            result
+        } catch (error: IOException) {
+            telemetry.warn(TAG, "$operation failed", error)
+            throw error
+        }
+    }
+
+    private fun shortId(value: String): String = value.take(8).lowercase()
+
     private fun runBlockingStoreKey(): ByteArray {
         return kotlinx.coroutines.runBlocking {
             databaseKeyStore.getOrCreate(storageLayout.storeKeyPath)
@@ -1049,8 +1135,11 @@ class ChatRepository(
         timelineItems: List<FfiLocalTimelineItem>,
         pendingOutboxItems: List<FfiLocalOutboxItem>,
     ): String {
-        if (timelineItems.isEmpty()) {
-            if (pendingOutboxItems.isNotEmpty()) {
+        val visibleTimelineItems = timelineItems.filterNot(::isReceiptTimelineItem)
+        val visiblePendingOutboxItems = pendingOutboxItems.filterNot(::isReceiptOutboxMessage)
+
+        if (visibleTimelineItems.isEmpty()) {
+            if (visiblePendingOutboxItems.isNotEmpty()) {
                 return "Queued locally"
             }
             return if (item.previewText != null) {
@@ -1060,21 +1149,24 @@ class ChatRepository(
             }
         }
 
-        val latestTimelineSeq = timelineItems.last().serverSeq.toLong()
+        val latestTimelineSeq = visibleTimelineItems.last().serverSeq.toLong()
         if (item.previewServerSeq?.toLong()?.let { it > latestTimelineSeq } == true) {
             return "Mixed local timeline"
         }
 
-        return if (timelineItems.any { it.projectionKind != FfiLocalProjectionKind.APPLICATION_MESSAGE }) {
+        return if (visibleTimelineItems.any { it.projectionKind != FfiLocalProjectionKind.APPLICATION_MESSAGE }) {
             "Projected + MLS events"
-        } else if (pendingOutboxItems.isNotEmpty()) {
+        } else if (visiblePendingOutboxItems.isNotEmpty()) {
             "Projected timeline + queued outbox"
         } else {
             "Projected timeline"
         }
     }
 
-    private fun mapTimelineMessage(message: FfiLocalTimelineItem): ChatTimelineMessage {
+    private fun mapTimelineMessage(
+        message: FfiLocalTimelineItem,
+        receiptStatus: String?,
+    ): ChatTimelineMessage {
         val attachment = attachmentFrom(message)
         return ChatTimelineMessage(
             id = message.messageId,
@@ -1087,7 +1179,7 @@ class ChatRepository(
             body = timelineBody(message),
             timestampLabel = message.createdAtUnix.toLong().formatChatTimestamp(),
             isMine = message.isOutgoing,
-            note = timelineNote(message),
+            note = timelineNote(message, receiptStatus),
             contentType = message.contentType,
             attachment = attachment,
         )
@@ -1156,12 +1248,15 @@ class ChatRepository(
         }
     }
 
-    private fun timelineNote(message: FfiLocalTimelineItem): String? {
+    private fun timelineNote(
+        message: FfiLocalTimelineItem,
+        receiptStatus: String?,
+    ): String? {
         if (message.bodyParseError != null) {
             return message.bodyParseError
         }
 
-        return when (message.projectionKind) {
+        val projectionNote = when (message.projectionKind) {
             FfiLocalProjectionKind.APPLICATION_MESSAGE -> null
             FfiLocalProjectionKind.PROPOSAL_QUEUED -> "MLS proposal queued"
             FfiLocalProjectionKind.COMMIT_MERGED -> {
@@ -1172,12 +1267,19 @@ class ChatRepository(
             FfiLocalProjectionKind.WELCOME_REF -> "Welcome reference"
             FfiLocalProjectionKind.SYSTEM -> "System event"
         }
+
+        return listOfNotNull(receiptStatus, projectionNote)
+            .takeIf(List<String>::isNotEmpty)
+            ?.joinToString(separator = " · ")
     }
 
     private fun pendingOutboxPreview(
         pendingOutboxMessages: List<FfiLocalOutboxItem>,
     ): PendingOutboxPreview? {
-        val latest = pendingOutboxMessages.maxByOrNull(FfiLocalOutboxItem::queuedAtUnix) ?: return null
+        val latest = pendingOutboxMessages
+            .filterNot(::isReceiptOutboxMessage)
+            .maxByOrNull(FfiLocalOutboxItem::queuedAtUnix)
+            ?: return null
         val previewText = latest.body?.let(::structuredBodyText)
             ?: latest.attachmentDraft?.fileName
             ?: latest.attachmentDraft?.mimeType
@@ -1204,6 +1306,48 @@ class ChatRepository(
         } else {
             "${accountId.take(6)}…${accountId.takeLast(4)}"
         }
+    }
+
+    private fun isReceiptTimelineItem(message: FfiLocalTimelineItem): Boolean {
+        return message.contentType == FfiContentType.RECEIPT ||
+            message.body?.kind == FfiMessageBodyKind.RECEIPT
+    }
+
+    private fun isReceiptOutboxMessage(message: FfiLocalOutboxItem): Boolean {
+        return message.body?.kind == FfiMessageBodyKind.RECEIPT
+    }
+
+    private fun receiptStatusByMessageId(
+        timelineItems: List<FfiLocalTimelineItem>,
+    ): Map<String, String> {
+        val timelineById = timelineItems.associateBy(FfiLocalTimelineItem::messageId)
+        val receiptSummaries = linkedMapOf<String, ReceiptSummaryAccumulator>()
+
+        timelineItems.forEach { message ->
+            val body = message.body ?: return@forEach
+            if (body.kind != FfiMessageBodyKind.RECEIPT || message.isOutgoing) {
+                return@forEach
+            }
+
+            val targetMessageId = body.targetMessageId ?: return@forEach
+            val targetMessage = timelineById[targetMessageId] ?: return@forEach
+            if (!targetMessage.isOutgoing) {
+                return@forEach
+            }
+
+            val readerLabel = message.senderDisplayName.takeIf(String::isNotBlank)
+                ?: shortAccountId(message.senderAccountId)
+            receiptSummaries
+                .getOrPut(targetMessageId) { ReceiptSummaryAccumulator() }
+                .record(
+                    readerLabel = readerLabel,
+                    receiptType = body.receiptType,
+                )
+        }
+
+        return receiptSummaries
+            .mapValues { (_, accumulator) -> accumulator.summaryText() }
+            .filterValues(String::isNotBlank)
     }
 
     private fun shortMessageId(messageId: String): String {
@@ -1238,6 +1382,7 @@ class ChatRepository(
     private fun currentUnixSeconds(): Long = Instant.now().epochSecond
 
     companion object {
+        private const val TAG = "ChatRepository"
         private const val MAX_VISIBLE_MEMBERS = 3
         private val DIRECTORY_SEARCH_LIMIT = 20u
         private val HISTORY_SYNC_LIMIT = 200u
@@ -1354,6 +1499,57 @@ private data class PendingOutboxPreview(
     val previewText: String,
     val queuedAtUnix: Long,
 )
+
+private class ReceiptSummaryAccumulator {
+    private val deliveredReaders = linkedSetOf<String>()
+    private val readReaders = linkedSetOf<String>()
+
+    fun record(
+        readerLabel: String,
+        receiptType: FfiReceiptType?,
+    ) {
+        when (receiptType) {
+            FfiReceiptType.READ -> {
+                deliveredReaders.remove(readerLabel)
+                readReaders += readerLabel
+            }
+
+            FfiReceiptType.DELIVERED, null -> {
+                if (readerLabel !in readReaders) {
+                    deliveredReaders += readerLabel
+                }
+            }
+        }
+    }
+
+    fun summaryText(): String {
+        if (readReaders.isNotEmpty()) {
+            return formatSummary(
+                prefix = "Read by",
+                readers = readReaders.toList(),
+            )
+        }
+        if (deliveredReaders.isNotEmpty()) {
+            return formatSummary(
+                prefix = "Delivered to",
+                readers = deliveredReaders.toList(),
+            )
+        }
+        return ""
+    }
+
+    private fun formatSummary(
+        prefix: String,
+        readers: List<String>,
+    ): String {
+        return when (readers.size) {
+            0 -> ""
+            1 -> "$prefix ${readers.first()}"
+            2 -> "$prefix ${readers[0]}, ${readers[1]}"
+            else -> "$prefix ${readers[0]}, ${readers[1]} +${readers.size - 2}"
+        }
+    }
+}
 
 data class ChatAttachment(
     val messageId: String,

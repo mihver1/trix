@@ -569,7 +569,7 @@ private struct SidebarBullet: View {
     }
 }
 
-private struct ErrorStrip: View {
+struct ErrorStrip: View {
     @Environment(\.trixColors) private var colors
     let message: String
     let dismiss: () -> Void
