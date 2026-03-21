@@ -29,6 +29,8 @@ final class AppModel: ObservableObject {
     @Published var syncStateSnapshot: SyncStateSnapshot?
     @Published var historySyncJobs: [HistorySyncJobSummary] = []
     @Published var historySyncCursorDrafts: [UUID: String] = [:]
+    @Published var historySyncChunkDrafts: [UUID: HistorySyncChunkDraft] = [:]
+    @Published var historySyncChunksByJobID: [UUID: [HistorySyncChunkSummary]] = [:]
     @Published var keyPackagePublishDraft = KeyPackagePublishDraft()
     @Published var keyPackageReserveDraft = KeyPackageReserveDraft()
     @Published var createChatDraft = CreateChatDraft()
@@ -43,10 +45,15 @@ final class AppModel: ObservableObject {
     @Published var composerAttachmentDraft: AttachmentDraft?
     @Published var selectedChatDetail: ChatDetailResponse?
     @Published var selectedChatReadState: LocalChatReadState?
+    @Published var selectedChatReadCursor: UInt64?
+    @Published var selectedChatUnreadCount: UInt64?
+    @Published var selectedChatSyncCursor: UInt64?
     @Published var selectedChatTimelineItems: [LocalTimelineItem] = []
     @Published var selectedChatProjectedCursor: UInt64?
     @Published var selectedChatProjectedMessages: [LocalProjectedMessage] = []
     @Published var selectedChatHistory: [MessageEnvelope] = []
+    @Published var selectedChatMlsDiagnostics: LocalChatMlsDiagnostics?
+    @Published var mlsSignaturePublicKeyFingerprint: String?
     @Published var cachedAttachmentURLs: [UUID: URL] = [:]
     @Published var previewedAttachment: PreviewedAttachmentFile?
     @Published var outgoingLinkIntent: DeviceLinkIntentState?
@@ -72,6 +79,8 @@ final class AppModel: ObservableObject {
     @Published var revokingDeviceIDs: Set<UUID> = []
     @Published var approvingDeviceIDs: Set<UUID> = []
     @Published var completingHistorySyncJobIDs: Set<UUID> = []
+    @Published var loadingHistorySyncChunkJobIDs: Set<UUID> = []
+    @Published var appendingHistorySyncChunkJobIDs: Set<UUID> = []
     @Published var downloadingAttachmentMessageIDs: Set<UUID> = []
     @Published var removingChatMemberAccountIDs: Set<UUID> = []
     @Published var removingChatDeviceIDs: Set<UUID> = []
@@ -97,6 +106,8 @@ final class AppModel: ObservableObject {
     private var realtimeConnectionID = UUID()
     private var realtimeAccessToken: String?
     private var realtimeBaseURLString: String?
+    private var typingChatID: UUID?
+    private var isTypingActive = false
     private var hasScheduledRealtimeRecovery = false
     private var isApplicationActive = true
     private static let foregroundRealtimeConfig = FfiRealtimeConfig(
@@ -1299,6 +1310,35 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func refreshHistorySyncChunks(for jobID: UUID) async {
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
+
+        loadingHistorySyncChunkJobIDs.insert(jobID)
+        defer { loadingHistorySyncChunkJobIDs.remove(jobID) }
+
+        do {
+            historySyncChunksByJobID[jobID] = try await client.fetchHistorySyncChunks(
+                accessToken: token,
+                jobId: jobID
+            )
+        } catch let error as TrixAPIError {
+            if error.isCredentialFailure {
+                accessToken = nil
+                await restoreSession()
+            } else {
+                lastErrorMessage = error.userFacingMessage
+            }
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
     func refreshInbox(background: Bool = false, suppressErrors: Bool = false) async {
         guard let token = accessToken else {
             if !suppressErrors {
@@ -1625,6 +1665,58 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func appendHistorySyncChunk(_ jobID: UUID) async {
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
+        guard let draft = historySyncChunkDrafts[jobID] else {
+            return
+        }
+
+        appendingHistorySyncChunkJobIDs.insert(jobID)
+        defer { appendingHistorySyncChunkJobIDs.remove(jobID) }
+
+        do {
+            let payload = try decodeBase64Data(
+                draft.payloadB64,
+                label: "history sync payload"
+            )
+            let cursorJSON = try decodeCursorJSON(draft.cursorJSON)
+            let sequenceNo = try decodeUInt64(
+                draft.sequenceNo,
+                label: "history sync sequence"
+            )
+            let response = try await client.appendHistorySyncChunk(
+                accessToken: token,
+                jobId: jobID,
+                sequenceNo: sequenceNo,
+                payload: payload,
+                cursorJson: cursorJSON,
+                isFinal: draft.isFinal
+            )
+            try await loadHistorySyncJobs(client: client, accessToken: token)
+            let completedChunks = UInt64((historySyncChunksByJobID[jobID]?.count ?? 0) + 1)
+            await sendHistorySyncProgress(
+                jobID: response.jobId,
+                cursorJSON: cursorJSON,
+                completedChunks: completedChunks
+            )
+        } catch let error as TrixAPIError {
+            if error.isCredentialFailure {
+                accessToken = nil
+                await restoreSession()
+            } else {
+                lastErrorMessage = error.userFacingMessage
+            }
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
     func approvePendingDevice(_ device: DeviceSummary) async {
         guard let token = accessToken else {
             await restoreSession()
@@ -1753,6 +1845,50 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func setSelectedChatReadCursor(_ readCursorServerSeq: UInt64?) async {
+        guard let selectedChatID, let accountID = chatPresentationAccountID else {
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
+
+        do {
+            let storePaths = try workspaceStorePaths(for: accountID)
+            let updatedReadState = try await client.setLocalChatReadCursor(
+                databasePath: storePaths.localHistoryURL,
+                chatId: selectedChatID,
+                readCursorServerSeq: readCursorServerSeq,
+                selfAccountId: accountID
+            )
+            selectedChatReadState = updatedReadState
+            selectedChatReadCursor = updatedReadState.readCursorServerSeq
+            selectedChatUnreadCount = updatedReadState.unreadCount
+            if let existingIndex = localChatListItems.firstIndex(where: { $0.chatId == selectedChatID }) {
+                let existingItem = localChatListItems[existingIndex]
+                localChatListItems[existingIndex] = LocalChatListItem(
+                    chatId: existingItem.chatId,
+                    chatType: existingItem.chatType,
+                    title: existingItem.title,
+                    displayTitle: existingItem.displayTitle,
+                    lastServerSeq: existingItem.lastServerSeq,
+                    epoch: existingItem.epoch,
+                    pendingMessageCount: existingItem.pendingMessageCount,
+                    unreadCount: updatedReadState.unreadCount,
+                    previewText: existingItem.previewText,
+                    previewSenderAccountId: existingItem.previewSenderAccountId,
+                    previewSenderDisplayName: existingItem.previewSenderDisplayName,
+                    previewIsOutgoing: existingItem.previewIsOutgoing,
+                    previewServerSeq: existingItem.previewServerSeq,
+                    previewCreatedAtUnix: existingItem.previewCreatedAtUnix,
+                    participantProfiles: existingItem.participantProfiles
+                )
+            }
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
     func signOut() {
         do {
             try clearSession()
@@ -1868,6 +2004,57 @@ final class AppModel: ObservableObject {
             Task {
                 await client.stop()
             }
+        }
+    }
+
+    func updateTypingState(for chatID: UUID?, draftText: String) {
+        let normalizedDraft = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let desiredChatID = normalizedDraft.isEmpty ? nil : chatID
+        let desiredIsTyping = desiredChatID != nil
+
+        guard typingChatID != desiredChatID || isTypingActive != desiredIsTyping else {
+            return
+        }
+
+        let previousChatID = typingChatID
+        let previousIsTyping = isTypingActive
+        typingChatID = desiredChatID
+        isTypingActive = desiredIsTyping
+
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            if previousIsTyping, let previousChatID, previousChatID != desiredChatID {
+                try? await self.realtimeClient?.sendTypingUpdate(
+                    chatId: previousChatID,
+                    isTyping: false
+                )
+            }
+
+            if let chatID {
+                try? await self.realtimeClient?.sendTypingUpdate(
+                    chatId: chatID,
+                    isTyping: desiredIsTyping
+                )
+            }
+        }
+    }
+
+    private func sendHistorySyncProgress(
+        jobID: UUID,
+        cursorJSON: JSONValue?,
+        completedChunks: UInt64?
+    ) async {
+        do {
+            try await realtimeClient?.sendHistorySyncProgress(
+                jobId: jobID,
+                cursorJson: cursorJSON,
+                completedChunks: completedChunks
+            )
+        } catch {
+            return
         }
     }
 
@@ -2160,6 +2347,7 @@ final class AppModel: ObservableObject {
         do {
             let storePaths = try workspaceStorePaths()
             let selfAccountId = chatPresentationAccountID
+            let identity = try loadStoredIdentity()
             async let localChatListItem = client.fetchLocalChatListItem(
                 databasePath: storePaths.localHistoryURL,
                 chatId: chatId,
@@ -2175,8 +2363,21 @@ final class AppModel: ObservableObject {
                 chatId: chatId,
                 selfAccountId: selfAccountId
             )
+            async let localReadCursor = client.fetchLocalChatReadCursor(
+                databasePath: storePaths.localHistoryURL,
+                chatId: chatId
+            )
+            async let localUnreadCount = client.fetchLocalChatUnreadCount(
+                databasePath: storePaths.localHistoryURL,
+                chatId: chatId,
+                selfAccountId: selfAccountId
+            )
             async let localHistory = client.fetchLocalChatHistory(
                 databasePath: storePaths.localHistoryURL,
+                chatId: chatId
+            )
+            async let syncCursor = client.fetchChatSyncCursor(
+                statePath: storePaths.syncStateURL,
                 chatId: chatId
             )
             async let projectedCursor = client.fetchLocalProjectedCursor(
@@ -2187,24 +2388,37 @@ final class AppModel: ObservableObject {
                 databasePath: storePaths.localHistoryURL,
                 chatId: chatId
             )
+            async let localMlsDiagnostics = client.fetchLocalChatMlsDiagnostics(
+                databasePath: storePaths.localHistoryURL,
+                mlsStorageRoot: storePaths.mlsStateRootURL,
+                credentialIdentity: identity.storedIdentity.credentialIdentity,
+                chatId: chatId
+            )
 
             let loadedLocalChatListItem = try await localChatListItem
             let loadedLocalTimelineItems = try await localTimelineItems
             let loadedLocalReadState = try await localReadState
+            let loadedLocalReadCursor = try await localReadCursor
+            let loadedLocalUnreadCount = try await localUnreadCount
             let loadedProjectedCursor = try await projectedCursor
             let loadedProjectedMessages = try await projectedMessages
             let loadedLocalHistory = try await localHistory
+            let loadedSyncCursor = try await syncCursor
+            let loadedLocalMlsDiagnostics = try await localMlsDiagnostics
             let localHistoryServerSeq = loadedLocalHistory.messages.map(\.serverSeq).max() ?? 0
             let localProjectedCursor = loadedProjectedCursor ?? 0
 
             var resolvedLocalChatListItem = loadedLocalChatListItem
             var resolvedLocalTimelineItems = loadedLocalTimelineItems
             var resolvedLocalReadState = loadedLocalReadState
+            var resolvedLocalReadCursor = loadedLocalReadCursor
+            var resolvedLocalUnreadCount = loadedLocalUnreadCount
+            var resolvedSyncCursor = loadedSyncCursor
             var resolvedProjectedCursor = loadedProjectedCursor
             var resolvedProjectedMessages = loadedProjectedMessages
+            var resolvedLocalMlsDiagnostics = loadedLocalMlsDiagnostics
 
             if localHistoryServerSeq > localProjectedCursor {
-                let identity = try loadStoredIdentity()
                 let projected = try await client.projectLocalChatIfPossible(
                     databasePath: storePaths.localHistoryURL,
                     mlsStorageRoot: storePaths.mlsStateRootURL,
@@ -2228,6 +2442,19 @@ final class AppModel: ObservableObject {
                         chatId: chatId,
                         selfAccountId: selfAccountId
                     )
+                    async let refreshedLocalReadCursor = client.fetchLocalChatReadCursor(
+                        databasePath: storePaths.localHistoryURL,
+                        chatId: chatId
+                    )
+                    async let refreshedLocalUnreadCount = client.fetchLocalChatUnreadCount(
+                        databasePath: storePaths.localHistoryURL,
+                        chatId: chatId,
+                        selfAccountId: selfAccountId
+                    )
+                    async let refreshedSyncCursor = client.fetchChatSyncCursor(
+                        statePath: storePaths.syncStateURL,
+                        chatId: chatId
+                    )
                     async let refreshedProjectedCursor = client.fetchLocalProjectedCursor(
                         databasePath: storePaths.localHistoryURL,
                         chatId: chatId
@@ -2236,12 +2463,22 @@ final class AppModel: ObservableObject {
                         databasePath: storePaths.localHistoryURL,
                         chatId: chatId
                     )
+                    async let refreshedLocalMlsDiagnostics = client.fetchLocalChatMlsDiagnostics(
+                        databasePath: storePaths.localHistoryURL,
+                        mlsStorageRoot: storePaths.mlsStateRootURL,
+                        credentialIdentity: identity.storedIdentity.credentialIdentity,
+                        chatId: chatId
+                    )
 
                     resolvedLocalChatListItem = try await refreshedLocalChatListItem
                     resolvedLocalTimelineItems = try await refreshedLocalTimelineItems
                     resolvedLocalReadState = try await refreshedLocalReadState
+                    resolvedLocalReadCursor = try await refreshedLocalReadCursor
+                    resolvedLocalUnreadCount = try await refreshedLocalUnreadCount
+                    resolvedSyncCursor = try await refreshedSyncCursor
                     resolvedProjectedCursor = try await refreshedProjectedCursor
                     resolvedProjectedMessages = try await refreshedProjectedMessages
+                    resolvedLocalMlsDiagnostics = try await refreshedLocalMlsDiagnostics
                 }
             }
 
@@ -2250,8 +2487,12 @@ final class AppModel: ObservableObject {
             }
             selectedChatTimelineItems = resolvedLocalTimelineItems
             selectedChatReadState = resolvedLocalReadState
+            selectedChatReadCursor = resolvedLocalReadCursor
+            selectedChatUnreadCount = resolvedLocalUnreadCount
+            selectedChatSyncCursor = resolvedSyncCursor
             selectedChatProjectedCursor = resolvedProjectedCursor
             selectedChatProjectedMessages = resolvedProjectedMessages
+            selectedChatMlsDiagnostics = resolvedLocalMlsDiagnostics
 
             if loadedLocalHistory.messages.isEmpty && loadedDetail.lastServerSeq > 0 {
                 let remoteHistory = try await client.fetchChatHistory(
@@ -2387,10 +2628,15 @@ final class AppModel: ObservableObject {
         syncStateSnapshot = nil
         historySyncJobs = []
         historySyncCursorDrafts = [:]
+        historySyncChunkDrafts = [:]
+        historySyncChunksByJobID = [:]
         approvingDeviceIDs = []
+        loadingHistorySyncChunkJobIDs = []
+        appendingHistorySyncChunkJobIDs = []
         publishedKeyPackages = []
         reservedKeyPackages = []
         reservedKeyPackagesAccountID = nil
+        mlsSignaturePublicKeyFingerprint = nil
         clearSelectedChat()
         createChatDraft = CreateChatDraft()
     }
@@ -2442,11 +2688,35 @@ final class AppModel: ObservableObject {
         client: TrixAPIClient,
         accessToken: String
     ) async throws {
-        let loadedJobs = try await client.fetchHistorySyncJobs(accessToken: accessToken)
-        historySyncJobs = loadedJobs.jobs
-        for job in loadedJobs.jobs {
+        async let sourceJobs = client.fetchHistorySyncJobs(
+            accessToken: accessToken,
+            role: .source
+        )
+        async let targetJobs = client.fetchHistorySyncJobs(
+            accessToken: accessToken,
+            role: .target
+        )
+        let loadedSourceJobs = try await sourceJobs
+        let loadedTargetJobs = try await targetJobs
+        let mergedJobs = (loadedSourceJobs.jobs + loadedTargetJobs.jobs)
+            .sorted { left, right in
+                if left.updatedAtUnix == right.updatedAtUnix {
+                    return left.jobId.uuidString < right.jobId.uuidString
+                }
+                return left.updatedAtUnix > right.updatedAtUnix
+            }
+
+        historySyncJobs = mergedJobs
+        let visibleJobIDs = Set(mergedJobs.map(\.jobId))
+        historySyncChunksByJobID = historySyncChunksByJobID.filter { visibleJobIDs.contains($0.key) }
+        historySyncChunkDrafts = historySyncChunkDrafts.filter { visibleJobIDs.contains($0.key) }
+
+        for job in mergedJobs {
             if historySyncCursorDrafts[job.jobId] == nil {
                 historySyncCursorDrafts[job.jobId] = try encodeCursorJSON(job.cursorJson) ?? ""
+            }
+            if historySyncChunkDrafts[job.jobId] == nil {
+                historySyncChunkDrafts[job.jobId] = HistorySyncChunkDraft()
             }
         }
     }
@@ -2511,14 +2781,20 @@ final class AppModel: ObservableObject {
         accountId: UUID
     ) async throws {
         let storePaths = try workspaceStorePaths(for: accountId)
+        let identity = try loadStoredIdentity()
         let loadedItems = try await client.fetchLocalChatListItems(
             databasePath: storePaths.localHistoryURL,
             selfAccountId: accountId
+        )
+        let signaturePublicKey = try? await client.fetchMlsSignaturePublicKey(
+            mlsStorageRoot: storePaths.mlsStateRootURL,
+            credentialIdentity: identity.storedIdentity.credentialIdentity
         )
         localChatListItems = mergeLocalChatListItems(
             existing: localChatListItems,
             incoming: loadedItems
         )
+        mlsSignaturePublicKeyFingerprint = signaturePublicKey.map { shortDataFingerprint($0) }
     }
 
     private func reconcileSelectedChatAfterLocalStateUpdate(
@@ -2633,6 +2909,22 @@ final class AppModel: ObservableObject {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         let data = try encoder.encode(value)
         return String(data: data, encoding: .utf8)
+    }
+
+    private func decodeBase64Data(_ rawValue: String, label: String) throws -> Data {
+        guard let trimmed = rawValue.nonEmptyTrimmed, let data = Data(base64Encoded: trimmed) else {
+            throw TrixAPIError.invalidPayload("Вставь валидный base64 для \(label).")
+        }
+
+        return data
+    }
+
+    private func decodeUInt64(_ rawValue: String, label: String) throws -> UInt64 {
+        guard let trimmed = rawValue.nonEmptyTrimmed, let value = UInt64(trimmed) else {
+            throw TrixAPIError.invalidPayload("Не удалось разобрать \(label).")
+        }
+
+        return value
     }
 
     private func decodePublishKeyPackageItems(_ rawValue: String) throws -> [PublishKeyPackageItem] {
@@ -2805,10 +3097,14 @@ final class AppModel: ObservableObject {
     private func resetSelectedChatContent() {
         selectedChatDetail = nil
         selectedChatReadState = nil
+        selectedChatReadCursor = nil
+        selectedChatUnreadCount = nil
+        selectedChatSyncCursor = nil
         selectedChatTimelineItems = []
         selectedChatProjectedCursor = nil
         selectedChatProjectedMessages = []
         selectedChatHistory = []
+        selectedChatMlsDiagnostics = nil
     }
 
     private func upsertLocalChatListItem(_ item: LocalChatListItem) {
@@ -3221,6 +3517,10 @@ final class AppModel: ObservableObject {
         String(value.uuidString.prefix(8)).lowercased()
     }
 
+    private func shortDataFingerprint(_ value: Data, prefixBytes: Int = 8) -> String {
+        value.prefix(prefixBytes).map { String(format: "%02x", $0) }.joined()
+    }
+
     private func logChatType(_ value: ChatType) -> String {
         switch value {
         case .dm:
@@ -3258,6 +3558,8 @@ final class AppModel: ObservableObject {
             selfAccountId: accountId
         )
         selectedChatReadState = updatedReadState
+        selectedChatReadCursor = updatedReadState.readCursorServerSeq
+        selectedChatUnreadCount = updatedReadState.unreadCount
 
         if let existingIndex = localChatListItems.firstIndex(where: { $0.chatId == chatId }) {
             let existingItem = localChatListItems[existingIndex]
@@ -3442,6 +3744,13 @@ struct KeyPackageReserveDraft {
     var accountID = ""
     var selectedDeviceIDs = ""
     var mode: KeyPackageReserveMode = .allActiveDevices
+}
+
+struct HistorySyncChunkDraft {
+    var sequenceNo = ""
+    var payloadB64 = ""
+    var cursorJSON = ""
+    var isFinal = false
 }
 
 struct InboxLeaseDraft {

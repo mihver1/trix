@@ -11,6 +11,18 @@ private struct KeyPackageDebugDraft {
     var deviceIds = ""
 }
 
+private struct HistorySyncChunkDebugDraft {
+    var jobId = ""
+    var sequenceNo = "1"
+    var payloadBase64 = ""
+    var cursorJson = ""
+    var isFinal = false
+}
+
+private struct LocalConversationDebugDraft {
+    var chatId = ""
+}
+
 struct MessagingLabView: View {
     @Binding var serverBaseURL: String
     @ObservedObject var model: AppModel
@@ -21,6 +33,11 @@ struct MessagingLabView: View {
     @State private var leasedInboxBatch: LeaseInboxResponse?
     @State private var localInboxSync: LocalInboxSyncResult?
     @State private var inspectedKeyPackages: AccountKeyPackagesResponse?
+    @State private var historySyncChunkDraft = HistorySyncChunkDebugDraft()
+    @State private var loadedHistorySyncChunks: [HistorySyncChunkSummary] = []
+    @State private var localConversationDraft = LocalConversationDebugDraft()
+    @State private var localConversationDiagnostics: LocalConversationDiagnostics?
+    @State private var signaturePublicKeyFingerprint: String?
 
     var body: some View {
         List {
@@ -225,6 +242,149 @@ struct MessagingLabView: View {
                     Text("Local Core Store")
                 } footer: {
                     Text("This is the on-device `trix-core` cache for MLS state, chat history, and inbox sync cursors. Chat detail prefers local history after you sync it here.")
+                }
+
+                Section {
+                    TextField(
+                        "History Sync Job ID",
+                        text: $historySyncChunkDraft.jobId
+                    )
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .font(.system(.footnote, design: .monospaced))
+
+                    TextField("Sequence No", text: $historySyncChunkDraft.sequenceNo)
+                        .keyboardType(.numberPad)
+                        .font(.system(.footnote, design: .monospaced))
+
+                    TextField("Payload Base64", text: $historySyncChunkDraft.payloadBase64, axis: .vertical)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .lineLimit(3, reservesSpace: true)
+                        .font(.system(.footnote, design: .monospaced))
+
+                    TextField("Cursor JSON (optional)", text: $historySyncChunkDraft.cursorJson, axis: .vertical)
+                        .lineLimit(3, reservesSpace: true)
+                        .font(.system(.footnote, design: .monospaced))
+
+                    Toggle("Mark Chunk Final", isOn: $historySyncChunkDraft.isFinal)
+
+                    Button(action: loadHistorySyncChunks) {
+                        if model.isLoading {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Text("Load Job Chunks")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .disabled(model.isLoading || trimmedValue(historySyncChunkDraft.jobId) == nil)
+
+                    Button(action: appendHistorySyncChunk) {
+                        if model.isLoading {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Text("Append Job Chunk")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .disabled(
+                        model.isLoading ||
+                            trimmedValue(historySyncChunkDraft.jobId) == nil ||
+                            trimmedValue(historySyncChunkDraft.sequenceNo) == nil ||
+                            trimmedValue(historySyncChunkDraft.payloadBase64) == nil
+                    )
+
+                    Button(action: publishHistorySyncProgress) {
+                        Text("Publish Realtime Progress")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .disabled(trimmedValue(historySyncChunkDraft.jobId) == nil)
+
+                    if !loadedHistorySyncChunks.isEmpty {
+                        ForEach(loadedHistorySyncChunks) { chunk in
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Chunk #\(chunk.sequenceNo)")
+                                        .font(.subheadline.weight(.medium))
+                                    Spacer()
+                                    if chunk.isFinal {
+                                        Text("Final")
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+
+                                Text(chunk.payloadBase64)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+
+                                if let cursorJson = chunk.cursorJson {
+                                    Text(cursorJson)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+                } header: {
+                    Text("History Sync Chunks")
+                } footer: {
+                    Text("Use this to inspect target-side chunk batches, append source-side chunks, and publish websocket progress for the active job.")
+                }
+
+                Section {
+                    TextField(
+                        "Chat ID",
+                        text: Binding(
+                            get: {
+                                if localConversationDraft.chatId.isEmpty {
+                                    return dashboard.chats.first?.chatId ?? ""
+                                }
+                                return localConversationDraft.chatId
+                            },
+                            set: { localConversationDraft.chatId = $0 }
+                        )
+                    )
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .font(.system(.footnote, design: .monospaced))
+
+                    Button(action: inspectLocalConversationState) {
+                        Text("Inspect Local Conversation State")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .disabled(model.localIdentity == nil || trimmedValue(localConversationDraft.chatId) == nil)
+
+                    if let signaturePublicKeyFingerprint {
+                        LabeledContent("Signing Key") {
+                            Text(signaturePublicKeyFingerprint)
+                                .font(.system(.footnote, design: .monospaced))
+                                .multilineTextAlignment(.trailing)
+                        }
+                    }
+
+                    if let localConversationDiagnostics {
+                        LabeledContent("Persisted Cursor") {
+                            Text(localConversationDiagnostics.chatCursor.map(String.init) ?? "None")
+                        }
+
+                        LabeledContent("Local Members") {
+                            Text(String(localConversationDiagnostics.memberCount))
+                        }
+
+                        LabeledContent("State Bytes") {
+                            Text(String(localConversationDiagnostics.ratchetTreeBytes))
+                        }
+                    }
+                } header: {
+                    Text("Local Conversation State")
+                } footer: {
+                    Text("This reads the on-device conversation cursor, signing key, and persisted conversation state for a specific chat.")
                 }
 
                 Section {
@@ -543,6 +703,110 @@ struct MessagingLabView: View {
         }
     }
 
+    private func loadHistorySyncChunks() {
+        activityMessage = nil
+        loadedHistorySyncChunks = []
+        guard
+            let dashboard = model.dashboard,
+            let jobId = trimmedValue(historySyncChunkDraft.jobId)
+        else {
+            return
+        }
+
+        Task {
+            do {
+                let chunks = try await TrixCoreServerBridge.getHistorySyncChunks(
+                    baseURLString: serverBaseURL,
+                    accessToken: dashboard.session.accessToken,
+                    jobId: jobId
+                )
+                loadedHistorySyncChunks = chunks
+                activityMessage = "Loaded \(chunks.count) chunks for history sync job \(jobId)."
+            } catch {
+                activityMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func appendHistorySyncChunk() {
+        activityMessage = nil
+        guard
+            let dashboard = model.dashboard,
+            let jobId = trimmedValue(historySyncChunkDraft.jobId),
+            let sequenceNo = UInt64(trimmedValue(historySyncChunkDraft.sequenceNo) ?? ""),
+            let payloadBase64 = trimmedValue(historySyncChunkDraft.payloadBase64),
+            let payload = Data(base64Encoded: payloadBase64)
+        else {
+            activityMessage = "Provide a valid job ID, sequence number, and base64 payload."
+            return
+        }
+
+        let cursorJson = trimmedValue(historySyncChunkDraft.cursorJson)
+
+        Task {
+            do {
+                let response = try await TrixCoreServerBridge.appendHistorySyncChunk(
+                    baseURLString: serverBaseURL,
+                    accessToken: dashboard.session.accessToken,
+                    jobId: jobId,
+                    sequenceNo: sequenceNo,
+                    payload: payload,
+                    cursorJson: cursorJson,
+                    isFinal: historySyncChunkDraft.isFinal
+                )
+                activityMessage = "Appended chunk \(response.chunkId) for job \(response.jobId)."
+            } catch {
+                activityMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func publishHistorySyncProgress() {
+        activityMessage = nil
+        guard let jobId = trimmedValue(historySyncChunkDraft.jobId) else {
+            return
+        }
+
+        Task {
+            let completedChunks = UInt64(loadedHistorySyncChunks.count)
+            await model.sendHistorySyncProgress(
+                jobId: jobId,
+                cursorJson: trimmedValue(historySyncChunkDraft.cursorJson),
+                completedChunks: completedChunks > 0 ? completedChunks : nil
+            )
+            activityMessage = "Published realtime progress for history sync job \(jobId)."
+        }
+    }
+
+    private func inspectLocalConversationState() {
+        activityMessage = nil
+        localConversationDiagnostics = nil
+        signaturePublicKeyFingerprint = nil
+        guard
+            let identity = model.localIdentity,
+            let chatId = trimmedValue(localConversationDraft.chatId)
+        else {
+            return
+        }
+
+        Task {
+            do {
+                let diagnostics = try TrixCorePersistentBridge.localConversationDiagnostics(
+                    identity: identity,
+                    chatId: chatId
+                )
+                let signaturePublicKey = try TrixCorePersistentBridge.signaturePublicKey(identity: identity)
+                localConversationDiagnostics = diagnostics
+                signaturePublicKeyFingerprint = shortFingerprint(signaturePublicKey)
+                activityMessage = diagnostics == nil
+                    ? "No local conversation state is ready for chat \(chatId)."
+                    : "Loaded local conversation state for chat \(chatId)."
+            } catch {
+                activityMessage = error.localizedDescription
+            }
+        }
+    }
+
     private func effectiveKeyPackageAccountId() -> String {
         let trimmed = keyPackageDebugDraft.accountId.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
@@ -570,6 +834,15 @@ struct MessagingLabView: View {
                 activityMessage = "Acknowledged \(response.ackedInboxIds.count) inbox items."
             }
         }
+    }
+
+    private func trimmedValue(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func shortFingerprint(_ data: Data, prefixBytes: Int = 8) -> String {
+        data.prefix(prefixBytes).map { String(format: "%02x", $0) }.joined()
     }
 }
 

@@ -97,6 +97,7 @@ import chat.trix.android.core.chat.ChatRepository
 import chat.trix.android.core.chat.ChatReceiptStatus
 import chat.trix.android.core.chat.ChatTimelineMessage
 import chat.trix.android.core.ffi.FfiChatType
+import chat.trix.android.core.runtime.RealtimeForegroundService
 import chat.trix.android.ui.adaptive.TrixAdaptiveInfo
 import chat.trix.android.ui.adaptive.TrixFoldPosture
 import java.io.IOException
@@ -146,6 +147,9 @@ fun ChatsScreen(
     var groupMembershipErrorMessage by remember(repository) { mutableStateOf<String?>(null) }
     var activeAttachmentMessageId by remember(repository) { mutableStateOf<String?>(null) }
     var attachmentErrorMessage by remember(repository) { mutableStateOf<String?>(null) }
+    var publishedTypingState by remember(session.localState.deviceId) {
+        mutableStateOf<Pair<String?, Boolean>>(null to false)
+    }
 
     fun openDirectorySheet(config: DirectorySheetConfig) {
         directorySheetConfig = config
@@ -640,6 +644,30 @@ fun ChatsScreen(
         }
     }
 
+    LaunchedEffect(selectedConversationId, composerDraft) {
+        val nextChatId = selectedConversationId
+        val nextIsTyping = nextChatId != null && composerDraft.isNotBlank()
+        val (previousChatId, previousIsTyping) = publishedTypingState
+
+        if (previousChatId != null && previousChatId != nextChatId && previousIsTyping) {
+            RealtimeForegroundService.sendTypingUpdate(
+                context = context,
+                chatId = previousChatId,
+                isTyping = false,
+            )
+        }
+
+        if (nextChatId != null && (previousChatId != nextChatId || previousIsTyping != nextIsTyping)) {
+            RealtimeForegroundService.sendTypingUpdate(
+                context = context,
+                chatId = nextChatId,
+                isTyping = nextIsTyping,
+            )
+        }
+
+        publishedTypingState = nextChatId to nextIsTyping
+    }
+
     val conversations = overviewState.overview?.conversations.orEmpty()
     val selectedConversationSummary = conversations.firstOrNull { it.chatId == selectedConversationId }
     val selectedConversation = detailState.conversation
@@ -654,6 +682,19 @@ fun ChatsScreen(
 
     BackHandler(enabled = detailOnly) {
         selectedConversationId = null
+    }
+
+    DisposableEffect(context) {
+        onDispose {
+            val (chatId, isTyping) = publishedTypingState
+            if (chatId != null && isTyping) {
+                RealtimeForegroundService.sendTypingUpdate(
+                    context = context,
+                    chatId = chatId,
+                    isTyping = false,
+                )
+            }
+        }
     }
 
     LaunchedEffect(selectedConversation?.chatId, selectedConversation?.canManageMembers) {

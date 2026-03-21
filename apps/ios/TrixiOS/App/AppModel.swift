@@ -1927,6 +1927,30 @@ final class AppModel: ObservableObject {
         return true
     }
 
+    func sendTypingUpdate(chatId: String, isTyping: Bool) async {
+        do {
+            try await realtimeClient?.sendTypingUpdate(chatId: chatId, isTyping: isTyping)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func sendHistorySyncProgress(
+        jobId: String,
+        cursorJson: String?,
+        completedChunks: UInt64?
+    ) async {
+        do {
+            try await realtimeClient?.sendHistorySyncProgress(
+                jobId: jobId,
+                cursorJson: cursorJson,
+                completedChunks: completedChunks
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     private func makeInboxPath(afterInboxId: UInt64?, limit: Int) -> String {
         let clampedLimit = min(max(limit, 1), 500)
 

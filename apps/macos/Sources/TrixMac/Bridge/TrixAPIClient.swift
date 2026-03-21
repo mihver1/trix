@@ -448,16 +448,18 @@ struct TrixAPIClient {
 
     func fetchHistorySyncJobs(
         accessToken: String,
+        role: HistorySyncJobRole = .source,
         status: HistorySyncJobStatus? = nil,
         limit: Int = 50
     ) async throws -> HistorySyncJobListResponse {
         try await callFFI(accessToken: accessToken) { client in
             try HistorySyncJobListResponse(
                 ffiValues: client.listHistorySyncJobs(
-                    role: nil,
+                    role: role.ffiValue,
                     status: status?.ffiValue,
                     limit: try TrixCoreCodec.uint32(limit, label: "history sync limit")
-                )
+                ),
+                role: role
             )
         }
     }
@@ -472,6 +474,37 @@ struct TrixAPIClient {
                 ffiValue: client.completeHistorySyncJob(
                     jobId: jobId.uuidString,
                     cursorJson: try request.ffiCursorJSONString()
+                )
+            )
+        }
+    }
+
+    func fetchHistorySyncChunks(
+        accessToken: String,
+        jobId: UUID
+    ) async throws -> [HistorySyncChunkSummary] {
+        try await callFFI(accessToken: accessToken) { client in
+            try client.getHistorySyncChunks(jobId: jobId.uuidString)
+                .map(HistorySyncChunkSummary.init)
+        }
+    }
+
+    func appendHistorySyncChunk(
+        accessToken: String,
+        jobId: UUID,
+        sequenceNo: UInt64,
+        payload: Data,
+        cursorJson: JSONValue?,
+        isFinal: Bool
+    ) async throws -> AppendHistorySyncChunkResponse {
+        try await callFFI(accessToken: accessToken) { client in
+            try AppendHistorySyncChunkResponse(
+                ffiValue: client.appendHistorySyncChunk(
+                    jobId: jobId.uuidString,
+                    sequenceNo: sequenceNo,
+                    payload: payload,
+                    cursorJson: try TrixCoreCodec.encodeJSONString(cursorJson),
+                    isFinal: isFinal
                 )
             )
         }
@@ -1170,6 +1203,48 @@ struct TrixAPIClient {
         }
     }
 
+    func fetchLocalChatReadCursor(
+        databasePath: URL,
+        chatId: UUID
+    ) async throws -> UInt64? {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            return try store.chatReadCursor(chatId: chatId.uuidString)
+        }
+    }
+
+    func fetchLocalChatUnreadCount(
+        databasePath: URL,
+        chatId: UUID,
+        selfAccountId: UUID?
+    ) async throws -> UInt64? {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            return try store.chatUnreadCount(
+                chatId: chatId.uuidString,
+                selfAccountId: selfAccountId?.uuidString
+            )
+        }
+    }
+
+    func setLocalChatReadCursor(
+        databasePath: URL,
+        chatId: UUID,
+        readCursorServerSeq: UInt64?,
+        selfAccountId: UUID?
+    ) async throws -> LocalChatReadState {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            return try LocalChatReadState(
+                ffiValue: store.setChatReadCursor(
+                    chatId: chatId.uuidString,
+                    readCursorServerSeq: readCursorServerSeq,
+                    selfAccountId: selfAccountId?.uuidString
+                )
+            )
+        }
+    }
+
     func fetchLocalProjectedMessages(
         databasePath: URL,
         chatId: UUID,
@@ -1501,6 +1576,58 @@ struct TrixAPIClient {
         try await callFFI { _ in
             let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
             return try SyncStateSnapshot(ffiValue: coordinator.stateSnapshot())
+        }
+    }
+
+    func fetchChatSyncCursor(
+        statePath: URL,
+        chatId: UUID
+    ) async throws -> UInt64? {
+        try await callFFI { _ in
+            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
+            return try coordinator.chatCursor(chatId: chatId.uuidString)
+        }
+    }
+
+    func fetchMlsSignaturePublicKey(
+        mlsStorageRoot: URL,
+        credentialIdentity: Data
+    ) async throws -> Data {
+        try await callFFI { _ in
+            let facade = try Self.makePersistentMlsFacade(
+                storageRoot: mlsStorageRoot,
+                credentialIdentity: credentialIdentity
+            )
+            return try facade.signaturePublicKey()
+        }
+    }
+
+    func fetchLocalChatMlsDiagnostics(
+        databasePath: URL,
+        mlsStorageRoot: URL,
+        credentialIdentity: Data,
+        chatId: UUID
+    ) async throws -> LocalChatMlsDiagnostics? {
+        try await callFFI { _ in
+            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
+            let facade = try Self.makePersistentMlsFacade(
+                storageRoot: mlsStorageRoot,
+                credentialIdentity: credentialIdentity
+            )
+            guard let conversation = try? Self.prepareConversationIfNeeded(
+                store: store,
+                facade: facade,
+                chatId: chatId
+            ) else {
+                return nil
+            }
+
+            let members = try facade.members(conversation: conversation)
+            let ratchetTree = try conversation.exportRatchetTree()
+            return LocalChatMlsDiagnostics(
+                memberCount: members.count,
+                ratchetTreeBytes: ratchetTree.count
+            )
         }
     }
 

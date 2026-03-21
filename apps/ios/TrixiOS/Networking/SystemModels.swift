@@ -46,6 +46,11 @@ enum HistorySyncJobStatus: String, Codable {
     case canceled
 }
 
+enum HistorySyncJobRole: String, Codable {
+    case source
+    case target
+}
+
 enum JSONValue: Codable, Equatable {
     case string(String)
     case number(Double)
@@ -306,6 +311,7 @@ struct RevokeDeviceResponse: Decodable {
 
 struct HistorySyncJobSummary: Decodable, Identifiable {
     let jobId: String
+    let role: HistorySyncJobRole
     let jobType: HistorySyncJobType
     let jobStatus: HistorySyncJobStatus
     let sourceDeviceId: String
@@ -328,6 +334,33 @@ struct CompleteHistorySyncJobRequest: Encodable {
 struct CompleteHistorySyncJobResponse: Decodable {
     let jobId: String
     let jobStatus: HistorySyncJobStatus
+}
+
+struct AppendHistorySyncChunkResponse: Decodable {
+    let jobId: String
+    let chunkId: UInt64
+    let jobStatus: HistorySyncJobStatus
+}
+
+struct HistorySyncChunkSummary: Decodable, Identifiable {
+    let chunkId: UInt64
+    let sequenceNo: UInt64
+    let payload: Data
+    let cursorJson: String?
+    let isFinal: Bool
+    let createdAtUnix: UInt64
+
+    var id: UInt64 { chunkId }
+
+    var payloadBase64: String {
+        payload.base64EncodedString()
+    }
+}
+
+struct LocalConversationDiagnostics {
+    let chatCursor: UInt64?
+    let memberCount: Int
+    let ratchetTreeBytes: Int
 }
 
 struct ChatSummary: Decodable, Identifiable {

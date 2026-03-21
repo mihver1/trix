@@ -82,6 +82,7 @@ struct ConsumerChatDetailView: View {
     @State private var activityMessage: String?
     @State private var downloadedAttachment: DownloadedAttachmentFile?
     @State private var downloadingAttachmentMessageId: String?
+    @State private var isTypingPublished = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -147,6 +148,12 @@ struct ConsumerChatDetailView: View {
         }
         .sheet(item: $downloadedAttachment) { downloadedAttachment in
             AttachmentActivitySheet(items: [downloadedAttachment.fileURL])
+        }
+        .onChange(of: composerText) { _, newValue in
+            publishTypingState(for: newValue)
+        }
+        .onDisappear {
+            publishTypingState(for: "", force: true)
         }
     }
 
@@ -390,6 +397,7 @@ struct ConsumerChatDetailView: View {
                 draft: draft
             ) != nil {
                 composerText = ""
+                publishTypingState(for: "", force: true)
                 activityMessage = "Message sent"
                 await loadSnapshot()
             } else {
@@ -414,6 +422,7 @@ struct ConsumerChatDetailView: View {
                 fileURL: selectedAttachment.fileURL
             ) {
                 composerText = ""
+                publishTypingState(for: "", force: true)
                 self.selectedAttachment = nil
                 activityMessage = "Sent \(outcome.fileName ?? "attachment")"
                 await loadSnapshot()
@@ -766,6 +775,18 @@ struct ConsumerChatDetailView: View {
         with next: ConsumerReceiptStatus
     ) -> ConsumerReceiptStatus {
         current.map { max($0, next) } ?? next
+    }
+
+    private func publishTypingState(for text: String, force: Bool = false) {
+        let shouldPublish = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard force || shouldPublish != isTypingPublished else {
+            return
+        }
+
+        isTypingPublished = shouldPublish
+        Task {
+            await model.sendTypingUpdate(chatId: chatSummary.chatId, isTyping: shouldPublish)
+        }
     }
 }
 

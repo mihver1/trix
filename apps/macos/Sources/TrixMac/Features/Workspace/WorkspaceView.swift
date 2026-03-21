@@ -152,9 +152,13 @@ struct WorkspaceView: View {
                 }
             }
             .onChange(of: model.selectedChatID, initial: false) { _, _ in
+                model.updateTypingState(for: nil, draftText: "")
                 composerDraft = ""
                 memberSearchQuery = ""
                 memberSearchResults = []
+            }
+            .onChange(of: composerDraft, initial: false) { _, newValue in
+                model.updateTypingState(for: model.selectedChatID, draftText: newValue)
             }
             .task(id: model.visibleLocalChatListItems.first?.chatId) {
                 guard model.selectedChatID == nil, let firstChat = model.visibleLocalChatListItems.first else {
@@ -833,6 +837,560 @@ struct WorkspaceView: View {
         }
     }
 
+    private var controlSummaryPanel: some View {
+        TrixPanel(
+            title: "Advanced",
+            subtitle: "Operational tooling stays here so the main conversation view can behave like a messenger."
+        ) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: availableSize.width < 1160 ? 180 : 220), spacing: 12)], alignment: .leading, spacing: 12) {
+                WorkspaceSummaryChip(
+                    iconName: "person.crop.circle.badge.checkmark",
+                    label: "\(model.devices.count) device record\(model.devices.count == 1 ? "" : "s")",
+                    tone: .surface
+                )
+                WorkspaceSummaryChip(
+                    iconName: "tray.and.arrow.down.fill",
+                    label: "\(model.inboxItems.count) inbox item\(model.inboxItems.count == 1 ? "" : "s") loaded",
+                    tone: .surface
+                )
+                WorkspaceSummaryChip(
+                    iconName: "arrow.triangle.2.circlepath",
+                    label: "\(model.syncStateSnapshot?.chatCursors.count ?? 0) persisted sync cursor\(model.syncStateSnapshot?.chatCursors.count == 1 ? "" : "s")",
+                    tone: .surface
+                )
+                WorkspaceSummaryChip(
+                    iconName: "clock.badge.checkmark",
+                    label: "\(model.historySyncJobs.count) history sync job\(model.historySyncJobs.count == 1 ? "" : "s")",
+                    tone: .surface
+                )
+            }
+        }
+    }
+
+    private var operationsColumn: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            TrixPanel(
+                title: "Device Linking",
+                subtitle: model.hasAccountRootKey
+                    ? "Create a link intent here, then approve the pending Mac directly from the device directory once it registers."
+                    : "This device can create link intents, but approval must happen on another root-capable trusted device."
+            ) {
+                VStack(alignment: .leading, spacing: 16) {
+                    Button {
+                        Task {
+                            await model.createLinkIntent()
+                        }
+                    } label: {
+                        Label(
+                            model.isCreatingLinkIntent ? "Creating Link Intent…" : "Create Link Intent",
+                            systemImage: "qrcode.viewfinder"
+                        )
+                    }
+                    .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                    .disabled(model.isCreatingLinkIntent)
+
+                    if let linkIntent = model.outgoingLinkIntent {
+                        TrixInputBlock(
+                            "Link Payload",
+                            hint: "Move this JSON to the Mac that should join the account."
+                        ) {
+                            TrixPayloadBox(payload: linkIntent.payload, minHeight: 160)
+                        }
+
+                        HStack(spacing: 12) {
+                            Button {
+                                copyStringToPasteboard(linkIntent.payload)
+                            } label: {
+                                Label("Copy Payload", systemImage: "doc.on.doc")
+                            }
+                            .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+
+                            Text("expires \(Self.linkExpiryFormatter.localizedString(for: linkIntent.expiresAt, relativeTo: .now))")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(colors.inkMuted)
+                        }
+                    }
+                }
+            }
+
+            TrixPanel(
+                title: "Key Packages",
+                subtitle: "Manual publish and reserve tooling until native MLS package generation lands in the Mac client."
+            ) {
+                VStack(alignment: .leading, spacing: 18) {
+                    if let signatureFingerprint = model.mlsSignaturePublicKeyFingerprint {
+                        InlineMeta(label: "MLS signer \(signatureFingerprint)")
+                    }
+
+                    OperationalSectionLabel("Publish For Current Device")
+
+                    TrixInputBlock(
+                        "Packages JSON",
+                        hint: "Paste a JSON array of `{ cipher_suite, key_package_b64 }` objects."
+                    ) {
+                        TextEditor(text: $model.keyPackagePublishDraft.packagesJSON)
+                            .scrollContentBackground(.hidden)
+                            .frame(minHeight: 138)
+                            .font(.system(.footnote, design: .monospaced))
+                            .trixInputChrome()
+                    }
+
+                    Button {
+                        Task {
+                            await model.publishKeyPackages()
+                        }
+                    } label: {
+                        Label(
+                            model.isPublishingKeyPackages ? "Publishing Packages…" : "Publish Packages",
+                            systemImage: "arrow.up.circle"
+                        )
+                    }
+                    .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                    .disabled(!model.canPublishKeyPackages)
+
+                    if !model.publishedKeyPackages.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(model.publishedKeyPackages) { package in
+                                PublishedKeyPackageRow(package: package)
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    OperationalSectionLabel("Reserve For Account")
+
+                    HStack(spacing: 10) {
+                        KeyPackageReserveModeButton(
+                            title: KeyPackageReserveMode.allActiveDevices.title,
+                            isSelected: model.keyPackageReserveDraft.mode == .allActiveDevices
+                        ) {
+                            model.keyPackageReserveDraft.mode = .allActiveDevices
+                        }
+
+                        KeyPackageReserveModeButton(
+                            title: KeyPackageReserveMode.selectedDevices.title,
+                            isSelected: model.keyPackageReserveDraft.mode == .selectedDevices
+                        ) {
+                            model.keyPackageReserveDraft.mode = .selectedDevices
+                        }
+                    }
+
+                    TrixInputBlock(
+                        "Account ID",
+                        hint: "Target account whose active devices should contribute reserved key packages."
+                    ) {
+                        TextField("account uuid", text: $model.keyPackageReserveDraft.accountID)
+                            .textFieldStyle(.plain)
+                            .font(.system(.body, design: .monospaced))
+                            .trixInputChrome()
+                    }
+
+                    if model.keyPackageReserveDraft.mode == .selectedDevices {
+                        TrixInputBlock(
+                            "Device IDs",
+                            hint: "One UUID per line, or comma-separated."
+                        ) {
+                            TextEditor(text: $model.keyPackageReserveDraft.selectedDeviceIDs)
+                                .scrollContentBackground(.hidden)
+                                .frame(minHeight: 110)
+                                .font(.system(.footnote, design: .monospaced))
+                                .trixInputChrome()
+                        }
+
+                        Button {
+                            model.useVisibleActiveDeviceIDsForReserve()
+                        } label: {
+                            Label("Use Visible Active Devices", systemImage: "list.bullet.rectangle")
+                        }
+                        .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                    }
+
+                    Button {
+                        Task {
+                            await model.reserveKeyPackages()
+                        }
+                    } label: {
+                        Label(
+                            model.isReservingKeyPackages ? "Reserving Packages…" : "Reserve Packages",
+                            systemImage: "arrow.down.circle"
+                        )
+                    }
+                    .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                    .disabled(!model.canReserveKeyPackages)
+
+                    if !model.reservedKeyPackages.isEmpty {
+                        if let accountID = model.reservedKeyPackagesAccountID {
+                            Text("reserved for \(shortID(accountID))")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(colors.inkMuted)
+                        }
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(model.reservedKeyPackages) { package in
+                                ReservedKeyPackageRow(package: package)
+                            }
+                        }
+                    }
+                }
+            }
+
+            TrixPanel(
+                title: "Inbox Polling",
+                subtitle: "Incremental inbox inspection with local cache ingest and persisted sync cursors for this device."
+            ) {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 12) {
+                        if let lease = model.activeInboxLease {
+                            TrixToneBadge(
+                                label: lease.isExpired ? "Lease expired" : "Lease active",
+                                tint: lease.isExpired ? colors.warning : colors.success
+                            )
+
+                            Text("\(lease.owner) until \(Self.linkExpiryFormatter.localizedString(for: lease.expiresAt, relativeTo: .now))")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(colors.inkMuted)
+                        } else {
+                            TrixToneBadge(label: "No active lease", tint: colors.inkMuted)
+                        }
+                    }
+
+                    if let lastInboxCursor = model.lastInboxCursor {
+                        Text("Last seen inbox id \(lastInboxCursor)")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(colors.inkMuted)
+                    }
+
+                    TrixInputBlock(
+                        "After Inbox ID",
+                        hint: "Leave empty for the earliest visible pending items. Successful poll and lease actions advance this cursor automatically."
+                    ) {
+                        TextField("0", text: $model.inboxLeaseDraft.afterInboxID)
+                            .textFieldStyle(.plain)
+                            .font(.system(.body, design: .monospaced))
+                            .trixInputChrome()
+                    }
+
+                    if prefersSingleColumn {
+                        VStack(alignment: .leading, spacing: 16) {
+                            inboxLimitField
+                            inboxLeaseTTLField
+                            inboxLeaseOwnerField
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 16) {
+                            HStack(alignment: .top, spacing: 16) {
+                                inboxLimitField
+                                inboxLeaseTTLField
+                            }
+                            inboxLeaseOwnerField
+                        }
+                    }
+
+                    if prefersSingleColumn {
+                        VStack(spacing: 12) {
+                            inboxPrimaryActions
+                            inboxSecondaryActions
+                        }
+                    } else {
+                        inboxPrimaryActions
+                        inboxSecondaryActions
+                    }
+
+                    if !model.lastAckedInboxIDs.isEmpty {
+                        Text("last acked \(model.lastAckedInboxIDs.count) item(s) through inbox \(model.lastAckedInboxIDs.max() ?? 0)")
+                            .font(.footnote)
+                            .foregroundStyle(colors.inkMuted)
+                    }
+
+                    if model.inboxItems.isEmpty {
+                        EmptyWorkspaceLabel("No inbox items are loaded into this shell yet.")
+                    } else {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(model.inboxItems) { item in
+                                InboxItemRow(item: item)
+                            }
+                        }
+                    }
+                }
+            }
+
+            TrixPanel(
+                title: "History Sync Jobs",
+                subtitle: "Server-side jobs targeted from this device. Useful after device approval, revoke and future chat backfills."
+            ) {
+                VStack(alignment: .leading, spacing: 16) {
+                    Button {
+                        Task {
+                            await model.refreshHistorySyncJobs()
+                        }
+                    } label: {
+                        Label(
+                            model.isRefreshingHistorySyncJobs ? "Refreshing Jobs…" : "Refresh Jobs",
+                            systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90"
+                        )
+                    }
+                    .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                    .disabled(model.isRefreshingHistorySyncJobs)
+
+                    if model.historySyncJobs.isEmpty {
+                        EmptyWorkspaceLabel("No history sync jobs are visible for this device yet.")
+                    } else {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(model.historySyncJobs) { job in
+                                HistorySyncJobRow(
+                                    job: job,
+                                    cursorText: cursorBinding(for: job.jobId),
+                                    chunkDraft: historySyncChunkDraftBinding(for: job.jobId),
+                                    chunks: model.historySyncChunksByJobID[job.jobId] ?? [],
+                                    isCompleting: model.completingHistorySyncJobIDs.contains(job.jobId),
+                                    isLoadingChunks: model.loadingHistorySyncChunkJobIDs.contains(job.jobId),
+                                    isAppendingChunk: model.appendingHistorySyncChunkJobIDs.contains(job.jobId),
+                                    loadChunks: {
+                                        Task {
+                                            await model.refreshHistorySyncChunks(for: job.jobId)
+                                        }
+                                    },
+                                    complete: {
+                                        Task {
+                                            await model.completeHistorySyncJob(job.jobId)
+                                        }
+                                    },
+                                    appendChunk: {
+                                        Task {
+                                            await model.appendHistorySyncChunk(job.jobId)
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            TrixPanel(
+                title: "Devices",
+                subtitle: "Current account device directory."
+            ) {
+                if model.devices.isEmpty {
+                    EmptyWorkspaceLabel("No devices returned by the server.")
+                } else {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(model.devices) { device in
+                            DeviceRow(
+                                device: device,
+                                isCurrentDevice: device.deviceId == model.currentDeviceID,
+                                canApprove: model.hasAccountRootKey &&
+                                    device.deviceStatus == .pending &&
+                                    device.deviceId != model.currentDeviceID,
+                                isApproving: model.approvingDeviceIDs.contains(device.deviceId),
+                                canRevoke: model.hasAccountRootKey && device.deviceId != model.currentDeviceID,
+                                isRevoking: model.revokingDeviceIDs.contains(device.deviceId),
+                                approve: {
+                                    Task {
+                                        await model.approvePendingDevice(device)
+                                    }
+                                },
+                                revoke: {
+                                    Task {
+                                        await model.revokeDevice(device)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            TrixPanel(
+                title: "Chats",
+                subtitle: "Secondary chat picker for the control inspector."
+            ) {
+                if model.chats.isEmpty {
+                    EmptyWorkspaceLabel("No chats are visible yet. Create another account or use the API to open the first DM or group.")
+                } else {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(model.chats) { chat in
+                            ChatRow(
+                                chat: chat,
+                                currentAccountID: presentationAccountID,
+                                isSelected: chat.chatId == model.selectedChatID,
+                                isLoading: chat.chatId == model.selectedChatID && model.isLoadingSelectedChat
+                            ) {
+                                Task {
+                                    await model.selectChat(chat.chatId)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var controlInspectorColumn: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            if let summary = model.selectedChatSummary {
+                TrixPanel(
+                    title: "Selected Chat Diagnostics",
+                    subtitle: "\(summary.displayTitle(for: presentationAccountID)) • \(summary.subtitle(for: presentationAccountID))"
+                ) {
+                    VStack(alignment: .leading, spacing: 18) {
+                        HStack(spacing: 12) {
+                            TrixToneBadge(label: summary.chatType.label, tint: colors.accent)
+                            if model.isLoadingSelectedChat {
+                                TrixToneBadge(label: "Refreshing detail", tint: colors.rust)
+                            }
+                        }
+
+                        if let detail = model.selectedChatDetail {
+                            HStack(spacing: 16) {
+                                TrixMetricTile(label: "Epoch", value: "\(detail.epoch)")
+                                TrixMetricTile(label: "Server seq", value: "\(detail.lastServerSeq)")
+                                TrixMetricTile(
+                                    label: "Members",
+                                    value: "\(detail.members.count)",
+                                    footnote: detail.lastCommitMessageId.map { "commit \(shortID($0))" }
+                                )
+                                TrixMetricTile(
+                                    label: "Projected",
+                                    value: model.selectedChatProjectedCursor.map(String.init) ?? "none",
+                                    footnote: model.hasProjectedTimelineData
+                                        ? "\(model.selectedChatProjectedMessages.count) projected item(s)"
+                                        : "MLS restore path still missing"
+                                )
+                            }
+
+                            HStack(spacing: 16) {
+                                TrixMetricTile(
+                                    label: "Read cursor",
+                                    value: model.selectedChatReadCursor.map(String.init) ?? "none"
+                                )
+                                TrixMetricTile(
+                                    label: "Unread",
+                                    value: model.selectedChatUnreadCount.map(String.init) ?? "none"
+                                )
+                                TrixMetricTile(
+                                    label: "Sync cursor",
+                                    value: model.selectedChatSyncCursor.map(String.init) ?? "none"
+                                )
+                                TrixMetricTile(
+                                    label: "MLS leaves",
+                                    value: model.selectedChatMlsDiagnostics.map { "\($0.memberCount)" } ?? "n/a",
+                                    footnote: model.selectedChatMlsDiagnostics.map {
+                                        "\($0.ratchetTreeBytes) ratchet-tree bytes"
+                                    }
+                                )
+                            }
+
+                            if model.selectedChatProjectedCursor != nil || detail.lastServerSeq > 0 {
+                                Button {
+                                    Task {
+                                        await model.setSelectedChatReadCursor(
+                                            model.selectedChatProjectedCursor ?? detail.lastServerSeq
+                                        )
+                                    }
+                                } label: {
+                                    Label("Set Local Read Cursor", systemImage: "checkmark.circle")
+                                }
+                                .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                            }
+
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Members")
+                                    .font(.headline)
+                                    .foregroundStyle(colors.ink)
+
+                                ForEach(detail.members) { member in
+                                    HStack(alignment: .top) {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(memberDisplayName(detail: detail, accountId: member.accountId))
+                                                .font(.subheadline.weight(.semibold))
+                                                .foregroundStyle(colors.ink)
+                                            Text(memberSecondaryLine(detail: detail, accountId: member.accountId) ?? member.role)
+                                                .font(.footnote.weight(.semibold))
+                                                .foregroundStyle(colors.inkMuted)
+                                        }
+                                        Spacer()
+                                        Text(member.membershipStatus)
+                                            .font(.caption.weight(.bold))
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 6)
+                                            .background(colors.tileFill, in: Capsule())
+                                            .foregroundStyle(colors.inkMuted)
+                                    }
+                                    .padding(.bottom, 2)
+                                }
+                            }
+                        } else {
+                            HStack(spacing: 12) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("Loading chat detail…")
+                                    .foregroundStyle(colors.inkMuted)
+                            }
+                        }
+                    }
+                }
+
+                TrixPanel(
+                    title: "Projected Timeline",
+                    subtitle: "Typed local timeline projection is wired in, but application payloads still depend on restored MLS conversation state."
+                ) {
+                    if model.isLoadingSelectedChat && model.selectedChatProjectedMessages.isEmpty {
+                        HStack(spacing: 12) {
+                            ProgressView()
+                            Text("Checking projected timeline…")
+                                .foregroundStyle(colors.inkMuted)
+                        }
+                    } else if model.selectedChatProjectedMessages.isEmpty {
+                        EmptyWorkspaceLabel(
+                            model.selectedChatHistory.isEmpty
+                                ? "No projected items are stored for this chat yet."
+                                : "Projected timeline is empty. The local store has encrypted history, but macOS still cannot restore the MLS conversation for this chat."
+                        )
+                    } else {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(model.selectedChatProjectedMessages) { message in
+                                ProjectedMessageRow(message: message)
+                            }
+                        }
+                    }
+                }
+
+                TrixPanel(
+                    title: "Encrypted History",
+                    subtitle: "Raw encrypted metadata persisted through the local history store. This remains the fallback until MLS restore lands."
+                ) {
+                    if model.isLoadingSelectedChat && model.selectedChatHistory.isEmpty {
+                        HStack(spacing: 12) {
+                            ProgressView()
+                            Text("Loading history…")
+                                .foregroundStyle(colors.inkMuted)
+                        }
+                    } else if presentedHistoryMessages.isEmpty {
+                        EmptyWorkspaceLabel("This chat has no server-stored messages yet.")
+                    } else {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(presentedHistoryMessages) { message in
+                                MessageHistoryRow(
+                                    message: message.message,
+                                    isOutgoing: message.isOutgoing
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                TrixPanel(
+                    title: "No Chat Selected",
+                    subtitle: "Select a chat if you want the control inspector to show membership and timeline diagnostics."
+                ) {
+                    EmptyWorkspaceLabel("Select a chat from Messages or from the secondary picker in Control to inspect server and local state.")
+                }
+            }
+        }
+    }
     private func conversationMetadata(_ detail: ChatDetailResponse) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: availableSize.width < 1160 ? 180 : 220), spacing: 12)], alignment: .leading, spacing: 12) {
@@ -1098,6 +1656,116 @@ struct WorkspaceView: View {
         return segments.isEmpty ? profile?.detailLine : segments.joined(separator: " • ")
     }
 
+    private func cursorBinding(for jobID: UUID) -> Binding<String> {
+        Binding(
+            get: { model.historySyncCursorDrafts[jobID] ?? "" },
+            set: { model.historySyncCursorDrafts[jobID] = $0 }
+        )
+    }
+
+    private func historySyncChunkDraftBinding(for jobID: UUID) -> Binding<HistorySyncChunkDraft> {
+        Binding(
+            get: { model.historySyncChunkDrafts[jobID] ?? HistorySyncChunkDraft() },
+            set: { model.historySyncChunkDrafts[jobID] = $0 }
+        )
+    }
+
+    private var inboxPrimaryActions: some View {
+        HStack(spacing: 12) {
+            Button {
+                Task {
+                    await model.refreshInbox()
+                }
+            } label: {
+                Label(
+                    model.isRefreshingInbox ? "Polling Inbox…" : "Poll Inbox",
+                    systemImage: "tray.and.arrow.down"
+                )
+            }
+            .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+            .disabled(model.isRefreshingInbox || model.isLeasingInbox || model.isAckingInbox)
+
+            Button {
+                Task {
+                    await model.leaseInbox()
+                }
+            } label: {
+                Label(
+                    model.isLeasingInbox ? "Leasing Inbox…" : "Lease Inbox",
+                    systemImage: "lock.open.display"
+                )
+            }
+            .buttonStyle(TrixActionButtonStyle(tone: .primary))
+            .disabled(model.isRefreshingInbox || model.isLeasingInbox || model.isAckingInbox)
+        }
+    }
+
+    private var inboxSecondaryActions: some View {
+        HStack(spacing: 12) {
+            Button {
+                Task {
+                    await model.ackLoadedInboxItems()
+                }
+            } label: {
+                Label(
+                    model.isAckingInbox ? "Acking Loaded…" : "Ack Loaded",
+                    systemImage: "checkmark.circle"
+                )
+            }
+            .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+            .disabled(!model.canAckLoadedInboxItems || model.isRefreshingInbox || model.isLeasingInbox)
+
+            Button {
+                model.useLastInboxCursor()
+            } label: {
+                Label("Use Last Cursor", systemImage: "arrow.turn.down.right")
+            }
+            .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+            .disabled(model.lastInboxCursor == nil)
+
+            Button {
+                model.resetInboxCursor()
+            } label: {
+                Label("Reset Cursor", systemImage: "arrow.uturn.backward")
+            }
+            .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+
+            Button {
+                model.clearLoadedInboxItems()
+            } label: {
+                Label("Clear Loaded", systemImage: "trash")
+            }
+            .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+            .disabled(model.inboxItems.isEmpty)
+        }
+    }
+
+    private var inboxLimitField: some View {
+        TrixInputBlock("Limit", hint: "1...500 items per poll.") {
+            TextField("50", text: $model.inboxLeaseDraft.limit)
+                .textFieldStyle(.plain)
+                .font(.system(.body, design: .monospaced))
+                .trixInputChrome()
+        }
+    }
+
+    private var inboxLeaseTTLField: some View {
+        TrixInputBlock("Lease TTL", hint: "1...300 seconds for `/v0/inbox/lease`.") {
+            TextField("30", text: $model.inboxLeaseDraft.leaseTTLSeconds)
+                .textFieldStyle(.plain)
+                .font(.system(.body, design: .monospaced))
+                .trixInputChrome()
+        }
+    }
+
+    private var inboxLeaseOwnerField: some View {
+        TrixInputBlock("Lease Owner", hint: "Optional diagnostic owner label. Leave blank to let the server generate one.") {
+            TextField("macos-alpha:device", text: $model.inboxLeaseDraft.leaseOwner)
+                .textFieldStyle(.plain)
+                .font(.system(.body, design: .monospaced))
+                .trixInputChrome()
+        }
+    }
     private static let linkExpiryFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
@@ -1762,8 +2430,14 @@ private struct HistorySyncJobRow: View {
     @Environment(\.trixColors) private var colors
     let job: HistorySyncJobSummary
     @Binding var cursorText: String
+    @Binding var chunkDraft: HistorySyncChunkDraft
+    let chunks: [HistorySyncChunkSummary]
     let isCompleting: Bool
+    let isLoadingChunks: Bool
+    let isAppendingChunk: Bool
+    let loadChunks: () -> Void
     let complete: () -> Void
+    let appendChunk: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1772,12 +2446,15 @@ private struct HistorySyncJobRow: View {
                     Text(job.jobType.label)
                         .font(.headline)
                         .foregroundStyle(colors.ink)
-                    Text("job \(shortID(job.jobId)) • target \(shortID(job.targetDeviceId))")
+                    Text(jobSubtitle)
                         .font(.subheadline)
                         .foregroundStyle(colors.inkMuted)
                 }
                 Spacer()
-                TrixToneBadge(label: job.jobStatus.label, tint: statusTint)
+                VStack(alignment: .trailing, spacing: 8) {
+                    TrixToneBadge(label: job.role.label, tint: roleTint)
+                    TrixToneBadge(label: job.jobStatus.label, tint: statusTint)
+                }
             }
 
             HStack(spacing: 10) {
@@ -1793,7 +2470,81 @@ private struct HistorySyncJobRow: View {
                 }
             }
 
-            if job.isCompletable {
+            if job.role == .target {
+                Button(action: loadChunks) {
+                    Label(
+                        isLoadingChunks ? "Loading Chunks…" : "Load Chunks",
+                        systemImage: "square.stack.3d.down.right"
+                    )
+                }
+                .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                .disabled(isLoadingChunks)
+
+                if !chunks.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(chunks) { chunk in
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 10) {
+                                    InlineMeta(label: "chunk \(chunk.chunkId)")
+                                    InlineMeta(label: "seq \(chunk.sequenceNo)")
+                                    if chunk.isFinal {
+                                        InlineMeta(label: "final")
+                                    }
+                                }
+                                Text(chunk.payloadB64)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(colors.inkMuted)
+                                    .textSelection(.enabled)
+                                if let cursorJson = chunk.cursorJson {
+                                    TrixPayloadBox(payload: prettyCursor(cursorJson), minHeight: 72)
+                                }
+                            }
+                            .padding(12)
+                            .background(colors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        }
+                    }
+                }
+            }
+
+            if job.role == .source {
+                TrixInputBlock(
+                    "Append Chunk",
+                    hint: "Paste the opaque chunk payload as base64 and choose the monotonic source sequence number."
+                ) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        TextField("Sequence No", text: $chunkDraft.sequenceNo)
+                            .textFieldStyle(.plain)
+                            .font(.system(.body, design: .monospaced))
+                            .trixInputChrome()
+
+                        TextEditor(text: $chunkDraft.payloadB64)
+                            .scrollContentBackground(.hidden)
+                            .frame(minHeight: 96)
+                            .font(.system(.footnote, design: .monospaced))
+                            .trixInputChrome()
+
+                        TextEditor(text: $chunkDraft.cursorJSON)
+                            .scrollContentBackground(.hidden)
+                            .frame(minHeight: 92)
+                            .font(.system(.footnote, design: .monospaced))
+                            .trixInputChrome()
+
+                        Toggle("Mark Final Chunk", isOn: $chunkDraft.isFinal)
+                            .toggleStyle(.switch)
+                    }
+                }
+
+                Button(action: appendChunk) {
+                    Label(
+                        isAppendingChunk ? "Appending Chunk…" : "Append Chunk",
+                        systemImage: "arrow.up.to.line"
+                    )
+                }
+                .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                .disabled(isAppendingChunk)
+            }
+
+            if job.role == .source && job.isCompletable {
                 TrixInputBlock(
                     "Complete Cursor JSON",
                     hint: "Optional JSON persisted while marking the job completed. Leave empty to send `null`."
@@ -1833,6 +2584,24 @@ private struct HistorySyncJobRow: View {
             return colors.success
         case .failed, .canceled:
             return colors.rust
+        }
+    }
+
+    private var roleTint: Color {
+        switch job.role {
+        case .source:
+            return colors.accent
+        case .target:
+            return colors.success
+        }
+    }
+
+    private var jobSubtitle: String {
+        switch job.role {
+        case .source:
+            return "job \(shortID(job.jobId)) • target \(shortID(job.targetDeviceId))"
+        case .target:
+            return "job \(shortID(job.jobId)) • source \(shortID(job.sourceDeviceId))"
         }
     }
 

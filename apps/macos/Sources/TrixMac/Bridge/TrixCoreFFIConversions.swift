@@ -229,6 +229,17 @@ extension HistorySyncJobStatus {
     }
 }
 
+extension HistorySyncJobRole {
+    var ffiValue: FfiHistorySyncJobRole {
+        switch self {
+        case .source:
+            return .source
+        case .target:
+            return .target
+        }
+    }
+}
+
 extension CreateAccountRequest {
     func ffiParams() throws -> FfiCreateAccountParams {
         FfiCreateAccountParams(
@@ -765,9 +776,10 @@ extension AckInboxResponse {
 }
 
 extension HistorySyncJobSummary {
-    init(ffiValue: FfiHistorySyncJob) throws {
+    init(ffiValue: FfiHistorySyncJob, role: HistorySyncJobRole) throws {
         self.init(
             jobId: try TrixCoreCodec.uuid(ffiValue.jobId, label: "job_id"),
+            role: role,
             jobType: HistorySyncJobType(ffiValue.jobType),
             jobStatus: HistorySyncJobStatus(ffiValue.jobStatus),
             sourceDeviceId: try TrixCoreCodec.uuid(ffiValue.sourceDeviceId, label: "source_device_id"),
@@ -781,8 +793,8 @@ extension HistorySyncJobSummary {
 }
 
 extension HistorySyncJobListResponse {
-    init(ffiValues: [FfiHistorySyncJob]) throws {
-        self.init(jobs: try ffiValues.map { try HistorySyncJobSummary(ffiValue: $0) })
+    init(ffiValues: [FfiHistorySyncJob], role: HistorySyncJobRole) throws {
+        self.init(jobs: try ffiValues.map { try HistorySyncJobSummary(ffiValue: $0, role: role) })
     }
 }
 
@@ -926,6 +938,29 @@ extension CompleteHistorySyncJobResponse {
         self.init(
             jobId: try TrixCoreCodec.uuid(ffiValue.jobId, label: "job_id"),
             jobStatus: HistorySyncJobStatus(ffiValue.jobStatus)
+        )
+    }
+}
+
+extension AppendHistorySyncChunkResponse {
+    init(ffiValue: FfiAppendHistorySyncChunkResponse) throws {
+        self.init(
+            jobId: try TrixCoreCodec.uuid(ffiValue.jobId, label: "job_id"),
+            chunkId: ffiValue.chunkId,
+            jobStatus: HistorySyncJobStatus(ffiValue.jobStatus)
+        )
+    }
+}
+
+extension HistorySyncChunkSummary {
+    init(ffiValue: FfiHistorySyncChunk) {
+        self.init(
+            chunkId: ffiValue.chunkId,
+            sequenceNo: ffiValue.sequenceNo,
+            payloadB64: ffiValue.payload.base64EncodedString(),
+            cursorJson: try? TrixCoreCodec.decodeOptionalJSONValue(ffiValue.cursorJson ?? "null", label: "cursor_json"),
+            isFinal: ffiValue.isFinal,
+            uploadedAtUnix: ffiValue.uploadedAtUnix
         )
     }
 }

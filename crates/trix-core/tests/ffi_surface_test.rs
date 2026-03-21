@@ -47,25 +47,27 @@ fn device_key_material_generate_and_roundtrip() {
 }
 
 #[test]
-fn account_root_sign_and_verify() {
+fn account_root_signatures_verify_with_core_key() {
     let root = FfiAccountRootMaterial::generate();
     let payload = b"test-payload".to_vec();
     let signature = root.sign(payload.clone());
     assert!(!signature.is_empty());
-    root.verify(payload.clone(), signature.clone()).unwrap();
+    let verifier = AccountRootMaterial::from_bytes(root.private_key_bytes().try_into().unwrap());
+    verifier.verify(&payload, &signature).unwrap();
 
     let tampered = b"tampered".to_vec();
-    root.verify(tampered, signature).unwrap_err();
+    verifier.verify(&tampered, &signature).unwrap_err();
 }
 
 #[test]
-fn device_key_sign_and_verify() {
+fn device_key_signatures_verify_with_core_key() {
     let keys = FfiDeviceKeyMaterial::generate();
     let payload = b"device-payload".to_vec();
     let signature = keys.sign(payload.clone());
-    keys.verify(payload.clone(), signature.clone()).unwrap();
+    let verifier = DeviceKeyMaterial::from_bytes(keys.private_key_bytes().try_into().unwrap());
+    verifier.verify(&payload, &signature).unwrap();
 
-    keys.verify(b"wrong".to_vec(), signature).unwrap_err();
+    verifier.verify(b"wrong", &signature).unwrap_err();
 }
 
 #[test]
@@ -73,7 +75,8 @@ fn sign_auth_challenge_produces_valid_signature() {
     let keys = FfiDeviceKeyMaterial::generate();
     let challenge = b"auth-challenge-bytes".to_vec();
     let sig = keys.sign_auth_challenge(challenge.clone());
-    keys.verify(challenge, sig).unwrap();
+    let verifier = DeviceKeyMaterial::from_bytes(keys.private_key_bytes().try_into().unwrap());
+    verifier.verify(&challenge, &sig).unwrap();
 }
 
 // ─── 2. Account bootstrap & device revoke helpers ───
@@ -83,11 +86,12 @@ fn account_bootstrap_payload_and_sign() {
     let root = FfiAccountRootMaterial::generate();
     let transport = vec![1, 2, 3];
     let credential = vec![4, 5, 6];
+    let verifier = AccountRootMaterial::from_bytes(root.private_key_bytes().try_into().unwrap());
     let payload = root.account_bootstrap_payload(transport.clone(), credential.clone());
     assert!(payload.starts_with(b"trix-account-bootstrap:v1"));
 
     let signature = root.sign_account_bootstrap(transport.clone(), credential.clone());
-    root.verify(payload.clone(), signature).unwrap();
+    verifier.verify(&payload, &signature).unwrap();
 
     let standalone = account_bootstrap_message(&transport, &credential);
     assert_eq!(standalone, payload);
@@ -98,6 +102,7 @@ fn device_revoke_payload_and_sign() {
     let root = FfiAccountRootMaterial::generate();
     let device_id = Uuid::new_v4().to_string();
     let reason = "test revocation".to_string();
+    let verifier = AccountRootMaterial::from_bytes(root.private_key_bytes().try_into().unwrap());
 
     let payload = root
         .device_revoke_payload(device_id.clone(), reason.clone())
@@ -107,26 +112,13 @@ fn device_revoke_payload_and_sign() {
     let signature = root
         .sign_device_revoke(device_id.clone(), reason.clone())
         .unwrap();
-    root.verify(payload.clone(), signature).unwrap();
+    verifier.verify(&payload, &signature).unwrap();
 
-    let standalone = device_revoke_message(
-        uuid::Uuid::parse_str(&device_id).unwrap(),
-        &reason,
-    );
+    let standalone = device_revoke_message(uuid::Uuid::parse_str(&device_id).unwrap(), &reason);
     assert_eq!(standalone, payload);
 }
 
-// ─── 3. Transfer bundle ───
-
-#[test]
-fn account_root_transfer_bundle_round_trip() {
-    let root = FfiAccountRootMaterial::generate();
-    let bundle = root.transfer_bundle();
-    assert_eq!(bundle, root.private_key_bytes());
-
-    let restored = FfiAccountRootMaterial::from_transfer_bundle(bundle).unwrap();
-    assert_eq!(restored.public_key_bytes(), root.public_key_bytes());
-}
+// ─── 3. Device transfer bundle ───
 
 #[test]
 fn device_transfer_bundle_encrypt_decrypt_round_trip() {
@@ -268,7 +260,9 @@ fn attachment_prepare_and_decrypt_round_trip() {
     assert_eq!(prepared.plaintext_size_bytes, payload.len() as u64);
     assert!(prepared.encrypted_size_bytes >= prepared.plaintext_size_bytes);
 
-    let body = prepared.clone().into_message_body("blob-test-123".to_owned());
+    let body = prepared
+        .clone()
+        .into_message_body("blob-test-123".to_owned());
     assert_eq!(body.blob_id, "blob-test-123");
     assert_eq!(body.mime_type, "image/png");
 
@@ -276,26 +270,34 @@ fn attachment_prepare_and_decrypt_round_trip() {
     assert_eq!(decrypted, payload);
 }
 
-// ─── 6. MLS facade (in-memory) ───
+// ─── 6. MLS facade (persistent) ───
 
 #[test]
-fn mls_facade_in_memory_create_and_inspect() {
+fn mls_facade_persistent_create_and_inspect() {
+    let root = temp_dir("mls-create");
     let credential = b"test-credential".to_vec();
-    let facade = FfiMlsFacade::new(credential.clone()).unwrap();
+    let facade =
+        FfiMlsFacade::new_persistent(credential.clone(), root.display().to_string()).unwrap();
 
     assert_eq!(facade.credential_identity().unwrap(), credential);
     assert!(!facade.ciphersuite_label().unwrap().is_empty());
     assert!(!facade.signature_public_key().unwrap().is_empty());
+
+    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
 fn mls_facade_persistent_create_reload() {
     let root = temp_dir("mls-persist");
     let credential = b"persist-credential".to_vec();
-    let facade = FfiMlsFacade::new_persistent(credential.clone(), root.display().to_string()).unwrap();
+    let facade =
+        FfiMlsFacade::new_persistent(credential.clone(), root.display().to_string()).unwrap();
     facade.save_state().unwrap();
 
-    assert_eq!(facade.storage_root().unwrap(), Some(root.display().to_string()));
+    assert_eq!(
+        facade.storage_root().unwrap(),
+        Some(root.display().to_string())
+    );
 
     let reloaded = FfiMlsFacade::load_persistent(root.display().to_string()).unwrap();
     assert_eq!(reloaded.credential_identity().unwrap(), credential);
@@ -305,15 +307,23 @@ fn mls_facade_persistent_create_reload() {
 
 #[test]
 fn mls_facade_generate_key_packages() {
-    let facade = FfiMlsFacade::new(b"kp-credential".to_vec()).unwrap();
+    let root = temp_dir("mls-key-packages");
+    let facade =
+        FfiMlsFacade::new_persistent(b"kp-credential".to_vec(), root.display().to_string())
+            .unwrap();
     let packages = facade.generate_key_packages(3).unwrap();
     assert_eq!(packages.len(), 3);
     assert!(packages.iter().all(|kp| !kp.is_empty()));
+
+    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
 fn mls_facade_generate_publish_key_packages_sets_ciphersuite() {
-    let facade = FfiMlsFacade::new(b"pub-kp-credential".to_vec()).unwrap();
+    let root = temp_dir("mls-publish-packages");
+    let facade =
+        FfiMlsFacade::new_persistent(b"pub-kp-credential".to_vec(), root.display().to_string())
+            .unwrap();
     let publish_packages = facade.generate_publish_key_packages(2).unwrap();
     assert_eq!(publish_packages.len(), 2);
     let ciphersuite = facade.ciphersuite_label().unwrap();
@@ -321,11 +331,16 @@ fn mls_facade_generate_publish_key_packages_sets_ciphersuite() {
         assert_eq!(pkg.cipher_suite, ciphersuite);
         assert!(!pkg.key_package.is_empty());
     }
+
+    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
 fn mls_facade_create_group_and_inspect() {
-    let facade = FfiMlsFacade::new(b"group-credential".to_vec()).unwrap();
+    let root = temp_dir("mls-group");
+    let facade =
+        FfiMlsFacade::new_persistent(b"group-credential".to_vec(), root.display().to_string())
+            .unwrap();
     let group_id = Uuid::new_v4().as_bytes().to_vec();
     let conversation = facade.create_group(group_id.clone()).unwrap();
 
@@ -338,18 +353,26 @@ fn mls_facade_create_group_and_inspect() {
     let members = facade.members(conversation).unwrap();
     assert_eq!(members.len(), 1);
     assert_eq!(members[0].credential_identity, b"group-credential");
+
+    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
 fn mls_facade_add_member_and_welcome_round_trip() {
-    let facade_a = FfiMlsFacade::new(b"alice-mls".to_vec()).unwrap();
-    let facade_b = FfiMlsFacade::new(b"bob-mls".to_vec()).unwrap();
+    let root_a = temp_dir("mls-alice");
+    let root_b = temp_dir("mls-bob");
+    let facade_a =
+        FfiMlsFacade::new_persistent(b"alice-mls".to_vec(), root_a.display().to_string()).unwrap();
+    let facade_b =
+        FfiMlsFacade::new_persistent(b"bob-mls".to_vec(), root_b.display().to_string()).unwrap();
 
     let group_id = Uuid::new_v4().as_bytes().to_vec();
     let conversation_a = facade_a.create_group(group_id.clone()).unwrap();
 
     let bob_kp = facade_b.generate_key_package().unwrap();
-    let commit_bundle = facade_a.add_members(conversation_a.clone(), vec![bob_kp]).unwrap();
+    let commit_bundle = facade_a
+        .add_members(conversation_a.clone(), vec![bob_kp])
+        .unwrap();
     assert!(!commit_bundle.commit_message.is_empty());
     assert!(commit_bundle.welcome_message.is_some());
     assert_eq!(commit_bundle.epoch, 1);
@@ -373,16 +396,26 @@ fn mls_facade_add_member_and_welcome_round_trip() {
         .collect();
     assert!(identities.contains(&b"alice-mls".as_slice()));
     assert!(identities.contains(&b"bob-mls".as_slice()));
+
+    fs::remove_dir_all(&root_a).ok();
+    fs::remove_dir_all(&root_b).ok();
 }
 
-// ─── 7. Local History Store (in-memory) ───
+// ─── 7. Local History Store (persistent) ───
 
 #[test]
-fn local_history_store_in_memory_basic_ops() {
-    let store = FfiLocalHistoryStore::new();
+fn local_history_store_persistent_basic_ops() {
+    let root = temp_dir("history-store-basic");
+    let db_path = root.join("history.sqlite");
+    let store = FfiLocalHistoryStore::new_persistent(db_path.display().to_string()).unwrap();
     let chats = store.list_chats().unwrap();
     assert!(chats.is_empty());
-    assert!(store.database_path().unwrap().is_none());
+    assert_eq!(
+        store.database_path().unwrap(),
+        Some(db_path.display().to_string())
+    );
+
+    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
@@ -405,7 +438,9 @@ fn local_history_store_persistent_crud() {
 
 #[test]
 fn local_history_store_outbox_lifecycle() {
-    let store = FfiLocalHistoryStore::new();
+    let root = temp_dir("history-store-outbox");
+    let db_path = root.join("history.sqlite");
+    let store = FfiLocalHistoryStore::new_persistent(db_path.display().to_string()).unwrap();
     let chat_id = Uuid::new_v4().to_string();
     let account_id = Uuid::new_v4().to_string();
     let device_id = Uuid::new_v4().to_string();
@@ -459,18 +494,23 @@ fn local_history_store_outbox_lifecycle() {
 
     let items = store.list_outbox_messages(None).unwrap();
     assert!(items.is_empty());
+
+    fs::remove_dir_all(&root).ok();
 }
 
 // ─── 8. Sync Coordinator ───
 
 #[test]
-fn sync_coordinator_in_memory_state() {
-    let coordinator = FfiSyncCoordinator::new().unwrap();
+fn sync_coordinator_persistent_state_snapshot() {
+    let root = temp_dir("sync-coord-snapshot");
+    let state_path = root.join("sync-state.sqlite");
+    let coordinator = FfiSyncCoordinator::new_persistent(state_path.display().to_string()).unwrap();
     let snapshot = coordinator.state_snapshot().unwrap();
     assert!(!snapshot.lease_owner.is_empty());
     assert!(snapshot.last_acked_inbox_id.is_none());
     assert!(snapshot.chat_cursors.is_empty());
-    assert_eq!(coordinator.last_acked_inbox_id().unwrap(), None);
+
+    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
@@ -478,8 +518,7 @@ fn sync_coordinator_persistent() {
     let root = temp_dir("sync-coord");
     let state_path = root.join("sync-state.sqlite");
 
-    let coordinator =
-        FfiSyncCoordinator::new_persistent(state_path.display().to_string()).unwrap();
+    let coordinator = FfiSyncCoordinator::new_persistent(state_path.display().to_string()).unwrap();
     coordinator.save_state().unwrap();
     assert_eq!(
         coordinator.state_path().unwrap(),
@@ -492,9 +531,6 @@ fn sync_coordinator_persistent() {
         .unwrap();
     assert!(advanced);
     assert_eq!(coordinator.chat_cursor(chat_id).unwrap(), Some(42));
-
-    coordinator.record_acked_inbox_ids(vec![10, 20]).unwrap();
-    assert_eq!(coordinator.last_acked_inbox_id().unwrap(), Some(20));
 
     fs::remove_dir_all(&root).ok();
 }
@@ -515,10 +551,6 @@ fn client_store_open_and_access_substores() {
     .unwrap();
 
     assert_eq!(store.database_path(), db_path.display().to_string());
-    assert_eq!(
-        store.attachment_cache_root(),
-        cache_root.display().to_string()
-    );
     assert!(!store.mls_storage_root().is_empty());
 
     let history = store.history_store();
@@ -543,26 +575,16 @@ fn client_store_open_and_access_substores() {
 // ─── 10. Realtime driver ───
 
 #[test]
-fn realtime_driver_default_config() {
-    let driver = FfiRealtimeDriver::new().unwrap();
-    let config = driver.config();
-    assert!(config.inbox_limit > 0);
-    assert!(config.inbox_lease_ttl_seconds > 0);
-    assert!(config.poll_interval_ms > 0);
-}
+fn realtime_driver_constructors_work() {
+    FfiRealtimeDriver::new().unwrap();
 
-#[test]
-fn realtime_driver_custom_config() {
-    let config = FfiRealtimeConfig {
+    let custom_config = FfiRealtimeConfig {
         inbox_limit: 10,
         inbox_lease_ttl_seconds: 5,
         poll_interval_ms: 500,
         websocket_retry_delay_ms: 1000,
     };
-    let driver = FfiRealtimeDriver::with_config(config.clone()).unwrap();
-    let actual = driver.config();
-    assert_eq!(actual.inbox_limit, 10);
-    assert_eq!(actual.poll_interval_ms, 500);
+    FfiRealtimeDriver::with_config(custom_config).unwrap();
 }
 
 // ─── 11. Default ciphersuite ───
@@ -577,7 +599,9 @@ fn default_ciphersuite_label_is_non_empty() {
 
 #[test]
 fn local_history_store_read_state_operations() {
-    let store = FfiLocalHistoryStore::new();
+    let root = temp_dir("history-store-read-state");
+    let db_path = root.join("history.sqlite");
+    let store = FfiLocalHistoryStore::new_persistent(db_path.display().to_string()).unwrap();
     let chat_id = Uuid::new_v4().to_string();
     let self_account_id = Uuid::new_v4().to_string();
 
@@ -591,6 +615,8 @@ fn local_history_store_read_state_operations() {
         .list_chat_read_states(Some(self_account_id.clone()))
         .unwrap();
     assert!(all_states.is_empty());
+
+    fs::remove_dir_all(&root).ok();
 }
 
 // ─── 13. Enum conversions (ensure all variants exist) ───

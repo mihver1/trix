@@ -242,15 +242,44 @@ struct TrixCoreServerBridge {
     static func listHistorySyncJobs(
         baseURLString: String,
         accessToken: String,
+        role: HistorySyncJobRole? = nil,
         limit: Int = 50
     ) async throws -> HistorySyncJobListResponse {
         let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
         let clampedLimit = limit > 0 ? UInt32(limit) : nil
         return try client.listHistorySyncJobs(
-            role: nil,
+            role: role?.trix_ffiHistorySyncJobRole,
             status: nil,
             limit: clampedLimit
-        ).trix_serverHistorySyncJobListResponse
+        ).trix_serverHistorySyncJobListResponse(role: role)
+    }
+
+    static func getHistorySyncChunks(
+        baseURLString: String,
+        accessToken: String,
+        jobId: String
+    ) async throws -> [HistorySyncChunkSummary] {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        return try client.getHistorySyncChunks(jobId: jobId).map(\.trix_serverHistorySyncChunkSummary)
+    }
+
+    static func appendHistorySyncChunk(
+        baseURLString: String,
+        accessToken: String,
+        jobId: String,
+        sequenceNo: UInt64,
+        payload: Data,
+        cursorJson: String?,
+        isFinal: Bool
+    ) async throws -> AppendHistorySyncChunkResponse {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        return try client.appendHistorySyncChunk(
+            jobId: jobId,
+            sequenceNo: sequenceNo,
+            payload: payload,
+            cursorJson: cursorJson,
+            isFinal: isFinal
+        ).trix_serverAppendHistorySyncChunkResponse
     }
 
     static func listChats(
@@ -675,6 +704,28 @@ private extension FfiHistorySyncJobStatus {
     }
 }
 
+private extension HistorySyncJobRole {
+    var trix_ffiHistorySyncJobRole: FfiHistorySyncJobRole {
+        switch self {
+        case .source:
+            return .source
+        case .target:
+            return .target
+        }
+    }
+}
+
+private extension FfiHistorySyncJobRole {
+    var trix_serverHistorySyncJobRole: HistorySyncJobRole {
+        switch self {
+        case .source:
+            return .source
+        case .target:
+            return .target
+        }
+    }
+}
+
 private extension FfiAccountProfile {
     var trix_serverAccountProfileResponse: AccountProfileResponse {
         AccountProfileResponse(
@@ -741,9 +792,10 @@ private extension Array where Element == FfiReservedKeyPackage {
 }
 
 private extension FfiHistorySyncJob {
-    var trix_serverHistorySyncJobSummary: HistorySyncJobSummary {
+    func trix_serverHistorySyncJobSummary(role: HistorySyncJobRole?) -> HistorySyncJobSummary {
         HistorySyncJobSummary(
             jobId: jobId,
+            role: role ?? .source,
             jobType: jobType.trix_serverHistorySyncJobType,
             jobStatus: jobStatus.trix_serverHistorySyncJobStatus,
             sourceDeviceId: sourceDeviceId,
@@ -756,8 +808,31 @@ private extension FfiHistorySyncJob {
 }
 
 private extension Array where Element == FfiHistorySyncJob {
-    var trix_serverHistorySyncJobListResponse: HistorySyncJobListResponse {
-        HistorySyncJobListResponse(jobs: map(\.trix_serverHistorySyncJobSummary))
+    func trix_serverHistorySyncJobListResponse(role: HistorySyncJobRole?) -> HistorySyncJobListResponse {
+        HistorySyncJobListResponse(jobs: map { $0.trix_serverHistorySyncJobSummary(role: role) })
+    }
+}
+
+private extension FfiAppendHistorySyncChunkResponse {
+    var trix_serverAppendHistorySyncChunkResponse: AppendHistorySyncChunkResponse {
+        AppendHistorySyncChunkResponse(
+            jobId: jobId,
+            chunkId: chunkId,
+            jobStatus: jobStatus.trix_serverHistorySyncJobStatus
+        )
+    }
+}
+
+private extension FfiHistorySyncChunk {
+    var trix_serverHistorySyncChunkSummary: HistorySyncChunkSummary {
+        HistorySyncChunkSummary(
+            chunkId: chunkId,
+            sequenceNo: sequenceNo,
+            payload: payload,
+            cursorJson: cursorJson,
+            isFinal: isFinal,
+            createdAtUnix: uploadedAtUnix
+        )
     }
 }
 

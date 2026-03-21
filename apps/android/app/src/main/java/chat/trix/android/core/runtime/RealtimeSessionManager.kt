@@ -129,6 +129,18 @@ class RealtimeSessionManager(
         websocket?.sendPresencePing(nonce)
     }
 
+    suspend fun sendTypingUpdate(chatId: String, isTyping: Boolean) = withContext(Dispatchers.IO) {
+        websocket?.sendTypingUpdate(chatId, isTyping)
+    }
+
+    suspend fun sendHistorySyncProgress(
+        jobId: String,
+        cursorJson: String? = null,
+        completedChunks: ULong? = null,
+    ) = withContext(Dispatchers.IO) {
+        websocket?.sendHistorySyncProgress(jobId, cursorJson, completedChunks)
+    }
+
     override fun close() {
         if (observeProcessLifecycle) {
             lifecycle.removeObserver(this)

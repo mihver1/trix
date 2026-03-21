@@ -3,6 +3,7 @@ package chat.trix.android.core.chat
 import android.content.Context
 import android.net.Uri
 import chat.trix.android.core.ffi.FfiChatParticipantProfile
+import chat.trix.android.core.ffi.FfiAppendHistorySyncChunkResponse
 import chat.trix.android.core.auth.AuthenticatedSession
 import chat.trix.android.core.auth.DeviceDatabaseKeyStore
 import chat.trix.android.core.ffi.FfiContentType
@@ -13,6 +14,9 @@ import chat.trix.android.core.ffi.FfiClientStoreConfig
 import chat.trix.android.core.ffi.FfiCreateChatControlInput
 import chat.trix.android.core.ffi.FfiDirectoryAccount
 import chat.trix.android.core.ffi.FfiInboxItem
+import chat.trix.android.core.ffi.FfiHistorySyncChunk
+import chat.trix.android.core.ffi.FfiHistorySyncJob
+import chat.trix.android.core.ffi.FfiHistorySyncJobRole
 import chat.trix.android.core.ffi.FfiLocalChatListItem
 import chat.trix.android.core.ffi.FfiLocalHistoryStore
 import chat.trix.android.core.ffi.FfiLocalOutboxAttachmentDraft
@@ -417,7 +421,19 @@ class ChatRepository(
             val store = historyStore()
             val selfAccountId = session.localState.accountId
             val previous = store.getChatReadState(chatId, selfAccountId)
+            val directPreviousReadCursor = store.chatReadCursor(chatId)?.toLong()
+            val directPreviousUnreadCount = store.chatUnreadCount(chatId, selfAccountId)?.toLong()
             val updated = store.markChatRead(chatId, null, selfAccountId)
+            var directUpdatedReadCursor = store.chatReadCursor(chatId)?.toLong()
+            var directUpdatedUnreadCount = store.chatUnreadCount(chatId, selfAccountId)?.toLong()
+            if (
+                updated.readCursorServerSeq > 0uL &&
+                    (directUpdatedReadCursor == null || directUpdatedReadCursor < updated.readCursorServerSeq.toLong())
+            ) {
+                store.setChatReadCursor(chatId, updated.readCursorServerSeq, selfAccountId)
+                directUpdatedReadCursor = store.chatReadCursor(chatId)?.toLong()
+                directUpdatedUnreadCount = store.chatUnreadCount(chatId, selfAccountId)?.toLong()
+            }
             val previousReadCursor = previous?.readCursorServerSeq?.toLong()
             val updatedReadCursor = updated.readCursorServerSeq.toLong()
             if (updatedReadCursor > 0 && updatedReadCursor > (previousReadCursor ?: 0L)) {
@@ -435,7 +451,9 @@ class ChatRepository(
                 overview = buildOverview(),
                 changed = previous == null ||
                     previous.readCursorServerSeq != updated.readCursorServerSeq ||
-                    previous.unreadCount != updated.unreadCount,
+                    previous.unreadCount != updated.unreadCount ||
+                    directPreviousReadCursor != directUpdatedReadCursor ||
+                    directPreviousUnreadCount != directUpdatedUnreadCount,
             )
         }
     }
@@ -611,11 +629,35 @@ class ChatRepository(
         }
     }
 
-    suspend fun listHistorySyncJobs(): List<chat.trix.android.core.ffi.FfiHistorySyncJob> = withContext(Dispatchers.IO) {
+    suspend fun listHistorySyncJobs(
+        role: FfiHistorySyncJobRole? = null,
+    ): List<FfiHistorySyncJob> = withContext(Dispatchers.IO) {
         runFfi("Failed to list history sync jobs") {
             val client = client()
             client.setAccessToken(session.accessToken)
-            client.listHistorySyncJobs(null, null, null)
+            client.listHistorySyncJobs(role, null, null)
+        }
+    }
+
+    suspend fun getHistorySyncChunks(jobId: String): List<FfiHistorySyncChunk> = withContext(Dispatchers.IO) {
+        runFfi("Failed to load history sync chunks") {
+            val client = client()
+            client.setAccessToken(session.accessToken)
+            client.getHistorySyncChunks(jobId)
+        }
+    }
+
+    suspend fun appendHistorySyncChunk(
+        jobId: String,
+        sequenceNo: ULong,
+        payload: ByteArray,
+        cursorJson: String?,
+        isFinal: Boolean,
+    ): FfiAppendHistorySyncChunkResponse = withContext(Dispatchers.IO) {
+        runFfi("Failed to append history sync chunk") {
+            val client = client()
+            client.setAccessToken(session.accessToken)
+            client.appendHistorySyncChunk(jobId, sequenceNo, payload, cursorJson, isFinal)
         }
     }
 
@@ -706,6 +748,28 @@ class ChatRepository(
             val client = client()
             client.setAccessToken(session.accessToken)
             client.completeHistorySyncJob(jobId, cursorJson)
+        }
+    }
+
+    suspend fun signingKeyFingerprint(prefixBytes: Int = 8): String = withContext(Dispatchers.IO) {
+        runFfi("Failed to read signing key fingerprint") {
+            mlsFacade()
+                .signaturePublicKey()
+                .take(prefixBytes)
+                .joinToString(separator = "") { "%02x".format(it.toInt() and 0xff) }
+        }
+    }
+
+    suspend fun inspectLocalConversation(chatId: String): LocalConversationDiagnostics? = withContext(Dispatchers.IO) {
+        runFfi("Failed to inspect local conversation state") {
+            val conversation = historyStore().loadOrBootstrapChatConversation(chatId, mlsFacade()) ?: return@runFfi null
+            val members = mlsFacade().members(conversation)
+            val ratchetTree = conversation.exportRatchetTree()
+            LocalConversationDiagnostics(
+                chatCursor = syncCoordinator().chatCursor(chatId)?.toLong(),
+                memberCount = members.size,
+                ratchetTreeBytes = ratchetTree.size,
+            )
         }
     }
 
@@ -1639,6 +1703,12 @@ data class ChatDiagnostics(
     val leaseOwner: String,
     val historyStorePath: String?,
     val syncStatePath: String?,
+)
+
+data class LocalConversationDiagnostics(
+    val chatCursor: Long?,
+    val memberCount: Int,
+    val ratchetTreeBytes: Int,
 )
 
 data class ChatRefreshResult(

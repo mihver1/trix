@@ -43,6 +43,40 @@ class RealtimeForegroundService : Service() {
             body = "Connecting background delivery for this device.",
         )
 
+        when (intent?.action) {
+            ACTION_SEND_TYPING_UPDATE -> {
+                val chatId = intent.getStringExtra(EXTRA_CHAT_ID)
+                val isTyping = intent.getBooleanExtra(EXTRA_IS_TYPING, false)
+                if (!chatId.isNullOrBlank()) {
+                    serviceScope.launch {
+                        realtimeManager?.sendTypingUpdate(chatId, isTyping)
+                    }
+                }
+                if (bootJob?.isActive == true || realtimeManager != null) {
+                    return START_STICKY
+                }
+            }
+
+            ACTION_SEND_HISTORY_SYNC_PROGRESS -> {
+                val jobId = intent.getStringExtra(EXTRA_JOB_ID)
+                val cursorJson = intent.getStringExtra(EXTRA_CURSOR_JSON)
+                val hasCompletedChunks = intent.hasExtra(EXTRA_COMPLETED_CHUNKS)
+                val completedChunks = if (hasCompletedChunks) {
+                    intent.getLongExtra(EXTRA_COMPLETED_CHUNKS, 0L).toULong()
+                } else {
+                    null
+                }
+                if (!jobId.isNullOrBlank()) {
+                    serviceScope.launch {
+                        realtimeManager?.sendHistorySyncProgress(jobId, cursorJson, completedChunks)
+                    }
+                }
+                if (bootJob?.isActive == true || realtimeManager != null) {
+                    return START_STICKY
+                }
+            }
+        }
+
         if (bootJob?.isActive == true || realtimeManager != null) {
             return START_STICKY
         }
@@ -201,8 +235,17 @@ class RealtimeForegroundService : Service() {
         const val EXTRA_CHANGED_CHAT_IDS = "changed_chat_ids"
         const val EXTRA_FORCE_REFRESH = "force_refresh"
         const val EXTRA_SESSION_REASON = "session_reason"
+        const val EXTRA_CHAT_ID = "chat_id"
+        const val EXTRA_IS_TYPING = "is_typing"
+        const val EXTRA_JOB_ID = "job_id"
+        const val EXTRA_CURSOR_JSON = "cursor_json"
+        const val EXTRA_COMPLETED_CHUNKS = "completed_chunks"
 
         private const val ACTION_START = "chat.trix.android.core.runtime.action.START"
+        private const val ACTION_SEND_TYPING_UPDATE =
+            "chat.trix.android.core.runtime.action.SEND_TYPING_UPDATE"
+        private const val ACTION_SEND_HISTORY_SYNC_PROGRESS =
+            "chat.trix.android.core.runtime.action.SEND_HISTORY_SYNC_PROGRESS"
         private const val NOTIFICATION_ID = 2001
         private const val RESTORE_RETRY_DELAY_MS = 5_000L
 
@@ -215,6 +258,36 @@ class RealtimeForegroundService : Service() {
 
         fun stop(context: Context) {
             context.stopService(Intent(context, RealtimeForegroundService::class.java))
+        }
+
+        fun sendTypingUpdate(
+            context: Context,
+            chatId: String,
+            isTyping: Boolean,
+        ) {
+            val intent = Intent(context, RealtimeForegroundService::class.java).apply {
+                action = ACTION_SEND_TYPING_UPDATE
+                putExtra(EXTRA_CHAT_ID, chatId)
+                putExtra(EXTRA_IS_TYPING, isTyping)
+            }
+            ContextCompat.startForegroundService(context, intent)
+        }
+
+        fun sendHistorySyncProgress(
+            context: Context,
+            jobId: String,
+            cursorJson: String?,
+            completedChunks: Long?,
+        ) {
+            val intent = Intent(context, RealtimeForegroundService::class.java).apply {
+                action = ACTION_SEND_HISTORY_SYNC_PROGRESS
+                putExtra(EXTRA_JOB_ID, jobId)
+                putExtra(EXTRA_CURSOR_JSON, cursorJson)
+                if (completedChunks != null) {
+                    putExtra(EXTRA_COMPLETED_CHUNKS, completedChunks)
+                }
+            }
+            ContextCompat.startForegroundService(context, intent)
         }
     }
 }

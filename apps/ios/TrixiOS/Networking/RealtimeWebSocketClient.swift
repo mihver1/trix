@@ -58,6 +58,22 @@ actor RealtimeWebSocketClient {
         await shutdown(notifyDisconnect: false, reason: nil)
     }
 
+    func sendTypingUpdate(chatId: String, isTyping: Bool) throws {
+        try websocket.sendTypingUpdate(chatId: chatId, isTyping: isTyping)
+    }
+
+    func sendHistorySyncProgress(
+        jobId: String,
+        cursorJson: String?,
+        completedChunks: UInt64?
+    ) throws {
+        try websocket.sendHistorySyncProgress(
+            jobId: jobId,
+            cursorJson: cursorJson,
+            completedChunks: completedChunks
+        )
+    }
+
     private func receiveLoop() async {
         while isRunning, !Task.isCancelled {
             do {

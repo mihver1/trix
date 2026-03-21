@@ -836,13 +836,26 @@ enum TrixCorePersistentBridge {
         throughServerSeq: UInt64?
     ) throws -> LocalChatReadStateSnapshot {
         let context = try loadOrCreateContext(identity: identity)
-        return try context.historyStore
-            .markChatRead(
-                chatId: chatId,
-                throughServerSeq: throughServerSeq,
-                selfAccountId: identity.accountId
-            )
-            .trix_localChatReadStateSnapshot
+        do {
+            return try context.historyStore
+                .markChatRead(
+                    chatId: chatId,
+                    throughServerSeq: throughServerSeq,
+                    selfAccountId: identity.accountId
+                )
+                .trix_localChatReadStateSnapshot
+        } catch {
+            guard throughServerSeq != nil else {
+                throw error
+            }
+            return try context.historyStore
+                .setChatReadCursor(
+                    chatId: chatId,
+                    readCursorServerSeq: throughServerSeq,
+                    selfAccountId: identity.accountId
+                )
+                .trix_localChatReadStateSnapshot
+        }
     }
 
     static func loadLocalTimeline(
@@ -912,9 +925,53 @@ enum TrixCorePersistentBridge {
         chatId: String
     ) throws -> LocalChatReadStateSnapshot? {
         let context = try loadOrCreateContext(identity: identity)
-        return try context.historyStore
+        if let state = try context.historyStore
             .getChatReadState(chatId: chatId, selfAccountId: identity.accountId)
-            .map(\.trix_localChatReadStateSnapshot)
+        {
+            return state.trix_localChatReadStateSnapshot
+        }
+
+        let readCursor = try context.historyStore.chatReadCursor(chatId: chatId) ?? 0
+        let unreadCount = try context.historyStore.chatUnreadCount(
+            chatId: chatId,
+            selfAccountId: identity.accountId
+        ) ?? 0
+        guard readCursor > 0 || unreadCount > 0 else {
+            return nil
+        }
+
+        return LocalChatReadStateSnapshot(
+            chatId: chatId,
+            readCursorServerSeq: readCursor,
+            unreadCount: unreadCount
+        )
+    }
+
+    static func signaturePublicKey(
+        identity: LocalDeviceIdentity
+    ) throws -> Data {
+        let context = try loadOrCreateContext(identity: identity)
+        return try context.mlsFacade.signaturePublicKey()
+    }
+
+    static func localConversationDiagnostics(
+        identity: LocalDeviceIdentity,
+        chatId: String
+    ) throws -> LocalConversationDiagnostics? {
+        let conversationContext = try? loadConversationContext(identity: identity, chatId: chatId)
+        guard let conversationContext else {
+            return nil
+        }
+
+        let members = try conversationContext.context.mlsFacade.members(
+            conversation: conversationContext.conversation
+        )
+        let ratchetTree = try conversationContext.conversation.exportRatchetTree()
+        return LocalConversationDiagnostics(
+            chatCursor: try conversationContext.context.syncCoordinator.chatCursor(chatId: chatId),
+            memberCount: members.count,
+            ratchetTreeBytes: ratchetTree.count
+        )
     }
 
     static func getLocalChatListItem(
@@ -1332,7 +1389,6 @@ private extension TrixCorePersistentBridge {
                 guard !projectedMessages.isEmpty else {
                     continue
                 }
-
                 _ = try context.historyStore.applyProjectedMessages(
                     chatId: chatId,
                     projectedMessages: projectedMessages
@@ -1371,7 +1427,7 @@ private extension TrixCorePersistentBridge {
                     try makeProjectedMessage(
                         from: message,
                         projectionKind: .welcomeRef,
-                        payload: message.ciphertextB64.trix_decodedBase64(fieldName: "ciphertext_b64"),
+                        payload: try message.ciphertextB64.trix_decodedBase64(fieldName: "ciphertext_b64"),
                         mergedEpoch: nil
                     )
                 )
@@ -1475,6 +1531,7 @@ private extension TrixCorePersistentBridge {
             createdAtUnix: message.createdAtUnix
         )
     }
+
 }
 
 private extension FfiPublishedKeyPackage {

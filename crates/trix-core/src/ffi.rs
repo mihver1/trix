@@ -1025,7 +1025,6 @@ pub struct FfiClientStore {
     history_store: Arc<FfiLocalHistoryStore>,
     sync_coordinator: Arc<FfiSyncCoordinator>,
     database_path: String,
-    attachment_cache_root: String,
     mls_storage_root: String,
 }
 
@@ -1043,11 +1042,6 @@ pub struct FfiSyncCoordinator {
 #[derive(uniffi::Object)]
 pub struct FfiMlsConversation {
     inner: Mutex<crate::MlsConversation>,
-}
-
-#[uniffi::export]
-fn ffi_default_ciphersuite_label() -> String {
-    crate::DEFAULT_CIPHERSUITE.to_string()
 }
 
 #[uniffi::export]
@@ -1140,10 +1134,6 @@ impl FfiServerApiClient {
     pub fn clear_access_token(&self) -> Result<(), TrixFfiError> {
         lock(&self.inner)?.clear_access_token();
         Ok(())
-    }
-
-    pub fn access_token(&self) -> Result<Option<String>, TrixFfiError> {
-        Ok(lock(&self.inner)?.access_token().map(ToOwned::to_owned))
     }
 
     pub fn connect_websocket(&self) -> Result<Arc<FfiServerWebSocketClient>, TrixFfiError> {
@@ -2113,10 +2103,6 @@ impl FfiRealtimeDriver {
         }))
     }
 
-    pub fn config(&self) -> FfiRealtimeConfig {
-        realtime_config_to_ffi(self.inner.config())
-    }
-
     pub fn poll_once(
         &self,
         client: Arc<FfiServerApiClient>,
@@ -2195,18 +2181,6 @@ impl FfiAccountRootMaterial {
         self.inner.private_key_bytes().to_vec()
     }
 
-    // Temporary bridge until encrypted transfer bundles land in trix-core.
-    // The server already stores opaque bytes, so iOS can round-trip root-capable
-    // linked-device upgrades without inventing a separate wire format first.
-    #[uniffi::constructor]
-    pub fn from_transfer_bundle(transfer_bundle: Vec<u8>) -> Result<Arc<Self>, TrixFfiError> {
-        Self::from_private_key(transfer_bundle)
-    }
-
-    pub fn transfer_bundle(&self) -> Vec<u8> {
-        self.private_key_bytes()
-    }
-
     pub fn public_key_bytes(&self) -> Vec<u8> {
         self.inner.public_key_bytes()
     }
@@ -2275,10 +2249,6 @@ impl FfiAccountRootMaterial {
         )
         .map_err(ffi_error)
     }
-
-    pub fn verify(&self, payload: Vec<u8>, signature: Vec<u8>) -> Result<(), TrixFfiError> {
-        self.inner.verify(&payload, &signature).map_err(ffi_error)
-    }
 }
 
 #[uniffi::export]
@@ -2321,10 +2291,6 @@ impl FfiDeviceKeyMaterial {
         decrypt_device_transfer_bundle(&bundle, &self.inner)
             .map(imported_device_transfer_bundle_to_ffi)
             .map_err(ffi_error)
-    }
-
-    pub fn verify(&self, payload: Vec<u8>, signature: Vec<u8>) -> Result<(), TrixFfiError> {
-        self.inner.verify(&payload, &signature).map_err(ffi_error)
     }
 }
 
@@ -2376,17 +2342,12 @@ impl FfiClientStore {
             history_store,
             sync_coordinator,
             database_path: database_path.to_string_lossy().into_owned(),
-            attachment_cache_root: attachment_cache_root.to_string_lossy().into_owned(),
             mls_storage_root: mls_storage_root.to_string_lossy().into_owned(),
         }))
     }
 
     pub fn database_path(&self) -> String {
         self.database_path.clone()
-    }
-
-    pub fn attachment_cache_root(&self) -> String {
-        self.attachment_cache_root.clone()
     }
 
     pub fn mls_storage_root(&self) -> String {
@@ -2419,13 +2380,6 @@ impl FfiClientStore {
 
 #[uniffi::export]
 impl FfiLocalHistoryStore {
-    #[uniffi::constructor]
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self {
-            inner: Mutex::new(LocalHistoryStore::new()),
-        })
-    }
-
     #[uniffi::constructor]
     pub fn new_persistent(database_path: String) -> Result<Arc<Self>, TrixFfiError> {
         Ok(Arc::new(Self {
@@ -2655,21 +2609,6 @@ impl FfiLocalHistoryStore {
             .collect())
     }
 
-    pub fn apply_local_projection(
-        &self,
-        envelope: FfiMessageEnvelope,
-        projection_kind: FfiLocalProjectionKind,
-        payload: Option<Vec<u8>>,
-        merged_epoch: Option<u64>,
-    ) -> Result<FfiLocalStoreApplyReport, TrixFfiError> {
-        let envelope = ffi_message_envelope_to_api(envelope)?;
-        Ok(local_store_apply_report_to_ffi(
-            lock(&self.inner)?
-                .apply_local_projection(&envelope, projection_kind.into(), payload, merged_epoch)
-                .map_err(ffi_error)?,
-        ))
-    }
-
     pub fn apply_projected_messages(
         &self,
         chat_id: String,
@@ -2885,14 +2824,6 @@ impl FfiLocalHistoryStore {
 #[uniffi::export]
 impl FfiSyncCoordinator {
     #[uniffi::constructor]
-    pub fn new() -> Result<Arc<Self>, TrixFfiError> {
-        Ok(Arc::new(Self {
-            inner: Mutex::new(SyncCoordinator::new()),
-            runtime: build_runtime()?,
-        }))
-    }
-
-    #[uniffi::constructor]
     pub fn new_persistent(state_path: String) -> Result<Arc<Self>, TrixFfiError> {
         Ok(Arc::new(Self {
             inner: Mutex::new(SyncCoordinator::new_persistent(state_path).map_err(ffi_error)?),
@@ -2933,10 +2864,6 @@ impl FfiSyncCoordinator {
         Ok(lock(&self.inner)?.lease_owner().to_owned())
     }
 
-    pub fn last_acked_inbox_id(&self) -> Result<Option<u64>, TrixFfiError> {
-        Ok(lock(&self.inner)?.last_acked_inbox_id())
-    }
-
     pub fn chat_cursor(&self, chat_id: String) -> Result<Option<u64>, TrixFfiError> {
         Ok(lock(&self.inner)?.chat_cursor(parse_chat_id(&chat_id)?))
     }
@@ -2949,21 +2876,6 @@ impl FfiSyncCoordinator {
         lock(&self.inner)?
             .record_chat_server_seq(parse_chat_id(&chat_id)?, server_seq)
             .map_err(ffi_error)
-    }
-
-    pub fn sync_chat_histories(
-        &self,
-        client: Arc<FfiServerApiClient>,
-        limit_per_chat: u32,
-    ) -> Result<Vec<FfiChatHistory>, TrixFfiError> {
-        let client = clone_server_api_client(&client.inner)?;
-        let histories = {
-            let mut coordinator = lock(&self.inner)?;
-            self.runtime
-                .block_on(coordinator.sync_chat_histories(&client, limit_per_chat as usize))
-                .map_err(ffi_error)?
-        };
-        Ok(histories.into_iter().map(chat_history_to_ffi).collect())
     }
 
     pub fn sync_chat_histories_into_store(
@@ -3026,42 +2938,6 @@ impl FfiSyncCoordinator {
         Ok(FfiAckInboxResponse {
             acked_inbox_ids: response.acked_inbox_ids,
         })
-    }
-
-    pub fn record_acked_inbox_ids(&self, acked_inbox_ids: Vec<u64>) -> Result<(), TrixFfiError> {
-        lock(&self.inner)?
-            .record_acked_inbox_ids(&acked_inbox_ids)
-            .map_err(ffi_error)
-    }
-
-    pub fn apply_inbox_items_into_store(
-        &self,
-        store: Arc<FfiLocalHistoryStore>,
-        items: Vec<FfiInboxItem>,
-    ) -> Result<FfiLocalStoreApplyReport, TrixFfiError> {
-        let items = items
-            .into_iter()
-            .map(ffi_inbox_item_to_api)
-            .collect::<Result<Vec<_>, _>>()?;
-        let report = {
-            let mut coordinator = lock(&self.inner)?;
-            let mut store = lock(&store.inner)?;
-            coordinator
-                .apply_inbox_items_into_store(&mut store, &items)
-                .map_err(ffi_error)?
-        };
-        Ok(local_store_apply_report_to_ffi(report))
-    }
-
-    pub fn apply_websocket_inbox_frame(
-        &self,
-        store: Arc<FfiLocalHistoryStore>,
-        frame: FfiWebSocketServerFrame,
-    ) -> Result<Option<FfiLocalStoreApplyReport>, TrixFfiError> {
-        let Some(inbox) = frame.inbox else {
-            return Ok(None);
-        };
-        Ok(Some(self.apply_inbox_items_into_store(store, inbox.items)?))
     }
 
     pub fn lease_inbox_into_store(
@@ -3318,13 +3194,6 @@ impl FfiSyncCoordinator {
 #[uniffi::export]
 impl FfiMlsFacade {
     #[uniffi::constructor]
-    pub fn new(credential_identity: Vec<u8>) -> Result<Arc<Self>, TrixFfiError> {
-        Ok(Arc::new(Self {
-            inner: Mutex::new(MlsFacade::new(credential_identity).map_err(ffi_error)?),
-        }))
-    }
-
-    #[uniffi::constructor]
     pub fn new_persistent(
         credential_identity: Vec<u8>,
         storage_root: String,
@@ -3455,17 +3324,6 @@ impl FfiMlsFacade {
         ))
     }
 
-    pub fn self_update(
-        &self,
-        conversation: Arc<FfiMlsConversation>,
-    ) -> Result<FfiMlsCommitBundle, TrixFfiError> {
-        let facade = lock(&self.inner)?;
-        let mut conversation = lock(&conversation.inner)?;
-        Ok(commit_bundle_to_ffi(
-            facade.self_update(&mut conversation).map_err(ffi_error)?,
-        ))
-    }
-
     pub fn create_application_message(
         &self,
         conversation: Arc<FfiMlsConversation>,
@@ -3490,20 +3348,6 @@ impl FfiMlsFacade {
                 .process_message(&mut conversation, &message_bytes)
                 .map_err(ffi_error)?,
         ))
-    }
-
-    pub fn export_secret(
-        &self,
-        conversation: Arc<FfiMlsConversation>,
-        label: String,
-        context: Vec<u8>,
-        len: u32,
-    ) -> Result<Vec<u8>, TrixFfiError> {
-        let facade = lock(&self.inner)?;
-        let conversation = lock(&conversation.inner)?;
-        facade
-            .export_secret(&conversation, &label, &context, len as usize)
-            .map_err(ffi_error)
     }
 
     pub fn members(
@@ -4712,15 +4556,6 @@ fn sync_state_snapshot_to_ffi(value: SyncStateSnapshot) -> FfiSyncStateSnapshot 
     }
 }
 
-fn realtime_config_to_ffi(value: &RealtimeConfig) -> FfiRealtimeConfig {
-    FfiRealtimeConfig {
-        inbox_limit: value.inbox_limit as u32,
-        inbox_lease_ttl_seconds: value.inbox_lease_ttl_seconds,
-        poll_interval_ms: value.poll_interval.as_millis() as u64,
-        websocket_retry_delay_ms: value.websocket_retry_delay.as_millis() as u64,
-    }
-}
-
 fn realtime_config_from_ffi(value: FfiRealtimeConfig) -> RealtimeConfig {
     RealtimeConfig {
         inbox_limit: value.inbox_limit as usize,
@@ -5156,6 +4991,8 @@ mod tests {
         let account_root = FfiAccountRootMaterial::generate();
         let device_keys = FfiDeviceKeyMaterial::generate();
         let credential_identity = b"device-credential".to_vec();
+        let verifier =
+            AccountRootMaterial::from_bytes(account_root.private_key_bytes().try_into().unwrap());
 
         let payload = ffi_account_bootstrap_payload(
             device_keys.public_key_bytes(),
@@ -5171,7 +5008,7 @@ mod tests {
 
         let signature = account_root
             .sign_account_bootstrap(device_keys.public_key_bytes(), credential_identity.clone());
-        account_root.verify(payload, signature).unwrap();
+        verifier.verify(&payload, &signature).unwrap();
     }
 
     #[test]
@@ -5179,6 +5016,8 @@ mod tests {
         let account_root = FfiAccountRootMaterial::generate();
         let device_id = Uuid::new_v4().to_string();
         let reason = "compromised".to_owned();
+        let verifier =
+            AccountRootMaterial::from_bytes(account_root.private_key_bytes().try_into().unwrap());
 
         let payload = ffi_device_revoke_payload(device_id.clone(), reason.clone()).unwrap();
         assert_eq!(
@@ -5191,14 +5030,14 @@ mod tests {
         let signature = account_root
             .sign_device_revoke(device_id.clone(), reason.clone())
             .unwrap();
-        account_root.verify(payload, signature).unwrap();
+        verifier.verify(&payload, &signature).unwrap();
     }
 
     #[test]
-    fn account_root_transfer_bundle_round_trip_restores_same_keypair() {
+    fn account_root_private_key_round_trip_restores_same_keypair() {
         let original = FfiAccountRootMaterial::generate();
-        let transfer_bundle = original.transfer_bundle();
-        let restored = FfiAccountRootMaterial::from_transfer_bundle(transfer_bundle).unwrap();
+        let restored =
+            FfiAccountRootMaterial::from_private_key(original.private_key_bytes()).unwrap();
 
         assert_eq!(original.private_key_bytes(), restored.private_key_bytes());
         assert_eq!(original.public_key_bytes(), restored.public_key_bytes());
@@ -5206,7 +5045,13 @@ mod tests {
 
     #[test]
     fn mls_facade_generate_publish_key_packages_sets_ciphersuite() {
-        let facade = FfiMlsFacade::new(b"credential".to_vec()).unwrap();
+        let root = std::env::temp_dir().join(format!("trix-ffi-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let facade = FfiMlsFacade::new_persistent(
+            b"credential".to_vec(),
+            root.to_string_lossy().into_owned(),
+        )
+        .unwrap();
         let expected = facade.ciphersuite_label().unwrap();
 
         let packages = facade.generate_publish_key_packages(2).unwrap();
@@ -5221,5 +5066,7 @@ mod tests {
                 .iter()
                 .all(|package| package.cipher_suite == expected)
         );
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }

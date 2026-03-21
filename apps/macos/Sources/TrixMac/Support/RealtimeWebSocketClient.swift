@@ -56,6 +56,32 @@ actor RealtimeWebSocketClient {
         await shutdown(notifyDisconnect: false, reason: nil)
     }
 
+    func sendTypingUpdate(chatId: UUID, isTyping: Bool) async throws {
+        try websocket.sendTypingUpdate(chatId: chatId.uuidString, isTyping: isTyping)
+    }
+
+    func sendHistorySyncProgress(
+        jobId: UUID,
+        cursorJson: JSONValue?,
+        completedChunks: UInt64?
+    ) async throws {
+        let cursorJSONString: String?
+        if let cursorJson {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            let data = try encoder.encode(cursorJson)
+            cursorJSONString = String(data: data, encoding: .utf8)
+        } else {
+            cursorJSONString = nil
+        }
+
+        try websocket.sendHistorySyncProgress(
+            jobId: jobId.uuidString,
+            cursorJson: cursorJSONString,
+            completedChunks: completedChunks
+        )
+    }
+
     private func receiveLoop() async {
         while isRunning, !Task.isCancelled {
             do {

@@ -334,6 +334,15 @@ enum HistorySyncJobStatus: String, Codable {
     }
 }
 
+enum HistorySyncJobRole: String, Codable, Sendable {
+    case source
+    case target
+
+    var label: String {
+        rawValue.capitalized
+    }
+}
+
 struct ChatListResponse: Codable {
     let chats: [ChatSummary]
 }
@@ -393,6 +402,11 @@ struct LocalChatReadState: Identifiable, Sendable {
     var hasUnread: Bool {
         unreadCount > 0
     }
+}
+
+struct LocalChatMlsDiagnostics: Sendable {
+    let memberCount: Int
+    let ratchetTreeBytes: Int
 }
 
 struct LocalChatListItem: Identifiable, Sendable, Equatable {
@@ -1100,6 +1114,7 @@ struct HistorySyncJobListResponse: Codable, Sendable {
 
 struct HistorySyncJobSummary: Codable, Identifiable, Sendable {
     let jobId: UUID
+    let role: HistorySyncJobRole
     let jobType: HistorySyncJobType
     let jobStatus: HistorySyncJobStatus
     let sourceDeviceId: UUID
@@ -1131,6 +1146,27 @@ struct CompleteHistorySyncJobRequest: Codable, Sendable {
 struct CompleteHistorySyncJobResponse: Codable, Sendable {
     let jobId: UUID
     let jobStatus: HistorySyncJobStatus
+}
+
+struct AppendHistorySyncChunkResponse: Codable, Sendable {
+    let jobId: UUID
+    let chunkId: UInt64
+    let jobStatus: HistorySyncJobStatus
+}
+
+struct HistorySyncChunkSummary: Codable, Identifiable, Sendable {
+    let chunkId: UInt64
+    let sequenceNo: UInt64
+    let payloadB64: String
+    let cursorJson: JSONValue?
+    let isFinal: Bool
+    let uploadedAtUnix: UInt64
+
+    var id: UInt64 { chunkId }
+
+    var uploadedAt: Date {
+        Date(timeIntervalSince1970: TimeInterval(uploadedAtUnix))
+    }
 }
 
 struct MessageEnvelope: Codable, Identifiable {
