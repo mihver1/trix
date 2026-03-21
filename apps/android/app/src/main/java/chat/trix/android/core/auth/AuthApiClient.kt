@@ -1,12 +1,12 @@
 package chat.trix.android.core.auth
 
 import chat.trix.android.core.ffi.FfiAccountProfile
-import chat.trix.android.core.ffi.FfiCompleteLinkIntentWithDeviceKeyParams
-import chat.trix.android.core.ffi.FfiCreateAccountParams
+import chat.trix.android.core.ffi.FfiCompleteLinkIntentParams
 import chat.trix.android.core.ffi.FfiCreateAccountWithMaterialsParams
 import chat.trix.android.core.ffi.FfiMlsFacade
 import chat.trix.android.core.ffi.FfiDeviceStatus
 import chat.trix.android.core.ffi.FfiPublishKeyPackage
+import chat.trix.android.core.ffi.FfiPublishKeyPackagesResponse
 import chat.trix.android.core.ffi.FfiServerApiClient
 import chat.trix.android.core.ffi.TrixFfiException
 import chat.trix.android.core.ffi.FfiUpdateAccountProfileParams
@@ -106,16 +106,16 @@ class AuthApiClient(
         deviceKey: Ed25519KeyMaterial,
     ): CompletedLinkIntentResult = withContext(Dispatchers.IO) {
         runFfi("Failed to complete device link intent") {
-            val response = ffiClient.completeLinkIntentWithDeviceKey(
+            val response = ffiClient.completeLinkIntent(
                 linkIntentId = linkIntentId,
-                params = FfiCompleteLinkIntentWithDeviceKeyParams(
+                params = FfiCompleteLinkIntentParams(
                     linkToken = request.linkToken,
                     deviceDisplayName = request.deviceDisplayName,
                     platform = request.platform,
                     credentialIdentity = request.credentialIdentity,
+                    transportPubkey = deviceKey.publicKey,
                     keyPackages = request.keyPackages,
                 ),
-                deviceKeys = deviceKey.requireDeviceMaterial(),
             )
             CompletedLinkIntentResult(
                 accountId = response.accountId,
@@ -166,6 +166,16 @@ class AuthApiClient(
                     profileBio = request.profileBio,
                 ),
             ).toAccountProfile()
+        }
+    }
+
+    suspend fun publishKeyPackages(
+        accessToken: String,
+        packages: List<FfiPublishKeyPackage>,
+    ): FfiPublishKeyPackagesResponse = withContext(Dispatchers.IO) {
+        runFfi("Failed to publish key packages") {
+            ffiClient.setAccessToken(accessToken)
+            ffiClient.publishKeyPackages(packages)
         }
     }
 

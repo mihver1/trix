@@ -47,6 +47,18 @@ class Ed25519KeyMaterial private constructor(
         }
     }
 
+    fun accountBootstrapPayload(
+        transportPubkey: ByteArray,
+        credentialIdentity: ByteArray,
+    ): ByteArray {
+        return runCryptoFfi("Failed to build account bootstrap payload") {
+            requireAccountRootMaterial().accountBootstrapPayload(
+                transportPubkey,
+                credentialIdentity,
+            )
+        }
+    }
+
     fun createDeviceTransferBundle(
         input: DeviceTransferBundleInput,
         senderDeviceKey: Ed25519KeyMaterial,

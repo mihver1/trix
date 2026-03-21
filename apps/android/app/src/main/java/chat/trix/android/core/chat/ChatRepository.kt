@@ -12,12 +12,16 @@ import chat.trix.android.core.ffi.FfiClientStore
 import chat.trix.android.core.ffi.FfiClientStoreConfig
 import chat.trix.android.core.ffi.FfiCreateChatControlInput
 import chat.trix.android.core.ffi.FfiDirectoryAccount
+import chat.trix.android.core.ffi.FfiInboxItem
 import chat.trix.android.core.ffi.FfiLocalChatListItem
 import chat.trix.android.core.ffi.FfiLocalHistoryStore
 import chat.trix.android.core.ffi.FfiLocalOutboxAttachmentDraft
 import chat.trix.android.core.ffi.FfiLocalOutboxItem
 import chat.trix.android.core.ffi.FfiLocalOutboxStatus
 import chat.trix.android.core.ffi.FfiLocalProjectionKind
+import chat.trix.android.core.ffi.FfiLocalStoreApplyReport
+import chat.trix.android.core.ffi.FfiLeaseInboxParams
+import chat.trix.android.core.ffi.FfiLeaseInboxResponse
 import chat.trix.android.core.ffi.FfiLocalTimelineItem
 import chat.trix.android.core.ffi.FfiMessageBody
 import chat.trix.android.core.ffi.FfiMessageBodyKind
@@ -29,6 +33,8 @@ import chat.trix.android.core.ffi.FfiSendMessageInput
 import chat.trix.android.core.ffi.FfiServerApiClient
 import chat.trix.android.core.ffi.FfiSyncCoordinator
 import chat.trix.android.core.ffi.TrixFfiException
+import chat.trix.android.core.ffi.ffiParseMessageBody
+import chat.trix.android.core.ffi.ffiSerializeMessageBody
 import chat.trix.android.core.system.deviceStorageLayout
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -329,25 +335,27 @@ class ChatRepository(
                 senderAccountId = session.localState.accountId,
                 senderDeviceId = session.localState.deviceId,
                 messageId = UUID.randomUUID().toString(),
-                body = FfiMessageBody(
-                    kind = FfiMessageBodyKind.TEXT,
-                    text = normalizedDraft,
-                    targetMessageId = null,
-                    emoji = null,
-                    reactionAction = null,
-                    receiptType = null,
-                    receiptAtUnix = null,
-                    blobId = null,
-                    mimeType = null,
-                    sizeBytes = null,
-                    sha256 = null,
-                    fileName = null,
-                    widthPx = null,
-                    heightPx = null,
-                    fileKey = null,
-                    nonce = null,
-                    eventType = null,
-                    eventJson = null,
+                body = canonicalizeMessageBody(
+                    FfiMessageBody(
+                        kind = FfiMessageBodyKind.TEXT,
+                        text = normalizedDraft,
+                        targetMessageId = null,
+                        emoji = null,
+                        reactionAction = null,
+                        receiptType = null,
+                        receiptAtUnix = null,
+                        blobId = null,
+                        mimeType = null,
+                        sizeBytes = null,
+                        sha256 = null,
+                        fileName = null,
+                        widthPx = null,
+                        heightPx = null,
+                        fileKey = null,
+                        nonce = null,
+                        eventType = null,
+                        eventJson = null,
+                    ),
                 ),
                 queuedAtUnix = currentUnixSeconds().toULong(),
             )
@@ -593,7 +601,7 @@ class ChatRepository(
 
     suspend fun mlsStorageRoot(): String? = withContext(Dispatchers.IO) {
         runFfi("Failed to read MLS storage root") {
-            mlsFacade().storageRoot()
+            clientStore().mlsStorageRoot()
         }
     }
 
@@ -608,6 +616,85 @@ class ChatRepository(
             val client = client()
             client.setAccessToken(session.accessToken)
             client.listHistorySyncJobs(null, null, null)
+        }
+    }
+
+    suspend fun getInbox(
+        afterInboxId: ULong? = null,
+        limit: UInt = INBOX_SYNC_LIMIT,
+    ): List<FfiInboxItem> = withContext(Dispatchers.IO) {
+        runFfi("Failed to fetch inbox") {
+            val client = client()
+            client.setAccessToken(session.accessToken)
+            client.getInbox(afterInboxId, limit).items
+        }
+    }
+
+    suspend fun leaseInbox(
+        leaseOwner: String? = null,
+        limit: UInt? = INBOX_SYNC_LIMIT,
+        afterInboxId: ULong? = null,
+        leaseTtlSeconds: ULong? = LEASE_TTL_SECONDS,
+    ): FfiLeaseInboxResponse = withContext(Dispatchers.IO) {
+        runFfi("Failed to lease inbox") {
+            val client = client()
+            client.setAccessToken(session.accessToken)
+            client.leaseInbox(
+                FfiLeaseInboxParams(
+                    leaseOwner = leaseOwner ?: syncCoordinator().leaseOwner(),
+                    limit = limit,
+                    afterInboxId = afterInboxId,
+                    leaseTtlSeconds = leaseTtlSeconds,
+                ),
+            )
+        }
+    }
+
+    suspend fun ackInbox(inboxIds: List<ULong>): List<ULong> = withContext(Dispatchers.IO) {
+        runFfi("Failed to ack inbox") {
+            val client = client()
+            client.setAccessToken(session.accessToken)
+            client.ackInbox(inboxIds).ackedInboxIds
+        }
+    }
+
+    suspend fun leaseInboxWithSyncCoordinator(
+        limit: UInt? = INBOX_SYNC_LIMIT,
+        leaseTtlSeconds: ULong? = LEASE_TTL_SECONDS,
+    ): FfiLeaseInboxResponse = withContext(Dispatchers.IO) {
+        runFfi("Failed to lease inbox through sync coordinator") {
+            val client = client()
+            client.setAccessToken(session.accessToken)
+            syncCoordinator().leaseInbox(
+                client = client,
+                limit = limit,
+                leaseTtlSeconds = leaseTtlSeconds,
+            )
+        }
+    }
+
+    suspend fun ackInboxWithSyncCoordinator(inboxIds: List<ULong>): List<ULong> = withContext(Dispatchers.IO) {
+        runFfi("Failed to ack inbox through sync coordinator") {
+            val client = client()
+            client.setAccessToken(session.accessToken)
+            syncCoordinator().ackInbox(client = client, inboxIds = inboxIds).ackedInboxIds
+        }
+    }
+
+    suspend fun applyLeasedInbox(
+        lease: FfiLeaseInboxResponse,
+    ): FfiLocalStoreApplyReport = withContext(Dispatchers.IO) {
+        runFfi("Failed to apply leased inbox to local store") {
+            historyStore().applyLeasedInbox(lease)
+        }
+    }
+
+    suspend fun recordChatServerSeq(
+        chatId: String,
+        serverSeq: ULong,
+    ): Boolean = withContext(Dispatchers.IO) {
+        runFfi("Failed to record chat server sequence") {
+            syncCoordinator().recordChatServerSeq(chatId, serverSeq)
         }
     }
 
@@ -646,6 +733,8 @@ class ChatRepository(
         val store = historyStore()
         val selfAccountId = session.localState.accountId
         val syncSnapshot = syncCoordinator().stateSnapshot()
+        val leaseOwner = syncCoordinator().leaseOwner()
+        val syncStatePath = syncCoordinator().statePath() ?: clientStore().databasePath()
         val conversations = store.listLocalChatListItems(selfAccountId).map { item ->
             val detail = store.getChat(item.chatId)
             val pendingOutboxMessages = store.listOutboxMessages(item.chatId)
@@ -708,9 +797,9 @@ class ChatRepository(
                 projectedChatCount = conversations.count { it.hasProjectedTimeline },
                 pendingOutboxCount = store.listOutboxMessages(null).size,
                 lastAckedInboxId = syncSnapshot.lastAckedInboxId?.toLong(),
-                leaseOwner = syncSnapshot.leaseOwner,
+                leaseOwner = leaseOwner,
                 historyStorePath = store.databasePath(),
-                syncStatePath = clientStore().databasePath(),
+                syncStatePath = syncStatePath,
             ),
         )
     }
@@ -927,25 +1016,27 @@ class ChatRepository(
             senderAccountId = session.localState.accountId,
             senderDeviceId = session.localState.deviceId,
             messageId = UUID.randomUUID().toString(),
-            body = FfiMessageBody(
-                kind = FfiMessageBodyKind.RECEIPT,
-                text = null,
-                targetMessageId = targetMessage.messageId,
-                emoji = null,
-                reactionAction = null,
-                receiptType = FfiReceiptType.READ,
-                receiptAtUnix = queuedAtUnix,
-                blobId = null,
-                mimeType = null,
-                sizeBytes = null,
-                sha256 = null,
-                fileName = null,
-                widthPx = null,
-                heightPx = null,
-                fileKey = null,
-                nonce = null,
-                eventType = null,
-                eventJson = null,
+            body = canonicalizeMessageBody(
+                FfiMessageBody(
+                    kind = FfiMessageBodyKind.RECEIPT,
+                    text = null,
+                    targetMessageId = targetMessage.messageId,
+                    emoji = null,
+                    reactionAction = null,
+                    receiptType = FfiReceiptType.READ,
+                    receiptAtUnix = queuedAtUnix,
+                    blobId = null,
+                    mimeType = null,
+                    sizeBytes = null,
+                    sha256 = null,
+                    fileName = null,
+                    widthPx = null,
+                    heightPx = null,
+                    fileKey = null,
+                    nonce = null,
+                    eventType = null,
+                    eventJson = null,
+                ),
             ),
             queuedAtUnix = queuedAtUnix,
         )
@@ -1086,6 +1177,11 @@ class ChatRepository(
         }.getOrElse {
             chatId.encodeToByteArray()
         }
+    }
+
+    private fun canonicalizeMessageBody(body: FfiMessageBody): FfiMessageBody {
+        val payload = ffiSerializeMessageBody(body)
+        return ffiParseMessageBody(ffiContentTypeForBody(body), payload)
     }
 
     private fun client(): FfiServerApiClient = clientDelegate.value

@@ -101,8 +101,8 @@ struct LocalInboxAckResult {
 struct PersistentRealtimeBindings {
     let websocket: FfiServerWebSocketClient
     let realtimeDriver: FfiRealtimeDriver
-    let historyDatabasePath: String
-    let syncStatePath: String
+    let historyStore: FfiLocalHistoryStore
+    let syncCoordinator: FfiSyncCoordinator
 }
 
 struct PreparedLinkedDeviceState {
@@ -131,7 +131,32 @@ struct LocalCoreStateSnapshot {
     }
 }
 
+private struct DeviceDatabaseKeyStore {
+    private let keychain = KeychainStore()
+
+    func getOrCreate(account: String) throws -> Data {
+        if let existing = try keychain.load(account: account) {
+            return existing
+        }
+
+        let generated = try Data.trix_random(count: 32)
+        try keychain.save(generated, account: account)
+        return generated
+    }
+
+    func clear(account: String) throws {
+        try keychain.delete(account: account)
+    }
+}
+
 enum TrixCorePersistentBridge {
+    private static let realtimeConfig = FfiRealtimeConfig(
+        inboxLimit: 100,
+        inboxLeaseTtlSeconds: 30,
+        pollIntervalMs: 750,
+        websocketRetryDelayMs: 3_000
+    )
+
     static func publishKeyPackages(
         baseURLString: String,
         accessToken: String,
@@ -163,6 +188,22 @@ enum TrixCorePersistentBridge {
                 targetAvailable: UInt32(max(targetAvailable, 0))
             )?
             .trix_publishKeyPackagesResponse
+    }
+
+    static func dryRunCreateGroupCommit(
+        identity: LocalDeviceIdentity,
+        reservedPackages: [ReservedKeyPackage]
+    ) throws -> UInt64 {
+        let context = try loadOrCreateContext(identity: identity)
+        let keyPackages = try reservedPackages.map {
+            try $0.keyPackageB64.trix_decodedBase64(fieldName: "key_package_b64")
+        }
+        let groupId = try Data.trix_random(count: 16)
+        let conversation = try context.mlsFacade.createGroup(groupId: groupId)
+        return try context.mlsFacade.addMembers(
+            conversation: conversation,
+            keyPackages: keyPackages
+        ).epoch
     }
 
     static func prepareLinkedDeviceState(
@@ -321,7 +362,12 @@ enum TrixCorePersistentBridge {
     ) throws -> LocalInboxSyncResult {
         let context = try loadOrCreateContext(identity: identity)
         let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
-        let driver = try FfiRealtimeDriver()
+        let driver: FfiRealtimeDriver
+        do {
+            driver = try FfiRealtimeDriver.withConfig(config: realtimeConfig)
+        } catch {
+            driver = try FfiRealtimeDriver()
+        }
         let outcome = try driver.pollOnce(
             client: client,
             coordinator: context.syncCoordinator,
@@ -359,15 +405,20 @@ enum TrixCorePersistentBridge {
         accessToken: String,
         identity: LocalDeviceIdentity
     ) throws -> PersistentRealtimeBindings {
-        let paths = try PersistentCorePaths(identity: identity)
-        try paths.prepareRootDirectory()
+        let context = try loadOrCreateContext(identity: identity)
         let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        let realtimeDriver: FfiRealtimeDriver
+        do {
+            realtimeDriver = try FfiRealtimeDriver.withConfig(config: realtimeConfig)
+        } catch {
+            realtimeDriver = try FfiRealtimeDriver()
+        }
 
         return PersistentRealtimeBindings(
             websocket: try client.connectWebsocket(),
-            realtimeDriver: try FfiRealtimeDriver(),
-            historyDatabasePath: paths.historyDatabasePath.path,
-            syncStatePath: paths.syncStatePath.path
+            realtimeDriver: realtimeDriver,
+            historyStore: context.historyStore,
+            syncCoordinator: context.syncCoordinator
         )
     }
 
@@ -406,11 +457,24 @@ enum TrixCorePersistentBridge {
                 }
                 return left.unreadCount > right.unreadCount
             }
+        let mlsStorageRoot = if let clientStore = context.clientStore {
+            clientStore.mlsStorageRoot()
+        } else {
+            try context.mlsFacade.storageRoot() ?? context.paths.mlsStorageRoot.path
+        }
+        let historyDatabasePath = if let clientStore = context.clientStore {
+            clientStore.databasePath()
+        } else {
+            try context.historyStore.databasePath() ?? context.paths.legacyHistoryDatabasePath.path
+        }
+        let syncStatePath = try context.syncCoordinator.statePath()
+            ?? context.clientStore?.databasePath()
+            ?? context.paths.legacySyncStatePath.path
 
         return LocalCoreStateSnapshot(
-            mlsStorageRoot: try context.mlsFacade.storageRoot() ?? context.paths.mlsStorageRoot.path,
-            historyDatabasePath: try context.historyStore.databasePath() ?? context.paths.historyDatabasePath.path,
-            syncStatePath: try context.syncCoordinator.statePath() ?? context.paths.syncStatePath.path,
+            mlsStorageRoot: mlsStorageRoot,
+            historyDatabasePath: historyDatabasePath,
+            syncStatePath: syncStatePath,
             ciphersuiteLabel: try context.mlsFacade.ciphersuiteLabel(),
             leaseOwner: syncState.leaseOwner,
             lastAckedInboxId: syncState.lastAckedInboxId,
@@ -787,12 +851,14 @@ enum TrixCorePersistentBridge {
         limit: Int = 150
     ) throws -> [LocalTimelineItemSnapshot] {
         let paths = try PersistentCorePaths(identity: identity)
-        guard FileManager.default.fileExists(atPath: paths.historyDatabasePath.path) else {
+        guard FileManager.default.fileExists(atPath: paths.stateDatabasePath.path)
+                || FileManager.default.fileExists(atPath: paths.legacyHistoryDatabasePath.path)
+        else {
             return []
         }
 
-        let store = try FfiLocalHistoryStore.newPersistent(databasePath: paths.historyDatabasePath.path)
-        return try store.getLocalTimelineItems(
+        let context = try loadOrCreateContext(identity: identity)
+        return try context.historyStore.getLocalTimelineItems(
             chatId: chatId,
             selfAccountId: identity.accountId,
             afterServerSeq: nil,
@@ -807,12 +873,14 @@ enum TrixCorePersistentBridge {
         limit: Int = 100
     ) throws -> ChatHistoryResponse? {
         let paths = try PersistentCorePaths(identity: identity)
-        guard FileManager.default.fileExists(atPath: paths.historyDatabasePath.path) else {
+        guard FileManager.default.fileExists(atPath: paths.stateDatabasePath.path)
+                || FileManager.default.fileExists(atPath: paths.legacyHistoryDatabasePath.path)
+        else {
             return nil
         }
 
-        let store = try FfiLocalHistoryStore.newPersistent(databasePath: paths.historyDatabasePath.path)
-        let history = try store.getChatHistory(
+        let context = try loadOrCreateContext(identity: identity)
+        let history = try context.historyStore.getChatHistory(
             chatId: chatId,
             afterServerSeq: nil,
             limit: UInt32(min(max(limit, 1), 500))
@@ -829,12 +897,14 @@ enum TrixCorePersistentBridge {
         chatId: String
     ) throws -> UInt64? {
         let paths = try PersistentCorePaths(identity: identity)
-        guard FileManager.default.fileExists(atPath: paths.historyDatabasePath.path) else {
+        guard FileManager.default.fileExists(atPath: paths.stateDatabasePath.path)
+                || FileManager.default.fileExists(atPath: paths.legacyHistoryDatabasePath.path)
+        else {
             return nil
         }
 
-        let store = try FfiLocalHistoryStore.newPersistent(databasePath: paths.historyDatabasePath.path)
-        return try store.projectedCursor(chatId: chatId)
+        let context = try loadOrCreateContext(identity: identity)
+        return try context.historyStore.projectedCursor(chatId: chatId)
     }
 
     static func getChatReadState(
@@ -951,45 +1021,72 @@ enum TrixCorePersistentBridge {
 
     static func deletePersistentState(identity: LocalDeviceIdentity) throws {
         let paths = try PersistentCorePaths(identity: identity)
-        guard FileManager.default.fileExists(atPath: paths.rootDirectory.path) else {
-            return
+        if FileManager.default.fileExists(atPath: paths.rootDirectory.path) {
+            try FileManager.default.removeItem(at: paths.rootDirectory)
         }
 
-        try FileManager.default.removeItem(at: paths.rootDirectory)
+        try DeviceDatabaseKeyStore().clear(account: paths.databaseKeyAccount)
     }
 
     private static func loadOrCreateContext(identity: LocalDeviceIdentity) throws -> PersistentCoreContext {
         let paths = try PersistentCorePaths(identity: identity)
         try paths.prepareRootDirectory()
+        do {
+            let databaseKey = try DeviceDatabaseKeyStore().getOrCreate(account: paths.databaseKeyAccount)
+            let clientStore = try FfiClientStore.open(
+                config: FfiClientStoreConfig(
+                    databasePath: paths.stateDatabasePath.path,
+                    databaseKey: databaseKey,
+                    attachmentCacheRoot: paths.attachmentCacheRoot.path
+                )
+            )
+            let historyStore = clientStore.historyStore()
+            let syncCoordinator = clientStore.syncCoordinator()
+            let mlsFacade = try clientStore.openMlsFacade(credentialIdentity: identity.credentialIdentity)
 
-        let mlsFacade: FfiMlsFacade
-        if FileManager.default.fileExists(atPath: paths.mlsStorageRoot.path) {
-            mlsFacade = try FfiMlsFacade.loadPersistent(storageRoot: paths.mlsStorageRoot.path)
-        } else {
-            mlsFacade = try FfiMlsFacade.newPersistent(
-                credentialIdentity: identity.credentialIdentity,
-                storageRoot: paths.mlsStorageRoot.path
+            let persistedCredentialIdentity = try mlsFacade.credentialIdentity()
+            guard persistedCredentialIdentity == identity.credentialIdentity else {
+                throw TrixCorePersistentBridgeError.credentialIdentityMismatch
+            }
+
+            return PersistentCoreContext(
+                paths: paths,
+                clientStore: clientStore,
+                mlsFacade: mlsFacade,
+                historyStore: historyStore,
+                syncCoordinator: syncCoordinator
+            )
+        } catch {
+            let mlsFacade: FfiMlsFacade
+            if FileManager.default.fileExists(atPath: paths.mlsStorageRoot.path) {
+                mlsFacade = try FfiMlsFacade.loadPersistent(storageRoot: paths.mlsStorageRoot.path)
+            } else {
+                mlsFacade = try FfiMlsFacade.newPersistent(
+                    credentialIdentity: identity.credentialIdentity,
+                    storageRoot: paths.mlsStorageRoot.path
+                )
+            }
+
+            let persistedCredentialIdentity = try mlsFacade.credentialIdentity()
+            guard persistedCredentialIdentity == identity.credentialIdentity else {
+                throw TrixCorePersistentBridgeError.credentialIdentityMismatch
+            }
+
+            let historyStore = try FfiLocalHistoryStore.newPersistent(
+                databasePath: paths.legacyHistoryDatabasePath.path
+            )
+            let syncCoordinator = try FfiSyncCoordinator.newPersistent(
+                statePath: paths.legacySyncStatePath.path
+            )
+
+            return PersistentCoreContext(
+                paths: paths,
+                clientStore: nil,
+                mlsFacade: mlsFacade,
+                historyStore: historyStore,
+                syncCoordinator: syncCoordinator
             )
         }
-
-        let persistedCredentialIdentity = try mlsFacade.credentialIdentity()
-        guard persistedCredentialIdentity == identity.credentialIdentity else {
-            throw TrixCorePersistentBridgeError.credentialIdentityMismatch
-        }
-
-        let historyStore = try FfiLocalHistoryStore.newPersistent(
-            databasePath: paths.historyDatabasePath.path
-        )
-        let syncCoordinator = try FfiSyncCoordinator.newPersistent(
-            statePath: paths.syncStatePath.path
-        )
-
-        return PersistentCoreContext(
-            paths: paths,
-            mlsFacade: mlsFacade,
-            historyStore: historyStore,
-            syncCoordinator: syncCoordinator
-        )
     }
 
     private static func makeClient(
@@ -1006,6 +1103,7 @@ enum TrixCorePersistentBridge {
 
 private struct PersistentCoreContext {
     let paths: PersistentCorePaths
+    let clientStore: FfiClientStore?
     let mlsFacade: FfiMlsFacade
     let historyStore: FfiLocalHistoryStore
     let syncCoordinator: FfiSyncCoordinator
@@ -1020,8 +1118,11 @@ private struct PersistentCorePaths {
     let accountDirectory: URL
     let rootDirectory: URL
     let mlsStorageRoot: URL
-    let historyDatabasePath: URL
-    let syncStatePath: URL
+    let stateDatabasePath: URL
+    let legacyHistoryDatabasePath: URL
+    let legacySyncStatePath: URL
+    let attachmentCacheRoot: URL
+    let databaseKeyAccount: String
 
     init(identity: LocalDeviceIdentity) throws {
         let appSupportRoot = try FileManager.default.url(
@@ -1040,13 +1141,20 @@ private struct PersistentCorePaths {
         self.accountDirectory = accountDirectory
         self.rootDirectory = rootDirectory
         mlsStorageRoot = rootDirectory.appendingPathComponent("mls", isDirectory: true)
-        historyDatabasePath = rootDirectory.appendingPathComponent("history-store.sqlite")
-        syncStatePath = rootDirectory.appendingPathComponent("sync-state.sqlite")
+        stateDatabasePath = rootDirectory.appendingPathComponent("state-v1.db")
+        legacyHistoryDatabasePath = rootDirectory.appendingPathComponent("history-store.sqlite")
+        legacySyncStatePath = rootDirectory.appendingPathComponent("sync-state.sqlite")
+        attachmentCacheRoot = rootDirectory.appendingPathComponent("attachments", isDirectory: true)
+        databaseKeyAccount = "device-core-store-key-v1:\(identity.accountId):\(identity.deviceId)"
     }
 
     func prepareRootDirectory() throws {
         try FileManager.default.createDirectory(
             at: rootDirectory,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: attachmentCacheRoot,
             withIntermediateDirectories: true
         )
     }

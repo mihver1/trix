@@ -12,7 +12,11 @@ struct KeychainStore {
     private let service = AppIdentity.keychainService
 
     func save(_ data: Data, for key: VaultKey) throws {
-        let query = baseQuery(for: key)
+        try save(data, account: key.rawValue)
+    }
+
+    func save(_ data: Data, account: String) throws {
+        let query = baseQuery(account: account)
         let updateAttributes = [kSecValueData as String: data]
         let updateStatus = SecItemUpdate(query as CFDictionary, updateAttributes as CFDictionary)
 
@@ -41,7 +45,11 @@ struct KeychainStore {
     }
 
     func loadData(for key: VaultKey) throws -> Data? {
-        var query = baseQuery(for: key)
+        try loadData(account: key.rawValue)
+    }
+
+    func loadData(account: String) throws -> Data? {
+        var query = baseQuery(account: account)
         query[kSecReturnData as String] = kCFBooleanTrue
         query[kSecMatchLimit as String] = kSecMatchLimitOne
 
@@ -59,17 +67,25 @@ struct KeychainStore {
     }
 
     func removeValue(for key: VaultKey) throws {
-        let status = SecItemDelete(baseQuery(for: key) as CFDictionary)
+        try removeValue(account: key.rawValue)
+    }
+
+    func removeValue(account: String) throws {
+        let status = SecItemDelete(baseQuery(account: account) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw KeychainStoreError.unhandledStatus(status)
         }
     }
 
     private func baseQuery(for key: VaultKey) -> [String: Any] {
+        baseQuery(account: key.rawValue)
+    }
+
+    private func baseQuery(account: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: key.rawValue,
+            kSecAttrAccount as String: account,
         ]
     }
 }

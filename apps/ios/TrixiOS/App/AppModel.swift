@@ -539,6 +539,117 @@ final class AppModel: ObservableObject {
     }
 
     @discardableResult
+    func fetchAccountKeyPackages(
+        baseURLString: String,
+        accountId: String
+    ) async -> AccountKeyPackagesResponse? {
+        guard !isLoading else {
+            return nil
+        }
+
+        let normalizedAccountId = accountId.trix_trimmed()
+        guard !normalizedAccountId.isEmpty else {
+            errorMessage = "Account ID must not be empty."
+            return nil
+        }
+
+        isLoading = true
+        errorMessage = nil
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            return try TrixCoreServerBridge.getAccountKeyPackages(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                accountId: normalizedAccountId
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    @discardableResult
+    func reserveAccountKeyPackages(
+        baseURLString: String,
+        accountId: String,
+        deviceIds: [String]
+    ) async -> AccountKeyPackagesResponse? {
+        guard !isLoading else {
+            return nil
+        }
+
+        let normalizedAccountId = accountId.trix_trimmed()
+        let normalizedDeviceIds = sanitizeIdentifiers(deviceIds)
+        guard !normalizedAccountId.isEmpty else {
+            errorMessage = "Account ID must not be empty."
+            return nil
+        }
+        guard !normalizedDeviceIds.isEmpty else {
+            errorMessage = "At least one device ID is required."
+            return nil
+        }
+
+        isLoading = true
+        errorMessage = nil
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            return try TrixCoreServerBridge.reserveKeyPackages(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                accountId: normalizedAccountId,
+                deviceIds: normalizedDeviceIds
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    @discardableResult
+    func dryRunReservedKeyPackageCommit(
+        reservedPackages: [ReservedKeyPackage]
+    ) async -> UInt64? {
+        guard !isLoading else {
+            return nil
+        }
+        guard let identity = localIdentity else {
+            errorMessage = "Local identity is missing."
+            return nil
+        }
+        guard !reservedPackages.isEmpty else {
+            errorMessage = "Reserve or load key packages first."
+            return nil
+        }
+
+        isLoading = true
+        errorMessage = nil
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            return try TrixCorePersistentBridge.dryRunCreateGroupCommit(
+                identity: identity,
+                reservedPackages: reservedPackages
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    @discardableResult
     func createChat(
         baseURLString: String,
         chatType: ChatType,
@@ -1749,6 +1860,13 @@ final class AppModel: ObservableObject {
     }
 
     private func invalidateCachedAuthSession() {
+        if let cachedAuthSession,
+           let baseURLString = currentServerBaseURLString {
+            try? TrixCoreServerBridge.clearAccessToken(
+                baseURLString: baseURLString,
+                accessToken: cachedAuthSession.session.accessToken
+            )
+        }
         cachedAuthSession = nil
         realtimeAccessToken = nil
     }
@@ -2387,7 +2505,7 @@ final class AppModel: ObservableObject {
             receiptDraft.receiptKind = .read
             receiptDraft.receiptAtUnix = String(UInt64(Date().timeIntervalSince1970))
 
-            let response = try TrixCorePersistentBridge.sendMessageBody(
+            _ = try TrixCorePersistentBridge.sendMessageBody(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
@@ -2396,10 +2514,10 @@ final class AppModel: ObservableObject {
             )
 
             updateLocalCoreStateSnapshot(identity: context.identity)
-            applyLocalCoreStateOverlay(
+            _ = applyLocalCoreStateOverlay(
                 session: context.session,
                 ackedInboxIds: [],
-                changedChatIds: [response.chatId]
+                changedChatIds: [chatId]
             )
         } catch {
             // Read receipts are opportunistic; keep the chat open even if they fail.

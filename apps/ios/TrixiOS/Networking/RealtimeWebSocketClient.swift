@@ -33,8 +33,8 @@ actor RealtimeWebSocketClient {
         )
         websocket = bindings.websocket
         realtimeDriver = bindings.realtimeDriver
-        historyStore = try FfiLocalHistoryStore.newPersistent(databasePath: bindings.historyDatabasePath)
-        syncCoordinator = try FfiSyncCoordinator.newPersistent(statePath: bindings.syncStatePath)
+        historyStore = bindings.historyStore
+        syncCoordinator = bindings.syncCoordinator
         self.onEvent = onEvent
         self.onDisconnect = onDisconnect
     }

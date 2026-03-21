@@ -603,8 +603,28 @@ final class AppModel: ObservableObject {
 
             var updatedSession = session
             updatedSession.deviceStatus = authSession.deviceStatus
+            var resolvedIdentity = identity
 
-            try save(identity: identity, authSession: authSession, persistedSession: updatedSession)
+            if !identity.hasAccountRootKey, authSession.deviceStatus == .active {
+                do {
+                    let imported = try await importTransferredAccountRootIfAvailable(
+                        client: client,
+                        accessToken: authSession.accessToken,
+                        session: updatedSession,
+                        identity: identity
+                    )
+                    resolvedIdentity = imported.identity
+                    updatedSession.accountSyncChatId = imported.accountSyncChatId ?? updatedSession.accountSyncChatId
+                } catch {
+                    logWarn(
+                        "auth",
+                        "restore_session account-root import failed device=\(shortLogID(session.deviceId))",
+                        error: error
+                    )
+                }
+            }
+
+            try save(identity: resolvedIdentity, authSession: authSession, persistedSession: updatedSession)
             try await loadWorkspace(client: client, accessToken: authSession.accessToken)
             logInfo(
                 "auth",
@@ -2287,6 +2307,24 @@ final class AppModel: ObservableObject {
         try sessionStore.save(persistedSession)
         self.persistedSession = persistedSession
         refreshLocalIdentityState(reportErrors: true)
+    }
+
+    private func importTransferredAccountRootIfAvailable(
+        client: TrixAPIClient,
+        accessToken: String,
+        session: PersistedSession,
+        identity: DeviceIdentityMaterial
+    ) async throws -> ImportedAccountRootResult {
+        let bundle = try await client.fetchDeviceTransferBundle(
+            accessToken: accessToken,
+            deviceId: session.deviceId
+        )
+        return try identity.importingAccountRoot(
+            fromTransferBundle: bundle.transferBundle,
+            accountId: session.accountId,
+            deviceId: session.deviceId,
+            accountSyncChatId: session.accountSyncChatId
+        )
     }
 
     private func loadStoredIdentity(requireAccountRoot: Bool = false) throws -> DeviceIdentityMaterial {

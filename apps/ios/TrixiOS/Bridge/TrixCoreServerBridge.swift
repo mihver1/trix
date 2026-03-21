@@ -20,18 +20,42 @@ struct TrixCoreServerBridge {
         bootstrapMaterial: DeviceBootstrapMaterial
     ) throws -> CreateAccountResponse {
         let client = try makeClient(baseURLString: baseURLString)
-        let response = try client.createAccountWithMaterials(
-            params: FfiCreateAccountWithMaterialsParams(
-                handle: form.handle.trix_trimmedOrNil(),
-                profileName: form.profileName.trix_trimmed(),
-                profileBio: form.profileBio.trix_trimmedOrNil(),
-                deviceDisplayName: form.deviceDisplayName.trix_trimmed(),
-                platform: form.platform,
-                credentialIdentity: bootstrapMaterial.credentialIdentity
-            ),
-            accountRoot: try bootstrapMaterial.accountRootMaterial(),
-            deviceKeys: try bootstrapMaterial.deviceKeyMaterial()
+        let accountRoot = try bootstrapMaterial.accountRootMaterial()
+        let deviceKeys = try bootstrapMaterial.deviceKeyMaterial()
+        let transportPubkey = deviceKeys.publicKeyBytes()
+        let accountBootstrapPayload = accountRoot.accountBootstrapPayload(
+            transportPubkey: transportPubkey,
+            credentialIdentity: bootstrapMaterial.credentialIdentity
         )
+        let response: FfiCreateAccountResponse
+        do {
+            response = try client.createAccount(
+                params: FfiCreateAccountParams(
+                    handle: form.handle.trix_trimmedOrNil(),
+                    profileName: form.profileName.trix_trimmed(),
+                    profileBio: form.profileBio.trix_trimmedOrNil(),
+                    deviceDisplayName: form.deviceDisplayName.trix_trimmed(),
+                    platform: form.platform,
+                    credentialIdentity: bootstrapMaterial.credentialIdentity,
+                    accountRootPubkey: accountRoot.publicKeyBytes(),
+                    accountRootSignature: accountRoot.sign(payload: accountBootstrapPayload),
+                    transportPubkey: transportPubkey
+                )
+            )
+        } catch {
+            response = try client.createAccountWithMaterials(
+                params: FfiCreateAccountWithMaterialsParams(
+                    handle: form.handle.trix_trimmedOrNil(),
+                    profileName: form.profileName.trix_trimmed(),
+                    profileBio: form.profileBio.trix_trimmedOrNil(),
+                    deviceDisplayName: form.deviceDisplayName.trix_trimmed(),
+                    platform: form.platform,
+                    credentialIdentity: bootstrapMaterial.credentialIdentity
+                ),
+                accountRoot: accountRoot,
+                deviceKeys: deviceKeys
+            )
+        }
 
         return CreateAccountResponse(
             accountId: response.accountId,
@@ -51,6 +75,14 @@ struct TrixCoreServerBridge {
             qrPayload: response.qrPayload,
             expiresAtUnix: response.expiresAtUnix
         )
+    }
+
+    static func clearAccessToken(
+        baseURLString: String,
+        accessToken: String
+    ) throws {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        try client.clearAccessToken()
     }
 
     static func searchAccountDirectory(
@@ -148,18 +180,24 @@ struct TrixCoreServerBridge {
         identity: LocalDeviceIdentity
     ) throws -> AuthSessionResponse {
         let client = try makeClient(baseURLString: baseURLString)
-        let session = try client.authenticateWithDeviceKey(
-            deviceId: identity.deviceId,
-            deviceKeys: try identity.deviceKeyMaterial(),
-            setAccessToken: false
-        )
+        let deviceKeys = try identity.deviceKeyMaterial()
+        _ = deviceKeys.publicKeyBytes()
 
-        return AuthSessionResponse(
-            accessToken: session.accessToken,
-            expiresAtUnix: session.expiresAtUnix,
-            accountId: session.accountId,
-            deviceStatus: session.deviceStatus.trix_serverDeviceStatus
-        )
+        do {
+            let challenge = try client.createAuthChallenge(deviceId: identity.deviceId)
+            let session = try client.createAuthSession(
+                deviceId: identity.deviceId,
+                challengeId: challenge.challengeId,
+                signature: deviceKeys.sign(payload: challenge.challenge)
+            )
+            return session.trix_authSessionResponse
+        } catch {
+            return try client.authenticateWithDeviceKey(
+                deviceId: identity.deviceId,
+                deviceKeys: deviceKeys,
+                setAccessToken: false
+            ).trix_authSessionResponse
+        }
     }
 
     static func getAccountProfile(
@@ -176,6 +214,29 @@ struct TrixCoreServerBridge {
     ) async throws -> DeviceListResponse {
         let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
         return try client.listDevices().trix_serverDeviceListResponse
+    }
+
+    static func reserveKeyPackages(
+        baseURLString: String,
+        accessToken: String,
+        accountId: String,
+        deviceIds: [String]
+    ) throws -> AccountKeyPackagesResponse {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        return try client.reserveKeyPackages(
+            accountId: accountId,
+            deviceIds: deviceIds
+        ).trix_serverAccountKeyPackagesResponse(accountId: accountId)
+    }
+
+    static func getAccountKeyPackages(
+        baseURLString: String,
+        accessToken: String,
+        accountId: String
+    ) throws -> AccountKeyPackagesResponse {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        return try client.getAccountKeyPackages(accountId: accountId)
+            .trix_serverAccountKeyPackagesResponse(accountId: accountId)
     }
 
     static func listHistorySyncJobs(
@@ -285,11 +346,33 @@ struct TrixCoreServerBridge {
         deviceId: String
     ) throws -> ApproveDeviceResponse {
         let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
-        let response = try client.approveDeviceWithAccountRoot(
-            deviceId: deviceId,
-            accountRoot: try identity.accountRootMaterial(),
-            transferBundle: try identity.accountRootTransferBundle()
-        )
+        let accountRoot = try identity.accountRootMaterial()
+        let response: FfiApproveDeviceResponse
+
+        do {
+            let payload = try client.getDeviceApprovePayload(deviceId: deviceId)
+            let senderDeviceKeys = try identity.deviceKeyMaterial()
+            response = try client.approveDevice(
+                deviceId: payload.deviceId,
+                accountRootSignature: accountRoot.sign(payload: payload.bootstrapPayload),
+                transferBundle: try accountRoot.createDeviceTransferBundle(
+                    params: FfiCreateDeviceTransferBundleParams(
+                        accountId: payload.accountId,
+                        sourceDeviceId: identity.deviceId,
+                        targetDeviceId: payload.deviceId,
+                        accountSyncChatId: identity.accountSyncChatId
+                    ),
+                    senderDeviceKeys: senderDeviceKeys,
+                    recipientTransportPubkey: payload.transportPubkey
+                )
+            )
+        } catch {
+            response = try client.approveDeviceWithAccountRoot(
+                deviceId: deviceId,
+                accountRoot: accountRoot,
+                transferBundle: nil
+            )
+        }
 
         return ApproveDeviceResponse(
             accountId: response.accountId,
@@ -325,7 +408,7 @@ struct TrixCoreServerBridge {
             profileName: profile.profileName,
             profileBio: profile.profileBio,
             deviceId: profile.deviceId,
-            deviceStatus: profile.deviceStatus.trix_deviceStatus
+            deviceStatus: profile.deviceStatus.trix_serverDeviceStatus
         )
     }
 
@@ -342,7 +425,7 @@ struct TrixCoreServerBridge {
                     deviceId: device.deviceId,
                     displayName: device.displayName,
                     platform: device.platform,
-                    deviceStatus: device.deviceStatus.trix_deviceStatus,
+                    deviceStatus: device.deviceStatus.trix_serverDeviceStatus,
                     availableKeyPackageCount: device.availableKeyPackageCount
                 )
             }
@@ -605,6 +688,17 @@ private extension FfiAccountProfile {
     }
 }
 
+private extension FfiAuthSession {
+    var trix_authSessionResponse: AuthSessionResponse {
+        AuthSessionResponse(
+            accessToken: accessToken,
+            expiresAtUnix: expiresAtUnix,
+            accountId: accountId,
+            deviceStatus: deviceStatus.trix_serverDeviceStatus
+        )
+    }
+}
+
 private extension FfiDeviceSummary {
     var trix_serverDeviceSummary: DeviceSummary {
         DeviceSummary(
@@ -622,6 +716,26 @@ private extension FfiDeviceList {
         DeviceListResponse(
             accountId: accountId,
             devices: devices.map(\.trix_serverDeviceSummary)
+        )
+    }
+}
+
+private extension FfiReservedKeyPackage {
+    var trix_serverReservedKeyPackage: ReservedKeyPackage {
+        ReservedKeyPackage(
+            keyPackageId: keyPackageId,
+            deviceId: deviceId,
+            cipherSuite: cipherSuite,
+            keyPackageB64: keyPackage.base64EncodedString()
+        )
+    }
+}
+
+private extension Array where Element == FfiReservedKeyPackage {
+    func trix_serverAccountKeyPackagesResponse(accountId: String) -> AccountKeyPackagesResponse {
+        AccountKeyPackagesResponse(
+            accountId: accountId,
+            packages: map(\.trix_serverReservedKeyPackage)
         )
     }
 }

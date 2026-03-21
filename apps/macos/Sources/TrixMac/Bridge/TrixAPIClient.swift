@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 enum TrixAPIError: LocalizedError {
     case invalidResponse
@@ -1529,17 +1530,48 @@ struct TrixAPIClient {
     }
 
     private static func makeLocalHistoryStore(databasePath: URL) throws -> FfiLocalHistoryStore {
-        try FfiLocalHistoryStore.newPersistent(databasePath: databasePath.path)
+        if let clientStore = try makeWorkspaceClientStore(
+            workspaceRoot: databasePath.deletingLastPathComponent()
+        ) {
+            let clientDatabasePath = clientStore.databasePath()
+            guard !clientDatabasePath.isEmpty else {
+                throw TrixAPIError.invalidPayload("Unified client store returned an empty database path.")
+            }
+            let historyStore = clientStore.historyStore()
+            guard let resolvedDatabasePath = try historyStore.databasePath(),
+                  resolvedDatabasePath == clientDatabasePath
+            else {
+                throw TrixAPIError.invalidPayload("Unified history store returned an unexpected database path.")
+            }
+            return historyStore
+        }
+
+        return try FfiLocalHistoryStore.newPersistent(databasePath: databasePath.path)
     }
 
     private static func makeSyncCoordinator(statePath: URL) throws -> FfiSyncCoordinator {
-        try FfiSyncCoordinator.newPersistent(statePath: statePath.path)
+        if let clientStore = try makeWorkspaceClientStore(
+            workspaceRoot: statePath.deletingLastPathComponent()
+        ) {
+            return clientStore.syncCoordinator()
+        }
+
+        return try FfiSyncCoordinator.newPersistent(statePath: statePath.path)
     }
 
     private static func makePersistentMlsFacade(
         storageRoot: URL,
         credentialIdentity: Data
     ) throws -> FfiMlsFacade {
+        if let clientStore = try makeWorkspaceClientStore(
+            workspaceRoot: storageRoot.deletingLastPathComponent()
+        ) {
+            guard !clientStore.mlsStorageRoot().isEmpty else {
+                throw TrixAPIError.invalidPayload("Unified client store returned an empty MLS storage root.")
+            }
+            return try clientStore.openMlsFacade(credentialIdentity: credentialIdentity)
+        }
+
         try FileManager.default.createDirectory(
             at: storageRoot,
             withIntermediateDirectories: true
@@ -1561,8 +1593,13 @@ struct TrixAPIClient {
         chatIds: [String]? = nil,
         limit: Int = 500
     ) throws {
-        let workspaceRoot = databasePath.deletingLastPathComponent()
-        let mlsStorageRoot = workspaceRoot.appendingPathComponent("mls-state", isDirectory: true)
+        let resolvedDatabasePath = if let persistedDatabasePath = try store.databasePath() {
+            URL(fileURLWithPath: persistedDatabasePath)
+        } else {
+            databasePath
+        }
+        let workspaceRoot = resolvedDatabasePath.deletingLastPathComponent()
+        let mlsStorageRoot = resolvedPersistentMlsStorageRoot(workspaceRoot: workspaceRoot)
         guard let facade = try? FfiMlsFacade.loadPersistent(storageRoot: mlsStorageRoot.path) else {
             return
         }
@@ -1600,6 +1637,136 @@ struct TrixAPIClient {
             try store.saveState()
             try facade.saveState()
         }
+    }
+
+    private static func makeWorkspaceClientStore(workspaceRoot: URL) throws -> FfiClientStore? {
+        let fileManager = FileManager.default
+        let unifiedDatabasePath = workspaceRoot.appendingPathComponent("state-v1.db")
+        let legacyState = legacyWorkspaceState(workspaceRoot: workspaceRoot)
+        let hasUnifiedStore = fileManager.fileExists(atPath: unifiedDatabasePath.path)
+
+        let attachmentsRoot = workspaceRoot.appendingPathComponent("attachments", isDirectory: true)
+        try fileManager.createDirectory(at: workspaceRoot, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: attachmentsRoot, withIntermediateDirectories: true)
+
+        let databaseKey = try WorkspaceDatabaseKeyStore().getOrCreate(workspaceRoot: workspaceRoot)
+        do {
+            try prepareLegacyWorkspaceMigrationIfNeeded(
+                workspaceRoot: workspaceRoot,
+                legacyState: legacyState,
+                hasUnifiedStore: hasUnifiedStore
+            )
+
+            return try FfiClientStore.open(
+                config: FfiClientStoreConfig(
+                    databasePath: unifiedDatabasePath.path,
+                    databaseKey: databaseKey,
+                    attachmentCacheRoot: attachmentsRoot.path
+                )
+            )
+        } catch {
+            if !hasUnifiedStore && legacyState.exists {
+                return nil
+            }
+            throw error
+        }
+    }
+
+    private static func legacyWorkspaceState(workspaceRoot: URL) -> LegacyWorkspaceState {
+        let legacyHistoryPath = workspaceRoot.appendingPathComponent("local-history.sqlite")
+        let legacyMigrationHistoryPath = workspaceRoot.appendingPathComponent("trix-client.db")
+        let legacySyncPath = workspaceRoot.appendingPathComponent("sync-state.sqlite")
+        let legacyMlsRoot = workspaceRoot.appendingPathComponent("mls-state", isDirectory: true)
+        let fileManager = FileManager.default
+
+        return LegacyWorkspaceState(
+            historyPath: legacyHistoryPath,
+            migrationHistoryPath: legacyMigrationHistoryPath,
+            syncPath: legacySyncPath,
+            mlsRoot: legacyMlsRoot,
+            hasHistory: fileManager.fileExists(atPath: legacyHistoryPath.path)
+                || fileManager.fileExists(atPath: legacyMigrationHistoryPath.path),
+            hasSync: fileManager.fileExists(atPath: legacySyncPath.path),
+            hasMls: fileManager.fileExists(atPath: legacyMlsRoot.path)
+        )
+    }
+
+    private static func prepareLegacyWorkspaceMigrationIfNeeded(
+        workspaceRoot: URL,
+        legacyState: LegacyWorkspaceState,
+        hasUnifiedStore: Bool
+    ) throws {
+        let unifiedMlsRoot = workspaceRoot.appendingPathComponent("mls", isDirectory: true)
+
+        if !hasUnifiedStore,
+           legacyState.hasHistory,
+           !FileManager.default.fileExists(atPath: legacyState.migrationHistoryPath.path),
+           FileManager.default.fileExists(atPath: legacyState.historyPath.path) {
+            try copyItemIfNeeded(
+                from: legacyState.historyPath,
+                to: legacyState.migrationHistoryPath
+            )
+            try copySQLiteSidecarIfNeeded(
+                from: legacyState.historyPath,
+                to: legacyState.migrationHistoryPath,
+                suffix: "-shm"
+            )
+            try copySQLiteSidecarIfNeeded(
+                from: legacyState.historyPath,
+                to: legacyState.migrationHistoryPath,
+                suffix: "-wal"
+            )
+        }
+
+        if legacyState.hasMls,
+           !FileManager.default.fileExists(atPath: unifiedMlsRoot.path),
+           FileManager.default.fileExists(atPath: legacyState.mlsRoot.path) {
+            try copyItemIfNeeded(
+                from: legacyState.mlsRoot,
+                to: unifiedMlsRoot
+            )
+        }
+    }
+
+    private static func resolvedPersistentMlsStorageRoot(workspaceRoot: URL) -> URL {
+        let unifiedMlsRoot = workspaceRoot.appendingPathComponent("mls", isDirectory: true)
+        if FileManager.default.fileExists(atPath: unifiedMlsRoot.path) {
+            return unifiedMlsRoot
+        }
+
+        return workspaceRoot.appendingPathComponent("mls-state", isDirectory: true)
+    }
+
+    private static func copyItemIfNeeded(from source: URL, to destination: URL) throws {
+        guard FileManager.default.fileExists(atPath: source.path),
+              !FileManager.default.fileExists(atPath: destination.path)
+        else {
+            return
+        }
+
+        try FileManager.default.copyItem(at: source, to: destination)
+    }
+
+    private static func copySQLiteSidecarIfNeeded(
+        from source: URL,
+        to destination: URL,
+        suffix: String
+    ) throws {
+        try copyItemIfNeeded(
+            from: URL(fileURLWithPath: source.path + suffix),
+            to: URL(fileURLWithPath: destination.path + suffix)
+        )
+    }
+
+    fileprivate static func randomDatabaseKey(count: Int = 32) throws -> Data {
+        var bytes = Data(count: count)
+        let status = bytes.withUnsafeMutableBytes {
+            SecRandomCopyBytes(kSecRandomDefault, count, $0.baseAddress!)
+        }
+        guard status == errSecSuccess else {
+            throw KeychainStoreError.unhandledStatus(status)
+        }
+        return bytes
     }
 
     private static func prepareConversationIfNeeded(
@@ -1677,5 +1844,34 @@ struct TrixAPIClient {
             message: String(serverMessage),
             statusCode: statusCode
         )
+    }
+}
+
+private struct LegacyWorkspaceState {
+    let historyPath: URL
+    let migrationHistoryPath: URL
+    let syncPath: URL
+    let mlsRoot: URL
+    let hasHistory: Bool
+    let hasSync: Bool
+    let hasMls: Bool
+
+    var exists: Bool {
+        hasHistory || hasSync || hasMls
+    }
+}
+
+private struct WorkspaceDatabaseKeyStore {
+    private let keychainStore = KeychainStore()
+
+    func getOrCreate(workspaceRoot: URL) throws -> Data {
+        let account = "workspace-core-store-key-v1:\(workspaceRoot.lastPathComponent.lowercased())"
+        if let existing = try keychainStore.loadData(account: account) {
+            return existing
+        }
+
+        let generated = try TrixAPIClient.randomDatabaseKey()
+        try keychainStore.save(generated, account: account)
+        return generated
     }
 }

@@ -6,14 +6,21 @@ private struct CreateChatDraft {
     var participantAccountIds = ""
 }
 
+private struct KeyPackageDebugDraft {
+    var accountId = ""
+    var deviceIds = ""
+}
+
 struct MessagingLabView: View {
     @Binding var serverBaseURL: String
     @ObservedObject var model: AppModel
 
     @State private var createChatDraft = CreateChatDraft()
+    @State private var keyPackageDebugDraft = KeyPackageDebugDraft()
     @State private var activityMessage: String?
     @State private var leasedInboxBatch: LeaseInboxResponse?
     @State private var localInboxSync: LocalInboxSyncResult?
+    @State private var inspectedKeyPackages: AccountKeyPackagesResponse?
 
     var body: some View {
         List {
@@ -55,6 +62,93 @@ struct MessagingLabView: View {
                     Text("MLS Key Packages")
                 } footer: {
                     Text("Key packages now come from the persistent `trix-core` MLS facade stored on-device. Chat creation and membership flows can reserve these packages from the server.")
+                }
+
+                Section {
+                    TextField(
+                        "Account ID",
+                        text: Binding(
+                            get: {
+                                if keyPackageDebugDraft.accountId.isEmpty {
+                                    return dashboard.profile.accountId
+                                }
+                                return keyPackageDebugDraft.accountId
+                            },
+                            set: { keyPackageDebugDraft.accountId = $0 }
+                        )
+                    )
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .font(.system(.footnote, design: .monospaced))
+
+                    TextField(
+                        "Target Device IDs (comma or newline separated)",
+                        text: $keyPackageDebugDraft.deviceIds,
+                        axis: .vertical
+                    )
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .lineLimit(3, reservesSpace: true)
+                    .font(.system(.footnote, design: .monospaced))
+
+                    Button(action: loadReservedKeyPackages) {
+                        if model.isLoading {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Text("Load Reserved Packages")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .disabled(model.isLoading)
+
+                    Button(action: reserveKeyPackages) {
+                        if model.isLoading {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Text("Reserve Packages For Device IDs")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .disabled(model.isLoading || parsedIdentifiers(keyPackageDebugDraft.deviceIds).isEmpty)
+
+                    Button(action: dryRunGroupCommit) {
+                        if model.isLoading {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Text("Dry-Run MLS Group Commit")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .disabled(model.isLoading || (inspectedKeyPackages?.packages.isEmpty ?? true))
+
+                    if let inspectedKeyPackages {
+                        LabeledContent("Reserved Packages") {
+                            Text(String(inspectedKeyPackages.packages.count))
+                        }
+
+                        ForEach(inspectedKeyPackages.packages.prefix(8)) { package in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(package.deviceId)
+                                    .font(.system(.footnote, design: .monospaced))
+
+                                Text(package.keyPackageId)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+
+                                Text(package.cipherSuite)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    }
+                } header: {
+                    Text("Reserved Key Packages")
+                } footer: {
+                    Text("Use this to inspect or reserve server-held MLS key packages through `trix-core`, then dry-run a detached local group commit against those packages.")
                 }
 
                 Section {
@@ -400,6 +494,61 @@ struct MessagingLabView: View {
                 activityMessage = "Created \(response.chatType.label) chat \(response.chatId) at epoch \(response.epoch)."
             }
         }
+    }
+
+    private func loadReservedKeyPackages() {
+        activityMessage = nil
+        let accountId = effectiveKeyPackageAccountId()
+
+        Task {
+            if let response = await model.fetchAccountKeyPackages(
+                baseURLString: serverBaseURL,
+                accountId: accountId
+            ) {
+                inspectedKeyPackages = response
+                activityMessage = "Loaded \(response.packages.count) reserved packages for account \(response.accountId)."
+            }
+        }
+    }
+
+    private func reserveKeyPackages() {
+        activityMessage = nil
+        let accountId = effectiveKeyPackageAccountId()
+        let deviceIds = parsedIdentifiers(keyPackageDebugDraft.deviceIds)
+
+        Task {
+            if let response = await model.reserveAccountKeyPackages(
+                baseURLString: serverBaseURL,
+                accountId: accountId,
+                deviceIds: deviceIds
+            ) {
+                inspectedKeyPackages = response
+                activityMessage = "Reserved \(response.packages.count) packages for \(deviceIds.count) device IDs."
+            }
+        }
+    }
+
+    private func dryRunGroupCommit() {
+        activityMessage = nil
+        guard let reservedPackages = inspectedKeyPackages?.packages else {
+            return
+        }
+
+        Task {
+            if let epoch = await model.dryRunReservedKeyPackageCommit(
+                reservedPackages: reservedPackages
+            ) {
+                activityMessage = "Dry-run MLS commit produced epoch \(epoch) using \(reservedPackages.count) reserved packages."
+            }
+        }
+    }
+
+    private func effectiveKeyPackageAccountId() -> String {
+        let trimmed = keyPackageDebugDraft.accountId.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            return trimmed
+        }
+        return model.dashboard?.profile.accountId ?? ""
     }
 
     private func acknowledgeAllInbox() {

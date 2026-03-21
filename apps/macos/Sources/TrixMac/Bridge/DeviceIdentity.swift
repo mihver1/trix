@@ -14,6 +14,28 @@ struct DeviceTransferBundleInput {
     let recipientTransportPubkey: Data
 }
 
+struct ImportedAccountRootResult {
+    let identity: DeviceIdentityMaterial
+    let accountSyncChatId: UUID?
+}
+
+enum DeviceIdentityMaterialError: LocalizedError {
+    case invalidTransferBundle
+    case transferBundleIdentityMismatch
+    case transferBundlePublicKeyMismatch
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidTransferBundle:
+            return "The device transfer bundle is invalid or cannot be decrypted by this device."
+        case .transferBundleIdentityMismatch:
+            return "The device transfer bundle does not belong to this account or target device."
+        case .transferBundlePublicKeyMismatch:
+            return "The device transfer bundle contains mismatched account root key material."
+        }
+    }
+}
+
 struct DeviceIdentityMaterial {
     static let platform = "macos"
 
@@ -100,8 +122,8 @@ struct DeviceIdentityMaterial {
         }
 
         let transportPublicKey = transportMaterial.publicKeyBytes()
-        let bootstrapMessage = Self.bootstrapMessage(
-            transportPublicKey: transportPublicKey,
+        let bootstrapMessage = accountRootMaterial.accountBootstrapPayload(
+            transportPubkey: transportPublicKey,
             credentialIdentity: credentialIdentity
         )
 
@@ -143,13 +165,17 @@ struct DeviceIdentityMaterial {
         transportPublicKey: Data,
         credentialIdentity: Data
     ) throws -> String {
-        try accountRootSignatureB64(
-            for: Self.bootstrapMessage(
-                transportPublicKey: transportPublicKey,
+        guard let accountRootMaterial else {
+            throw TrixAPIError.invalidPayload("Approve доступен только на root-capable устройстве.")
+        }
+
+        return accountRootMaterial.sign(
+            payload: accountRootMaterial.accountBootstrapPayload(
+                transportPubkey: transportPublicKey,
                 credentialIdentity: credentialIdentity
-            ),
-            errorMessage: "Approve доступен только на root-capable устройстве."
+            )
         )
+        .base64EncodedString()
     }
 
     func accountRootSignatureB64(
@@ -192,6 +218,43 @@ struct DeviceIdentityMaterial {
         )
     }
 
+    func importingAccountRoot(
+        fromTransferBundle transferBundle: Data,
+        accountId: UUID,
+        deviceId: UUID,
+        accountSyncChatId: UUID?
+    ) throws -> ImportedAccountRootResult {
+        let importedBundle: FfiImportedDeviceTransferBundle
+        do {
+            importedBundle = try transportMaterial.decryptDeviceTransferBundle(bundle: transferBundle)
+        } catch {
+            throw DeviceIdentityMaterialError.invalidTransferBundle
+        }
+
+        guard importedBundle.accountId == accountId.uuidString,
+              importedBundle.targetDeviceId == deviceId.uuidString
+        else {
+            throw DeviceIdentityMaterialError.transferBundleIdentityMismatch
+        }
+
+        let importedAccountRoot = try FfiAccountRootMaterial.fromPrivateKey(
+            privateKey: importedBundle.accountRootPrivateKey
+        )
+        guard importedAccountRoot.publicKeyBytes() == importedBundle.accountRootPublicKey else {
+            throw DeviceIdentityMaterialError.transferBundlePublicKeyMismatch
+        }
+
+        return ImportedAccountRootResult(
+            identity: DeviceIdentityMaterial(
+                accountRootMaterial: importedAccountRoot,
+                transportMaterial: transportMaterial,
+                credentialIdentity: credentialIdentity
+            ),
+            accountSyncChatId: importedBundle.accountSyncChatId.flatMap(UUID.init(uuidString:))
+                ?? accountSyncChatId
+        )
+    }
+
     var hasAccountRootKey: Bool {
         accountRootMaterial != nil
     }
@@ -222,18 +285,6 @@ struct DeviceIdentityMaterial {
 
     var credentialIdentityB64: String {
         credentialIdentity.base64EncodedString()
-    }
-
-    static func bootstrapMessage(
-        transportPublicKey: Data,
-        credentialIdentity: Data
-    ) -> Data {
-        var message = Data("trix-account-bootstrap:v1".utf8)
-        message.append(bigEndian: UInt32(transportPublicKey.count))
-        message.append(transportPublicKey)
-        message.append(bigEndian: UInt32(credentialIdentity.count))
-        message.append(credentialIdentity)
-        return message
     }
 
     static func revokeMessage(deviceID: UUID, reason: String) -> Data {

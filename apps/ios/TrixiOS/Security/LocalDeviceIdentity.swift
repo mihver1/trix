@@ -195,6 +195,9 @@ struct LocalDeviceIdentityStore {
 enum LocalDeviceIdentityError: LocalizedError {
     case accountRootKeyUnavailable
     case invalidPrivateKeyMaterial
+    case invalidTransferBundle
+    case transferBundleIdentityMismatch
+    case transferBundlePublicKeyMismatch
     case randomGenerationFailed(OSStatus)
 
     var errorDescription: String? {
@@ -203,6 +206,12 @@ enum LocalDeviceIdentityError: LocalizedError {
             return "This device does not have shared account root key material yet."
         case .invalidPrivateKeyMaterial:
             return "Stored device key material is invalid."
+        case .invalidTransferBundle:
+            return "The device transfer bundle is invalid or cannot be decrypted by this device."
+        case .transferBundleIdentityMismatch:
+            return "The device transfer bundle does not belong to this account or target device."
+        case .transferBundlePublicKeyMismatch:
+            return "The device transfer bundle contains mismatched account root key material."
         case let .randomGenerationFailed(status):
             return "Secure random generation failed (\(status))."
         }
@@ -228,10 +237,6 @@ extension LocalDeviceIdentity {
         }
 
         return try accountRootPrivateKeyRaw.trix_accountRootMaterial()
-    }
-
-    func accountRootTransferBundle() throws -> Data {
-        try accountRootMaterial().transferBundle()
     }
 
     func deviceKeyMaterial() throws -> FfiDeviceKeyMaterial {
@@ -278,18 +283,31 @@ extension LocalDeviceIdentity {
     }
 
     func importingAccountRoot(fromTransferBundle transferBundle: Data) throws -> LocalDeviceIdentity {
-        let importedMaterial = try FfiAccountRootMaterial.fromTransferBundle(
-            transferBundle: transferBundle
-        )
+        let importedBundle: FfiImportedDeviceTransferBundle
+        do {
+            importedBundle = try deviceKeyMaterial().decryptDeviceTransferBundle(bundle: transferBundle)
+        } catch {
+            throw LocalDeviceIdentityError.invalidTransferBundle
+        }
+        guard importedBundle.accountId == accountId,
+              importedBundle.targetDeviceId == deviceId
+        else {
+            throw LocalDeviceIdentityError.transferBundleIdentityMismatch
+        }
+
+        let importedMaterial = try importedBundle.accountRootPrivateKey.trix_accountRootMaterial()
+        guard importedMaterial.publicKeyBytes() == importedBundle.accountRootPublicKey else {
+            throw LocalDeviceIdentityError.transferBundlePublicKeyMismatch
+        }
 
         return LocalDeviceIdentity(
             accountId: accountId,
             deviceId: deviceId,
-            accountSyncChatId: accountSyncChatId,
+            accountSyncChatId: importedBundle.accountSyncChatId ?? accountSyncChatId,
             deviceDisplayName: deviceDisplayName,
             platform: platform,
             credentialIdentity: credentialIdentity,
-            accountRootPrivateKeyRaw: importedMaterial.privateKeyBytes(),
+            accountRootPrivateKeyRaw: importedBundle.accountRootPrivateKey,
             transportPrivateKeyRaw: transportPrivateKeyRaw,
             trustState: .active,
             capabilityState: .fullAccountAccess
