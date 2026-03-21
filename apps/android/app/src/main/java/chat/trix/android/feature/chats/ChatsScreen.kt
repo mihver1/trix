@@ -32,6 +32,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.AttachFile
+import androidx.compose.material.icons.rounded.Done
+import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.MarkUnreadChatAlt
@@ -92,6 +94,7 @@ import chat.trix.android.core.chat.ChatDiagnostics
 import chat.trix.android.core.chat.ChatOverview
 import chat.trix.android.core.chat.ChatRefreshResult
 import chat.trix.android.core.chat.ChatRepository
+import chat.trix.android.core.chat.ChatReceiptStatus
 import chat.trix.android.core.chat.ChatTimelineMessage
 import chat.trix.android.core.ffi.FfiChatType
 import chat.trix.android.ui.adaptive.TrixAdaptiveInfo
@@ -2171,16 +2174,40 @@ private fun ConversationTranscript(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Text(
-                            text = message.timestampLabel,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (message.isMine && message.receiptStatus != null) {
+                                Icon(
+                                    imageVector = receiptStatusIcon(message.receiptStatus),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = receiptStatusTint(message.receiptStatus),
+                                )
+                            }
+                            Text(
+                                text = message.timestampLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
         }
     }
+}
+
+private fun receiptStatusIcon(status: ChatReceiptStatus) = when (status) {
+    ChatReceiptStatus.DELIVERED -> Icons.Rounded.Done
+    ChatReceiptStatus.READ -> Icons.Rounded.DoneAll
+}
+
+@Composable
+private fun receiptStatusTint(status: ChatReceiptStatus) = when (status) {
+    ChatReceiptStatus.DELIVERED -> MaterialTheme.colorScheme.onSurfaceVariant
+    ChatReceiptStatus.READ -> MaterialTheme.colorScheme.primary
 }
 
 @Composable

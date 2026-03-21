@@ -33,6 +33,24 @@ private enum ConsumerMessageClusterPosition {
     case bottom
 }
 
+private enum ConsumerReceiptStatus: Int, Comparable {
+    case delivered = 0
+    case read = 1
+
+    static func < (lhs: ConsumerReceiptStatus, rhs: ConsumerReceiptStatus) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+
+    var systemImageName: String {
+        switch self {
+        case .delivered:
+            return "checkmark"
+        case .read:
+            return "checkmark.double"
+        }
+    }
+}
+
 private struct ConsumerRenderedMessage: Identifiable {
     let id: String
     let senderAccountId: String
@@ -47,6 +65,7 @@ private struct ConsumerRenderedMessage: Identifiable {
     let clusterPosition: ConsumerMessageClusterPosition
     let topSpacing: CGFloat
     let usesCenteredEventStyle: Bool
+    let receiptStatus: ConsumerReceiptStatus?
 }
 
 struct ConsumerChatDetailView: View {
@@ -312,14 +331,33 @@ struct ConsumerChatDetailView: View {
             )
             snapshot = loadedSnapshot
             if loadedSnapshot.detail.lastServerSeq > 0 {
-                model.markChatReadLocally(
+                _ = await model.acknowledgeChatRead(
+                    baseURLString: serverBaseURL,
                     chatId: loadedSnapshot.detail.chatId,
-                    throughServerSeq: loadedSnapshot.detail.lastServerSeq
+                    throughServerSeq: loadedSnapshot.detail.lastServerSeq,
+                    receiptTargetMessageId: readReceiptTargetMessageId(for: loadedSnapshot)
                 )
             }
         } catch {
             localErrorMessage = error.localizedDescription
         }
+    }
+
+    private func readReceiptTargetMessageId(for snapshot: ChatSnapshot) -> String? {
+        guard let currentAccountId = model.localIdentity?.accountId else {
+            return nil
+        }
+
+        let orderedHistory = snapshot.history.sorted {
+            if $0.serverSeq == $1.serverSeq {
+                return $0.createdAtUnix < $1.createdAtUnix
+            }
+            return $0.serverSeq < $1.serverSeq
+        }
+
+        return orderedHistory.reversed().first { message in
+            message.senderAccountId != currentAccountId && message.contentType != .receipt
+        }?.id
     }
 
     private func sendCurrentPayload() {
@@ -452,14 +490,28 @@ struct ConsumerChatDetailView: View {
             return $0.serverSeq < $1.serverSeq
         }
         var items: [ConsumerTimelineItem] = []
+        var receiptStatusByMessageId: [String: ConsumerReceiptStatus] = [:]
+        let presentationMessages = messages.compactMap { message -> MessageEnvelope? in
+            guard isReceiptMessage(message) else {
+                return message
+            }
+
+            if let targetMessageId = receiptTargetMessageId(for: message) {
+                receiptStatusByMessageId[targetMessageId] = mergedReceiptStatus(
+                    receiptStatusByMessageId[targetMessageId],
+                    with: receiptStatus(for: message) ?? .delivered
+                )
+            }
+            return nil
+        }
         var previousMessage: MessageEnvelope?
 
-        for (index, message) in messages.enumerated() {
+        for (index, message) in presentationMessages.enumerated() {
             if previousMessage.map({ !Calendar.current.isDate($0.createdAtDate, inSameDayAs: message.createdAtDate) }) ?? true {
                 items.append(.daySeparator(daySeparatorTitle(for: message.createdAtDate)))
             }
 
-            let nextMessage = messages.indices.contains(index + 1) ? messages[index + 1] : nil
+            let nextMessage = presentationMessages.indices.contains(index + 1) ? presentationMessages[index + 1] : nil
             let continuesFromPrevious = previousMessage.map { canCluster($0, with: message) } ?? false
             let continuesToNext = nextMessage.map { canCluster(message, with: $0) } ?? false
             let isOutgoing = currentAccountId.map { message.senderAccountId == $0 } ?? false
@@ -505,7 +557,8 @@ struct ConsumerChatDetailView: View {
                         secondaryText: TrixCoreMessageBridge.preview(for: message)?.detail ?? message.debugDetail,
                         clusterPosition: clusterPosition,
                         topSpacing: topSpacing,
-                        usesCenteredEventStyle: messageUsesCenteredEventStyle(message)
+                        usesCenteredEventStyle: messageUsesCenteredEventStyle(message),
+                        receiptStatus: receiptStatusByMessageId[message.id]
                     )
                 )
             )
@@ -527,14 +580,28 @@ struct ConsumerChatDetailView: View {
             return $0.serverSeq < $1.serverSeq
         }
         var items: [ConsumerTimelineItem] = []
+        var receiptStatusByMessageId: [String: ConsumerReceiptStatus] = [:]
+        let presentationItems = sortedItems.compactMap { item -> LocalTimelineItemSnapshot? in
+            guard isReceiptItem(item) else {
+                return item
+            }
+
+            if let targetMessageId = receiptTargetMessageId(for: item) {
+                receiptStatusByMessageId[targetMessageId] = mergedReceiptStatus(
+                    receiptStatusByMessageId[targetMessageId],
+                    with: receiptStatus(for: item) ?? .delivered
+                )
+            }
+            return nil
+        }
         var previousItem: LocalTimelineItemSnapshot?
 
-        for (index, item) in sortedItems.enumerated() {
+        for (index, item) in presentationItems.enumerated() {
             if previousItem.map({ !Calendar.current.isDate($0.createdAtDate, inSameDayAs: item.createdAtDate) }) ?? true {
                 items.append(.daySeparator(daySeparatorTitle(for: item.createdAtDate)))
             }
 
-            let nextItem = sortedItems.indices.contains(index + 1) ? sortedItems[index + 1] : nil
+            let nextItem = presentationItems.indices.contains(index + 1) ? presentationItems[index + 1] : nil
             let continuesFromPrevious = previousItem.map { canCluster($0, with: item) } ?? false
             let continuesToNext = nextItem.map { canCluster(item, with: $0) } ?? false
             let shouldShowSender = chatType == .group && !item.isOutgoing && !continuesFromPrevious
@@ -576,7 +643,8 @@ struct ConsumerChatDetailView: View {
                         secondaryText: item.bodyPreview?.detail,
                         clusterPosition: clusterPosition,
                         topSpacing: topSpacing,
-                        usesCenteredEventStyle: projectedItemUsesCenteredEventStyle(item)
+                        usesCenteredEventStyle: projectedItemUsesCenteredEventStyle(item),
+                        receiptStatus: receiptStatusByMessageId[item.id]
                     )
                 )
             )
@@ -649,6 +717,55 @@ struct ConsumerChatDetailView: View {
         case .proposalQueued, .commitMerged, .welcomeRef, .system:
             return true
         }
+    }
+
+    private func receiptStatus(for message: MessageEnvelope) -> ConsumerReceiptStatus? {
+        guard message.contentType == .receipt,
+              let body = TrixCoreMessageBridge.parsedBody(for: message),
+              body.kind == .receipt else {
+            return nil
+        }
+
+        return body.receiptType == .read ? .read : .delivered
+    }
+
+    private func receiptStatus(for item: LocalTimelineItemSnapshot) -> ConsumerReceiptStatus? {
+        guard item.contentType == .receipt || item.messageBody?.kind == .receipt else {
+            return nil
+        }
+
+        return item.messageBody?.receiptType == .read ? .read : .delivered
+    }
+
+    private func isReceiptMessage(_ message: MessageEnvelope) -> Bool {
+        message.contentType == .receipt
+    }
+
+    private func isReceiptItem(_ item: LocalTimelineItemSnapshot) -> Bool {
+        item.contentType == .receipt || item.messageBody?.kind == .receipt
+    }
+
+    private func receiptTargetMessageId(for message: MessageEnvelope) -> String? {
+        guard let body = TrixCoreMessageBridge.parsedBody(for: message), body.kind == .receipt else {
+            return nil
+        }
+
+        return body.targetMessageId
+    }
+
+    private func receiptTargetMessageId(for item: LocalTimelineItemSnapshot) -> String? {
+        guard item.contentType == .receipt || item.messageBody?.kind == .receipt else {
+            return nil
+        }
+
+        return item.messageBody?.targetMessageId
+    }
+
+    private func mergedReceiptStatus(
+        _ current: ConsumerReceiptStatus?,
+        with next: ConsumerReceiptStatus
+    ) -> ConsumerReceiptStatus {
+        current.map { max($0, next) } ?? next
     }
 }
 
@@ -798,10 +915,17 @@ private struct ConsumerMessageBubble: View {
 
             HStack {
                 Spacer(minLength: 0)
-                Text(message.createdAtDate.formatted(date: .omitted, time: .shortened))
-                    .font(.caption2.weight(.medium))
-                    .monospacedDigit()
-                    .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
+                HStack(spacing: 4) {
+                    if let receiptStatus = message.receiptStatus, message.isOutgoing {
+                        Image(systemName: receiptStatus.systemImageName)
+                            .font(.caption2.weight(.semibold))
+                    }
+
+                    Text(message.createdAtDate.formatted(date: .omitted, time: .shortened))
+                        .font(.caption2.weight(.medium))
+                        .monospacedDigit()
+                }
+                .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
             }
         }
         .padding(.horizontal, 14)

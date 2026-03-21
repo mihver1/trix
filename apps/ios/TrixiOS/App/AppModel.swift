@@ -1726,9 +1726,10 @@ final class AppModel: ObservableObject {
         baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    func markChatReadLocally(chatId: String, throughServerSeq: UInt64?) {
+    @discardableResult
+    func markChatReadLocally(chatId: String, throughServerSeq: UInt64?) -> Bool {
         guard let localIdentity else {
-            return
+            return false
         }
 
         do {
@@ -1738,9 +1739,43 @@ final class AppModel: ObservableObject {
                 throughServerSeq: throughServerSeq
             )
             updateLocalCoreStateSnapshot(identity: localIdentity)
+            return true
         } catch {
             // Local read state is opportunistic; network/UI flows should not fail on it.
+            return false
         }
+    }
+
+    @discardableResult
+    func acknowledgeChatRead(
+        baseURLString: String,
+        chatId: String,
+        throughServerSeq: UInt64?,
+        receiptTargetMessageId: String?
+    ) async -> Bool {
+        guard localIdentity != nil else {
+            return false
+        }
+
+        let previousReadCursor = localCoreState?.chatReadState(for: chatId)?.readCursorServerSeq ?? 0
+        guard markChatReadLocally(chatId: chatId, throughServerSeq: throughServerSeq) else {
+            return false
+        }
+
+        guard let throughServerSeq,
+              throughServerSeq > previousReadCursor,
+              let receiptTargetMessageId = receiptTargetMessageId?.trix_trimmedOrNil()
+        else {
+            return true
+        }
+
+        await sendReadReceipt(
+            baseURLString: baseURLString,
+            chatId: chatId,
+            receiptTargetMessageId: receiptTargetMessageId
+        )
+
+        return true
     }
 
     private func makeInboxPath(afterInboxId: UInt64?, limit: Int) -> String {
@@ -2251,6 +2286,38 @@ final class AppModel: ObservableObject {
         } catch {
             localCoreState = nil
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func sendReadReceipt(
+        baseURLString: String,
+        chatId: String,
+        receiptTargetMessageId: String
+    ) async {
+        do {
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            var receiptDraft = DebugMessageDraft()
+            receiptDraft.kind = .receipt
+            receiptDraft.targetMessageId = receiptTargetMessageId
+            receiptDraft.receiptKind = .read
+            receiptDraft.receiptAtUnix = String(UInt64(Date().timeIntervalSince1970))
+
+            let response = try TrixCorePersistentBridge.sendMessageBody(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: context.identity,
+                chatId: chatId,
+                body: try TrixCoreMessageBridge.messageBody(for: receiptDraft)
+            )
+
+            updateLocalCoreStateSnapshot(identity: context.identity)
+            applyLocalCoreStateOverlay(
+                session: context.session,
+                ackedInboxIds: [],
+                changedChatIds: [response.chatId]
+            )
+        } catch {
+            // Read receipts are opportunistic; keep the chat open even if they fail.
         }
     }
 }

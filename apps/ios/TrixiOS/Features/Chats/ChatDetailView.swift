@@ -461,13 +461,40 @@ struct ChatDetailView: View {
         }
 
         do {
-            snapshot = try await model.fetchChatSnapshot(
+            let loadedSnapshot = try await model.fetchChatSnapshot(
                 baseURLString: serverBaseURL,
                 chatId: chatSummary.chatId
             )
+            snapshot = loadedSnapshot
+
+            if loadedSnapshot.detail.lastServerSeq > 0 {
+                _ = await model.acknowledgeChatRead(
+                    baseURLString: serverBaseURL,
+                    chatId: loadedSnapshot.detail.chatId,
+                    throughServerSeq: loadedSnapshot.detail.lastServerSeq,
+                    receiptTargetMessageId: readReceiptTargetMessageId(for: loadedSnapshot)
+                )
+            }
         } catch {
             localErrorMessage = error.localizedDescription
         }
+    }
+
+    private func readReceiptTargetMessageId(for snapshot: ChatSnapshot) -> String? {
+        guard let currentAccountId = model.localIdentity?.accountId else {
+            return nil
+        }
+
+        let orderedHistory = snapshot.history.sorted {
+            if $0.serverSeq == $1.serverSeq {
+                return $0.createdAtUnix < $1.createdAtUnix
+            }
+            return $0.serverSeq < $1.serverSeq
+        }
+
+        return orderedHistory.reversed().first { message in
+            message.senderAccountId != currentAccountId && message.contentType != .receipt
+        }?.id
     }
 
     private func sendSelectedMessage() {

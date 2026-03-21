@@ -457,23 +457,38 @@ class ChatRepository(
         val conversations = store.listLocalChatListItems(selfAccountId).map { item ->
             val detail = store.getChat(item.chatId)
             val pendingOutboxMessages = store.listOutboxMessages(item.chatId)
-            val previewCreatedAtUnix = item.previewCreatedAtUnix?.toLong()
-            val messageCount = store.getLocalTimelineItems(
-                item.chatId,
-                selfAccountId,
-                null,
-                null,
-            ).size + pendingOutboxMessages.size
-            val pendingPreview = pendingOutboxPreview(pendingOutboxMessages)
+            val filteredTimelineItems = visibleTimelineItems(
+                store.getLocalTimelineItems(
+                    item.chatId,
+                    selfAccountId,
+                    null,
+                    null,
+                ),
+            )
+            val filteredPendingOutboxMessages = visiblePendingOutboxMessages(pendingOutboxMessages)
+            val visibleMessageCount = filteredTimelineItems.size + filteredPendingOutboxMessages.size
+            val pendingPreview = pendingOutboxPreview(filteredPendingOutboxMessages)
+            val latestVisibleTimelineItem = filteredTimelineItems.maxWithOrNull(
+                compareBy<FfiLocalTimelineItem> { it.serverSeq }
+                    .thenBy { it.createdAtUnix },
+            )
             val previewText = when {
-                pendingPreview != null && (previewCreatedAtUnix == null || pendingPreview.queuedAtUnix >= previewCreatedAtUnix) ->
+                pendingPreview != null && (
+                    latestVisibleTimelineItem == null ||
+                        pendingPreview.queuedAtUnix >= latestVisibleTimelineItem.createdAtUnix.toLong()
+                ) ->
                     pendingPreview.previewText
-                else -> chatPreviewLabel(item)
+                latestVisibleTimelineItem != null -> timelinePreviewLabel(latestVisibleTimelineItem)
+                else -> if (visibleMessageCount > 0) chatPreviewLabel(item) else "No messages yet"
             }
             val timestampLabel = when {
-                pendingPreview != null && (previewCreatedAtUnix == null || pendingPreview.queuedAtUnix >= previewCreatedAtUnix) ->
+                pendingPreview != null && (
+                    latestVisibleTimelineItem == null ||
+                        pendingPreview.queuedAtUnix >= latestVisibleTimelineItem.createdAtUnix.toLong()
+                ) ->
                     pendingPreview.queuedAtUnix.formatChatTimestamp()
-                else -> previewCreatedAtUnix?.formatChatTimestamp() ?: "Pending"
+                latestVisibleTimelineItem != null -> latestVisibleTimelineItem.createdAtUnix.toLong().formatChatTimestamp()
+                else -> "No local timeline"
             }
 
             ChatConversationSummary(
@@ -486,9 +501,9 @@ class ChatRepository(
                 ),
                 lastMessagePreview = previewText,
                 timestampLabel = timestampLabel,
-                messageCount = messageCount,
+                messageCount = visibleMessageCount,
                 unreadCount = item.unreadCount.toInt(),
-                hasProjectedTimeline = messageCount > 0,
+                hasProjectedTimeline = visibleMessageCount > 0,
                 isAccountSyncChat = item.chatId == session.localState.accountSyncChatId,
             )
         }
@@ -518,11 +533,13 @@ class ChatRepository(
         val detail = store.getChat(chatId)
         val timelineItems = store.getLocalTimelineItems(chatId, selfAccountId, null, null)
         val pendingOutboxItems = store.listOutboxMessages(chatId)
+        val filteredTimelineItems = visibleTimelineItems(timelineItems)
+        val filteredPendingOutboxItems = visiblePendingOutboxMessages(pendingOutboxItems)
         val hasLocalMlsState = hasLocalConversation(chatId)
         val canSend = item.chatType == FfiChatType.ACCOUNT_SYNC || hasLocalMlsState
         val messages = mergeTimelineMessages(
-            timelineItems = timelineItems,
-            pendingOutboxItems = pendingOutboxItems,
+            timelineItems = filteredTimelineItems,
+            pendingOutboxItems = filteredPendingOutboxItems,
         )
         val members = conversationMembers(item, detail)
 
@@ -534,7 +551,7 @@ class ChatRepository(
                 item = item,
                 detail = detail,
             ),
-            timelineLabel = conversationTimelineLabel(item, timelineItems, pendingOutboxItems),
+            timelineLabel = conversationTimelineLabel(item, filteredTimelineItems, filteredPendingOutboxItems),
             isAccountSyncChat = chatId == session.localState.accountSyncChatId,
             canSend = canSend,
             canManageMembers = item.chatType == FfiChatType.GROUP && canSend,
@@ -543,7 +560,7 @@ class ChatRepository(
                     "Messages use this device's local MLS state for the account sync thread."
                 }
 
-                pendingOutboxItems.isNotEmpty() -> "Queued messages retry automatically when the device reconnects."
+                filteredPendingOutboxItems.isNotEmpty() -> "Queued messages retry automatically when the device reconnects."
                 canSend -> "Send through the local MLS state already present on this device."
                 else -> "Sending is disabled until this device has local MLS state for this chat."
             },
@@ -618,6 +635,8 @@ class ChatRepository(
                 sourcePriority = 0,
                 sourceOrder = index,
                 message = mapTimelineMessage(message),
+                receiptTargetMessageId = receiptTargetMessageId(message),
+                receiptStatus = receiptStatus(message),
             )
         } + pendingOutboxItems.mapIndexed { index, message ->
             TimedChatTimelineMessage(
@@ -625,6 +644,8 @@ class ChatRepository(
                 sourcePriority = 1,
                 sourceOrder = index,
                 message = mapOutboxMessage(message),
+                receiptTargetMessageId = receiptTargetMessageId(message),
+                receiptStatus = receiptStatus(message),
             )
         }
 
@@ -1183,6 +1204,76 @@ class ChatRepository(
         )
     }
 
+    private fun timelinePreviewLabel(item: FfiLocalTimelineItem): String {
+        val previewText = item.body?.let(::structuredBodyText)
+            ?: item.previewText
+                .trim()
+                .takeIf(String::isNotEmpty)
+            ?: item.bodyParseError
+            ?: "Encrypted application payload"
+        val senderLabel = if (item.isOutgoing) {
+            "You"
+        } else {
+            item.senderDisplayName.takeIf(String::isNotBlank)
+                ?: shortAccountId(item.senderAccountId)
+        }
+        return "$senderLabel: $previewText"
+    }
+
+    private fun visibleTimelineItems(
+        timelineItems: List<FfiLocalTimelineItem>,
+    ): List<FfiLocalTimelineItem> {
+        return timelineItems.filterNot { isReceiptTimelineItem(it) }
+    }
+
+    private fun visiblePendingOutboxMessages(
+        pendingOutboxMessages: List<FfiLocalOutboxItem>,
+    ): List<FfiLocalOutboxItem> {
+        return pendingOutboxMessages.filterNot { isReceiptOutboxItem(it) }
+    }
+
+    private fun receiptTargetMessageId(message: FfiLocalTimelineItem): String? {
+        return receiptTargetMessageId(message.body)
+    }
+
+    private fun receiptTargetMessageId(message: FfiLocalOutboxItem): String? {
+        return receiptTargetMessageId(message.body)
+    }
+
+    private fun receiptTargetMessageId(body: FfiMessageBody?): String? {
+        return body?.takeIf { isReceiptBody(it) }?.targetMessageId
+    }
+
+    private fun receiptStatus(message: FfiLocalTimelineItem): ChatReceiptStatus? {
+        return receiptStatus(message.body)
+    }
+
+    private fun receiptStatus(message: FfiLocalOutboxItem): ChatReceiptStatus? {
+        return receiptStatus(message.body)
+    }
+
+    private fun receiptStatus(body: FfiMessageBody?): ChatReceiptStatus? {
+        if (body?.kind != FfiMessageBodyKind.RECEIPT || body.targetMessageId == null) {
+            return null
+        }
+        return when (body?.receiptType) {
+            FfiReceiptType.READ -> ChatReceiptStatus.READ
+            FfiReceiptType.DELIVERED, null -> ChatReceiptStatus.DELIVERED
+        }
+    }
+
+    private fun isReceiptBody(body: FfiMessageBody?): Boolean {
+        return body?.kind == FfiMessageBodyKind.RECEIPT
+    }
+
+    private fun isReceiptTimelineItem(message: FfiLocalTimelineItem): Boolean {
+        return message.contentType == FfiContentType.RECEIPT || isReceiptBody(message.body)
+    }
+
+    private fun isReceiptOutboxItem(message: FfiLocalOutboxItem): Boolean {
+        return isReceiptBody(message.body)
+    }
+
     private fun ffiContentTypeForBody(body: FfiMessageBody): FfiContentType {
         return when (body.kind) {
             FfiMessageBodyKind.TEXT -> FfiContentType.TEXT
@@ -1343,7 +1434,13 @@ data class ChatTimelineMessage(
     val note: String?,
     val contentType: FfiContentType,
     val attachment: ChatAttachment? = null,
+    val receiptStatus: ChatReceiptStatus? = null,
 )
+
+enum class ChatReceiptStatus {
+    DELIVERED,
+    READ,
+}
 
 private data class PendingOutboxPreview(
     val previewText: String,

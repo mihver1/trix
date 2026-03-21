@@ -1342,7 +1342,6 @@ private extension DashboardData {
             ),
             previewDate: localChatListItem?.previewDate ?? latestMessage?.createdAtDate,
             unreadCount: resolvedUnreadCount(
-                for: chat,
                 localChatListItem: localChatListItem,
                 localReadState: localReadState
             )
@@ -1405,19 +1404,18 @@ private extension DashboardData {
     }
 
     private func resolvedUnreadCount(
-        for chat: ChatSummary,
         localChatListItem: LocalChatListItemSnapshot?,
         localReadState: LocalChatReadStateSnapshot?
     ) -> Int {
-        if let localChatListItem {
-            let localUnread = min(localChatListItem.unreadCount, UInt64(Int.max))
-            let serverPending = min(localChatListItem.pendingMessageCount, UInt64(Int.max))
-            return Int(max(localUnread, serverPending))
+        if let localReadState {
+            return Int(min(localReadState.unreadCount, UInt64(Int.max)))
         }
 
-        let localUnread = localReadState.map { min($0.unreadCount, UInt64(Int.max)) } ?? 0
-        let serverPending = min(chat.pendingMessageCount, UInt64(Int.max))
-        return Int(max(localUnread, serverPending))
+        if let localChatListItem {
+            return Int(min(localChatListItem.unreadCount, UInt64(Int.max)))
+        }
+
+        return 0
     }
 
     private func prefixedLocalPreviewText(
