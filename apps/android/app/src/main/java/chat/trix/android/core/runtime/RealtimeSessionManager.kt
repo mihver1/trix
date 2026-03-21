@@ -125,6 +125,10 @@ class RealtimeSessionManager(
         shutdownRealtimeLoop()
     }
 
+    suspend fun sendPresencePing(nonce: String? = null) = withContext(Dispatchers.IO) {
+        websocket?.sendPresencePing(nonce)
+    }
+
     override fun close() {
         if (observeProcessLifecycle) {
             lifecycle.removeObserver(this)

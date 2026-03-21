@@ -432,6 +432,198 @@ class ChatRepository(
         }
     }
 
+    // region FFI parity — methods aligned with iOS/macOS bridge surfaces
+
+    suspend fun getAccount(accountId: String): ChatDirectoryAccount = withContext(Dispatchers.IO) {
+        runFfi("Failed to look up account") {
+            val client = client()
+            client.setAccessToken(session.accessToken)
+            mapDirectoryAccount(client.getAccount(accountId))
+        }
+    }
+
+    suspend fun getChatHistory(
+        chatId: String,
+        afterServerSeq: ULong? = null,
+        limit: UInt = HISTORY_SYNC_LIMIT,
+    ): List<ChatTimelineMessage> = withContext(Dispatchers.IO) {
+        runFfi("Failed to load chat history") {
+            val client = client()
+            client.setAccessToken(session.accessToken)
+            val history = client.getChatHistory(chatId, afterServerSeq, limit)
+            history.messages.map { envelope ->
+                ChatTimelineMessage(
+                    id = envelope.messageId,
+                    author = accountDisplayName(envelope.senderAccountId),
+                    body = "seq=${envelope.serverSeq} epoch=${envelope.epoch}",
+                    timestampLabel = envelope.createdAtUnix.toLong().formatChatTimestamp(),
+                    isMine = envelope.senderAccountId == session.localState.accountId,
+                    note = null,
+                    contentType = envelope.contentType,
+                )
+            }
+        }
+    }
+
+    suspend fun listChatReadStates(): List<ChatReadStateSummary> = withContext(Dispatchers.IO) {
+        runFfi("Failed to list chat read states") {
+            val store = historyStore()
+            store.listChatReadStates(session.localState.accountId).map { state ->
+                ChatReadStateSummary(
+                    chatId = state.chatId,
+                    readCursorServerSeq = state.readCursorServerSeq.toLong(),
+                    unreadCount = state.unreadCount.toLong(),
+                )
+            }
+        }
+    }
+
+    suspend fun projectedCursor(chatId: String): Long? = withContext(Dispatchers.IO) {
+        runFfi("Failed to read projected cursor") {
+            historyStore().projectedCursor(chatId)?.toLong()
+        }
+    }
+
+    suspend fun pollOnce(): ChatRefreshResult = withContext(Dispatchers.IO) {
+        runFfi("Failed to poll realtime") {
+            val client = client()
+            val store = historyStore()
+            val syncCoordinator = syncCoordinator()
+
+            client.setAccessToken(session.accessToken)
+            val driver = chat.trix.android.core.ffi.FfiRealtimeDriver()
+            val outcome = driver.pollOnce(
+                client = client,
+                coordinator = syncCoordinator,
+                store = store,
+            )
+            val projectedChatTimelines = projectChatsWithLocalMlsState(store)
+
+            ChatRefreshResult(
+                overview = buildOverview(),
+                historyMessagesUpserted = 0,
+                inboxMessagesUpserted = outcome.report.messagesUpserted.toLong(),
+                ackedInboxCount = outcome.ackedInboxIds.size,
+                hydratedChatDetails = 0,
+                projectedChatTimelines = projectedChatTimelines,
+                flushedOutboxCount = 0,
+            )
+        }
+    }
+
+    suspend fun ciphersuiteLabel(): String = withContext(Dispatchers.IO) {
+        runFfi("Failed to read MLS ciphersuite") {
+            mlsFacade().ciphersuiteLabel()
+        }
+    }
+
+    suspend fun clearSessionToken() = withContext(Dispatchers.IO) {
+        runFfi("Failed to clear session token") {
+            client().clearAccessToken()
+        }
+    }
+
+    suspend fun addChatDevices(
+        chatId: String,
+        deviceIds: List<String>,
+    ): ChatMembershipUpdateResult = withContext(Dispatchers.IO) {
+        runFfi("Failed to add chat devices") {
+            val client = client()
+            val store = historyStore()
+            val syncCoordinator = syncCoordinator()
+            val facade = mlsFacade()
+
+            client.setAccessToken(session.accessToken)
+            syncCoordinator.addChatDevicesControl(
+                client = client,
+                store = store,
+                facade = facade,
+                input = chat.trix.android.core.ffi.FfiModifyChatDevicesControlInput(
+                    actorAccountId = session.localState.accountId,
+                    actorDeviceId = session.localState.deviceId,
+                    chatId = chatId,
+                    deviceIds = deviceIds,
+                    commitAadJson = EMPTY_AAD_JSON,
+                    welcomeAadJson = EMPTY_AAD_JSON,
+                ),
+            )
+            hydrateChatDetail(client, store, chatId)
+
+            ChatMembershipUpdateResult(
+                overview = buildOverview(),
+                conversation = buildConversation(chatId)
+                    ?: throw IOException("Conversation $chatId is no longer available"),
+            )
+        }
+    }
+
+    suspend fun removeChatDevices(
+        chatId: String,
+        deviceIds: List<String>,
+    ): ChatMembershipUpdateResult = withContext(Dispatchers.IO) {
+        runFfi("Failed to remove chat devices") {
+            val client = client()
+            val store = historyStore()
+            val syncCoordinator = syncCoordinator()
+            val facade = mlsFacade()
+
+            client.setAccessToken(session.accessToken)
+            syncCoordinator.removeChatDevicesControl(
+                client = client,
+                store = store,
+                facade = facade,
+                input = chat.trix.android.core.ffi.FfiModifyChatDevicesControlInput(
+                    actorAccountId = session.localState.accountId,
+                    actorDeviceId = session.localState.deviceId,
+                    chatId = chatId,
+                    deviceIds = deviceIds,
+                    commitAadJson = EMPTY_AAD_JSON,
+                    welcomeAadJson = EMPTY_AAD_JSON,
+                ),
+            )
+            hydrateChatDetail(client, store, chatId)
+
+            ChatMembershipUpdateResult(
+                overview = buildOverview(),
+                conversation = buildConversation(chatId)
+                    ?: throw IOException("Conversation $chatId is no longer available"),
+            )
+        }
+    }
+
+    suspend fun mlsStorageRoot(): String? = withContext(Dispatchers.IO) {
+        runFfi("Failed to read MLS storage root") {
+            mlsFacade().storageRoot()
+        }
+    }
+
+    suspend fun mlsCredentialIdentity(): ByteArray = withContext(Dispatchers.IO) {
+        runFfi("Failed to read MLS credential identity") {
+            mlsFacade().credentialIdentity()
+        }
+    }
+
+    suspend fun listHistorySyncJobs(): List<chat.trix.android.core.ffi.FfiHistorySyncJob> = withContext(Dispatchers.IO) {
+        runFfi("Failed to list history sync jobs") {
+            val client = client()
+            client.setAccessToken(session.accessToken)
+            client.listHistorySyncJobs(null, null, null)
+        }
+    }
+
+    suspend fun completeHistorySyncJob(
+        jobId: String,
+        cursorJson: String? = null,
+    ): chat.trix.android.core.ffi.FfiCompleteHistorySyncJobResponse = withContext(Dispatchers.IO) {
+        runFfi("Failed to complete history sync job") {
+            val client = client()
+            client.setAccessToken(session.accessToken)
+            client.completeHistorySyncJob(jobId, cursorJson)
+        }
+    }
+
+    // endregion
+
     override fun close() {
         if (clientDelegate.isInitialized()) {
             clientDelegate.value.close()
@@ -1388,6 +1580,12 @@ data class ChatDirectoryAccount(
     val handle: String?,
     val profileName: String,
     val profileBio: String?,
+)
+
+data class ChatReadStateSummary(
+    val chatId: String,
+    val readCursorServerSeq: Long,
+    val unreadCount: Long,
 )
 
 data class ChatConversationSummary(
