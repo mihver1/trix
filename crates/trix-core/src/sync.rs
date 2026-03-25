@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
@@ -20,7 +20,7 @@ use uuid::Uuid;
 use crate::{
     LocalHistoryStore, LocalOutgoingMessageApplyOutcome, LocalProjectedMessage,
     LocalProjectionKind, LocalStoreApplyReport, MessageBody, MlsConversation, MlsFacade,
-    ServerApiClient, SyncStateStore, decode_b64_field, encode_b64,
+    PreparedLocalOutboxSend, ServerApiClient, SyncStateStore, decode_b64_field, encode_b64,
     make_control_message_input_with_ratchet_tree, make_create_message_request,
 };
 
@@ -138,16 +138,22 @@ struct PersistedSyncState {
     version: u32,
     lease_owner: String,
     last_acked_inbox_id: Option<u64>,
+    #[serde(default)]
+    pending_acked_inbox_ids: BTreeSet<u64>,
     chat_cursors: BTreeMap<String, u64>,
+    #[serde(default)]
+    pending_chat_server_seqs: BTreeMap<String, BTreeSet<u64>>,
 }
 
 impl Default for PersistedSyncState {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             lease_owner: Uuid::new_v4().to_string(),
             last_acked_inbox_id: None,
+            pending_acked_inbox_ids: BTreeSet::new(),
             chat_cursors: BTreeMap::new(),
+            pending_chat_server_seqs: BTreeMap::new(),
         }
     }
 }
@@ -259,45 +265,44 @@ impl SyncCoordinator {
         self.state.chat_cursors.get(&chat_id.0.to_string()).copied()
     }
 
-    fn apply_chat_cursor_updates<I>(&mut self, updates: I) -> Result<bool>
+    fn record_observed_chat_server_seqs<I>(&mut self, updates: I) -> Result<bool>
     where
         I: IntoIterator<Item = (ChatId, u64)>,
     {
-        let mut max_updates = BTreeMap::new();
-        for (chat_id, server_seq) in updates {
-            max_updates
-                .entry(chat_id.0.to_string())
-                .and_modify(|current| {
-                    if server_seq > *current {
-                        *current = server_seq;
-                    }
-                })
-                .or_insert(server_seq);
-        }
-        if max_updates.is_empty() {
-            return Ok(false);
-        }
-
-        let previous_chat_cursors = self.state.chat_cursors.clone();
+        let previous_state = self.state.clone();
         let mut changed = false;
-        for (chat_id, server_seq) in max_updates {
-            let current = self
-                .state
-                .chat_cursors
-                .get(&chat_id)
-                .copied()
-                .unwrap_or_default();
-            if server_seq > current {
-                self.state.chat_cursors.insert(chat_id, server_seq);
-                changed = true;
+
+        for (chat_id, server_seq) in updates {
+            let chat_key = chat_id.0.to_string();
+            let current = self.state.chat_cursors.get(&chat_key).copied().unwrap_or_default();
+            if server_seq <= current {
+                continue;
+            }
+
+            let should_remove_pending = {
+                let pending = self
+                    .state
+                    .pending_chat_server_seqs
+                    .entry(chat_key.clone())
+                    .or_default();
+                changed |= pending.insert(server_seq);
+                changed |= advance_sparse_prefix(
+                    self.state.chat_cursors.entry(chat_key.clone()).or_default(),
+                    pending,
+                );
+                pending.is_empty()
+            };
+            if should_remove_pending {
+                self.state.pending_chat_server_seqs.remove(&chat_key);
             }
         }
+
         if !changed {
             return Ok(false);
         }
 
         if let Err(error) = self.save_state() {
-            self.state.chat_cursors = previous_chat_cursors;
+            self.state = previous_state;
             return Err(error);
         }
 
@@ -305,7 +310,42 @@ impl SyncCoordinator {
     }
 
     pub fn record_chat_server_seq(&mut self, chat_id: ChatId, server_seq: u64) -> Result<bool> {
-        self.apply_chat_cursor_updates([(chat_id, server_seq)])
+        let previous_state = self.state.clone();
+        let chat_key = chat_id.0.to_string();
+        let current = self.state.chat_cursors.get(&chat_key).copied().unwrap_or_default();
+        if server_seq <= current {
+            return Ok(false);
+        }
+
+        self.state.chat_cursors.insert(chat_key.clone(), server_seq);
+        let should_remove_pending = if let Some(pending) =
+            self.state.pending_chat_server_seqs.get_mut(&chat_key)
+        {
+            pending.retain(|pending_seq| *pending_seq > server_seq);
+            pending.is_empty()
+        } else {
+            false
+        };
+        if should_remove_pending {
+            self.state.pending_chat_server_seqs.remove(&chat_key);
+        }
+
+        if let Err(error) = self.save_state() {
+            self.state = previous_state;
+            return Err(error);
+        }
+
+        Ok(true)
+    }
+
+    pub fn record_chat_server_seqs<I>(&mut self, chat_id: ChatId, server_seqs: I) -> Result<bool>
+    where
+        I: IntoIterator<Item = u64>,
+    {
+        let Some(max_server_seq) = server_seqs.into_iter().max() else {
+            return Ok(false);
+        };
+        self.record_chat_server_seq(chat_id, max_server_seq)
     }
 
     pub fn record_projected_chat_cursor(
@@ -337,13 +377,8 @@ impl SyncCoordinator {
                 )
                 .await?;
 
-            if let Some(last_server_seq) = history
-                .messages
-                .iter()
-                .map(|message| message.server_seq)
-                .max()
-            {
-                cursor_updates.push((history.chat_id, last_server_seq));
+            for message in &history.messages {
+                cursor_updates.push((history.chat_id, message.server_seq));
             }
 
             if !history.messages.is_empty() {
@@ -351,7 +386,7 @@ impl SyncCoordinator {
             }
         }
 
-        self.apply_chat_cursor_updates(cursor_updates)?;
+        self.record_observed_chat_server_seqs(cursor_updates)?;
 
         Ok(updated_histories)
     }
@@ -376,20 +411,15 @@ impl SyncCoordinator {
                 )
                 .await?;
             let report = store.apply_chat_history(&history)?;
-            if let Some(last_server_seq) = history
-                .messages
-                .iter()
-                .map(|message| message.server_seq)
-                .max()
-            {
-                cursor_updates.push((history.chat_id, last_server_seq));
+            for message in &history.messages {
+                cursor_updates.push((history.chat_id, message.server_seq));
             }
             combined.chats_upserted += report.chats_upserted;
             combined.messages_upserted += report.messages_upserted;
             changed_chat_ids.extend(report.changed_chat_ids);
         }
 
-        self.apply_chat_cursor_updates(cursor_updates)?;
+        self.record_observed_chat_server_seqs(cursor_updates)?;
         changed_chat_ids.sort_by_key(|chat_id| chat_id.0);
         changed_chat_ids.dedup();
         combined.changed_chat_ids = changed_chat_ids;
@@ -424,17 +454,32 @@ impl SyncCoordinator {
     }
 
     pub fn record_acked_inbox_ids(&mut self, acked_inbox_ids: &[u64]) -> Result<()> {
-        if let Some(max_inbox_id) = acked_inbox_ids.iter().copied().max() {
-            let current = self.state.last_acked_inbox_id.unwrap_or_default();
-            if max_inbox_id > current {
-                let previous_last_acked_inbox_id = self.state.last_acked_inbox_id;
-                self.state.last_acked_inbox_id = Some(max_inbox_id);
-                if let Err(error) = self.save_state() {
-                    self.state.last_acked_inbox_id = previous_last_acked_inbox_id;
-                    return Err(error);
-                }
+        let current = self.state.last_acked_inbox_id.unwrap_or_default();
+        let previous_state = self.state.clone();
+        let mut changed = false;
+
+        for inbox_id in acked_inbox_ids.iter().copied() {
+            if inbox_id <= current {
+                continue;
             }
+            changed |= self.state.pending_acked_inbox_ids.insert(inbox_id);
         }
+
+        let last_acked = self.state.last_acked_inbox_id.get_or_insert(0);
+        changed |= advance_sparse_prefix(last_acked, &mut self.state.pending_acked_inbox_ids);
+        if *last_acked == 0 {
+            self.state.last_acked_inbox_id = None;
+        }
+
+        if !changed {
+            return Ok(());
+        }
+
+        if let Err(error) = self.save_state() {
+            self.state = previous_state;
+            return Err(error);
+        }
+
         Ok(())
     }
 
@@ -444,7 +489,7 @@ impl SyncCoordinator {
         items: &[trix_types::InboxItem],
     ) -> Result<LocalStoreApplyReport> {
         let report = store.apply_inbox_items(items)?;
-        self.apply_chat_cursor_updates(
+        self.record_observed_chat_server_seqs(
             items
                 .iter()
                 .map(|item| (item.message.chat_id, item.message.server_seq)),
@@ -484,7 +529,7 @@ impl SyncCoordinator {
         &mut self,
         client: &ServerApiClient,
         store: &mut LocalHistoryStore,
-        facade: &MlsFacade,
+        facade: &mut MlsFacade,
         conversation: &mut MlsConversation,
         sender_account_id: trix_types::AccountId,
         sender_device_id: trix_types::DeviceId,
@@ -493,23 +538,114 @@ impl SyncCoordinator {
         body: &MessageBody,
         aad_json: Option<Value>,
     ) -> Result<SendMessageOutcome> {
-        let plaintext = body.to_bytes()?;
-        let epoch = conversation.epoch();
-        let message_id = message_id.unwrap_or_default();
-        let ciphertext = facade.create_application_message(conversation, &plaintext)?;
-        let response = client
+        let existing_outbox = match message_id {
+            Some(message_id) => store.outbox_message(message_id),
+            None => store.find_matching_outbox_message(
+                chat_id,
+                sender_account_id,
+                sender_device_id,
+                body,
+            ),
+        };
+        let prepared_conversation = self
+            .prepare_chat_mutation_conversation(client, store, facade, chat_id)
+            .await?;
+        *conversation = prepared_conversation;
+
+        let queued_at_unix = current_unix_seconds()?;
+        let message_id = message_id
+            .or(existing_outbox.as_ref().map(|message| message.message_id))
+            .or_else(|| {
+                store.find_matching_outbox_message(
+                    chat_id,
+                    sender_account_id,
+                    sender_device_id,
+                    body,
+                )
+                .map(|message| message.message_id)
+            })
+            .unwrap_or_default();
+        store.ensure_outbox_message(
+            chat_id,
+            sender_account_id,
+            sender_device_id,
+            message_id,
+            body.clone(),
+            queued_at_unix,
+        )?;
+        if let Some(prepared_send) = existing_outbox
+            .as_ref()
+            .and_then(|message| message.prepared_send.clone())
+        {
+            store.prepare_outbox_message_send(message_id, prepared_send)?;
+        }
+
+        let normalized_aad_json = aad_json.unwrap_or_else(empty_json_object);
+        let normalized_aad_string = serde_json::to_string(&normalized_aad_json)?;
+        let prepared_send = if let Some(existing) = store.prepared_outbox_send(message_id) {
+            if existing.aad_json_string != normalized_aad_string {
+                let error = anyhow!(
+                    "outbox message {} already exists with different AAD",
+                    message_id.0
+                );
+                let _ = store.mark_outbox_failure(message_id, error.to_string());
+                return Err(error);
+            }
+            existing
+        } else {
+            let snapshot = facade.snapshot_state()?;
+            let plaintext = body.to_bytes()?;
+            let epoch = conversation.epoch();
+            let ciphertext = match facade.create_application_message(conversation, &plaintext) {
+                Ok(ciphertext) => ciphertext,
+                Err(error) => {
+                    let _ = store.mark_outbox_failure(message_id, error.to_string());
+                    return Err(error);
+                }
+            };
+            let prepared_send = PreparedLocalOutboxSend {
+                epoch,
+                ciphertext_b64: encode_b64(&ciphertext),
+                aad_json_string: normalized_aad_string.clone(),
+            };
+            if let Err(error) = store.prepare_outbox_message_send(message_id, prepared_send.clone())
+            {
+                facade.restore_snapshot(&snapshot).with_context(|| {
+                    format!(
+                        "failed to rollback MLS state after persisting prepared outbox {}",
+                        message_id.0
+                    )
+                })?;
+                *conversation = self
+                    .prepare_chat_mutation_conversation(client, store, facade, chat_id)
+                    .await?;
+                let _ = store.mark_outbox_failure(message_id, error.to_string());
+                return Err(error);
+            }
+            prepared_send
+        };
+        let ciphertext = decode_b64_field("prepared outbox ciphertext", &prepared_send.ciphertext_b64)
+            .map_err(|error| anyhow!("failed to decode prepared outbox ciphertext: {error}"))?;
+        let response = match client
             .create_message(
                 chat_id,
                 make_create_message_request(
                     message_id,
-                    epoch,
+                    prepared_send.epoch,
                     MessageKind::Application,
                     body.content_type(),
                     &ciphertext,
-                    aad_json.clone(),
+                    Some(normalized_aad_json.clone()),
                 ),
             )
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                let _ = store.mark_outbox_failure(message_id, error.to_string());
+                return Err(error.into());
+            }
+        };
 
         let envelope = MessageEnvelope {
             message_id: response.message_id,
@@ -517,18 +653,47 @@ impl SyncCoordinator {
             server_seq: response.server_seq,
             sender_account_id,
             sender_device_id,
-            epoch,
+            epoch: prepared_send.epoch,
             message_kind: MessageKind::Application,
             content_type: body.content_type(),
-            ciphertext_b64: encode_b64(&ciphertext),
-            aad_json: aad_json.unwrap_or_else(empty_json_object),
+            ciphertext_b64: prepared_send.ciphertext_b64.clone(),
+            aad_json: normalized_aad_json,
             created_at_unix: current_unix_seconds()?,
         };
         let LocalOutgoingMessageApplyOutcome {
             report,
             projected_message,
-        } = store.apply_outgoing_message(&envelope, body)?;
-        self.record_chat_server_seq(chat_id, response.server_seq)?;
+        } = match store.apply_outgoing_message(&envelope, body) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                restore_failed_outbox_send(
+                    store,
+                    chat_id,
+                    sender_account_id,
+                    sender_device_id,
+                    message_id,
+                    body,
+                    queued_at_unix,
+                    &prepared_send,
+                    &error.to_string(),
+                );
+                return Err(error);
+            }
+        };
+        if let Err(error) = self.record_chat_server_seq(chat_id, response.server_seq) {
+            restore_failed_outbox_send(
+                store,
+                chat_id,
+                sender_account_id,
+                sender_device_id,
+                message_id,
+                body,
+                queued_at_unix,
+                &prepared_send,
+                &error.to_string(),
+            );
+            return Err(error);
+        }
 
         Ok(SendMessageOutcome {
             chat_id,
@@ -1038,6 +1203,42 @@ impl SyncCoordinator {
         })
     }
 
+    async fn prepare_chat_mutation_conversation(
+        &mut self,
+        client: &ServerApiClient,
+        store: &mut LocalHistoryStore,
+        facade: &MlsFacade,
+        chat_id: ChatId,
+    ) -> Result<MlsConversation> {
+        let needs_bootstrap = store.get_chat(chat_id).is_none() || store.chat_mls_group_id(chat_id).is_none();
+        if needs_bootstrap {
+            let detail = client.get_chat(chat_id).await?;
+            store.apply_chat_detail(&detail)?;
+            let history = client
+                .get_chat_history(chat_id, self.chat_cursor(chat_id), None)
+                .await?;
+            store.apply_chat_history(&history)?;
+            self.record_chat_server_seqs(chat_id, history.messages.iter().map(|message| message.server_seq))?;
+        }
+
+        if store.needs_history_refresh(chat_id) {
+            let detail = client.get_chat(chat_id).await?;
+            store.apply_chat_detail(&detail)?;
+            let history = client.get_chat_history(chat_id, None, None).await?;
+            store.apply_chat_history(&history)?;
+            self.record_chat_server_seqs(chat_id, history.messages.iter().map(|message| message.server_seq))?;
+        }
+
+        if store.needs_projection(chat_id) {
+            store.project_chat_with_facade(chat_id, facade, None)?;
+            self.record_projected_chat_cursor(store, chat_id)?;
+        }
+
+        store
+            .load_or_bootstrap_chat_mls_conversation(chat_id, facade)?
+            .ok_or_else(|| anyhow!("chat {} has no bootstrappable MLS state", chat_id.0))
+    }
+
     async fn prepare_chat_control_context(
         &mut self,
         client: &ServerApiClient,
@@ -1045,21 +1246,9 @@ impl SyncCoordinator {
         facade: &MlsFacade,
         chat_id: ChatId,
     ) -> Result<(ChatDetailResponse, MlsConversation)> {
-        let group_id = store
-            .chat_mls_group_id(chat_id)
-            .ok_or_else(|| anyhow!("chat {} has no MLS group id in local store", chat_id.0))?;
-        let mut conversation = facade.load_group(&group_id)?.ok_or_else(|| {
-            anyhow!(
-                "MLS group for chat {} is missing from facade storage",
-                chat_id.0
-            )
-        })?;
-        let history = client
-            .get_chat_history(chat_id, self.chat_cursor(chat_id), None)
+        let conversation = self
+            .prepare_chat_mutation_conversation(client, store, facade, chat_id)
             .await?;
-        store.apply_chat_history(&history)?;
-        store.project_chat_messages(chat_id, facade, &mut conversation, None)?;
-        self.record_projected_chat_cursor(store, chat_id)?;
         let mut detail = client.get_chat(chat_id).await?;
         align_chat_detail_device_members_with_conversation(&mut detail, facade, &conversation)?;
         store.apply_chat_detail(&detail)?;
@@ -1084,6 +1273,7 @@ impl SyncCoordinator {
             .get_chat_history(chat_id, after_server_seq, None)
             .await?;
         merge_store_report(&mut report, store.apply_chat_history(&history)?);
+        self.record_chat_server_seqs(chat_id, history.messages.iter().map(|message| message.server_seq))?;
         Ok((detail, history, report))
     }
 }
@@ -1289,6 +1479,40 @@ fn merge_projection_report(
     }
 }
 
+fn restore_failed_outbox_send(
+    store: &mut LocalHistoryStore,
+    chat_id: ChatId,
+    sender_account_id: AccountId,
+    sender_device_id: DeviceId,
+    message_id: MessageId,
+    body: &MessageBody,
+    queued_at_unix: u64,
+    prepared_send: &PreparedLocalOutboxSend,
+    failure_message: &str,
+) {
+    let _ = store.ensure_outbox_message(
+        chat_id,
+        sender_account_id,
+        sender_device_id,
+        message_id,
+        body.clone(),
+        queued_at_unix,
+    );
+    let _ = store.prepare_outbox_message_send(message_id, prepared_send.clone());
+    let _ = store.mark_outbox_failure(message_id, failure_message.to_owned());
+}
+
+fn advance_sparse_prefix(prefix: &mut u64, pending: &mut BTreeSet<u64>) -> bool {
+    let mut next = prefix.saturating_add(1);
+    let mut changed = false;
+    while pending.remove(&next) {
+        *prefix = next;
+        changed = true;
+        next = prefix.saturating_add(1);
+    }
+    changed
+}
+
 fn current_unix_seconds() -> Result<u64> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1313,6 +1537,8 @@ fn save_state_to_path(
         DELETE FROM sync_state_metadata;
         DELETE FROM sync_state_values;
         DELETE FROM sync_state_chat_cursors;
+        DELETE FROM sync_state_pending_acked_inbox_ids;
+        DELETE FROM sync_state_pending_chat_server_seqs;
         "#,
     )?;
 
@@ -1338,6 +1564,17 @@ fn save_state_to_path(
         params![state.last_acked_inbox_id.map(|value| value.to_string())],
     )?;
 
+    let mut pending_ack_statement = transaction.prepare(
+        r#"
+        INSERT INTO sync_state_pending_acked_inbox_ids (inbox_id)
+        VALUES (?1)
+        "#,
+    )?;
+    for inbox_id in &state.pending_acked_inbox_ids {
+        pending_ack_statement.execute(params![u64_to_i64(*inbox_id, "pending acked inbox id")?])?;
+    }
+    drop(pending_ack_statement);
+
     let mut cursor_statement = transaction.prepare(
         r#"
         INSERT INTO sync_state_chat_cursors (chat_id, last_server_seq)
@@ -1351,6 +1588,22 @@ fn save_state_to_path(
         ])?;
     }
     drop(cursor_statement);
+
+    let mut pending_chat_seq_statement = transaction.prepare(
+        r#"
+        INSERT INTO sync_state_pending_chat_server_seqs (chat_id, server_seq)
+        VALUES (?1, ?2)
+        "#,
+    )?;
+    for (chat_id, pending_server_seqs) in &state.pending_chat_server_seqs {
+        for server_seq in pending_server_seqs {
+            pending_chat_seq_statement.execute(params![
+                chat_id,
+                u64_to_i64(*server_seq, "pending chat server_seq")?,
+            ])?;
+        }
+    }
+    drop(pending_chat_seq_statement);
 
     transaction
         .commit()
@@ -1388,7 +1641,7 @@ fn load_state_from_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Pe
         .unwrap_or_else(|| "1".to_owned())
         .parse::<u32>()
         .context("failed to parse sync state version")?;
-    if version != 1 {
+    if version != 1 && version != 2 {
         return Err(anyhow!(
             "unsupported sync state version {} in {}",
             version,
@@ -1428,10 +1681,12 @@ fn load_state_from_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Pe
         .transpose()?;
 
     let mut state = PersistedSyncState {
-        version,
+        version: 2,
         lease_owner,
         last_acked_inbox_id,
+        pending_acked_inbox_ids: BTreeSet::new(),
         chat_cursors: BTreeMap::new(),
+        pending_chat_server_seqs: BTreeMap::new(),
     };
 
     let mut cursor_statement = connection.prepare(
@@ -1451,20 +1706,58 @@ fn load_state_from_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Pe
             .insert(chat_id, i64_to_u64(last_server_seq, "last_server_seq")?);
     }
 
+    let mut pending_ack_statement = connection.prepare(
+        r#"
+        SELECT inbox_id
+        FROM sync_state_pending_acked_inbox_ids
+        ORDER BY inbox_id
+        "#,
+    )?;
+    let pending_ack_rows =
+        pending_ack_statement.query_map([], |row| row.get::<_, i64>(0))?;
+    for row in pending_ack_rows {
+        state.pending_acked_inbox_ids.insert(i64_to_u64(
+            row?,
+            "pending acked inbox id",
+        )?);
+    }
+
+    let mut pending_chat_statement = connection.prepare(
+        r#"
+        SELECT chat_id, server_seq
+        FROM sync_state_pending_chat_server_seqs
+        ORDER BY chat_id, server_seq
+        "#,
+    )?;
+    let pending_chat_rows = pending_chat_statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    for row in pending_chat_rows {
+        let (chat_id, server_seq) = row?;
+        state
+            .pending_chat_server_seqs
+            .entry(chat_id)
+            .or_default()
+            .insert(i64_to_u64(server_seq, "pending chat server_seq")?);
+    }
+
     Ok(state)
 }
 
 fn load_legacy_json_state_from_path(path: &Path) -> Result<PersistedSyncState> {
     let input_file = File::open(path)
         .with_context(|| format!("failed to open sync state file {}", path.display()))?;
-    let state: PersistedSyncState =
+    let mut state: PersistedSyncState =
         serde_json::from_reader(input_file).context("failed to parse sync state file")?;
-    if state.version != 1 {
+    if state.version != 1 && state.version != 2 {
         return Err(anyhow!(
             "unsupported sync state version {} in {}",
             state.version,
             path.display()
         ));
+    }
+    if state.version == 1 {
+        state.version = 2;
     }
     Ok(state)
 }
@@ -1500,6 +1793,14 @@ fn open_sync_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Connecti
         CREATE TABLE IF NOT EXISTS sync_state_chat_cursors (
             chat_id TEXT PRIMARY KEY,
             last_server_seq INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS sync_state_pending_acked_inbox_ids (
+            inbox_id INTEGER PRIMARY KEY
+        );
+        CREATE TABLE IF NOT EXISTS sync_state_pending_chat_server_seqs (
+            chat_id TEXT NOT NULL,
+            server_seq INTEGER NOT NULL,
+            PRIMARY KEY (chat_id, server_seq)
         );
         "#,
     )?;
@@ -1577,17 +1878,230 @@ fn parse_chat_id(value: &str) -> Result<ChatId> {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, env, fs};
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        env, fs,
+        sync::{Arc, Mutex},
+    };
 
+    use axum::{
+        Json, Router,
+        extract::{Path as AxumPath, Query, State},
+        http::StatusCode,
+        response::IntoResponse,
+        routing::{get, post},
+    };
+    use serde::Deserialize;
     use serde_json::json;
+    use tokio::{net::TcpListener, task::JoinHandle};
     use trix_types::{
-        AccountId, ChatId, ContentType, DeviceId, InboxItem, MessageEnvelope, MessageId,
+        AccountId, ChatDetailResponse, ChatId, ChatType, ContentType, CreateMessageRequest,
+        CreateMessageResponse, DeviceId, ErrorResponse, InboxItem, MessageEnvelope, MessageId,
         MessageKind,
     };
     use uuid::Uuid;
 
     use super::{PersistedSyncState, SyncCoordinator, is_sqlite_database};
-    use crate::LocalHistoryStore;
+    use crate::{
+        LocalHistoryStore, LocalOutboxStatus, MessageBody, MlsFacade, MlsProcessResult,
+        ServerApiClient, TextMessageBody, decode_b64_field,
+    };
+
+    #[derive(Debug, Clone, Deserialize)]
+    struct MockHistoryQuery {
+        after_server_seq: Option<u64>,
+        limit: Option<usize>,
+    }
+
+    #[derive(Debug)]
+    struct MockChatServerState {
+        chat_detail: ChatDetailResponse,
+        history: Vec<MessageEnvelope>,
+        sender_account_id: AccountId,
+        sender_device_id: DeviceId,
+        expected_create_epoch: Option<u64>,
+        create_requests: Vec<CreateMessageRequest>,
+        create_responses: BTreeMap<String, CreateMessageResponse>,
+        chat_detail_requests: usize,
+        history_requests: usize,
+    }
+
+    struct MockChatServer {
+        base_url: String,
+        state: Arc<Mutex<MockChatServerState>>,
+        task: JoinHandle<()>,
+    }
+
+    impl MockChatServer {
+        async fn spawn(state: MockChatServerState) -> Self {
+            let state = Arc::new(Mutex::new(state));
+            let app = Router::new()
+                .route("/v0/chats/{chat_id}", get(mock_get_chat))
+                .route("/v0/chats/{chat_id}/history", get(mock_get_chat_history))
+                .route("/v0/chats/{chat_id}/messages", post(mock_create_message))
+                .with_state(state.clone());
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base_url = format!("http://{}", listener.local_addr().unwrap());
+            let task = tokio::spawn(async move {
+                axum::serve(listener, app)
+                    .await
+                    .expect("mock chat server should stay up");
+            });
+
+            Self {
+                base_url,
+                state,
+                task,
+            }
+        }
+
+        fn client(&self) -> ServerApiClient {
+            ServerApiClient::new(&self.base_url).expect("mock base url should be valid")
+        }
+
+        async fn shutdown(self) {
+            self.task.abort();
+            let _ = self.task.await;
+        }
+    }
+
+    async fn mock_get_chat(
+        AxumPath(chat_id): AxumPath<Uuid>,
+        State(state): State<Arc<Mutex<MockChatServerState>>>,
+    ) -> impl IntoResponse {
+        let mut state = state.lock().unwrap();
+        if state.chat_detail.chat_id != ChatId(chat_id) {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        state.chat_detail_requests += 1;
+        Json(state.chat_detail.clone()).into_response()
+    }
+
+    async fn mock_get_chat_history(
+        AxumPath(chat_id): AxumPath<Uuid>,
+        Query(query): Query<MockHistoryQuery>,
+        State(state): State<Arc<Mutex<MockChatServerState>>>,
+    ) -> impl IntoResponse {
+        let mut state = state.lock().unwrap();
+        if state.chat_detail.chat_id != ChatId(chat_id) {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        state.history_requests += 1;
+        let mut messages = state
+            .history
+            .iter()
+            .filter(|message| {
+                query
+                    .after_server_seq
+                    .map(|after| message.server_seq > after)
+                    .unwrap_or(true)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if let Some(limit) = query.limit {
+            messages.truncate(limit);
+        }
+        Json(trix_types::ChatHistoryResponse {
+            chat_id: state.chat_detail.chat_id,
+            messages,
+        })
+        .into_response()
+    }
+
+    async fn mock_create_message(
+        AxumPath(chat_id): AxumPath<Uuid>,
+        State(state): State<Arc<Mutex<MockChatServerState>>>,
+        Json(request): Json<CreateMessageRequest>,
+    ) -> impl IntoResponse {
+        let mut state = state.lock().unwrap();
+        if state.chat_detail.chat_id != ChatId(chat_id) {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        if let Some(expected_epoch) = state.expected_create_epoch
+            && request.epoch != expected_epoch
+        {
+            return (
+                StatusCode::CONFLICT,
+                Json(ErrorResponse {
+                    code: "epoch_conflict".to_owned(),
+                    message: format!(
+                        "expected epoch {expected_epoch}, got {}",
+                        request.epoch
+                    ),
+                }),
+            )
+                .into_response();
+        }
+
+        state.create_requests.push(request.clone());
+        if let Some(existing) = state
+            .create_responses
+            .get(&request.message_id.0.to_string())
+            .cloned()
+        {
+            return Json(existing).into_response();
+        }
+
+        let server_seq = state
+            .history
+            .last()
+            .map(|message| message.server_seq)
+            .unwrap_or_default()
+            + 1;
+        let envelope = MessageEnvelope {
+            message_id: request.message_id,
+            chat_id: ChatId(chat_id),
+            server_seq,
+            sender_account_id: state.sender_account_id,
+            sender_device_id: state.sender_device_id,
+            epoch: request.epoch,
+            message_kind: request.message_kind,
+            content_type: request.content_type,
+            ciphertext_b64: request.ciphertext_b64.clone(),
+            aad_json: request.aad_json.clone().unwrap_or_else(|| json!({})),
+            created_at_unix: 1_700_000_000 + server_seq,
+        };
+        state.history.push(envelope.clone());
+        state.chat_detail.last_server_seq = server_seq;
+        state.chat_detail.epoch = request.epoch;
+        state.chat_detail.last_message = Some(envelope);
+        let response = CreateMessageResponse {
+            message_id: request.message_id,
+            server_seq,
+        };
+        state
+            .create_responses
+            .insert(request.message_id.0.to_string(), response.clone());
+        Json(response).into_response()
+    }
+
+    fn text_body(text: &str) -> MessageBody {
+        MessageBody::Text(TextMessageBody {
+            text: text.to_owned(),
+        })
+    }
+
+    fn empty_chat_detail(
+        chat_id: ChatId,
+        last_server_seq: u64,
+        epoch: u64,
+        last_message: Option<MessageEnvelope>,
+        last_commit_message_id: Option<MessageId>,
+    ) -> ChatDetailResponse {
+        ChatDetailResponse {
+            chat_id,
+            chat_type: ChatType::Dm,
+            title: None,
+            last_server_seq,
+            pending_message_count: 0,
+            epoch,
+            last_commit_message_id,
+            last_message,
+            participant_profiles: Vec::new(),
+            members: Vec::new(),
+            device_members: Vec::new(),
+        }
+    }
 
     #[test]
     fn sync_coordinator_persists_chat_cursors_and_inbox_cursor() {
@@ -1614,7 +2128,9 @@ mod tests {
             version: 1,
             lease_owner: "legacy-lease-owner".to_owned(),
             last_acked_inbox_id: Some(12),
+            pending_acked_inbox_ids: BTreeSet::new(),
             chat_cursors: BTreeMap::from([(chat_id.0.to_string(), 44)]),
+            pending_chat_server_seqs: BTreeMap::new(),
         };
         let file = fs::File::create(&state_path).unwrap();
         serde_json::to_writer_pretty(file, &state).unwrap();
@@ -1635,7 +2151,8 @@ mod tests {
         let mut coordinator = SyncCoordinator::new_encrypted(&state_path, vec![9u8; 32]).unwrap();
 
         coordinator.record_chat_server_seq(chat_id, 77).unwrap();
-        coordinator.record_acked_inbox_ids(&[15]).unwrap();
+        let acked = (1..=15).collect::<Vec<_>>();
+        coordinator.record_acked_inbox_ids(&acked).unwrap();
 
         let restored = SyncCoordinator::new_encrypted(&state_path, vec![9u8; 32]).unwrap();
         assert_eq!(restored.chat_cursor(chat_id), Some(77));
@@ -1707,7 +2224,497 @@ mod tests {
             .unwrap();
 
         assert_eq!(report.messages_upserted, 2);
+        assert_eq!(coordinator.chat_cursor(chat_id), Some(1));
+
+        coordinator
+            .apply_inbox_items_into_store(
+                &mut store,
+                &[InboxItem {
+                    inbox_id: 9,
+                    message: MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 2,
+                        sender_account_id: account_id,
+                        sender_device_id: device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        ciphertext_b64: crate::encode_b64(b"ciphertext-2"),
+                        aad_json: json!({}),
+                        created_at_unix: 3,
+                    },
+                }],
+            )
+            .unwrap();
         assert_eq!(coordinator.chat_cursor(chat_id), Some(3));
+    }
+
+    #[test]
+    fn acked_inbox_ids_advance_only_after_contiguous_gap_is_closed() {
+        let mut coordinator = SyncCoordinator::new();
+
+        coordinator.record_acked_inbox_ids(&[11]).unwrap();
+        assert_eq!(coordinator.last_acked_inbox_id(), None);
+
+        coordinator.record_acked_inbox_ids(&[10]).unwrap();
+        assert_eq!(coordinator.last_acked_inbox_id(), None);
+
+        let leading_prefix = (1..=9).collect::<Vec<_>>();
+        coordinator.record_acked_inbox_ids(&leading_prefix).unwrap();
+        assert_eq!(coordinator.last_acked_inbox_id(), Some(11));
+    }
+
+    #[tokio::test]
+    async fn send_message_repairs_stale_group_mapping_before_network_send() {
+        let chat_id = ChatId(Uuid::new_v4());
+        let alice_account = AccountId(Uuid::new_v4());
+        let alice_device = DeviceId(Uuid::new_v4());
+        let mut alice = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+        let bob = MlsFacade::new(b"bob-device".to_vec()).unwrap();
+
+        let unrelated_group = alice.create_group(b"stale-group-id").unwrap();
+        let bob_key_package = bob.generate_key_package().unwrap();
+        let mut correct_group = alice.create_group(chat_id.0.as_bytes()).unwrap();
+        let add_bundle = alice
+            .add_members(&mut correct_group, &[bob_key_package])
+            .unwrap();
+        let mut bob_group = bob
+            .join_group_from_welcome(
+                add_bundle.welcome_message.as_ref().unwrap(),
+                add_bundle.ratchet_tree.as_deref(),
+            )
+            .unwrap();
+        let existing_ciphertext = alice
+            .create_application_message(&mut correct_group, b"existing from alice")
+            .unwrap();
+        let correct_group_id = correct_group.group_id();
+        let commit_message_id = MessageId(Uuid::new_v4());
+        let welcome_message_id = MessageId(Uuid::new_v4());
+        let existing_message_id = MessageId(Uuid::new_v4());
+        let history = vec![
+            MessageEnvelope {
+                message_id: commit_message_id,
+                chat_id,
+                server_seq: 1,
+                sender_account_id: alice_account,
+                sender_device_id: alice_device,
+                epoch: add_bundle.epoch,
+                message_kind: MessageKind::Commit,
+                content_type: ContentType::ChatEvent,
+                ciphertext_b64: crate::encode_b64(&add_bundle.commit_message),
+                aad_json: json!({}),
+                created_at_unix: 1,
+            },
+            MessageEnvelope {
+                message_id: welcome_message_id,
+                chat_id,
+                server_seq: 2,
+                sender_account_id: alice_account,
+                sender_device_id: alice_device,
+                epoch: add_bundle.epoch,
+                message_kind: MessageKind::WelcomeRef,
+                content_type: ContentType::ChatEvent,
+                ciphertext_b64: crate::encode_b64(add_bundle.welcome_message.as_ref().unwrap()),
+                aad_json: json!({
+                    "_trix": {
+                        "ratchet_tree_b64": crate::encode_b64(add_bundle.ratchet_tree.as_ref().unwrap())
+                    }
+                }),
+                created_at_unix: 2,
+            },
+            MessageEnvelope {
+                message_id: existing_message_id,
+                chat_id,
+                server_seq: 3,
+                sender_account_id: alice_account,
+                sender_device_id: alice_device,
+                epoch: add_bundle.epoch,
+                message_kind: MessageKind::Application,
+                content_type: ContentType::Text,
+                ciphertext_b64: crate::encode_b64(&existing_ciphertext),
+                aad_json: json!({}),
+                created_at_unix: 3,
+            },
+        ];
+
+        let mut store = LocalHistoryStore::new();
+        store
+            .apply_chat_history(&trix_types::ChatHistoryResponse {
+                chat_id,
+                messages: history.clone(),
+            })
+            .unwrap();
+        let projection = store.project_chat_with_facade(chat_id, &alice, None).unwrap();
+        assert_eq!(projection.advanced_to_server_seq, Some(3));
+        store
+            .set_chat_mls_group_id(chat_id, &unrelated_group.group_id())
+            .unwrap();
+
+        let server = MockChatServer::spawn(MockChatServerState {
+            chat_detail: empty_chat_detail(
+                chat_id,
+                3,
+                add_bundle.epoch,
+                history.last().cloned(),
+                Some(commit_message_id),
+            ),
+            history,
+            sender_account_id: alice_account,
+            sender_device_id: alice_device,
+            expected_create_epoch: Some(add_bundle.epoch),
+            create_requests: Vec::new(),
+            create_responses: BTreeMap::new(),
+            chat_detail_requests: 0,
+            history_requests: 0,
+        })
+        .await;
+        let client = server.client();
+
+        let mut coordinator = SyncCoordinator::new();
+        let body = text_body("fresh after mapping repair");
+        let mut conversation = alice.load_group(&unrelated_group.group_id()).unwrap().unwrap();
+        let outcome = coordinator
+            .send_message_body(
+                &client,
+                &mut store,
+                &mut alice,
+                &mut conversation,
+                alice_account,
+                alice_device,
+                chat_id,
+                None,
+                &body,
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.server_seq, 4);
+        assert_eq!(
+            store.chat_mls_group_id(chat_id).as_deref(),
+            Some(correct_group_id.as_slice())
+        );
+
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.chat_detail_requests, 0);
+        assert_eq!(state.history_requests, 0);
+        assert_eq!(state.create_requests.len(), 1);
+        let ciphertext =
+            decode_b64_field("ciphertext_b64", &state.create_requests[0].ciphertext_b64).unwrap();
+        drop(state);
+        match bob.process_message(&mut bob_group, &ciphertext).unwrap() {
+            MlsProcessResult::ApplicationMessage(bytes) => {
+                assert_eq!(bytes, body.to_bytes().unwrap())
+            }
+            other => panic!("expected application message, got {other:?}"),
+        }
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn send_message_replays_pending_local_commit_before_sending() {
+        let chat_id = ChatId(Uuid::new_v4());
+        let alice_account = AccountId(Uuid::new_v4());
+        let alice_device = DeviceId(Uuid::new_v4());
+        let bob_account = AccountId(Uuid::new_v4());
+        let bob_device = DeviceId(Uuid::new_v4());
+        let alice = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+        let mut bob = MlsFacade::new(b"bob-device".to_vec()).unwrap();
+        let charlie = MlsFacade::new(b"charlie-device".to_vec()).unwrap();
+
+        let bob_key_package = bob.generate_key_package().unwrap();
+        let mut alice_group = alice.create_group(chat_id.0.as_bytes()).unwrap();
+        let add_bob_bundle = alice
+            .add_members(&mut alice_group, &[bob_key_package])
+            .unwrap();
+        let add_bob_commit_id = MessageId(Uuid::new_v4());
+        let add_bob_welcome_id = MessageId(Uuid::new_v4());
+        let mut store = LocalHistoryStore::new();
+        store
+            .apply_chat_history(&trix_types::ChatHistoryResponse {
+                chat_id,
+                messages: vec![
+                    MessageEnvelope {
+                        message_id: add_bob_commit_id,
+                        chat_id,
+                        server_seq: 1,
+                        sender_account_id: alice_account,
+                        sender_device_id: alice_device,
+                        epoch: add_bob_bundle.epoch,
+                        message_kind: MessageKind::Commit,
+                        content_type: ContentType::ChatEvent,
+                        ciphertext_b64: crate::encode_b64(&add_bob_bundle.commit_message),
+                        aad_json: json!({}),
+                        created_at_unix: 1,
+                    },
+                    MessageEnvelope {
+                        message_id: add_bob_welcome_id,
+                        chat_id,
+                        server_seq: 2,
+                        sender_account_id: alice_account,
+                        sender_device_id: alice_device,
+                        epoch: add_bob_bundle.epoch,
+                        message_kind: MessageKind::WelcomeRef,
+                        content_type: ContentType::ChatEvent,
+                        ciphertext_b64: crate::encode_b64(
+                            add_bob_bundle.welcome_message.as_ref().unwrap(),
+                        ),
+                        aad_json: json!({
+                            "_trix": {
+                                "ratchet_tree_b64": crate::encode_b64(
+                                    add_bob_bundle.ratchet_tree.as_ref().unwrap()
+                                )
+                            }
+                        }),
+                        created_at_unix: 2,
+                    },
+                ],
+            })
+            .unwrap();
+        store.project_chat_with_facade(chat_id, &bob, None).unwrap();
+        assert_eq!(store.projected_cursor(chat_id), Some(2));
+
+        let charlie_key_package = charlie.generate_key_package().unwrap();
+        let add_charlie_bundle = alice
+            .add_members(&mut alice_group, &[charlie_key_package])
+            .unwrap();
+        let add_charlie_commit_id = MessageId(Uuid::new_v4());
+        let pending_commit = MessageEnvelope {
+            message_id: add_charlie_commit_id,
+            chat_id,
+            server_seq: 3,
+            sender_account_id: alice_account,
+            sender_device_id: alice_device,
+            epoch: add_charlie_bundle.epoch,
+            message_kind: MessageKind::Commit,
+            content_type: ContentType::ChatEvent,
+            ciphertext_b64: crate::encode_b64(&add_charlie_bundle.commit_message),
+            aad_json: json!({}),
+            created_at_unix: 3,
+        };
+        store
+            .apply_chat_history(&trix_types::ChatHistoryResponse {
+                chat_id,
+                messages: vec![pending_commit.clone()],
+            })
+            .unwrap();
+        store
+            .apply_chat_detail(&empty_chat_detail(
+                chat_id,
+                3,
+                add_charlie_bundle.epoch,
+                Some(pending_commit.clone()),
+                Some(add_charlie_commit_id),
+            ))
+            .unwrap();
+        let group_id = store.chat_mls_group_id(chat_id).unwrap();
+
+        let server = MockChatServer::spawn(MockChatServerState {
+            chat_detail: empty_chat_detail(
+                chat_id,
+                3,
+                add_charlie_bundle.epoch,
+                Some(pending_commit.clone()),
+                Some(add_charlie_commit_id),
+            ),
+            history: vec![
+                MessageEnvelope {
+                    message_id: add_bob_commit_id,
+                    chat_id,
+                    server_seq: 1,
+                    sender_account_id: alice_account,
+                    sender_device_id: alice_device,
+                    epoch: add_bob_bundle.epoch,
+                    message_kind: MessageKind::Commit,
+                    content_type: ContentType::ChatEvent,
+                    ciphertext_b64: crate::encode_b64(&add_bob_bundle.commit_message),
+                    aad_json: json!({}),
+                    created_at_unix: 1,
+                },
+                MessageEnvelope {
+                    message_id: add_bob_welcome_id,
+                    chat_id,
+                    server_seq: 2,
+                    sender_account_id: alice_account,
+                    sender_device_id: alice_device,
+                    epoch: add_bob_bundle.epoch,
+                    message_kind: MessageKind::WelcomeRef,
+                    content_type: ContentType::ChatEvent,
+                    ciphertext_b64: crate::encode_b64(
+                        add_bob_bundle.welcome_message.as_ref().unwrap(),
+                    ),
+                    aad_json: json!({
+                        "_trix": {
+                            "ratchet_tree_b64": crate::encode_b64(
+                                add_bob_bundle.ratchet_tree.as_ref().unwrap()
+                            )
+                        }
+                    }),
+                    created_at_unix: 2,
+                },
+                pending_commit,
+            ],
+            sender_account_id: bob_account,
+            sender_device_id: bob_device,
+            expected_create_epoch: Some(add_charlie_bundle.epoch),
+            create_requests: Vec::new(),
+            create_responses: BTreeMap::new(),
+            chat_detail_requests: 0,
+            history_requests: 0,
+        })
+        .await;
+        let client = server.client();
+
+        let mut coordinator = SyncCoordinator::new();
+        let body = text_body("after local commit replay");
+        let mut conversation = bob.load_group(&group_id).unwrap().unwrap();
+        assert_eq!(conversation.epoch(), add_bob_bundle.epoch);
+        let outcome = coordinator
+            .send_message_body(
+                &client,
+                &mut store,
+                &mut bob,
+                &mut conversation,
+                bob_account,
+                bob_device,
+                chat_id,
+                None,
+                &body,
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.server_seq, 4);
+        assert_eq!(store.projected_cursor(chat_id), Some(4));
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.chat_detail_requests, 1);
+        assert_eq!(state.history_requests, 1);
+        assert_eq!(state.create_requests.len(), 1);
+        assert_eq!(state.create_requests[0].epoch, add_charlie_bundle.epoch);
+        drop(state);
+        assert_eq!(
+            bob.load_group(&group_id).unwrap().unwrap().epoch(),
+            add_charlie_bundle.epoch
+        );
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn send_message_retry_reuses_persisted_outbox_after_local_apply_failure() {
+        let chat_id = ChatId(Uuid::new_v4());
+        let alice_account = AccountId(Uuid::new_v4());
+        let alice_device = DeviceId(Uuid::new_v4());
+        let mls_root =
+            env::temp_dir().join(format!("trix-sync-send-retry-mls-{}", Uuid::new_v4()));
+        let store_path =
+            env::temp_dir().join(format!("trix-sync-send-retry-store-{}.db", Uuid::new_v4()));
+        let mut facade = MlsFacade::new_persistent(b"alice-device".to_vec(), &mls_root).unwrap();
+        let initial_conversation = facade.create_group(chat_id.0.as_bytes()).unwrap();
+        let initial_epoch = initial_conversation.epoch();
+        let group_id = initial_conversation.group_id();
+        drop(initial_conversation);
+
+        let mut store = LocalHistoryStore::new_persistent(&store_path).unwrap();
+        store
+            .apply_chat_detail(&empty_chat_detail(chat_id, 0, initial_epoch, None, None))
+            .unwrap();
+        store.set_chat_mls_group_id(chat_id, &group_id).unwrap();
+
+        let server = MockChatServer::spawn(MockChatServerState {
+            chat_detail: empty_chat_detail(chat_id, 0, initial_epoch, None, None),
+            history: Vec::new(),
+            sender_account_id: alice_account,
+            sender_device_id: alice_device,
+            expected_create_epoch: Some(initial_epoch),
+            create_requests: Vec::new(),
+            create_responses: BTreeMap::new(),
+            chat_detail_requests: 0,
+            history_requests: 0,
+        })
+        .await;
+        let client = server.client();
+
+        let body = text_body("retry after local failure");
+        let mut coordinator = SyncCoordinator::new();
+        let mut conversation = facade.load_group(&group_id).unwrap().unwrap();
+        store.inject_save_failure_after(2);
+        let error = coordinator
+            .send_message_body(
+                &client,
+                &mut store,
+                &mut facade,
+                &mut conversation,
+                alice_account,
+                alice_device,
+                chat_id,
+                None,
+                &body,
+                None,
+            )
+            .await
+            .expect_err("apply_outgoing_message should fail after server accepted the send");
+        assert!(error.to_string().contains("injected local history save failure"));
+
+        let failed_outbox = store.list_outbox_messages(Some(chat_id));
+        assert_eq!(failed_outbox.len(), 1);
+        assert_eq!(failed_outbox[0].status, LocalOutboxStatus::Failed);
+        assert!(failed_outbox[0].prepared_send.is_some());
+        let message_id = failed_outbox[0].message_id;
+
+        drop(conversation);
+        drop(store);
+        drop(facade);
+
+        let mut store = LocalHistoryStore::new_persistent(&store_path).unwrap();
+        let mut facade = MlsFacade::load_persistent(&mls_root).unwrap();
+        let reloaded_outbox = store.list_outbox_messages(Some(chat_id));
+        assert_eq!(reloaded_outbox.len(), 1);
+        assert_eq!(reloaded_outbox[0].message_id, message_id);
+        assert_eq!(reloaded_outbox[0].status, LocalOutboxStatus::Failed);
+        assert!(reloaded_outbox[0].prepared_send.is_some());
+        assert_eq!(
+            store
+                .find_matching_outbox_message(chat_id, alice_account, alice_device, &body)
+                .map(|message| message.message_id),
+            Some(message_id)
+        );
+
+        let mut conversation = facade.load_group(&group_id).unwrap().unwrap();
+        let outcome = coordinator
+            .send_message_body(
+                &client,
+                &mut store,
+                &mut facade,
+                &mut conversation,
+                alice_account,
+                alice_device,
+                chat_id,
+                None,
+                &body,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.create_requests.len(), 2);
+        assert_eq!(state.create_requests[1].message_id, message_id);
+        assert_eq!(state.history.len(), 1);
+        assert_eq!(state.history[0].message_id, message_id);
+        drop(state);
+        assert_eq!(outcome.message_id, message_id);
+        assert!(store.outbox_message(message_id).is_none());
+        let projected = store.get_projected_messages(chat_id, None, Some(10));
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].payload.as_deref(), Some(body.to_bytes().unwrap().as_slice()));
+
+        server.shutdown().await;
+        cleanup_sqlite_test_path(&store_path);
+        fs::remove_dir_all(&mls_root).ok();
     }
 
     fn cleanup_sqlite_test_path(path: &std::path::Path) {

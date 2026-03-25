@@ -305,6 +305,10 @@ impl MlsFacade {
         })
     }
 
+    pub fn clone_detached(&self) -> Result<Self> {
+        Self::build_from_snapshot(self.snapshot_state()?, None)
+    }
+
     pub fn restore_snapshot(&mut self, snapshot: &MlsFacadeSnapshot) -> Result<()> {
         let restored = Self::build_from_snapshot(snapshot.clone(), self.persistence.clone())?;
         *self = restored;

@@ -40,7 +40,8 @@ pub use storage::{
     AttachmentStore, LocalChatListItem, LocalChatReadState, LocalHistoryStore,
     LocalOutboxAttachmentDraft, LocalOutboxMessage, LocalOutboxPayload, LocalOutboxStatus,
     LocalOutgoingMessageApplyOutcome, LocalProjectedMessage, LocalProjectionApplyReport,
-    LocalProjectionKind, LocalStoreApplyReport, LocalTimelineItem, MlsStateStore, SyncStateStore,
+    LocalProjectionKind, LocalStoreApplyReport, LocalTimelineItem, MlsStateStore,
+    PreparedLocalOutboxSend, SyncStateStore,
 };
 pub use sync::{
     CoreEvent, CoreEventSink, CreateChatControlInput, CreateChatControlOutcome, InboxApplyOutcome,

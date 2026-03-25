@@ -2977,14 +2977,14 @@ impl FfiSyncCoordinator {
         let outcome = {
             let mut coordinator = lock(&self.inner)?;
             let mut store = lock(&store.inner)?;
-            let facade = lock(&facade.inner)?;
+            let mut facade = lock(&facade.inner)?;
             let mut conversation = lock(&conversation.inner)?;
             self.runtime
                 .block_on(
                     coordinator.send_message_body(
                         &client,
                         &mut store,
-                        &facade,
+                        &mut facade,
                         &mut conversation,
                         parse_account_id(&input.sender_account_id)?,
                         parse_device_id(&input.sender_device_id)?,

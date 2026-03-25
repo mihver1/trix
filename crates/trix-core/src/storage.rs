@@ -171,6 +171,13 @@ pub struct LocalOutboxAttachmentDraft {
     pub height_px: Option<u32>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreparedLocalOutboxSend {
+    pub epoch: u64,
+    pub ciphertext_b64: String,
+    pub aad_json_string: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum LocalOutboxPayload {
@@ -192,6 +199,8 @@ pub struct LocalOutboxMessage {
     pub queued_at_unix: u64,
     pub status: LocalOutboxStatus,
     pub failure_message: Option<String>,
+    #[serde(default)]
+    pub prepared_send: Option<PreparedLocalOutboxSend>,
 }
 
 #[derive(Debug, Clone)]
@@ -199,6 +208,8 @@ pub struct LocalHistoryStore {
     state: PersistedLocalHistoryState,
     database_path: Option<PathBuf>,
     database_key: Option<Vec<u8>>,
+    #[cfg(test)]
+    fail_save_after: std::cell::Cell<Option<usize>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -293,6 +304,8 @@ impl LocalHistoryStore {
             state: PersistedLocalHistoryState::default(),
             database_path: None,
             database_key: None,
+            #[cfg(test)]
+            fail_save_after: std::cell::Cell::new(None),
         }
     }
 
@@ -303,12 +316,16 @@ impl LocalHistoryStore {
                 state: load_state_from_path(&database_path)?,
                 database_path: Some(database_path),
                 database_key: None,
+                #[cfg(test)]
+                fail_save_after: std::cell::Cell::new(None),
             })
         } else {
             let store = Self {
                 state: PersistedLocalHistoryState::default(),
                 database_path: Some(database_path),
                 database_key: None,
+                #[cfg(test)]
+                fail_save_after: std::cell::Cell::new(None),
             };
             store.save_state()?;
             Ok(store)
@@ -322,12 +339,16 @@ impl LocalHistoryStore {
                 state: load_state_from_encrypted_path(&database_path, &database_key)?,
                 database_path: Some(database_path),
                 database_key: Some(database_key),
+                #[cfg(test)]
+                fail_save_after: std::cell::Cell::new(None),
             })
         } else {
             let store = Self {
                 state: PersistedLocalHistoryState::default(),
                 database_path: Some(database_path),
                 database_key: Some(database_key),
+                #[cfg(test)]
+                fail_save_after: std::cell::Cell::new(None),
             };
             store.save_state()?;
             Ok(store)
@@ -339,6 +360,15 @@ impl LocalHistoryStore {
     }
 
     pub fn save_state(&self) -> Result<()> {
+        #[cfg(test)]
+        if let Some(remaining_successful_saves) = self.fail_save_after.get() {
+            if remaining_successful_saves == 0 {
+                self.fail_save_after.set(None);
+                return Err(anyhow!("injected local history save failure"));
+            }
+            self.fail_save_after
+                .set(Some(remaining_successful_saves.saturating_sub(1)));
+        }
         let Some(database_path) = &self.database_path else {
             return Ok(());
         };
@@ -519,6 +549,111 @@ impl LocalHistoryStore {
             .and_then(|value| decode_b64_field("mls_group_id_b64", value).ok())
     }
 
+    pub fn outbox_message(&self, message_id: MessageId) -> Option<LocalOutboxMessage> {
+        self.state.outbox.get(&message_id.0.to_string()).cloned()
+    }
+
+    pub fn prepared_outbox_send(&self, message_id: MessageId) -> Option<PreparedLocalOutboxSend> {
+        self.state
+            .outbox
+            .get(&message_id.0.to_string())
+            .and_then(|message| message.prepared_send.clone())
+    }
+
+    pub fn find_matching_outbox_message(
+        &self,
+        chat_id: ChatId,
+        sender_account_id: trix_types::AccountId,
+        sender_device_id: trix_types::DeviceId,
+        body: &MessageBody,
+    ) -> Option<LocalOutboxMessage> {
+        self.state
+            .outbox
+            .values()
+            .find(|message| {
+                message.chat_id == chat_id
+                    && message.sender_account_id == sender_account_id
+                    && message.sender_device_id == sender_device_id
+                    && matches!(
+                        &message.payload,
+                        LocalOutboxPayload::Body { body: queued_body } if queued_body == body
+                    )
+            })
+            .cloned()
+    }
+
+    pub fn ensure_outbox_message(
+        &mut self,
+        chat_id: ChatId,
+        sender_account_id: trix_types::AccountId,
+        sender_device_id: trix_types::DeviceId,
+        message_id: MessageId,
+        body: MessageBody,
+        queued_at_unix: u64,
+    ) -> Result<LocalOutboxMessage> {
+        self.ensure_chat_exists(chat_id);
+        if let Some(existing) = self.state.outbox.get_mut(&message_id.0.to_string()) {
+            let existing_matches = existing.chat_id == chat_id
+                && existing.sender_account_id == sender_account_id
+                && existing.sender_device_id == sender_device_id
+                && matches!(
+                    &existing.payload,
+                    LocalOutboxPayload::Body { body: queued_body } if queued_body == &body
+                );
+            if !existing_matches {
+                return Err(anyhow!(
+                    "outbox message {} already exists with different payload",
+                    message_id.0
+                ));
+            }
+
+            let changed = existing.status != LocalOutboxStatus::Pending
+                || existing.failure_message.is_some();
+            existing.status = LocalOutboxStatus::Pending;
+            existing.failure_message = None;
+            let queued = existing.clone();
+            let _ = existing;
+            self.persist_if_needed(changed)?;
+            return Ok(queued);
+        }
+
+        self.enqueue_outbox_message(
+            chat_id,
+            sender_account_id,
+            sender_device_id,
+            message_id,
+            body,
+            queued_at_unix,
+        )
+    }
+
+    pub fn prepare_outbox_message_send(
+        &mut self,
+        message_id: MessageId,
+        prepared_send: PreparedLocalOutboxSend,
+    ) -> Result<LocalOutboxMessage> {
+        let message = self
+            .state
+            .outbox
+            .get_mut(&message_id.0.to_string())
+            .ok_or_else(|| anyhow!("outbox message {} is missing", message_id.0))?;
+        if let Some(existing) = message.prepared_send.as_ref() {
+            if existing != &prepared_send {
+                return Err(anyhow!(
+                    "outbox message {} already has different prepared send material",
+                    message_id.0
+                ));
+            }
+            return Ok(message.clone());
+        }
+
+        message.prepared_send = Some(prepared_send);
+        let queued = message.clone();
+        let _ = message;
+        self.save_state()?;
+        Ok(queued)
+    }
+
     pub fn set_chat_mls_group_id(&mut self, chat_id: ChatId, group_id: &[u8]) -> Result<bool> {
         let entry = self
             .state
@@ -568,26 +703,48 @@ impl LocalHistoryStore {
         }
 
         for group_id in &candidate_group_ids {
-            match facade.load_group(&group_id).map_err(|err| {
+            let probe_facade = facade
+                .clone_detached()
+                .with_context(|| format!("failed to probe MLS state for chat {}", chat_id.0))?;
+            let Some(mut conversation) = probe_facade.load_group(group_id).map_err(|err| {
                 anyhow!(
                     "failed to load MLS group {} for chat {}: {err}",
-                    crate::encode_b64(&group_id),
+                    crate::encode_b64(group_id),
                     chat_id.0
                 )
-            })? {
-                Some(conversation) => {
-                    self.set_chat_mls_group_id(chat_id, &group_id)?;
-                    if let Some(bootstrap) = bootstraps.first() {
-                        self.apply_projected_messages(chat_id, &bootstrap.synthetic_projections)?;
-                    }
-                    return Ok(Some(conversation));
-                }
-                None => {
-                    // The local history store can outlive the persisted MLS store.
-                    // Fall back to bootstrapping from the latest welcome when the
-                    // stored group id points to a missing conversation.
-                }
+            })?
+            else {
+                continue;
+            };
+
+            if !self.persisted_group_matches_chat(
+                chat_id,
+                &probe_facade,
+                &mut conversation,
+                &bootstraps,
+            )? {
+                continue;
             }
+
+            let conversation = facade.load_group(group_id).map_err(|err| {
+                anyhow!(
+                    "failed to load validated MLS group {} for chat {}: {err}",
+                    crate::encode_b64(group_id),
+                    chat_id.0
+                )
+            })?
+            .ok_or_else(|| {
+                anyhow!(
+                    "validated MLS group {} for chat {} disappeared from active facade",
+                    crate::encode_b64(group_id),
+                    chat_id.0
+                )
+            })?;
+            self.set_chat_mls_group_id(chat_id, group_id)?;
+            if let Some(bootstrap) = bootstraps.first() {
+                self.apply_projected_messages(chat_id, &bootstrap.synthetic_projections)?;
+            }
+            return Ok(Some(conversation));
         }
 
         if !has_explicit_group_mapping {
@@ -1301,6 +1458,7 @@ impl LocalHistoryStore {
             queued_at_unix,
             status: LocalOutboxStatus::Pending,
             failure_message: None,
+            prepared_send: None,
         };
         self.state
             .outbox
@@ -1328,6 +1486,7 @@ impl LocalHistoryStore {
             queued_at_unix,
             status: LocalOutboxStatus::Pending,
             failure_message: None,
+            prepared_send: None,
         };
         self.state
             .outbox
@@ -1689,6 +1848,7 @@ impl LocalHistoryStore {
             });
 
         let mut chat_changed = false;
+        let mut outbox_changed = false;
         for message in &history.messages {
             if message.chat_id != chat_id {
                 return Err(anyhow!(
@@ -1731,12 +1891,17 @@ impl LocalHistoryStore {
                 entry.last_commit_message_id = Some(message.message_id);
                 chat_changed = true;
             }
+            outbox_changed |= self
+                .state
+                .outbox
+                .remove(&message.message_id.0.to_string())
+                .is_some();
         }
 
         if chat_changed {
             changed_chat_ids.insert(chat_id.0.to_string());
         }
-        self.persist_if_needed(chat_changed)?;
+        self.persist_if_needed(chat_changed || outbox_changed)?;
         Ok(LocalStoreApplyReport {
             chats_upserted: usize::from(chat_changed),
             messages_upserted,
@@ -1875,6 +2040,12 @@ impl LocalHistoryStore {
             self.save_state()?;
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_save_failure_after(&mut self, successful_saves_before_failure: usize) {
+        self.fail_save_after
+            .set(Some(successful_saves_before_failure));
     }
 
     fn find_welcome_bootstraps(&self, chat_id: ChatId) -> Result<Vec<WelcomeBootstrapMaterial>> {

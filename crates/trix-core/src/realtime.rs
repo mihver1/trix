@@ -314,6 +314,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(acked.kind, RealtimeEventKind::Acked);
-        assert_eq!(sync.last_acked_inbox_id(), Some(7));
+        assert_eq!(sync.last_acked_inbox_id(), None);
     }
 }

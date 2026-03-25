@@ -246,7 +246,7 @@ async fn inbound_welcome_bootstrap_projects_text_and_persists_group_mapping() ->
         .send_message_body(
             &alice.client,
             &mut alice_store,
-            &alice.facade,
+            &mut alice.facade,
             &mut alice_group,
             alice.account_id,
             alice.device_id,
