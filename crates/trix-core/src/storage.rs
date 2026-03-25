@@ -607,8 +607,8 @@ impl LocalHistoryStore {
                 ));
             }
 
-            let changed = existing.status != LocalOutboxStatus::Pending
-                || existing.failure_message.is_some();
+            let changed =
+                existing.status != LocalOutboxStatus::Pending || existing.failure_message.is_some();
             existing.status = LocalOutboxStatus::Pending;
             existing.failure_message = None;
             let queued = existing.clone();
@@ -726,20 +726,22 @@ impl LocalHistoryStore {
                 continue;
             }
 
-            let conversation = facade.load_group(group_id).map_err(|err| {
-                anyhow!(
-                    "failed to load validated MLS group {} for chat {}: {err}",
-                    crate::encode_b64(group_id),
-                    chat_id.0
-                )
-            })?
-            .ok_or_else(|| {
-                anyhow!(
-                    "validated MLS group {} for chat {} disappeared from active facade",
-                    crate::encode_b64(group_id),
-                    chat_id.0
-                )
-            })?;
+            let conversation = facade
+                .load_group(group_id)
+                .map_err(|err| {
+                    anyhow!(
+                        "failed to load validated MLS group {} for chat {}: {err}",
+                        crate::encode_b64(group_id),
+                        chat_id.0
+                    )
+                })?
+                .ok_or_else(|| {
+                    anyhow!(
+                        "validated MLS group {} for chat {} disappeared from active facade",
+                        crate::encode_b64(group_id),
+                        chat_id.0
+                    )
+                })?;
             self.set_chat_mls_group_id(chat_id, group_id)?;
             if let Some(bootstrap) = bootstraps.first() {
                 self.apply_projected_messages(chat_id, &bootstrap.synthetic_projections)?;

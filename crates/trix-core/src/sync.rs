@@ -274,7 +274,12 @@ impl SyncCoordinator {
 
         for (chat_id, server_seq) in updates {
             let chat_key = chat_id.0.to_string();
-            let current = self.state.chat_cursors.get(&chat_key).copied().unwrap_or_default();
+            let current = self
+                .state
+                .chat_cursors
+                .get(&chat_key)
+                .copied()
+                .unwrap_or_default();
             if server_seq <= current {
                 continue;
             }
@@ -312,20 +317,24 @@ impl SyncCoordinator {
     pub fn record_chat_server_seq(&mut self, chat_id: ChatId, server_seq: u64) -> Result<bool> {
         let previous_state = self.state.clone();
         let chat_key = chat_id.0.to_string();
-        let current = self.state.chat_cursors.get(&chat_key).copied().unwrap_or_default();
+        let current = self
+            .state
+            .chat_cursors
+            .get(&chat_key)
+            .copied()
+            .unwrap_or_default();
         if server_seq <= current {
             return Ok(false);
         }
 
         self.state.chat_cursors.insert(chat_key.clone(), server_seq);
-        let should_remove_pending = if let Some(pending) =
-            self.state.pending_chat_server_seqs.get_mut(&chat_key)
-        {
-            pending.retain(|pending_seq| *pending_seq > server_seq);
-            pending.is_empty()
-        } else {
-            false
-        };
+        let should_remove_pending =
+            if let Some(pending) = self.state.pending_chat_server_seqs.get_mut(&chat_key) {
+                pending.retain(|pending_seq| *pending_seq > server_seq);
+                pending.is_empty()
+            } else {
+                false
+            };
         if should_remove_pending {
             self.state.pending_chat_server_seqs.remove(&chat_key);
         }
@@ -556,13 +565,14 @@ impl SyncCoordinator {
         let message_id = message_id
             .or(existing_outbox.as_ref().map(|message| message.message_id))
             .or_else(|| {
-                store.find_matching_outbox_message(
-                    chat_id,
-                    sender_account_id,
-                    sender_device_id,
-                    body,
-                )
-                .map(|message| message.message_id)
+                store
+                    .find_matching_outbox_message(
+                        chat_id,
+                        sender_account_id,
+                        sender_device_id,
+                        body,
+                    )
+                    .map(|message| message.message_id)
             })
             .unwrap_or_default();
         store.ensure_outbox_message(
@@ -624,8 +634,9 @@ impl SyncCoordinator {
             }
             prepared_send
         };
-        let ciphertext = decode_b64_field("prepared outbox ciphertext", &prepared_send.ciphertext_b64)
-            .map_err(|error| anyhow!("failed to decode prepared outbox ciphertext: {error}"))?;
+        let ciphertext =
+            decode_b64_field("prepared outbox ciphertext", &prepared_send.ciphertext_b64)
+                .map_err(|error| anyhow!("failed to decode prepared outbox ciphertext: {error}"))?;
         let response = match client
             .create_message(
                 chat_id,
@@ -1210,7 +1221,8 @@ impl SyncCoordinator {
         facade: &MlsFacade,
         chat_id: ChatId,
     ) -> Result<MlsConversation> {
-        let needs_bootstrap = store.get_chat(chat_id).is_none() || store.chat_mls_group_id(chat_id).is_none();
+        let needs_bootstrap =
+            store.get_chat(chat_id).is_none() || store.chat_mls_group_id(chat_id).is_none();
         if needs_bootstrap {
             let detail = client.get_chat(chat_id).await?;
             store.apply_chat_detail(&detail)?;
@@ -1218,7 +1230,10 @@ impl SyncCoordinator {
                 .get_chat_history(chat_id, self.chat_cursor(chat_id), None)
                 .await?;
             store.apply_chat_history(&history)?;
-            self.record_chat_server_seqs(chat_id, history.messages.iter().map(|message| message.server_seq))?;
+            self.record_chat_server_seqs(
+                chat_id,
+                history.messages.iter().map(|message| message.server_seq),
+            )?;
         }
 
         if store.needs_history_refresh(chat_id) {
@@ -1226,7 +1241,10 @@ impl SyncCoordinator {
             store.apply_chat_detail(&detail)?;
             let history = client.get_chat_history(chat_id, None, None).await?;
             store.apply_chat_history(&history)?;
-            self.record_chat_server_seqs(chat_id, history.messages.iter().map(|message| message.server_seq))?;
+            self.record_chat_server_seqs(
+                chat_id,
+                history.messages.iter().map(|message| message.server_seq),
+            )?;
         }
 
         if store.needs_projection(chat_id) {
@@ -1273,7 +1291,10 @@ impl SyncCoordinator {
             .get_chat_history(chat_id, after_server_seq, None)
             .await?;
         merge_store_report(&mut report, store.apply_chat_history(&history)?);
-        self.record_chat_server_seqs(chat_id, history.messages.iter().map(|message| message.server_seq))?;
+        self.record_chat_server_seqs(
+            chat_id,
+            history.messages.iter().map(|message| message.server_seq),
+        )?;
         Ok((detail, history, report))
     }
 }
@@ -1713,13 +1734,11 @@ fn load_state_from_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Pe
         ORDER BY inbox_id
         "#,
     )?;
-    let pending_ack_rows =
-        pending_ack_statement.query_map([], |row| row.get::<_, i64>(0))?;
+    let pending_ack_rows = pending_ack_statement.query_map([], |row| row.get::<_, i64>(0))?;
     for row in pending_ack_rows {
-        state.pending_acked_inbox_ids.insert(i64_to_u64(
-            row?,
-            "pending acked inbox id",
-        )?);
+        state
+            .pending_acked_inbox_ids
+            .insert(i64_to_u64(row?, "pending acked inbox id")?);
     }
 
     let mut pending_chat_statement = connection.prepare(
@@ -2024,10 +2043,7 @@ mod tests {
                 StatusCode::CONFLICT,
                 Json(ErrorResponse {
                     code: "epoch_conflict".to_owned(),
-                    message: format!(
-                        "expected epoch {expected_epoch}, got {}",
-                        request.epoch
-                    ),
+                    message: format!("expected epoch {expected_epoch}, got {}", request.epoch),
                 }),
             )
                 .into_response();
@@ -2345,7 +2361,9 @@ mod tests {
                 messages: history.clone(),
             })
             .unwrap();
-        let projection = store.project_chat_with_facade(chat_id, &alice, None).unwrap();
+        let projection = store
+            .project_chat_with_facade(chat_id, &alice, None)
+            .unwrap();
         assert_eq!(projection.advanced_to_server_seq, Some(3));
         store
             .set_chat_mls_group_id(chat_id, &unrelated_group.group_id())
@@ -2373,7 +2391,10 @@ mod tests {
 
         let mut coordinator = SyncCoordinator::new();
         let body = text_body("fresh after mapping repair");
-        let mut conversation = alice.load_group(&unrelated_group.group_id()).unwrap().unwrap();
+        let mut conversation = alice
+            .load_group(&unrelated_group.group_id())
+            .unwrap()
+            .unwrap();
         let outcome = coordinator
             .send_message_body(
                 &client,
@@ -2608,8 +2629,7 @@ mod tests {
         let chat_id = ChatId(Uuid::new_v4());
         let alice_account = AccountId(Uuid::new_v4());
         let alice_device = DeviceId(Uuid::new_v4());
-        let mls_root =
-            env::temp_dir().join(format!("trix-sync-send-retry-mls-{}", Uuid::new_v4()));
+        let mls_root = env::temp_dir().join(format!("trix-sync-send-retry-mls-{}", Uuid::new_v4()));
         let store_path =
             env::temp_dir().join(format!("trix-sync-send-retry-store-{}.db", Uuid::new_v4()));
         let mut facade = MlsFacade::new_persistent(b"alice-device".to_vec(), &mls_root).unwrap();
@@ -2657,7 +2677,11 @@ mod tests {
             )
             .await
             .expect_err("apply_outgoing_message should fail after server accepted the send");
-        assert!(error.to_string().contains("injected local history save failure"));
+        assert!(
+            error
+                .to_string()
+                .contains("injected local history save failure")
+        );
 
         let failed_outbox = store.list_outbox_messages(Some(chat_id));
         assert_eq!(failed_outbox.len(), 1);
@@ -2710,7 +2734,10 @@ mod tests {
         assert!(store.outbox_message(message_id).is_none());
         let projected = store.get_projected_messages(chat_id, None, Some(10));
         assert_eq!(projected.len(), 1);
-        assert_eq!(projected[0].payload.as_deref(), Some(body.to_bytes().unwrap().as_slice()));
+        assert_eq!(
+            projected[0].payload.as_deref(),
+            Some(body.to_bytes().unwrap().as_slice())
+        );
 
         server.shutdown().await;
         cleanup_sqlite_test_path(&store_path);

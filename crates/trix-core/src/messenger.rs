@@ -1093,18 +1093,8 @@ impl FfiMessengerClient {
     ) -> Result<FfiMessengerPendingDeviceRecord, FfiMessengerError> {
         let payload: LinkPayload = serde_json::from_str(&link_payload)
             .map_err(|err| FfiMessengerError::Message(format!("invalid link payload: {err}")))?;
-        {
-            let mut state = lock_state(&self.state)?;
-            state.base_url = payload.base_url.clone();
-            state.account_id = Some(payload.account_id.clone());
-            if !device_display_name.trim().is_empty() {
-                state.device_display_name = Some(device_display_name.clone());
-            }
-            self.save_state_locked(&state)?;
-        }
-
-        self.rebuild_client_base_url(&payload.base_url)?;
-        let client = self.authenticated_client_for_pending_device()?;
+        let requested_display_name = device_display_name.trim().to_owned();
+        let client = ServerApiClient::new(&payload.base_url).map_err(messenger_error)?;
         let key_packages = self.with_mls_facade(|facade| {
             Ok(facade
                 .generate_key_packages(SAFE_DEVICE_KEY_PACKAGE_TARGET as usize)
@@ -1130,12 +1120,12 @@ impl FfiMessengerClient {
             .platform
             .clone()
             .ok_or_else(|| FfiMessengerError::NotConfigured("platform is missing".to_owned()))?;
-        let display_name = if device_display_name.trim().is_empty() {
+        let display_name = if requested_display_name.is_empty() {
             state.device_display_name.clone().ok_or_else(|| {
                 FfiMessengerError::NotConfigured("device_display_name is missing".to_owned())
             })?
         } else {
-            device_display_name
+            requested_display_name.clone()
         };
         drop(state);
 
@@ -1156,10 +1146,18 @@ impl FfiMessengerClient {
 
         {
             let mut state = lock_state(&self.state)?;
+            state.base_url = payload.base_url.clone();
+            state.access_token = None;
             state.account_id = Some(response.account_id.0.to_string());
             state.device_id = Some(response.pending_device_id.0.to_string());
+            state.account_sync_chat_id = None;
+            state.account_root_private_key = None;
+            if !requested_display_name.is_empty() {
+                state.device_display_name = Some(requested_display_name);
+            }
             self.save_state_locked(&state)?;
         }
+        self.rebuild_client_base_url(&payload.base_url)?;
 
         Ok(FfiMessengerPendingDeviceRecord {
             account_id: response.account_id.0.to_string(),
@@ -1321,13 +1319,6 @@ impl FfiMessengerClient {
         if !has_token {
             self.refresh_session()?;
         }
-        let client = lock_client(&self.client)?.clone();
-        Ok(client)
-    }
-
-    fn authenticated_client_for_pending_device(
-        &self,
-    ) -> Result<ServerApiClient, FfiMessengerError> {
         let client = lock_client(&self.client)?.clone();
         Ok(client)
     }
@@ -2869,6 +2860,137 @@ mod tests {
                 .load_group(legacy_group.group_id())
                 .unwrap()
                 .is_some()
+        );
+
+        fs::remove_dir_all(root_path).ok();
+    }
+
+    #[test]
+    fn complete_link_device_failure_preserves_existing_state() {
+        let root_path =
+            env::temp_dir().join(format!("trix-messenger-link-failure-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let database_key = vec![13_u8; 32];
+        let original_base_url = "http://127.0.0.1:43111".to_owned();
+        let original_account_id = Uuid::new_v4().to_string();
+        let original_device_id = Uuid::new_v4().to_string();
+        let original_sync_chat_id = Uuid::new_v4().to_string();
+        let original_display_name = "existing-device".to_owned();
+        let original_platform = "test".to_owned();
+        let original_credential_identity = b"existing-credential".to_vec();
+        let original_account_root_private_key = vec![7_u8; 32];
+        let original_transport_private_key = vec![8_u8; 32];
+
+        let client = FfiMessengerClient::open(FfiMessengerOpenConfig {
+            root_path: root_path.to_string_lossy().into_owned(),
+            database_key: database_key.clone(),
+            base_url: original_base_url.clone(),
+            access_token: Some("existing-token".to_owned()),
+            account_id: Some(original_account_id.clone()),
+            device_id: Some(original_device_id.clone()),
+            account_sync_chat_id: Some(original_sync_chat_id.clone()),
+            device_display_name: Some(original_display_name.clone()),
+            platform: Some(original_platform.clone()),
+            credential_identity: Some(original_credential_identity.clone()),
+            account_root_private_key: Some(original_account_root_private_key.clone()),
+            transport_private_key: Some(original_transport_private_key.clone()),
+        })
+        .unwrap();
+
+        let before = load_state_from_path(Path::new(&client.state_path), &database_key).unwrap();
+        let payload = serde_json::json!({
+            "version": 1,
+            "base_url": "http://127.0.0.1:9",
+            "account_id": Uuid::new_v4().to_string(),
+            "link_intent_id": Uuid::new_v4().to_string(),
+            "link_token": Uuid::new_v4().to_string(),
+        })
+        .to_string();
+
+        let error = client
+            .complete_link_device(payload, "linked-device".to_owned())
+            .unwrap_err();
+        let error_text = error.to_string().to_lowercase();
+        assert!(
+            error_text.contains("connect")
+                || error_text.contains("connection")
+                || error_text.contains("refused")
+                || error_text.contains("request"),
+            "unexpected link failure: {error}"
+        );
+
+        let after_disk =
+            load_state_from_path(Path::new(&client.state_path), &database_key).unwrap();
+        let after_memory = lock_state(&client.state).unwrap().clone();
+
+        assert_eq!(before.base_url, original_base_url);
+        assert_eq!(
+            before.account_id.as_deref(),
+            Some(original_account_id.as_str())
+        );
+        assert_eq!(
+            before.device_id.as_deref(),
+            Some(original_device_id.as_str())
+        );
+        assert_eq!(
+            before.account_sync_chat_id.as_deref(),
+            Some(original_sync_chat_id.as_str())
+        );
+        assert_eq!(
+            before.device_display_name.as_deref(),
+            Some(original_display_name.as_str())
+        );
+        assert_eq!(before.platform.as_deref(), Some(original_platform.as_str()));
+        assert_eq!(
+            before.credential_identity.as_deref(),
+            Some(original_credential_identity.as_slice())
+        );
+        assert_eq!(
+            before.account_root_private_key.as_deref(),
+            Some(original_account_root_private_key.as_slice())
+        );
+        assert_eq!(
+            before.transport_private_key.as_deref(),
+            Some(original_transport_private_key.as_slice())
+        );
+        assert_eq!(before.access_token.as_deref(), Some("existing-token"));
+
+        assert_eq!(after_disk.base_url, before.base_url);
+        assert_eq!(after_disk.access_token, before.access_token);
+        assert_eq!(after_disk.account_id, before.account_id);
+        assert_eq!(after_disk.device_id, before.device_id);
+        assert_eq!(after_disk.account_sync_chat_id, before.account_sync_chat_id);
+        assert_eq!(after_disk.device_display_name, before.device_display_name);
+        assert_eq!(after_disk.platform, before.platform);
+        assert_eq!(after_disk.credential_identity, before.credential_identity);
+        assert_eq!(
+            after_disk.account_root_private_key,
+            before.account_root_private_key
+        );
+        assert_eq!(
+            after_disk.transport_private_key,
+            before.transport_private_key
+        );
+
+        assert_eq!(after_memory.base_url, before.base_url);
+        assert_eq!(after_memory.access_token, before.access_token);
+        assert_eq!(after_memory.account_id, before.account_id);
+        assert_eq!(after_memory.device_id, before.device_id);
+        assert_eq!(
+            after_memory.account_sync_chat_id,
+            before.account_sync_chat_id
+        );
+        assert_eq!(after_memory.device_display_name, before.device_display_name);
+        assert_eq!(after_memory.platform, before.platform);
+        assert_eq!(after_memory.credential_identity, before.credential_identity);
+        assert_eq!(
+            after_memory.account_root_private_key,
+            before.account_root_private_key
+        );
+        assert_eq!(
+            after_memory.transport_private_key,
+            before.transport_private_key
         );
 
         fs::remove_dir_all(root_path).ok();
