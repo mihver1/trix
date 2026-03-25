@@ -800,38 +800,45 @@ impl SyncCoordinator {
             }
         };
 
-        let (_detail, history, mut report) = self
-            .refresh_chat_state(client, store, response.chat_id, None)
-            .await?;
-        store.set_chat_mls_group_id(response.chat_id, &group_id)?;
-        store.align_chat_device_members_with_conversation(
-            response.chat_id,
-            facade,
-            &conversation,
-        )?;
-        let projected_messages = synthesize_control_messages(
-            &history,
-            Some((commit_message_id, add_bundle.epoch)),
-            add_bundle
-                .welcome_message
-                .as_ref()
-                .map(|_| welcome_message_id),
-        )?;
-        let projection_report =
-            store.apply_projected_messages(response.chat_id, &projected_messages)?;
-        merge_store_report(
-            &mut report,
-            LocalStoreApplyReport {
-                chats_upserted: usize::from(projection_report.projected_messages_upserted > 0),
-                messages_upserted: 0,
-                changed_chat_ids: if projection_report.projected_messages_upserted > 0 {
-                    vec![response.chat_id]
-                } else {
-                    Vec::new()
+        let (report, projected_messages) = async {
+            let (_detail, history, mut report) = self
+                .refresh_chat_state(client, store, response.chat_id, None)
+                .await?;
+            store.set_chat_mls_group_id(response.chat_id, &group_id)?;
+            store.align_chat_device_members_with_conversation(
+                response.chat_id,
+                facade,
+                &conversation,
+            )?;
+            let projected_messages = synthesize_control_messages(
+                &history,
+                Some((commit_message_id, add_bundle.epoch)),
+                add_bundle
+                    .welcome_message
+                    .as_ref()
+                    .map(|_| welcome_message_id),
+            )?;
+            let projection_report =
+                store.apply_projected_messages(response.chat_id, &projected_messages)?;
+            merge_store_report(
+                &mut report,
+                LocalStoreApplyReport {
+                    chats_upserted: usize::from(projection_report.projected_messages_upserted > 0),
+                    messages_upserted: 0,
+                    changed_chat_ids: if projection_report.projected_messages_upserted > 0 {
+                        vec![response.chat_id]
+                    } else {
+                        Vec::new()
+                    },
                 },
-            },
-        );
-        self.record_projected_chat_cursor(store, response.chat_id)?;
+            );
+            self.record_projected_chat_cursor(store, response.chat_id)?;
+            Ok::<_, anyhow::Error>((report, projected_messages))
+        }
+        .await
+        .map_err(|error| {
+            control_mutation_requires_resync("create_chat_control", response.chat_id, error)
+        })?;
 
         Ok(CreateChatControlOutcome {
             chat_id: response.chat_id,
@@ -923,22 +930,33 @@ impl SyncCoordinator {
             }
         };
 
-        let (_, history, mut report) = self
-            .refresh_chat_state(client, store, input.chat_id, after_server_seq)
-            .await?;
-        store.align_chat_device_members_with_conversation(input.chat_id, facade, &conversation)?;
-        let projected_messages = synthesize_control_messages(
-            &history,
-            Some((commit_message_id, add_bundle.epoch)),
-            add_bundle
-                .welcome_message
-                .as_ref()
-                .map(|_| welcome_message_id),
-        )?;
-        let projection_report =
-            store.apply_projected_messages(input.chat_id, &projected_messages)?;
-        merge_projection_report(&mut report, input.chat_id, &projection_report);
-        self.record_projected_chat_cursor(store, input.chat_id)?;
+        let (report, projected_messages) = async {
+            let (_, history, mut report) = self
+                .refresh_chat_state(client, store, input.chat_id, after_server_seq)
+                .await?;
+            store.align_chat_device_members_with_conversation(
+                input.chat_id,
+                facade,
+                &conversation,
+            )?;
+            let projected_messages = synthesize_control_messages(
+                &history,
+                Some((commit_message_id, add_bundle.epoch)),
+                add_bundle
+                    .welcome_message
+                    .as_ref()
+                    .map(|_| welcome_message_id),
+            )?;
+            let projection_report =
+                store.apply_projected_messages(input.chat_id, &projected_messages)?;
+            merge_projection_report(&mut report, input.chat_id, &projection_report);
+            self.record_projected_chat_cursor(store, input.chat_id)?;
+            Ok::<_, anyhow::Error>((report, projected_messages))
+        }
+        .await
+        .map_err(|error| {
+            control_mutation_requires_resync("add_chat_members_control", input.chat_id, error)
+        })?;
 
         Ok(ModifyChatMembersControlOutcome {
             chat_id: response.chat_id,
@@ -1008,19 +1026,30 @@ impl SyncCoordinator {
             }
         };
 
-        let (_, history, mut report) = self
-            .refresh_chat_state(client, store, input.chat_id, after_server_seq)
-            .await?;
-        store.align_chat_device_members_with_conversation(input.chat_id, facade, &conversation)?;
-        let projected_messages = synthesize_control_messages(
-            &history,
-            Some((commit_message_id, remove_bundle.epoch)),
-            None,
-        )?;
-        let projection_report =
-            store.apply_projected_messages(input.chat_id, &projected_messages)?;
-        merge_projection_report(&mut report, input.chat_id, &projection_report);
-        self.record_projected_chat_cursor(store, input.chat_id)?;
+        let (report, projected_messages) = async {
+            let (_, history, mut report) = self
+                .refresh_chat_state(client, store, input.chat_id, after_server_seq)
+                .await?;
+            store.align_chat_device_members_with_conversation(
+                input.chat_id,
+                facade,
+                &conversation,
+            )?;
+            let projected_messages = synthesize_control_messages(
+                &history,
+                Some((commit_message_id, remove_bundle.epoch)),
+                None,
+            )?;
+            let projection_report =
+                store.apply_projected_messages(input.chat_id, &projected_messages)?;
+            merge_projection_report(&mut report, input.chat_id, &projection_report);
+            self.record_projected_chat_cursor(store, input.chat_id)?;
+            Ok::<_, anyhow::Error>((report, projected_messages))
+        }
+        .await
+        .map_err(|error| {
+            control_mutation_requires_resync("remove_chat_members_control", input.chat_id, error)
+        })?;
 
         Ok(ModifyChatMembersControlOutcome {
             chat_id: response.chat_id,
@@ -1109,22 +1138,33 @@ impl SyncCoordinator {
             }
         };
 
-        let (_, history, mut report) = self
-            .refresh_chat_state(client, store, input.chat_id, after_server_seq)
-            .await?;
-        store.align_chat_device_members_with_conversation(input.chat_id, facade, &conversation)?;
-        let projected_messages = synthesize_control_messages(
-            &history,
-            Some((commit_message_id, add_bundle.epoch)),
-            add_bundle
-                .welcome_message
-                .as_ref()
-                .map(|_| welcome_message_id),
-        )?;
-        let projection_report =
-            store.apply_projected_messages(input.chat_id, &projected_messages)?;
-        merge_projection_report(&mut report, input.chat_id, &projection_report);
-        self.record_projected_chat_cursor(store, input.chat_id)?;
+        let (report, projected_messages) = async {
+            let (_, history, mut report) = self
+                .refresh_chat_state(client, store, input.chat_id, after_server_seq)
+                .await?;
+            store.align_chat_device_members_with_conversation(
+                input.chat_id,
+                facade,
+                &conversation,
+            )?;
+            let projected_messages = synthesize_control_messages(
+                &history,
+                Some((commit_message_id, add_bundle.epoch)),
+                add_bundle
+                    .welcome_message
+                    .as_ref()
+                    .map(|_| welcome_message_id),
+            )?;
+            let projection_report =
+                store.apply_projected_messages(input.chat_id, &projected_messages)?;
+            merge_projection_report(&mut report, input.chat_id, &projection_report);
+            self.record_projected_chat_cursor(store, input.chat_id)?;
+            Ok::<_, anyhow::Error>((report, projected_messages))
+        }
+        .await
+        .map_err(|error| {
+            control_mutation_requires_resync("add_chat_devices_control", input.chat_id, error)
+        })?;
 
         Ok(ModifyChatDevicesControlOutcome {
             chat_id: response.chat_id,
@@ -1191,19 +1231,30 @@ impl SyncCoordinator {
             }
         };
 
-        let (_, history, mut report) = self
-            .refresh_chat_state(client, store, input.chat_id, after_server_seq)
-            .await?;
-        store.align_chat_device_members_with_conversation(input.chat_id, facade, &conversation)?;
-        let projected_messages = synthesize_control_messages(
-            &history,
-            Some((commit_message_id, remove_bundle.epoch)),
-            None,
-        )?;
-        let projection_report =
-            store.apply_projected_messages(input.chat_id, &projected_messages)?;
-        merge_projection_report(&mut report, input.chat_id, &projection_report);
-        self.record_projected_chat_cursor(store, input.chat_id)?;
+        let (report, projected_messages) = async {
+            let (_, history, mut report) = self
+                .refresh_chat_state(client, store, input.chat_id, after_server_seq)
+                .await?;
+            store.align_chat_device_members_with_conversation(
+                input.chat_id,
+                facade,
+                &conversation,
+            )?;
+            let projected_messages = synthesize_control_messages(
+                &history,
+                Some((commit_message_id, remove_bundle.epoch)),
+                None,
+            )?;
+            let projection_report =
+                store.apply_projected_messages(input.chat_id, &projected_messages)?;
+            merge_projection_report(&mut report, input.chat_id, &projection_report);
+            self.record_projected_chat_cursor(store, input.chat_id)?;
+            Ok::<_, anyhow::Error>((report, projected_messages))
+        }
+        .await
+        .map_err(|error| {
+            control_mutation_requires_resync("remove_chat_devices_control", input.chat_id, error)
+        })?;
 
         Ok(ModifyChatDevicesControlOutcome {
             chat_id: response.chat_id,
@@ -1498,6 +1549,17 @@ fn merge_projection_report(
         target.changed_chat_ids.sort_by_key(|id| id.0);
         target.changed_chat_ids.dedup();
     }
+}
+
+fn control_mutation_requires_resync(
+    operation: &str,
+    chat_id: ChatId,
+    error: anyhow::Error,
+) -> anyhow::Error {
+    anyhow!(
+        "requires resync: local state repair is required after successful {operation} for chat {}: {error}",
+        chat_id.0
+    )
 }
 
 fn restore_failed_outbox_send(

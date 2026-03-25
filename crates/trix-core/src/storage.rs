@@ -226,6 +226,8 @@ struct PersistedLocalHistoryState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PersistedChatState {
+    #[serde(default = "default_chat_is_active")]
+    is_active: bool,
     chat_type: ChatType,
     title: Option<String>,
     last_server_seq: u64,
@@ -278,6 +280,10 @@ struct ProjectionGapRepairBackup {
     gap_start_server_seq: u64,
     previous_cursor_server_seq: u64,
     removed_projected_messages: BTreeMap<u64, PersistedProjectedMessage>,
+}
+
+fn default_chat_is_active() -> bool {
+    true
 }
 
 impl Default for PersistedLocalHistoryState {
@@ -416,6 +422,9 @@ impl LocalHistoryStore {
             .chats
             .iter()
             .filter_map(|(chat_id, state)| {
+                if !state.is_active {
+                    return None;
+                }
                 Some(local_chat_list_item_from(
                     parse_chat_id(chat_id).ok()?,
                     state,
@@ -438,6 +447,9 @@ impl LocalHistoryStore {
         self_account_id: Option<trix_types::AccountId>,
     ) -> Option<LocalChatListItem> {
         let state = self.state.chats.get(&chat_id.0.to_string())?;
+        if !state.is_active {
+            return None;
+        }
         Some(local_chat_list_item_from(chat_id, state, self_account_id))
     }
 
@@ -660,6 +672,7 @@ impl LocalHistoryStore {
             .chats
             .entry(chat_id.0.to_string())
             .or_insert_with(|| PersistedChatState {
+                is_active: true,
                 chat_type: ChatType::Dm,
                 title: None,
                 last_server_seq: 0,
@@ -1289,6 +1302,9 @@ impl LocalHistoryStore {
         self_account_id: Option<trix_types::AccountId>,
     ) -> Option<LocalChatReadState> {
         let state = self.state.chats.get(&chat_id.0.to_string())?;
+        if !state.is_active {
+            return None;
+        }
         Some(local_chat_read_state_from(chat_id, state, self_account_id))
     }
 
@@ -1301,6 +1317,9 @@ impl LocalHistoryStore {
             .chats
             .iter()
             .filter_map(|(chat_id, state)| {
+                if !state.is_active {
+                    return None;
+                }
                 Some(local_chat_read_state_from(
                     parse_chat_id(chat_id).ok()?,
                     state,
@@ -1645,6 +1664,7 @@ impl LocalHistoryStore {
             .chats
             .entry(chat_id.0.to_string())
             .or_insert_with(|| PersistedChatState {
+                is_active: true,
                 chat_type: ChatType::Dm,
                 title: None,
                 last_server_seq: 0,
@@ -1676,6 +1696,7 @@ impl LocalHistoryStore {
                 .chats
                 .entry(chat.chat_id.0.to_string())
                 .or_insert_with(|| PersistedChatState {
+                    is_active: true,
                     chat_type: chat.chat_type,
                     title: chat.title.clone(),
                     last_server_seq: 0,
@@ -1694,6 +1715,10 @@ impl LocalHistoryStore {
                 });
 
             let mut changed = false;
+            if !entry.is_active {
+                entry.is_active = true;
+                changed = true;
+            }
             if entry.chat_type != chat.chat_type {
                 entry.chat_type = chat.chat_type;
                 changed = true;
@@ -1729,6 +1754,21 @@ impl LocalHistoryStore {
             }
         }
 
+        let listed_chat_ids = response
+            .chats
+            .iter()
+            .map(|chat| chat.chat_id.0.to_string())
+            .collect::<BTreeSet<_>>();
+        for (chat_id, chat_state) in &mut self.state.chats {
+            if chat_state.chat_type == ChatType::AccountSync || !chat_state.is_active {
+                continue;
+            }
+            if !listed_chat_ids.contains(chat_id) {
+                chat_state.is_active = false;
+                chats_upserted += 1;
+            }
+        }
+
         self.persist_if_needed(chats_upserted > 0)?;
         Ok(LocalStoreApplyReport {
             chats_upserted,
@@ -1749,6 +1789,7 @@ impl LocalHistoryStore {
             .chats
             .entry(detail.chat_id.0.to_string())
             .or_insert_with(|| PersistedChatState {
+                is_active: true,
                 chat_type: detail.chat_type,
                 title: detail.title.clone(),
                 last_server_seq: detail.last_server_seq,
@@ -1767,6 +1808,10 @@ impl LocalHistoryStore {
             });
 
         let mut changed = false;
+        if !entry.is_active {
+            entry.is_active = true;
+            changed = true;
+        }
         if entry.chat_type != detail.chat_type {
             entry.chat_type = detail.chat_type;
             changed = true;
@@ -1832,6 +1877,7 @@ impl LocalHistoryStore {
             .chats
             .entry(chat_id.0.to_string())
             .or_insert_with(|| PersistedChatState {
+                is_active: true,
                 chat_type: ChatType::Dm,
                 title: None,
                 last_server_seq: 0,
@@ -1851,6 +1897,10 @@ impl LocalHistoryStore {
 
         let mut chat_changed = false;
         let mut outbox_changed = false;
+        if !entry.is_active {
+            entry.is_active = true;
+            chat_changed = true;
+        }
         for message in &history.messages {
             if message.chat_id != chat_id {
                 return Err(anyhow!(
@@ -2818,6 +2868,7 @@ fn save_state_to_path(
         r#"
         INSERT INTO local_history_chats (
             chat_id,
+            is_active,
             chat_type_json,
             title,
             last_server_seq,
@@ -2831,7 +2882,7 @@ fn save_state_to_path(
             mls_group_id_b64,
             read_cursor_server_seq,
             projected_cursor_server_seq
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
         "#,
     )?;
     let mut message_statement = transaction.prepare(
@@ -2862,6 +2913,7 @@ fn save_state_to_path(
     for (chat_id, chat) in &state.chats {
         chat_statement.execute(params![
             chat_id,
+            if chat.is_active { 1_i64 } else { 0_i64 },
             serde_json::to_string(&chat.chat_type)?,
             chat.title,
             u64_to_i64(chat.last_server_seq, "last_server_seq")?,
@@ -2987,6 +3039,7 @@ fn load_state_from_sqlite(
         r#"
         SELECT
             chat_id,
+            is_active,
             chat_type_json,
             title,
             last_server_seq,
@@ -3006,23 +3059,25 @@ fn load_state_from_sqlite(
     )?;
     let chat_rows = chats_statement.query_map([], |row| {
         let chat_id: String = row.get(0)?;
-        let chat_type_json: String = row.get(1)?;
-        let title: Option<String> = row.get(2)?;
-        let last_server_seq: i64 = row.get(3)?;
-        let pending_message_count: i64 = row.get(4)?;
-        let last_message_json: Option<String> = row.get(5)?;
-        let epoch: i64 = row.get(6)?;
-        let last_commit_message_id: Option<String> = row.get(7)?;
-        let participant_profiles_json: String = row.get(8)?;
-        let members_json: String = row.get(9)?;
-        let device_members_json: String = row.get(10)?;
-        let mls_group_id_b64: Option<String> = row.get(11)?;
-        let read_cursor_server_seq: i64 = row.get(12)?;
-        let projected_cursor_server_seq: i64 = row.get(13)?;
+        let is_active: i64 = row.get(1)?;
+        let chat_type_json: String = row.get(2)?;
+        let title: Option<String> = row.get(3)?;
+        let last_server_seq: i64 = row.get(4)?;
+        let pending_message_count: i64 = row.get(5)?;
+        let last_message_json: Option<String> = row.get(6)?;
+        let epoch: i64 = row.get(7)?;
+        let last_commit_message_id: Option<String> = row.get(8)?;
+        let participant_profiles_json: String = row.get(9)?;
+        let members_json: String = row.get(10)?;
+        let device_members_json: String = row.get(11)?;
+        let mls_group_id_b64: Option<String> = row.get(12)?;
+        let read_cursor_server_seq: i64 = row.get(13)?;
+        let projected_cursor_server_seq: i64 = row.get(14)?;
 
         Ok((
             chat_id,
             PersistedChatState {
+                is_active: is_active != 0,
                 chat_type: serde_json::from_str(&chat_type_json).map_err(sqlite_serde_error)?,
                 title,
                 last_server_seq: i64_to_u64(last_server_seq, "last_server_seq")
@@ -3212,6 +3267,7 @@ fn open_history_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Conne
         );
         CREATE TABLE IF NOT EXISTS local_history_chats (
             chat_id TEXT PRIMARY KEY,
+            is_active INTEGER NOT NULL DEFAULT 1,
             chat_type_json TEXT NOT NULL,
             title TEXT,
             last_server_seq INTEGER NOT NULL,
@@ -3249,7 +3305,34 @@ fn open_history_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Conne
         );
         "#,
     )?;
+    ensure_sqlite_column(
+        &connection,
+        "local_history_chats",
+        "is_active",
+        "INTEGER NOT NULL DEFAULT 1",
+    )?;
     Ok(connection)
+}
+
+fn ensure_sqlite_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<()> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let column_names = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    drop(statement);
+    if column_names.iter().any(|existing| existing == column) {
+        return Ok(());
+    }
+    connection.execute(
+        &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+        [],
+    )?;
+    Ok(())
 }
 
 fn configure_sqlcipher_connection(
@@ -3511,6 +3594,124 @@ mod tests {
     }
 
     #[test]
+    fn apply_chat_list_hides_missing_chats_without_dropping_local_history() {
+        let mut store = LocalHistoryStore::new();
+        let visible_chat_id = ChatId(Uuid::new_v4());
+        let hidden_chat_id = ChatId(Uuid::new_v4());
+        let self_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+
+        store
+            .apply_chat_list(&ChatListResponse {
+                chats: vec![
+                    ChatSummary {
+                        chat_id: visible_chat_id,
+                        chat_type: ChatType::Dm,
+                        title: Some("Visible".to_owned()),
+                        last_server_seq: 0,
+                        epoch: 1,
+                        pending_message_count: 0,
+                        last_message: None,
+                        participant_profiles: Vec::new(),
+                    },
+                    ChatSummary {
+                        chat_id: hidden_chat_id,
+                        chat_type: ChatType::Dm,
+                        title: Some("Hidden".to_owned()),
+                        last_server_seq: 1,
+                        epoch: 1,
+                        pending_message_count: 0,
+                        last_message: None,
+                        participant_profiles: Vec::new(),
+                    },
+                ],
+            })
+            .unwrap();
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id: hidden_chat_id,
+                messages: vec![MessageEnvelope {
+                    message_id: MessageId(Uuid::new_v4()),
+                    chat_id: hidden_chat_id,
+                    server_seq: 1,
+                    sender_account_id: self_account_id,
+                    sender_device_id,
+                    epoch: 1,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    ciphertext_b64: crate::encode_b64(b"hidden-message"),
+                    aad_json: json!({}),
+                    created_at_unix: 10,
+                }],
+            })
+            .unwrap();
+
+        assert_eq!(
+            store
+                .list_local_chat_list_items(Some(self_account_id))
+                .len(),
+            2
+        );
+        assert!(store.get_chat(hidden_chat_id).is_some());
+
+        store
+            .apply_chat_list(&ChatListResponse {
+                chats: vec![ChatSummary {
+                    chat_id: visible_chat_id,
+                    chat_type: ChatType::Dm,
+                    title: Some("Visible".to_owned()),
+                    last_server_seq: 0,
+                    epoch: 1,
+                    pending_message_count: 0,
+                    last_message: None,
+                    participant_profiles: Vec::new(),
+                }],
+            })
+            .unwrap();
+
+        let visible = store.list_local_chat_list_items(Some(self_account_id));
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].chat_id, visible_chat_id);
+        assert!(
+            store
+                .get_local_chat_list_item(hidden_chat_id, Some(self_account_id))
+                .is_none()
+        );
+        assert!(store.get_chat(hidden_chat_id).is_some());
+        assert_eq!(
+            store
+                .get_chat_history(hidden_chat_id, None, Some(10))
+                .messages
+                .len(),
+            1
+        );
+
+        store
+            .apply_chat_detail(&ChatDetailResponse {
+                chat_id: hidden_chat_id,
+                chat_type: ChatType::Group,
+                title: Some("Reactivated".to_owned()),
+                last_server_seq: 1,
+                pending_message_count: 0,
+                epoch: 2,
+                last_commit_message_id: None,
+                last_message: store
+                    .get_chat(hidden_chat_id)
+                    .and_then(|chat| chat.last_message),
+                participant_profiles: Vec::new(),
+                members: Vec::new(),
+                device_members: Vec::new(),
+            })
+            .unwrap();
+
+        assert!(
+            store
+                .get_local_chat_list_item(hidden_chat_id, Some(self_account_id))
+                .is_some()
+        );
+    }
+
+    #[test]
     fn encrypted_local_history_store_round_trips_with_same_key() {
         let database_path =
             env::temp_dir().join(format!("trix-history-encrypted-{}.db", Uuid::new_v4()));
@@ -3645,6 +3846,7 @@ mod tests {
             chats: BTreeMap::from([(
                 chat_id.0.to_string(),
                 PersistedChatState {
+                    is_active: true,
                     chat_type: ChatType::Dm,
                     title: Some("Legacy Chat".to_owned()),
                     last_server_seq: 1,

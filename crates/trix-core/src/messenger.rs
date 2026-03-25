@@ -662,10 +662,14 @@ impl FfiMessengerClient {
         let body = self.build_send_message_body(&request)?;
         let client = self.authenticated_client()?;
         let (self_account_id, self_device_id) = self.require_self_identity()?;
+        let after_server_seq = {
+            let coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
+            coordinator.chat_cursor(chat_id)
+        };
 
         {
             let mut store = lock_history_store(&self.history_store)?;
-            self.bootstrap_chat_if_needed(&client, &mut store, chat_id)?;
+            self.bootstrap_chat_if_needed(&client, &mut store, chat_id, after_server_seq)?;
         }
 
         let outcome = self.with_mls_facade(|facade| {
@@ -888,8 +892,9 @@ impl FfiMessengerClient {
         let (self_account_id, self_device_id) = self.require_self_identity()?;
         let outcome = self.with_mls_facade(|facade| {
             let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
+            let after_server_seq = coordinator.chat_cursor(chat_id);
             let mut store = lock_history_store(&self.history_store)?;
-            self.bootstrap_chat_if_needed(&client, &mut store, chat_id)?;
+            self.bootstrap_chat_if_needed(&client, &mut store, chat_id, after_server_seq)?;
             self.runtime
                 .block_on(
                     coordinator.add_chat_members_control(
@@ -924,8 +929,9 @@ impl FfiMessengerClient {
         let (self_account_id, self_device_id) = self.require_self_identity()?;
         let outcome = self.with_mls_facade(|facade| {
             let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
+            let after_server_seq = coordinator.chat_cursor(chat_id);
             let mut store = lock_history_store(&self.history_store)?;
-            self.bootstrap_chat_if_needed(&client, &mut store, chat_id)?;
+            self.bootstrap_chat_if_needed(&client, &mut store, chat_id, after_server_seq)?;
             self.runtime
                 .block_on(
                     coordinator.remove_chat_members_control(
@@ -960,8 +966,9 @@ impl FfiMessengerClient {
         let (self_account_id, self_device_id) = self.require_self_identity()?;
         let outcome = self.with_mls_facade(|facade| {
             let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
+            let after_server_seq = coordinator.chat_cursor(chat_id);
             let mut store = lock_history_store(&self.history_store)?;
-            self.bootstrap_chat_if_needed(&client, &mut store, chat_id)?;
+            self.bootstrap_chat_if_needed(&client, &mut store, chat_id, after_server_seq)?;
             self.runtime
                 .block_on(
                     coordinator.add_chat_devices_control(
@@ -996,8 +1003,9 @@ impl FfiMessengerClient {
         let (self_account_id, self_device_id) = self.require_self_identity()?;
         let outcome = self.with_mls_facade(|facade| {
             let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
+            let after_server_seq = coordinator.chat_cursor(chat_id);
             let mut store = lock_history_store(&self.history_store)?;
-            self.bootstrap_chat_if_needed(&client, &mut store, chat_id)?;
+            self.bootstrap_chat_if_needed(&client, &mut store, chat_id, after_server_seq)?;
             self.runtime
                 .block_on(
                     coordinator.remove_chat_devices_control(
@@ -1544,6 +1552,7 @@ impl FfiMessengerClient {
         client: &ServerApiClient,
         store: &mut LocalHistoryStore,
         chat_id: ChatId,
+        after_server_seq: Option<u64>,
     ) -> Result<(), FfiMessengerError> {
         if store.get_chat(chat_id).is_some() && store.chat_mls_group_id(chat_id).is_some() {
             return Ok(());
@@ -1553,10 +1562,6 @@ impl FfiMessengerClient {
             .block_on(client.get_chat(chat_id))
             .map_err(messenger_error)?;
         store.apply_chat_detail(&detail).map_err(map_domain_error)?;
-        let after_server_seq = {
-            let coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
-            coordinator.chat_cursor(chat_id)
-        };
         let history = self
             .runtime
             .block_on(client.get_chat_history(chat_id, after_server_seq, None))
@@ -2648,7 +2653,8 @@ fn is_unauthorized(error: &ServerApiError) -> bool {
 
 fn map_domain_error(error: impl std::fmt::Display) -> FfiMessengerError {
     let message = error.to_string();
-    if message.contains("no bootstrappable MLS state")
+    if message.contains("requires resync:")
+        || message.contains("no bootstrappable MLS state")
         || message.contains("failed to bootstrap MLS conversation")
         || message.contains("MLS")
     {
@@ -2752,6 +2758,13 @@ mod tests {
             normalize_revoke_reason(Some(" compromised ".to_owned())),
             "compromised".to_owned()
         );
+    }
+
+    #[test]
+    fn map_domain_error_marks_requires_resync_prefix() {
+        let error =
+            map_domain_error("requires resync: local state repair is required after control op");
+        assert!(matches!(error, FfiMessengerError::RequiresResync(_)));
     }
 
     #[test]

@@ -424,10 +424,8 @@ async fn smoke_websocket_delivers_inbox_items_and_acknowledges() -> Result<()> {
         Some(WebSocketServerFrame::Acked { acked_inbox_ids }) => {
             assert_eq!(acked_inbox_ids, ack_ids);
             bob_sync.record_acked_inbox_ids(&acked_inbox_ids)?;
-            assert_eq!(
-                bob_sync.last_acked_inbox_id(),
-                acked_inbox_ids.iter().copied().max()
-            );
+            let remaining = bob.client.get_inbox(None, Some(10)).await?;
+            assert!(remaining.items.is_empty());
         }
         other => return Err(anyhow!("expected websocket ack frame, got {other:?}")),
     }
