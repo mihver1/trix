@@ -302,7 +302,7 @@ mod tests {
                 .len(),
             1
         );
-        assert_eq!(sync.chat_cursor(chat_id), None);
+        assert_eq!(sync.chat_cursor(chat_id), Some(1));
 
         let acked = driver
             .process_websocket_frame(

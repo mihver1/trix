@@ -632,7 +632,7 @@ async fn safe_s3_attachment_tokens_are_chat_scoped() -> Result<()> {
             .create_conversation(dm_request(&charlie.account_id))?;
 
         let token = alice.client.send_attachment(
-            dm_with_bob.conversation_id,
+            dm_with_bob.conversation_id.clone(),
             b"scoped attachment".to_vec(),
             FfiMessengerAttachmentMetadata {
                 mime_type: "text/plain".to_owned(),
@@ -650,6 +650,18 @@ async fn safe_s3_attachment_tokens_are_chat_scoped() -> Result<()> {
             wrong_chat,
             Err(FfiMessengerError::AttachmentInvalid(_))
         ));
+        let correct_chat = alice.client.send_message(attachment_request(
+            &dm_with_bob.conversation_id,
+            &token.token,
+        ))?;
+        assert!(
+            correct_chat
+                .message
+                .body
+                .as_ref()
+                .and_then(|body| body.attachment.as_ref())
+                .is_some()
+        );
 
         Ok(())
     })
@@ -1042,6 +1054,72 @@ async fn safe_s8_materialized_history_and_attachments_survive_reopen_without_mls
             .get_attachment(descriptor.attachment_ref)
             .context("attachment descriptor should survive reopen without MLS state")?;
         assert_eq!(fs::read(&restored_attachment.local_path)?, payload);
+
+        Ok(())
+    })
+    .await?;
+
+    server.shutdown().await
+}
+
+#[tokio::test]
+#[ignore = "requires local postgres"]
+async fn safe_s9_stale_checkpoint_requires_resync_and_snapshot_rebaseline() -> Result<()> {
+    let server = spawn_test_server().await?;
+    let base_url = server.base_url.clone();
+
+    ffi(move || {
+        let alice = create_safe_client(&base_url, "alice", true)?;
+        let bob = create_safe_client(&base_url, "bob", true)?;
+
+        alice.client.load_snapshot()?;
+        let initial_snapshot = bob.client.load_snapshot()?;
+        let initial_checkpoint = initial_snapshot.checkpoint.clone();
+
+        let created = alice
+            .client
+            .create_conversation(dm_request(&bob.account_id))?;
+        let conversation_id = created.conversation_id.clone();
+
+        let conversation_batch = bob.client.get_new_events(initial_checkpoint.clone())?;
+        let conversation_checkpoint = expect_checkpoint(&conversation_batch)?;
+
+        alice
+            .client
+            .send_message(text_request(&conversation_id, "first checkpointed message"))?;
+        let first_message_batch = bob
+            .client
+            .get_new_events(Some(conversation_checkpoint.clone()))?;
+        let first_message_checkpoint = expect_checkpoint(&first_message_batch)?;
+
+        alice.client.send_message(text_request(
+            &conversation_id,
+            "message behind stale checkpoint",
+        ))?;
+        let stale = bob
+            .client
+            .get_new_events(Some(conversation_checkpoint.clone()));
+        assert!(matches!(stale, Err(FfiMessengerError::RequiresResync(_))));
+
+        let rebased_snapshot = bob.client.load_snapshot()?;
+        assert_eq!(
+            rebased_snapshot.checkpoint.as_deref(),
+            Some(first_message_checkpoint.as_str())
+        );
+
+        alice
+            .client
+            .send_message(text_request(&conversation_id, "message after rebaseline"))?;
+        let resumed_batch = bob
+            .client
+            .get_new_events(rebased_snapshot.checkpoint.clone())?;
+        assert!(resumed_batch.events.iter().any(|event| {
+            event
+                .message
+                .as_ref()
+                .and_then(|message| message_text(message))
+                == Some("message after rebaseline")
+        }));
 
         Ok(())
     })

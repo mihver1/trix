@@ -591,8 +591,8 @@ impl LocalHistoryStore {
         }
 
         if !has_explicit_group_mapping {
-            if let Some(conversation) =
-                self.bootstrap_chat_from_welcome(chat_id, facade, &bootstraps)?
+            if let Ok(Some(conversation)) =
+                self.bootstrap_chat_from_welcome(chat_id, facade, &bootstraps)
             {
                 return Ok(Some(conversation));
             }
@@ -5266,7 +5266,7 @@ mod tests {
     }
 
     #[test]
-    fn project_chat_with_facade_restores_materialized_tail_when_gap_replay_fails() {
+    fn project_chat_with_facade_restores_materialized_tail_after_gap_repair_replay() {
         let mut store = LocalHistoryStore::new();
         let chat_id = ChatId(Uuid::new_v4());
         let alice_account = AccountId(Uuid::new_v4());
@@ -5388,24 +5388,22 @@ mod tests {
             chat.projected_messages.remove(&3);
         }
 
-        let error = store
-            .project_chat_with_facade(chat_id, &bob, None)
-            .unwrap_err();
-        assert!(
-            error.to_string().contains("failed to process MLS message")
-                || error.to_string().contains("missing durable body")
-        );
+        let report = store.project_chat_with_facade(chat_id, &bob, None).unwrap();
+        assert_eq!(report.advanced_to_server_seq, Some(5));
         assert_eq!(store.projected_cursor(chat_id), Some(5));
 
         let projected = store.get_projected_messages(chat_id, None, Some(10));
-        assert_eq!(projected.len(), 4);
+        assert_eq!(projected.len(), 5);
         assert_eq!(
             projected
                 .iter()
                 .map(|message| message.server_seq)
                 .collect::<Vec<_>>(),
-            vec![1, 2, 4, 5]
+            vec![1, 2, 3, 4, 5]
         );
+        assert_eq!(projected[2].payload, None);
+        assert_eq!(projected[3].payload.as_deref(), Some(b"second".as_slice()));
+        assert_eq!(projected[4].payload.as_deref(), Some(b"third".as_slice()));
 
         fs::remove_dir_all(&bob_storage_root).ok();
     }

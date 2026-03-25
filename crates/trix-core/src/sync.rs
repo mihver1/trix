@@ -259,20 +259,53 @@ impl SyncCoordinator {
         self.state.chat_cursors.get(&chat_id.0.to_string()).copied()
     }
 
-    pub fn record_chat_server_seq(&mut self, chat_id: ChatId, server_seq: u64) -> Result<bool> {
-        let key = chat_id.0.to_string();
-        let current = self
-            .state
-            .chat_cursors
-            .get(&key)
-            .copied()
-            .unwrap_or_default();
-        if server_seq <= current {
+    fn apply_chat_cursor_updates<I>(&mut self, updates: I) -> Result<bool>
+    where
+        I: IntoIterator<Item = (ChatId, u64)>,
+    {
+        let mut max_updates = BTreeMap::new();
+        for (chat_id, server_seq) in updates {
+            max_updates
+                .entry(chat_id.0.to_string())
+                .and_modify(|current| {
+                    if server_seq > *current {
+                        *current = server_seq;
+                    }
+                })
+                .or_insert(server_seq);
+        }
+        if max_updates.is_empty() {
             return Ok(false);
         }
-        self.state.chat_cursors.insert(key, server_seq);
-        self.save_state()?;
+
+        let previous_chat_cursors = self.state.chat_cursors.clone();
+        let mut changed = false;
+        for (chat_id, server_seq) in max_updates {
+            let current = self
+                .state
+                .chat_cursors
+                .get(&chat_id)
+                .copied()
+                .unwrap_or_default();
+            if server_seq > current {
+                self.state.chat_cursors.insert(chat_id, server_seq);
+                changed = true;
+            }
+        }
+        if !changed {
+            return Ok(false);
+        }
+
+        if let Err(error) = self.save_state() {
+            self.state.chat_cursors = previous_chat_cursors;
+            return Err(error);
+        }
+
         Ok(true)
+    }
+
+    pub fn record_chat_server_seq(&mut self, chat_id: ChatId, server_seq: u64) -> Result<bool> {
+        self.apply_chat_cursor_updates([(chat_id, server_seq)])
     }
 
     pub fn record_projected_chat_cursor(
@@ -293,7 +326,7 @@ impl SyncCoordinator {
     ) -> Result<Vec<ChatHistoryResponse>> {
         let chats = client.list_chats().await?;
         let mut updated_histories = Vec::new();
-        let mut state_changed = false;
+        let mut cursor_updates = Vec::new();
 
         for chat in chats.chats {
             let history = client
@@ -310,17 +343,7 @@ impl SyncCoordinator {
                 .map(|message| message.server_seq)
                 .max()
             {
-                let key = history.chat_id.0.to_string();
-                let current = self
-                    .state
-                    .chat_cursors
-                    .get(&key)
-                    .copied()
-                    .unwrap_or_default();
-                if last_server_seq > current {
-                    self.state.chat_cursors.insert(key, last_server_seq);
-                    state_changed = true;
-                }
+                cursor_updates.push((history.chat_id, last_server_seq));
             }
 
             if !history.messages.is_empty() {
@@ -328,9 +351,7 @@ impl SyncCoordinator {
             }
         }
 
-        if state_changed {
-            self.save_state()?;
-        }
+        self.apply_chat_cursor_updates(cursor_updates)?;
 
         Ok(updated_histories)
     }
@@ -344,6 +365,7 @@ impl SyncCoordinator {
         let chats = client.list_chats().await?;
         let mut combined = store.apply_chat_list(&chats)?;
         let mut changed_chat_ids = combined.changed_chat_ids.clone();
+        let mut cursor_updates = Vec::new();
 
         for chat in chats.chats {
             let history = client
@@ -354,11 +376,20 @@ impl SyncCoordinator {
                 )
                 .await?;
             let report = store.apply_chat_history(&history)?;
+            if let Some(last_server_seq) = history
+                .messages
+                .iter()
+                .map(|message| message.server_seq)
+                .max()
+            {
+                cursor_updates.push((history.chat_id, last_server_seq));
+            }
             combined.chats_upserted += report.chats_upserted;
             combined.messages_upserted += report.messages_upserted;
             changed_chat_ids.extend(report.changed_chat_ids);
         }
 
+        self.apply_chat_cursor_updates(cursor_updates)?;
         changed_chat_ids.sort_by_key(|chat_id| chat_id.0);
         changed_chat_ids.dedup();
         combined.changed_chat_ids = changed_chat_ids;
@@ -396,8 +427,12 @@ impl SyncCoordinator {
         if let Some(max_inbox_id) = acked_inbox_ids.iter().copied().max() {
             let current = self.state.last_acked_inbox_id.unwrap_or_default();
             if max_inbox_id > current {
+                let previous_last_acked_inbox_id = self.state.last_acked_inbox_id;
                 self.state.last_acked_inbox_id = Some(max_inbox_id);
-                self.save_state()?;
+                if let Err(error) = self.save_state() {
+                    self.state.last_acked_inbox_id = previous_last_acked_inbox_id;
+                    return Err(error);
+                }
             }
         }
         Ok(())
@@ -408,7 +443,13 @@ impl SyncCoordinator {
         store: &mut LocalHistoryStore,
         items: &[trix_types::InboxItem],
     ) -> Result<LocalStoreApplyReport> {
-        store.apply_inbox_items(items)
+        let report = store.apply_inbox_items(items)?;
+        self.apply_chat_cursor_updates(
+            items
+                .iter()
+                .map(|item| (item.message.chat_id, item.message.server_seq)),
+        )?;
+        Ok(report)
     }
 
     pub async fn lease_inbox_into_store(
@@ -1538,10 +1579,15 @@ fn parse_chat_id(value: &str) -> Result<ChatId> {
 mod tests {
     use std::{collections::BTreeMap, env, fs};
 
+    use serde_json::json;
+    use trix_types::{
+        AccountId, ChatId, ContentType, DeviceId, InboxItem, MessageEnvelope, MessageId,
+        MessageKind,
+    };
     use uuid::Uuid;
 
     use super::{PersistedSyncState, SyncCoordinator, is_sqlite_database};
-    use trix_types::ChatId;
+    use crate::LocalHistoryStore;
 
     #[test]
     fn sync_coordinator_persists_chat_cursors_and_inbox_cursor() {
@@ -1610,6 +1656,58 @@ mod tests {
         );
 
         cleanup_sqlite_test_path(&state_path);
+    }
+
+    #[test]
+    fn apply_inbox_items_advances_chat_cursors() {
+        let chat_id = ChatId(Uuid::new_v4());
+        let account_id = AccountId(Uuid::new_v4());
+        let device_id = DeviceId(Uuid::new_v4());
+        let mut coordinator = SyncCoordinator::new();
+        let mut store = LocalHistoryStore::new();
+
+        let report = coordinator
+            .apply_inbox_items_into_store(
+                &mut store,
+                &[
+                    InboxItem {
+                        inbox_id: 7,
+                        message: MessageEnvelope {
+                            message_id: MessageId(Uuid::new_v4()),
+                            chat_id,
+                            server_seq: 1,
+                            sender_account_id: account_id,
+                            sender_device_id: device_id,
+                            epoch: 1,
+                            message_kind: MessageKind::Application,
+                            content_type: ContentType::Text,
+                            ciphertext_b64: crate::encode_b64(b"ciphertext-1"),
+                            aad_json: json!({}),
+                            created_at_unix: 1,
+                        },
+                    },
+                    InboxItem {
+                        inbox_id: 8,
+                        message: MessageEnvelope {
+                            message_id: MessageId(Uuid::new_v4()),
+                            chat_id,
+                            server_seq: 3,
+                            sender_account_id: account_id,
+                            sender_device_id: device_id,
+                            epoch: 1,
+                            message_kind: MessageKind::Application,
+                            content_type: ContentType::Text,
+                            ciphertext_b64: crate::encode_b64(b"ciphertext-3"),
+                            aad_json: json!({}),
+                            created_at_unix: 2,
+                        },
+                    },
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(report.messages_upserted, 2);
+        assert_eq!(coordinator.chat_cursor(chat_id), Some(3));
     }
 
     fn cleanup_sqlite_test_path(path: &std::path::Path) {

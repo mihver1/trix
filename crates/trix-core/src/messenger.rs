@@ -556,7 +556,8 @@ impl FfiMessengerClient {
         &self,
         checkpoint: Option<String>,
     ) -> Result<FfiMessengerEventBatch, FfiMessengerError> {
-        let _requested_checkpoint = checkpoint.as_deref().map(parse_checkpoint).transpose()?;
+        let requested_checkpoint = checkpoint.as_deref().map(parse_checkpoint).transpose()?;
+        self.validate_requested_checkpoint(requested_checkpoint)?;
         let client = self.authenticated_client()?;
         self.maybe_import_transfer_bundle()?;
 
@@ -1738,7 +1739,7 @@ impl FfiMessengerClient {
         let now = current_unix_seconds().map_err(messenger_error)?;
         let mut state = lock_state(&self.state)?;
         gc_attachment_tokens(&mut state, now);
-        let pending = state.attachment_tokens.remove(token).ok_or_else(|| {
+        let pending = state.attachment_tokens.get(token).cloned().ok_or_else(|| {
             FfiMessengerError::AttachmentExpired(format!(
                 "attachment token {} is missing or expired",
                 token
@@ -1750,8 +1751,32 @@ impl FfiMessengerClient {
                 token
             )));
         }
-        self.save_state_locked(&state)?;
+        state.attachment_tokens.remove(token);
+        if let Err(error) = self.save_state_locked(&state) {
+            state
+                .attachment_tokens
+                .insert(token.to_owned(), pending.clone());
+            return Err(error);
+        }
         Ok(pending.body)
+    }
+
+    fn validate_requested_checkpoint(
+        &self,
+        requested_checkpoint: Option<u64>,
+    ) -> Result<(), FfiMessengerError> {
+        let current_tail = lock_state(&self.state)?.last_event_id;
+        if requested_checkpoint_matches_local_tail(requested_checkpoint, current_tail) {
+            return Ok(());
+        }
+
+        let requested_checkpoint = requested_checkpoint.expect("mismatched checkpoint must exist");
+
+        let current_label =
+            checkpoint_from_event_id(current_tail).unwrap_or_else(|| "none".to_owned());
+        Err(FfiMessengerError::RequiresResync(format!(
+            "checkpoint evt:{requested_checkpoint} does not match local event tail {current_label}; reload snapshot"
+        )))
     }
 
     fn send_outcome_to_message_record(
@@ -2287,6 +2312,13 @@ fn checkpoint_from_event_id(event_id: u64) -> Option<String> {
     }
 }
 
+fn requested_checkpoint_matches_local_tail(
+    requested_checkpoint: Option<u64>,
+    current_tail: u64,
+) -> bool {
+    requested_checkpoint.is_none() || requested_checkpoint == Some(current_tail)
+}
+
 fn parse_uuid(value: &str, field: &str) -> Result<Uuid, FfiMessengerError> {
     Uuid::parse_str(value)
         .map_err(|err| FfiMessengerError::Message(format!("invalid {field}: {err}")))
@@ -2704,6 +2736,15 @@ mod tests {
     fn checkpoint_round_trip() {
         let checkpoint = checkpoint_from_event_id(9).unwrap();
         assert_eq!(parse_checkpoint(&checkpoint).unwrap(), 9);
+    }
+
+    #[test]
+    fn requested_checkpoint_must_match_local_tail() {
+        assert!(requested_checkpoint_matches_local_tail(None, 0));
+        assert!(requested_checkpoint_matches_local_tail(None, 9));
+        assert!(requested_checkpoint_matches_local_tail(Some(9), 9));
+        assert!(!requested_checkpoint_matches_local_tail(Some(7), 9));
+        assert!(!requested_checkpoint_matches_local_tail(Some(11), 9));
     }
 
     #[test]

@@ -469,6 +469,14 @@ async fn s4_send_text_message_and_receive() -> Result<()> {
 
         bob.sync
             .sync_chat_histories_into_store(bob.client.clone(), bob.store.clone(), 100)?;
+        let chat_cursor = bob
+            .sync
+            .chat_cursor(chat.chat_id.clone())?
+            .ok_or_else(|| anyhow!("sync cursor should advance after history sync"))?;
+        assert!(
+            chat_cursor >= send_outcome.server_seq,
+            "sync cursor should cover the latest delivered message"
+        );
         bob.store
             .project_chat_with_facade(chat.chat_id.clone(), bob.facade.clone(), Some(500))?;
 
@@ -567,7 +575,7 @@ async fn s8_websocket_inbox_delivery() -> Result<()> {
         )?;
         assert!(hello_event.is_some());
 
-        alice.sync.create_chat_control(
+        let created = alice.sync.create_chat_control(
             alice.client.clone(),
             alice.store.clone(),
             alice.facade.clone(),
@@ -593,6 +601,10 @@ async fn s8_websocket_inbox_delivery() -> Result<()> {
         let event = inbox_event.unwrap();
         assert!(event.report.is_some());
         assert!(event.report.unwrap().messages_upserted > 0);
+        assert!(
+            bob.sync.chat_cursor(created.chat_id)?.is_some(),
+            "realtime inbox apply should advance sync cursor"
+        );
 
         bob_ws.close_socket()?;
         Ok(())
