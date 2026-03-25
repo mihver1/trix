@@ -388,9 +388,12 @@ internal fun shouldDispatchChatRefresh(
     eventKind: FfiRealtimeEventKind,
     changedChatIds: Set<String>,
 ): Boolean {
-    return changedChatIds.isNotEmpty() ||
-        eventKind == FfiRealtimeEventKind.ACKED ||
-        eventKind == FfiRealtimeEventKind.INBOX_ITEMS
+    return when (eventKind) {
+        FfiRealtimeEventKind.ACKED,
+        FfiRealtimeEventKind.INBOX_ITEMS,
+        -> changedChatIds.isNotEmpty()
+        else -> false
+    }
 }
 
 private val RECOVERABLE_SESSION_REPLACEMENT_REASONS = setOf(

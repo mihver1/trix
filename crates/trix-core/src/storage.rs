@@ -556,10 +556,9 @@ impl LocalHistoryStore {
         facade: &MlsFacade,
     ) -> Result<Option<MlsConversation>> {
         let bootstraps = self.find_welcome_bootstraps(chat_id)?;
-        let mut candidate_group_ids = self
-            .chat_mls_group_id(chat_id)
-            .into_iter()
-            .collect::<Vec<_>>();
+        let mapped_group_id = self.chat_mls_group_id(chat_id);
+        let has_explicit_group_mapping = mapped_group_id.is_some();
+        let mut candidate_group_ids = mapped_group_id.into_iter().collect::<Vec<_>>();
         let deterministic_group_id = chat_id.0.as_bytes().to_vec();
         if candidate_group_ids
             .iter()
@@ -591,6 +590,14 @@ impl LocalHistoryStore {
             }
         }
 
+        if !has_explicit_group_mapping {
+            if let Some(conversation) =
+                self.bootstrap_chat_from_welcome(chat_id, facade, &bootstraps)?
+            {
+                return Ok(Some(conversation));
+            }
+        }
+
         if let Some(group_id) = self.recover_persisted_group_mapping(
             chat_id,
             facade,
@@ -612,37 +619,7 @@ impl LocalHistoryStore {
             }
         }
 
-        if bootstraps.is_empty() {
-            return Ok(None);
-        }
-
-        let mut newest_error = None;
-        for bootstrap in bootstraps {
-            match facade
-                .join_group_from_welcome(
-                    &bootstrap.welcome_payload,
-                    bootstrap.ratchet_tree.as_deref(),
-                )
-                .with_context(|| {
-                    format!(
-                        "failed to bootstrap MLS conversation for chat {} from welcome {}",
-                        chat_id.0, bootstrap.welcome_message_id.0
-                    )
-                }) {
-                Ok(conversation) => {
-                    self.set_chat_mls_group_id(chat_id, &conversation.group_id())?;
-                    self.apply_projected_messages(chat_id, &bootstrap.synthetic_projections)?;
-                    return Ok(Some(conversation));
-                }
-                Err(error) => {
-                    if newest_error.is_none() {
-                        newest_error = Some(error);
-                    }
-                }
-            }
-        }
-
-        Err(newest_error.expect("welcome bootstrap candidates should yield an error"))
+        self.bootstrap_chat_from_welcome(chat_id, facade, &bootstraps)
     }
 
     fn recover_persisted_group_mapping(
@@ -702,6 +679,27 @@ impl LocalHistoryStore {
         conversation: &mut MlsConversation,
         bootstraps: &[WelcomeBootstrapMaterial],
     ) -> Result<bool> {
+        if let Some(chat) = self.state.chats.get(&chat_id.0.to_string()) {
+            if !chat.device_members.is_empty() {
+                let expected_credentials = chat
+                    .device_members
+                    .iter()
+                    .map(|member| {
+                        decode_b64_field("credential_identity_b64", &member.credential_identity_b64)
+                            .map_err(anyhow::Error::from)
+                    })
+                    .collect::<Result<BTreeSet<_>>>()?;
+                let actual_credentials = facade
+                    .members(conversation)?
+                    .into_iter()
+                    .map(|member| member.credential_identity)
+                    .collect::<BTreeSet<_>>();
+                if expected_credentials != actual_credentials {
+                    return Ok(false);
+                }
+            }
+        }
+
         let mut probe_store = self.clone();
         probe_store.database_path = None;
         probe_store.database_key = None;
@@ -715,6 +713,75 @@ impl LocalHistoryStore {
             Ok(_) => Ok(!probe_store.chat_has_unprojected_messages(chat_id)),
             Err(_) => Ok(false),
         }
+    }
+
+    fn bootstrap_chat_from_welcome(
+        &mut self,
+        chat_id: ChatId,
+        facade: &MlsFacade,
+        bootstraps: &[WelcomeBootstrapMaterial],
+    ) -> Result<Option<MlsConversation>> {
+        if bootstraps.is_empty() {
+            return Ok(None);
+        }
+
+        let mut newest_error = None;
+        for bootstrap in bootstraps {
+            match facade
+                .join_group_from_welcome(
+                    &bootstrap.welcome_payload,
+                    bootstrap.ratchet_tree.as_deref(),
+                )
+                .with_context(|| {
+                    format!(
+                        "failed to bootstrap MLS conversation for chat {} from welcome {}",
+                        chat_id.0, bootstrap.welcome_message_id.0
+                    )
+                }) {
+                Ok(conversation) => {
+                    self.set_chat_mls_group_id(chat_id, &conversation.group_id())?;
+                    self.apply_projected_messages(chat_id, &bootstrap.synthetic_projections)?;
+                    return Ok(Some(conversation));
+                }
+                Err(error) => {
+                    if newest_error.is_none() {
+                        newest_error = Some(error);
+                    }
+                }
+            }
+        }
+
+        Err(newest_error.expect("welcome bootstrap candidates should yield an error"))
+    }
+
+    fn recover_conversation_after_group_id_mismatch(
+        &mut self,
+        chat_id: ChatId,
+        facade: &MlsFacade,
+        bootstraps: &[WelcomeBootstrapMaterial],
+        attempted_group_ids: &[Vec<u8>],
+        context_label: &str,
+    ) -> Result<Option<MlsConversation>> {
+        if let Some(group_id) =
+            self.recover_persisted_group_mapping(chat_id, facade, bootstraps, attempted_group_ids)?
+        {
+            if let Some(conversation) = facade.load_group(&group_id).map_err(|err| {
+                anyhow!(
+                    "failed to load recovered MLS group {} for chat {} after {}: {err}",
+                    crate::encode_b64(&group_id),
+                    chat_id.0,
+                    context_label
+                )
+            })? {
+                self.set_chat_mls_group_id(chat_id, &group_id)?;
+                if let Some(bootstrap) = bootstraps.first() {
+                    self.apply_projected_messages(chat_id, &bootstrap.synthetic_projections)?;
+                }
+                return Ok(Some(conversation));
+            }
+        }
+
+        self.bootstrap_chat_from_welcome(chat_id, facade, bootstraps)
     }
 
     fn chat_has_unprojected_messages(&self, chat_id: ChatId) -> bool {
@@ -830,6 +897,38 @@ impl LocalHistoryStore {
         self.save_state()
     }
 
+    fn restore_materialized_projection_tail(
+        &mut self,
+        backup: &ProjectionGapRepairBackup,
+    ) -> Result<()> {
+        let Some(chat) = self.state.chats.get_mut(&backup.chat_id.0.to_string()) else {
+            return Ok(());
+        };
+
+        let mut changed = false;
+        for (server_seq, removed) in &backup.removed_projected_messages {
+            let Some(removed_body_b64) = removed.materialized_body_b64.as_ref() else {
+                continue;
+            };
+            let Some(current) = chat.projected_messages.get_mut(server_seq) else {
+                continue;
+            };
+            if current.projection_kind != LocalProjectionKind::ApplicationMessage
+                || current.message_kind != trix_types::MessageKind::Application
+                || current.materialized_body_b64.is_some()
+                || current.message_id != removed.message_id
+                || current.content_type != removed.content_type
+            {
+                continue;
+            }
+
+            current.materialized_body_b64 = Some(removed_body_b64.clone());
+            changed = true;
+        }
+
+        self.persist_if_needed(changed)
+    }
+
     pub fn project_chat_with_facade(
         &mut self,
         chat_id: ChatId,
@@ -843,6 +942,9 @@ impl LocalHistoryStore {
             .ok_or_else(|| anyhow!("chat {} has no bootstrappable MLS state", chat_id.0))?;
         let report = match self.project_chat_messages(chat_id, facade, &mut conversation, limit) {
             Ok(mut report) => {
+                if let Some(backup) = repair_backup.as_ref() {
+                    self.restore_materialized_projection_tail(backup)?;
+                }
                 if repair_backup.is_some() && report.processed_messages == 0 {
                     report.advanced_to_server_seq = self.projected_cursor(chat_id);
                 }
@@ -859,35 +961,29 @@ impl LocalHistoryStore {
                     }
                 }
                 let bootstraps = self.find_welcome_bootstraps(chat_id)?;
-                let Some(group_id) = self.recover_persisted_group_mapping(
-                    chat_id,
-                    facade,
-                    &bootstraps,
-                    &attempted_group_ids,
-                )?
+                let Some(mut recovered_conversation) = self
+                    .recover_conversation_after_group_id_mismatch(
+                        chat_id,
+                        facade,
+                        &bootstraps,
+                        &attempted_group_ids,
+                        "projection mismatch",
+                    )?
                 else {
                     return Err(error);
                 };
-                let Some(mut recovered_conversation) = facade.load_group(&group_id).map_err(|err| {
-                    anyhow!(
-                        "failed to load recovered MLS group {} for chat {} after projection mismatch: {err}",
-                        crate::encode_b64(&group_id),
-                        chat_id.0
-                    )
-                })? else {
-                    return Err(error);
-                };
-                self.set_chat_mls_group_id(chat_id, &group_id)?;
-                if let Some(bootstrap) = bootstraps.first() {
-                    self.apply_projected_messages(chat_id, &bootstrap.synthetic_projections)?;
-                }
                 match self.project_chat_messages(
                     chat_id,
                     facade,
                     &mut recovered_conversation,
                     limit,
                 ) {
-                    Ok(report) => report,
+                    Ok(report) => {
+                        if let Some(backup) = repair_backup.as_ref() {
+                            self.restore_materialized_projection_tail(backup)?;
+                        }
+                        report
+                    }
                     Err(retry_error) => {
                         if let Some(backup) = repair_backup {
                             self.restore_projection_gap_repair(backup)?;
@@ -939,37 +1035,26 @@ impl LocalHistoryStore {
                     }
                 }
                 let bootstraps = self.find_welcome_bootstraps(chat_id)?;
-                let Some(group_id) = self.recover_persisted_group_mapping(
-                    chat_id,
-                    facade,
-                    &bootstraps,
-                    &attempted_group_ids,
-                )?
+                let Some(mut recovered_conversation) = self
+                    .recover_conversation_after_group_id_mismatch(
+                        chat_id,
+                        facade,
+                        &bootstraps,
+                        &attempted_group_ids,
+                        "legacy recovery mismatch",
+                    )?
                 else {
                     return Err(error);
                 };
-                let Some(mut recovered_conversation) =
-                    facade.load_group(&group_id).map_err(|err| {
-                        anyhow!(
-                            "failed to load recovered MLS group {} for chat {} after legacy recovery mismatch: {err}",
-                            crate::encode_b64(&group_id),
-                            chat_id.0
-                        )
-                    })?
-                else {
-                    return Err(error);
-                };
-                self.set_chat_mls_group_id(chat_id, &group_id)?;
-                if let Some(bootstrap) = bootstraps.first() {
-                    self.apply_projected_messages(chat_id, &bootstrap.synthetic_projections)?;
-                }
                 self.project_chat_messages(chat_id, facade, &mut recovered_conversation, limit)
                     .map(|_| ())
             }
             Err(error) => Err(error),
         };
 
-        if result.is_err() {
+        if result.is_ok() {
+            self.restore_materialized_projection_tail(&backup)?;
+        } else {
             self.restore_projection_gap_repair(backup)?;
         }
         Ok(())
@@ -4592,6 +4677,213 @@ mod tests {
     }
 
     #[test]
+    fn load_or_bootstrap_chat_mls_conversation_prefers_welcome_over_unrelated_persisted_group() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let alice_account = AccountId(Uuid::new_v4());
+        let alice_device = DeviceId(Uuid::new_v4());
+        let alice = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+        let bob_storage_root =
+            env::temp_dir().join(format!("trix-storage-welcome-first-{}", Uuid::new_v4()));
+        let bob = MlsFacade::new_persistent(b"bob-device".to_vec(), &bob_storage_root).unwrap();
+
+        let unrelated_group = bob.create_group(b"unrelated-group").unwrap();
+        let bob_key_package = bob.generate_key_package().unwrap();
+        let mut alice_group = alice.create_group(b"server-generated-group-id").unwrap();
+        let add_bundle = alice
+            .add_members(&mut alice_group, &[bob_key_package])
+            .unwrap();
+
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 1,
+                        sender_account_id: alice_account,
+                        sender_device_id: alice_device,
+                        epoch: add_bundle.epoch,
+                        message_kind: MessageKind::Commit,
+                        content_type: ContentType::ChatEvent,
+                        ciphertext_b64: crate::encode_b64(&add_bundle.commit_message),
+                        aad_json: json!({}),
+                        created_at_unix: 1,
+                    },
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 2,
+                        sender_account_id: alice_account,
+                        sender_device_id: alice_device,
+                        epoch: add_bundle.epoch,
+                        message_kind: MessageKind::WelcomeRef,
+                        content_type: ContentType::ChatEvent,
+                        ciphertext_b64: crate::encode_b64(
+                            add_bundle.welcome_message.as_ref().unwrap(),
+                        ),
+                        aad_json: json!({
+                            "_trix": {
+                                "ratchet_tree_b64": crate::encode_b64(
+                                    add_bundle.ratchet_tree.as_ref().unwrap()
+                                )
+                            }
+                        }),
+                        created_at_unix: 2,
+                    },
+                ],
+            })
+            .unwrap();
+
+        let conversation = store
+            .load_or_bootstrap_chat_mls_conversation(chat_id, &bob)
+            .unwrap()
+            .unwrap();
+        assert_ne!(conversation.group_id(), unrelated_group.group_id());
+        assert_eq!(
+            store.chat_mls_group_id(chat_id).as_deref(),
+            Some(conversation.group_id().as_slice())
+        );
+
+        let ciphertext = alice
+            .create_application_message(&mut alice_group, b"hello from alice")
+            .unwrap();
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![MessageEnvelope {
+                    message_id: MessageId(Uuid::new_v4()),
+                    chat_id,
+                    server_seq: 3,
+                    sender_account_id: alice_account,
+                    sender_device_id: alice_device,
+                    epoch: add_bundle.epoch,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    ciphertext_b64: crate::encode_b64(&ciphertext),
+                    aad_json: json!({}),
+                    created_at_unix: 3,
+                }],
+            })
+            .unwrap();
+
+        let report = store.project_chat_with_facade(chat_id, &bob, None).unwrap();
+        assert_eq!(report.processed_messages, 1);
+        assert_eq!(report.projected_messages_upserted, 1);
+        assert_eq!(report.advanced_to_server_seq, Some(3));
+        assert_eq!(store.projected_cursor(chat_id), Some(3));
+        assert_eq!(
+            store
+                .get_projected_messages(chat_id, None, Some(10))
+                .last()
+                .and_then(|message| message.payload.clone()),
+            Some(b"hello from alice".to_vec())
+        );
+
+        fs::remove_dir_all(&bob_storage_root).ok();
+    }
+
+    #[test]
+    fn project_chat_with_facade_bootstraps_from_welcome_when_stale_mapping_has_no_real_group() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let alice_account = AccountId(Uuid::new_v4());
+        let alice_device = DeviceId(Uuid::new_v4());
+        let alice = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+        let bob_storage_root =
+            env::temp_dir().join(format!("trix-storage-welcome-repair-{}", Uuid::new_v4()));
+        let bob = MlsFacade::new_persistent(b"bob-device".to_vec(), &bob_storage_root).unwrap();
+
+        let unrelated_group = bob.create_group(b"stale-group-id").unwrap();
+        let bob_key_package = bob.generate_key_package().unwrap();
+        let mut alice_group = alice.create_group(b"server-generated-group-id").unwrap();
+        let add_bundle = alice
+            .add_members(&mut alice_group, &[bob_key_package])
+            .unwrap();
+        let ciphertext = alice
+            .create_application_message(&mut alice_group, b"hello from alice")
+            .unwrap();
+
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 1,
+                        sender_account_id: alice_account,
+                        sender_device_id: alice_device,
+                        epoch: add_bundle.epoch,
+                        message_kind: MessageKind::Commit,
+                        content_type: ContentType::ChatEvent,
+                        ciphertext_b64: crate::encode_b64(&add_bundle.commit_message),
+                        aad_json: json!({}),
+                        created_at_unix: 1,
+                    },
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 2,
+                        sender_account_id: alice_account,
+                        sender_device_id: alice_device,
+                        epoch: add_bundle.epoch,
+                        message_kind: MessageKind::WelcomeRef,
+                        content_type: ContentType::ChatEvent,
+                        ciphertext_b64: crate::encode_b64(
+                            add_bundle.welcome_message.as_ref().unwrap(),
+                        ),
+                        aad_json: json!({
+                            "_trix": {
+                                "ratchet_tree_b64": crate::encode_b64(
+                                    add_bundle.ratchet_tree.as_ref().unwrap()
+                                )
+                            }
+                        }),
+                        created_at_unix: 2,
+                    },
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 3,
+                        sender_account_id: alice_account,
+                        sender_device_id: alice_device,
+                        epoch: add_bundle.epoch,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        ciphertext_b64: crate::encode_b64(&ciphertext),
+                        aad_json: json!({}),
+                        created_at_unix: 3,
+                    },
+                ],
+            })
+            .unwrap();
+        store
+            .set_chat_mls_group_id(chat_id, &unrelated_group.group_id())
+            .unwrap();
+
+        let report = store.project_chat_with_facade(chat_id, &bob, None).unwrap();
+        assert_eq!(report.processed_messages, 1);
+        assert_eq!(report.projected_messages_upserted, 1);
+        assert_eq!(report.advanced_to_server_seq, Some(3));
+        assert_eq!(store.projected_cursor(chat_id), Some(3));
+        assert_ne!(
+            store.chat_mls_group_id(chat_id).as_deref(),
+            Some(unrelated_group.group_id().as_slice())
+        );
+        assert_eq!(
+            store
+                .get_projected_messages(chat_id, None, Some(10))
+                .last()
+                .and_then(|message| message.payload.clone()),
+            Some(b"hello from alice".to_vec())
+        );
+
+        fs::remove_dir_all(&bob_storage_root).ok();
+    }
+
+    #[test]
     fn project_chat_with_facade_tolerates_unreadable_own_application_replay() {
         let mut store = LocalHistoryStore::new();
         let chat_id = ChatId(Uuid::new_v4());
@@ -4711,6 +5003,168 @@ mod tests {
         assert_eq!(projected[2].payload, None);
         assert_eq!(projected[3].server_seq, 4);
         assert_eq!(projected[3].payload, None);
+
+        fs::remove_dir_all(&bob_storage_root).ok();
+    }
+
+    #[test]
+    fn legacy_projection_repair_preserves_materialized_tail_for_own_messages() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let alice_account = AccountId(Uuid::new_v4());
+        let alice_device = DeviceId(Uuid::new_v4());
+        let bob_account = AccountId(Uuid::new_v4());
+        let bob_device = DeviceId(Uuid::new_v4());
+        let alice = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+        let bob_storage_root =
+            env::temp_dir().join(format!("trix-storage-own-tail-{}", Uuid::new_v4()));
+        let bob = MlsFacade::new_persistent(b"bob-device".to_vec(), &bob_storage_root).unwrap();
+
+        let bob_key_package = bob.generate_key_package().unwrap();
+        let mut alice_group = alice.create_group(b"server-generated-group-id").unwrap();
+        let add_bundle = alice
+            .add_members(&mut alice_group, &[bob_key_package])
+            .unwrap();
+        let mut bob_group = bob
+            .join_group_from_welcome(
+                add_bundle.welcome_message.as_ref().unwrap(),
+                add_bundle.ratchet_tree.as_deref(),
+            )
+            .unwrap();
+
+        let first_bob_ciphertext = bob
+            .create_application_message(&mut bob_group, b"hello from bob")
+            .unwrap();
+        let second_bob_ciphertext = bob
+            .create_application_message(&mut bob_group, b"second hello from bob")
+            .unwrap();
+        let first_message_id = MessageId(Uuid::new_v4());
+        let second_message_id = MessageId(Uuid::new_v4());
+
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 1,
+                        sender_account_id: alice_account,
+                        sender_device_id: alice_device,
+                        epoch: add_bundle.epoch,
+                        message_kind: MessageKind::Commit,
+                        content_type: ContentType::ChatEvent,
+                        ciphertext_b64: crate::encode_b64(&add_bundle.commit_message),
+                        aad_json: json!({}),
+                        created_at_unix: 1,
+                    },
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 2,
+                        sender_account_id: alice_account,
+                        sender_device_id: alice_device,
+                        epoch: add_bundle.epoch,
+                        message_kind: MessageKind::WelcomeRef,
+                        content_type: ContentType::ChatEvent,
+                        ciphertext_b64: crate::encode_b64(
+                            add_bundle.welcome_message.as_ref().unwrap(),
+                        ),
+                        aad_json: json!({
+                            "_trix": {
+                                "ratchet_tree_b64": crate::encode_b64(
+                                    add_bundle.ratchet_tree.as_ref().unwrap()
+                                )
+                            }
+                        }),
+                        created_at_unix: 2,
+                    },
+                    MessageEnvelope {
+                        message_id: first_message_id,
+                        chat_id,
+                        server_seq: 3,
+                        sender_account_id: bob_account,
+                        sender_device_id: bob_device,
+                        epoch: add_bundle.epoch,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        ciphertext_b64: crate::encode_b64(&first_bob_ciphertext),
+                        aad_json: json!({}),
+                        created_at_unix: 3,
+                    },
+                    MessageEnvelope {
+                        message_id: second_message_id,
+                        chat_id,
+                        server_seq: 4,
+                        sender_account_id: bob_account,
+                        sender_device_id: bob_device,
+                        epoch: add_bundle.epoch,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        ciphertext_b64: crate::encode_b64(&second_bob_ciphertext),
+                        aad_json: json!({}),
+                        created_at_unix: 4,
+                    },
+                ],
+            })
+            .unwrap();
+        store
+            .set_chat_mls_group_id(chat_id, &bob_group.group_id())
+            .unwrap();
+
+        let second_body = MessageBody::Text(crate::TextMessageBody {
+            text: "second hello from bob".to_owned(),
+        });
+        let second_body_b64 = crate::encode_b64(&second_body.to_bytes().unwrap());
+        {
+            let chat = store.state.chats.get_mut(&chat_id.0.to_string()).unwrap();
+            chat.projected_messages.insert(
+                3,
+                PersistedProjectedMessage {
+                    server_seq: 3,
+                    message_id: first_message_id,
+                    sender_account_id: bob_account,
+                    sender_device_id: bob_device,
+                    epoch: add_bundle.epoch,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    projection_kind: LocalProjectionKind::ApplicationMessage,
+                    materialized_body_b64: None,
+                    merged_epoch: None,
+                    created_at_unix: 3,
+                },
+            );
+            chat.projected_messages.insert(
+                4,
+                PersistedProjectedMessage {
+                    server_seq: 4,
+                    message_id: second_message_id,
+                    sender_account_id: bob_account,
+                    sender_device_id: bob_device,
+                    epoch: add_bundle.epoch,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    projection_kind: LocalProjectionKind::ApplicationMessage,
+                    materialized_body_b64: Some(second_body_b64.clone()),
+                    merged_epoch: None,
+                    created_at_unix: 4,
+                },
+            );
+            chat.projected_cursor_server_seq = 4;
+        }
+
+        let report = store.project_chat_with_facade(chat_id, &bob, None).unwrap();
+        assert_eq!(report.advanced_to_server_seq, Some(4));
+
+        let projected = store.get_projected_messages(chat_id, None, Some(10));
+        assert_eq!(projected.len(), 4);
+        assert_eq!(projected[2].server_seq, 3);
+        assert_eq!(projected[2].payload, None);
+        assert_eq!(projected[3].server_seq, 4);
+        assert_eq!(
+            projected[3].parse_body().unwrap(),
+            Some(second_body.clone())
+        );
 
         fs::remove_dir_all(&bob_storage_root).ok();
     }

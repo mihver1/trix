@@ -387,6 +387,7 @@ pub struct FfiMessengerClient {
     client: Mutex<ServerApiClient>,
     history_store: Mutex<LocalHistoryStore>,
     sync_coordinator: Mutex<SyncCoordinator>,
+    mls_operation: Mutex<()>,
     state: Mutex<MessengerClientState>,
     root_path: String,
     database_key: Vec<u8>,
@@ -472,6 +473,7 @@ impl FfiMessengerClient {
             client: Mutex::new(client),
             history_store: Mutex::new(history_store),
             sync_coordinator: Mutex::new(sync_coordinator),
+            mls_operation: Mutex::new(()),
             state: Mutex::new(state),
             root_path: root_path.to_string_lossy().into_owned(),
             database_key: config.database_key,
@@ -658,7 +660,6 @@ impl FfiMessengerClient {
         let chat_id = parse_chat_id(&request.conversation_id)?;
         let body = self.build_send_message_body(&request)?;
         let client = self.authenticated_client()?;
-        let facade = self.open_or_load_mls_facade()?;
         let (self_account_id, self_device_id) = self.require_self_identity()?;
 
         {
@@ -666,11 +667,11 @@ impl FfiMessengerClient {
             self.bootstrap_chat_if_needed(&client, &mut store, chat_id)?;
         }
 
-        let outcome = {
+        let outcome = self.with_mls_facade(|facade| {
             let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
             let mut store = lock_history_store(&self.history_store)?;
             let mut conversation = store
-                .load_or_bootstrap_chat_mls_conversation(chat_id, &facade)
+                .load_or_bootstrap_chat_mls_conversation(chat_id, facade)
                 .map_err(map_domain_error)?
                 .ok_or_else(|| {
                     FfiMessengerError::RequiresResync(format!(
@@ -683,7 +684,7 @@ impl FfiMessengerClient {
                     coordinator.send_message_body(
                         &client,
                         &mut store,
-                        &facade,
+                        facade,
                         &mut conversation,
                         self_account_id,
                         self_device_id,
@@ -697,9 +698,8 @@ impl FfiMessengerClient {
                         None,
                     ),
                 )
-                .map_err(map_domain_error)?
-        };
-        facade.save_state().map_err(map_domain_error)?;
+                .map_err(map_domain_error)
+        })?;
         let message = self.send_outcome_to_message_record(chat_id, outcome)?;
         Ok(FfiMessengerSendMessageResult {
             conversation_id: request.conversation_id,
@@ -846,10 +846,9 @@ impl FfiMessengerClient {
         request: FfiMessengerCreateConversationRequest,
     ) -> Result<FfiMessengerConversationMutationResult, FfiMessengerError> {
         let client = self.authenticated_client()?;
-        let mut facade = self.open_or_load_mls_facade()?;
-        self.ensure_device_key_packages(&client, &facade)?;
         let (self_account_id, self_device_id) = self.require_self_identity()?;
-        let outcome = {
+        let outcome = self.with_mls_facade(|facade| {
+            self.ensure_device_key_packages(&client, facade)?;
             let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
             let mut store = lock_history_store(&self.history_store)?;
             self.runtime
@@ -857,12 +856,12 @@ impl FfiMessengerClient {
                     coordinator.create_chat_control(
                         &client,
                         &mut store,
-                        &mut facade,
+                        facade,
                         CreateChatControlInput {
                             creator_account_id: self_account_id,
                             creator_device_id: self_device_id,
                             chat_type: ffi_chat_type_to_model(request.conversation_type),
-                            title: request.title,
+                            title: request.title.clone(),
                             participant_account_ids: request
                                 .participant_account_ids
                                 .iter()
@@ -874,9 +873,8 @@ impl FfiMessengerClient {
                         },
                     ),
                 )
-                .map_err(map_domain_error)?
-        };
-        facade.save_state().map_err(map_domain_error)?;
+                .map_err(map_domain_error)
+        })?;
         self.conversation_mutation_from_create_outcome(outcome)
     }
 
@@ -886,9 +884,8 @@ impl FfiMessengerClient {
     ) -> Result<FfiMessengerConversationMutationResult, FfiMessengerError> {
         let chat_id = parse_chat_id(&request.conversation_id)?;
         let client = self.authenticated_client()?;
-        let mut facade = self.open_or_load_mls_facade()?;
         let (self_account_id, self_device_id) = self.require_self_identity()?;
-        let outcome = {
+        let outcome = self.with_mls_facade(|facade| {
             let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
             let mut store = lock_history_store(&self.history_store)?;
             self.bootstrap_chat_if_needed(&client, &mut store, chat_id)?;
@@ -897,7 +894,7 @@ impl FfiMessengerClient {
                     coordinator.add_chat_members_control(
                         &client,
                         &mut store,
-                        &mut facade,
+                        facade,
                         ModifyChatMembersControlInput {
                             actor_account_id: self_account_id,
                             actor_device_id: self_device_id,
@@ -912,9 +909,8 @@ impl FfiMessengerClient {
                         },
                     ),
                 )
-                .map_err(map_domain_error)?
-        };
-        facade.save_state().map_err(map_domain_error)?;
+                .map_err(map_domain_error)
+        })?;
         self.conversation_mutation_from_member_outcome(outcome)
     }
 
@@ -924,9 +920,8 @@ impl FfiMessengerClient {
     ) -> Result<FfiMessengerConversationMutationResult, FfiMessengerError> {
         let chat_id = parse_chat_id(&request.conversation_id)?;
         let client = self.authenticated_client()?;
-        let mut facade = self.open_or_load_mls_facade()?;
         let (self_account_id, self_device_id) = self.require_self_identity()?;
-        let outcome = {
+        let outcome = self.with_mls_facade(|facade| {
             let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
             let mut store = lock_history_store(&self.history_store)?;
             self.bootstrap_chat_if_needed(&client, &mut store, chat_id)?;
@@ -935,7 +930,7 @@ impl FfiMessengerClient {
                     coordinator.remove_chat_members_control(
                         &client,
                         &mut store,
-                        &mut facade,
+                        facade,
                         ModifyChatMembersControlInput {
                             actor_account_id: self_account_id,
                             actor_device_id: self_device_id,
@@ -950,9 +945,8 @@ impl FfiMessengerClient {
                         },
                     ),
                 )
-                .map_err(map_domain_error)?
-        };
-        facade.save_state().map_err(map_domain_error)?;
+                .map_err(map_domain_error)
+        })?;
         self.conversation_mutation_from_member_outcome(outcome)
     }
 
@@ -962,9 +956,8 @@ impl FfiMessengerClient {
     ) -> Result<FfiMessengerConversationMutationResult, FfiMessengerError> {
         let chat_id = parse_chat_id(&request.conversation_id)?;
         let client = self.authenticated_client()?;
-        let mut facade = self.open_or_load_mls_facade()?;
         let (self_account_id, self_device_id) = self.require_self_identity()?;
-        let outcome = {
+        let outcome = self.with_mls_facade(|facade| {
             let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
             let mut store = lock_history_store(&self.history_store)?;
             self.bootstrap_chat_if_needed(&client, &mut store, chat_id)?;
@@ -973,7 +966,7 @@ impl FfiMessengerClient {
                     coordinator.add_chat_devices_control(
                         &client,
                         &mut store,
-                        &mut facade,
+                        facade,
                         ModifyChatDevicesControlInput {
                             actor_account_id: self_account_id,
                             actor_device_id: self_device_id,
@@ -988,9 +981,8 @@ impl FfiMessengerClient {
                         },
                     ),
                 )
-                .map_err(map_domain_error)?
-        };
-        facade.save_state().map_err(map_domain_error)?;
+                .map_err(map_domain_error)
+        })?;
         self.conversation_mutation_from_device_outcome(outcome)
     }
 
@@ -1000,9 +992,8 @@ impl FfiMessengerClient {
     ) -> Result<FfiMessengerConversationMutationResult, FfiMessengerError> {
         let chat_id = parse_chat_id(&request.conversation_id)?;
         let client = self.authenticated_client()?;
-        let mut facade = self.open_or_load_mls_facade()?;
         let (self_account_id, self_device_id) = self.require_self_identity()?;
-        let outcome = {
+        let outcome = self.with_mls_facade(|facade| {
             let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
             let mut store = lock_history_store(&self.history_store)?;
             self.bootstrap_chat_if_needed(&client, &mut store, chat_id)?;
@@ -1011,7 +1002,7 @@ impl FfiMessengerClient {
                     coordinator.remove_chat_devices_control(
                         &client,
                         &mut store,
-                        &mut facade,
+                        facade,
                         ModifyChatDevicesControlInput {
                             actor_account_id: self_account_id,
                             actor_device_id: self_device_id,
@@ -1026,9 +1017,8 @@ impl FfiMessengerClient {
                         },
                     ),
                 )
-                .map_err(map_domain_error)?
-        };
-        facade.save_state().map_err(map_domain_error)?;
+                .map_err(map_domain_error)
+        })?;
         self.conversation_mutation_from_device_outcome(outcome)
     }
 
@@ -1114,16 +1104,17 @@ impl FfiMessengerClient {
 
         self.rebuild_client_base_url(&payload.base_url)?;
         let client = self.authenticated_client_for_pending_device()?;
-        let facade = self.open_or_load_mls_facade()?;
-        let key_packages = facade
-            .generate_key_packages(SAFE_DEVICE_KEY_PACKAGE_TARGET as usize)
-            .map_err(map_domain_error)?
-            .into_iter()
-            .map(|key_package| PublishKeyPackageMaterial {
-                cipher_suite: facade.ciphersuite_label(),
-                key_package,
-            })
-            .collect::<Vec<_>>();
+        let key_packages = self.with_mls_facade(|facade| {
+            Ok(facade
+                .generate_key_packages(SAFE_DEVICE_KEY_PACKAGE_TARGET as usize)
+                .map_err(map_domain_error)?
+                .into_iter()
+                .map(|key_package| PublishKeyPackageMaterial {
+                    cipher_suite: facade.ciphersuite_label(),
+                    key_package,
+                })
+                .collect::<Vec<_>>())
+        })?;
         let state = lock_state(&self.state)?;
         let credential_identity = state.credential_identity.clone().ok_or_else(|| {
             FfiMessengerError::NotConfigured("credential_identity is missing".to_owned())
@@ -1413,6 +1404,17 @@ impl FfiMessengerClient {
         }
     }
 
+    fn with_mls_facade<T, F>(&self, op: F) -> Result<T, FfiMessengerError>
+    where
+        F: FnOnce(&mut MlsFacade) -> Result<T, FfiMessengerError>,
+    {
+        let _guard = lock_mls_operation(&self.mls_operation)?;
+        let mut facade = self.open_or_load_mls_facade()?;
+        let result = op(&mut facade)?;
+        facade.save_state().map_err(map_domain_error)?;
+        Ok(result)
+    }
+
     fn sync_workspace(&self) -> Result<(), FfiMessengerError> {
         let client = self.authenticated_client()?;
         self.maybe_import_transfer_bundle()?;
@@ -1431,7 +1433,7 @@ impl FfiMessengerClient {
             self.refresh_chat_details(&client, &report.changed_chat_ids)?;
             self.project_changed_chats(&report.changed_chat_ids)?;
         }
-        self.ensure_device_key_packages(&client, &self.open_or_load_mls_facade()?)?;
+        self.with_mls_facade(|facade| self.ensure_device_key_packages(&client, facade))?;
         Ok(())
     }
 
@@ -1574,19 +1576,19 @@ impl FfiMessengerClient {
     }
 
     fn project_changed_chats(&self, chat_ids: &[ChatId]) -> Result<(), FfiMessengerError> {
-        let facade = self.open_or_load_mls_facade()?;
-        let mut store = lock_history_store(&self.history_store)?;
-        let mut projected_cursors = Vec::new();
-        for chat_id in chat_ids {
-            store
-                .project_chat_with_facade(*chat_id, &facade, None)
-                .map_err(map_domain_error)?;
-            if let Some(projected_cursor) = store.projected_cursor(*chat_id) {
-                projected_cursors.push((*chat_id, projected_cursor));
+        let projected_cursors = self.with_mls_facade(|facade| {
+            let mut store = lock_history_store(&self.history_store)?;
+            let mut projected_cursors = Vec::new();
+            for chat_id in chat_ids {
+                store
+                    .project_chat_with_facade(*chat_id, facade, None)
+                    .map_err(map_domain_error)?;
+                if let Some(projected_cursor) = store.projected_cursor(*chat_id) {
+                    projected_cursors.push((*chat_id, projected_cursor));
+                }
             }
-        }
-        drop(store);
-        facade.save_state().map_err(map_domain_error)?;
+            Ok(projected_cursors)
+        })?;
         let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
         for (chat_id, projected_cursor) in projected_cursors {
             coordinator
@@ -2492,6 +2494,12 @@ fn lock_sync_coordinator(
     value
         .lock()
         .map_err(|_| FfiMessengerError::Message("sync coordinator mutex poisoned".to_owned()))
+}
+
+fn lock_mls_operation(value: &Mutex<()>) -> Result<MutexGuard<'_, ()>, FfiMessengerError> {
+    value
+        .lock()
+        .map_err(|_| FfiMessengerError::Message("mls operation mutex poisoned".to_owned()))
 }
 
 fn capability_flags() -> FfiMessengerCapabilityFlags {

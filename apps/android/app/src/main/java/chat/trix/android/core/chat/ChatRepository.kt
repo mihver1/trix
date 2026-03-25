@@ -48,8 +48,11 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class ChatRepository(
@@ -1318,21 +1321,29 @@ class ChatRepository(
 
     private fun attachmentRepository(): AttachmentRepository = attachmentRepositoryDelegate.value
 
-    private inline fun <T> runFfi(
+    private suspend inline fun <T> runFfi(
         fallbackMessage: String,
         block: () -> T,
     ): T {
-        return try {
-            block()
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: TrixFfiException) {
-            throw IOException(error.message ?: fallbackMessage, error)
-        } catch (error: UnsatisfiedLinkError) {
-            throw IOException("Rust FFI library is not available in the Android app bundle", error)
-        } catch (error: RuntimeException) {
-            throw IOException(fallbackMessage, error)
+        return sessionOperationMutex().withLock {
+            try {
+                block()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: TrixFfiException) {
+                throw IOException(error.message ?: fallbackMessage, error)
+            } catch (error: UnsatisfiedLinkError) {
+                throw IOException("Rust FFI library is not available in the Android app bundle", error)
+            } catch (error: RuntimeException) {
+                throw IOException(fallbackMessage, error)
+            }
         }
+    }
+
+    private fun sessionOperationMutex(): Mutex {
+        return SESSION_OPERATION_MUTEXES.computeIfAbsent(
+            storageLayout.sessionRoot.absolutePath,
+        ) { Mutex() }
     }
 
     private fun runBlockingStoreKey(): ByteArray {
@@ -1755,6 +1766,7 @@ class ChatRepository(
         private val MONTH_DAY_FORMATTER = DateTimeFormatter.ofPattern("MMM d")
         private val DATE_FORMATTER = DateTimeFormatter.ofPattern("MMM d, yyyy")
         private const val EMPTY_AAD_JSON = "{}"
+        private val SESSION_OPERATION_MUTEXES = ConcurrentHashMap<String, Mutex>()
     }
 }
 

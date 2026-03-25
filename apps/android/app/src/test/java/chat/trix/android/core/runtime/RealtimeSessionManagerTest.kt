@@ -22,11 +22,21 @@ class RealtimeSessionManagerTest {
     }
 
     @Test
-    fun `acked event refreshes ui even without changed chat ids`() {
-        assertTrue(
+    fun `acked event without changed chats does not refresh ui`() {
+        assertFalse(
             shouldDispatchChatRefresh(
                 eventKind = FfiRealtimeEventKind.ACKED,
                 changedChatIds = emptySet(),
+            ),
+        )
+    }
+
+    @Test
+    fun `inbox event with changed chats refreshes ui`() {
+        assertTrue(
+            shouldDispatchChatRefresh(
+                eventKind = FfiRealtimeEventKind.INBOX_ITEMS,
+                changedChatIds = setOf("chat-1"),
             ),
         )
     }

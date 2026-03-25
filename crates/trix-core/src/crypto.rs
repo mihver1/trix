@@ -726,11 +726,13 @@ impl MlsPersistencePaths {
     }
 
     fn storage_tmp_file(&self) -> PathBuf {
-        self.root.join("storage.json.tmp")
+        self.root
+            .join(format!(".storage.json.{}.tmp", uuid::Uuid::new_v4()))
     }
 
     fn metadata_tmp_file(&self) -> PathBuf {
-        self.root.join("metadata.json.tmp")
+        self.root
+            .join(format!(".metadata.json.{}.tmp", uuid::Uuid::new_v4()))
     }
 }
 
