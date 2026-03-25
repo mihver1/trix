@@ -893,22 +893,34 @@ extension ContentType {
 
 extension MessageEnvelope {
     var debugPreview: String {
-        if let preview = TrixCoreMessageBridge.preview(for: self) {
-            return preview.title
+        switch messageKind {
+        case .application:
+            switch contentType {
+            case .text:
+                return "Message content is unavailable on this device."
+            case .reaction:
+                return "Reaction content is unavailable on this device."
+            case .receipt:
+                return "Receipt"
+            case .attachment:
+                return "Attachment content is unavailable on this device."
+            case .chatEvent:
+                return "Chat event content is unavailable on this device."
+            }
+        case .commit:
+            return "Updated chat"
+        case .welcomeRef:
+            return "Invited device"
+        case .system:
+            if case let .object(values) = aadJson,
+               case let .string(text)? = values["debug_plaintext"] {
+                return text
+            }
+            if let preview = TrixCoreMessageBridge.preview(for: self) {
+                return preview.title
+            }
+            return "System message"
         }
-
-        if let data = Data(base64Encoded: ciphertextB64),
-           let text = String(data: data, encoding: .utf8),
-           !text.isEmpty {
-            return text
-        }
-
-        if case let .object(values) = aadJson,
-           case let .string(text)? = values["debug_plaintext"] {
-            return text
-        }
-
-        return ciphertextB64
     }
 
     var debugDetail: String? {

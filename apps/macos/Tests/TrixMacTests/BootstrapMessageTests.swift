@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 @testable import TrixMac
@@ -7,8 +8,8 @@ func bootstrapMessageMatchesServerLayout() {
     let transport = Data([0xAA, 0xBB, 0xCC])
     let credentialIdentity = Data([0x01, 0x02])
 
-    let message = DeviceIdentityMaterial.bootstrapMessage(
-        transportPublicKey: transport,
+    let message = ffiAccountBootstrapPayload(
+        transportPubkey: transport,
         credentialIdentity: credentialIdentity
     )
 
@@ -35,8 +36,8 @@ func ffiBootstrapPayloadMatchesServerLayout() {
 
     #expect(
         payload
-            == DeviceIdentityMaterial.bootstrapMessage(
-                transportPublicKey: transport,
+            == ffiAccountBootstrapPayload(
+                transportPubkey: transport,
                 credentialIdentity: credentialIdentity
             )
     )
@@ -107,9 +108,11 @@ func ffiKeyMaterialSignsAndVerifies() throws {
     let payload = Data("ffi-roundtrip".utf8)
     let keyMaterial = FfiAccountRootMaterial.generate()
     let signature = keyMaterial.sign(payload: payload)
+    let publicKey = try Curve25519.Signing.PublicKey(
+        rawRepresentation: keyMaterial.publicKeyBytes()
+    )
 
-    try keyMaterial.verify(payload: payload, signature: signature)
-
+    #expect(publicKey.isValidSignature(signature, for: payload))
     #expect(!signature.isEmpty)
     #expect(!keyMaterial.publicKeyBytes().isEmpty)
 }

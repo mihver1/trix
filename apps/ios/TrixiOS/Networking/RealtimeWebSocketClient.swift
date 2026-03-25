@@ -1,40 +1,48 @@
 import Foundation
 
 struct RealtimeConnectionUpdate {
-    let event: FfiRealtimeEvent
+    let batch: SafeMessengerEventBatch
+}
+
+enum RealtimeWebSocketClientError: LocalizedError {
+    case historySyncProgressUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .historySyncProgressUnavailable:
+            return "History sync progress updates are only available in the legacy diagnostics path."
+        }
+    }
 }
 
 actor RealtimeWebSocketClient {
     typealias EventHandler = @Sendable (RealtimeConnectionUpdate) async -> Void
     typealias DisconnectHandler = @Sendable (String?) async -> Void
 
-    private let websocket: FfiServerWebSocketClient
-    private let realtimeDriver: FfiRealtimeDriver
-    private let historyStore: FfiLocalHistoryStore
-    private let syncCoordinator: FfiSyncCoordinator
+    private let baseURLString: String
+    private let accessToken: String
+    private let identity: LocalDeviceIdentity
     private let onEvent: EventHandler
     private let onDisconnect: DisconnectHandler
 
-    private var receiveLoopTask: Task<Void, Never>?
-    private var heartbeatTask: Task<Void, Never>?
+    private var pollLoopTask: Task<Void, Never>?
     private var isRunning = false
+    private var checkpoint: String?
+
+    private static let pollIntervalNanoseconds: UInt64 = 1_500_000_000
 
     init(
         baseURLString: String,
         accessToken: String,
         identity: LocalDeviceIdentity,
+        checkpoint: String?,
         onEvent: @escaping EventHandler,
         onDisconnect: @escaping DisconnectHandler
-    ) throws {
-        let bindings = try TrixCorePersistentBridge.makeRealtimeBindings(
-            baseURLString: baseURLString,
-            accessToken: accessToken,
-            identity: identity
-        )
-        websocket = bindings.websocket
-        realtimeDriver = bindings.realtimeDriver
-        historyStore = bindings.historyStore
-        syncCoordinator = bindings.syncCoordinator
+    ) {
+        self.baseURLString = baseURLString
+        self.accessToken = accessToken
+        self.identity = identity
+        self.checkpoint = checkpoint
         self.onEvent = onEvent
         self.onDisconnect = onDisconnect
     }
@@ -45,12 +53,8 @@ actor RealtimeWebSocketClient {
         }
 
         isRunning = true
-
-        receiveLoopTask = Task {
-            await receiveLoop()
-        }
-        heartbeatTask = Task {
-            await heartbeatLoop()
+        pollLoopTask = Task {
+            await pollLoop()
         }
     }
 
@@ -59,7 +63,13 @@ actor RealtimeWebSocketClient {
     }
 
     func sendTypingUpdate(chatId: String, isTyping: Bool) throws {
-        try websocket.sendTypingUpdate(chatId: chatId, isTyping: isTyping)
+        try TrixCorePersistentBridge.setTyping(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity,
+            chatId: chatId,
+            isTyping: isTyping
+        )
     }
 
     func sendHistorySyncProgress(
@@ -67,60 +77,40 @@ actor RealtimeWebSocketClient {
         cursorJson: String?,
         completedChunks: UInt64?
     ) throws {
-        try websocket.sendHistorySyncProgress(
-            jobId: jobId,
-            cursorJson: cursorJson,
-            completedChunks: completedChunks
-        )
+        _ = jobId
+        _ = cursorJson
+        _ = completedChunks
+        throw RealtimeWebSocketClientError.historySyncProgressUnavailable
     }
 
-    private func receiveLoop() async {
+    private func pollLoop() async {
         while isRunning, !Task.isCancelled {
             do {
-                guard let event = try realtimeDriver.nextWebsocketEvent(
-                    websocket: websocket,
-                    coordinator: syncCoordinator,
-                    store: historyStore,
-                    autoAck: true
-                ) else {
-                    await shutdown(notifyDisconnect: isRunning, reason: "Realtime websocket closed.")
-                    return
+                let batch = try TrixCorePersistentBridge.getNewMessengerEvents(
+                    baseURLString: baseURLString,
+                    accessToken: accessToken,
+                    identity: identity,
+                    checkpoint: checkpoint
+                )
+                checkpoint = batch.checkpoint ?? checkpoint
+
+                if !batch.events.isEmpty {
+                    await onEvent(RealtimeConnectionUpdate(batch: batch))
                 }
-
-                await onEvent(RealtimeConnectionUpdate(event: event))
             } catch {
                 await shutdown(notifyDisconnect: isRunning, reason: error.localizedDescription)
                 return
             }
-        }
-    }
 
-    private func heartbeatLoop() async {
-        while isRunning, !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 20_000_000_000)
-
-            guard isRunning, !Task.isCancelled else {
-                return
-            }
-
-            do {
-                try websocket.sendPresencePing(nonce: nil)
-            } catch {
-                await shutdown(notifyDisconnect: isRunning, reason: error.localizedDescription)
-                return
-            }
+            try? await Task.sleep(nanoseconds: Self.pollIntervalNanoseconds)
         }
     }
 
     private func shutdown(notifyDisconnect: Bool, reason: String?) async {
         let shouldNotify = notifyDisconnect && isRunning
-
         isRunning = false
-        receiveLoopTask?.cancel()
-        receiveLoopTask = nil
-        heartbeatTask?.cancel()
-        heartbeatTask = nil
-        _ = try? websocket.closeSocket()
+        pollLoopTask?.cancel()
+        pollLoopTask = nil
 
         if shouldNotify {
             await onDisconnect(reason)
@@ -129,10 +119,6 @@ actor RealtimeWebSocketClient {
 }
 
 func isRecoverableRealtimeSessionReplacement(_ reason: String?) -> Bool {
-    switch reason {
-    case "replaced by a newer websocket session", "server shutting down":
-        return true
-    default:
-        return false
-    }
+    _ = reason
+    return false
 }

@@ -494,31 +494,54 @@ struct WorkspaceView: View {
                 title: "Trusted Devices",
                 subtitle: "Approve pending devices, revoke old ones and keep your account inventory clean."
             ) {
-                if model.devices.isEmpty {
-                    EmptyWorkspaceLabel("No devices are visible for this account yet.")
-                } else {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(model.devices) { device in
-                            DeviceRow(
-                                device: device,
-                                isCurrentDevice: device.deviceId == model.currentDeviceID,
-                                canApprove: model.hasAccountRootKey &&
-                                    device.deviceStatus == .pending &&
-                                    device.deviceId != model.currentDeviceID,
-                                isApproving: model.approvingDeviceIDs.contains(device.deviceId),
-                                canRevoke: model.hasAccountRootKey && device.deviceId != model.currentDeviceID,
-                                isRevoking: model.revokingDeviceIDs.contains(device.deviceId),
-                                approve: {
-                                    Task {
-                                        await model.approvePendingDevice(device)
-                                    }
-                                },
-                                revoke: {
-                                    Task {
-                                        await model.revokeDevice(device)
-                                    }
-                                }
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .center, spacing: 12) {
+                        Button {
+                            Task {
+                                await model.refreshDevices()
+                            }
+                        } label: {
+                            Label(
+                                model.isRefreshingDevices || model.isRefreshingWorkspace ? "Refreshing Devices…" : "Refresh Devices",
+                                systemImage: "arrow.triangle.2.circlepath"
                             )
+                        }
+                        .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                        .disabled(model.isRefreshingDevices || model.isRefreshingWorkspace)
+
+                        if model.devices.contains(where: { $0.deviceStatus == .pending }) {
+                            Text("Pending devices are shown first.")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(colors.warning)
+                        }
+                    }
+
+                    if model.devices.isEmpty {
+                        EmptyWorkspaceLabel("No devices are visible for this account yet.")
+                    } else {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(model.devices) { device in
+                                DeviceRow(
+                                    device: device,
+                                    isCurrentDevice: device.deviceId == model.currentDeviceID,
+                                    canApprove: model.hasAccountRootKey &&
+                                        device.deviceStatus == .pending &&
+                                        device.deviceId != model.currentDeviceID,
+                                    isApproving: model.approvingDeviceIDs.contains(device.deviceId),
+                                    canRevoke: model.hasAccountRootKey && device.deviceId != model.currentDeviceID,
+                                    isRevoking: model.revokingDeviceIDs.contains(device.deviceId),
+                                    approve: {
+                                        Task {
+                                            await model.approvePendingDevice(device)
+                                        }
+                                    },
+                                    revoke: {
+                                        Task {
+                                            await model.revokeDevice(device)
+                                        }
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -711,7 +734,9 @@ struct WorkspaceView: View {
                     profile: participantProfile(detail: detail, accountId: member.accountId),
                     member: member,
                     isCurrentAccount: member.accountId == currentAccount.accountId,
-                    canRemove: canManageSelectedChatMembers && member.accountId != currentAccount.accountId,
+                    canRemove: canManageSelectedChatMembers &&
+                        model.supportsSafeConversationMemberRemoval &&
+                        member.accountId != currentAccount.accountId,
                     isRemoving: model.removingChatMemberAccountIDs.contains(member.accountId)
                 ) {
                     Task {
@@ -785,7 +810,9 @@ struct WorkspaceView: View {
                     device: device,
                     ownerProfile: participantProfile(detail: detail, accountId: device.accountId),
                     isCurrentDevice: device.deviceId == model.currentDeviceID,
-                    canRemove: canManageSelectedChatDevices && device.deviceId != model.currentDeviceID,
+                    canRemove: canManageSelectedChatDevices &&
+                        model.supportsSafeConversationDeviceRemoval &&
+                        device.deviceId != model.currentDeviceID,
                     isRemoving: model.removingChatDeviceIDs.contains(device.deviceId)
                 ) {
                     Task {
@@ -849,8 +876,8 @@ struct WorkspaceView: View {
                     tone: .surface
                 )
                 WorkspaceSummaryChip(
-                    iconName: "tray.and.arrow.down.fill",
-                    label: "\(model.inboxItems.count) inbox item\(model.inboxItems.count == 1 ? "" : "s") loaded",
+                    iconName: "bubble.left.and.bubble.right.fill",
+                    label: "\(model.localChatListItems.count) local chat projection\(model.localChatListItems.count == 1 ? "" : "s")",
                     tone: .surface
                 )
                 WorkspaceSummaryChip(
@@ -1029,86 +1056,6 @@ struct WorkspaceView: View {
                         VStack(alignment: .leading, spacing: 12) {
                             ForEach(model.reservedKeyPackages) { package in
                                 ReservedKeyPackageRow(package: package)
-                            }
-                        }
-                    }
-                }
-            }
-
-            TrixPanel(
-                title: "Inbox Polling",
-                subtitle: "Incremental inbox inspection with local cache ingest and persisted sync cursors for this device."
-            ) {
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack(spacing: 12) {
-                        if let lease = model.activeInboxLease {
-                            TrixToneBadge(
-                                label: lease.isExpired ? "Lease expired" : "Lease active",
-                                tint: lease.isExpired ? colors.warning : colors.success
-                            )
-
-                            Text("\(lease.owner) until \(Self.linkExpiryFormatter.localizedString(for: lease.expiresAt, relativeTo: .now))")
-                                .font(.footnote.weight(.semibold))
-                                .foregroundStyle(colors.inkMuted)
-                        } else {
-                            TrixToneBadge(label: "No active lease", tint: colors.inkMuted)
-                        }
-                    }
-
-                    if let lastInboxCursor = model.lastInboxCursor {
-                        Text("Last seen inbox id \(lastInboxCursor)")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(colors.inkMuted)
-                    }
-
-                    TrixInputBlock(
-                        "After Inbox ID",
-                        hint: "Leave empty for the earliest visible pending items. Successful poll and lease actions advance this cursor automatically."
-                    ) {
-                        TextField("0", text: $model.inboxLeaseDraft.afterInboxID)
-                            .textFieldStyle(.plain)
-                            .font(.system(.body, design: .monospaced))
-                            .trixInputChrome()
-                    }
-
-                    if prefersSingleColumn {
-                        VStack(alignment: .leading, spacing: 16) {
-                            inboxLimitField
-                            inboxLeaseTTLField
-                            inboxLeaseOwnerField
-                        }
-                    } else {
-                        VStack(alignment: .leading, spacing: 16) {
-                            HStack(alignment: .top, spacing: 16) {
-                                inboxLimitField
-                                inboxLeaseTTLField
-                            }
-                            inboxLeaseOwnerField
-                        }
-                    }
-
-                    if prefersSingleColumn {
-                        VStack(spacing: 12) {
-                            inboxPrimaryActions
-                            inboxSecondaryActions
-                        }
-                    } else {
-                        inboxPrimaryActions
-                        inboxSecondaryActions
-                    }
-
-                    if !model.lastAckedInboxIDs.isEmpty {
-                        Text("last acked \(model.lastAckedInboxIDs.count) item(s) through inbox \(model.lastAckedInboxIDs.max() ?? 0)")
-                            .font(.footnote)
-                            .foregroundStyle(colors.inkMuted)
-                    }
-
-                    if model.inboxItems.isEmpty {
-                        EmptyWorkspaceLabel("No inbox items are loaded into this shell yet.")
-                    } else {
-                        VStack(alignment: .leading, spacing: 12) {
-                            ForEach(model.inboxItems) { item in
-                                InboxItemRow(item: item)
                             }
                         }
                     }
@@ -1670,102 +1617,6 @@ struct WorkspaceView: View {
         )
     }
 
-    private var inboxPrimaryActions: some View {
-        HStack(spacing: 12) {
-            Button {
-                Task {
-                    await model.refreshInbox()
-                }
-            } label: {
-                Label(
-                    model.isRefreshingInbox ? "Polling Inbox…" : "Poll Inbox",
-                    systemImage: "tray.and.arrow.down"
-                )
-            }
-            .buttonStyle(TrixActionButtonStyle(tone: .secondary))
-            .disabled(model.isRefreshingInbox || model.isLeasingInbox || model.isAckingInbox)
-
-            Button {
-                Task {
-                    await model.leaseInbox()
-                }
-            } label: {
-                Label(
-                    model.isLeasingInbox ? "Leasing Inbox…" : "Lease Inbox",
-                    systemImage: "lock.open.display"
-                )
-            }
-            .buttonStyle(TrixActionButtonStyle(tone: .primary))
-            .disabled(model.isRefreshingInbox || model.isLeasingInbox || model.isAckingInbox)
-        }
-    }
-
-    private var inboxSecondaryActions: some View {
-        HStack(spacing: 12) {
-            Button {
-                Task {
-                    await model.ackLoadedInboxItems()
-                }
-            } label: {
-                Label(
-                    model.isAckingInbox ? "Acking Loaded…" : "Ack Loaded",
-                    systemImage: "checkmark.circle"
-                )
-            }
-            .buttonStyle(TrixActionButtonStyle(tone: .ghost))
-            .disabled(!model.canAckLoadedInboxItems || model.isRefreshingInbox || model.isLeasingInbox)
-
-            Button {
-                model.useLastInboxCursor()
-            } label: {
-                Label("Use Last Cursor", systemImage: "arrow.turn.down.right")
-            }
-            .buttonStyle(TrixActionButtonStyle(tone: .ghost))
-            .disabled(model.lastInboxCursor == nil)
-
-            Button {
-                model.resetInboxCursor()
-            } label: {
-                Label("Reset Cursor", systemImage: "arrow.uturn.backward")
-            }
-            .buttonStyle(TrixActionButtonStyle(tone: .ghost))
-
-            Button {
-                model.clearLoadedInboxItems()
-            } label: {
-                Label("Clear Loaded", systemImage: "trash")
-            }
-            .buttonStyle(TrixActionButtonStyle(tone: .ghost))
-            .disabled(model.inboxItems.isEmpty)
-        }
-    }
-
-    private var inboxLimitField: some View {
-        TrixInputBlock("Limit", hint: "1...500 items per poll.") {
-            TextField("50", text: $model.inboxLeaseDraft.limit)
-                .textFieldStyle(.plain)
-                .font(.system(.body, design: .monospaced))
-                .trixInputChrome()
-        }
-    }
-
-    private var inboxLeaseTTLField: some View {
-        TrixInputBlock("Lease TTL", hint: "1...300 seconds for `/v0/inbox/lease`.") {
-            TextField("30", text: $model.inboxLeaseDraft.leaseTTLSeconds)
-                .textFieldStyle(.plain)
-                .font(.system(.body, design: .monospaced))
-                .trixInputChrome()
-        }
-    }
-
-    private var inboxLeaseOwnerField: some View {
-        TrixInputBlock("Lease Owner", hint: "Optional diagnostic owner label. Leave blank to let the server generate one.") {
-            TextField("macos-alpha:device", text: $model.inboxLeaseDraft.leaseOwner)
-                .textFieldStyle(.plain)
-                .font(.system(.body, design: .monospaced))
-                .trixInputChrome()
-        }
-    }
     private static let linkExpiryFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
@@ -2918,53 +2769,6 @@ private struct ChatRow: View {
             return "arrow.triangle.2.circlepath"
         }
     }
-}
-
-private struct InboxItemRow: View {
-    @Environment(\.trixColors) private var colors
-    let item: InboxItem
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("inbox \(item.inboxId) • seq \(item.message.serverSeq)")
-                        .font(.headline)
-                        .foregroundStyle(colors.ink)
-                    Text("chat \(shortID(item.message.chatId)) • sender \(item.message.senderShortID)")
-                        .font(.subheadline)
-                        .foregroundStyle(colors.inkMuted)
-                }
-                Spacer()
-                Text(Self.relativeFormatter.localizedString(for: item.message.createdAt, relativeTo: .now))
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(colors.inkMuted)
-            }
-
-            HStack(spacing: 10) {
-                InlineMeta(label: item.message.messageKind.label)
-                InlineMeta(label: item.message.contentType.label)
-                InlineMeta(label: "\(item.message.ciphertextSizeBytes) bytes")
-                InlineMeta(label: "epoch \(item.message.epoch)")
-            }
-        }
-        .padding(16)
-        .background(colors.tileFill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(colors.outline, lineWidth: 1)
-        }
-    }
-
-    private func shortID(_ uuid: UUID) -> String {
-        String(uuid.uuidString.prefix(8)).lowercased()
-    }
-
-    private static let relativeFormatter: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter
-    }()
 }
 
 private enum WorkspaceMessageReceiptStatus: Int, Comparable {

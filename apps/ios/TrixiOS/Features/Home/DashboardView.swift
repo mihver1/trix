@@ -412,6 +412,7 @@ private struct SettingsHomeView: View {
                             canManageDevices: model.canManageAccountDevices,
                             capabilitySummary: model.deviceCapabilitySummary,
                             isLoading: model.isLoading,
+                            onReload: onReload,
                             onCreateLinkIntent: onCreateLinkIntent,
                             onApprovePendingDevice: onApprovePendingDevice,
                             onRevokeDevice: onRevokeDevice
@@ -679,6 +680,7 @@ private struct LinkedDevicesView: View {
     let canManageDevices: Bool
     let capabilitySummary: String
     let isLoading: Bool
+    let onReload: () -> Void
     let onCreateLinkIntent: () -> Void
     let onApprovePendingDevice: (String) -> Void
     let onRevokeDevice: (DeviceSummary) -> Void
@@ -804,6 +806,17 @@ private struct LinkedDevicesView: View {
         }
         .navigationTitle("Linked Devices")
         .navigationBarTitleDisplayMode(.inline)
+        .refreshable {
+            onReload()
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: onReload) {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .disabled(isLoading)
+            }
+        }
         .background(Color(uiColor: .systemGroupedBackground))
     }
 }

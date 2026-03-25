@@ -78,7 +78,7 @@ struct ChatSnapshot {
 
 struct DebugAttachmentSendOutcome {
     let createMessage: CreateMessageResponse
-    let blobId: String
+    let attachmentRef: String?
     let fileName: String?
 }
 
@@ -114,12 +114,22 @@ final class AppModel: ObservableObject {
     private var hasScheduledBackgroundRefresh = false
     private var cachedAuthSession: CachedAuthSession?
     private var realtimeAccessToken: String?
+    private var messengerSnapshot: SafeMessengerSnapshot?
+    private var messengerCheckpoint: String?
+    private var messengerReadStates: [String: LocalChatReadStateSnapshot] = [:]
     private var cachedAttachmentFiles: [String: DownloadedAttachmentFile] = [:]
     private var attachmentDownloadTasks: [String: Task<DownloadedAttachmentFile, Error>] = [:]
     private var backgroundRealtimeTaskID: UIBackgroundTaskIdentifier = .invalid
+    private var linkIntentPollingTask: Task<Void, Never>?
+    private var linkIntentPendingBaselineDeviceIds: Set<String> = []
+    private static let linkIntentPollingIntervalNanoseconds: UInt64 = 3_000_000_000
 
     init(identityStore: LocalDeviceIdentityStore = LocalDeviceIdentityStore()) {
         self.identityStore = identityStore
+    }
+
+    deinit {
+        linkIntentPollingTask?.cancel()
     }
 
     var hasProvisionedIdentity: Bool {
@@ -193,6 +203,9 @@ final class AppModel: ObservableObject {
                     invalidateCachedAuthSession()
                     await stopRealtimeConnection()
                     dashboard = nil
+                    messengerSnapshot = nil
+                    messengerCheckpoint = nil
+                    messengerReadStates = [:]
                     updateLocalCoreStateSnapshot(identity: localIdentity)
                     systemSnapshot = try? await fetchSystemSnapshot(client: client)
                     lastUpdatedAt = Date()
@@ -201,6 +214,9 @@ final class AppModel: ObservableObject {
                 await stopRealtimeConnection()
                 dashboard = nil
                 localCoreState = nil
+                messengerSnapshot = nil
+                messengerCheckpoint = nil
+                messengerReadStates = [:]
                 systemSnapshot = try await fetchSystemSnapshot(client: client)
                 lastUpdatedAt = Date()
             }
@@ -212,6 +228,10 @@ final class AppModel: ObservableObject {
     func handleAppDidBecomeActive(baseURLString: String) async {
         currentServerBaseURLString = normalizedBaseURLString(baseURLString)
         endBackgroundRealtimeTask()
+
+        if activeLinkIntent != nil {
+            await refreshLinkedDevices(baseURLString: baseURLString, suppressErrors: true)
+        }
 
         guard localIdentity != nil else {
             return
@@ -321,20 +341,10 @@ final class AppModel: ObservableObject {
         do {
             let client = try APIClient(baseURLString: baseURLString)
             let bootstrapMaterial = try DeviceBootstrapMaterial.generate()
-            let preparedState = try TrixCorePersistentBridge.prepareLinkedDeviceState(
+            let localIdentity = try TrixCorePersistentBridge.completeLinkDevice(
                 payload: payload,
                 form: form,
                 bootstrapMaterial: bootstrapMaterial
-            )
-            let response = try TrixCoreServerBridge.completeLinkIntent(
-                baseURLString: baseURLString,
-                payload: payload,
-                form: form,
-                preparedState: preparedState
-            )
-            let localIdentity = try TrixCorePersistentBridge.finalizeLinkedDeviceState(
-                preparedState: preparedState,
-                pendingDeviceId: response.pendingDeviceId
             )
 
             try identityStore.save(localIdentity)
@@ -342,6 +352,7 @@ final class AppModel: ObservableObject {
             updateLocalCoreStateSnapshot(identity: localIdentity)
             dashboard = nil
             activeLinkIntent = nil
+            stopLinkIntentRefreshLoop()
             invalidateCachedAuthSession()
             systemSnapshot = try await fetchSystemSnapshot(client: client)
             lastUpdatedAt = Date()
@@ -355,11 +366,15 @@ final class AppModel: ObservableObject {
             if let localIdentity {
             try? TrixCorePersistentBridge.deletePersistentState(identity: localIdentity)
         }
+        stopLinkIntentRefreshLoop()
         disconnectRealtimeConnection()
         invalidateCachedAuthSession()
         try identityStore.delete()
         localIdentity = nil
         localCoreState = nil
+            messengerSnapshot = nil
+            messengerCheckpoint = nil
+            messengerReadStates = [:]
             dashboard = nil
             activeLinkIntent = nil
             directoryAccountCache = [:]
@@ -383,12 +398,23 @@ final class AppModel: ObservableObject {
         }
 
         do {
+            stopLinkIntentRefreshLoop()
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try TrixCoreServerBridge.createLinkIntent(
+            let response = try TrixCorePersistentBridge.createLinkDeviceIntent(
                 baseURLString: baseURLString,
-                accessToken: context.session.accessToken
+                accessToken: context.session.accessToken,
+                identity: context.identity
             )
+            let baselineSnapshot = try? TrixCorePersistentBridge.loadMessengerSnapshot(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: context.identity
+            )
+            let baselineDevices = baselineSnapshot?.devices ?? dashboard?.devices ?? []
+            linkIntentPendingBaselineDeviceIds = pendingDeviceIds(in: baselineDevices)
+            applyLoadedDevicesToDashboard(baselineDevices)
             activeLinkIntent = response
+            startLinkIntentRefreshLoop(baseURLString: baseURLString)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -396,6 +422,7 @@ final class AppModel: ObservableObject {
 
     func dismissActiveLinkIntent() {
         activeLinkIntent = nil
+        stopLinkIntentRefreshLoop()
     }
 
     @discardableResult
@@ -416,7 +443,7 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try TrixCoreServerBridge.approvePendingDevice(
+            let response = try TrixCorePersistentBridge.approveLinkedDevice(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
@@ -455,7 +482,7 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let _: RevokeDeviceResponse = try TrixCoreServerBridge.revokeDevice(
+            let _: RevokeDeviceResponse = try TrixCorePersistentBridge.revokeDevice(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
@@ -684,7 +711,7 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try TrixCorePersistentBridge.createChatControl(
+            let response = try TrixCorePersistentBridge.createConversation(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
@@ -727,7 +754,7 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try TrixCorePersistentBridge.addChatMembersControl(
+            let response = try TrixCorePersistentBridge.addConversationMembers(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
@@ -769,7 +796,7 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try TrixCorePersistentBridge.removeChatMembersControl(
+            let response = try TrixCorePersistentBridge.removeConversationMembers(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
@@ -818,7 +845,7 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try TrixCorePersistentBridge.addChatDevicesControl(
+            let response = try TrixCorePersistentBridge.addConversationDevices(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
@@ -860,7 +887,7 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try TrixCorePersistentBridge.removeChatDevicesControl(
+            let response = try TrixCorePersistentBridge.removeConversationDevices(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
@@ -880,7 +907,6 @@ final class AppModel: ObservableObject {
     func postDebugMessage(
         baseURLString: String,
         chatId: String,
-        epoch: UInt64,
         draft: DebugMessageDraft
     ) async -> CreateMessageResponse? {
         guard !isLoading else {
@@ -901,19 +927,18 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try TrixCorePersistentBridge.sendMessageBody(
+            let response = try TrixCorePersistentBridge.sendMessage(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
                 chatId: chatId,
-                body: try TrixCoreMessageBridge.messageBody(for: draft)
+                draft: draft
             )
 
-            updateLocalCoreStateSnapshot(identity: context.identity)
-            _ = applyLocalCoreStateOverlay(
-                session: context.session,
-                ackedInboxIds: [],
-                changedChatIds: [chatId]
+            try await refreshSafeMessengerState(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: context.identity
             )
             return response
         } catch {
@@ -926,7 +951,6 @@ final class AppModel: ObservableObject {
     func postDebugAttachment(
         baseURLString: String,
         chatId: String,
-        epoch: UInt64,
         fileURL: URL
     ) async -> DebugAttachmentSendOutcome? {
         guard !isLoading else {
@@ -942,36 +966,20 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let attachmentUpload = try TrixCoreMessageBridge.readAttachmentUploadMaterial(fileURL: fileURL)
-            let blobClient = try FfiServerApiClient(
-                baseUrl: baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
-            )
-            try blobClient.setAccessToken(accessToken: context.session.accessToken)
-
-            let uploadedAttachment = try blobClient.uploadAttachment(
-                chatId: chatId,
-                payload: attachmentUpload.payload,
-                params: attachmentUpload.params
-            )
-            let response = try TrixCorePersistentBridge.sendMessageBody(
+            let response = try TrixCorePersistentBridge.sendAttachment(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
                 chatId: chatId,
-                body: uploadedAttachment.body
+                fileURL: fileURL
             )
 
-            updateLocalCoreStateSnapshot(identity: context.identity)
-            _ = applyLocalCoreStateOverlay(
-                session: context.session,
-                ackedInboxIds: [],
-                changedChatIds: [chatId]
+            try await refreshSafeMessengerState(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: context.identity
             )
-            return DebugAttachmentSendOutcome(
-                createMessage: response,
-                blobId: uploadedAttachment.blobId,
-                fileName: uploadedAttachment.body.fileName
-            )
+            return response
         } catch {
             errorMessage = error.localizedDescription
             return nil
@@ -981,7 +989,7 @@ final class AppModel: ObservableObject {
     @discardableResult
     func downloadAttachment(
         baseURLString: String,
-        body: FfiMessageBody
+        attachment: SafeMessengerAttachment
     ) async -> DownloadedAttachmentFile? {
         guard !isLoading else {
             return nil
@@ -996,33 +1004,11 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let blobClient = try FfiServerApiClient(
-                baseUrl: baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
-            )
-            try blobClient.setAccessToken(accessToken: context.session.accessToken)
-
-            let downloadedAttachment = try blobClient.downloadAttachment(body: body)
-            let fileName = TrixCoreMessageBridge.suggestedAttachmentFileName(for: downloadedAttachment.body)
-            let downloadsDirectory = FileManager.default.temporaryDirectory
-                .appendingPathComponent("TrixAttachments", isDirectory: true)
-            try FileManager.default.createDirectory(
-                at: downloadsDirectory,
-                withIntermediateDirectories: true
-            )
-
-            let destinationURL = downloadsDirectory
-                .appendingPathComponent(UUID().uuidString, isDirectory: true)
-                .appendingPathComponent(fileName)
-            try FileManager.default.createDirectory(
-                at: destinationURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try downloadedAttachment.plaintext.write(to: destinationURL, options: .atomic)
-
-            return DownloadedAttachmentFile(
-                fileURL: destinationURL,
-                fileName: fileName,
-                mimeType: downloadedAttachment.body.mimeType
+            return try TrixCorePersistentBridge.getAttachment(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: context.identity,
+                attachment: attachment
             )
         } catch {
             errorMessage = error.localizedDescription
@@ -1395,6 +1381,21 @@ final class AppModel: ObservableObject {
         )
     }
 
+    func fetchConversationSnapshot(
+        baseURLString: String,
+        chatId: String
+    ) async throws -> SafeConversationSnapshot {
+        let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+        let snapshot = try TrixCorePersistentBridge.loadConversationSnapshot(
+            baseURLString: baseURLString,
+            accessToken: context.session.accessToken,
+            identity: context.identity,
+            chatId: chatId
+        )
+        seedDirectoryAccountCache(with: snapshot.detail.participantProfiles)
+        return snapshot
+    }
+
     private func backfillChatHistoryFromServer(
         client: APIClient,
         accessToken: String,
@@ -1584,25 +1585,8 @@ final class AppModel: ObservableObject {
             accessToken: session.accessToken,
             identity: identity
         )
-        _ = try? TrixCorePersistentBridge.repairLinkedDevicePersistentStateIfNeeded(
-            identity: effectiveIdentity
-        )
-
-        do {
-            _ = try TrixCorePersistentBridge.ensureOwnDeviceKeyPackages(
-                baseURLString: baseURLString,
-                accessToken: session.accessToken,
-                identity: effectiveIdentity
-            )
-        } catch {
-            errorMessage = error.localizedDescription
-        }
 
         async let profile = TrixCoreServerBridge.getAccountProfile(
-            baseURLString: baseURLString,
-            accessToken: session.accessToken
-        )
-        async let devices = TrixCoreServerBridge.listDevices(
             baseURLString: baseURLString,
             accessToken: session.accessToken
         )
@@ -1610,56 +1594,36 @@ final class AppModel: ObservableObject {
             baseURLString: baseURLString,
             accessToken: session.accessToken
         )
-        async let chats = TrixCoreServerBridge.listChats(
-            baseURLString: baseURLString,
-            accessToken: session.accessToken
-        )
-        async let inbox = TrixCoreServerBridge.getInbox(
+        async let safeSnapshotTask: SafeMessengerSnapshot = TrixCorePersistentBridge.loadMessengerSnapshot(
             baseURLString: baseURLString,
             accessToken: session.accessToken,
-            afterInboxId: nil,
-            limit: 50
+            identity: effectiveIdentity
         )
 
         let resolvedSystemSnapshot = try await systemSnapshot
         let resolvedProfile = try await profile
-        let resolvedDevices = try await devices
         let resolvedHistorySyncJobs = try await historySyncJobs
-        let resolvedChats = try await chats
-        let resolvedInbox = try await inbox
+        let resolvedSafeSnapshot = try await safeSnapshotTask
 
-        let changedChatIds = applyServerStateToLocalStore(
-            identity: effectiveIdentity,
-            chats: resolvedChats.chats,
-            inboxItems: resolvedInbox.items
+        messengerSnapshot = resolvedSafeSnapshot
+        messengerCheckpoint = resolvedSafeSnapshot.checkpoint
+        syncLocalIdentityWithMessengerSnapshot(
+            resolvedSafeSnapshot,
+            currentIdentity: effectiveIdentity
         )
-        await hydrateAndProjectChangedChats(
-            client: client,
-            accessToken: session.accessToken,
-            identity: effectiveIdentity,
-            chatIds: changedChatIds
-        )
-        let acknowledgedInboxIds = await acknowledgeInboxIntoLocalSyncStateIfPossible(
-            baseURLString: try client.baseURLString(),
-            accessToken: session.accessToken,
-            identity: effectiveIdentity,
-            inboxItems: resolvedInbox.items
-        )
-        updateLocalCoreStateSnapshot(identity: effectiveIdentity)
-        let acknowledgedSet = Set(acknowledgedInboxIds)
-        let remainingInboxItems = resolvedInbox.items.filter { !acknowledgedSet.contains($0.inboxId) }
+        updateLocalCoreStateSnapshot(identity: localIdentity ?? effectiveIdentity)
 
         self.systemSnapshot = resolvedSystemSnapshot
         let dashboard = DashboardData(
             session: session,
             profile: resolvedProfile,
-            devices: resolvedDevices.devices,
-            historySyncJobs: resolvedHistorySyncJobs.jobs,
-            chats: mergeChatSummaries(
-                existing: resolvedChats.chats,
-                inboxItems: remainingInboxItems
+            devices: sortedDevicesForDisplay(
+                resolvedSafeSnapshot.devices,
+                currentDeviceId: resolvedProfile.deviceId
             ),
-            inboxItems: remainingInboxItems
+            historySyncJobs: resolvedHistorySyncJobs.jobs,
+            chats: resolvedSafeSnapshot.chats,
+            inboxItems: []
         )
         directoryAccountCache[dashboard.profile.accountId] = DirectoryAccountSummary(
             accountId: dashboard.profile.accountId,
@@ -1680,6 +1644,107 @@ final class AppModel: ObservableObject {
                 identity: effectiveIdentity
             )
         }
+    }
+
+    private func refreshLinkedDevices(baseURLString: String, suppressErrors: Bool) async {
+        do {
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            let snapshot = try TrixCorePersistentBridge.loadMessengerSnapshot(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: context.identity
+            )
+            messengerSnapshot = snapshot
+            messengerCheckpoint = snapshot.checkpoint
+            updateLocalCoreStateSnapshot(identity: localIdentity ?? context.identity)
+            applyLoadedDevicesToDashboard(snapshot.devices)
+        } catch {
+            if !suppressErrors {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func applyLoadedDevicesToDashboard(_ devices: [DeviceSummary]) {
+        guard let dashboard else {
+            return
+        }
+
+        let sortedDevices = sortedDevicesForDisplay(
+            devices,
+            currentDeviceId: dashboard.profile.deviceId
+        )
+        let newPendingIds = pendingDeviceIds(in: sortedDevices)
+            .subtracting(linkIntentPendingBaselineDeviceIds)
+
+        self.dashboard = DashboardData(
+            session: dashboard.session,
+            profile: dashboard.profile,
+            devices: sortedDevices,
+            historySyncJobs: dashboard.historySyncJobs,
+            chats: dashboard.chats,
+            inboxItems: dashboard.inboxItems
+        )
+        lastUpdatedAt = Date()
+
+        guard activeLinkIntent != nil,
+              newPendingIds.isEmpty == false else {
+            return
+        }
+
+        activeLinkIntent = nil
+        stopLinkIntentRefreshLoop()
+    }
+
+    private func startLinkIntentRefreshLoop(baseURLString: String) {
+        guard let activeLinkIntent else {
+            return
+        }
+
+        linkIntentPollingTask?.cancel()
+        linkIntentPollingTask = nil
+        let normalizedBaseURL = normalizedBaseURLString(baseURLString)
+        let linkIntentId = activeLinkIntent.linkIntentId
+        let expiresAtUnix = activeLinkIntent.expiresAtUnix
+
+        linkIntentPollingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else {
+                    return
+                }
+                guard self.activeLinkIntent?.linkIntentId == linkIntentId else {
+                    return
+                }
+
+                let nowUnix = UInt64(Date().timeIntervalSince1970)
+                if nowUnix >= expiresAtUnix {
+                    self.activeLinkIntent = nil
+                    self.stopLinkIntentRefreshLoop()
+                    return
+                }
+
+                if !self.isLoading {
+                    await self.refreshLinkedDevices(
+                        baseURLString: normalizedBaseURL,
+                        suppressErrors: true
+                    )
+                }
+
+                let remainingNanoseconds = UInt64(
+                    min(
+                        Double(expiresAtUnix - nowUnix),
+                        Double(Self.linkIntentPollingIntervalNanoseconds) / 1_000_000_000
+                    ) * 1_000_000_000
+                )
+                try? await Task.sleep(nanoseconds: max(remainingNanoseconds, 250_000_000))
+            }
+        }
+    }
+
+    private func stopLinkIntentRefreshLoop() {
+        linkIntentPollingTask?.cancel()
+        linkIntentPollingTask = nil
+        linkIntentPendingBaselineDeviceIds = []
     }
 
     private func authenticate(
@@ -1875,6 +1940,71 @@ final class AppModel: ObservableObject {
         baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private func refreshSafeMessengerState(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity
+    ) async throws {
+        let snapshot = try TrixCorePersistentBridge.loadMessengerSnapshot(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        )
+        messengerSnapshot = snapshot
+        messengerCheckpoint = snapshot.checkpoint
+        syncLocalIdentityWithMessengerSnapshot(snapshot, currentIdentity: identity)
+        updateLocalCoreStateSnapshot(identity: localIdentity ?? identity)
+
+        if let dashboard {
+            self.dashboard = DashboardData(
+                session: dashboard.session,
+                profile: dashboard.profile,
+                devices: sortedDevicesForDisplay(
+                    snapshot.devices,
+                    currentDeviceId: dashboard.profile.deviceId
+                ),
+                historySyncJobs: dashboard.historySyncJobs,
+                chats: snapshot.chats,
+                inboxItems: []
+            )
+            lastUpdatedAt = Date()
+
+            if activeLinkIntent != nil {
+                applyLoadedDevicesToDashboard(snapshot.devices)
+            }
+        }
+    }
+
+    private func syncLocalIdentityWithMessengerSnapshot(
+        _ snapshot: SafeMessengerSnapshot,
+        currentIdentity: LocalDeviceIdentity
+    ) {
+        let resolvedAccountId = snapshot.accountId ?? currentIdentity.accountId
+        let resolvedDeviceId = snapshot.deviceId ?? currentIdentity.deviceId
+        let resolvedSyncChatId = snapshot.accountSyncChatId ?? currentIdentity.accountSyncChatId
+        guard resolvedAccountId != currentIdentity.accountId
+                || resolvedDeviceId != currentIdentity.deviceId
+                || resolvedSyncChatId != currentIdentity.accountSyncChatId
+        else {
+            return
+        }
+
+        let updatedIdentity = LocalDeviceIdentity(
+            accountId: resolvedAccountId,
+            deviceId: resolvedDeviceId,
+            accountSyncChatId: resolvedSyncChatId,
+            deviceDisplayName: currentIdentity.deviceDisplayName,
+            platform: currentIdentity.platform,
+            credentialIdentity: currentIdentity.credentialIdentity,
+            accountRootPrivateKeyRaw: currentIdentity.accountRootPrivateKeyRaw,
+            transportPrivateKeyRaw: currentIdentity.transportPrivateKeyRaw,
+            trustState: currentIdentity.trustState,
+            capabilityState: currentIdentity.capabilityState
+        )
+        try? identityStore.save(updatedIdentity)
+        localIdentity = updatedIdentity
+    }
+
     @discardableResult
     func markChatReadLocally(chatId: String, throughServerSeq: UInt64?) -> Bool {
         guard let localIdentity else {
@@ -1925,6 +2055,52 @@ final class AppModel: ObservableObject {
         )
 
         return true
+    }
+
+    @discardableResult
+    func acknowledgeConversationRead(
+        baseURLString: String,
+        chatId: String,
+        throughMessageId: String?,
+        receiptTargetMessageId: String?
+    ) async -> Bool {
+        guard localIdentity != nil else {
+            return false
+        }
+
+        let previousReadCursor = messengerReadStates[chatId]?.readCursorServerSeq ?? 0
+
+        do {
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            let readState = try TrixCorePersistentBridge.markConversationRead(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: context.identity,
+                chatId: chatId,
+                throughMessageId: throughMessageId
+            )
+            messengerReadStates[chatId] = readState
+            try await refreshSafeMessengerState(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: context.identity
+            )
+
+            guard readState.readCursorServerSeq > previousReadCursor,
+                  let receiptTargetMessageId = receiptTargetMessageId?.trix_trimmedOrNil()
+            else {
+                return true
+            }
+
+            await sendReadReceipt(
+                baseURLString: baseURLString,
+                chatId: chatId,
+                receiptTargetMessageId: receiptTargetMessageId
+            )
+            return true
+        } catch {
+            return false
+        }
     }
 
     func sendTypingUpdate(chatId: String, isTyping: Bool) async {
@@ -1978,27 +2154,21 @@ final class AppModel: ObservableObject {
         let connectionID = UUID()
         realtimeConnectionID = connectionID
 
-        do {
-            let client = try RealtimeWebSocketClient(
-                baseURLString: baseURLString,
-                accessToken: accessToken,
-                identity: identity,
-                onEvent: { [weak self] update in
-                    await self?.handleRealtimeUpdate(update, connectionID: connectionID)
-                },
-                onDisconnect: { [weak self] reason in
-                    await self?.handleRealtimeDisconnect(reason, connectionID: connectionID)
-                }
-            )
-            realtimeClient = client
-            realtimeAccessToken = accessToken
-            await client.start()
-        } catch {
-            realtimeClient = nil
-            realtimeAccessToken = nil
-            errorMessage = error.localizedDescription
-            scheduleBackgroundRefresh(delayNanoseconds: 300_000_000)
-        }
+        let client = RealtimeWebSocketClient(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity,
+            checkpoint: messengerCheckpoint,
+            onEvent: { [weak self] update in
+                await self?.handleRealtimeUpdate(update, connectionID: connectionID)
+            },
+            onDisconnect: { [weak self] reason in
+                await self?.handleRealtimeDisconnect(reason, connectionID: connectionID)
+            }
+        )
+        realtimeClient = client
+        realtimeAccessToken = accessToken
+        await client.start()
     }
 
     private func stopRealtimeConnection() async {
@@ -2030,60 +2200,28 @@ final class AppModel: ObservableObject {
             return
         }
 
-        switch update.event.kind {
-        case .hello:
-            lastUpdatedAt = Date()
-        case .inboxItems:
-            if let localIdentity,
-               let baseURLString = currentServerBaseURLString,
-               let accessToken = realtimeAccessToken,
-               let client = try? APIClient(baseURLString: baseURLString) {
-                await hydrateAndProjectChangedChats(
-                    client: client,
-                    accessToken: accessToken,
-                    identity: localIdentity,
-                    chatIds: Set(update.event.report?.changedChatIds ?? [])
-                )
-                updateLocalCoreStateSnapshot(identity: localIdentity)
-            } else if let localIdentity {
-                updateLocalCoreStateSnapshot(identity: localIdentity)
-            }
-            if let dashboard {
-                let applied = applyLocalCoreStateOverlay(
-                    session: dashboard.session,
-                    ackedInboxIds: [],
-                    changedChatIds: update.event.report?.changedChatIds ?? []
-                )
-                if !applied {
-                    scheduleBackgroundRefresh(delayNanoseconds: 300_000_000)
-                }
-            } else {
-                scheduleBackgroundRefresh(delayNanoseconds: 300_000_000)
-            }
-        case .acked:
-            if let localIdentity {
-                updateLocalCoreStateSnapshot(identity: localIdentity)
-            }
-            removeDashboardInboxItems(update.event.serverAckedInboxIds)
-        case .pong:
-            break
-        case .sessionReplaced:
-            disconnectRealtimeConnection()
-            if let reason = update.event.sessionReplacedReason?.trix_trimmedOrNil(),
-               !isRecoverableRealtimeSessionReplacement(reason) {
-                errorMessage = reason
-            }
-            scheduleBackgroundRefresh(
-                delayNanoseconds: isRecoverableRealtimeSessionReplacement(update.event.sessionReplacedReason)
-                    ? 300_000_000
-                    : 1_500_000_000
+        messengerCheckpoint = update.batch.checkpoint ?? messengerCheckpoint
+        mergeSafeMessengerReadStates(from: update.batch)
+
+        guard !update.batch.events.isEmpty,
+              let baseURLString = currentServerBaseURLString
+        else {
+            return
+        }
+
+        do {
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            let effectiveIdentity = try reconcileAuthenticatedIdentity(
+                baseURLString: try context.client.baseURLString(),
+                accessToken: context.session.accessToken,
+                identity: context.identity
             )
-        case .error:
-            errorMessage = update.event.errorMessage ?? "Realtime transport error."
-            disconnectRealtimeConnection()
-            scheduleBackgroundRefresh(delayNanoseconds: 1_500_000_000)
-        case .disconnected:
-            disconnectRealtimeConnection()
+            try await refreshSafeMessengerState(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: effectiveIdentity
+            )
+        } catch {
             scheduleBackgroundRefresh(delayNanoseconds: 300_000_000)
         }
     }
@@ -2205,36 +2343,42 @@ final class AppModel: ObservableObject {
                 accessToken: context.session.accessToken,
                 identity: context.identity
             )
-            _ = try? TrixCorePersistentBridge.repairLinkedDevicePersistentStateIfNeeded(
-                identity: effectiveIdentity
-            )
-            let result = try TrixCorePersistentBridge.pollRealtimeOnce(
+            let batch = try TrixCorePersistentBridge.getNewMessengerEvents(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
-                identity: effectiveIdentity
-            )
-            await hydrateAndProjectChangedChats(
-                client: context.client,
-                accessToken: context.session.accessToken,
                 identity: effectiveIdentity,
-                chatIds: Set(result.report.changedChatIds)
+                checkpoint: messengerCheckpoint
             )
-            updateLocalCoreStateSnapshot(identity: effectiveIdentity)
-            let applied = applyLocalCoreStateOverlay(
-                session: context.session,
-                ackedInboxIds: result.ackedInboxIds,
-                changedChatIds: result.report.changedChatIds
-            )
-            if applied {
-                await startRealtimeConnection(
+            messengerCheckpoint = batch.checkpoint ?? messengerCheckpoint
+            mergeSafeMessengerReadStates(from: batch)
+
+            if !batch.events.isEmpty || localIdentity?.deviceId != effectiveIdentity.deviceId {
+                try await refreshSafeMessengerState(
                     baseURLString: baseURLString,
                     accessToken: context.session.accessToken,
                     identity: effectiveIdentity
                 )
+            } else {
+                updateLocalCoreStateSnapshot(identity: localIdentity ?? effectiveIdentity)
             }
-            return applied
+
+            await startRealtimeConnection(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: localIdentity ?? effectiveIdentity
+            )
+            return true
         } catch {
             return false
+        }
+    }
+
+    private func mergeSafeMessengerReadStates(from batch: SafeMessengerEventBatch) {
+        for event in batch.events {
+            guard let readState = event.readState else {
+                continue
+            }
+            messengerReadStates[readState.chatId] = readState
         }
     }
 
@@ -2508,6 +2652,38 @@ final class AppModel: ObservableObject {
     }
 
     private func updateLocalCoreStateSnapshot(identity: LocalDeviceIdentity) {
+        if let messengerSnapshot {
+            do {
+                let paths = try PersistentCorePaths(identity: identity)
+                let chatReadStates = messengerSnapshot.chatListItems.map { item in
+                    messengerReadStates[item.chatId] ?? LocalChatReadStateSnapshot(
+                        chatId: item.chatId,
+                        readCursorServerSeq: 0,
+                        unreadCount: item.unreadCount
+                    )
+                }
+
+                localCoreState = LocalCoreStateSnapshot(
+                    mlsStorageRoot: paths.mlsStorageRoot.path,
+                    historyDatabasePath: paths.stateDatabasePath.path,
+                    syncStatePath: paths.stateDatabasePath.path,
+                    ciphersuiteLabel: "Managed by FfiMessengerClient",
+                    leaseOwner: "safe_messenger",
+                    lastAckedInboxId: nil,
+                    localChats: messengerSnapshot.chats,
+                    localChatListItems: messengerSnapshot.chatListItems,
+                    chatCursors: messengerSnapshot.chatListItems.map {
+                        LocalChatCursorSnapshot(chatId: $0.chatId, lastServerSeq: $0.lastServerSeq)
+                    },
+                    chatReadStates: chatReadStates
+                )
+            } catch {
+                localCoreState = nil
+                errorMessage = error.localizedDescription
+            }
+            return
+        }
+
         do {
             localCoreState = try TrixCorePersistentBridge.localStateSnapshot(identity: identity)
         } catch {
@@ -2529,19 +2705,18 @@ final class AppModel: ObservableObject {
             receiptDraft.receiptKind = .read
             receiptDraft.receiptAtUnix = String(UInt64(Date().timeIntervalSince1970))
 
-            _ = try TrixCorePersistentBridge.sendMessageBody(
+            _ = try TrixCorePersistentBridge.sendMessage(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
                 chatId: chatId,
-                body: try TrixCoreMessageBridge.messageBody(for: receiptDraft)
+                draft: receiptDraft
             )
 
-            updateLocalCoreStateSnapshot(identity: context.identity)
-            _ = applyLocalCoreStateOverlay(
-                session: context.session,
-                ackedInboxIds: [],
-                changedChatIds: [chatId]
+            try await refreshSafeMessengerState(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: context.identity
             )
         } catch {
             // Read receipts are opportunistic; keep the chat open even if they fail.
@@ -2588,6 +2763,49 @@ private enum AppModelError: LocalizedError {
             return "Local identity is missing."
         }
     }
+}
+
+private func sortedDevicesForDisplay(
+    _ devices: [DeviceSummary],
+    currentDeviceId: String?
+) -> [DeviceSummary] {
+    devices.sorted { lhs, rhs in
+        let lhsPriority = deviceDisplayPriority(lhs, currentDeviceId: currentDeviceId)
+        let rhsPriority = deviceDisplayPriority(rhs, currentDeviceId: currentDeviceId)
+
+        if lhsPriority != rhsPriority {
+            return lhsPriority < rhsPriority
+        }
+
+        let nameComparison = lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName)
+        if nameComparison != .orderedSame {
+            return nameComparison == .orderedAscending
+        }
+
+        return lhs.deviceId.localizedCaseInsensitiveCompare(rhs.deviceId) == .orderedAscending
+    }
+}
+
+private func deviceDisplayPriority(
+    _ device: DeviceSummary,
+    currentDeviceId: String?
+) -> Int {
+    switch device.deviceStatus {
+    case .pending:
+        return 0
+    case .active:
+        return device.deviceId == currentDeviceId ? 1 : 2
+    case .revoked:
+        return 3
+    }
+}
+
+private func pendingDeviceIds(in devices: [DeviceSummary]) -> Set<String> {
+    Set(
+        devices.compactMap { device in
+            device.deviceStatus == .pending ? device.deviceId : nil
+        }
+    )
 }
 
 extension String {

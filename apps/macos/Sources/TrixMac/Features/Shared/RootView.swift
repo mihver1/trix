@@ -41,7 +41,16 @@ struct RootView: View {
                     TrixCanvas()
 
                     if model.showsWorkspace {
-                        WorkspaceView(model: model, availableSize: proxy.size)
+                        VStack(alignment: .leading, spacing: 20) {
+                            if let message = model.lastErrorMessage {
+                                ErrorStrip(message: message) {
+                                    model.dismissError()
+                                }
+                            }
+
+                            WorkspaceView(model: model, availableSize: proxy.size)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        }
                             .padding(.top, 26)
                             .padding(.horizontal, 22)
                             .padding(.bottom, 20)

@@ -186,6 +186,8 @@ async fn bot_falls_back_to_polling_after_session_replaced() -> Result<()> {
     let mut replacement_ws = replacement_client.connect_websocket().await?;
 
     wait_for_connection_mode(&mut events, ConnectionMode::Polling).await?;
+    replacement_ws.close().await.ok();
+    sleep(Duration::from_millis(250)).await;
 
     let mut alice = create_authenticated_identity(&server.base_url, "alice").await?;
     let mut alice_store = LocalHistoryStore::new();
@@ -209,7 +211,6 @@ async fn bot_falls_back_to_polling_after_session_replaced() -> Result<()> {
         .await?;
 
     wait_for_chat(&bot, create_outcome.chat_id).await?;
-    replacement_ws.close().await.ok();
     bot.stop().await?;
     server.shutdown().await?;
     fs::remove_dir_all(state_dir).ok();

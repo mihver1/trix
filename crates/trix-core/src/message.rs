@@ -82,6 +82,12 @@ impl MessageBody {
 
     pub fn from_bytes(content_type: ContentType, bytes: &[u8]) -> Result<Self> {
         if matches!(content_type, ContentType::Text) {
+            if let Ok(text) = serde_json::from_slice::<String>(bytes) {
+                return Ok(Self::Text(TextMessageBody { text }));
+            }
+            if let Ok(body) = serde_json::from_slice::<TextMessageBody>(bytes) {
+                return Ok(Self::Text(body));
+            }
             if let Ok(text) = std::str::from_utf8(bytes) {
                 if !looks_like_json(text) {
                     return Ok(Self::Text(TextMessageBody {
@@ -121,6 +127,28 @@ mod tests {
     #[test]
     fn text_body_round_trip_supports_plaintext_fallback() {
         let parsed = MessageBody::from_bytes(ContentType::Text, b"hello").unwrap();
+        assert_eq!(
+            parsed,
+            MessageBody::Text(TextMessageBody {
+                text: "hello".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn text_body_round_trip_supports_legacy_json_string() {
+        let parsed = MessageBody::from_bytes(ContentType::Text, br#""hello""#).unwrap();
+        assert_eq!(
+            parsed,
+            MessageBody::Text(TextMessageBody {
+                text: "hello".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn text_body_round_trip_supports_legacy_json_object_without_kind() {
+        let parsed = MessageBody::from_bytes(ContentType::Text, br#"{"text":"hello"}"#).unwrap();
         assert_eq!(
             parsed,
             MessageBody::Text(TextMessageBody {

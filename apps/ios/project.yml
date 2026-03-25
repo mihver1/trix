@@ -35,3 +35,24 @@ targets:
         DEVELOPMENT_ASSET_PATHS: "\"TrixiOS/Resources\""
     scheme:
       gatherCoverageData: false
+      testTargets:
+        - TrixiOSTests
+
+  TrixiOSTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: TrixiOSTests
+    dependencies:
+      - target: TrixiOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trixapp.tests
+        PRODUCT_NAME: "$(TARGET_NAME)"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: HGY33KYKQ2
+        TARGETED_DEVICE_FAMILY: "1,2"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Trix.app/Trix"
+        BUNDLE_LOADER: "$(TEST_HOST)"

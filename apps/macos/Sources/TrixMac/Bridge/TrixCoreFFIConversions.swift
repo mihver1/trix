@@ -131,6 +131,36 @@ extension TypedMessageBodyKind {
             return .chatEvent
         }
     }
+
+    init(_ ffiValue: FfiMessengerMessageBodyKind) {
+        switch ffiValue {
+        case .text:
+            self = .text
+        case .reaction:
+            self = .reaction
+        case .receipt:
+            self = .receipt
+        case .attachment:
+            self = .attachment
+        case .chatEvent:
+            self = .chatEvent
+        }
+    }
+
+    var ffiMessengerValue: FfiMessengerMessageBodyKind {
+        switch self {
+        case .text:
+            return .text
+        case .reaction:
+            return .reaction
+        case .receipt:
+            return .receipt
+        case .attachment:
+            return .attachment
+        case .chatEvent:
+            return .chatEvent
+        }
+    }
 }
 
 extension ReactionAction {
@@ -278,17 +308,6 @@ extension CompleteLinkIntentRequest {
     }
 }
 
-extension LeaseInboxRequest {
-    func ffiValue() throws -> FfiLeaseInboxParams {
-        FfiLeaseInboxParams(
-            leaseOwner: leaseOwner,
-            limit: try limit.map { try TrixCoreCodec.uint32($0, label: "lease limit") },
-            afterInboxId: afterInboxId,
-            leaseTtlSeconds: leaseTtlSeconds
-        )
-    }
-}
-
 extension CompleteHistorySyncJobRequest {
     func ffiCursorJSONString() throws -> String? {
         try TrixCoreCodec.encodeJSONString(cursorJson)
@@ -307,6 +326,7 @@ extension TypedMessageBody {
             reactionAction: ffiValue.reactionAction.map(ReactionAction.init),
             receiptType: ffiValue.receiptType.map(ReceiptType.init),
             receiptAtUnix: ffiValue.receiptAtUnix,
+            attachmentRef: nil,
             blobId: ffiValue.blobId,
             mimeType: ffiValue.mimeType,
             sizeBytes: ffiValue.sizeBytes,
@@ -341,6 +361,54 @@ extension TypedMessageBody {
             nonce: nonce,
             eventType: eventType,
             eventJson: eventJson
+        )
+    }
+
+    init(ffiMessengerValue: FfiMessengerMessageBody) throws {
+        let attachment = ffiMessengerValue.attachment
+        self.init(
+            kind: TypedMessageBodyKind(ffiMessengerValue.kind),
+            text: ffiMessengerValue.text,
+            targetMessageId: try ffiMessengerValue.targetMessageId.map {
+                try TrixCoreCodec.uuid($0, label: "target_message_id")
+            },
+            emoji: ffiMessengerValue.emoji,
+            reactionAction: ffiMessengerValue.reactionAction.map(ReactionAction.init),
+            receiptType: ffiMessengerValue.receiptType.map(ReceiptType.init),
+            receiptAtUnix: ffiMessengerValue.receiptAtUnix,
+            attachmentRef: attachment?.attachmentRef,
+            blobId: nil,
+            mimeType: attachment?.mimeType,
+            sizeBytes: attachment?.sizeBytes,
+            sha256: nil,
+            fileName: attachment?.fileName,
+            widthPx: attachment?.widthPx,
+            heightPx: attachment?.heightPx,
+            fileKey: nil,
+            nonce: nil,
+            eventType: ffiMessengerValue.eventType,
+            eventJson: ffiMessengerValue.eventJson
+        )
+    }
+
+    func ffiMessengerSendRequest(
+        conversationId: UUID,
+        messageId: UUID? = nil,
+        attachmentTokens: [String] = []
+    ) -> FfiMessengerSendMessageRequest {
+        FfiMessengerSendMessageRequest(
+            conversationId: conversationId.uuidString,
+            messageId: messageId?.uuidString,
+            kind: kind.ffiMessengerValue,
+            text: text,
+            targetMessageId: targetMessageId?.uuidString,
+            emoji: emoji,
+            reactionAction: reactionAction?.ffiValue,
+            receiptType: receiptType?.ffiValue,
+            receiptAtUnix: receiptAtUnix,
+            eventType: eventType,
+            eventJson: eventJson,
+            attachmentTokens: attachmentTokens
         )
     }
 }
@@ -744,37 +812,6 @@ extension ChatHistoryResponse {
     }
 }
 
-extension InboxItem {
-    init(ffiValue: FfiInboxItem) throws {
-        self.init(
-            inboxId: ffiValue.inboxId,
-            message: try MessageEnvelope(ffiValue: ffiValue.message)
-        )
-    }
-}
-
-extension InboxResponse {
-    init(ffiValue: FfiInbox) throws {
-        self.init(items: try ffiValue.items.map { try InboxItem(ffiValue: $0) })
-    }
-}
-
-extension LeaseInboxResponse {
-    init(ffiValue: FfiLeaseInboxResponse) throws {
-        self.init(
-            leaseOwner: ffiValue.leaseOwner,
-            leaseExpiresAtUnix: ffiValue.leaseExpiresAtUnix,
-            items: try ffiValue.items.map { try InboxItem(ffiValue: $0) }
-        )
-    }
-}
-
-extension AckInboxResponse {
-    init(ffiValue: FfiAckInboxResponse) {
-        self.init(ackedInboxIds: ffiValue.ackedInboxIds)
-    }
-}
-
 extension HistorySyncJobSummary {
     init(ffiValue: FfiHistorySyncJob, role: HistorySyncJobRole) throws {
         self.init(
@@ -836,6 +873,100 @@ extension LocalTimelineItem {
             previewText: ffiValue.previewText,
             mergedEpoch: ffiValue.mergedEpoch,
             createdAtUnix: ffiValue.createdAtUnix
+        )
+    }
+
+    init(ffiMessengerValue: FfiMessengerMessageRecord) throws {
+        let resolvedBody = try ffiMessengerValue.body.map { try TypedMessageBody(ffiMessengerValue: $0) }
+        let resolvedContentType = ContentType(ffiMessengerValue.contentType)
+        let resolvedMessageKind: MessageKind = resolvedContentType == .chatEvent ? .system : .application
+        let resolvedProjectionKind: LocalProjectionKind =
+            resolvedContentType == .chatEvent ? .system : .applicationMessage
+
+        let resolvedSenderDisplayName: String = {
+            if let senderDisplayName = ffiMessengerValue.senderDisplayName?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               !senderDisplayName.isEmpty {
+                return senderDisplayName
+            }
+            return String(ffiMessengerValue.senderAccountId.prefix(8)).lowercased()
+        }()
+
+        self.init(
+            serverSeq: ffiMessengerValue.serverSeq,
+            messageId: try TrixCoreCodec.uuid(ffiMessengerValue.messageId, label: "message_id"),
+            senderAccountId: try TrixCoreCodec.uuid(
+                ffiMessengerValue.senderAccountId,
+                label: "sender_account_id"
+            ),
+            senderDeviceId: try TrixCoreCodec.uuid(
+                ffiMessengerValue.senderDeviceId,
+                label: "sender_device_id"
+            ),
+            senderDisplayName: resolvedSenderDisplayName,
+            isOutgoing: ffiMessengerValue.isOutgoing,
+            epoch: ffiMessengerValue.epoch,
+            messageKind: resolvedMessageKind,
+            contentType: resolvedContentType,
+            projectionKind: resolvedProjectionKind,
+            body: resolvedBody,
+            bodyParseError: nil,
+            previewText: ffiMessengerValue.previewText,
+            mergedEpoch: nil,
+            createdAtUnix: ffiMessengerValue.createdAtUnix
+        )
+    }
+}
+
+extension LocalChatListItem {
+    init(ffiMessengerValue: FfiMessengerConversationSummary) throws {
+        self.init(
+            chatId: try TrixCoreCodec.uuid(ffiMessengerValue.conversationId, label: "conversation_id"),
+            chatType: ChatType(ffiMessengerValue.conversationType),
+            title: ffiMessengerValue.title,
+            displayTitle: ffiMessengerValue.displayTitle,
+            lastServerSeq: ffiMessengerValue.lastServerSeq,
+            epoch: ffiMessengerValue.epoch,
+            pendingMessageCount: ffiMessengerValue.pendingMessageCount,
+            unreadCount: ffiMessengerValue.unreadCount,
+            previewText: ffiMessengerValue.previewText,
+            previewSenderAccountId: try ffiMessengerValue.previewSenderAccountId.map {
+                try TrixCoreCodec.uuid($0, label: "preview_sender_account_id")
+            },
+            previewSenderDisplayName: ffiMessengerValue.previewSenderDisplayName,
+            previewIsOutgoing: ffiMessengerValue.previewIsOutgoing,
+            previewServerSeq: ffiMessengerValue.previewServerSeq,
+            previewCreatedAtUnix: ffiMessengerValue.previewCreatedAtUnix,
+            participantProfiles: try ffiMessengerValue.participantProfiles.map {
+                try ChatParticipantProfileSummary(
+                    accountId: TrixCoreCodec.uuid($0.accountId, label: "participant_account_id"),
+                    handle: $0.handle,
+                    profileName: $0.profileName,
+                    profileBio: $0.profileBio
+                )
+            }
+        )
+    }
+}
+
+extension DeviceSummary {
+    init(ffiMessengerValue: FfiMessengerDeviceRecord) throws {
+        self.init(
+            deviceId: try TrixCoreCodec.uuid(ffiMessengerValue.deviceId, label: "device_id"),
+            displayName: ffiMessengerValue.displayName,
+            platform: ffiMessengerValue.platform,
+            deviceStatus: DeviceStatus(ffiMessengerValue.deviceStatus),
+            availableKeyPackageCount: ffiMessengerValue.availableKeyPackageCount
+        )
+    }
+}
+
+extension LocalChatReadState {
+    init(ffiMessengerValue: FfiMessengerReadStateResult) throws {
+        self.init(
+            chatId: try TrixCoreCodec.uuid(ffiMessengerValue.conversationId, label: "conversation_id"),
+            readCursorServerSeq: ffiMessengerValue.readCursorServerSeq,
+            unreadCount: ffiMessengerValue.unreadCount
         )
     }
 }

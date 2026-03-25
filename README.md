@@ -1,77 +1,85 @@
 # Trix
 
-`Trix` is a native-first end-to-end encrypted messenger prototype built around:
+`Trix` is an experimental native-first end-to-end encrypted messenger workspace. The repository currently combines a Rust backend (`trixd`), a shared Rust core (`trix-core`), a headless bot runtime, and native clients for Android, iOS, and macOS.
 
-- `Rust` backend as a single binary
-- `PostgreSQL` for metadata and delivery state
-- local filesystem blob storage for encrypted attachments
-- `OpenMLS` as the planned group-crypto layer
-- `macOS` as the first desktop client platform
-- `Android` as the adaptive mobile client track
-- headless `E2EE` bot accounts via `trix-bot`
+Confirmed components in the repo today:
+
+- single-binary `Axum` backend with `PostgreSQL`, automatic `sqlx` migrations, local blob storage, rate limiting, cleanup jobs, and websocket inbox delivery
+- `v0` API surface for auth, accounts, directory search, device linking and approval, device revoke, key packages, chats, message history, inbox lease and ack, history sync, and blob upload and download
+- shared `trix-core` library with `OpenMLS` group state, encrypted local stores, attachment helpers, device-transfer helpers, realtime and sync runtime, and `UniFFI` bindings
+- `trix-bot` and `trix-botd` for headless encrypted bot accounts, plus Rust, Python, and Go echo-bot examples
+
+This is still a development prototype, not a production deployment.
 
 ## Repository Layout
 
-- `apps/trixd` backend binary
-- `apps/android` Android adaptive client scaffold
-- `apps/trix-botd` bot CLI and `JSON-RPC` stdio daemon
-- `apps/macos` macOS app scaffold and integration notes
-- `apps/ios` iOS app scaffold and baseline client
+- `apps/trixd` backend binary entrypoint
+- `apps/trix-botd` bot CLI and `JSON-RPC 2.0` stdio daemon
+- `apps/android` Android client project
+- `apps/ios` iOS client project
+- `apps/macos` macOS client project
+- `crates/trix-server` backend server library
+- `crates/trix-core` shared client core, storage, MLS, realtime, and FFI surface
 - `crates/trix-bot` headless bot runtime
-- `crates/trix-core` shared client core scaffold
-- `crates/trix-server` backend server library scaffold
-- `crates/trix-types` shared domain and API types
-- `examples/bots` Rust, Python, and Go bot examples
-- `docs/bot-harness.md` bot harness runtime and IPC contract
-- `docs/v0-spec.md` architecture and product spec
-- `migrations/` initial PostgreSQL schema draft
-- `openapi/v0.yaml` API contract scaffold
+- `crates/trix-types` shared API and domain types
+- `docs/` project documentation
+- `examples/bots/` Rust, Python, and Go bot examples
+- `migrations/` SQL migrations applied by the server on startup
+- `openapi/v0.yaml` current HTTP API contract
 
-## Quick Start
+## Local Backend Quick Start
 
-1. Copy `.env.example` to `.env`.
-2. Start local infrastructure with `docker compose up postgres`.
-3. Run `cargo run -p trixd`.
+`trixd` reads process environment directly. Copying `.env.example` to `.env` is useful, but the file is not auto-loaded by the binary.
 
-## Bot Harness
+1. Prepare local environment variables:
 
-`Trix` now includes a `v1` bot harness that runs bots as ordinary single-device encrypted clients:
+```bash
+cp .env.example .env
+set -a
+source .env
+set +a
+```
 
-- `crates/trix-bot` is the direct Rust API.
-- `apps/trix-botd` exposes CLI and `JSON-RPC 2.0` over stdio for Python, Go, or other runtimes.
-- `examples/bots` contains echo-bot examples for Rust, Python, and Go.
+2. Start the bundled local `PostgreSQL` service:
 
-See `docs/bot-harness.md` for setup and `docs/ffi-bindings.md` for the binding surface.
+```bash
+docker compose up -d postgres
+```
 
-## Current State
+3. Run the server:
 
-The repository currently contains a compile-ready scaffold plus the first working backend vertical slice:
+```bash
+cargo run -p trixd
+```
 
-- workspace and crate layout
-- initial Apple client scaffolds for `macOS` and `iOS`
-- `iOS` PoC flow for account bootstrap, device auth, and authenticated profile/device reads
-- backend HTTP router with health and version endpoints
-- `PostgreSQL` bootstrap and automatic migrations on startup
-- working `create account`, `auth challenge`, `auth session`, `accounts/me`, and `devices` endpoints
-- Ed25519 verification for device auth challenge flow
-- JWT-based device session tokens
-- persistent local history, projection, and MLS state in `trix-core`
-- control-plane chat membership flows on top of `OpenMLS`
-- headless `E2EE` bot runtime with websocket/polling sync, file attachment helpers, and `JSON-RPC` stdio bindings
-- initial migration draft
-- single-node `docker compose` setup
+4. Check the health endpoint:
 
-## Next Steps
+```bash
+curl http://127.0.0.1:8080/v0/system/health
+```
 
-- add `OpenMLS` group state management into `trix-core`
-- implement device linking and revocation flows
-- implement chat creation and encrypted message append paths
-- generate `UniFFI` bindings for the future `macOS` app
-- wire Android health/version and auth/device flows on top of the adaptive scaffold
-- extend bot events beyond text-only delivery
-- implement device linking and revocation flows for all client types
-- extend bot events beyond text/file delivery
-- add mobile clients on top of the same `trix-core` primitives
-- implement chat creation and encrypted message append paths across Apple clients and bots
-- keep hardening the `UniFFI`/client bridge surface
-- harden production ops around blob storage, retries, and observability
+The repo also includes a `Dockerfile` for `trixd` and a `docker-compose.yml` with `postgres` and `app` services.
+
+## Common Commands
+
+```bash
+make check
+make run-server
+make ffi-bindings
+cargo test --workspace
+cargo run -p trix-botd -- stdio
+```
+
+## Clients And Bots
+
+- Android details: [apps/android/README.md](apps/android/README.md)
+- iOS details: [apps/ios/README.md](apps/ios/README.md)
+- macOS details: [apps/macos/README.md](apps/macos/README.md)
+- Bot harness: [docs/bot-harness.md](docs/bot-harness.md)
+- FFI surface and binding generation: [docs/ffi-bindings.md](docs/ffi-bindings.md)
+- Bot examples: [examples/bots/README.md](examples/bots/README.md)
+
+## Additional Docs
+
+- Product and architecture spec: [docs/v0-spec.md](docs/v0-spec.md)
+- HTTP API contract: [openapi/v0.yaml](openapi/v0.yaml)

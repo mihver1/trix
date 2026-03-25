@@ -227,7 +227,7 @@ async fn inbound_welcome_bootstrap_projects_text_and_persists_group_mapping() ->
 
     let bootstrap_projection =
         bot_store.project_chat_with_facade(create_outcome.chat_id, &bot.facade, None)?;
-    assert_eq!(bootstrap_projection.advanced_to_server_seq, Some(2));
+    assert_eq!(bootstrap_projection.processed_messages, 0);
     assert!(
         bot_store
             .chat_mls_group_id(create_outcome.chat_id)

@@ -23,7 +23,10 @@ internal fun mergeChatTimelineMessages(
                 .thenBy { it.message.id },
         )
         .mapNotNull { timedMessage ->
-            if (timedMessage.message.contentType == FfiContentType.RECEIPT) {
+            if (
+                timedMessage.message.contentType == FfiContentType.RECEIPT ||
+                (timedMessage.receiptTargetMessageId != null && timedMessage.receiptStatus != null)
+            ) {
                 val targetMessageId = timedMessage.receiptTargetMessageId
                 val receiptStatus = timedMessage.receiptStatus
                 if (targetMessageId != null && receiptStatus != null) {

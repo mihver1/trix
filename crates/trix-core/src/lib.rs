@@ -4,6 +4,7 @@ pub mod crypto;
 pub mod device_transfer;
 pub mod ffi;
 pub mod message;
+pub mod messenger;
 pub mod realtime;
 pub mod signatures;
 pub mod storage;
@@ -30,6 +31,7 @@ pub use message::{
     AttachmentMessageBody, ChatEventMessageBody, MessageBody, ReactionAction, ReactionMessageBody,
     ReceiptMessageBody, ReceiptType, TextMessageBody,
 };
+pub use messenger::*;
 pub use realtime::{
     RealtimeConfig, RealtimeDriver, RealtimeEvent, RealtimeEventKind, RealtimeMode,
 };

@@ -17,8 +17,6 @@ import chat.trix.android.core.chat.ChatOverview
 import chat.trix.android.core.chat.ChatTimelineMessage
 import chat.trix.android.core.ffi.FfiChatType
 import chat.trix.android.core.ffi.FfiContentType
-import chat.trix.android.core.ffi.FfiMessageBody
-import chat.trix.android.core.ffi.FfiMessageBodyKind
 import chat.trix.android.designsystem.theme.TrixTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -29,7 +27,7 @@ class ChatsScreenTest {
     val composeRule = createAndroidComposeRule<ComponentActivity>()
 
     @Test
-    fun conversationListPaneShowsUnreadAndGroupMetadata() {
+    fun conversationListPaneShowsUnreadAndConversationMetadata() {
         composeRule.setContent {
             TrixTheme {
                 ConversationListPaneForTesting(
@@ -39,10 +37,9 @@ class ChatsScreenTest {
             }
         }
 
-        composeRule.onNodeWithText("Local chat cache").assertIsDisplayed()
         composeRule.onNodeWithText("Design review").assertIsDisplayed()
-        composeRule.onNodeWithText("Group").assertIsDisplayed()
-        composeRule.onNodeWithText("3 unread").assertIsDisplayed()
+        composeRule.onNodeWithText("Alex, Sam +1").assertIsDisplayed()
+        composeRule.onNodeWithText("3").assertIsDisplayed()
         composeRule.onNodeWithText("Queued attachment").assertIsDisplayed()
     }
 
@@ -75,48 +72,40 @@ class ChatsScreenTest {
     }
 
     @Test
-    fun conversationDetailPaneCanHideConversationHeader() {
+    fun conversationDetailPaneHidesManageMembersWhenActionUnavailable() {
         composeRule.setContent {
             TrixTheme {
                 ConversationDetailPaneForTesting(
                     conversation = sampleConversation(title = "Mobile group"),
-                    showConversationHeader = false,
+                    onManageMembers = null,
                 )
             }
         }
 
-        composeRule.onAllNodesWithText("Mobile group").assertCountEquals(0)
+        composeRule.onNodeWithText("Mobile group").assertIsDisplayed()
         composeRule.onAllNodesWithText("Manage members").assertCountEquals(0)
         composeRule.onNodeWithText("Queued for delivery").assertIsDisplayed()
     }
 
     @Test
-    fun detailConversationActionsMenuShowsNewChatAndManageOptions() {
+    fun newChatActionsShowDirectAndGroupButtons() {
         var directMessageClicks = 0
         var groupChatClicks = 0
-        var manageClicks = 0
 
         composeRule.setContent {
             TrixTheme {
-                DetailConversationActionsForTesting(
-                    canManageMembers = true,
+                NewChatActionsForTesting(
                     onOpenDirectMessages = { directMessageClicks += 1 },
                     onOpenGroupChats = { groupChatClicks += 1 },
-                    onManageMembers = { manageClicks += 1 },
                 )
             }
         }
 
-        composeRule.onNodeWithContentDescription("More conversation actions").performClick()
-        composeRule.onNodeWithText("New direct message").performClick()
-        composeRule.onNodeWithContentDescription("More conversation actions").performClick()
-        composeRule.onNodeWithText("Create group chat").performClick()
-        composeRule.onNodeWithContentDescription("More conversation actions").performClick()
-        composeRule.onNodeWithText("Manage members").performClick()
+        composeRule.onNodeWithContentDescription("Start direct message").performClick()
+        composeRule.onNodeWithContentDescription("Create group chat").performClick()
 
         assertEquals(1, directMessageClicks)
         assertEquals(1, groupChatClicks)
-        assertEquals(1, manageClicks)
     }
 
     private fun sampleOverview(): ChatOverview {
@@ -151,26 +140,6 @@ class ChatsScreenTest {
     private fun sampleConversation(
         title: String = "Group members",
     ): ChatConversation {
-        val attachmentBody = FfiMessageBody(
-            kind = FfiMessageBodyKind.ATTACHMENT,
-            text = null,
-            targetMessageId = null,
-            emoji = null,
-            reactionAction = null,
-            receiptType = null,
-            receiptAtUnix = null,
-            blobId = "blob-1",
-            mimeType = "application/pdf",
-            sizeBytes = 1024u,
-            sha256 = null,
-            fileName = "roadmap.pdf",
-            widthPx = null,
-            heightPx = null,
-            fileKey = null,
-            nonce = null,
-            eventType = null,
-            eventJson = null,
-        )
         return ChatConversation(
             chatId = "chat-group-1",
             chatType = FfiChatType.GROUP,
@@ -208,13 +177,12 @@ class ChatsScreenTest {
                     contentType = FfiContentType.ATTACHMENT,
                     attachment = ChatAttachment(
                         messageId = "message-1",
-                        blobId = "blob-1",
+                        attachmentRef = "attachment-ref-1",
                         mimeType = "application/pdf",
                         fileName = "roadmap.pdf",
                         sizeBytes = 1024,
                         widthPx = null,
                         heightPx = null,
-                        body = attachmentBody,
                     ),
                 ),
             ),

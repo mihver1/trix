@@ -178,3 +178,32 @@ data class DeviceLinkIntent(
     val qrPayload: String,
     val expiresAtUnix: Long,
 )
+
+fun sortedDevicesForDisplay(
+    devices: List<AccountDevice>,
+): List<AccountDevice> {
+    return devices.sortedWith(
+        compareBy<AccountDevice>(
+            { deviceDisplayPriority(it) },
+            { it.displayName.lowercase() },
+            { it.deviceId.lowercase() },
+        ),
+    )
+}
+
+fun pendingDeviceIds(
+    devices: List<AccountDevice>,
+): Set<String> {
+    return devices.asSequence()
+        .filter { it.status == AccountDeviceStatus.Pending }
+        .map(AccountDevice::deviceId)
+        .toSet()
+}
+
+private fun deviceDisplayPriority(device: AccountDevice): Int {
+    return when (device.status) {
+        AccountDeviceStatus.Pending -> 0
+        AccountDeviceStatus.Active -> if (device.isCurrentDevice) 1 else 2
+        AccountDeviceStatus.Revoked -> 3
+    }
+}

@@ -8,6 +8,10 @@
 
 /* Begin PBXBuildFile section */
 		0C59311F8E54EDC1AD82DE2A /* LocalDeviceIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = C81238E1EC57CFBB2B333A7A /* LocalDeviceIdentity.swift */; };
+		0A11A001B001C001D001E001 /* FormAndPayloadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A11B001B001C001D001E001 /* FormAndPayloadTests.swift */; };
+		0A11A002B002C002D002E002 /* TrixCoreMessageBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A11B002B002C002D002E002 /* TrixCoreMessageBridgeTests.swift */; };
+		0A11A003B003C003D003E003 /* SafeDiagnosticLogStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A11B003B003C003D003E003 /* SafeDiagnosticLogStoreTests.swift */; };
+		0A11A010B010C010D010E010 /* ServerBackedSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A11B010B010C010D010E010 /* ServerBackedSmokeTests.swift */; };
 		299255BB4FA97D30B09AE774 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22C33A945CFEA9105871D033 /* AppModel.swift */; };
 		2A4D048B3AE35BA823611D63 /* APIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D76E826883729659D5B0DF4 /* APIError.swift */; };
 		32DD1CD4D3EDDE9B08297EEF /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD786FA5598DD8B41A0444FE /* APIClient.swift */; };
@@ -34,8 +38,23 @@
 		E4F971691AB2F86D7BACBBB2 /* ServerConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E8E57CCC8925A9519C5EB59 /* ServerConfiguration.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		0A11E001B001C001D001E001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 710B5D3A4FE448A8DD206320 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 35A2EFCE0CF914C97292DC9D;
+			remoteInfo = TrixiOS;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		0B4F5BB41B01FD4D022964E0 /* SafeDiagnosticLogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafeDiagnosticLogStore.swift; sourceTree = "<group>"; };
+		0A11B001B001C001D001E001 /* FormAndPayloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FormAndPayloadTests.swift; sourceTree = "<group>"; };
+		0A11B002B002C002D002E002 /* TrixCoreMessageBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixCoreMessageBridgeTests.swift; sourceTree = "<group>"; };
+		0A11B003B003C003D003E003 /* SafeDiagnosticLogStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafeDiagnosticLogStoreTests.swift; sourceTree = "<group>"; };
+		0A11B004B004C004D004E004 /* TrixiOSTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = TrixiOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		0A11B010B010C010D010E010 /* ServerBackedSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerBackedSmokeTests.swift; sourceTree = "<group>"; };
 		0BE73C1B13A52D7BFF9426BC /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		184D72DBD37F99C0A5067184 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
 		229E4FE51C86DFFFFBEDA5BF /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
@@ -70,6 +89,13 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		0A11D001B001C001D001E001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		47F172B22F4348BDB8B8185D /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -81,6 +107,17 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		0A11C001B001C001D001E001 /* TrixiOSTests */ = {
+			isa = PBXGroup;
+			children = (
+				0A11B001B001C001D001E001 /* FormAndPayloadTests.swift */,
+				0A11B010B010C010D010E010 /* ServerBackedSmokeTests.swift */,
+				0A11B003B003C003D003E003 /* SafeDiagnosticLogStoreTests.swift */,
+				0A11B002B002C002D002E002 /* TrixCoreMessageBridgeTests.swift */,
+			);
+			path = TrixiOSTests;
+			sourceTree = "<group>";
+		};
 		1C49F9CBC0D1F6A9418A6BE5 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
@@ -115,6 +152,7 @@
 			isa = PBXGroup;
 			children = (
 				4947F3F335746A3BEADF9960 /* TrixiOS.app */,
+				0A11B004B004C004D004E004 /* TrixiOSTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -222,6 +260,7 @@
 			isa = PBXGroup;
 			children = (
 				A2DC788B5278576D5E39C8EC /* TrixiOS */,
+				0A11C001B001C001D001E001 /* TrixiOSTests */,
 				1C49F9CBC0D1F6A9418A6BE5 /* Frameworks */,
 				2D93899E1C1D88CEABAB3352 /* Products */,
 			);
@@ -242,6 +281,25 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		0A11F001B001C001D001E001 /* TrixiOSTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0A120003B003C003D003E003 /* Build configuration list for PBXNativeTarget "TrixiOSTests" */;
+			buildPhases = (
+				0A11D002B002C002D002E002 /* Sources */,
+				0A11D001B001C001D001E001 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				0A11E002B002C002D002E002 /* PBXTargetDependency */,
+			);
+			name = TrixiOSTests;
+			packageProductDependencies = (
+			);
+			productName = TrixiOSTests;
+			productReference = 0A11B004B004C004D004E004 /* TrixiOSTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		35A2EFCE0CF914C97292DC9D /* TrixiOS */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 30FCD116EF8786C50C1E5B59 /* Build configuration list for PBXNativeTarget "TrixiOS" */;
@@ -270,6 +328,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					0A11F001B001C001D001E001 = {
+						DevelopmentTeam = HGY33KYKQ2;
+						ProvisioningStyle = Automatic;
+					};
 					35A2EFCE0CF914C97292DC9D = {
 						DevelopmentTeam = HGY33KYKQ2;
 						ProvisioningStyle = Automatic;
@@ -290,6 +352,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				0A11F001B001C001D001E001 /* TrixiOSTests */,
 				35A2EFCE0CF914C97292DC9D /* TrixiOS */,
 			);
 		};
@@ -307,6 +370,17 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		0A11D002B002C002D002E002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0A11A001B001C001D001E001 /* FormAndPayloadTests.swift in Sources */,
+				0A11A010B010C010D010E010 /* ServerBackedSmokeTests.swift in Sources */,
+				0A11A003B003C003D003E003 /* SafeDiagnosticLogStoreTests.swift in Sources */,
+				0A11A002B002C002D002E002 /* TrixCoreMessageBridgeTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		B310ED466CDDDF295B8C766A /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -339,7 +413,67 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		0A11E002B002C002D002E002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 35A2EFCE0CF914C97292DC9D /* TrixiOS */;
+			targetProxy = 0A11E001B001C001D001E001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		0A120001B001C001D001E001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HGY33KYKQ2;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixapp.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Trix.app/Trix";
+			};
+			name = Debug;
+		};
+		0A120002B002C002D002E002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HGY33KYKQ2;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixapp.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Trix.app/Trix";
+			};
+			name = Release;
+		};
 		2918216D717EA7F9865E15CC /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -518,6 +652,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		0A120003B003C003D003E003 /* Build configuration list for PBXNativeTarget "TrixiOSTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0A120001B001C001D001E001 /* Debug */,
+				0A120002B002C002D002E002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		30FCD116EF8786C50C1E5B59 /* Build configuration list for PBXNativeTarget "TrixiOS" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

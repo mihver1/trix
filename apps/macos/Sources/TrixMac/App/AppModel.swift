@@ -21,11 +21,6 @@ final class AppModel: ObservableObject {
     @Published var currentAccount: AccountProfileResponse?
     @Published var devices: [DeviceSummary] = []
     @Published var chats: [ChatSummary] = []
-    @Published var inboxItems: [InboxItem] = []
-    @Published var inboxLeaseDraft = InboxLeaseDraft()
-    @Published var activeInboxLease: InboxLeaseState?
-    @Published var lastInboxCursor: UInt64?
-    @Published var lastAckedInboxIDs: [UInt64] = []
     @Published var syncStateSnapshot: SyncStateSnapshot?
     @Published var historySyncJobs: [HistorySyncJobSummary] = []
     @Published var historySyncCursorDrafts: [UUID: String] = [:]
@@ -67,13 +62,11 @@ final class AppModel: ObservableObject {
     @Published var isReservingKeyPackages = false
     @Published var isRestoringSession = false
     @Published var isRefreshingWorkspace = false
+    @Published var isRefreshingDevices = false
     @Published var isCreatingChat = false
     @Published var isSearchingAccountDirectory = false
     @Published var isUpdatingProfile = false
     @Published var isSendingMessage = false
-    @Published var isRefreshingInbox = false
-    @Published var isLeasingInbox = false
-    @Published var isAckingInbox = false
     @Published var isRefreshingHistorySyncJobs = false
     @Published var isLoadingSelectedChat = false
     @Published var revokingDeviceIDs: Set<UUID> = []
@@ -95,28 +88,23 @@ final class AppModel: ObservableObject {
     private let defaultDeviceName: String
     private var persistedSession: PersistedSession?
     private var accessToken: String?
+    private var messengerCheckpoint: String?
     private var didStart = false
     private var backgroundRefreshTask: Task<Void, Never>?
     private var foregroundRealtimeTask: Task<Void, Never>?
+    private var linkIntentRefreshTask: Task<Void, Never>?
     private var foregroundRealtimeTaskID: UUID?
     private var foregroundRealtimeAccessToken: String?
     private var foregroundRealtimeBaseURLString: String?
     private var foregroundRealtimeAccountID: UUID?
-    private var realtimeClient: RealtimeWebSocketClient?
-    private var realtimeConnectionID = UUID()
-    private var realtimeAccessToken: String?
-    private var realtimeBaseURLString: String?
     private var typingChatID: UUID?
     private var isTypingActive = false
     private var hasScheduledRealtimeRecovery = false
     private var isApplicationActive = true
-    private static let foregroundRealtimeConfig = FfiRealtimeConfig(
-        inboxLimit: 100,
-        inboxLeaseTtlSeconds: 30,
-        pollIntervalMs: 750,
-        websocketRetryDelayMs: 3_000
-    )
+    private static let foregroundRealtimePollIntervalNanoseconds: UInt64 = 750_000_000
     private static let foregroundRealtimeRetryDelayNanoseconds: UInt64 = 3_000_000_000
+    private static let linkIntentRefreshIntervalNanoseconds: UInt64 = 3_000_000_000
+    private var linkIntentPendingBaselineIDs: Set<UUID> = []
 
     init(
         sessionStore: SessionStore = SessionStore(),
@@ -144,6 +132,7 @@ final class AppModel: ObservableObject {
     deinit {
         backgroundRefreshTask?.cancel()
         foregroundRealtimeTask?.cancel()
+        linkIntentRefreshTask?.cancel()
     }
 
     var isAuthenticated: Bool {
@@ -208,10 +197,6 @@ final class AppModel: ObservableObject {
         return !isReservingKeyPackages
     }
 
-    var canAckLoadedInboxItems: Bool {
-        !inboxItems.isEmpty && !isAckingInbox
-    }
-
     var currentDeviceID: UUID? {
         currentAccount?.deviceId ?? persistedSession?.deviceId
     }
@@ -268,6 +253,14 @@ final class AppModel: ObservableObject {
 
     var chatPresentationAccountID: UUID? {
         currentAccount?.accountId ?? persistedSession?.accountId
+    }
+
+    var supportsSafeConversationMemberRemoval: Bool {
+        true
+    }
+
+    var supportsSafeConversationDeviceRemoval: Bool {
+        true
     }
 
     var isCreateChatDirectoryEmpty: Bool {
@@ -340,14 +333,19 @@ final class AppModel: ObservableObject {
         if isActive {
             Task {
                 await refreshNotificationPermissionState()
-                if let accessToken,
-                   let accountId = currentAccount?.accountId ?? persistedSession?.accountId {
-                    await startRealtimeConnection(
-                        accessToken: accessToken,
-                        accountId: accountId
-                    )
+                if outgoingLinkIntent != nil {
+                    await refreshDevices(showProgress: false, suppressErrors: true)
+                }
+                if accessToken != nil {
+                    restartForegroundRealtimeLoopIfNeeded()
+                    if foregroundRealtimeTask == nil {
+                        await refreshMessengerEvents(
+                            postNotifications: false,
+                            suppressErrors: true
+                        )
+                    }
                 } else {
-                    await refreshInbox(background: false, suppressErrors: true)
+                    await restoreSession()
                 }
             }
         } else {
@@ -429,16 +427,18 @@ final class AppModel: ObservableObject {
             }
             return nil
         }
-        guard let client = makeClient() else {
+        guard let attachmentRef = body.attachmentRef?.nonEmptyTrimmed else {
+            if reportErrors {
+                lastErrorMessage = "Attachment reference is missing."
+            }
             return nil
         }
 
         do {
-            let downloaded = try await client.downloadAttachment(accessToken: token, body: body)
-            let destinationURL = try attachmentCacheURL(for: message.messageId, body: downloaded.body)
-            try downloaded.plaintext.write(to: destinationURL, options: .atomic)
-            cachedAttachmentURLs[message.messageId] = destinationURL
-            return destinationURL
+            let messenger = try makeAuthenticatedMessenger(accessToken: token)
+            let file = try await messenger.getAttachment(attachmentRef: attachmentRef)
+            cachedAttachmentURLs[message.messageId] = file.localURL
+            return file.localURL
         } catch let error as TrixAPIError {
             if error.isCredentialFailure {
                 accessToken = nil
@@ -521,23 +521,30 @@ final class AppModel: ObservableObject {
             await restoreSession()
             return
         }
-        guard let client = makeClient() else {
-            return
-        }
 
         isCreatingLinkIntent = true
         lastErrorMessage = nil
         defer { isCreatingLinkIntent = false }
 
         do {
-            let response = try await client.createLinkIntent(accessToken: token)
+            stopLinkIntentRefreshLoop()
+            let messenger = try makeAuthenticatedMessenger(accessToken: token)
+            let response = try await messenger.createLinkDeviceIntent()
+            let baselineDevices = try await messenger.listDevices()
+            linkIntentPendingBaselineIDs = pendingDeviceIDs(in: baselineDevices)
+            applyLoadedDevices(baselineDevices)
             outgoingLinkIntent = DeviceLinkIntentState(
-                payload: response.qrPayload,
-                expiresAt: Date(timeIntervalSince1970: TimeInterval(response.expiresAtUnix))
+                payload: response.payload,
+                expiresAt: response.expiresAt
             )
+            startLinkIntentRefreshLoop()
         } catch {
             lastErrorMessage = error.userFacingMessage
         }
+    }
+
+    func refreshDevices() async {
+        await refreshDevices(showProgress: true, suppressErrors: false)
     }
 
     func completeLink() async {
@@ -552,21 +559,19 @@ final class AppModel: ObservableObject {
 
         do {
             let payload = try decodeLinkIntentPayload(linkDraft.linkPayload)
-            guard let client = makeClient(baseURLString: payload.baseURL) else {
-                return
-            }
-
             let identity = try DeviceIdentityMaterial.makeLinkedDevice(
                 deviceDisplayName: deviceDisplayName,
                 platform: DeviceIdentityMaterial.platform
             )
-            let storePaths = try workspaceStorePaths(for: payload.accountId)
-            let response = try await client.completeLinkIntent(
-                linkIntentId: payload.linkIntentId,
-                linkToken: payload.linkToken,
+            let messenger = try makeMessengerClient(
+                baseURLString: payload.baseURL,
+                accountId: payload.accountId,
                 deviceDisplayName: deviceDisplayName,
-                identity: identity,
-                mlsStorageRoot: storePaths.mlsStateRootURL
+                identity: identity
+            )
+            let response = try await messenger.completeLinkDevice(
+                linkPayload: linkDraft.linkPayload,
+                deviceDisplayName: deviceDisplayName
             )
 
             serverBaseURLString = payload.baseURL
@@ -575,7 +580,7 @@ final class AppModel: ObservableObject {
             let session = PersistedSession(
                 baseURLString: payload.baseURL,
                 accountId: response.accountId,
-                deviceId: response.pendingDeviceId,
+                deviceId: response.deviceId,
                 accountSyncChatId: nil,
                 profileName: "Linked Account",
                 handle: nil,
@@ -694,7 +699,7 @@ final class AppModel: ObservableObject {
             await refreshServerStatus()
             logInfo(
                 "sync",
-                "workspace_refresh success chats=\(chats.count) devices=\(devices.count) inbox=\(inboxItems.count)"
+                "workspace_refresh success chats=\(chats.count) devices=\(devices.count)"
             )
         } catch let error as TrixAPIError {
             logWarn("sync", "workspace_refresh failed", error: error)
@@ -768,17 +773,13 @@ final class AppModel: ObservableObject {
             lastErrorMessage = "Аккаунт ещё не загружен."
             return false
         }
-        guard let creatorDeviceID = currentDeviceID else {
-            lastErrorMessage = "Текущее устройство ещё не загружено."
-            return false
-        }
 
         isCreatingChat = true
         lastErrorMessage = nil
         defer { isCreatingChat = false }
 
         do {
-            let identity = try loadStoredIdentity()
+            let messenger = try makeAuthenticatedMessenger(accessToken: token)
             var seenParticipantIDs = Set<UUID>()
             let uniqueParticipants = createChatParticipantAccountIDs.filter { participantAccountID in
                 guard participantAccountID != creatorAccountID else {
@@ -805,15 +806,7 @@ final class AppModel: ObservableObject {
                 "chat",
                 "create_chat start type=\(logChatType(createChatDraft.chatType)) participants=\(uniqueParticipants.count)"
             )
-            let storePaths = try workspaceStorePaths()
-            let created = try await client.createChatControl(
-                accessToken: token,
-                databasePath: storePaths.localHistoryURL,
-                statePath: storePaths.syncStateURL,
-                mlsStorageRoot: storePaths.mlsStateRootURL,
-                credentialIdentity: identity.storedIdentity.credentialIdentity,
-                creatorAccountId: creatorAccountID,
-                creatorDeviceId: creatorDeviceID,
+            let created = try await messenger.createConversation(
                 chatType: createChatDraft.chatType,
                 title: createChatDraft.title.nonEmptyTrimmed,
                 participantAccountIds: uniqueParticipants
@@ -823,11 +816,11 @@ final class AppModel: ObservableObject {
             try await loadWorkspace(
                 client: client,
                 accessToken: token,
-                selectionPreference: .force(created.chatId)
+                selectionPreference: .force(created.conversationId)
             )
             logInfo(
                 "chat",
-                "create_chat success chat=\(shortLogID(created.chatId)) epoch=\(created.epoch)"
+                "create_chat success chat=\(shortLogID(created.conversationId)) epoch=\(created.conversation?.epoch ?? 0)"
             )
             return true
         } catch let error as TrixAPIError {
@@ -858,14 +851,6 @@ final class AppModel: ObservableObject {
             lastErrorMessage = "Сначала выбери чат."
             return false
         }
-        guard let senderAccountID = currentAccount?.accountId ?? persistedSession?.accountId else {
-            lastErrorMessage = "Аккаунт ещё не загружен."
-            return false
-        }
-        guard let senderDeviceID = currentDeviceID else {
-            lastErrorMessage = "Текущее устройство ещё не загружено."
-            return false
-        }
         let trimmedText = draftText.nonEmptyTrimmed
         guard trimmedText != nil || composerAttachmentDraft != nil else {
             return false
@@ -880,23 +865,46 @@ final class AppModel: ObservableObject {
                 "message",
                 "send_message start chat=\(shortLogID(chatId)) text=\(trimmedText != nil) attachment=\(composerAttachmentDraft != nil)"
             )
-            let identity = try loadStoredIdentity()
-            let storePaths = try workspaceStorePaths()
+            let messenger = try makeAuthenticatedMessenger(accessToken: token)
             if let attachmentDraft = composerAttachmentDraft {
                 let pendingAttachment = enqueuePendingOutgoing(
                     chatId: chatId,
                     payload: .attachment(attachmentDraft)
                 )
                 do {
-                    try await sendAttachmentPayload(
-                        client: client,
-                        accessToken: token,
-                        storePaths: storePaths,
-                        identity: identity,
-                        senderAccountID: senderAccountID,
-                        senderDeviceID: senderDeviceID,
-                        chatId: chatId,
-                        draft: attachmentDraft
+                    let payload = try Data(contentsOf: attachmentDraft.fileURL)
+                    let attachmentToken = try await messenger.sendAttachment(
+                        conversationId: chatId,
+                        payload: payload,
+                        mimeType: attachmentDraft.mimeType,
+                        fileName: attachmentDraft.fileName,
+                        widthPx: attachmentDraft.widthPx,
+                        heightPx: attachmentDraft.heightPx
+                    )
+                    _ = try await messenger.sendMessage(
+                        conversationId: chatId,
+                        body: TypedMessageBody(
+                            kind: .attachment,
+                            text: nil,
+                            targetMessageId: nil,
+                            emoji: nil,
+                            reactionAction: nil,
+                            receiptType: nil,
+                            receiptAtUnix: nil,
+                            attachmentRef: nil,
+                            blobId: nil,
+                            mimeType: attachmentDraft.mimeType,
+                            sizeBytes: attachmentDraft.fileSizeBytes,
+                            sha256: nil,
+                            fileName: attachmentDraft.fileName,
+                            widthPx: attachmentDraft.widthPx,
+                            heightPx: attachmentDraft.heightPx,
+                            fileKey: nil,
+                            nonce: nil,
+                            eventType: nil,
+                            eventJson: nil
+                        ),
+                        attachmentTokens: [attachmentToken]
                     )
                     removePendingOutgoing(pendingAttachment)
                 } catch {
@@ -914,15 +922,8 @@ final class AppModel: ObservableObject {
                     payload: .text(trimmedText)
                 )
                 do {
-                    _ = try await client.sendMessageBody(
-                        accessToken: token,
-                        databasePath: storePaths.localHistoryURL,
-                        statePath: storePaths.syncStateURL,
-                        mlsStorageRoot: storePaths.mlsStateRootURL,
-                        credentialIdentity: identity.storedIdentity.credentialIdentity,
-                        senderAccountId: senderAccountID,
-                        senderDeviceId: senderDeviceID,
-                        chatId: chatId,
+                    _ = try await messenger.sendMessage(
+                        conversationId: chatId,
                         body: .text(trimmedText)
                     )
                     removePendingOutgoing(pendingText)
@@ -1045,11 +1046,7 @@ final class AppModel: ObservableObject {
             await restoreSession()
             return
         }
-        guard let client = makeClient() else {
-            return
-        }
-        guard let actorAccountID = currentAccount?.accountId ?? persistedSession?.accountId,
-              let actorDeviceID = currentDeviceID,
+        guard let client = makeClient(),
               let chatId = selectedChatID else {
             lastErrorMessage = "Чат или устройство ещё не загружены."
             return
@@ -1063,17 +1060,9 @@ final class AppModel: ObservableObject {
                 "membership",
                 "add_members start chat=\(shortLogID(chatId)) count=\(participantAccountIDs.count)"
             )
-            let identity = try loadStoredIdentity()
-            let storePaths = try workspaceStorePaths()
-            let outcome = try await client.addChatMembersControl(
-                accessToken: token,
-                databasePath: storePaths.localHistoryURL,
-                statePath: storePaths.syncStateURL,
-                mlsStorageRoot: storePaths.mlsStateRootURL,
-                credentialIdentity: identity.storedIdentity.credentialIdentity,
-                actorAccountId: actorAccountID,
-                actorDeviceId: actorDeviceID,
-                chatId: chatId,
+            let messenger = try makeAuthenticatedMessenger(accessToken: token)
+            let outcome = try await messenger.updateConversationMembers(
+                conversationId: chatId,
                 participantAccountIds: participantAccountIDs
             )
             try await loadWorkspace(
@@ -1083,7 +1072,7 @@ final class AppModel: ObservableObject {
             )
             logInfo(
                 "membership",
-                "add_members success chat=\(shortLogID(chatId)) changed=\(outcome.changedParticipantAccountIDs.count) epoch=\(outcome.epoch)"
+                "add_members success chat=\(shortLogID(chatId)) changed=\(outcome.changedParticipantAccountIDs.count) epoch=\(outcome.conversation?.epoch ?? 0)"
             )
         } catch {
             logWarn("membership", "add_members failed chat=\(shortLogID(chatId))", error: error)
@@ -1096,11 +1085,7 @@ final class AppModel: ObservableObject {
             await restoreSession()
             return
         }
-        guard let client = makeClient() else {
-            return
-        }
-        guard let actorAccountID = currentAccount?.accountId ?? persistedSession?.accountId,
-              let actorDeviceID = currentDeviceID,
+        guard let client = makeClient(),
               let chatId = selectedChatID else {
             lastErrorMessage = "Чат или устройство ещё не загружены."
             return
@@ -1112,19 +1097,11 @@ final class AppModel: ObservableObject {
         do {
             logInfo(
                 "membership",
-                "remove_member start chat=\(shortLogID(chatId)) account=\(shortLogID(participantAccountID))"
+                "remove_members start chat=\(shortLogID(chatId)) count=1"
             )
-            let identity = try loadStoredIdentity()
-            let storePaths = try workspaceStorePaths()
-            let outcome = try await client.removeChatMembersControl(
-                accessToken: token,
-                databasePath: storePaths.localHistoryURL,
-                statePath: storePaths.syncStateURL,
-                mlsStorageRoot: storePaths.mlsStateRootURL,
-                credentialIdentity: identity.storedIdentity.credentialIdentity,
-                actorAccountId: actorAccountID,
-                actorDeviceId: actorDeviceID,
-                chatId: chatId,
+            let messenger = try makeAuthenticatedMessenger(accessToken: token)
+            let outcome = try await messenger.removeConversationMembers(
+                conversationId: chatId,
                 participantAccountIds: [participantAccountID]
             )
             try await loadWorkspace(
@@ -1134,10 +1111,10 @@ final class AppModel: ObservableObject {
             )
             logInfo(
                 "membership",
-                "remove_member success chat=\(shortLogID(chatId)) changed=\(outcome.changedParticipantAccountIDs.count) epoch=\(outcome.epoch)"
+                "remove_members success chat=\(shortLogID(chatId)) changed=\(outcome.changedParticipantAccountIDs.count) epoch=\(outcome.conversation?.epoch ?? 0)"
             )
         } catch {
-            logWarn("membership", "remove_member failed chat=\(shortLogID(chatId))", error: error)
+            logWarn("membership", "remove_members failed chat=\(shortLogID(chatId))", error: error)
             lastErrorMessage = error.userFacingMessage
         }
     }
@@ -1150,11 +1127,7 @@ final class AppModel: ObservableObject {
             await restoreSession()
             return
         }
-        guard let client = makeClient() else {
-            return
-        }
-        guard let actorAccountID = currentAccount?.accountId ?? persistedSession?.accountId,
-              let actorDeviceID = currentDeviceID,
+        guard let client = makeClient(),
               let chatId = selectedChatID else {
             lastErrorMessage = "Чат или устройство ещё не загружены."
             return
@@ -1168,17 +1141,9 @@ final class AppModel: ObservableObject {
                 "devices",
                 "add_devices start chat=\(shortLogID(chatId)) count=\(deviceIDs.count)"
             )
-            let identity = try loadStoredIdentity()
-            let storePaths = try workspaceStorePaths()
-            let outcome = try await client.addChatDevicesControl(
-                accessToken: token,
-                databasePath: storePaths.localHistoryURL,
-                statePath: storePaths.syncStateURL,
-                mlsStorageRoot: storePaths.mlsStateRootURL,
-                credentialIdentity: identity.storedIdentity.credentialIdentity,
-                actorAccountId: actorAccountID,
-                actorDeviceId: actorDeviceID,
-                chatId: chatId,
+            let messenger = try makeAuthenticatedMessenger(accessToken: token)
+            let outcome = try await messenger.updateConversationDevices(
+                conversationId: chatId,
                 deviceIds: deviceIDs
             )
             try await loadWorkspace(
@@ -1188,7 +1153,7 @@ final class AppModel: ObservableObject {
             )
             logInfo(
                 "devices",
-                "add_devices success chat=\(shortLogID(chatId)) changed=\(outcome.changedDeviceIDs.count) epoch=\(outcome.epoch)"
+                "add_devices success chat=\(shortLogID(chatId)) changed=\(outcome.changedDeviceIDs.count) epoch=\(outcome.conversation?.epoch ?? 0)"
             )
         } catch {
             logWarn("devices", "add_devices failed chat=\(shortLogID(chatId))", error: error)
@@ -1201,11 +1166,7 @@ final class AppModel: ObservableObject {
             await restoreSession()
             return
         }
-        guard let client = makeClient() else {
-            return
-        }
-        guard let actorAccountID = currentAccount?.accountId ?? persistedSession?.accountId,
-              let actorDeviceID = currentDeviceID,
+        guard let client = makeClient(),
               let chatId = selectedChatID else {
             lastErrorMessage = "Чат или устройство ещё не загружены."
             return
@@ -1217,19 +1178,11 @@ final class AppModel: ObservableObject {
         do {
             logInfo(
                 "devices",
-                "remove_device start chat=\(shortLogID(chatId)) device=\(shortLogID(deviceID))"
+                "remove_devices start chat=\(shortLogID(chatId)) count=1"
             )
-            let identity = try loadStoredIdentity()
-            let storePaths = try workspaceStorePaths()
-            let outcome = try await client.removeChatDevicesControl(
-                accessToken: token,
-                databasePath: storePaths.localHistoryURL,
-                statePath: storePaths.syncStateURL,
-                mlsStorageRoot: storePaths.mlsStateRootURL,
-                credentialIdentity: identity.storedIdentity.credentialIdentity,
-                actorAccountId: actorAccountID,
-                actorDeviceId: actorDeviceID,
-                chatId: chatId,
+            let messenger = try makeAuthenticatedMessenger(accessToken: token)
+            let outcome = try await messenger.removeConversationDevices(
+                conversationId: chatId,
                 deviceIds: [deviceID]
             )
             try await loadWorkspace(
@@ -1239,10 +1192,10 @@ final class AppModel: ObservableObject {
             )
             logInfo(
                 "devices",
-                "remove_device success chat=\(shortLogID(chatId)) changed=\(outcome.changedDeviceIDs.count) epoch=\(outcome.epoch)"
+                "remove_devices success chat=\(shortLogID(chatId)) changed=\(outcome.changedDeviceIDs.count) epoch=\(outcome.conversation?.epoch ?? 0)"
             )
         } catch {
-            logWarn("devices", "remove_device failed chat=\(shortLogID(chatId))", error: error)
+            logWarn("devices", "remove_devices failed chat=\(shortLogID(chatId))", error: error)
             lastErrorMessage = error.userFacingMessage
         }
     }
@@ -1337,206 +1290,6 @@ final class AppModel: ObservableObject {
         } catch {
             lastErrorMessage = error.userFacingMessage
         }
-    }
-
-    func refreshInbox(background: Bool = false, suppressErrors: Bool = false) async {
-        guard let token = accessToken else {
-            if !suppressErrors {
-                await restoreSession()
-            }
-            return
-        }
-        guard let client = makeClient() else {
-            return
-        }
-
-        isRefreshingInbox = true
-        lastErrorMessage = nil
-        defer { isRefreshingInbox = false }
-
-        do {
-            logInfo("inbox", "refresh_inbox start background=\(background)")
-            let existingInboxIDs = Set(inboxItems.map(\.inboxId))
-            let parameters = try decodeInboxPollParameters()
-            let storePaths = try workspaceStorePaths()
-            let response = try await client.fetchInboxIntoLocalStore(
-                accessToken: token,
-                databasePath: storePaths.localHistoryURL,
-                statePath: storePaths.syncStateURL,
-                afterInboxId: parameters.afterInboxId,
-                limit: parameters.limit
-            )
-            let changedChatIDs = Set(response.report.changedChatIDs)
-            let identity = try loadStoredIdentity()
-            for chatId in changedChatIDs {
-                _ = try await client.projectLocalChatIfPossible(
-                    databasePath: storePaths.localHistoryURL,
-                    mlsStorageRoot: storePaths.mlsStateRootURL,
-                    credentialIdentity: identity.storedIdentity.credentialIdentity,
-                    chatId: chatId
-                )
-            }
-            let projectedChats = try await client.fetchLocalChats(databasePath: storePaths.localHistoryURL)
-            let currentAccountID = currentAccount?.accountId ?? persistedSession?.accountId
-            let newIncomingItems = response.items.filter { item in
-                !existingInboxIDs.contains(item.inboxId) &&
-                    item.message.senderAccountId != currentAccountID
-            }
-            mergeInboxItems(response.items, autoAdvanceCursor: true)
-            applyLocalStoreSnapshot(chats: projectedChats.chats, syncState: response.syncState)
-            if let accountId = currentAccount?.accountId ?? persistedSession?.accountId {
-                try await refreshLocalMessengerState(client: client, accountId: accountId)
-                try await reconcileSelectedChatAfterLocalStateUpdate(
-                    client: client,
-                    accessToken: token,
-                    changedChatIDs: changedChatIDs
-                )
-            }
-            if background {
-                await postNotificationsForNewMessages(newIncomingItems)
-            }
-            logInfo(
-                "inbox",
-                "refresh_inbox success items=\(response.items.count) changed_chats=\(changedChatIDs.count)"
-            )
-        } catch let error as TrixAPIError {
-            logWarn("inbox", "refresh_inbox failed", error: error)
-            if error.isCredentialFailure {
-                accessToken = nil
-                disconnectRealtimeConnection()
-                lastErrorMessage = "Session expired. Reconnect this Mac to keep syncing messages."
-                if !suppressErrors {
-                    await restoreSession()
-                }
-            } else if !suppressErrors {
-                lastErrorMessage = error.userFacingMessage
-            }
-        } catch {
-            logWarn("inbox", "refresh_inbox failed", error: error)
-            if !suppressErrors {
-                lastErrorMessage = error.userFacingMessage
-            }
-        }
-    }
-
-    func leaseInbox() async {
-        guard let token = accessToken else {
-            await restoreSession()
-            return
-        }
-        guard let client = makeClient() else {
-            return
-        }
-
-        isLeasingInbox = true
-        lastErrorMessage = nil
-        defer { isLeasingInbox = false }
-
-        do {
-            let parameters = try decodeInboxPollParameters()
-            let storePaths = try workspaceStorePaths()
-            let response = try await client.leaseInboxIntoLocalStore(
-                accessToken: token,
-                databasePath: storePaths.localHistoryURL,
-                statePath: storePaths.syncStateURL,
-                leaseOwner: parameters.leaseOwner,
-                limit: parameters.limit,
-                afterInboxId: parameters.afterInboxId,
-                leaseTtlSeconds: parameters.leaseTtlSeconds
-            )
-            let changedChatIDs = Set(response.report.changedChatIDs)
-            let identity = try loadStoredIdentity()
-            for chatId in changedChatIDs {
-                _ = try await client.projectLocalChatIfPossible(
-                    databasePath: storePaths.localHistoryURL,
-                    mlsStorageRoot: storePaths.mlsStateRootURL,
-                    credentialIdentity: identity.storedIdentity.credentialIdentity,
-                    chatId: chatId
-                )
-            }
-            let projectedChats = try await client.fetchLocalChats(databasePath: storePaths.localHistoryURL)
-            activeInboxLease = InboxLeaseState(
-                owner: response.lease.leaseOwner,
-                expiresAt: response.lease.leaseExpiresAt
-            )
-            mergeInboxItems(response.lease.items, autoAdvanceCursor: true)
-            applyLocalStoreSnapshot(chats: projectedChats.chats, syncState: response.syncState)
-            if let accountId = currentAccount?.accountId ?? persistedSession?.accountId {
-                try await refreshLocalMessengerState(client: client, accountId: accountId)
-                try await reconcileSelectedChatAfterLocalStateUpdate(
-                    client: client,
-                    accessToken: token,
-                    changedChatIDs: changedChatIDs
-                )
-            }
-        } catch let error as TrixAPIError {
-            if error.isCredentialFailure {
-                accessToken = nil
-                await restoreSession()
-            } else {
-                lastErrorMessage = error.userFacingMessage
-            }
-        } catch {
-            lastErrorMessage = error.userFacingMessage
-        }
-    }
-
-    func ackLoadedInboxItems() async {
-        guard canAckLoadedInboxItems else {
-            return
-        }
-        guard let token = accessToken else {
-            await restoreSession()
-            return
-        }
-        guard let client = makeClient() else {
-            return
-        }
-
-        isAckingInbox = true
-        lastErrorMessage = nil
-        defer { isAckingInbox = false }
-
-        do {
-            let inboxIds = inboxItems.map(\.inboxId)
-            let storePaths = try workspaceStorePaths()
-            let response = try await client.ackInboxIntoSyncState(
-                accessToken: token,
-                statePath: storePaths.syncStateURL,
-                inboxIds: inboxIds
-            )
-
-            let acked = Set(response.ackedInboxIds)
-            inboxItems.removeAll { acked.contains($0.inboxId) }
-            lastAckedInboxIDs = response.ackedInboxIds.sorted()
-            applySyncStateSnapshot(response.syncState)
-        } catch let error as TrixAPIError {
-            if error.isCredentialFailure {
-                accessToken = nil
-                await restoreSession()
-            } else {
-                lastErrorMessage = error.userFacingMessage
-            }
-        } catch {
-            lastErrorMessage = error.userFacingMessage
-        }
-    }
-
-    func useLastInboxCursor() {
-        guard let lastInboxCursor else {
-            return
-        }
-
-        inboxLeaseDraft.afterInboxID = String(lastInboxCursor)
-    }
-
-    func resetInboxCursor() {
-        inboxLeaseDraft.afterInboxID = ""
-    }
-
-    func clearLoadedInboxItems() {
-        inboxItems = []
-        lastAckedInboxIDs = []
     }
 
     func publishKeyPackages() async {
@@ -1690,7 +1443,7 @@ final class AppModel: ObservableObject {
                 draft.sequenceNo,
                 label: "history sync sequence"
             )
-            let response = try await client.appendHistorySyncChunk(
+            _ = try await client.appendHistorySyncChunk(
                 accessToken: token,
                 jobId: jobID,
                 sequenceNo: sequenceNo,
@@ -1699,12 +1452,6 @@ final class AppModel: ObservableObject {
                 isFinal: draft.isFinal
             )
             try await loadHistorySyncJobs(client: client, accessToken: token)
-            let completedChunks = UInt64((historySyncChunksByJobID[jobID]?.count ?? 0) + 1)
-            await sendHistorySyncProgress(
-                jobID: response.jobId,
-                cursorJSON: cursorJSON,
-                completedChunks: completedChunks
-            )
         } catch let error as TrixAPIError {
             if error.isCredentialFailure {
                 accessToken = nil
@@ -1734,32 +1481,15 @@ final class AppModel: ObservableObject {
             lastErrorMessage = "Текущее устройство нельзя approve из этого же сеанса."
             return
         }
-        guard let client = makeClient() else {
-            return
-        }
 
         approvingDeviceIDs.insert(device.deviceId)
         lastErrorMessage = nil
         defer { approvingDeviceIDs.remove(device.deviceId) }
 
         do {
-            let identity = try loadStoredIdentity(requireAccountRoot: true)
-            let approvePayload = try await client.fetchDeviceApprovePayload(
-                accessToken: token,
-                deviceId: device.deviceId
-            )
-            let transferBundle = try makeApproveTransferBundle(
-                approvePayload: approvePayload,
-                identity: identity
-            )
-            _ = try await client.approveDevice(
-                accessToken: token,
-                deviceId: device.deviceId,
-                identity: identity,
-                transferBundle: transferBundle
-            )
-
-            await refreshWorkspace()
+            let messenger = try makeAuthenticatedMessenger(accessToken: token)
+            let result = try await messenger.approveLinkedDevice(deviceId: device.deviceId)
+            applyLoadedDevices(result.devices)
         } catch {
             lastErrorMessage = error.userFacingMessage
         }
@@ -1784,23 +1514,9 @@ final class AppModel: ObservableObject {
         defer { revokingDeviceIDs.remove(device.deviceId) }
 
         do {
-            let identity = try loadStoredIdentity(requireAccountRoot: true)
-            let reason = device.deviceStatus == .pending
-                ? "pending link rejected from macOS alpha client"
-                : "device revoked from macOS alpha client"
-
-            guard let client = makeClient() else {
-                return
-            }
-
-            _ = try await client.revokeDevice(
-                accessToken: token,
-                deviceId: device.deviceId,
-                reason: reason,
-                identity: identity
-            )
-
-            await refreshWorkspace()
+            let messenger = try makeAuthenticatedMessenger(accessToken: token)
+            let result = try await messenger.revokeDevice(deviceId: device.deviceId)
+            applyLoadedDevices(result.devices)
         } catch {
             lastErrorMessage = error.userFacingMessage
         }
@@ -1846,44 +1562,21 @@ final class AppModel: ObservableObject {
     }
 
     func setSelectedChatReadCursor(_ readCursorServerSeq: UInt64?) async {
-        guard let selectedChatID, let accountID = chatPresentationAccountID else {
-            return
-        }
-        guard let client = makeClient() else {
+        guard let selectedChatID else {
             return
         }
 
         do {
-            let storePaths = try workspaceStorePaths(for: accountID)
-            let updatedReadState = try await client.setLocalChatReadCursor(
-                databasePath: storePaths.localHistoryURL,
-                chatId: selectedChatID,
-                readCursorServerSeq: readCursorServerSeq,
-                selfAccountId: accountID
-            )
-            selectedChatReadState = updatedReadState
-            selectedChatReadCursor = updatedReadState.readCursorServerSeq
-            selectedChatUnreadCount = updatedReadState.unreadCount
-            if let existingIndex = localChatListItems.firstIndex(where: { $0.chatId == selectedChatID }) {
-                let existingItem = localChatListItems[existingIndex]
-                localChatListItems[existingIndex] = LocalChatListItem(
-                    chatId: existingItem.chatId,
-                    chatType: existingItem.chatType,
-                    title: existingItem.title,
-                    displayTitle: existingItem.displayTitle,
-                    lastServerSeq: existingItem.lastServerSeq,
-                    epoch: existingItem.epoch,
-                    pendingMessageCount: existingItem.pendingMessageCount,
-                    unreadCount: updatedReadState.unreadCount,
-                    previewText: existingItem.previewText,
-                    previewSenderAccountId: existingItem.previewSenderAccountId,
-                    previewSenderDisplayName: existingItem.previewSenderDisplayName,
-                    previewIsOutgoing: existingItem.previewIsOutgoing,
-                    previewServerSeq: existingItem.previewServerSeq,
-                    previewCreatedAtUnix: existingItem.previewCreatedAtUnix,
-                    participantProfiles: existingItem.participantProfiles
-                )
+            let messenger = try makeAuthenticatedMessenger()
+            let throughMessageId = readCursorServerSeq.flatMap { cursor in
+                selectedChatTimelineItems.last(where: { $0.serverSeq <= cursor })?.messageId ??
+                    selectedChatTimelineItems.last?.messageId
             }
+            let updatedReadState = try await messenger.markRead(
+                conversationId: selectedChatID,
+                throughMessageId: throughMessageId
+            )
+            applySelectedChatReadState(updatedReadState)
         } catch {
             lastErrorMessage = error.userFacingMessage
         }
@@ -1927,6 +1620,101 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func makeMessengerConfiguration(
+        baseURLString: String? = nil,
+        accessToken: String? = nil,
+        accountId: UUID? = nil,
+        deviceId: UUID? = nil,
+        accountSyncChatId: UUID? = nil,
+        deviceDisplayName: String? = nil,
+        identity: DeviceIdentityMaterial? = nil
+    ) throws -> TrixMessengerClient.Configuration {
+        let rawBaseURL = baseURLString ?? persistedSession?.baseURLString ?? serverBaseURLString
+        guard let normalizedBaseURL = ServerEndpoint.normalizedURL(from: rawBaseURL)?.absoluteString else {
+            throw TrixAPIError.invalidPayload("Не удалось разобрать URL сервера.")
+        }
+
+        let resolvedAccountID = accountId ?? currentAccount?.accountId ?? persistedSession?.accountId
+        guard let resolvedAccountID else {
+            throw TrixAPIError.invalidPayload("Аккаунт ещё не загружен.")
+        }
+
+        let storePaths = try workspaceStorePaths(for: resolvedAccountID)
+        let storedIdentity = identity?.storedIdentity
+
+        return try TrixMessengerClient(
+            workspaceRoot: storePaths.rootURL,
+            baseURL: normalizedBaseURL,
+            accessToken: accessToken ?? self.accessToken,
+            accountId: accountId ?? currentAccount?.accountId ?? persistedSession?.accountId,
+            deviceId: deviceId ?? currentDeviceID,
+            accountSyncChatId: accountSyncChatId ?? persistedSession?.accountSyncChatId,
+            deviceDisplayName: deviceDisplayName ?? persistedSession?.deviceDisplayName ?? draft.deviceDisplayName,
+            platform: storedIdentity != nil ? DeviceIdentityMaterial.platform : nil,
+            credentialIdentity: storedIdentity?.credentialIdentity,
+            accountRootPrivateKey: storedIdentity?.accountRootSeed,
+            transportPrivateKey: storedIdentity?.transportSeed
+        ).configuration
+    }
+
+    private func makeMessengerClient(
+        baseURLString: String? = nil,
+        accessToken: String? = nil,
+        accountId: UUID? = nil,
+        deviceId: UUID? = nil,
+        accountSyncChatId: UUID? = nil,
+        deviceDisplayName: String? = nil,
+        identity: DeviceIdentityMaterial? = nil
+    ) throws -> TrixMessengerClient {
+        TrixMessengerClient(
+            configuration: try makeMessengerConfiguration(
+                baseURLString: baseURLString,
+                accessToken: accessToken,
+                accountId: accountId,
+                deviceId: deviceId,
+                accountSyncChatId: accountSyncChatId,
+                deviceDisplayName: deviceDisplayName,
+                identity: identity
+            )
+        )
+    }
+
+    private func makeAuthenticatedMessenger(accessToken: String? = nil) throws -> TrixMessengerClient {
+        try makeMessengerClient(
+            accessToken: accessToken ?? self.accessToken,
+            identity: try loadStoredIdentity()
+        )
+    }
+
+    private func applySelectedChatReadState(_ readState: LocalChatReadState) {
+        selectedChatReadState = readState
+        selectedChatReadCursor = readState.readCursorServerSeq
+        selectedChatUnreadCount = readState.unreadCount
+
+        guard let existingIndex = localChatListItems.firstIndex(where: { $0.chatId == readState.chatId }) else {
+            return
+        }
+
+        let existingItem = localChatListItems[existingIndex]
+        localChatListItems[existingIndex] = LocalChatListItem(
+            chatId: existingItem.chatId,
+            chatType: existingItem.chatType,
+            title: existingItem.title,
+            displayTitle: existingItem.displayTitle,
+            lastServerSeq: existingItem.lastServerSeq,
+            epoch: existingItem.epoch,
+            pendingMessageCount: existingItem.pendingMessageCount,
+            unreadCount: readState.unreadCount,
+            previewText: existingItem.previewText,
+            previewSenderAccountId: existingItem.previewSenderAccountId,
+            previewSenderDisplayName: existingItem.previewSenderDisplayName,
+            previewIsOutgoing: existingItem.previewIsOutgoing,
+            previewServerSeq: existingItem.previewServerSeq,
+            previewCreatedAtUnix: existingItem.previewCreatedAtUnix,
+            participantProfiles: existingItem.participantProfiles
+        )
+    }
+
     private func authenticate(
         client: TrixAPIClient,
         deviceId: UUID,
@@ -1938,73 +1726,8 @@ final class AppModel: ObservableObject {
         )
     }
 
-    private func startRealtimeConnection(
-        accessToken: String,
-        accountId: UUID
-    ) async {
-        guard let session = persistedSession else {
-            return
-        }
-
-        let normalizedBaseURL = ServerEndpoint.normalizedURL(from: session.baseURLString)?
-            .absoluteString ?? session.baseURLString
-        if realtimeClient != nil,
-           realtimeAccessToken == accessToken,
-           realtimeBaseURLString == normalizedBaseURL {
-            return
-        }
-
-        await stopRealtimeConnection()
-
-        do {
-            let storePaths = try workspaceStorePaths(for: accountId)
-            let connectionID = UUID()
-            realtimeConnectionID = connectionID
-            let client = try RealtimeWebSocketClient(
-                baseURLString: session.baseURLString,
-                accessToken: accessToken,
-                databasePath: storePaths.localHistoryURL,
-                statePath: storePaths.syncStateURL,
-                onEvent: { [weak self] update in
-                    await self?.handleRealtimeUpdate(update, connectionID: connectionID)
-                },
-                onDisconnect: { [weak self] reason in
-                    await self?.handleRealtimeDisconnect(reason, connectionID: connectionID)
-                }
-            )
-            realtimeClient = client
-            realtimeAccessToken = accessToken
-            realtimeBaseURLString = normalizedBaseURL
-            await client.start()
-        } catch {
-            realtimeClient = nil
-            realtimeAccessToken = nil
-            realtimeBaseURLString = nil
-            scheduleRealtimeRecovery(delayNanoseconds: 1_500_000_000)
-        }
-    }
-
-    private func stopRealtimeConnection() async {
-        let client = realtimeClient
-        realtimeClient = nil
-        realtimeAccessToken = nil
-        realtimeBaseURLString = nil
-        realtimeConnectionID = UUID()
-        await client?.stop()
-    }
-
     private func disconnectRealtimeConnection() {
-        let client = realtimeClient
-        realtimeClient = nil
-        realtimeAccessToken = nil
-        realtimeBaseURLString = nil
-        realtimeConnectionID = UUID()
-
-        if let client {
-            Task {
-                await client.stop()
-            }
-        }
+        stopForegroundRealtimeLoop()
     }
 
     func updateTypingState(for chatID: UUID?, draftText: String) {
@@ -2026,149 +1749,28 @@ final class AppModel: ObservableObject {
                 return
             }
 
-            if previousIsTyping, let previousChatID, previousChatID != desiredChatID {
-                try? await self.realtimeClient?.sendTypingUpdate(
-                    chatId: previousChatID,
-                    isTyping: false
-                )
-            }
-
-            if let chatID {
-                try? await self.realtimeClient?.sendTypingUpdate(
-                    chatId: chatID,
-                    isTyping: desiredIsTyping
-                )
-            }
-        }
-    }
-
-    private func sendHistorySyncProgress(
-        jobID: UUID,
-        cursorJSON: JSONValue?,
-        completedChunks: UInt64?
-    ) async {
-        do {
-            try await realtimeClient?.sendHistorySyncProgress(
-                jobId: jobID,
-                cursorJson: cursorJSON,
-                completedChunks: completedChunks
-            )
-        } catch {
-            return
-        }
-    }
-
-    private func handleRealtimeUpdate(
-        _ update: RealtimeConnectionUpdate,
-        connectionID: UUID
-    ) async {
-        guard realtimeConnectionID == connectionID else {
-            return
-        }
-
-        switch update.event.kind {
-        case .hello, .pong:
-            return
-        case .inboxItems:
-            await applyRealtimeLocalUpdate(
-                changedChatIDs: Set(update.event.report?.changedChatIds.compactMap(UUID.init(uuidString:)) ?? []),
-                ackedInboxIDs: [],
-                postNotifications: !isApplicationActive
-            )
-        case .acked:
-            removeAckedInboxItems(update.event.serverAckedInboxIds)
-            do {
-                let storePaths = try workspaceStorePaths()
-                let client = try makeClientForRealtimeRefresh()
-                let syncState = try await client.fetchSyncStateSnapshot(statePath: storePaths.syncStateURL)
-                applySyncStateSnapshot(syncState)
-            } catch {
-                scheduleRealtimeRecovery(delayNanoseconds: 300_000_000)
-            }
-        case .sessionReplaced:
-            let reason = update.event.sessionReplacedReason?.nonEmptyTrimmed
-            disconnectRealtimeConnection()
-            if let reason, !isRecoverableRealtimeSessionReplacement(reason) {
-                lastErrorMessage = reason
-            }
-            scheduleRealtimeRecovery(
-                delayNanoseconds: isRecoverableRealtimeSessionReplacement(reason) ? 500_000_000 : 1_500_000_000
-            )
-        case .error:
-            if let message = update.event.errorMessage?.nonEmptyTrimmed {
-                lastErrorMessage = message
-            }
-            disconnectRealtimeConnection()
-            scheduleRealtimeRecovery(delayNanoseconds: 1_500_000_000)
-        case .disconnected:
-            disconnectRealtimeConnection()
-            scheduleRealtimeRecovery(delayNanoseconds: 1_500_000_000)
-        }
-    }
-
-    private func handleRealtimeDisconnect(
-        _ reason: String?,
-        connectionID: UUID
-    ) async {
-        guard realtimeConnectionID == connectionID else {
-            return
-        }
-
-        disconnectRealtimeConnection()
-        if let reason = reason?.nonEmptyTrimmed,
-           currentAccount == nil {
-            lastErrorMessage = reason
-        }
-        scheduleRealtimeRecovery(delayNanoseconds: 1_500_000_000)
-    }
-
-    private func applyRealtimeLocalUpdate(
-        changedChatIDs: Set<UUID>,
-        ackedInboxIDs: [UInt64],
-        postNotifications: Bool
-    ) async {
-        guard let accountId = currentAccount?.accountId ?? persistedSession?.accountId else {
-            return
-        }
-
-        do {
-            let client = try makeClientForRealtimeRefresh()
-            let storePaths = try workspaceStorePaths(for: accountId)
-            let identity = try loadStoredIdentity()
-            guard let accessToken else {
+            guard let accessToken = self.accessToken else {
                 return
             }
-            let previousChatListItems = Dictionary(uniqueKeysWithValues: localChatListItems.map { ($0.chatId, $0) })
 
-            for chatId in changedChatIDs {
-                _ = try await client.projectLocalChatIfPossible(
-                    databasePath: storePaths.localHistoryURL,
-                    mlsStorageRoot: storePaths.mlsStateRootURL,
-                    credentialIdentity: identity.storedIdentity.credentialIdentity,
-                    chatId: chatId
-                )
+            do {
+                let messenger = try self.makeAuthenticatedMessenger(accessToken: accessToken)
+                if previousIsTyping, let previousChatID, previousChatID != desiredChatID {
+                    try await messenger.setTyping(
+                        conversationId: previousChatID,
+                        isTyping: false
+                    )
+                }
+
+                if let desiredChatID {
+                    try await messenger.setTyping(
+                        conversationId: desiredChatID,
+                        isTyping: desiredIsTyping
+                    )
+                }
+            } catch {
+                return
             }
-
-            let projectedChats = try await client.fetchLocalChats(databasePath: storePaths.localHistoryURL)
-            let syncState = try await client.fetchSyncStateSnapshot(statePath: storePaths.syncStateURL)
-
-            applyLocalStoreSnapshot(chats: projectedChats.chats, syncState: syncState)
-            try await refreshLocalMessengerState(client: client, accountId: accountId)
-            removeAckedInboxItems(ackedInboxIDs)
-            try await reconcileSelectedChatAfterLocalStateUpdate(
-                client: client,
-                accessToken: accessToken,
-                changedChatIDs: changedChatIDs
-            )
-
-            if postNotifications {
-                await postRealtimeNotifications(
-                    previousChatListItems: previousChatListItems,
-                    changedChatIDs: changedChatIDs
-                )
-            }
-        } catch {
-            await refreshInbox(background: postNotifications, suppressErrors: true)
         }
     }
 
@@ -2232,23 +1834,12 @@ final class AppModel: ObservableObject {
                 self.hasScheduledRealtimeRecovery = false
             }
 
-            if let accessToken,
-               let accountId = self.currentAccount?.accountId ?? self.persistedSession?.accountId {
-                await self.startRealtimeConnection(
-                    accessToken: accessToken,
-                    accountId: accountId
-                )
+            if self.accessToken != nil {
+                self.restartForegroundRealtimeLoopIfNeeded()
             } else if self.persistedSession != nil {
                 await self.restoreSession()
             }
         }
-    }
-
-    private func makeClientForRealtimeRefresh() throws -> TrixAPIClient {
-        guard let client = makeClient() else {
-            throw TrixAPIError.invalidPayload("Не удалось инициализировать realtime client.")
-        }
-        return client
     }
 
     private func loadWorkspace(client: TrixAPIClient, accessToken: String) async throws {
@@ -2262,53 +1853,29 @@ final class AppModel: ObservableObject {
     ) async throws {
         isRefreshingWorkspace = true
         defer { isRefreshingWorkspace = false }
-
-        if let session = persistedSession {
-            do {
-                let identity = try loadStoredIdentity()
-                let storePaths = try workspaceStorePaths(for: session.accountId)
-                _ = try await client.ensureOwnDeviceKeyPackages(
-                    accessToken: accessToken,
-                    deviceId: session.deviceId,
-                    mlsStorageRoot: storePaths.mlsStateRootURL,
-                    credentialIdentity: identity.storedIdentity.credentialIdentity
-                )
-            } catch {
-                lastErrorMessage = error.userFacingMessage
-            }
-        }
-
-        async let profile = client.fetchCurrentAccount(accessToken: accessToken)
-        async let devices = client.fetchDevices(accessToken: accessToken)
-        async let chats = client.fetchChats(accessToken: accessToken)
-
-        let loadedProfile = try await profile
-        let loadedDevices = try await devices
-        let loadedChats = try await chats
-
-        let sortedChats = loadedChats.chats.sorted(by: chatSort)
+        let loadedProfile = try await client.fetchCurrentAccount(accessToken: accessToken)
+        let identity = try loadStoredIdentity()
+        let messenger = try makeMessengerClient(
+            baseURLString: loadedProfile.accountId == persistedSession?.accountId
+                ? persistedSession?.baseURLString
+                : serverBaseURLString,
+            accessToken: accessToken,
+            accountId: loadedProfile.accountId,
+            deviceId: loadedProfile.deviceId,
+            accountSyncChatId: persistedSession?.accountSyncChatId,
+            deviceDisplayName: persistedSession?.deviceDisplayName,
+            identity: identity
+        )
+        let snapshot = try await messenger.loadSnapshot()
 
         currentAccount = loadedProfile
-        self.devices = loadedDevices.devices.sorted {
-            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
-        }
-        self.chats = sortedChats
-
         try updatePersistedSessionProfile(from: loadedProfile)
+        try applyMessengerSnapshot(snapshot)
         refreshLocalIdentityState(reportErrors: false)
         syncKeyPackageDrafts(with: loadedProfile)
-        syncInboxDrafts(with: loadedProfile)
         syncEditProfileDraft(with: loadedProfile)
         try await loadHistorySyncJobs(client: client, accessToken: accessToken)
-        await refreshLocalWorkspaceCache(
-            client: client,
-            accessToken: accessToken,
-            accountId: loadedProfile.accountId
-        )
-        await startRealtimeConnection(
-            accessToken: accessToken,
-            accountId: loadedProfile.accountId
-        )
+        restartForegroundRealtimeLoopIfNeeded()
 
         if let preferredChatID = resolvedWorkspaceSelection(
             selectionPreference: selectionPreference,
@@ -2345,180 +1912,48 @@ final class AppModel: ObservableObject {
         selectedChatDetail = loadedDetail
 
         do {
-            let storePaths = try workspaceStorePaths()
-            let selfAccountId = chatPresentationAccountID
-            let identity = try loadStoredIdentity()
-            async let localChatListItem = client.fetchLocalChatListItem(
-                databasePath: storePaths.localHistoryURL,
-                chatId: chatId,
-                selfAccountId: selfAccountId
-            )
-            async let localTimelineItems = client.fetchLocalTimelineItems(
-                databasePath: storePaths.localHistoryURL,
-                chatId: chatId,
-                selfAccountId: selfAccountId
-            )
-            async let localReadState = client.fetchLocalChatReadState(
-                databasePath: storePaths.localHistoryURL,
-                chatId: chatId,
-                selfAccountId: selfAccountId
-            )
-            async let localReadCursor = client.fetchLocalChatReadCursor(
-                databasePath: storePaths.localHistoryURL,
-                chatId: chatId
-            )
-            async let localUnreadCount = client.fetchLocalChatUnreadCount(
-                databasePath: storePaths.localHistoryURL,
-                chatId: chatId,
-                selfAccountId: selfAccountId
-            )
-            async let localHistory = client.fetchLocalChatHistory(
-                databasePath: storePaths.localHistoryURL,
-                chatId: chatId
-            )
-            async let syncCursor = client.fetchChatSyncCursor(
-                statePath: storePaths.syncStateURL,
-                chatId: chatId
-            )
-            async let projectedCursor = client.fetchLocalProjectedCursor(
-                databasePath: storePaths.localHistoryURL,
-                chatId: chatId
-            )
-            async let projectedMessages = client.fetchLocalProjectedMessages(
-                databasePath: storePaths.localHistoryURL,
-                chatId: chatId
-            )
-            async let localMlsDiagnostics = client.fetchLocalChatMlsDiagnostics(
-                databasePath: storePaths.localHistoryURL,
-                mlsStorageRoot: storePaths.mlsStateRootURL,
-                credentialIdentity: identity.storedIdentity.credentialIdentity,
-                chatId: chatId
-            )
-
-            let loadedLocalChatListItem = try await localChatListItem
-            let loadedLocalTimelineItems = try await localTimelineItems
-            let loadedLocalReadState = try await localReadState
-            let loadedLocalReadCursor = try await localReadCursor
-            let loadedLocalUnreadCount = try await localUnreadCount
-            let loadedProjectedCursor = try await projectedCursor
-            let loadedProjectedMessages = try await projectedMessages
-            let loadedLocalHistory = try await localHistory
-            let loadedSyncCursor = try await syncCursor
-            let loadedLocalMlsDiagnostics = try await localMlsDiagnostics
-            let localHistoryServerSeq = loadedLocalHistory.messages.map(\.serverSeq).max() ?? 0
-            let localProjectedCursor = loadedProjectedCursor ?? 0
-
-            var resolvedLocalChatListItem = loadedLocalChatListItem
-            var resolvedLocalTimelineItems = loadedLocalTimelineItems
-            var resolvedLocalReadState = loadedLocalReadState
-            var resolvedLocalReadCursor = loadedLocalReadCursor
-            var resolvedLocalUnreadCount = loadedLocalUnreadCount
-            var resolvedSyncCursor = loadedSyncCursor
-            var resolvedProjectedCursor = loadedProjectedCursor
-            var resolvedProjectedMessages = loadedProjectedMessages
-            var resolvedLocalMlsDiagnostics = loadedLocalMlsDiagnostics
-
-            if localHistoryServerSeq > localProjectedCursor {
-                let projected = try await client.projectLocalChatIfPossible(
-                    databasePath: storePaths.localHistoryURL,
-                    mlsStorageRoot: storePaths.mlsStateRootURL,
-                    credentialIdentity: identity.storedIdentity.credentialIdentity,
-                    chatId: chatId
-                )
-
-                if projected {
-                    async let refreshedLocalChatListItem = client.fetchLocalChatListItem(
-                        databasePath: storePaths.localHistoryURL,
-                        chatId: chatId,
-                        selfAccountId: selfAccountId
-                    )
-                    async let refreshedLocalTimelineItems = client.fetchLocalTimelineItems(
-                        databasePath: storePaths.localHistoryURL,
-                        chatId: chatId,
-                        selfAccountId: selfAccountId
-                    )
-                    async let refreshedLocalReadState = client.fetchLocalChatReadState(
-                        databasePath: storePaths.localHistoryURL,
-                        chatId: chatId,
-                        selfAccountId: selfAccountId
-                    )
-                    async let refreshedLocalReadCursor = client.fetchLocalChatReadCursor(
-                        databasePath: storePaths.localHistoryURL,
-                        chatId: chatId
-                    )
-                    async let refreshedLocalUnreadCount = client.fetchLocalChatUnreadCount(
-                        databasePath: storePaths.localHistoryURL,
-                        chatId: chatId,
-                        selfAccountId: selfAccountId
-                    )
-                    async let refreshedSyncCursor = client.fetchChatSyncCursor(
-                        statePath: storePaths.syncStateURL,
-                        chatId: chatId
-                    )
-                    async let refreshedProjectedCursor = client.fetchLocalProjectedCursor(
-                        databasePath: storePaths.localHistoryURL,
-                        chatId: chatId
-                    )
-                    async let refreshedProjectedMessages = client.fetchLocalProjectedMessages(
-                        databasePath: storePaths.localHistoryURL,
-                        chatId: chatId
-                    )
-                    async let refreshedLocalMlsDiagnostics = client.fetchLocalChatMlsDiagnostics(
-                        databasePath: storePaths.localHistoryURL,
-                        mlsStorageRoot: storePaths.mlsStateRootURL,
-                        credentialIdentity: identity.storedIdentity.credentialIdentity,
-                        chatId: chatId
-                    )
-
-                    resolvedLocalChatListItem = try await refreshedLocalChatListItem
-                    resolvedLocalTimelineItems = try await refreshedLocalTimelineItems
-                    resolvedLocalReadState = try await refreshedLocalReadState
-                    resolvedLocalReadCursor = try await refreshedLocalReadCursor
-                    resolvedLocalUnreadCount = try await refreshedLocalUnreadCount
-                    resolvedSyncCursor = try await refreshedSyncCursor
-                    resolvedProjectedCursor = try await refreshedProjectedCursor
-                    resolvedProjectedMessages = try await refreshedProjectedMessages
-                    resolvedLocalMlsDiagnostics = try await refreshedLocalMlsDiagnostics
+            let messenger = try makeAuthenticatedMessenger(accessToken: accessToken)
+            let timelineItems = try await messenger.getAllMessages(conversationId: chatId)
+            let localChatListItem = localChatListItems.first { $0.chatId == chatId }
+            let unreadCount = localChatListItem?.unreadCount ?? 0
+            let inferredReadCursor: UInt64 = {
+                if unreadCount == 0 {
+                    return timelineItems.last?.serverSeq ?? localChatListItem?.lastServerSeq ?? 0
                 }
-            }
-
-            if let resolvedLocalChatListItem {
-                upsertLocalChatListItem(resolvedLocalChatListItem)
-            }
-            selectedChatTimelineItems = resolvedLocalTimelineItems
-            selectedChatReadState = resolvedLocalReadState
-            selectedChatReadCursor = resolvedLocalReadCursor
-            selectedChatUnreadCount = resolvedLocalUnreadCount
-            selectedChatSyncCursor = resolvedSyncCursor
-            selectedChatProjectedCursor = resolvedProjectedCursor
-            selectedChatProjectedMessages = resolvedProjectedMessages
-            selectedChatMlsDiagnostics = resolvedLocalMlsDiagnostics
-
-            if loadedLocalHistory.messages.isEmpty && loadedDetail.lastServerSeq > 0 {
-                let remoteHistory = try await client.fetchChatHistory(
-                    accessToken: accessToken,
-                    chatId: chatId
-                )
-                selectedChatHistory = remoteHistory.messages
-            } else {
-                selectedChatHistory = loadedLocalHistory.messages
-            }
-
-            if let selfAccountId {
-                try await markSelectedChatReadIfNeeded(
-                    client: client,
-                    accessToken: accessToken,
-                    accountId: selfAccountId,
-                    chatId: chatId,
-                    timelineItems: resolvedLocalTimelineItems
-                )
-            }
-        } catch {
-            let remoteHistory = try await client.fetchChatHistory(
-                accessToken: accessToken,
-                chatId: chatId
+                return selectedChatReadState?.readCursorServerSeq ?? 0
+            }()
+            let readState = LocalChatReadState(
+                chatId: chatId,
+                readCursorServerSeq: inferredReadCursor,
+                unreadCount: unreadCount
             )
-            selectedChatHistory = remoteHistory.messages
+
+            if let localChatListItem {
+                upsertLocalChatListItem(localChatListItem)
+            }
+            selectedChatTimelineItems = timelineItems
+            applySelectedChatReadState(readState)
+            selectedChatSyncCursor = nil
+            selectedChatProjectedCursor = nil
+            selectedChatProjectedMessages = []
+            selectedChatHistory = []
+            selectedChatMlsDiagnostics = nil
+
+            try await markSelectedChatReadIfNeeded(
+                messenger: messenger,
+                chatId: chatId,
+                timelineItems: timelineItems
+            )
+        } catch {
+            selectedChatTimelineItems = []
+            selectedChatReadState = nil
+            selectedChatReadCursor = nil
+            selectedChatUnreadCount = nil
+            selectedChatSyncCursor = nil
+            selectedChatProjectedCursor = nil
+            selectedChatProjectedMessages = []
+            selectedChatHistory = []
+            selectedChatMlsDiagnostics = nil
         }
     }
 
@@ -2592,6 +2027,7 @@ final class AppModel: ObservableObject {
 
     private func clearSession() throws {
         disconnectRealtimeConnection()
+        stopLinkIntentRefreshLoop()
         try sessionStore.clear()
         try keychainStore.removeValue(for: .accountRootSeed)
         try keychainStore.removeValue(for: .transportSeed)
@@ -2600,9 +2036,9 @@ final class AppModel: ObservableObject {
 
         persistedSession = nil
         accessToken = nil
+        messengerCheckpoint = nil
         clearWorkspaceData()
         outgoingLinkIntent = nil
-        inboxLeaseDraft = InboxLeaseDraft()
         keyPackagePublishDraft = KeyPackagePublishDraft()
         keyPackageReserveDraft = KeyPackageReserveDraft()
         hasAccountRootKey = false
@@ -2611,8 +2047,10 @@ final class AppModel: ObservableObject {
     }
 
     private func clearWorkspaceData() {
+        stopLinkIntentRefreshLoop()
         stopForegroundRealtimeLoop()
         currentAccount = nil
+        messengerCheckpoint = nil
         devices = []
         chats = []
         localChatListItems = []
@@ -2621,10 +2059,6 @@ final class AppModel: ObservableObject {
         cachedAttachmentURLs = [:]
         previewedAttachment = nil
         accountDirectoryResults = []
-        inboxItems = []
-        activeInboxLease = nil
-        lastInboxCursor = nil
-        lastAckedInboxIDs = []
         syncStateSnapshot = nil
         historySyncJobs = []
         historySyncCursorDrafts = [:]
@@ -2669,12 +2103,6 @@ final class AppModel: ObservableObject {
     private func syncKeyPackageDrafts(with profile: AccountProfileResponse) {
         if keyPackageReserveDraft.accountID.nonEmptyTrimmed == nil {
             keyPackageReserveDraft.accountID = profile.accountId.uuidString
-        }
-    }
-
-    private func syncInboxDrafts(with profile: AccountProfileResponse) {
-        if inboxLeaseDraft.leaseOwner.nonEmptyTrimmed == nil {
-            inboxLeaseDraft.leaseOwner = defaultInboxLeaseOwner(for: profile.deviceId)
         }
     }
 
@@ -2726,34 +2154,11 @@ final class AppModel: ObservableObject {
         accessToken: String,
         accountId: UUID
     ) async {
+        _ = client
+        _ = accountId
         do {
-            let storePaths = try workspaceStorePaths(for: accountId)
-            let identity = try loadStoredIdentity()
-            var syncedState: SyncStateSnapshot?
-
-            do {
-                let localResult = try await client.syncChatHistoriesIntoLocalStore(
-                    accessToken: accessToken,
-                    databasePath: storePaths.localHistoryURL,
-                    statePath: storePaths.syncStateURL
-                )
-                syncedState = localResult.syncState
-            } catch {
-                lastErrorMessage = error.userFacingMessage
-            }
-
-            _ = try await client.projectLocalChatsIfPossible(
-                databasePath: storePaths.localHistoryURL,
-                mlsStorageRoot: storePaths.mlsStateRootURL,
-                credentialIdentity: identity.storedIdentity.credentialIdentity
-            )
-            let projectedChats = try await client.fetchLocalChats(databasePath: storePaths.localHistoryURL)
-            if let syncedState {
-                applyLocalStoreSnapshot(chats: projectedChats.chats, syncState: syncedState)
-            } else if !projectedChats.chats.isEmpty {
-                self.chats = projectedChats.chats.sorted(by: chatSort)
-            }
-            try await refreshLocalMessengerState(client: client, accountId: accountId)
+            let messenger = try makeAuthenticatedMessenger(accessToken: accessToken)
+            try applyMessengerSnapshot(try await messenger.loadSnapshot())
         } catch {
             lastErrorMessage = error.userFacingMessage
         }
@@ -2776,25 +2181,50 @@ final class AppModel: ObservableObject {
         applySyncStateSnapshot(syncState)
     }
 
-    private func refreshLocalMessengerState(
-        client: TrixAPIClient,
-        accountId: UUID
-    ) async throws {
-        let storePaths = try workspaceStorePaths(for: accountId)
-        let identity = try loadStoredIdentity()
-        let loadedItems = try await client.fetchLocalChatListItems(
-            databasePath: storePaths.localHistoryURL,
-            selfAccountId: accountId
-        )
-        let signaturePublicKey = try? await client.fetchMlsSignaturePublicKey(
-            mlsStorageRoot: storePaths.mlsStateRootURL,
-            credentialIdentity: identity.storedIdentity.credentialIdentity
-        )
+    private func applyMessengerSnapshot(_ snapshot: MessengerSnapshot) throws {
+        messengerCheckpoint = snapshot.checkpoint
         localChatListItems = mergeLocalChatListItems(
             existing: localChatListItems,
-            incoming: loadedItems
+            incoming: snapshot.conversations
         )
-        mlsSignaturePublicKeyFingerprint = signaturePublicKey.map { shortDataFingerprint($0) }
+        chats = snapshot.conversations
+            .map(chatSummary(for:))
+            .sorted(by: chatSort)
+        applyLoadedDevices(snapshot.devices)
+
+        if var session = persistedSession {
+            var didChange = false
+
+            if let accountId = snapshot.accountId, accountId != session.accountId {
+                session.accountId = accountId
+                didChange = true
+            }
+            if let deviceId = snapshot.deviceId, deviceId != session.deviceId {
+                session.deviceId = deviceId
+                didChange = true
+            }
+            if snapshot.accountSyncChatId != session.accountSyncChatId {
+                session.accountSyncChatId = snapshot.accountSyncChatId
+                didChange = true
+            }
+            if didChange {
+                try sessionStore.save(session)
+                persistedSession = session
+            }
+        }
+    }
+
+    private func refreshLocalMessengerState(
+        messenger: TrixMessengerClient
+    ) async throws {
+        localChatListItems = mergeLocalChatListItems(
+            existing: localChatListItems,
+            incoming: try await messenger.listConversations()
+        )
+        chats = localChatListItems
+            .map(chatSummary(for:))
+            .sorted(by: chatSort)
+        mlsSignaturePublicKeyFingerprint = nil
     }
 
     private func reconcileSelectedChatAfterLocalStateUpdate(
@@ -2865,17 +2295,6 @@ final class AppModel: ObservableObject {
 
     private func applySyncStateSnapshot(_ syncState: SyncStateSnapshot) {
         syncStateSnapshot = syncState
-
-        if inboxLeaseDraft.leaseOwner.nonEmptyTrimmed == nil {
-            inboxLeaseDraft.leaseOwner = syncState.leaseOwner
-        }
-
-        if let lastAckedInboxId = syncState.lastAckedInboxId {
-            lastInboxCursor = max(lastInboxCursor ?? 0, lastAckedInboxId)
-            if inboxLeaseDraft.afterInboxID.nonEmptyTrimmed == nil {
-                inboxLeaseDraft.afterInboxID = String(lastAckedInboxId)
-            }
-        }
     }
 
     private func decodeLinkIntentPayload(_ rawValue: String) throws -> LinkIntentPayload {
@@ -2940,30 +2359,6 @@ final class AppModel: ObservableObject {
         return packages
     }
 
-    private func decodeInboxPollParameters() throws -> InboxPollParameters {
-        let afterInboxId = try decodeOptionalUInt64(
-            inboxLeaseDraft.afterInboxID,
-            label: "after inbox id"
-        )
-        let limit = try decodeOptionalInt(
-            inboxLeaseDraft.limit,
-            label: "limit",
-            range: 1...500
-        ) ?? InboxLeaseDraft.defaultLimit
-        let leaseTtlSeconds = try decodeOptionalUInt64(
-            inboxLeaseDraft.leaseTTLSeconds,
-            label: "lease ttl seconds",
-            range: 1...300
-        ) ?? InboxLeaseDraft.defaultLeaseTTLSeconds
-
-        return InboxPollParameters(
-            afterInboxId: afterInboxId,
-            limit: limit,
-            leaseOwner: inboxLeaseDraft.leaseOwner.nonEmptyTrimmed,
-            leaseTtlSeconds: leaseTtlSeconds
-        )
-    }
-
     private func decodeUUID(_ rawValue: String, label: String) throws -> UUID {
         guard let trimmed = rawValue.nonEmptyTrimmed, let uuid = UUID(uuidString: trimmed) else {
             throw TrixAPIError.invalidPayload("Не удалось разобрать \(label).")
@@ -2990,20 +2385,6 @@ final class AppModel: ObservableObject {
             return nil
         }
         guard range.contains(value) else {
-            throw TrixAPIError.invalidPayload("\(label.capitalized) должен быть в диапазоне \(range.lowerBound)...\(range.upperBound).")
-        }
-        return value
-    }
-
-    private func decodeOptionalInt(
-        _ rawValue: String,
-        label: String,
-        range: ClosedRange<Int>
-    ) throws -> Int? {
-        guard let trimmed = rawValue.nonEmptyTrimmed else {
-            return nil
-        }
-        guard let value = Int(trimmed), range.contains(value) else {
             throw TrixAPIError.invalidPayload("\(label.capitalized) должен быть в диапазоне \(range.lowerBound)...\(range.upperBound).")
         }
         return value
@@ -3075,6 +2456,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func chatSummary(for item: LocalChatListItem) -> ChatSummary {
+        ChatSummary(
+            chatId: item.chatId,
+            chatType: item.chatType,
+            title: item.title,
+            lastServerSeq: item.lastServerSeq,
+            epoch: item.epoch,
+            pendingMessageCount: item.pendingMessageCount,
+            lastMessage: nil,
+            participantProfiles: item.participantProfiles
+        )
+    }
+
     private func resolvedWorkspaceSelection(
         selectionPreference: WorkspaceSelectionPreference,
         currentSelectedChatID: UUID?,
@@ -3139,21 +2533,17 @@ final class AppModel: ObservableObject {
     }
 
     private func performBackgroundRefreshIfNeeded() async {
-        guard isAuthenticated,
-              !isRefreshingInbox,
-              !isLeasingInbox,
-              !isAckingInbox else {
-            return
-        }
-
-        if realtimeClient != nil {
+        guard isAuthenticated else {
             return
         }
 
         if isApplicationActive {
             restartForegroundRealtimeLoopIfNeeded()
             if foregroundRealtimeTask == nil {
-                await refreshInbox(background: false, suppressErrors: true)
+                await refreshMessengerEvents(
+                    postNotifications: false,
+                    suppressErrors: true
+                )
             }
             return
         }
@@ -3164,39 +2554,77 @@ final class AppModel: ObservableObject {
 
         switch notificationPreferences.permissionState {
         case .authorized, .provisional, .ephemeral:
-            await refreshInbox(background: true, suppressErrors: true)
+            await refreshMessengerEvents(
+                postNotifications: true,
+                suppressErrors: true
+            )
         case .notDetermined, .denied:
             break
         }
     }
 
-    private func postNotificationsForNewMessages(_ inboxItems: [InboxItem]) async {
-        guard notificationPreferences.isEnabled else {
-            return
+    @discardableResult
+    private func refreshMessengerEvents(
+        postNotifications: Bool,
+        suppressErrors: Bool
+    ) async -> Bool {
+        guard let token = accessToken else {
+            if !suppressErrors {
+                await restoreSession()
+            }
+            return false
+        }
+        guard let client = makeClient() else {
+            return false
         }
 
-        switch notificationPreferences.permissionState {
-        case .authorized, .provisional, .ephemeral:
-            break
-        case .notDetermined, .denied:
-            return
-        }
+        let previousChatListItems = Dictionary(
+            uniqueKeysWithValues: localChatListItems.map { ($0.chatId, $0) }
+        )
 
-        let groupedByChat = Dictionary(grouping: inboxItems, by: { $0.message.chatId })
-        for (chatId, items) in groupedByChat {
-            guard let latestItem = items.max(by: { $0.inboxId < $1.inboxId }) else {
-                continue
+        do {
+            let messenger = try makeAuthenticatedMessenger(accessToken: token)
+            let batch = try await messenger.getNewEvents(checkpoint: messengerCheckpoint)
+            messengerCheckpoint = batch.checkpoint ?? messengerCheckpoint
+
+            if !batch.changedConversationIDs.isEmpty {
+                try await refreshLocalMessengerState(messenger: messenger)
+                try await reconcileSelectedChatAfterLocalStateUpdate(
+                    client: client,
+                    accessToken: token,
+                    changedChatIDs: batch.changedConversationIDs
+                )
             }
 
-            let chatTitle = localChatListItems.first(where: { $0.chatId == chatId })?.displayTitle ?? "New message"
-            let body = localChatListItems.first(where: { $0.chatId == chatId })?.previewText ??
-                "You have \(items.count) new message\(items.count == 1 ? "" : "s")."
-            await notificationCoordinator.postMessageNotification(
-                identifier: "chat-\(chatId.uuidString)-\(latestItem.inboxId)",
-                title: chatTitle,
-                body: body
-            )
+            if batch.hasDeviceChanges {
+                applyLoadedDevices(try await messenger.listDevices())
+            }
+
+            if postNotifications, !batch.changedConversationIDs.isEmpty {
+                await postRealtimeNotifications(
+                    previousChatListItems: previousChatListItems,
+                    changedChatIDs: batch.changedConversationIDs
+                )
+            }
+
+            return true
+        } catch let error as TrixAPIError {
+            if error.isCredentialFailure {
+                accessToken = nil
+                disconnectRealtimeConnection()
+                if !suppressErrors {
+                    await restoreSession()
+                }
+            } else if !suppressErrors {
+                lastErrorMessage = error.userFacingMessage
+            }
+        } catch {
+            if !suppressErrors {
+                lastErrorMessage = error.userFacingMessage
+            }
         }
+
+        return false
     }
 
     private func restartForegroundRealtimeLoopIfNeeded() {
@@ -3230,90 +2658,31 @@ final class AppModel: ObservableObject {
 
         let taskID = UUID()
         foregroundRealtimeTaskID = taskID
-        let realtimeConfig = Self.foregroundRealtimeConfig
+        let pollIntervalNanoseconds = Self.foregroundRealtimePollIntervalNanoseconds
         let retryDelayNanoseconds = Self.foregroundRealtimeRetryDelayNanoseconds
-        let realtimeBaseURLString = normalizedBaseURLString
 
-        foregroundRealtimeTask = Task.detached(priority: .userInitiated) { [weak self] in
+        foregroundRealtimeTask = Task { [weak self] in
             guard let self else {
                 return
             }
 
-            let ffiClient: FfiServerApiClient
-            let realtimeDriver: FfiRealtimeDriver
-            let storePaths: WorkspaceStorePaths
-            let historyStore: FfiLocalHistoryStore
-            let syncCoordinator: FfiSyncCoordinator
-
-            do {
-                ffiClient = try FfiServerApiClient(baseUrl: normalizedBaseURLString)
-                try ffiClient.setAccessToken(accessToken: accessToken)
-                realtimeDriver = try FfiRealtimeDriver.withConfig(config: realtimeConfig)
-                storePaths = try WorkspaceStorePaths.forAccount(accountId)
-                historyStore = try FfiLocalHistoryStore.newPersistent(databasePath: storePaths.localHistoryURL.path)
-                syncCoordinator = try FfiSyncCoordinator.newPersistent(statePath: storePaths.syncStateURL.path)
-            } catch {
-                await self.finishForegroundRealtimeLoop(taskID: taskID)
-                return
-            }
-
-            var websocket: FfiServerWebSocketClient?
-
-            func closeSocket() {
-                guard let current = websocket else {
-                    return
-                }
-                try? current.closeSocket()
-                websocket = nil
-            }
-
             while !Task.isCancelled {
-                do {
-                    let activeWebSocket: FfiServerWebSocketClient
-                    if let websocket {
-                        activeWebSocket = websocket
-                    } else {
-                        let created = try ffiClient.connectWebsocket()
-                        websocket = created
-                        activeWebSocket = created
-                    }
-
-                    guard let event = try realtimeDriver.nextWebsocketEvent(
-                        websocket: activeWebSocket,
-                        coordinator: syncCoordinator,
-                        store: historyStore,
-                        autoAck: true
-                    ) else {
-                        closeSocket()
-                        if Task.isCancelled {
-                            break
-                        }
-                        try? await Task.sleep(nanoseconds: retryDelayNanoseconds)
-                        continue
-                    }
-
-                    let shouldContinue = await self.handleForegroundRealtimeEvent(
-                        baseURLString: realtimeBaseURLString,
-                        accessToken: accessToken,
-                        accountId: accountId,
-                        event: event
-                    )
-                    if !shouldContinue {
-                        break
-                    }
-                } catch is CancellationError {
+                let didRefresh = await self.refreshMessengerEvents(
+                    postNotifications: false,
+                    suppressErrors: true
+                )
+                if Task.isCancelled || !self.isApplicationActive || self.accessToken == nil {
                     break
+                }
+                let delayNanoseconds = didRefresh ? pollIntervalNanoseconds : retryDelayNanoseconds
+                do {
+                    try await Task.sleep(nanoseconds: delayNanoseconds)
                 } catch {
-                    closeSocket()
-                    if Task.isCancelled {
-                        break
-                    }
-                    try? await Task.sleep(nanoseconds: retryDelayNanoseconds)
+                    break
                 }
             }
 
-            closeSocket()
-            await self.finishForegroundRealtimeLoop(taskID: taskID)
+            self.finishForegroundRealtimeLoop(taskID: taskID)
         }
     }
 
@@ -3336,54 +2705,6 @@ final class AppModel: ObservableObject {
         foregroundRealtimeAccessToken = nil
         foregroundRealtimeBaseURLString = nil
         foregroundRealtimeAccountID = nil
-    }
-
-    private func handleForegroundRealtimeEvent(
-        baseURLString: String,
-        accessToken: String,
-        accountId: UUID,
-        event: FfiRealtimeEvent
-    ) async -> Bool {
-        let ackedInboxIDs = Array(Set(event.outboundAckInboxIds + event.serverAckedInboxIds)).sorted()
-        if !ackedInboxIDs.isEmpty {
-            let acknowledgedSet = Set(ackedInboxIDs)
-            inboxItems.removeAll { acknowledgedSet.contains($0.inboxId) }
-            lastAckedInboxIDs = ackedInboxIDs
-        }
-
-        switch event.kind {
-        case .hello, .pong:
-            return true
-        case .inboxItems, .acked:
-            let changedChatIDs = Set((event.report?.changedChatIds ?? []).compactMap(UUID.init(uuidString:)))
-            guard let client = makeClient(baseURLString: baseURLString) else {
-                return true
-            }
-
-            do {
-                let storePaths = try workspaceStorePaths(for: accountId)
-                let syncState = try await client.fetchSyncStateSnapshot(statePath: storePaths.syncStateURL)
-                applySyncStateSnapshot(syncState)
-                try await refreshLocalMessengerState(client: client, accountId: accountId)
-                try await reconcileSelectedChatAfterLocalStateUpdate(
-                    client: client,
-                    accessToken: accessToken,
-                    changedChatIDs: changedChatIDs
-                )
-            } catch let error as TrixAPIError {
-                lastErrorMessage = error.userFacingMessage
-            } catch {
-                lastErrorMessage = error.userFacingMessage
-            }
-            return true
-        case .error, .disconnected:
-            return true
-        case .sessionReplaced:
-            lastErrorMessage = event.sessionReplacedReason?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                ? event.sessionReplacedReason
-                : "Эта сессия была заменена другим клиентом."
-            return false
-        }
     }
 
     private func enqueuePendingOutgoing(chatId: UUID, payload: PendingOutgoingPayload) -> UUID {
@@ -3440,45 +2761,6 @@ final class AppModel: ObservableObject {
         )
     }
 
-    private func sendAttachmentPayload(
-        client: TrixAPIClient,
-        accessToken: String,
-        storePaths: WorkspaceStorePaths,
-        identity: DeviceIdentityMaterial,
-        senderAccountID: UUID,
-        senderDeviceID: UUID,
-        chatId: UUID,
-        draft: AttachmentDraft
-    ) async throws {
-        let payload = try Data(contentsOf: draft.fileURL)
-        let uploaded = try await client.uploadAttachment(
-            accessToken: accessToken,
-            chatId: chatId,
-            payload: payload,
-            mimeType: draft.mimeType,
-            fileName: draft.fileName,
-            widthPx: draft.widthPx,
-            heightPx: draft.heightPx
-        )
-        _ = try await client.sendMessageBody(
-            accessToken: accessToken,
-            databasePath: storePaths.localHistoryURL,
-            statePath: storePaths.syncStateURL,
-            mlsStorageRoot: storePaths.mlsStateRootURL,
-            credentialIdentity: identity.storedIdentity.credentialIdentity,
-            senderAccountId: senderAccountID,
-            senderDeviceId: senderDeviceID,
-            chatId: chatId,
-            body: uploaded.body
-        )
-    }
-
-    private func attachmentCacheURL(for messageId: UUID, body: TypedMessageBody) throws -> URL {
-        let storePaths = try workspaceStorePaths()
-        let fileName = body.fileName?.nonEmptyTrimmed ?? "\(messageId.uuidString).bin"
-        return storePaths.attachmentsRootURL.appending(path: "\(messageId.uuidString)-\(fileName)")
-    }
-
     private func presentAttachment(url: URL, body: TypedMessageBody) {
         if LocalImageAttachmentSupport.supports(mimeType: body.mimeType, fileName: body.fileName ?? url.lastPathComponent) {
             previewedAttachment = PreviewedAttachmentFile(
@@ -3533,58 +2815,29 @@ final class AppModel: ObservableObject {
     }
 
     private func markSelectedChatReadIfNeeded(
-        client: TrixAPIClient,
-        accessToken: String,
-        accountId: UUID,
+        messenger: TrixMessengerClient,
         chatId: UUID,
         timelineItems: [LocalTimelineItem]
     ) async throws {
-        guard let latestServerSeq = timelineItems.last?.serverSeq else {
+        guard let latestMessage = timelineItems.last else {
             return
         }
 
         let previousReadCursor = selectedChatReadState?.readCursorServerSeq ?? 0
         if let selectedChatReadState,
            selectedChatReadState.unreadCount == 0,
-           selectedChatReadState.readCursorServerSeq >= latestServerSeq {
+           selectedChatReadState.readCursorServerSeq >= latestMessage.serverSeq {
             return
         }
 
-        let storePaths = try workspaceStorePaths(for: accountId)
-        let updatedReadState = try await client.markLocalChatRead(
-            databasePath: storePaths.localHistoryURL,
-            chatId: chatId,
-            throughServerSeq: latestServerSeq,
-            selfAccountId: accountId
+        let updatedReadState = try await messenger.markRead(
+            conversationId: chatId,
+            throughMessageId: latestMessage.messageId
         )
-        selectedChatReadState = updatedReadState
-        selectedChatReadCursor = updatedReadState.readCursorServerSeq
-        selectedChatUnreadCount = updatedReadState.unreadCount
-
-        if let existingIndex = localChatListItems.firstIndex(where: { $0.chatId == chatId }) {
-            let existingItem = localChatListItems[existingIndex]
-            localChatListItems[existingIndex] = LocalChatListItem(
-                chatId: existingItem.chatId,
-                chatType: existingItem.chatType,
-                title: existingItem.title,
-                displayTitle: existingItem.displayTitle,
-                lastServerSeq: existingItem.lastServerSeq,
-                epoch: existingItem.epoch,
-                pendingMessageCount: existingItem.pendingMessageCount,
-                unreadCount: updatedReadState.unreadCount,
-                previewText: existingItem.previewText,
-                previewSenderAccountId: existingItem.previewSenderAccountId,
-                previewSenderDisplayName: existingItem.previewSenderDisplayName,
-                previewIsOutgoing: existingItem.previewIsOutgoing,
-                previewServerSeq: existingItem.previewServerSeq,
-                previewCreatedAtUnix: existingItem.previewCreatedAtUnix,
-                participantProfiles: existingItem.participantProfiles
-            )
-        }
+        applySelectedChatReadState(updatedReadState)
 
         guard updatedReadState.readCursorServerSeq > 0,
               updatedReadState.readCursorServerSeq > previousReadCursor,
-              let senderDeviceID = currentDeviceID,
               let receiptTargetMessageID = readReceiptTargetMessageId(
                 timelineItems: timelineItems,
                 throughServerSeq: updatedReadState.readCursorServerSeq,
@@ -3595,16 +2848,8 @@ final class AppModel: ObservableObject {
         }
 
         do {
-            let identity = try loadStoredIdentity()
-            _ = try await client.sendMessageBody(
-                accessToken: accessToken,
-                databasePath: storePaths.localHistoryURL,
-                statePath: storePaths.syncStateURL,
-                mlsStorageRoot: storePaths.mlsStateRootURL,
-                credentialIdentity: identity.storedIdentity.credentialIdentity,
-                senderAccountId: accountId,
-                senderDeviceId: senderDeviceID,
-                chatId: chatId,
+            _ = try await messenger.sendMessage(
+                conversationId: chatId,
                 body: .receipt(
                     targetMessageId: receiptTargetMessageID,
                     receiptAtUnix: UInt64(Date().timeIntervalSince1970)
@@ -3632,47 +2877,138 @@ final class AppModel: ObservableObject {
             .messageId
     }
 
-    private func mergeInboxItems(_ newItems: [InboxItem], autoAdvanceCursor: Bool) {
-        guard !newItems.isEmpty else {
-            return
-        }
-
-        var mergedByID = Dictionary(uniqueKeysWithValues: inboxItems.map { ($0.inboxId, $0) })
-        for item in newItems {
-            mergedByID[item.inboxId] = item
-        }
-
-        let merged = mergedByID.values.sorted { $0.inboxId < $1.inboxId }
-        inboxItems = merged
-
-        if let maxInboxId = merged.last?.inboxId {
-            lastInboxCursor = max(lastInboxCursor ?? 0, maxInboxId)
-            if autoAdvanceCursor {
-                inboxLeaseDraft.afterInboxID = String(maxInboxId)
-            }
-        }
-    }
-
-    private func removeAckedInboxItems(_ ackedInboxIDs: [UInt64]) {
-        guard !ackedInboxIDs.isEmpty else {
-            return
-        }
-
-        let acked = Set(ackedInboxIDs)
-        inboxItems.removeAll { acked.contains($0.inboxId) }
-        lastAckedInboxIDs = ackedInboxIDs.sorted()
-    }
-
-    private func defaultInboxLeaseOwner(for deviceId: UUID) -> String {
-        let prefix = String(deviceId.uuidString.prefix(8)).lowercased()
-        return "macos-alpha:\(prefix)"
-    }
-
     private func normalizeCreateChatSelectionForType() {
         if createChatDraft.chatType == .dm,
            createChatDraft.selectedParticipants.count > 1 {
             createChatDraft.selectedParticipants = Array(createChatDraft.selectedParticipants.prefix(1))
         }
+    }
+
+    private func refreshDevices(showProgress: Bool, suppressErrors: Bool) async {
+        guard let token = accessToken else {
+            if !suppressErrors {
+                await restoreSession()
+            }
+            return
+        }
+
+        if showProgress {
+            isRefreshingDevices = true
+        }
+        defer {
+            if showProgress {
+                isRefreshingDevices = false
+            }
+        }
+
+        do {
+            let messenger = try makeAuthenticatedMessenger(accessToken: token)
+            applyLoadedDevices(try await messenger.listDevices())
+        } catch let error as TrixAPIError {
+            if error.isCredentialFailure {
+                accessToken = nil
+                disconnectRealtimeConnection()
+                if !suppressErrors {
+                    await restoreSession()
+                }
+            } else if !suppressErrors {
+                lastErrorMessage = error.userFacingMessage
+            }
+        } catch {
+            if !suppressErrors {
+                lastErrorMessage = error.userFacingMessage
+            }
+        }
+    }
+
+    private func applyLoadedDevices(_ loadedDevices: [DeviceSummary]) {
+        let pendingDeviceIDs = pendingDeviceIDs(in: loadedDevices)
+        let newPendingDeviceIDs = pendingDeviceIDs.subtracting(linkIntentPendingBaselineIDs)
+        let currentStatus = currentDeviceID.flatMap { currentDeviceID in
+            loadedDevices.first(where: { $0.deviceId == currentDeviceID })?.deviceStatus
+        }
+
+        devices = sortedDevicesForDisplay(
+            loadedDevices,
+            currentDeviceID: currentDeviceID
+        )
+
+        if let currentStatus {
+            if let currentAccount, currentAccount.deviceStatus != currentStatus {
+                self.currentAccount = AccountProfileResponse(
+                    accountId: currentAccount.accountId,
+                    handle: currentAccount.handle,
+                    profileName: currentAccount.profileName,
+                    profileBio: currentAccount.profileBio,
+                    deviceId: currentAccount.deviceId,
+                    deviceStatus: currentStatus
+                )
+            }
+            if var session = persistedSession, session.deviceStatus != currentStatus {
+                session.deviceStatus = currentStatus
+                try? sessionStore.save(session)
+                persistedSession = session
+            }
+        }
+
+        guard outgoingLinkIntent != nil,
+              let discoveredDevice = sortedDevicesForDisplay(
+                loadedDevices.filter { newPendingDeviceIDs.contains($0.deviceId) },
+                currentDeviceID: currentDeviceID
+              ).first else {
+            return
+        }
+
+        outgoingLinkIntent = nil
+        stopLinkIntentRefreshLoop()
+        lastErrorMessage = "Device \"\(discoveredDevice.displayName)\" is waiting for approval in Trusted Devices."
+    }
+
+    private func startLinkIntentRefreshLoop() {
+        guard let linkIntent = outgoingLinkIntent else {
+            return
+        }
+
+        linkIntentRefreshTask?.cancel()
+        linkIntentRefreshTask = nil
+        let expiresAt = linkIntent.expiresAt
+
+        linkIntentRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else {
+                    return
+                }
+                guard self.outgoingLinkIntent?.id == linkIntent.id else {
+                    return
+                }
+
+                if Date() >= expiresAt {
+                    self.outgoingLinkIntent = nil
+                    self.stopLinkIntentRefreshLoop()
+                    self.lastErrorMessage = "The link payload expired. Create a new one if you still need to add a device."
+                    return
+                }
+
+                if !self.isRefreshingWorkspace && !self.isRefreshingDevices {
+                    await self.refreshDevices(showProgress: false, suppressErrors: true)
+                }
+
+                let remainingSeconds = max(expiresAt.timeIntervalSinceNow, 0)
+                let sleepNanoseconds = UInt64(
+                    min(
+                        remainingSeconds,
+                        TimeInterval(Self.linkIntentRefreshIntervalNanoseconds) / 1_000_000_000
+                    ) * 1_000_000_000
+                )
+                try? await Task.sleep(nanoseconds: max(sleepNanoseconds, 250_000_000))
+            }
+        }
+    }
+
+    private func stopLinkIntentRefreshLoop() {
+        linkIntentRefreshTask?.cancel()
+        linkIntentRefreshTask = nil
+        linkIntentPendingBaselineIDs = []
     }
 }
 
@@ -3751,32 +3087,6 @@ struct HistorySyncChunkDraft {
     var payloadB64 = ""
     var cursorJSON = ""
     var isFinal = false
-}
-
-struct InboxLeaseDraft {
-    static let defaultLimit = 50
-    static let defaultLeaseTTLSeconds: UInt64 = 30
-
-    var afterInboxID = ""
-    var limit = String(defaultLimit)
-    var leaseOwner = ""
-    var leaseTTLSeconds = String(defaultLeaseTTLSeconds)
-}
-
-struct InboxLeaseState {
-    let owner: String
-    let expiresAt: Date
-
-    var isExpired: Bool {
-        expiresAt <= Date()
-    }
-}
-
-private struct InboxPollParameters {
-    let afterInboxId: UInt64?
-    let limit: Int
-    let leaseOwner: String?
-    let leaseTtlSeconds: UInt64
 }
 
 enum SelectedChatReconciliationAction: Equatable {
@@ -3858,6 +3168,46 @@ func resolvedWorkspaceSelectedChatID(
     case let .force(chatId):
         return chatId
     }
+}
+
+func sortedDevicesForDisplay(
+    _ devices: [DeviceSummary],
+    currentDeviceID: UUID?
+) -> [DeviceSummary] {
+    devices.sorted { lhs, rhs in
+        let lhsPriority = deviceDisplayPriority(lhs, currentDeviceID: currentDeviceID)
+        let rhsPriority = deviceDisplayPriority(rhs, currentDeviceID: currentDeviceID)
+
+        if lhsPriority != rhsPriority {
+            return lhsPriority < rhsPriority
+        }
+
+        let nameComparison = lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName)
+        if nameComparison != .orderedSame {
+            return nameComparison == .orderedAscending
+        }
+
+        return lhs.deviceId.uuidString.localizedCaseInsensitiveCompare(rhs.deviceId.uuidString) == .orderedAscending
+    }
+}
+
+func deviceDisplayPriority(_ device: DeviceSummary, currentDeviceID: UUID?) -> Int {
+    switch device.deviceStatus {
+    case .pending:
+        return 0
+    case .active:
+        return device.deviceId == currentDeviceID ? 1 : 2
+    case .revoked:
+        return 3
+    }
+}
+
+func pendingDeviceIDs(in devices: [DeviceSummary]) -> Set<UUID> {
+    Set(
+        devices.compactMap { device in
+            device.deviceStatus == .pending ? device.deviceId : nil
+        }
+    )
 }
 
 struct DeviceLinkIntentState: Identifiable {

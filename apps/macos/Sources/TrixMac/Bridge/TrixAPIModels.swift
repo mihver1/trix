@@ -372,26 +372,6 @@ struct LocalHistorySyncResult: Sendable {
     let chats: [ChatSummary]
 }
 
-struct LocalInboxPollResult: Sendable {
-    let items: [InboxItem]
-    let report: LocalStoreApplyReport
-    let syncState: SyncStateSnapshot
-    let chats: [ChatSummary]
-}
-
-struct LocalInboxLeaseResult: Sendable {
-    let lease: LeaseInboxResponse
-    let ackedInboxIds: [UInt64]
-    let report: LocalStoreApplyReport
-    let syncState: SyncStateSnapshot
-    let chats: [ChatSummary]
-}
-
-struct LocalInboxAckResult: Sendable {
-    let ackedInboxIds: [UInt64]
-    let syncState: SyncStateSnapshot
-}
-
 struct LocalChatReadState: Identifiable, Sendable {
     let chatId: UUID
     let readCursorServerSeq: UInt64
@@ -754,6 +734,7 @@ struct TypedMessageBody: Sendable {
     let reactionAction: ReactionAction?
     let receiptType: ReceiptType?
     let receiptAtUnix: UInt64?
+    let attachmentRef: String?
     let blobId: String?
     let mimeType: String?
     let sizeBytes: UInt64?
@@ -765,6 +746,48 @@ struct TypedMessageBody: Sendable {
     let nonce: Data?
     let eventType: String?
     let eventJson: String?
+
+    init(
+        kind: TypedMessageBodyKind,
+        text: String?,
+        targetMessageId: UUID?,
+        emoji: String?,
+        reactionAction: ReactionAction?,
+        receiptType: ReceiptType?,
+        receiptAtUnix: UInt64?,
+        attachmentRef: String? = nil,
+        blobId: String?,
+        mimeType: String?,
+        sizeBytes: UInt64?,
+        sha256: Data?,
+        fileName: String?,
+        widthPx: UInt32?,
+        heightPx: UInt32?,
+        fileKey: Data?,
+        nonce: Data?,
+        eventType: String?,
+        eventJson: String?
+    ) {
+        self.kind = kind
+        self.text = text
+        self.targetMessageId = targetMessageId
+        self.emoji = emoji
+        self.reactionAction = reactionAction
+        self.receiptType = receiptType
+        self.receiptAtUnix = receiptAtUnix
+        self.attachmentRef = attachmentRef
+        self.blobId = blobId
+        self.mimeType = mimeType
+        self.sizeBytes = sizeBytes
+        self.sha256 = sha256
+        self.fileName = fileName
+        self.widthPx = widthPx
+        self.heightPx = heightPx
+        self.fileKey = fileKey
+        self.nonce = nonce
+        self.eventType = eventType
+        self.eventJson = eventJson
+    }
 
     var summary: String {
         switch kind {
@@ -779,7 +802,7 @@ struct TypedMessageBody: Sendable {
             let targetPart = targetMessageId.map { String($0.uuidString.prefix(8)).lowercased() } ?? "unknown"
             return "\(receiptType?.label ?? "Receipt") for \(targetPart)"
         case .attachment:
-            return fileName ?? blobId ?? (mimeType ?? "Attachment")
+            return fileName ?? attachmentRef ?? blobId ?? (mimeType ?? "Attachment")
         case .chatEvent:
             return eventType ?? "Chat event"
         }
@@ -794,6 +817,7 @@ struct TypedMessageBody: Sendable {
             reactionAction: nil,
             receiptType: nil,
             receiptAtUnix: nil,
+            attachmentRef: nil,
             blobId: nil,
             mimeType: nil,
             sizeBytes: nil,
@@ -821,6 +845,7 @@ struct TypedMessageBody: Sendable {
             reactionAction: nil,
             receiptType: receiptType,
             receiptAtUnix: receiptAtUnix,
+            attachmentRef: nil,
             blobId: nil,
             mimeType: nil,
             sizeBytes: nil,
@@ -1070,42 +1095,6 @@ struct NotificationPreferences: Sendable {
 struct ChatHistoryResponse: Codable {
     let chatId: UUID
     let messages: [MessageEnvelope]
-}
-
-struct InboxItem: Codable, Identifiable {
-    let inboxId: UInt64
-    let message: MessageEnvelope
-
-    var id: UInt64 { inboxId }
-}
-
-struct InboxResponse: Codable {
-    let items: [InboxItem]
-}
-
-struct LeaseInboxRequest: Codable {
-    let leaseOwner: String?
-    let limit: Int?
-    let afterInboxId: UInt64?
-    let leaseTtlSeconds: UInt64?
-}
-
-struct LeaseInboxResponse: Codable {
-    let leaseOwner: String
-    let leaseExpiresAtUnix: UInt64
-    let items: [InboxItem]
-
-    var leaseExpiresAt: Date {
-        Date(timeIntervalSince1970: TimeInterval(leaseExpiresAtUnix))
-    }
-}
-
-struct AckInboxRequest: Codable {
-    let inboxIds: [UInt64]
-}
-
-struct AckInboxResponse: Codable {
-    let ackedInboxIds: [UInt64]
 }
 
 struct HistorySyncJobListResponse: Codable, Sendable {

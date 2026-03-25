@@ -38,6 +38,10 @@ val androidSdkRootValue = providers.environmentVariable("ANDROID_SDK_ROOT")
     .orElse(loadLocalProperty("sdk.dir") ?: "")
     .get()
 val androidNdkRootDir = File(androidSdkRootValue, "ndk/$trixAndroidNdkVersion")
+val skipAndroidNdkBuild = providers.gradleProperty("trixSkipAndroidNdkBuild")
+    .orElse("false")
+    .map { it.equals("true", ignoreCase = true) }
+    .get()
 val hostRustLibrary = File(workspaceRoot, "target/debug/${hostRustLibraryName()}")
 
 val trixBaseUrl = providers.gradleProperty("trixBaseUrl")
@@ -169,7 +173,16 @@ val generateTrixCoreKotlinBindings by tasks.registering(Exec::class) {
     )
 }
 
+val syncCheckedInTrixCoreKotlinBindings by tasks.registering(Copy::class) {
+    dependsOn(generateTrixCoreKotlinBindings)
+    from(generatedUniffiDir.map { it.file("chat/trix/android/core/ffi/trix_core.kt") })
+    into(layout.projectDirectory.dir("src/main/java/chat/trix/android/core/ffi"))
+}
+
 val buildTrixCoreAndroidLibs by tasks.registering(CargoNdkBuildTask::class) {
+    dependsOn(buildTrixCoreHostLib)
+    dependsOn(generateTrixCoreKotlinBindings)
+    dependsOn(syncCheckedInTrixCoreKotlinBindings)
     workspaceDir.set(layout.dir(provider { workspaceRoot }))
     androidSdkRoot.set(androidSdkRootValue)
     androidNdkRoot.set(androidNdkRootDir.absolutePath)
@@ -180,7 +193,10 @@ val buildTrixCoreAndroidLibs by tasks.registering(CargoNdkBuildTask::class) {
 }
 
 tasks.named("preBuild") {
-    dependsOn(buildTrixCoreAndroidLibs)
+    dependsOn(syncCheckedInTrixCoreKotlinBindings)
+    if (!skipAndroidNdkBuild) {
+        dependsOn(buildTrixCoreAndroidLibs)
+    }
 }
 
 dependencies {

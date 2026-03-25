@@ -275,6 +275,17 @@ impl SyncCoordinator {
         Ok(true)
     }
 
+    pub fn record_projected_chat_cursor(
+        &mut self,
+        store: &LocalHistoryStore,
+        chat_id: ChatId,
+    ) -> Result<bool> {
+        let Some(server_seq) = store.projected_cursor(chat_id) else {
+            return Ok(false);
+        };
+        self.record_chat_server_seq(chat_id, server_seq)
+    }
+
     pub async fn sync_chat_histories(
         &mut self,
         client: &ServerApiClient,
@@ -342,14 +353,6 @@ impl SyncCoordinator {
                     Some(limit_per_chat),
                 )
                 .await?;
-            if let Some(last_server_seq) = history
-                .messages
-                .iter()
-                .map(|message| message.server_seq)
-                .max()
-            {
-                self.record_chat_server_seq(history.chat_id, last_server_seq)?;
-            }
             let report = store.apply_chat_history(&history)?;
             combined.chats_upserted += report.chats_upserted;
             combined.messages_upserted += report.messages_upserted;
@@ -405,11 +408,7 @@ impl SyncCoordinator {
         store: &mut LocalHistoryStore,
         items: &[trix_types::InboxItem],
     ) -> Result<LocalStoreApplyReport> {
-        let report = store.apply_inbox_items(items)?;
-        for item in items {
-            self.record_chat_server_seq(item.message.chat_id, item.message.server_seq)?;
-        }
-        Ok(report)
+        store.apply_inbox_items(items)
     }
 
     pub async fn lease_inbox_into_store(
@@ -584,10 +583,15 @@ impl SyncCoordinator {
             }
         };
 
-        let (detail, history, mut report) = self
+        let (_detail, history, mut report) = self
             .refresh_chat_state(client, store, response.chat_id, None)
             .await?;
         store.set_chat_mls_group_id(response.chat_id, &group_id)?;
+        store.align_chat_device_members_with_conversation(
+            response.chat_id,
+            facade,
+            &conversation,
+        )?;
         let projected_messages = synthesize_control_messages(
             &history,
             Some((commit_message_id, add_bundle.epoch)),
@@ -610,7 +614,7 @@ impl SyncCoordinator {
                 },
             },
         );
-        self.record_chat_server_seq(response.chat_id, detail.last_server_seq)?;
+        self.record_projected_chat_cursor(store, response.chat_id)?;
 
         Ok(CreateChatControlOutcome {
             chat_id: response.chat_id,
@@ -705,6 +709,7 @@ impl SyncCoordinator {
         let (_, history, mut report) = self
             .refresh_chat_state(client, store, input.chat_id, after_server_seq)
             .await?;
+        store.align_chat_device_members_with_conversation(input.chat_id, facade, &conversation)?;
         let projected_messages = synthesize_control_messages(
             &history,
             Some((commit_message_id, add_bundle.epoch)),
@@ -716,6 +721,7 @@ impl SyncCoordinator {
         let projection_report =
             store.apply_projected_messages(input.chat_id, &projected_messages)?;
         merge_projection_report(&mut report, input.chat_id, &projection_report);
+        self.record_projected_chat_cursor(store, input.chat_id)?;
 
         Ok(ModifyChatMembersControlOutcome {
             chat_id: response.chat_id,
@@ -788,6 +794,7 @@ impl SyncCoordinator {
         let (_, history, mut report) = self
             .refresh_chat_state(client, store, input.chat_id, after_server_seq)
             .await?;
+        store.align_chat_device_members_with_conversation(input.chat_id, facade, &conversation)?;
         let projected_messages = synthesize_control_messages(
             &history,
             Some((commit_message_id, remove_bundle.epoch)),
@@ -796,6 +803,7 @@ impl SyncCoordinator {
         let projection_report =
             store.apply_projected_messages(input.chat_id, &projected_messages)?;
         merge_projection_report(&mut report, input.chat_id, &projection_report);
+        self.record_projected_chat_cursor(store, input.chat_id)?;
 
         Ok(ModifyChatMembersControlOutcome {
             chat_id: response.chat_id,
@@ -887,6 +895,7 @@ impl SyncCoordinator {
         let (_, history, mut report) = self
             .refresh_chat_state(client, store, input.chat_id, after_server_seq)
             .await?;
+        store.align_chat_device_members_with_conversation(input.chat_id, facade, &conversation)?;
         let projected_messages = synthesize_control_messages(
             &history,
             Some((commit_message_id, add_bundle.epoch)),
@@ -898,6 +907,7 @@ impl SyncCoordinator {
         let projection_report =
             store.apply_projected_messages(input.chat_id, &projected_messages)?;
         merge_projection_report(&mut report, input.chat_id, &projection_report);
+        self.record_projected_chat_cursor(store, input.chat_id)?;
 
         Ok(ModifyChatDevicesControlOutcome {
             chat_id: response.chat_id,
@@ -967,6 +977,7 @@ impl SyncCoordinator {
         let (_, history, mut report) = self
             .refresh_chat_state(client, store, input.chat_id, after_server_seq)
             .await?;
+        store.align_chat_device_members_with_conversation(input.chat_id, facade, &conversation)?;
         let projected_messages = synthesize_control_messages(
             &history,
             Some((commit_message_id, remove_bundle.epoch)),
@@ -975,6 +986,7 @@ impl SyncCoordinator {
         let projection_report =
             store.apply_projected_messages(input.chat_id, &projected_messages)?;
         merge_projection_report(&mut report, input.chat_id, &projection_report);
+        self.record_projected_chat_cursor(store, input.chat_id)?;
 
         Ok(ModifyChatDevicesControlOutcome {
             chat_id: response.chat_id,
@@ -1004,18 +1016,13 @@ impl SyncCoordinator {
         let history = client
             .get_chat_history(chat_id, self.chat_cursor(chat_id), None)
             .await?;
-        if let Some(last_server_seq) = history
-            .messages
-            .iter()
-            .map(|message| message.server_seq)
-            .max()
-        {
-            self.record_chat_server_seq(chat_id, last_server_seq)?;
-        }
         store.apply_chat_history(&history)?;
         store.project_chat_messages(chat_id, facade, &mut conversation, None)?;
-        let detail = client.get_chat(chat_id).await?;
+        self.record_projected_chat_cursor(store, chat_id)?;
+        let mut detail = client.get_chat(chat_id).await?;
+        align_chat_detail_device_members_with_conversation(&mut detail, facade, &conversation)?;
         store.apply_chat_detail(&detail)?;
+        store.align_chat_device_members_with_conversation(chat_id, facade, &conversation)?;
         Ok((detail, conversation))
     }
 
@@ -1035,14 +1042,6 @@ impl SyncCoordinator {
         let history = client
             .get_chat_history(chat_id, after_server_seq, None)
             .await?;
-        if let Some(last_server_seq) = history
-            .messages
-            .iter()
-            .map(|message| message.server_seq)
-            .max()
-        {
-            self.record_chat_server_seq(chat_id, last_server_seq)?;
-        }
         merge_store_report(&mut report, store.apply_chat_history(&history)?);
         Ok((detail, history, report))
     }
@@ -1124,6 +1123,30 @@ fn collect_leaf_indices_for_accounts(
     }
     leaf_indices.sort_unstable();
     Ok(leaf_indices)
+}
+
+fn align_chat_detail_device_members_with_conversation(
+    detail: &mut ChatDetailResponse,
+    facade: &MlsFacade,
+    conversation: &MlsConversation,
+) -> Result<()> {
+    let leaf_index_by_credential = facade
+        .members(conversation)?
+        .into_iter()
+        .map(|member| (encode_b64(&member.credential_identity), member.leaf_index))
+        .collect::<BTreeMap<_, _>>();
+
+    for member in &mut detail.device_members {
+        if let Some(&leaf_index) = leaf_index_by_credential.get(&member.credential_identity_b64) {
+            member.leaf_index = leaf_index;
+        }
+    }
+    detail.device_members.sort_by(|left, right| {
+        left.leaf_index
+            .cmp(&right.leaf_index)
+            .then_with(|| left.device_id.0.cmp(&right.device_id.0))
+    });
+    Ok(())
 }
 
 fn collect_leaf_indices_for_devices(
