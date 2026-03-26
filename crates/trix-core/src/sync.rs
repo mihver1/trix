@@ -1278,7 +1278,7 @@ impl SyncCoordinator {
             let detail = client.get_chat(chat_id).await?;
             store.apply_chat_detail(&detail)?;
             let history = client
-                .get_chat_history(chat_id, self.chat_cursor(chat_id), None)
+                .get_chat_history(chat_id, None, None)
                 .await?;
             store.apply_chat_history(&history)?;
             self.record_chat_server_seqs(
@@ -1984,8 +1984,8 @@ mod tests {
 
     use super::{PersistedSyncState, SyncCoordinator, is_sqlite_database};
     use crate::{
-        LocalHistoryStore, LocalOutboxStatus, MessageBody, MlsFacade, MlsProcessResult,
-        ServerApiClient, TextMessageBody, decode_b64_field,
+        LocalHistoryStore, LocalOutboxStatus, LocalProjectionKind, MessageBody, MlsFacade,
+        MlsProcessResult, ServerApiClient, TextMessageBody, decode_b64_field,
     };
 
     #[derive(Debug, Clone, Deserialize)]
@@ -2005,6 +2005,7 @@ mod tests {
         create_responses: BTreeMap<String, CreateMessageResponse>,
         chat_detail_requests: usize,
         history_requests: usize,
+        history_after_server_seq_requests: Vec<Option<u64>>,
     }
 
     struct MockChatServer {
@@ -2068,6 +2069,7 @@ mod tests {
             return StatusCode::NOT_FOUND.into_response();
         }
         state.history_requests += 1;
+        state.history_after_server_seq_requests.push(query.after_server_seq);
         let mut messages = state
             .history
             .iter()
@@ -2447,6 +2449,7 @@ mod tests {
             create_responses: BTreeMap::new(),
             chat_detail_requests: 0,
             history_requests: 0,
+            history_after_server_seq_requests: Vec::new(),
         })
         .await;
         let client = server.client();
@@ -2646,6 +2649,7 @@ mod tests {
             create_responses: BTreeMap::new(),
             chat_detail_requests: 0,
             history_requests: 0,
+            history_after_server_seq_requests: Vec::new(),
         })
         .await;
         let client = server.client();
@@ -2716,6 +2720,7 @@ mod tests {
             create_responses: BTreeMap::new(),
             chat_detail_requests: 0,
             history_requests: 0,
+            history_after_server_seq_requests: Vec::new(),
         })
         .await;
         let client = server.client();
@@ -2804,6 +2809,180 @@ mod tests {
         server.shutdown().await;
         cleanup_sqlite_test_path(&store_path);
         fs::remove_dir_all(&mls_root).ok();
+    }
+
+    #[tokio::test]
+    async fn send_message_bootstraps_from_full_history_when_cursor_is_ahead_and_local_bootstrap_is_missing(
+    ) {
+        let chat_id = ChatId(Uuid::new_v4());
+        let alice_account = AccountId(Uuid::new_v4());
+        let alice_device = DeviceId(Uuid::new_v4());
+        let bob_account = AccountId(Uuid::new_v4());
+        let bob_device = DeviceId(Uuid::new_v4());
+        let alice = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+        let mut bob = MlsFacade::new(b"bob-device".to_vec()).unwrap();
+
+        let bob_key_package = bob.generate_key_package().unwrap();
+        let mut alice_group = alice.create_group(chat_id.0.as_bytes()).unwrap();
+        let add_bundle = alice
+            .add_members(&mut alice_group, &[bob_key_package])
+            .unwrap();
+        let existing_body = text_body("existing from alice");
+        let existing_body_bytes = existing_body.to_bytes().unwrap();
+        let existing_ciphertext = alice
+            .create_application_message(&mut alice_group, &existing_body_bytes)
+            .unwrap();
+        let commit_message_id = MessageId(Uuid::new_v4());
+        let welcome_message_id = MessageId(Uuid::new_v4());
+        let existing_message_id = MessageId(Uuid::new_v4());
+        let existing_message = MessageEnvelope {
+            message_id: existing_message_id,
+            chat_id,
+            server_seq: 3,
+            sender_account_id: alice_account,
+            sender_device_id: alice_device,
+            epoch: add_bundle.epoch,
+            message_kind: MessageKind::Application,
+            content_type: ContentType::Text,
+            ciphertext_b64: crate::encode_b64(&existing_ciphertext),
+            aad_json: json!({}),
+            created_at_unix: 3,
+        };
+        let history = vec![
+            MessageEnvelope {
+                message_id: commit_message_id,
+                chat_id,
+                server_seq: 1,
+                sender_account_id: alice_account,
+                sender_device_id: alice_device,
+                epoch: add_bundle.epoch,
+                message_kind: MessageKind::Commit,
+                content_type: ContentType::ChatEvent,
+                ciphertext_b64: crate::encode_b64(&add_bundle.commit_message),
+                aad_json: json!({}),
+                created_at_unix: 1,
+            },
+            MessageEnvelope {
+                message_id: welcome_message_id,
+                chat_id,
+                server_seq: 2,
+                sender_account_id: alice_account,
+                sender_device_id: alice_device,
+                epoch: add_bundle.epoch,
+                message_kind: MessageKind::WelcomeRef,
+                content_type: ContentType::ChatEvent,
+                ciphertext_b64: crate::encode_b64(
+                    add_bundle.welcome_message.as_ref().unwrap(),
+                ),
+                aad_json: json!({
+                    "_trix": {
+                        "ratchet_tree_b64": crate::encode_b64(
+                            add_bundle.ratchet_tree.as_ref().unwrap()
+                        )
+                    }
+                }),
+                created_at_unix: 2,
+            },
+            existing_message.clone(),
+        ];
+
+        let mut store = LocalHistoryStore::new();
+        store
+            .apply_chat_detail(&empty_chat_detail(
+                chat_id,
+                3,
+                add_bundle.epoch,
+                Some(existing_message.clone()),
+                Some(commit_message_id),
+            ))
+            .unwrap();
+        store
+            .apply_chat_history(&trix_types::ChatHistoryResponse {
+                chat_id,
+                messages: vec![existing_message.clone()],
+            })
+            .unwrap();
+        store
+            .apply_local_projection(
+                &existing_message,
+                LocalProjectionKind::ApplicationMessage,
+                Some(existing_body_bytes.clone()),
+                None,
+            )
+            .unwrap();
+        assert_eq!(store.projected_cursor(chat_id), Some(3));
+        assert!(store.chat_mls_group_id(chat_id).is_none());
+        assert!(!store.needs_history_refresh(chat_id));
+
+        let server = MockChatServer::spawn(MockChatServerState {
+            chat_detail: empty_chat_detail(
+                chat_id,
+                3,
+                add_bundle.epoch,
+                Some(existing_message.clone()),
+                Some(commit_message_id),
+            ),
+            history,
+            sender_account_id: bob_account,
+            sender_device_id: bob_device,
+            expected_create_epoch: Some(add_bundle.epoch),
+            create_requests: Vec::new(),
+            create_responses: BTreeMap::new(),
+            chat_detail_requests: 0,
+            history_requests: 0,
+            history_after_server_seq_requests: Vec::new(),
+        })
+        .await;
+        let client = server.client();
+
+        let mut coordinator = SyncCoordinator::new();
+        coordinator.record_chat_server_seq(chat_id, 3).unwrap();
+
+        let send_body = text_body("fresh after bootstrap repair");
+        let send_body_bytes = send_body.to_bytes().unwrap();
+        let expected_group_id = alice_group.group_id();
+        let mut conversation = bob.create_group(b"placeholder-conversation").unwrap();
+        let outcome = coordinator
+            .send_message_body(
+                &client,
+                &mut store,
+                &mut bob,
+                &mut conversation,
+                bob_account,
+                bob_device,
+                chat_id,
+                None,
+                &send_body,
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.server_seq, 4);
+        assert_eq!(coordinator.chat_cursor(chat_id), Some(4));
+        assert_eq!(conversation.group_id(), expected_group_id);
+        assert_eq!(
+            store.chat_mls_group_id(chat_id).as_deref(),
+            Some(expected_group_id.as_slice())
+        );
+
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.chat_detail_requests, 1);
+        assert_eq!(state.history_requests, 1);
+        assert_eq!(state.history_after_server_seq_requests, vec![None]);
+        assert_eq!(state.create_requests.len(), 1);
+        let ciphertext = decode_b64_field(
+            "ciphertext_b64",
+            &state.create_requests[0].ciphertext_b64,
+        )
+        .unwrap();
+        drop(state);
+        match alice.process_message(&mut alice_group, &ciphertext).unwrap() {
+            MlsProcessResult::ApplicationMessage(bytes) => assert_eq!(bytes, send_body_bytes),
+            other => panic!("expected application message, got {other:?}"),
+        }
+
+        server.shutdown().await;
     }
 
     fn cleanup_sqlite_test_path(path: &std::path::Path) {

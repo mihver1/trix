@@ -2143,20 +2143,45 @@ impl FfiRealtimeDriver {
         store: Arc<FfiLocalHistoryStore>,
         auto_ack: bool,
     ) -> Result<Option<FfiRealtimeEvent>, TrixFfiError> {
-        let event = {
+        let frame = {
             let mut websocket = lock(&websocket.inner)?;
-            let mut coordinator = lock(&coordinator.inner)?;
-            let mut store = lock(&store.inner)?;
             self.runtime
-                .block_on(self.inner.next_websocket_event(
-                    &mut websocket,
-                    &mut coordinator,
-                    &mut store,
-                    auto_ack,
-                ))
+                .block_on(websocket.next_frame())
                 .map_err(ffi_error)?
         };
-        Ok(event.map(realtime_event_to_ffi))
+        let Some(frame) = frame else {
+            return Ok(Some(realtime_event_to_ffi(RealtimeEvent {
+                mode: RealtimeMode::Disconnected,
+                kind: RealtimeEventKind::Disconnected,
+                report: None,
+                outbound_ack_inbox_ids: Vec::new(),
+                server_acked_inbox_ids: Vec::new(),
+                lease_owner: None,
+                lease_expires_at_unix: None,
+                pong_nonce: None,
+                pong_server_unix: None,
+                session_replaced_reason: None,
+                error_code: None,
+                error_message: None,
+            })));
+        };
+
+        let event = {
+            let mut coordinator = lock(&coordinator.inner)?;
+            let mut store = lock(&store.inner)?;
+            self.inner
+                .process_websocket_frame(&mut coordinator, &mut store, frame)
+                .map_err(ffi_error)?
+        };
+
+        if auto_ack && !event.outbound_ack_inbox_ids.is_empty() {
+            let mut websocket = lock(&websocket.inner)?;
+            self.runtime
+                .block_on(websocket.send_ack(event.outbound_ack_inbox_ids.clone()))
+                .map_err(ffi_error)?;
+        }
+
+        Ok(Some(realtime_event_to_ffi(event)))
     }
 }
 
@@ -2773,10 +2798,11 @@ impl FfiLocalHistoryStore {
         limit: Option<u32>,
     ) -> Result<FfiLocalProjectionApplyReport, TrixFfiError> {
         let chat_id = parse_chat_id(&chat_id)?;
+        let mut store = lock(&self.inner)?;
         let facade = lock(&facade.inner)?;
         let mut conversation = lock(&conversation.inner)?;
         Ok(local_projection_apply_report_to_ffi(
-            lock(&self.inner)?
+            store
                 .project_chat_messages(
                     chat_id,
                     &facade,
@@ -2793,10 +2819,12 @@ impl FfiLocalHistoryStore {
         facade: Arc<FfiMlsFacade>,
     ) -> Result<Option<Arc<FfiMlsConversation>>, TrixFfiError> {
         let chat_id = parse_chat_id(&chat_id)?;
+        let mut store = lock(&self.inner)?;
         let facade = lock(&facade.inner)?;
-        let conversation = lock(&self.inner)?
+        let conversation = store
             .load_or_bootstrap_chat_mls_conversation(chat_id, &facade)
             .map_err(ffi_error)?;
+        drop(store);
         facade.save_state().map_err(ffi_error)?;
         Ok(conversation.map(|conversation| {
             Arc::new(FfiMlsConversation {
@@ -2812,10 +2840,12 @@ impl FfiLocalHistoryStore {
         limit: Option<u32>,
     ) -> Result<FfiLocalProjectionApplyReport, TrixFfiError> {
         let chat_id = parse_chat_id(&chat_id)?;
+        let mut store = lock(&self.inner)?;
         let facade = lock(&facade.inner)?;
-        let report = lock(&self.inner)?
+        let report = store
             .project_chat_with_facade(chat_id, &facade, limit.map(|value| value as usize))
             .map_err(ffi_error)?;
+        drop(store);
         facade.save_state().map_err(ffi_error)?;
         Ok(local_projection_apply_report_to_ffi(report))
     }
@@ -4922,10 +4952,87 @@ impl From<trix_types::ServiceStatus> for FfiServiceStatus {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        sync::{Arc, Mutex},
+        thread,
+        time::Duration,
+    };
+
+    use axum::{
+        Router,
+        extract::{
+            State,
+            ws::{Message as AxumWebSocketMessage, WebSocketUpgrade},
+        },
+        response::IntoResponse,
+        routing::get,
+    };
     use serde_json::json;
+    use tokio::{
+        net::TcpListener,
+        sync::broadcast,
+        task::JoinHandle,
+        time::{sleep, timeout},
+    };
+    use trix_types::{AccountId, DeviceId, WebSocketServerFrame};
     use uuid::Uuid;
 
     use super::*;
+
+    #[derive(Clone)]
+    struct TestWebSocketState {
+        outbound_frames: broadcast::Sender<WebSocketServerFrame>,
+    }
+
+    struct TestWebSocketServer {
+        base_url: String,
+        outbound_frames: broadcast::Sender<WebSocketServerFrame>,
+        task: JoinHandle<()>,
+    }
+
+    impl TestWebSocketServer {
+        async fn spawn() -> Self {
+            let (outbound_frames, _) = broadcast::channel(1);
+            let app = Router::new()
+                .route("/v0/ws", get(test_websocket_route))
+                .with_state(TestWebSocketState {
+                    outbound_frames: outbound_frames.clone(),
+                });
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base_url = format!("http://{}", listener.local_addr().unwrap());
+            let task = tokio::spawn(async move {
+                axum::serve(listener, app)
+                    .await
+                    .expect("test websocket server should stay up");
+            });
+
+            Self {
+                base_url,
+                outbound_frames,
+                task,
+            }
+        }
+
+        async fn shutdown(self) {
+            self.task.abort();
+            let _ = self.task.await;
+        }
+    }
+
+    async fn test_websocket_route(
+        ws: WebSocketUpgrade,
+        State(state): State<TestWebSocketState>,
+    ) -> impl IntoResponse {
+        ws.on_upgrade(move |mut socket| async move {
+            let mut outbound = state.outbound_frames.subscribe();
+            if let Ok(frame) = outbound.recv().await {
+                let payload = serde_json::to_string(&frame).unwrap();
+                let _ = socket
+                    .send(AxumWebSocketMessage::Text(payload.into()))
+                    .await;
+            }
+        })
+    }
 
     #[test]
     fn parse_optional_json_accepts_empty_and_null_as_absent() {
@@ -5068,5 +5175,132 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn project_chat_with_facade_waits_on_store_before_locking_facade() {
+        let chat_id = Uuid::new_v4().to_string();
+        let store = Arc::new(FfiLocalHistoryStore {
+            inner: Mutex::new(LocalHistoryStore::new()),
+        });
+        let facade = Arc::new(FfiMlsFacade {
+            inner: Mutex::new(MlsFacade::new(b"lock-order-device".to_vec()).unwrap()),
+        });
+
+        let store_guard = store.inner.lock().unwrap();
+        let store_for_thread = Arc::clone(&store);
+        let facade_for_thread = Arc::clone(&facade);
+        let handle = thread::spawn(move || {
+            let _ = store_for_thread.project_chat_with_facade(chat_id, facade_for_thread, None);
+        });
+
+        thread::sleep(Duration::from_millis(100));
+        assert!(
+            facade.inner.try_lock().is_ok(),
+            "facade mutex should remain unlocked while project_chat_with_facade is blocked on store"
+        );
+
+        drop(store_guard);
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn load_or_bootstrap_chat_conversation_waits_on_store_before_locking_facade() {
+        let chat_id = Uuid::new_v4().to_string();
+        let store = Arc::new(FfiLocalHistoryStore {
+            inner: Mutex::new(LocalHistoryStore::new()),
+        });
+        let facade = Arc::new(FfiMlsFacade {
+            inner: Mutex::new(MlsFacade::new(b"bootstrap-lock-device".to_vec()).unwrap()),
+        });
+
+        let store_guard = store.inner.lock().unwrap();
+        let store_for_thread = Arc::clone(&store);
+        let facade_for_thread = Arc::clone(&facade);
+        let handle = thread::spawn(move || {
+            let _ =
+                store_for_thread.load_or_bootstrap_chat_conversation(chat_id, facade_for_thread);
+        });
+
+        thread::sleep(Duration::from_millis(100));
+        assert!(
+            facade.inner.try_lock().is_ok(),
+            "facade mutex should remain unlocked while load_or_bootstrap_chat_conversation is blocked on store"
+        );
+
+        drop(store_guard);
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn next_websocket_event_does_not_lock_store_or_sync_while_waiting_for_a_frame() {
+        let runtime = Builder::new_multi_thread().enable_all().build().unwrap();
+        let server = runtime.block_on(TestWebSocketServer::spawn());
+        let client = FfiServerApiClient::new(server.base_url.clone()).unwrap();
+        client.set_access_token("test-token".to_owned()).unwrap();
+        let websocket = client.connect_websocket().unwrap();
+        let websocket_probe = Arc::clone(&websocket);
+        let driver = FfiRealtimeDriver::new().unwrap();
+        let coordinator = Arc::new(FfiSyncCoordinator {
+            inner: Mutex::new(SyncCoordinator::new()),
+            runtime: build_runtime().unwrap(),
+        });
+        let store = Arc::new(FfiLocalHistoryStore {
+            inner: Mutex::new(LocalHistoryStore::new()),
+        });
+
+        let driver_task = {
+            let driver = Arc::clone(&driver);
+            let websocket = Arc::clone(&websocket);
+            let coordinator = Arc::clone(&coordinator);
+            let store = Arc::clone(&store);
+            thread::spawn(move || driver.next_websocket_event(websocket, coordinator, store, false))
+        };
+
+        runtime
+            .block_on(async {
+                timeout(Duration::from_secs(2), async {
+                    loop {
+                        if websocket_probe.inner.try_lock().is_err() {
+                            break;
+                        }
+                        sleep(Duration::from_millis(10)).await;
+                    }
+                })
+                .await
+            })
+            .expect("next_websocket_event should start waiting on the websocket");
+
+        assert!(
+            store.inner.try_lock().is_ok(),
+            "store mutex should remain available while next_websocket_event waits on websocket IO"
+        );
+        assert!(
+            coordinator.inner.try_lock().is_ok(),
+            "sync mutex should remain available while next_websocket_event waits on websocket IO"
+        );
+
+        server
+            .outbound_frames
+            .send(WebSocketServerFrame::Hello {
+                session_id: Uuid::new_v4().to_string(),
+                account_id: AccountId(Uuid::new_v4()),
+                device_id: DeviceId(Uuid::new_v4()),
+                lease_owner: "lease-owner".to_owned(),
+                lease_ttl_seconds: 30,
+            })
+            .unwrap();
+
+        let event = driver_task
+            .join()
+            .unwrap()
+            .unwrap()
+            .expect("websocket should yield a realtime event");
+        match event.kind {
+            FfiRealtimeEventKind::Hello => {}
+            other => panic!("expected hello event, got {other:?}"),
+        }
+
+        runtime.block_on(server.shutdown());
     }
 }
