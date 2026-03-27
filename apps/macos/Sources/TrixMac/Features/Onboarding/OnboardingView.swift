@@ -68,8 +68,6 @@ struct OnboardingView: View {
             subtitle: model.onboardingMode == .createAccount
                 ? "The first device flow should feel like a launch console, not a settings screen."
                 : "Linking still starts from a payload, but approval now happens directly from the trusted device directory."
-            ,
-            tone: .inverted
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 if model.onboardingMode == .createAccount {
@@ -129,7 +127,7 @@ struct OnboardingView: View {
                     TrixToneBadge(label: readinessLabel, tint: readinessTint)
 
                     if let health = model.health {
-                        Text("uptime \(formatUptime(health.uptimeMs))")
+                        Text("uptime \(formattedUptime(health.uptimeMs))")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(colors.inkMuted)
                     }
@@ -156,8 +154,7 @@ struct OnboardingView: View {
     private var createAccountColumn: some View {
         TrixPanel(
             title: "Create The First Trusted Device",
-            subtitle: "Register the account root, transport key and local device profile in one pass.",
-            tone: .strong
+            subtitle: "Register the account root, transport key and local device profile in one pass."
         ) {
             VStack(alignment: .leading, spacing: 16) {
                 modeSelector
@@ -171,14 +168,12 @@ struct OnboardingView: View {
 
                 TrixInputBlock("Server URL", hint: "Usually `http://127.0.0.1:8080` in local development.") {
                     TextField("http://127.0.0.1:8080", text: $model.serverBaseURLString)
-                        .textFieldStyle(.plain)
-                        .trixInputChrome()
+                        .textFieldStyle(.roundedBorder)
                 }
 
                 TrixInputBlock("Profile Name", hint: "Visible name for the account.") {
                     TextField("Maksym", text: $model.draft.profileName)
-                        .textFieldStyle(.plain)
-                        .trixInputChrome()
+                        .textFieldStyle(.roundedBorder)
                 }
 
                 if prefersSingleColumn {
@@ -195,10 +190,8 @@ struct OnboardingView: View {
 
                 TrixInputBlock("Profile Bio", hint: "Stored as profile metadata on the server.") {
                     TextEditor(text: $model.draft.profileBio)
-                        .scrollContentBackground(.hidden)
                         .frame(minHeight: bioHeight)
                         .font(.body)
-                        .trixInputChrome()
                 }
 
                 createActionRow
@@ -214,8 +207,7 @@ struct OnboardingView: View {
     private var linkExistingColumn: some View {
         TrixPanel(
             title: "Link This Mac To An Existing Account",
-            subtitle: "Paste a link intent from another trusted device, then register this Mac as pending approval.",
-            tone: .strong
+            subtitle: "Paste a link intent from another trusted device, then register this Mac as pending approval."
         ) {
             VStack(alignment: .leading, spacing: 16) {
                 modeSelector
@@ -232,16 +224,13 @@ struct OnboardingView: View {
                     hint: "Paste the JSON from `Create Link Intent` on an already active device."
                 ) {
                     TextEditor(text: $model.linkDraft.linkPayload)
-                        .scrollContentBackground(.hidden)
                         .frame(minHeight: 160)
                         .font(.system(.body, design: .monospaced))
-                        .trixInputChrome()
                 }
 
                 TrixInputBlock("Device Name", hint: "How this Mac should appear in the remote device directory.") {
                     TextField("This Mac", text: $model.linkDraft.deviceDisplayName)
-                        .textFieldStyle(.plain)
-                        .trixInputChrome()
+                        .textFieldStyle(.roundedBorder)
                 }
 
                 Group {
@@ -254,7 +243,7 @@ struct OnboardingView: View {
                             } label: {
                                 Label("Check Server", systemImage: "bolt.horizontal.circle")
                             }
-                            .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                            .buttonStyle(.bordered)
                             .frame(maxWidth: 190)
 
                             Button {
@@ -268,7 +257,7 @@ struct OnboardingView: View {
                                     Label("Register Pending Device", systemImage: "link.badge.plus")
                                 }
                             }
-                            .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                            .buttonStyle(.borderedProminent)
                             .disabled(!model.canCompleteLink || model.isCompletingLink)
                         }
                     } else {
@@ -280,7 +269,7 @@ struct OnboardingView: View {
                             } label: {
                                 Label("Check Server", systemImage: "bolt.horizontal.circle")
                             }
-                            .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                            .buttonStyle(.bordered)
                             .frame(maxWidth: 190)
 
                             Button {
@@ -294,7 +283,7 @@ struct OnboardingView: View {
                                     Label("Register Pending Device", systemImage: "link.badge.plus")
                                 }
                             }
-                            .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                            .buttonStyle(.borderedProminent)
                             .disabled(!model.canCompleteLink || model.isCompletingLink)
                             .frame(maxWidth: 260)
                         }
@@ -312,8 +301,7 @@ struct OnboardingView: View {
     private var pendingStatusPanel: some View {
         TrixPanel(
             title: "Pending Approval",
-            subtitle: "This Mac has already registered a pending device record and is waiting for another trusted device to approve it from the device directory.",
-            tone: .inverted
+            subtitle: "This Mac has already registered a pending device record and is waiting for another trusted device to approve it from the device directory."
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 OnboardingFeature(
@@ -338,8 +326,7 @@ struct OnboardingView: View {
     private var pendingApprovalColumn: some View {
         TrixPanel(
             title: "Waiting For Approval",
-            subtitle: "The server knows about this Mac, but it is still `pending`. Another active trusted device must approve it from the workspace device directory.",
-            tone: .strong
+            subtitle: "The server knows about this Mac, but it is still `pending`. Another active trusted device must approve it from the workspace device directory."
         ) {
             VStack(alignment: .leading, spacing: 16) {
                 if let deviceID = model.pendingLinkedDeviceID {
@@ -358,7 +345,7 @@ struct OnboardingView: View {
                                 } label: {
                                     Label("Copy Device ID", systemImage: "doc.on.doc")
                                 }
-                                .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                                .buttonStyle(.bordered)
                                 .frame(maxWidth: 220)
 
                                 Button {
@@ -371,7 +358,7 @@ struct OnboardingView: View {
                                         systemImage: "arrow.clockwise.circle.fill"
                                     )
                                 }
-                                .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                                .buttonStyle(.borderedProminent)
                                 .frame(maxWidth: 280)
                                 .disabled(model.isRestoringSession)
 
@@ -380,7 +367,7 @@ struct OnboardingView: View {
                                 } label: {
                                     Label("Restart Link", systemImage: "arrow.uturn.backward.circle")
                                 }
-                                .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+                                .buttonStyle(.borderless)
                                 .frame(maxWidth: 220)
                             }
                         } else {
@@ -390,7 +377,7 @@ struct OnboardingView: View {
                                 } label: {
                                     Label("Copy Device ID", systemImage: "doc.on.doc")
                                 }
-                                .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                                .buttonStyle(.bordered)
                                 .frame(maxWidth: 220)
 
                                 Button {
@@ -403,7 +390,7 @@ struct OnboardingView: View {
                                         systemImage: "arrow.clockwise.circle.fill"
                                     )
                                 }
-                                .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                                .buttonStyle(.borderedProminent)
                                 .frame(maxWidth: 280)
                                 .disabled(model.isRestoringSession)
 
@@ -412,7 +399,7 @@ struct OnboardingView: View {
                                 } label: {
                                     Label("Restart Link", systemImage: "arrow.uturn.backward.circle")
                                 }
-                                .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+                                .buttonStyle(.borderless)
                                 .frame(maxWidth: 220)
                             }
                         }
@@ -430,36 +417,25 @@ struct OnboardingView: View {
     }
 
     private var modeSelector: some View {
-        HStack(spacing: 10) {
-            OnboardingModeButton(
-                title: OnboardingMode.createAccount.title,
-                isSelected: model.onboardingMode == .createAccount
-            ) {
-                model.onboardingMode = .createAccount
-            }
-
-            OnboardingModeButton(
-                title: OnboardingMode.linkExisting.title,
-                isSelected: model.onboardingMode == .linkExisting
-            ) {
-                model.onboardingMode = .linkExisting
+        Picker("Setup Flow", selection: $model.onboardingMode) {
+            ForEach(OnboardingMode.allCases, id: \.self) { mode in
+                Text(mode.title).tag(mode)
             }
         }
+        .pickerStyle(.segmented)
     }
 
     private var handleField: some View {
         TrixInputBlock("Handle", hint: "Optional public handle.") {
             TextField("optional handle", text: $model.draft.handle)
-                .textFieldStyle(.plain)
-                .trixInputChrome()
+                .textFieldStyle(.roundedBorder)
         }
     }
 
     private var deviceField: some View {
         TrixInputBlock("Device Name", hint: "How this Mac appears in the device list.") {
             TextField("This Mac", text: $model.draft.deviceDisplayName)
-                .textFieldStyle(.plain)
-                .trixInputChrome()
+                .textFieldStyle(.roundedBorder)
         }
     }
 
@@ -474,7 +450,7 @@ struct OnboardingView: View {
                     } label: {
                         Label("Check Server", systemImage: "bolt.horizontal.circle")
                     }
-                    .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                    .buttonStyle(.bordered)
                     .frame(maxWidth: 190)
 
                     Button {
@@ -488,7 +464,7 @@ struct OnboardingView: View {
                             Label("Create Account", systemImage: "arrow.up.right.circle.fill")
                         }
                     }
-                    .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                    .buttonStyle(.borderedProminent)
                     .disabled(!model.canCreateAccount || model.isCreatingAccount)
                 }
             } else {
@@ -500,7 +476,7 @@ struct OnboardingView: View {
                     } label: {
                         Label("Check Server", systemImage: "bolt.horizontal.circle")
                     }
-                    .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                    .buttonStyle(.bordered)
                     .frame(maxWidth: 190)
 
                     Button {
@@ -514,7 +490,7 @@ struct OnboardingView: View {
                             Label("Create Account", systemImage: "arrow.up.right.circle.fill")
                         }
                     }
-                    .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                    .buttonStyle(.borderedProminent)
                     .disabled(!model.canCreateAccount || model.isCreatingAccount)
                     .frame(maxWidth: 240)
                 }
@@ -546,21 +522,6 @@ struct OnboardingView: View {
         return colors.warning
     }
 
-    private func formatUptime(_ uptimeMs: UInt64) -> String {
-        let seconds = Int(uptimeMs / 1000)
-        if seconds < 60 {
-            return "\(seconds)s"
-        }
-
-        let minutes = seconds / 60
-        if minutes < 60 {
-            return "\(minutes)m"
-        }
-
-        let hours = minutes / 60
-        let remainderMinutes = minutes % 60
-        return "\(hours)h \(remainderMinutes)m"
-    }
 }
 
 private struct OnboardingFeature: View {
@@ -570,48 +531,14 @@ private struct OnboardingFeature: View {
     let detail: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            Image(systemName: symbol)
-                .font(.title3)
-                .foregroundStyle(colors.accentSoft)
-                .frame(width: 28)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(colors.inverseInk)
-                Text(detail)
-                    .font(.subheadline)
-                    .foregroundStyle(colors.inverseInkMuted)
-            }
+        VStack(alignment: .leading, spacing: 4) {
+            Label(title, systemImage: symbol)
+                .font(.headline)
+                .foregroundStyle(colors.ink)
+            Text(detail)
+                .font(.subheadline)
+                .foregroundStyle(colors.inkMuted)
         }
-    }
-}
-
-private struct OnboardingModeButton: View {
-    @Environment(\.trixColors) private var colors
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .frame(maxWidth: .infinity)
-                .background(
-                    isSelected ? colors.accent.opacity(0.92) : colors.tileFill,
-                    in: Capsule()
-                )
-                .foregroundStyle(isSelected ? Color.white : colors.ink)
-                .overlay {
-                    Capsule()
-                        .stroke(isSelected ? colors.accent.opacity(0.16) : colors.outline, lineWidth: 1)
-                }
-        }
-        .buttonStyle(.plain)
     }
 }
 
@@ -627,13 +554,7 @@ private struct CommandLineChip: View {
         Text(command)
             .font(.system(.footnote, design: .monospaced))
             .foregroundStyle(colors.ink)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(colors.tileFill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(colors.outline, lineWidth: 1)
-            }
+            .textSelection(.enabled)
     }
 }
 

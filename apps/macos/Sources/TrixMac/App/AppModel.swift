@@ -3012,7 +3012,7 @@ final class AppModel: ObservableObject {
     }
 }
 
-enum OnboardingMode: String {
+enum OnboardingMode: String, CaseIterable {
     case createAccount
     case linkExisting
 

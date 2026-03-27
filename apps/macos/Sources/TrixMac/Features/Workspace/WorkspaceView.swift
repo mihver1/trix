@@ -137,6 +137,23 @@ struct WorkspaceView: View {
             .sheet(isPresented: $isPresentingSettings) {
                 settingsSheet
             }
+            .toolbar {
+                ToolbarItemGroup {
+                    Button {
+                        model.resetCreateChatComposer()
+                        isPresentingCreateChat = true
+                    } label: {
+                        Label("New Chat", systemImage: "square.and.pencil")
+                    }
+
+                    Button {
+                        activeSettingsTab = .profile
+                        isPresentingSettings = true
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
+                    }
+                }
+            }
             .fileImporter(
                 isPresented: $isImportingAttachment,
                 allowedContentTypes: [.item],
@@ -185,7 +202,7 @@ struct WorkspaceView: View {
                             systemImage: "arrow.clockwise.circle.fill"
                         )
                     }
-                    .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                    .buttonStyle(.borderedProminent)
                     .frame(maxWidth: 220)
                     .disabled(model.isRestoringSession)
                 }
@@ -220,7 +237,7 @@ struct WorkspaceView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(selectedChatTitle)
-                    .font(.system(size: availableSize.height < 760 ? 23 : 26, weight: .bold, design: .serif))
+                    .font(availableSize.height < 760 ? .title3.weight(.semibold) : .title2.weight(.semibold))
                     .foregroundStyle(colors.ink)
 
                 Text(toolbarSubtitle)
@@ -230,28 +247,6 @@ struct WorkspaceView: View {
             }
 
             Spacer(minLength: 20)
-
-            HStack(spacing: 10) {
-                Button {
-                    model.resetCreateChatComposer()
-                    isPresentingCreateChat = true
-                } label: {
-                    Image(systemName: "square.and.pencil")
-                        .font(.headline.weight(.semibold))
-                        .frame(width: 18, height: 18)
-                }
-                .buttonStyle(MessengerToolbarIconButtonStyle())
-
-                Button {
-                    activeSettingsTab = .profile
-                    isPresentingSettings = true
-                } label: {
-                    Image(systemName: "gearshape")
-                        .font(.headline.weight(.semibold))
-                        .frame(width: 18, height: 18)
-                }
-                .buttonStyle(MessengerToolbarIconButtonStyle())
-            }
         }
         .padding(.horizontal, 4)
     }
@@ -281,88 +276,48 @@ struct WorkspaceView: View {
     }
 
     private var emptyConversationState: some View {
-        VStack(alignment: .center, spacing: 14) {
-            Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 34, weight: .semibold))
-                .foregroundStyle(colors.accent)
-
-            Text("Choose a conversation")
-                .font(.title3.weight(.bold))
-                .foregroundStyle(colors.ink)
-
-            Text("Pick a chat from the left or start a new one.")
-                .font(.subheadline)
-                .foregroundStyle(colors.inkMuted)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-
+        ContentUnavailableView {
+            Label("Choose a Conversation", systemImage: "bubble.left.and.bubble.right")
+        } description: {
+            Text("Pick a chat from the sidebar or start a new one from the toolbar.")
+        } actions: {
             Button {
                 model.resetCreateChatComposer()
                 isPresentingCreateChat = true
             } label: {
                 Label("New Chat", systemImage: "square.and.pencil")
             }
-            .buttonStyle(TrixActionButtonStyle(tone: .primary))
+            .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(32)
-        .background(colors.panel, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(colors.outline, lineWidth: 1)
-        }
     }
 
     private var settingsSheet: some View {
-        HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 18) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Settings")
-                        .font(.system(size: 28, weight: .bold, design: .serif))
-                        .foregroundStyle(colors.ink)
-
-                    Text("Profile, devices, notifications and advanced tooling live here.")
-                        .font(.subheadline)
-                        .foregroundStyle(colors.inkMuted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(SettingsTab.allCases) { tab in
-                        SettingsTabButton(
-                            tab: tab,
-                            isSelected: activeSettingsTab == tab
-                        ) {
-                            activeSettingsTab = tab
-                        }
-                    }
-                }
-
-                Spacer()
-
-                Button("Done") {
-                    isPresentingSettings = false
-                }
-                .buttonStyle(TrixActionButtonStyle(tone: .primary))
+        NavigationSplitView {
+            List(SettingsTab.allCases, selection: $activeSettingsTab) { tab in
+                Label(tab.title, systemImage: tab.iconName)
+                    .tag(tab)
             }
-            .frame(width: 260, alignment: .topLeading)
-            .padding(24)
-            .background(colors.panelStrong)
-
-            Rectangle()
-                .fill(colors.outline)
-                .frame(width: 1)
-
+            .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 260)
+            .listStyle(.sidebar)
+        } detail: {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     settingsContent
                 }
                 .padding(24)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .background(colors.panel)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        isPresentingSettings = false
+                    }
+                }
+            }
+            .navigationTitle("Settings")
         }
-        .frame(minWidth: 1080, minHeight: 760)
-        .background(colors.panel)
+        .frame(minWidth: 960, minHeight: 720)
     }
 
     @ViewBuilder
@@ -388,22 +343,18 @@ struct WorkspaceView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     TrixInputBlock("Display Name", hint: "Visible account name.") {
                         TextField("Maksym", text: $model.editProfileDraft.profileName)
-                            .textFieldStyle(.plain)
-                            .trixInputChrome()
+                            .textFieldStyle(.roundedBorder)
                     }
 
                     TrixInputBlock("Handle", hint: "Optional public handle.") {
                         TextField("mihver", text: $model.editProfileDraft.handle)
-                            .textFieldStyle(.plain)
-                            .trixInputChrome()
+                            .textFieldStyle(.roundedBorder)
                     }
 
                     TrixInputBlock("Bio", hint: "Optional short profile bio.") {
                         TextEditor(text: $model.editProfileDraft.profileBio)
-                            .scrollContentBackground(.hidden)
                             .frame(minHeight: 120)
                             .font(.body)
-                            .trixInputChrome()
                     }
 
                     HStack(spacing: 12) {
@@ -417,7 +368,7 @@ struct WorkspaceView: View {
                                 systemImage: "checkmark.circle.fill"
                             )
                         }
-                        .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                        .buttonStyle(.borderedProminent)
                         .disabled(!model.canUpdateProfile)
 
                         Button(role: .destructive) {
@@ -426,7 +377,7 @@ struct WorkspaceView: View {
                         } label: {
                             Label("Forget This Device", systemImage: "trash")
                         }
-                        .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+                        .buttonStyle(.borderless)
                     }
                 }
             }
@@ -466,7 +417,7 @@ struct WorkspaceView: View {
                             systemImage: "qrcode.viewfinder"
                         )
                     }
-                    .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                    .buttonStyle(.borderedProminent)
                     .disabled(model.isCreatingLinkIntent)
 
                     if let linkIntent = model.outgoingLinkIntent {
@@ -480,7 +431,7 @@ struct WorkspaceView: View {
                             } label: {
                                 Label("Copy Payload", systemImage: "doc.on.doc")
                             }
-                            .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                            .buttonStyle(.bordered)
 
                             Text("expires \(Self.linkExpiryFormatter.localizedString(for: linkIntent.expiresAt, relativeTo: .now))")
                                 .font(.footnote.weight(.semibold))
@@ -506,7 +457,7 @@ struct WorkspaceView: View {
                                 systemImage: "arrow.triangle.2.circlepath"
                             )
                         }
-                        .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                        .buttonStyle(.bordered)
                         .disabled(model.isRefreshingDevices || model.isRefreshingWorkspace)
 
                         if model.devices.contains(where: { $0.deviceStatus == .pending }) {
@@ -693,27 +644,13 @@ struct WorkspaceView: View {
                 }
                 .padding(20)
             }
-            .background(colors.panel, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .stroke(colors.outline, lineWidth: 1)
-            }
         } else {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Details")
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(colors.ink)
-                Text("Choose a conversation to see people and devices.")
-                    .foregroundStyle(colors.inkMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(colors.panel, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .stroke(colors.outline, lineWidth: 1)
-            }
+            ContentUnavailableView(
+                "No Conversation Selected",
+                systemImage: "person.2.slash",
+                description: Text("Choose a conversation to inspect members and devices.")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -749,8 +686,7 @@ struct WorkspaceView: View {
                 TrixInputBlock("Add People", hint: "Search by name or handle.") {
                     HStack(spacing: 12) {
                         TextField("Find people", text: $memberSearchQuery)
-                            .textFieldStyle(.plain)
-                            .trixInputChrome()
+                            .textFieldStyle(.roundedBorder)
                             .onSubmit {
                                 searchSelectedChatMembers()
                             }
@@ -763,7 +699,7 @@ struct WorkspaceView: View {
                                 systemImage: "magnifyingglass"
                             )
                         }
-                        .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                        .buttonStyle(.bordered)
                         .disabled(model.isSearchingAccountDirectory || model.isAddingChatMembers)
                     }
                 }
@@ -1393,11 +1329,11 @@ struct WorkspaceView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             }
         }
-        .padding(20)
+        .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(colors.inputFill, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .background(colors.inputFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(colors.outline, lineWidth: 1)
         }
     }
@@ -1423,10 +1359,10 @@ struct WorkspaceView: View {
                 }
 
                 TextEditor(text: $composerDraft)
-                    .scrollContentBackground(.hidden)
                     .frame(minHeight: 88, maxHeight: 140)
                     .font(.body)
-                    .trixInputChrome()
+                    .padding(6)
+                    .background(colors.inputFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
 
             HStack(spacing: 12) {
@@ -1435,7 +1371,7 @@ struct WorkspaceView: View {
                 } label: {
                     Label(model.composerAttachmentDraft == nil ? "Attach" : "Replace", systemImage: "paperclip")
                 }
-                .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+                .buttonStyle(.bordered)
                 .disabled(model.isSendingMessage)
 
                 Button {
@@ -1443,7 +1379,7 @@ struct WorkspaceView: View {
                 } label: {
                     Label("Clear Draft", systemImage: "xmark.circle")
                 }
-                .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+                .buttonStyle(.borderless)
                 .disabled(
                     composerDraft.isEmpty &&
                         model.composerAttachmentDraft == nil
@@ -1461,7 +1397,7 @@ struct WorkspaceView: View {
                 } label: {
                     Label(model.isSendingMessage ? "Sending…" : "Send", systemImage: "paperplane.fill")
                 }
-                .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                .buttonStyle(.borderedProminent)
                 .disabled(
                     (
                         composerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
@@ -1472,11 +1408,6 @@ struct WorkspaceView: View {
             }
         }
         .padding(16)
-        .background(colors.panel, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .stroke(colors.outline, lineWidth: 1)
-        }
     }
 
     private var timelineScrollContent: some View {
@@ -1624,39 +1555,6 @@ struct WorkspaceView: View {
     }()
 }
 
-private struct SettingsTabButton: View {
-    @Environment(\.trixColors) private var colors
-    let tab: SettingsTab
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: tab.iconName)
-                    .font(.subheadline.weight(.semibold))
-                    .frame(width: 18)
-                Text(tab.title)
-                    .font(.subheadline.weight(.semibold))
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(
-                isSelected ? colors.accentSoft.opacity(0.8) : colors.tileFill,
-                in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(isSelected ? colors.accent.opacity(0.24) : colors.outline, lineWidth: 1)
-            }
-            .foregroundStyle(isSelected ? colors.ink : colors.inkMuted)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 private struct ConversationAvatar: View {
     @Environment(\.trixColors) private var colors
     let title: String
@@ -1664,7 +1562,7 @@ private struct ConversationAvatar: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            Circle()
                 .fill(colors.panel)
                 .frame(width: 48, height: 48)
 
@@ -1673,7 +1571,7 @@ private struct ConversationAvatar: View {
                 .foregroundStyle(colors.accent)
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            Circle()
                 .stroke(colors.outline, lineWidth: 1)
         }
     }
@@ -1708,24 +1606,6 @@ private struct DetailsSectionHeader: View {
                 .foregroundStyle(colors.inkMuted)
                 .fixedSize(horizontal: false, vertical: true)
         }
-    }
-}
-
-private struct MessengerToolbarIconButtonStyle: ButtonStyle {
-    @Environment(\.trixColors) private var colors
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .padding(10)
-            .background(
-                colors.tileFill.opacity(configuration.isPressed ? 0.75 : 1),
-                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(colors.outline, lineWidth: 1)
-            }
-            .foregroundStyle(colors.ink)
     }
 }
 
@@ -1822,7 +1702,7 @@ private struct CreateChatSheet: View {
                 Button("Close") {
                     isPresented = false
                 }
-                .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+                .buttonStyle(.borderless)
             }
 
             Picker(
@@ -1843,8 +1723,7 @@ private struct CreateChatSheet: View {
                     hint: "Optional group name."
                 ) {
                     TextField("Design review", text: $model.createChatDraft.title)
-                        .textFieldStyle(.plain)
-                        .trixInputChrome()
+                        .textFieldStyle(.roundedBorder)
                 }
             }
 
@@ -1874,8 +1753,7 @@ private struct CreateChatSheet: View {
             ) {
                 HStack(spacing: 12) {
                     TextField("Search by handle or profile name", text: $model.createChatDraft.directoryQuery)
-                        .textFieldStyle(.plain)
-                        .trixInputChrome()
+                        .textFieldStyle(.roundedBorder)
                         .onSubmit {
                             Task {
                                 await model.searchAccountDirectory()
@@ -1892,7 +1770,7 @@ private struct CreateChatSheet: View {
                             systemImage: "magnifyingglass"
                         )
                     }
-                    .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                    .buttonStyle(.bordered)
                     .disabled(model.isSearchingAccountDirectory)
                 }
             }
@@ -1910,7 +1788,7 @@ private struct CreateChatSheet: View {
                 Button("Cancel") {
                     isPresented = false
                 }
-                .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+                .buttonStyle(.borderless)
 
                 Button {
                     Task {
@@ -1926,13 +1804,12 @@ private struct CreateChatSheet: View {
                         systemImage: "plus.bubble.fill"
                     )
                 }
-                .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                .buttonStyle(.borderedProminent)
                 .disabled(!model.canCreateChat)
             }
         }
         .padding(24)
         .frame(width: 620)
-        .background(colors.panelStrong, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
         .task {
             await model.prepareCreateChatSheet()
         }
@@ -3042,7 +2919,7 @@ private struct PendingOutgoingMessageRow: View {
                 }
 
                 if let errorMessage = trimmedValue(message.errorMessage) {
-                    Text(userFacingError(errorMessage))
+                    Text(localizedPendingOutgoingError(errorMessage))
                         .font(.footnote)
                         .foregroundStyle(colors.rust)
                         .fixedSize(horizontal: false, vertical: true)
@@ -3053,12 +2930,12 @@ private struct PendingOutgoingMessageRow: View {
                         Button(action: retry) {
                             Label("Retry", systemImage: "arrow.clockwise")
                         }
-                        .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+                        .buttonStyle(.bordered)
 
                         Button(role: .destructive, action: discard) {
                             Label("Dismiss", systemImage: "trash")
                         }
-                        .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+                        .buttonStyle(.borderless)
                     }
                 }
             }
@@ -3075,13 +2952,6 @@ private struct PendingOutgoingMessageRow: View {
         }
     }
 
-    private func userFacingError(_ rawValue: String) -> String {
-        let normalized = rawValue.lowercased()
-        if normalized.contains("epoch") || normalized.contains("mls") || normalized.contains("conversation") {
-            return "Couldn't send this message right now. Try again in a moment."
-        }
-        return rawValue
-    }
 }
 
 private struct LocalTimelineMessageRow: View {
