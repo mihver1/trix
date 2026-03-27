@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
 DEFAULT_DATABASE_URL="postgres://trix:trix@localhost:5432/trix"
 DEFAULT_IOS_SERVER_SMOKE_BASE_URL="http://localhost:8080"
+DEFAULT_IOS_UI_TEST_BASE_URL="http://localhost:8080"
 
 declare -a SELECTED_SUITES=()
 declare -a DEFAULT_SUITES=(
@@ -36,6 +37,7 @@ Default suites:
 Optional suites:
   ios-unit         xcodebuild test for apps/ios on an available iPhone simulator
   ios-server       xcodebuild server-backed smoke for apps/ios against a running backend
+  ios-ui           xcodebuild XCUITest smoke for apps/ios against a running backend
   macos             swift test for apps/macos
   android-unit      ./gradlew testDebugUnitTest
   android-ui        ./gradlew connectedDebugAndroidTest
@@ -51,6 +53,7 @@ Options:
 Environment:
   TRIX_TEST_DATABASE_URL  Override the database URL used by the Rust e2e suites.
   TRIX_IOS_SERVER_SMOKE_BASE_URL  Override the base URL used by the ios-server suite.
+  TRIX_IOS_UI_TEST_BASE_URL  Override the base URL used by the ios-ui suite.
 EOF
 }
 
@@ -61,6 +64,7 @@ safe-ffi
 bot-runtime
 ios-unit
 ios-server
+ios-ui
 macos
 android-unit
 android-ui
@@ -93,7 +97,7 @@ has_suite() {
 add_suite() {
   local suite="$1"
   case "$suite" in
-    client-scenarios|safe-ffi|bot-runtime|ios-unit|ios-server|macos|android-unit|android-ui) ;;
+    client-scenarios|safe-ffi|bot-runtime|ios-unit|ios-server|ios-ui|macos|android-unit|android-ui) ;;
     *) die "unknown suite '$suite'; use --list-suites to inspect supported values" ;;
   esac
 
@@ -308,6 +312,9 @@ run_suite() {
         -destination "$destination" \
         -derivedDataPath apps/ios/build/ios-tests-deriveddata \
         CODE_SIGNING_ALLOWED=NO \
+        -only-testing:TrixiOSTests \
+        -skip-testing:TrixiOSTests/ServerBackedSmokeTests \
+        -skip-testing:TrixiOSTests/UITestConversationSeedStateTests \
         test
       ;;
     ios-server)
@@ -325,6 +332,24 @@ run_suite() {
         -derivedDataPath apps/ios/build/ios-tests-deriveddata \
         CODE_SIGNING_ALLOWED=NO \
         -only-testing:TrixiOSTests/ServerBackedSmokeTests \
+        -only-testing:TrixiOSTests/UITestConversationSeedStateTests \
+        test
+      ;;
+    ios-ui)
+      local destination
+      local base_url
+      destination="$(resolve_ios_destination)"
+      base_url="${TRIX_IOS_UI_TEST_BASE_URL:-$DEFAULT_IOS_UI_TEST_BASE_URL}"
+      log "Running ios-ui on $destination against $base_url"
+      run_root_command env \
+        TRIX_IOS_UI_TEST_BASE_URL="$base_url" \
+        xcodebuild \
+        -project apps/ios/TrixiOS.xcodeproj \
+        -scheme TrixiOS \
+        -destination "$destination" \
+        -derivedDataPath apps/ios/build/ios-tests-deriveddata \
+        CODE_SIGNING_ALLOWED=NO \
+        -only-testing:TrixiOSUITests/TrixiOSSmokeUITests \
         test
       ;;
     macos)
@@ -354,7 +379,7 @@ main() {
   log "TRIX_TEST_DATABASE_URL=$TRIX_TEST_DATABASE_URL"
 
   if ((START_POSTGRES)); then
-    if has_suite "ios-server"; then
+    if has_suite "ios-server" || has_suite "ios-ui"; then
       start_local_server
     else
       start_postgres
@@ -369,7 +394,7 @@ main() {
   done
 
   if ((START_POSTGRES)) && ((KEEP_POSTGRES == 0)); then
-    if has_suite "ios-server"; then
+    if has_suite "ios-server" || has_suite "ios-ui"; then
       stop_local_server
     else
       stop_postgres

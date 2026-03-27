@@ -298,10 +298,11 @@ enum TrixCorePersistentBridge {
                 heightPx: attachmentUpload.params.heightPx
             )
         )
+        let messageId = UUID().uuidString.lowercased()
         let response = try client.sendMessage(
             request: FfiMessengerSendMessageRequest(
                 conversationId: chatId,
-                messageId: nil,
+                messageId: messageId,
                 kind: .attachment,
                 text: nil,
                 targetMessageId: nil,
@@ -2477,6 +2478,7 @@ private extension FfiMessengerSendMessageResult {
 
 private extension DebugMessageDraft {
     func trix_safeSendMessageRequest(chatId: String) throws -> FfiMessengerSendMessageRequest {
+        let messageId = UUID().uuidString.lowercased()
         switch kind {
         case .text:
             let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2485,7 +2487,7 @@ private extension DebugMessageDraft {
             }
             return FfiMessengerSendMessageRequest(
                 conversationId: chatId,
-                messageId: nil,
+                messageId: messageId,
                 kind: .text,
                 text: text,
                 targetMessageId: nil,
@@ -2507,7 +2509,7 @@ private extension DebugMessageDraft {
             }
             return FfiMessengerSendMessageRequest(
                 conversationId: chatId,
-                messageId: nil,
+                messageId: messageId,
                 kind: .reaction,
                 text: nil,
                 targetMessageId: targetMessageId,
@@ -2535,7 +2537,7 @@ private extension DebugMessageDraft {
             }
             return FfiMessengerSendMessageRequest(
                 conversationId: chatId,
-                messageId: nil,
+                messageId: messageId,
                 kind: .receipt,
                 text: nil,
                 targetMessageId: targetMessageId,
@@ -2556,7 +2558,7 @@ private extension DebugMessageDraft {
             _ = try JSONSerialization.jsonObject(with: Data(eventJSON.utf8))
             return FfiMessengerSendMessageRequest(
                 conversationId: chatId,
-                messageId: nil,
+                messageId: messageId,
                 kind: .chatEvent,
                 text: nil,
                 targetMessageId: nil,

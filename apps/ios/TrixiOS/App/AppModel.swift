@@ -1040,14 +1040,15 @@ final class AppModel: ObservableObject {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try await TrixCoreServerBridge.ackInbox(
+            let response = try await TrixCorePersistentBridge.ackInboxIntoSyncState(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
+                identity: context.identity,
                 inboxIds: inboxIds
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
-            return response
+            return AckInboxResponse(ackedInboxIds: response.ackedInboxIds)
         } catch {
             errorMessage = error.localizedDescription
             return nil

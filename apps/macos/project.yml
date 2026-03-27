@@ -1,0 +1,78 @@
+name: TrixMac
+
+options:
+  minimumXcodeGenVersion: 2.44.0
+  deploymentTarget:
+    macOS: "14.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 0.1.0
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+
+targets:
+  TrixMac:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/TrixMac
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trixapp
+        PRODUCT_NAME: TrixMac
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        OTHER_SWIFT_FLAGS:
+          - -Xcc
+          - -fmodule-map-file=$(SRCROOT)/Sources/trix_coreFFI/module.modulemap
+        OTHER_LDFLAGS:
+          - $(SRCROOT)/../../target/debug/libtrix_core.a
+      configs:
+        Debug:
+          ENABLE_TESTABILITY: YES
+    scheme:
+      gatherCoverageData: false
+      testTargets:
+        - TrixMacTests
+        - TrixMacUITests
+
+  TrixMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests/TrixMacTests
+    dependencies:
+      - target: TrixMac
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trixapp.tests
+        PRODUCT_NAME: "$(TARGET_NAME)"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        OTHER_SWIFT_FLAGS:
+          - -Xcc
+          - -fmodule-map-file=$(SRCROOT)/Sources/trix_coreFFI/module.modulemap
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/TrixMac.app/Contents/MacOS/TrixMac"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
+  TrixMacUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: TrixMacUITests
+      - path: Sources/TrixMac/Support/MacUITestSupport.swift
+      - path: Sources/TrixMac/Support/TrixMacInteropSupport.swift
+    dependencies:
+      - target: TrixMac
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trixapp.uitests
+        PRODUCT_NAME: "$(TARGET_NAME)"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        TEST_TARGET_NAME: TrixMac

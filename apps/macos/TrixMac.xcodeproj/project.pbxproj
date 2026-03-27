@@ -1,0 +1,735 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		07C1B5AA070A11634214CFA9 /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BCE39CDE1353EA8F59981D0 /* WorkspaceView.swift */; };
+		18E0D4414BEEDD52CAE7735F /* SafeDiagnosticLogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BA327D85EBC3ECA78574724 /* SafeDiagnosticLogStore.swift */; };
+		1C1C3A912795772D0F8F5578 /* GroupChatPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2B7388A4D817DC522225FBC /* GroupChatPresentationTests.swift */; };
+		2658AEB933EE026700BAC845 /* TrixMacInteropSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1575427B96432954EC184FEF /* TrixMacInteropSupport.swift */; };
+		2C7693CEC34B3A80406B069D /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0F7D92E85043126564D9441 /* OnboardingView.swift */; };
+		31C9E73E0EE07D141723B1C1 /* TrixMacSmokeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349F1AC040924E97D696D317 /* TrixMacSmokeUITests.swift */; };
+		39F5BBFE01907362344FEAB0 /* BootstrapMessageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1D8E914C2819EA7CF5E9E97 /* BootstrapMessageTests.swift */; };
+		3B9F4F63BC1F8EE254ACC6D3 /* MacUITestLaunchConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 235F6FCF01F82761B85B4132 /* MacUITestLaunchConfiguration.swift */; };
+		459EC67CD117256DF95826FA /* TrixMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C949F8B829089ED93F68174 /* TrixMacApp.swift */; };
+		4D029DA0BA32A0C8ED0C29C0 /* CrossPlatformStabilizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACD09428B63A34435686262F /* CrossPlatformStabilizationTests.swift */; };
+		518B35E60FD543175C137CD7 /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C6BFE4790D60B43AE929D75 /* SessionStore.swift */; };
+		67DE8CF0A0E02CD90B298573 /* MacUITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B13124D1505CA449E0D0AECA /* MacUITestSupport.swift */; };
+		706178ECC8E1EE15DC6EE4E7 /* NotificationSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB8B65020EA850F8ECE018C1 /* NotificationSupport.swift */; };
+		7CC474A10DB62B83F498DBB7 /* MacUITestLaunchConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99D3A143E466D3ED9CE6DA8B /* MacUITestLaunchConfigurationTests.swift */; };
+		7E93F7B01158ECE8D534AEFC /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37FC742545535C1D04FA361B /* KeychainStore.swift */; };
+		8506A281E2AFB1086CA49AFE /* TrixAPIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F12263C2646EFEB09564D498 /* TrixAPIModels.swift */; };
+		88132E40AAAA1841462225C1 /* MacUITestAppBootstrapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B094F46233034DE544886BD /* MacUITestAppBootstrapTests.swift */; };
+		8A6EF6A6DFC34C57E4A18C8E /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9068443F554CD6F8424422A0 /* AppModel.swift */; };
+		8C70941A293E4D29BF209B37 /* TrixAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9E7A0296CF1257C7837E668 /* TrixAPIClient.swift */; };
+		902FE0A288A07CFC7908BE16 /* TrixCoreFFIConversions.swift in Sources */ = {isa = PBXBuildFile; fileRef = B23C86C8509965588B5B6C9F /* TrixCoreFFIConversions.swift */; };
+		98ADE511A362ADA7AFAA1AF0 /* TrixMessengerClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED0CF18F6A6B6288A8455FA9 /* TrixMessengerClient.swift */; };
+		A7EA5B8CB38E55739C1B93E7 /* SessionRestoreErrorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44EE6F646D2111D046C49025 /* SessionRestoreErrorTests.swift */; };
+		AFA8BDF95FFD3D16FBB4EDD0 /* MacUITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B13124D1505CA449E0D0AECA /* MacUITestSupport.swift */; };
+		B0D6A2556020BCCAEB2445B0 /* TrixMacInteropSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1575427B96432954EC184FEF /* TrixMacInteropSupport.swift */; };
+		B619C18977430B69EDE2A7D8 /* TrixMacInteropDriverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 448219DEF0BA572AAA5E0C73 /* TrixMacInteropDriverTests.swift */; };
+		BE9BD658F14BFEA7B7FF6290 /* TrixMacUITestApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD72ABF5B554DB5E3936BE39 /* TrixMacUITestApp.swift */; };
+		C381CDD42782CCBC2EBC2059 /* DeviceIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8DA7EB980D53B9998B24B3A /* DeviceIdentity.swift */; };
+		CF216EE8A2AC0F42BDD96910 /* trix_core.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E294D6B5626B1D095D94E1E /* trix_core.swift */; };
+		D1E6A31EF3E81A8FE7290E0A /* WindowViewportConfigurator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B19A373F262F14C35C553F1B /* WindowViewportConfigurator.swift */; };
+		D23106F804C0E953386BC46F /* TrixMacInteropDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 268F8F7B489422D6DD3E1BF6 /* TrixMacInteropDriver.swift */; };
+		D3CE75793412CE828101BC7D /* TrixMacInteropActionBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C708CDFFF0C16936B2F2FA9D /* TrixMacInteropActionBridgeTests.swift */; };
+		D46C104D14169E3D6C0B77A3 /* AppIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6783D0499D89DC1C138D9884 /* AppIdentity.swift */; };
+		D8F37F6168058B301642E878 /* TrixMacInteropActionBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A758602C129BAFB1A29D62E /* TrixMacInteropActionBridge.swift */; };
+		E27AD64FEA1BF6FF3EC86271 /* AttachmentPreviewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F3E9F4D645B6CCBD53E40BF /* AttachmentPreviewSheet.swift */; };
+		E3CD9232F12043D0AF937AD9 /* MacUITestFixtureSeeder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91C76B87CB855F822DCF0184 /* MacUITestFixtureSeeder.swift */; };
+		E5B39E3D73A6952ADF53D8E1 /* WorkspaceStorePaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AEBFE31E96635AC131C69B /* WorkspaceStorePaths.swift */; };
+		ECF2C5909B8B90B210FC877E /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93B9EC54629077A2F819A1C4 /* RootView.swift */; };
+		FA866F5B4DB3E42DB51B1981 /* TrixChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16A88AF081AE91FD4005272D /* TrixChrome.swift */; };
+		FD4E8CC52E29BCB49729263D /* MacUITestAppBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 627F1777C49C1241F0E44A8F /* MacUITestAppBootstrap.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		097A4517BAFC9610E5D57FFE /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A4B4FE6F161829507DCD789E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A86A55812F1046A4D674C5FE;
+			remoteInfo = TrixMac;
+		};
+		2685A8992B2236EFA62CFF37 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A4B4FE6F161829507DCD789E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A86A55812F1046A4D674C5FE;
+			remoteInfo = TrixMac;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0A758602C129BAFB1A29D62E /* TrixMacInteropActionBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMacInteropActionBridge.swift; sourceTree = "<group>"; };
+		0B094F46233034DE544886BD /* MacUITestAppBootstrapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacUITestAppBootstrapTests.swift; sourceTree = "<group>"; };
+		0E294D6B5626B1D095D94E1E /* trix_core.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = trix_core.swift; sourceTree = "<group>"; };
+		1575427B96432954EC184FEF /* TrixMacInteropSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMacInteropSupport.swift; sourceTree = "<group>"; };
+		16A88AF081AE91FD4005272D /* TrixChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixChrome.swift; sourceTree = "<group>"; };
+		1B42AB34C64A3C9384D8CA0D /* TrixMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TrixMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1C949F8B829089ED93F68174 /* TrixMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMacApp.swift; sourceTree = "<group>"; };
+		235F6FCF01F82761B85B4132 /* MacUITestLaunchConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacUITestLaunchConfiguration.swift; sourceTree = "<group>"; };
+		268F8F7B489422D6DD3E1BF6 /* TrixMacInteropDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMacInteropDriver.swift; sourceTree = "<group>"; };
+		349F1AC040924E97D696D317 /* TrixMacSmokeUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMacSmokeUITests.swift; sourceTree = "<group>"; };
+		37FC742545535C1D04FA361B /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		3BA327D85EBC3ECA78574724 /* SafeDiagnosticLogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafeDiagnosticLogStore.swift; sourceTree = "<group>"; };
+		448219DEF0BA572AAA5E0C73 /* TrixMacInteropDriverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMacInteropDriverTests.swift; sourceTree = "<group>"; };
+		44EE6F646D2111D046C49025 /* SessionRestoreErrorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRestoreErrorTests.swift; sourceTree = "<group>"; };
+		58D27BC6E7B9A18E1FF81E13 /* TrixMacUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TrixMacUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		5BCE39CDE1353EA8F59981D0 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
+		627F1777C49C1241F0E44A8F /* MacUITestAppBootstrap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacUITestAppBootstrap.swift; sourceTree = "<group>"; };
+		6783D0499D89DC1C138D9884 /* AppIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIdentity.swift; sourceTree = "<group>"; };
+		6F3E9F4D645B6CCBD53E40BF /* AttachmentPreviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentPreviewSheet.swift; sourceTree = "<group>"; };
+		9068443F554CD6F8424422A0 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		91B9FDE42BCCD4DCD14CBF7C /* TrixMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TrixMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		91C76B87CB855F822DCF0184 /* MacUITestFixtureSeeder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacUITestFixtureSeeder.swift; sourceTree = "<group>"; };
+		93B9EC54629077A2F819A1C4 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		99D3A143E466D3ED9CE6DA8B /* MacUITestLaunchConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacUITestLaunchConfigurationTests.swift; sourceTree = "<group>"; };
+		9C6BFE4790D60B43AE929D75 /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
+		ACD09428B63A34435686262F /* CrossPlatformStabilizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossPlatformStabilizationTests.swift; sourceTree = "<group>"; };
+		B13124D1505CA449E0D0AECA /* MacUITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacUITestSupport.swift; sourceTree = "<group>"; };
+		B19A373F262F14C35C553F1B /* WindowViewportConfigurator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowViewportConfigurator.swift; sourceTree = "<group>"; };
+		B23C86C8509965588B5B6C9F /* TrixCoreFFIConversions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixCoreFFIConversions.swift; sourceTree = "<group>"; };
+		C0F7D92E85043126564D9441 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		C1AEBFE31E96635AC131C69B /* WorkspaceStorePaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceStorePaths.swift; sourceTree = "<group>"; };
+		C708CDFFF0C16936B2F2FA9D /* TrixMacInteropActionBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMacInteropActionBridgeTests.swift; sourceTree = "<group>"; };
+		CD72ABF5B554DB5E3936BE39 /* TrixMacUITestApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMacUITestApp.swift; sourceTree = "<group>"; };
+		D9E7A0296CF1257C7837E668 /* TrixAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixAPIClient.swift; sourceTree = "<group>"; };
+		DB8B65020EA850F8ECE018C1 /* NotificationSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSupport.swift; sourceTree = "<group>"; };
+		E1D8E914C2819EA7CF5E9E97 /* BootstrapMessageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BootstrapMessageTests.swift; sourceTree = "<group>"; };
+		ED0CF18F6A6B6288A8455FA9 /* TrixMessengerClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMessengerClient.swift; sourceTree = "<group>"; };
+		F12263C2646EFEB09564D498 /* TrixAPIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixAPIModels.swift; sourceTree = "<group>"; };
+		F2B7388A4D817DC522225FBC /* GroupChatPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupChatPresentationTests.swift; sourceTree = "<group>"; };
+		F8DA7EB980D53B9998B24B3A /* DeviceIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceIdentity.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		074B802BAEA8CFAA45D7FCEC /* Onboarding */ = {
+			isa = PBXGroup;
+			children = (
+				C0F7D92E85043126564D9441 /* OnboardingView.swift */,
+			);
+			path = Onboarding;
+			sourceTree = "<group>";
+		};
+		126FCED022AF6EC7A39E300D /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				074B802BAEA8CFAA45D7FCEC /* Onboarding */,
+				6384EBF18AD8FA0228112EB1 /* Shared */,
+				9FA330191467A0F65D45F5F4 /* Workspace */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		25699586802E12FAB62BA910 /* TrixMac */ = {
+			isa = PBXGroup;
+			children = (
+				F41E9B3CA9957EB9BD52704C /* App */,
+				59B921689A75990672223A0E /* Bridge */,
+				126FCED022AF6EC7A39E300D /* Features */,
+				DDAD67A986A42119148ACDC9 /* Generated */,
+				4DF90B153AC4B498B490A7D4 /* Support */,
+			);
+			name = TrixMac;
+			path = Sources/TrixMac;
+			sourceTree = "<group>";
+		};
+		4DF90B153AC4B498B490A7D4 /* Support */ = {
+			isa = PBXGroup;
+			children = (
+				6783D0499D89DC1C138D9884 /* AppIdentity.swift */,
+				37FC742545535C1D04FA361B /* KeychainStore.swift */,
+				B13124D1505CA449E0D0AECA /* MacUITestSupport.swift */,
+				DB8B65020EA850F8ECE018C1 /* NotificationSupport.swift */,
+				3BA327D85EBC3ECA78574724 /* SafeDiagnosticLogStore.swift */,
+				9C6BFE4790D60B43AE929D75 /* SessionStore.swift */,
+				1575427B96432954EC184FEF /* TrixMacInteropSupport.swift */,
+				C1AEBFE31E96635AC131C69B /* WorkspaceStorePaths.swift */,
+			);
+			path = Support;
+			sourceTree = "<group>";
+		};
+		59B921689A75990672223A0E /* Bridge */ = {
+			isa = PBXGroup;
+			children = (
+				F8DA7EB980D53B9998B24B3A /* DeviceIdentity.swift */,
+				D9E7A0296CF1257C7837E668 /* TrixAPIClient.swift */,
+				F12263C2646EFEB09564D498 /* TrixAPIModels.swift */,
+				B23C86C8509965588B5B6C9F /* TrixCoreFFIConversions.swift */,
+				ED0CF18F6A6B6288A8455FA9 /* TrixMessengerClient.swift */,
+			);
+			path = Bridge;
+			sourceTree = "<group>";
+		};
+		6384EBF18AD8FA0228112EB1 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				93B9EC54629077A2F819A1C4 /* RootView.swift */,
+				16A88AF081AE91FD4005272D /* TrixChrome.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		7779ADBC39450CE499F198D6 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1B42AB34C64A3C9384D8CA0D /* TrixMac.app */,
+				91B9FDE42BCCD4DCD14CBF7C /* TrixMacTests.xctest */,
+				58D27BC6E7B9A18E1FF81E13 /* TrixMacUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		9FA330191467A0F65D45F5F4 /* Workspace */ = {
+			isa = PBXGroup;
+			children = (
+				6F3E9F4D645B6CCBD53E40BF /* AttachmentPreviewSheet.swift */,
+				5BCE39CDE1353EA8F59981D0 /* WorkspaceView.swift */,
+			);
+			path = Workspace;
+			sourceTree = "<group>";
+		};
+		A92939E18F686FCB164656FB = {
+			isa = PBXGroup;
+			children = (
+				25699586802E12FAB62BA910 /* TrixMac */,
+				DD46DBA14B32A1614776ACCD /* TrixMacTests */,
+				DE4A6495A326C92A5DCCF9ED /* TrixMacUITests */,
+				7779ADBC39450CE499F198D6 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		DD46DBA14B32A1614776ACCD /* TrixMacTests */ = {
+			isa = PBXGroup;
+			children = (
+				E1D8E914C2819EA7CF5E9E97 /* BootstrapMessageTests.swift */,
+				ACD09428B63A34435686262F /* CrossPlatformStabilizationTests.swift */,
+				F2B7388A4D817DC522225FBC /* GroupChatPresentationTests.swift */,
+				0B094F46233034DE544886BD /* MacUITestAppBootstrapTests.swift */,
+				99D3A143E466D3ED9CE6DA8B /* MacUITestLaunchConfigurationTests.swift */,
+				44EE6F646D2111D046C49025 /* SessionRestoreErrorTests.swift */,
+				C708CDFFF0C16936B2F2FA9D /* TrixMacInteropActionBridgeTests.swift */,
+			);
+			name = TrixMacTests;
+			path = Tests/TrixMacTests;
+			sourceTree = "<group>";
+		};
+		DDAD67A986A42119148ACDC9 /* Generated */ = {
+			isa = PBXGroup;
+			children = (
+				0E294D6B5626B1D095D94E1E /* trix_core.swift */,
+			);
+			path = Generated;
+			sourceTree = "<group>";
+		};
+		DE4A6495A326C92A5DCCF9ED /* TrixMacUITests */ = {
+			isa = PBXGroup;
+			children = (
+				268F8F7B489422D6DD3E1BF6 /* TrixMacInteropDriver.swift */,
+				448219DEF0BA572AAA5E0C73 /* TrixMacInteropDriverTests.swift */,
+				349F1AC040924E97D696D317 /* TrixMacSmokeUITests.swift */,
+				CD72ABF5B554DB5E3936BE39 /* TrixMacUITestApp.swift */,
+			);
+			path = TrixMacUITests;
+			sourceTree = "<group>";
+		};
+		F41E9B3CA9957EB9BD52704C /* App */ = {
+			isa = PBXGroup;
+			children = (
+				9068443F554CD6F8424422A0 /* AppModel.swift */,
+				627F1777C49C1241F0E44A8F /* MacUITestAppBootstrap.swift */,
+				91C76B87CB855F822DCF0184 /* MacUITestFixtureSeeder.swift */,
+				235F6FCF01F82761B85B4132 /* MacUITestLaunchConfiguration.swift */,
+				1C949F8B829089ED93F68174 /* TrixMacApp.swift */,
+				0A758602C129BAFB1A29D62E /* TrixMacInteropActionBridge.swift */,
+				B19A373F262F14C35C553F1B /* WindowViewportConfigurator.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		0FFDE725E4F805981BA3D21B /* TrixMacTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5B6BB4C5B8AC434498D9F4C8 /* Build configuration list for PBXNativeTarget "TrixMacTests" */;
+			buildPhases = (
+				752D28DBC6A2D1CEACE0E967 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				041BB9FB4AF22CEEA289C602 /* PBXTargetDependency */,
+			);
+			name = TrixMacTests;
+			packageProductDependencies = (
+			);
+			productName = TrixMacTests;
+			productReference = 91B9FDE42BCCD4DCD14CBF7C /* TrixMacTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		A86A55812F1046A4D674C5FE /* TrixMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6CD79AFB2D85577145021AA9 /* Build configuration list for PBXNativeTarget "TrixMac" */;
+			buildPhases = (
+				B41E9D7FA8E3A0B8B5780327 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TrixMac;
+			packageProductDependencies = (
+			);
+			productName = TrixMac;
+			productReference = 1B42AB34C64A3C9384D8CA0D /* TrixMac.app */;
+			productType = "com.apple.product-type.application";
+		};
+		CC5BE1D0925BE20FDD953377 /* TrixMacUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FD3C0C65A92D43B1691C2161 /* Build configuration list for PBXNativeTarget "TrixMacUITests" */;
+			buildPhases = (
+				2E01498CFCEC7E34AC633832 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C57541C08F2DF43D9C511B4E /* PBXTargetDependency */,
+			);
+			name = TrixMacUITests;
+			packageProductDependencies = (
+			);
+			productName = TrixMacUITests;
+			productReference = 58D27BC6E7B9A18E1FF81E13 /* TrixMacUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A4B4FE6F161829507DCD789E /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					0FFDE725E4F805981BA3D21B = {
+						ProvisioningStyle = Automatic;
+					};
+					A86A55812F1046A4D674C5FE = {
+						ProvisioningStyle = Automatic;
+					};
+					CC5BE1D0925BE20FDD953377 = {
+						ProvisioningStyle = Automatic;
+						TestTargetID = A86A55812F1046A4D674C5FE;
+					};
+				};
+			};
+			buildConfigurationList = 342D661CD5732ABD1ED1D0D5 /* Build configuration list for PBXProject "TrixMac" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = A92939E18F686FCB164656FB;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 7779ADBC39450CE499F198D6 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A86A55812F1046A4D674C5FE /* TrixMac */,
+				0FFDE725E4F805981BA3D21B /* TrixMacTests */,
+				CC5BE1D0925BE20FDD953377 /* TrixMacUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		2E01498CFCEC7E34AC633832 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AFA8BDF95FFD3D16FBB4EDD0 /* MacUITestSupport.swift in Sources */,
+				D23106F804C0E953386BC46F /* TrixMacInteropDriver.swift in Sources */,
+				B619C18977430B69EDE2A7D8 /* TrixMacInteropDriverTests.swift in Sources */,
+				2658AEB933EE026700BAC845 /* TrixMacInteropSupport.swift in Sources */,
+				31C9E73E0EE07D141723B1C1 /* TrixMacSmokeUITests.swift in Sources */,
+				BE9BD658F14BFEA7B7FF6290 /* TrixMacUITestApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		752D28DBC6A2D1CEACE0E967 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				39F5BBFE01907362344FEAB0 /* BootstrapMessageTests.swift in Sources */,
+				4D029DA0BA32A0C8ED0C29C0 /* CrossPlatformStabilizationTests.swift in Sources */,
+				1C1C3A912795772D0F8F5578 /* GroupChatPresentationTests.swift in Sources */,
+				88132E40AAAA1841462225C1 /* MacUITestAppBootstrapTests.swift in Sources */,
+				7CC474A10DB62B83F498DBB7 /* MacUITestLaunchConfigurationTests.swift in Sources */,
+				A7EA5B8CB38E55739C1B93E7 /* SessionRestoreErrorTests.swift in Sources */,
+				D3CE75793412CE828101BC7D /* TrixMacInteropActionBridgeTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B41E9D7FA8E3A0B8B5780327 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D46C104D14169E3D6C0B77A3 /* AppIdentity.swift in Sources */,
+				8A6EF6A6DFC34C57E4A18C8E /* AppModel.swift in Sources */,
+				E27AD64FEA1BF6FF3EC86271 /* AttachmentPreviewSheet.swift in Sources */,
+				C381CDD42782CCBC2EBC2059 /* DeviceIdentity.swift in Sources */,
+				7E93F7B01158ECE8D534AEFC /* KeychainStore.swift in Sources */,
+				FD4E8CC52E29BCB49729263D /* MacUITestAppBootstrap.swift in Sources */,
+				E3CD9232F12043D0AF937AD9 /* MacUITestFixtureSeeder.swift in Sources */,
+				3B9F4F63BC1F8EE254ACC6D3 /* MacUITestLaunchConfiguration.swift in Sources */,
+				67DE8CF0A0E02CD90B298573 /* MacUITestSupport.swift in Sources */,
+				706178ECC8E1EE15DC6EE4E7 /* NotificationSupport.swift in Sources */,
+				2C7693CEC34B3A80406B069D /* OnboardingView.swift in Sources */,
+				ECF2C5909B8B90B210FC877E /* RootView.swift in Sources */,
+				18E0D4414BEEDD52CAE7735F /* SafeDiagnosticLogStore.swift in Sources */,
+				518B35E60FD543175C137CD7 /* SessionStore.swift in Sources */,
+				8C70941A293E4D29BF209B37 /* TrixAPIClient.swift in Sources */,
+				8506A281E2AFB1086CA49AFE /* TrixAPIModels.swift in Sources */,
+				FA866F5B4DB3E42DB51B1981 /* TrixChrome.swift in Sources */,
+				902FE0A288A07CFC7908BE16 /* TrixCoreFFIConversions.swift in Sources */,
+				459EC67CD117256DF95826FA /* TrixMacApp.swift in Sources */,
+				D8F37F6168058B301642E878 /* TrixMacInteropActionBridge.swift in Sources */,
+				B0D6A2556020BCCAEB2445B0 /* TrixMacInteropSupport.swift in Sources */,
+				98ADE511A362ADA7AFAA1AF0 /* TrixMessengerClient.swift in Sources */,
+				D1E6A31EF3E81A8FE7290E0A /* WindowViewportConfigurator.swift in Sources */,
+				E5B39E3D73A6952ADF53D8E1 /* WorkspaceStorePaths.swift in Sources */,
+				07C1B5AA070A11634214CFA9 /* WorkspaceView.swift in Sources */,
+				CF216EE8A2AC0F42BDD96910 /* trix_core.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		041BB9FB4AF22CEEA289C602 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A86A55812F1046A4D674C5FE /* TrixMac */;
+			targetProxy = 097A4517BAFC9610E5D57FFE /* PBXContainerItemProxy */;
+		};
+		C57541C08F2DF43D9C511B4E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A86A55812F1046A4D674C5FE /* TrixMac */;
+			targetProxy = 2685A8992B2236EFA62CFF37 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		12E1C26EE6BCC84411223C11 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixapp.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				TEST_TARGET_NAME = TrixMac;
+			};
+			name = Debug;
+		};
+		4A4D55AC1AD62BAA8AACC92E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		6FA9BD8BAE25D9E489823133 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				OTHER_LDFLAGS = (
+					"$(SRCROOT)/../../target/debug/libtrix_core.a",
+				);
+				OTHER_SWIFT_FLAGS = (
+					"-Xcc",
+					"-fmodule-map-file=$(SRCROOT)/Sources/trix_coreFFI/module.modulemap",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixapp;
+				PRODUCT_NAME = TrixMac;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		9EF87D01FE05D7D15FD31C29 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixapp.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				TEST_TARGET_NAME = TrixMac;
+			};
+			name = Release;
+		};
+		B8DD09E1E6785643CECE176E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				OTHER_SWIFT_FLAGS = (
+					"-Xcc",
+					"-fmodule-map-file=$(SRCROOT)/Sources/trix_coreFFI/module.modulemap",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixapp.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TrixMac.app/Contents/MacOS/TrixMac";
+			};
+			name = Release;
+		};
+		CBD86C77B81525CDA5753F12 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				OTHER_SWIFT_FLAGS = (
+					"-Xcc",
+					"-fmodule-map-file=$(SRCROOT)/Sources/trix_coreFFI/module.modulemap",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixapp.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TrixMac.app/Contents/MacOS/TrixMac";
+			};
+			name = Debug;
+		};
+		D147CFD35C22DFA196156DCD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				OTHER_LDFLAGS = (
+					"$(SRCROOT)/../../target/debug/libtrix_core.a",
+				);
+				OTHER_SWIFT_FLAGS = (
+					"-Xcc",
+					"-fmodule-map-file=$(SRCROOT)/Sources/trix_coreFFI/module.modulemap",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixapp;
+				PRODUCT_NAME = TrixMac;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		F6AB8DEA9096B6D3E6A537B2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		342D661CD5732ABD1ED1D0D5 /* Build configuration list for PBXProject "TrixMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4A4D55AC1AD62BAA8AACC92E /* Debug */,
+				F6AB8DEA9096B6D3E6A537B2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		5B6BB4C5B8AC434498D9F4C8 /* Build configuration list for PBXNativeTarget "TrixMacTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CBD86C77B81525CDA5753F12 /* Debug */,
+				B8DD09E1E6785643CECE176E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		6CD79AFB2D85577145021AA9 /* Build configuration list for PBXNativeTarget "TrixMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6FA9BD8BAE25D9E489823133 /* Debug */,
+				D147CFD35C22DFA196156DCD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		FD3C0C65A92D43B1691C2161 /* Build configuration list for PBXNativeTarget "TrixMacUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				12E1C26EE6BCC84411223C11 /* Debug */,
+				9EF87D01FE05D7D15FD31C29 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A4B4FE6F161829507DCD789E /* Project object */;
+}

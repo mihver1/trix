@@ -547,34 +547,14 @@ impl SyncCoordinator {
         body: &MessageBody,
         aad_json: Option<Value>,
     ) -> Result<SendMessageOutcome> {
-        let existing_outbox = match message_id {
-            Some(message_id) => store.outbox_message(message_id),
-            None => store.find_matching_outbox_message(
-                chat_id,
-                sender_account_id,
-                sender_device_id,
-                body,
-            ),
-        };
+        let existing_outbox = message_id.and_then(|message_id| store.outbox_message(message_id));
         let prepared_conversation = self
             .prepare_chat_mutation_conversation(client, store, facade, chat_id)
             .await?;
         *conversation = prepared_conversation;
 
         let queued_at_unix = current_unix_seconds()?;
-        let message_id = message_id
-            .or(existing_outbox.as_ref().map(|message| message.message_id))
-            .or_else(|| {
-                store
-                    .find_matching_outbox_message(
-                        chat_id,
-                        sender_account_id,
-                        sender_device_id,
-                        body,
-                    )
-                    .map(|message| message.message_id)
-            })
-            .unwrap_or_default();
+        let message_id = message_id.unwrap_or_default();
         store.ensure_outbox_message(
             chat_id,
             sender_account_id,
@@ -823,9 +803,9 @@ impl SyncCoordinator {
             merge_store_report(
                 &mut report,
                 LocalStoreApplyReport {
-                    chats_upserted: usize::from(projection_report.projected_messages_upserted > 0),
+                    chats_upserted: usize::from(projection_report_changed_chat(&projection_report)),
                     messages_upserted: 0,
-                    changed_chat_ids: if projection_report.projected_messages_upserted > 0 {
+                    changed_chat_ids: if projection_report_changed_chat(&projection_report) {
                         vec![response.chat_id]
                     } else {
                         Vec::new()
@@ -1277,9 +1257,7 @@ impl SyncCoordinator {
         if needs_bootstrap {
             let detail = client.get_chat(chat_id).await?;
             store.apply_chat_detail(&detail)?;
-            let history = client
-                .get_chat_history(chat_id, None, None)
-                .await?;
+            let history = client.get_chat_history(chat_id, None, None).await?;
             store.apply_chat_history(&history)?;
             self.record_chat_server_seqs(
                 chat_id,
@@ -1542,13 +1520,16 @@ fn merge_projection_report(
     chat_id: ChatId,
     projection_report: &crate::LocalProjectionApplyReport,
 ) {
-    if projection_report.projected_messages_upserted > 0
-        && !target.changed_chat_ids.contains(&chat_id)
-    {
+    if projection_report_changed_chat(projection_report) && !target.changed_chat_ids.contains(&chat_id) {
         target.changed_chat_ids.push(chat_id);
         target.changed_chat_ids.sort_by_key(|id| id.0);
         target.changed_chat_ids.dedup();
     }
+}
+
+fn projection_report_changed_chat(projection_report: &crate::LocalProjectionApplyReport) -> bool {
+    projection_report.projected_messages_upserted > 0
+        || projection_report.advanced_to_server_seq.is_some()
 }
 
 fn control_mutation_requires_resync(
@@ -1982,10 +1963,11 @@ mod tests {
     };
     use uuid::Uuid;
 
-    use super::{PersistedSyncState, SyncCoordinator, is_sqlite_database};
+    use super::{PersistedSyncState, SyncCoordinator, is_sqlite_database, merge_projection_report};
     use crate::{
-        LocalHistoryStore, LocalOutboxStatus, LocalProjectionKind, MessageBody, MlsFacade,
-        MlsProcessResult, ServerApiClient, TextMessageBody, decode_b64_field,
+        LocalHistoryStore, LocalOutboxStatus, LocalProjectionKind, LocalStoreApplyReport,
+        MessageBody, MlsFacade, MlsProcessResult, ServerApiClient, TextMessageBody,
+        decode_b64_field,
     };
 
     #[derive(Debug, Clone, Deserialize)]
@@ -2069,7 +2051,9 @@ mod tests {
             return StatusCode::NOT_FOUND.into_response();
         }
         state.history_requests += 1;
-        state.history_after_server_seq_requests.push(query.after_server_seq);
+        state
+            .history_after_server_seq_requests
+            .push(query.after_server_seq);
         let mut messages = state
             .history
             .iter()
@@ -2343,6 +2327,29 @@ mod tests {
         let leading_prefix = (1..=9).collect::<Vec<_>>();
         coordinator.record_acked_inbox_ids(&leading_prefix).unwrap();
         assert_eq!(coordinator.last_acked_inbox_id(), Some(11));
+    }
+
+    #[test]
+    fn merge_projection_report_marks_chat_changed_when_cursor_only_advances() {
+        let chat_id = ChatId(Uuid::new_v4());
+        let mut report = LocalStoreApplyReport {
+            chats_upserted: 0,
+            messages_upserted: 0,
+            changed_chat_ids: Vec::new(),
+        };
+
+        merge_projection_report(
+            &mut report,
+            chat_id,
+            &crate::LocalProjectionApplyReport {
+                chat_id,
+                processed_messages: 0,
+                projected_messages_upserted: 0,
+                advanced_to_server_seq: Some(3),
+            },
+        );
+
+        assert_eq!(report.changed_chat_ids, vec![chat_id]);
     }
 
     #[tokio::test]
@@ -2755,6 +2762,18 @@ mod tests {
         assert_eq!(failed_outbox[0].status, LocalOutboxStatus::Failed);
         assert!(failed_outbox[0].prepared_send.is_some());
         let message_id = failed_outbox[0].message_id;
+        assert!(
+            store
+                .get_chat_history(chat_id, None, Some(10))
+                .messages
+                .is_empty()
+        );
+        assert!(
+            store
+                .get_projected_messages(chat_id, None, Some(10))
+                .is_empty()
+        );
+        assert_eq!(store.projected_cursor(chat_id), Some(0));
 
         drop(conversation);
         drop(store);
@@ -2767,9 +2786,21 @@ mod tests {
         assert_eq!(reloaded_outbox[0].message_id, message_id);
         assert_eq!(reloaded_outbox[0].status, LocalOutboxStatus::Failed);
         assert!(reloaded_outbox[0].prepared_send.is_some());
+        assert!(
+            store
+                .get_chat_history(chat_id, None, Some(10))
+                .messages
+                .is_empty()
+        );
+        assert!(
+            store
+                .get_projected_messages(chat_id, None, Some(10))
+                .is_empty()
+        );
+        assert_eq!(store.projected_cursor(chat_id), Some(0));
         assert_eq!(
             store
-                .find_matching_outbox_message(chat_id, alice_account, alice_device, &body)
+                .outbox_message(message_id)
                 .map(|message| message.message_id),
             Some(message_id)
         );
@@ -2784,7 +2815,7 @@ mod tests {
                 alice_account,
                 alice_device,
                 chat_id,
-                None,
+                Some(message_id),
                 &body,
                 None,
             )
@@ -2812,8 +2843,107 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_message_bootstraps_from_full_history_when_cursor_is_ahead_and_local_bootstrap_is_missing(
-    ) {
+    async fn send_message_without_explicit_message_id_keeps_identical_bodies_distinct() {
+        let chat_id = ChatId(Uuid::new_v4());
+        let alice_account = AccountId(Uuid::new_v4());
+        let alice_device = DeviceId(Uuid::new_v4());
+        let mls_root =
+            env::temp_dir().join(format!("trix-sync-send-duplicate-mls-{}", Uuid::new_v4()));
+        let store_path = env::temp_dir().join(format!(
+            "trix-sync-send-duplicate-store-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut facade = MlsFacade::new_persistent(b"alice-device".to_vec(), &mls_root).unwrap();
+        let initial_conversation = facade.create_group(chat_id.0.as_bytes()).unwrap();
+        let initial_epoch = initial_conversation.epoch();
+        let group_id = initial_conversation.group_id();
+        drop(initial_conversation);
+
+        let mut store = LocalHistoryStore::new_persistent(&store_path).unwrap();
+        store
+            .apply_chat_detail(&empty_chat_detail(chat_id, 0, initial_epoch, None, None))
+            .unwrap();
+        store.set_chat_mls_group_id(chat_id, &group_id).unwrap();
+
+        let server = MockChatServer::spawn(MockChatServerState {
+            chat_detail: empty_chat_detail(chat_id, 0, initial_epoch, None, None),
+            history: Vec::new(),
+            sender_account_id: alice_account,
+            sender_device_id: alice_device,
+            expected_create_epoch: Some(initial_epoch),
+            create_requests: Vec::new(),
+            create_responses: BTreeMap::new(),
+            chat_detail_requests: 0,
+            history_requests: 0,
+            history_after_server_seq_requests: Vec::new(),
+        })
+        .await;
+        let client = server.client();
+
+        let body = text_body("same body, separate sends");
+        let mut coordinator = SyncCoordinator::new();
+        let mut conversation = facade.load_group(&group_id).unwrap().unwrap();
+        let first = coordinator
+            .send_message_body(
+                &client,
+                &mut store,
+                &mut facade,
+                &mut conversation,
+                alice_account,
+                alice_device,
+                chat_id,
+                None,
+                &body,
+                None,
+            )
+            .await
+            .unwrap();
+        let second = coordinator
+            .send_message_body(
+                &client,
+                &mut store,
+                &mut facade,
+                &mut conversation,
+                alice_account,
+                alice_device,
+                chat_id,
+                None,
+                &body,
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_ne!(first.message_id, second.message_id);
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.create_requests.len(), 2);
+        assert_ne!(
+            state.create_requests[0].message_id,
+            state.create_requests[1].message_id
+        );
+        assert_eq!(state.history.len(), 2);
+        assert_ne!(state.history[0].message_id, state.history[1].message_id);
+        drop(state);
+
+        let projected = store.get_projected_messages(chat_id, None, Some(10));
+        assert_eq!(projected.len(), 2);
+        assert_eq!(
+            projected[0].payload.as_deref(),
+            Some(body.to_bytes().unwrap().as_slice())
+        );
+        assert_eq!(
+            projected[1].payload.as_deref(),
+            Some(body.to_bytes().unwrap().as_slice())
+        );
+
+        server.shutdown().await;
+        cleanup_sqlite_test_path(&store_path);
+        fs::remove_dir_all(&mls_root).ok();
+    }
+
+    #[tokio::test]
+    async fn send_message_bootstraps_from_full_history_when_cursor_is_ahead_and_local_bootstrap_is_missing()
+     {
         let chat_id = ChatId(Uuid::new_v4());
         let alice_account = AccountId(Uuid::new_v4());
         let alice_device = DeviceId(Uuid::new_v4());
@@ -2871,9 +3001,7 @@ mod tests {
                 epoch: add_bundle.epoch,
                 message_kind: MessageKind::WelcomeRef,
                 content_type: ContentType::ChatEvent,
-                ciphertext_b64: crate::encode_b64(
-                    add_bundle.welcome_message.as_ref().unwrap(),
-                ),
+                ciphertext_b64: crate::encode_b64(add_bundle.welcome_message.as_ref().unwrap()),
                 aad_json: json!({
                     "_trix": {
                         "ratchet_tree_b64": crate::encode_b64(
@@ -2971,13 +3099,13 @@ mod tests {
         assert_eq!(state.history_requests, 1);
         assert_eq!(state.history_after_server_seq_requests, vec![None]);
         assert_eq!(state.create_requests.len(), 1);
-        let ciphertext = decode_b64_field(
-            "ciphertext_b64",
-            &state.create_requests[0].ciphertext_b64,
-        )
-        .unwrap();
+        let ciphertext =
+            decode_b64_field("ciphertext_b64", &state.create_requests[0].ciphertext_b64).unwrap();
         drop(state);
-        match alice.process_message(&mut alice_group, &ciphertext).unwrap() {
+        match alice
+            .process_message(&mut alice_group, &ciphertext)
+            .unwrap()
+        {
             MlsProcessResult::ApplicationMessage(bytes) => assert_eq!(bytes, send_body_bytes),
             other => panic!("expected application message, got {other:?}"),
         }

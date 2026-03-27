@@ -323,6 +323,17 @@ pub struct FfiMessengerEventBatch {
     pub events: Vec<FfiMessengerEvent>,
 }
 
+#[derive(Debug, Clone)]
+struct PendingMessengerEvent {
+    kind: FfiMessengerEventKind,
+    conversation_id: Option<String>,
+    message: Option<FfiMessengerMessageRecord>,
+    conversation: Option<FfiMessengerConversationSummary>,
+    device: Option<FfiMessengerDeviceRecord>,
+    read_state: Option<FfiMessengerReadStateResult>,
+    attachment_ref: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct MessengerClientState {
     version: u32,
@@ -338,6 +349,12 @@ struct MessengerClientState {
     transport_private_key: Option<Vec<u8>>,
     next_event_id: u64,
     last_event_id: u64,
+    #[serde(default)]
+    requires_resync_message: Option<String>,
+    #[serde(default)]
+    pending_inbox_ack_ids: Vec<u64>,
+    #[serde(default)]
+    pending_device_events: Vec<StoredPendingDeviceEvent>,
     #[serde(default)]
     attachment_tokens: BTreeMap<String, StoredPendingAttachment>,
     #[serde(default)]
@@ -362,10 +379,29 @@ struct StoredAttachmentRef {
     created_at_unix: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct StoredDeviceState {
     account_id: String,
     device_status: DeviceStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+enum StoredPendingDeviceEventKind {
+    Pending,
+    Approved,
+    Revoked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct StoredPendingDeviceEvent {
+    kind: StoredPendingDeviceEventKind,
+    account_id: String,
+    device_id: String,
+    display_name: String,
+    platform: String,
+    device_status: DeviceStatus,
+    available_key_package_count: u32,
+    is_current_device: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -492,6 +528,7 @@ impl FfiMessengerClient {
         self.maybe_import_transfer_bundle()?;
         let devices = self.list_devices()?;
         let conversations = self.list_conversations()?;
+        self.clear_requires_resync()?;
         let state = lock_state(&self.state)?;
         Ok(FfiMessengerSnapshot {
             account_id: state.account_id.clone(),
@@ -560,98 +597,130 @@ impl FfiMessengerClient {
         self.validate_requested_checkpoint(requested_checkpoint)?;
         let client = self.authenticated_client()?;
         self.maybe_import_transfer_bundle()?;
+        self.flush_pending_inbox_acks_best_effort(&client);
+        let self_account_id = self.state_account_id().transpose()?;
+        let mut mutated_checkpointed_state = false;
 
-        let mut previous_cursors = BTreeMap::new();
-        {
-            let store = lock_history_store(&self.history_store)?;
-            for chat in store.list_chats() {
-                previous_cursors.insert(
-                    chat.chat_id.0.to_string(),
-                    store.projected_cursor(chat.chat_id).unwrap_or(0),
-                );
-            }
-        }
-
-        let lease = {
-            let coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
-            self.runtime
-                .block_on(coordinator.lease_inbox(&client, Some(100), Some(30)))
-                .map_err(map_domain_error)?
-        };
-        let report = {
-            let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
-            let mut store = lock_history_store(&self.history_store)?;
-            coordinator
-                .apply_inbox_items_into_store(&mut store, &lease.items)
-                .map_err(map_domain_error)?
-        };
-
-        let changed_chat_ids = report.changed_chat_ids;
-        if !changed_chat_ids.is_empty() {
-            self.refresh_chat_details(&client, &changed_chat_ids)?;
-            self.project_changed_chats(&changed_chat_ids)?;
-        }
-        let inbox_ids = lease
-            .items
-            .iter()
-            .map(|item| item.inbox_id)
-            .collect::<Vec<_>>();
-        if !inbox_ids.is_empty() {
-            let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
-            self.runtime
-                .block_on(coordinator.ack_inbox(&client, inbox_ids))
-                .map_err(map_domain_error)?;
-        }
-
-        let mut events = Vec::new();
-        for chat_id in changed_chat_ids {
-            let after_server_seq = previous_cursors
-                .get(&chat_id.0.to_string())
-                .copied()
-                .unwrap_or_default();
-            let new_messages = {
+        let result = (|| -> Result<FfiMessengerEventBatch, FfiMessengerError> {
+            let mut previous_cursors = BTreeMap::new();
+            {
                 let store = lock_history_store(&self.history_store)?;
-                store.get_local_timeline_items(
-                    chat_id,
-                    self.state_account_id().transpose()?,
-                    Some(after_server_seq),
-                    None,
-                )
-            };
-            for message in new_messages {
-                let message = self.timeline_item_to_message_record(chat_id, message)?;
-                events.push(self.new_event(
-                    FfiMessengerEventKind::MessageCreated,
-                    Some(chat_id.0.to_string()),
-                    Some(message),
-                    None,
-                    None,
-                    None,
-                    None,
-                )?);
+                for chat in store.list_chats() {
+                    previous_cursors.insert(
+                        chat.chat_id.0.to_string(),
+                        store.projected_cursor(chat.chat_id).unwrap_or(0),
+                    );
+                }
             }
-            if let Some(conversation) = self.get_conversation_summary(chat_id)? {
-                events.push(self.new_event(
-                    FfiMessengerEventKind::ConversationUpdated,
-                    Some(chat_id.0.to_string()),
-                    None,
-                    Some(conversation),
-                    None,
-                    None,
-                    None,
-                )?);
+
+            let mut changed_chat_ids = {
+                let chats = self
+                    .runtime
+                    .block_on(client.list_chats())
+                    .map_err(messenger_error)?;
+                let mut store = lock_history_store(&self.history_store)?;
+                let report = store.apply_chat_list(&chats).map_err(map_domain_error)?;
+                if !report.changed_chat_ids.is_empty() {
+                    mutated_checkpointed_state = true;
+                }
+                report.changed_chat_ids
+            };
+            let lease = {
+                let coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
+                self.runtime
+                    .block_on(coordinator.lease_inbox(&client, Some(100), Some(30)))
+                    .map_err(map_domain_error)?
+            };
+            let report = {
+                let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
+                let mut store = lock_history_store(&self.history_store)?;
+                coordinator
+                    .apply_inbox_items_into_store(&mut store, &lease.items)
+                    .map_err(map_domain_error)?
+            };
+            if report.messages_upserted > 0 || !report.changed_chat_ids.is_empty() {
+                mutated_checkpointed_state = true;
+            }
+
+            let inbox_changed_chat_ids = report.changed_chat_ids;
+            changed_chat_ids.extend(inbox_changed_chat_ids.iter().copied());
+            changed_chat_ids.sort_by_key(|chat_id| chat_id.0);
+            changed_chat_ids.dedup();
+
+            if !inbox_changed_chat_ids.is_empty() {
+                let active_inbox_changed_chat_ids =
+                    self.filter_active_chat_ids(&inbox_changed_chat_ids)?;
+                if !active_inbox_changed_chat_ids.is_empty() {
+                    self.refresh_chat_details(&client, &active_inbox_changed_chat_ids)?;
+                    self.project_changed_chats(&active_inbox_changed_chat_ids)?;
+                }
+            }
+            let inbox_ids = lease
+                .items
+                .iter()
+                .map(|item| item.inbox_id)
+                .collect::<Vec<_>>();
+
+            let mut events = Vec::new();
+            for chat_id in changed_chat_ids {
+                let after_server_seq = previous_cursors
+                    .get(&chat_id.0.to_string())
+                    .copied()
+                    .unwrap_or_default();
+                let new_messages = {
+                    let store = lock_history_store(&self.history_store)?;
+                    store.get_local_timeline_items(
+                        chat_id,
+                        self_account_id,
+                        Some(after_server_seq),
+                        None,
+                    )
+                };
+                for message in new_messages {
+                    let message = self.timeline_item_to_message_record(chat_id, message)?;
+                    events.push(PendingMessengerEvent {
+                        kind: FfiMessengerEventKind::MessageCreated,
+                        conversation_id: Some(chat_id.0.to_string()),
+                        message: Some(message),
+                        conversation: None,
+                        device: None,
+                        read_state: None,
+                        attachment_ref: None,
+                    });
+                }
+                let conversation = {
+                    let store = lock_history_store(&self.history_store)?;
+                    store
+                        .get_local_chat_list_item(chat_id, self_account_id)
+                        .map(conversation_summary_to_ffi)
+                };
+                events.push(PendingMessengerEvent {
+                    kind: FfiMessengerEventKind::ConversationUpdated,
+                    conversation_id: Some(chat_id.0.to_string()),
+                    message: None,
+                    conversation,
+                    device: None,
+                    read_state: None,
+                    attachment_ref: None,
+                });
+            }
+
+            let devices = self.fetch_devices(&client)?;
+            let device_state_changed = self.sync_device_statuses(&devices, false)?;
+            let batch = self.finalize_event_batch(events, &inbox_ids, device_state_changed)?;
+            self.flush_pending_inbox_acks_best_effort(&client);
+            Ok(batch)
+        })();
+
+        if let Err(error) = &result {
+            if mutated_checkpointed_state {
+                let _ = self.mark_requires_resync(format!(
+                    "local state advanced without a delivered event batch; reload snapshot ({error})"
+                ));
             }
         }
 
-        let (_devices, mut device_events) = self.fetch_and_store_devices(&client)?;
-        events.append(&mut device_events);
-        Ok(FfiMessengerEventBatch {
-            checkpoint: {
-                let state = lock_state(&self.state)?;
-                checkpoint_from_event_id(state.last_event_id)
-            },
-            events,
-        })
+        result
     }
 
     pub fn send_message(
@@ -701,6 +770,9 @@ impl FfiMessengerClient {
                 )
                 .map_err(map_domain_error)
         })?;
+        if let Some(token) = request.attachment_tokens.first() {
+            let _ = self.remove_attachment_token_if_present(&request.conversation_id, token);
+        }
         let message = self.send_outcome_to_message_record(chat_id, outcome)?;
         Ok(FfiMessengerSendMessageResult {
             conversation_id: request.conversation_id,
@@ -1071,7 +1143,9 @@ impl FfiMessengerClient {
 
     pub fn list_devices(&self) -> Result<Vec<FfiMessengerDeviceRecord>, FfiMessengerError> {
         let client = self.authenticated_client()?;
-        self.fetch_and_store_devices(&client).map(|result| result.0)
+        let devices = self.fetch_devices(&client)?;
+        let _ = self.sync_device_statuses(&devices, true)?;
+        Ok(devices)
     }
 
     pub fn create_link_device_intent(
@@ -1410,6 +1484,7 @@ impl FfiMessengerClient {
     fn sync_workspace(&self) -> Result<(), FfiMessengerError> {
         let client = self.authenticated_client()?;
         self.maybe_import_transfer_bundle()?;
+        self.flush_pending_inbox_acks_best_effort(&client);
         let report = {
             let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
             let mut store = lock_history_store(&self.history_store)?;
@@ -1422,8 +1497,11 @@ impl FfiMessengerClient {
                 .map_err(map_domain_error)?
         };
         if !report.changed_chat_ids.is_empty() {
-            self.refresh_chat_details(&client, &report.changed_chat_ids)?;
-            self.project_changed_chats(&report.changed_chat_ids)?;
+            let active_changed_chat_ids = self.filter_active_chat_ids(&report.changed_chat_ids)?;
+            if !active_changed_chat_ids.is_empty() {
+                self.refresh_chat_details(&client, &active_changed_chat_ids)?;
+                self.project_changed_chats(&active_changed_chat_ids)?;
+            }
         }
         self.with_mls_facade(|facade| self.ensure_device_key_packages(&client, facade))?;
         Ok(())
@@ -1448,7 +1526,8 @@ impl FfiMessengerClient {
             return Ok(());
         };
         let client = self.authenticated_client()?;
-        let (devices, _) = self.fetch_and_store_devices(&client)?;
+        let devices = self.fetch_devices(&client)?;
+        let _ = self.sync_device_statuses(&devices, true)?;
         let current_device = devices
             .iter()
             .find(|device| device.device_id == device_id && device.is_current_device);
@@ -1537,6 +1616,18 @@ impl FfiMessengerClient {
             store.apply_chat_detail(&detail).map_err(map_domain_error)?;
         }
         Ok(())
+    }
+
+    fn filter_active_chat_ids(
+        &self,
+        chat_ids: &[ChatId],
+    ) -> Result<Vec<ChatId>, FfiMessengerError> {
+        let store = lock_history_store(&self.history_store)?;
+        Ok(chat_ids
+            .iter()
+            .copied()
+            .filter(|chat_id| store.get_local_chat_list_item(*chat_id, None).is_some())
+            .collect())
     }
 
     fn bootstrap_chat_if_needed(
@@ -1651,7 +1742,7 @@ impl FfiMessengerClient {
                     "exactly one attachment token is supported per message".to_owned(),
                 ));
             }
-            return Ok(MessageBody::Attachment(self.consume_attachment_token(
+            return Ok(MessageBody::Attachment(self.resolve_attachment_token(
                 &request.conversation_id,
                 &request.attachment_tokens[0],
             )?));
@@ -1718,7 +1809,7 @@ impl FfiMessengerClient {
         }
     }
 
-    fn consume_attachment_token(
+    fn resolve_attachment_token(
         &self,
         conversation_id: &str,
         token: &str,
@@ -1738,26 +1829,49 @@ impl FfiMessengerClient {
                 token
             )));
         }
-        state.attachment_tokens.remove(token);
-        if let Err(error) = self.save_state_locked(&state) {
-            state
-                .attachment_tokens
-                .insert(token.to_owned(), pending.clone());
-            return Err(error);
-        }
         Ok(pending.body)
+    }
+
+    fn remove_attachment_token_if_present(
+        &self,
+        conversation_id: &str,
+        token: &str,
+    ) -> Result<(), FfiMessengerError> {
+        let now = current_unix_seconds().map_err(messenger_error)?;
+        let mut state = lock_state(&self.state)?;
+        gc_attachment_tokens(&mut state, now);
+        let Some(pending) = state.attachment_tokens.get(token).cloned() else {
+            return Ok(());
+        };
+        if pending.conversation_id != conversation_id {
+            return Err(FfiMessengerError::AttachmentInvalid(format!(
+                "attachment token {} belongs to another conversation",
+                token
+            )));
+        }
+        state.attachment_tokens.remove(token);
+        self.save_state_locked(&state)
     }
 
     fn validate_requested_checkpoint(
         &self,
         requested_checkpoint: Option<u64>,
     ) -> Result<(), FfiMessengerError> {
-        let current_tail = lock_state(&self.state)?.last_event_id;
+        let state = lock_state(&self.state)?;
+        if let Some(message) = state.requires_resync_message.clone() {
+            return Err(FfiMessengerError::RequiresResync(message));
+        }
+        let current_tail = state.last_event_id;
         if requested_checkpoint_matches_local_tail(requested_checkpoint, current_tail) {
             return Ok(());
         }
 
-        let requested_checkpoint = requested_checkpoint.expect("mismatched checkpoint must exist");
+        let Some(requested_checkpoint) = requested_checkpoint else {
+            return Err(FfiMessengerError::RequiresResync(
+                "checkpoint is missing and local state requires rebaseline; reload snapshot"
+                    .to_owned(),
+            ));
+        };
 
         let current_label =
             checkpoint_from_event_id(current_tail).unwrap_or_else(|| "none".to_owned());
@@ -1950,17 +2064,16 @@ impl FfiMessengerClient {
         })
     }
 
-    fn fetch_and_store_devices(
+    fn fetch_devices(
         &self,
         client: &ServerApiClient,
-    ) -> Result<(Vec<FfiMessengerDeviceRecord>, Vec<FfiMessengerEvent>), FfiMessengerError> {
+    ) -> Result<Vec<FfiMessengerDeviceRecord>, FfiMessengerError> {
         let response = self
             .runtime
             .block_on(client.list_devices())
             .map_err(messenger_error)?;
         let current_device_id = lock_state(&self.state)?.device_id.clone();
-        let mut new_events = Vec::new();
-        let devices = response
+        Ok(response
             .devices
             .into_iter()
             .map(|device| FfiMessengerDeviceRecord {
@@ -1975,44 +2088,20 @@ impl FfiMessengerClient {
                     .map(|value| value == device.device_id.0.to_string())
                     .unwrap_or(false),
             })
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>())
+    }
 
-        let mut pending_device_events = Vec::new();
-        {
-            let mut state = lock_state(&self.state)?;
-            for device in &devices {
-                let previous = state.device_statuses.get(&device.device_id).cloned();
-                let current = ffi_device_status_to_model(device.device_status);
-                if let Some(previous) = previous {
-                    match (previous.device_status, current) {
-                        (DeviceStatus::Pending, DeviceStatus::Active) => pending_device_events
-                            .push((FfiMessengerEventKind::DeviceApproved, device.clone())),
-                        (DeviceStatus::Active | DeviceStatus::Pending, DeviceStatus::Revoked) => {
-                            pending_device_events
-                                .push((FfiMessengerEventKind::DeviceRevoked, device.clone()));
-                        }
-                        _ => {}
-                    }
-                } else if current == DeviceStatus::Pending {
-                    pending_device_events
-                        .push((FfiMessengerEventKind::DevicePending, device.clone()));
-                }
-                state.device_statuses.insert(
-                    device.device_id.clone(),
-                    StoredDeviceState {
-                        account_id: device.account_id.clone(),
-                        device_status: current,
-                    },
-                );
-            }
+    fn sync_device_statuses(
+        &self,
+        devices: &[FfiMessengerDeviceRecord],
+        persist_state: bool,
+    ) -> Result<bool, FfiMessengerError> {
+        let mut state = lock_state(&self.state)?;
+        let changed = record_device_transition_events(&mut state, devices);
+        if persist_state && changed {
             self.save_state_locked(&state)?;
         }
-
-        for (kind, device) in pending_device_events {
-            new_events.push(self.new_event(kind, None, None, None, Some(device), None, None)?);
-        }
-
-        Ok((devices, new_events))
+        Ok(changed)
     }
 
     fn conversation_mutation_from_create_outcome(
@@ -2086,31 +2175,74 @@ impl FfiMessengerClient {
         })
     }
 
-    fn new_event(
+    fn finalize_event_batch(
         &self,
-        kind: FfiMessengerEventKind,
-        conversation_id: Option<String>,
-        message: Option<FfiMessengerMessageRecord>,
-        conversation: Option<FfiMessengerConversationSummary>,
-        device: Option<FfiMessengerDeviceRecord>,
-        read_state: Option<FfiMessengerReadStateResult>,
-        attachment_ref: Option<String>,
-    ) -> Result<FfiMessengerEvent, FfiMessengerError> {
+        mut events: Vec<PendingMessengerEvent>,
+        pending_inbox_ack_ids: &[u64],
+        state_changed: bool,
+    ) -> Result<FfiMessengerEventBatch, FfiMessengerError> {
         let mut state = lock_state(&self.state)?;
-        state.next_event_id += 1;
-        state.last_event_id = state.next_event_id;
-        let event_id = state.last_event_id.to_string();
-        self.save_state_locked(&state)?;
-        Ok(FfiMessengerEvent {
-            event_id,
-            kind,
-            conversation_id,
-            message,
-            conversation,
-            device,
-            read_state,
-            attachment_ref,
-        })
+        let mut pending_device_events = take_pending_device_events(&mut state);
+        events.append(&mut pending_device_events);
+        let ack_queue_changed =
+            queue_pending_inbox_acks(&mut state, pending_inbox_ack_ids.iter().copied());
+        let batch = materialize_pending_event_batch(&mut state, events);
+        if state_changed || ack_queue_changed || !batch.events.is_empty() {
+            self.save_state_locked(&state)?;
+        }
+        Ok(batch)
+    }
+
+    fn flush_pending_inbox_acks_best_effort(&self, client: &ServerApiClient) {
+        let pending_inbox_ack_ids = match lock_state(&self.state) {
+            Ok(state) => state.pending_inbox_ack_ids.clone(),
+            Err(_) => return,
+        };
+        if pending_inbox_ack_ids.is_empty() {
+            return;
+        }
+
+        let acked_inbox_ids = {
+            let mut coordinator = match lock_sync_coordinator(&self.sync_coordinator) {
+                Ok(coordinator) => coordinator,
+                Err(_) => return,
+            };
+            match self
+                .runtime
+                .block_on(coordinator.ack_inbox(client, pending_inbox_ack_ids.clone()))
+            {
+                Ok(response) => response.acked_inbox_ids,
+                Err(_) => return,
+            }
+        };
+
+        if acked_inbox_ids.is_empty() {
+            return;
+        }
+
+        let mut state = match lock_state(&self.state) {
+            Ok(state) => state,
+            Err(_) => return,
+        };
+        state
+            .pending_inbox_ack_ids
+            .retain(|inbox_id| !acked_inbox_ids.contains(inbox_id));
+        let _ = self.save_state_locked(&state);
+    }
+
+    fn mark_requires_resync(&self, message: String) -> Result<(), FfiMessengerError> {
+        let mut state = lock_state(&self.state)?;
+        state.requires_resync_message = Some(message);
+        self.save_state_locked(&state)
+    }
+
+    fn clear_requires_resync(&self) -> Result<(), FfiMessengerError> {
+        let mut state = lock_state(&self.state)?;
+        if state.requires_resync_message.is_none() {
+            return Ok(());
+        }
+        state.requires_resync_message = None;
+        self.save_state_locked(&state)
     }
 
     fn find_message_server_seq(
@@ -2243,6 +2375,150 @@ fn gc_attachment_tokens(state: &mut MessengerClientState, now: u64) {
     state
         .attachment_tokens
         .retain(|_, attachment| attachment.expires_at_unix > now);
+}
+
+fn queue_pending_inbox_acks<I>(state: &mut MessengerClientState, inbox_ids: I) -> bool
+where
+    I: IntoIterator<Item = u64>,
+{
+    let mut changed = false;
+    for inbox_id in inbox_ids {
+        if state.pending_inbox_ack_ids.binary_search(&inbox_id).is_ok() {
+            continue;
+        }
+        state.pending_inbox_ack_ids.push(inbox_id);
+        changed = true;
+    }
+    if changed {
+        state.pending_inbox_ack_ids.sort_unstable();
+        state.pending_inbox_ack_ids.dedup();
+    }
+    changed
+}
+
+fn materialize_pending_event_batch(
+    state: &mut MessengerClientState,
+    events: Vec<PendingMessengerEvent>,
+) -> FfiMessengerEventBatch {
+    let mut materialized = Vec::with_capacity(events.len());
+    for event in events {
+        state.next_event_id += 1;
+        state.last_event_id = state.next_event_id;
+        materialized.push(FfiMessengerEvent {
+            event_id: state.last_event_id.to_string(),
+            kind: event.kind,
+            conversation_id: event.conversation_id,
+            message: event.message,
+            conversation: event.conversation,
+            device: event.device,
+            read_state: event.read_state,
+            attachment_ref: event.attachment_ref,
+        });
+    }
+    FfiMessengerEventBatch {
+        checkpoint: checkpoint_from_event_id(state.last_event_id),
+        events: materialized,
+    }
+}
+
+fn record_device_transition_events(
+    state: &mut MessengerClientState,
+    devices: &[FfiMessengerDeviceRecord],
+) -> bool {
+    let mut changed = false;
+
+    for device in devices {
+        let current = ffi_device_status_to_model(device.device_status);
+        let next_state = StoredDeviceState {
+            account_id: device.account_id.clone(),
+            device_status: current,
+        };
+        let previous = state.device_statuses.get(&device.device_id).cloned();
+
+        if let Some(previous) = previous.as_ref() {
+            match (previous.device_status, current) {
+                (DeviceStatus::Pending, DeviceStatus::Active) => state
+                    .pending_device_events
+                    .push(stored_pending_device_event(
+                        StoredPendingDeviceEventKind::Approved,
+                        device,
+                    )),
+                (DeviceStatus::Active | DeviceStatus::Pending, DeviceStatus::Revoked) => {
+                    state
+                        .pending_device_events
+                        .push(stored_pending_device_event(
+                            StoredPendingDeviceEventKind::Revoked,
+                            device,
+                        ));
+                }
+                _ => {}
+            }
+        } else if current == DeviceStatus::Pending {
+            state
+                .pending_device_events
+                .push(stored_pending_device_event(
+                    StoredPendingDeviceEventKind::Pending,
+                    device,
+                ));
+        }
+
+        if previous.as_ref() != Some(&next_state) {
+            state
+                .device_statuses
+                .insert(device.device_id.clone(), next_state);
+            changed = true;
+        }
+    }
+
+    changed
+}
+
+fn take_pending_device_events(state: &mut MessengerClientState) -> Vec<PendingMessengerEvent> {
+    state
+        .pending_device_events
+        .drain(..)
+        .map(pending_device_event_from_stored)
+        .collect()
+}
+
+fn stored_pending_device_event(
+    kind: StoredPendingDeviceEventKind,
+    device: &FfiMessengerDeviceRecord,
+) -> StoredPendingDeviceEvent {
+    StoredPendingDeviceEvent {
+        kind,
+        account_id: device.account_id.clone(),
+        device_id: device.device_id.clone(),
+        display_name: device.display_name.clone(),
+        platform: device.platform.clone(),
+        device_status: ffi_device_status_to_model(device.device_status),
+        available_key_package_count: device.available_key_package_count,
+        is_current_device: device.is_current_device,
+    }
+}
+
+fn pending_device_event_from_stored(event: StoredPendingDeviceEvent) -> PendingMessengerEvent {
+    PendingMessengerEvent {
+        kind: match event.kind {
+            StoredPendingDeviceEventKind::Pending => FfiMessengerEventKind::DevicePending,
+            StoredPendingDeviceEventKind::Approved => FfiMessengerEventKind::DeviceApproved,
+            StoredPendingDeviceEventKind::Revoked => FfiMessengerEventKind::DeviceRevoked,
+        },
+        conversation_id: None,
+        message: None,
+        conversation: None,
+        device: Some(FfiMessengerDeviceRecord {
+            account_id: event.account_id,
+            device_id: event.device_id,
+            display_name: event.display_name,
+            platform: event.platform,
+            device_status: device_status_to_ffi(event.device_status),
+            available_key_package_count: event.available_key_package_count,
+            is_current_device: event.is_current_device,
+        }),
+        read_state: None,
+        attachment_ref: None,
+    }
 }
 
 fn parse_page_cursor(value: &str) -> Result<u64, FfiMessengerError> {
@@ -2662,7 +2938,7 @@ fn messenger_error(error: impl std::fmt::Display) -> FfiMessengerError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
+    use std::{env, fs};
 
     use trix_types::{
         ChatDetailResponse, ChatHistoryResponse, ChatParticipantProfileSummary, ChatType,
@@ -2693,6 +2969,87 @@ mod tests {
         );
         gc_attachment_tokens(&mut state, 2);
         assert!(state.attachment_tokens.is_empty());
+    }
+
+    #[test]
+    fn attachment_token_is_retained_when_send_fails_before_delivery() {
+        let root_path = env::temp_dir().join(format!(
+            "trix-messenger-attachment-token-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let client = FfiMessengerClient::open(FfiMessengerOpenConfig {
+            root_path: root_path.to_string_lossy().into_owned(),
+            database_key: vec![11u8; 32],
+            base_url: "http://127.0.0.1:9".to_owned(),
+            access_token: None,
+            account_id: None,
+            device_id: None,
+            account_sync_chat_id: None,
+            device_display_name: Some("test-device".to_owned()),
+            platform: Some("test".to_owned()),
+            credential_identity: None,
+            account_root_private_key: None,
+            transport_private_key: None,
+        })
+        .unwrap();
+
+        let conversation_id = Uuid::new_v4().to_string();
+        let token = "pending-attachment-token".to_owned();
+        let body = AttachmentMessageBody {
+            blob_id: "blob-1".to_owned(),
+            mime_type: "image/png".to_owned(),
+            size_bytes: 4,
+            sha256: vec![1, 2, 3, 4],
+            file_name: Some("photo.png".to_owned()),
+            width_px: Some(2),
+            height_px: Some(2),
+            file_key: vec![9; 32],
+            nonce: vec![7; 24],
+        };
+        {
+            let mut state = lock_state(&client.state).unwrap();
+            state.attachment_tokens.insert(
+                token.clone(),
+                StoredPendingAttachment {
+                    conversation_id: conversation_id.clone(),
+                    body: body.clone(),
+                    created_at_unix: 1,
+                    expires_at_unix: u64::MAX,
+                },
+            );
+            client.save_state_locked(&state).unwrap();
+        }
+
+        let error = client
+            .send_message(FfiMessengerSendMessageRequest {
+                conversation_id: conversation_id.clone(),
+                message_id: None,
+                kind: FfiMessengerMessageBodyKind::Attachment,
+                text: None,
+                target_message_id: None,
+                emoji: None,
+                reaction_action: None,
+                receipt_type: None,
+                receipt_at_unix: None,
+                event_type: None,
+                event_json: None,
+                attachment_tokens: vec![token.clone()],
+            })
+            .unwrap_err();
+        assert!(matches!(error, FfiMessengerError::NotConfigured(_)));
+
+        let state = lock_state(&client.state).unwrap();
+        let pending = state.attachment_tokens.get(&token).cloned();
+        drop(state);
+        assert_eq!(pending.as_ref().map(|value| value.body.clone()), Some(body));
+
+        let restored =
+            load_state_from_path(Path::new(&client.state_path), &client.database_key).unwrap();
+        assert!(restored.attachment_tokens.contains_key(&token));
+
+        fs::remove_dir_all(root_path).ok();
     }
 
     #[test]
@@ -2756,6 +3113,117 @@ mod tests {
         let error =
             map_domain_error("requires resync: local state repair is required after control op");
         assert!(matches!(error, FfiMessengerError::RequiresResync(_)));
+    }
+
+    #[test]
+    fn materialize_pending_event_batch_assigns_sequential_ids_once() {
+        let mut state = MessengerClientState::default();
+        let batch = materialize_pending_event_batch(
+            &mut state,
+            vec![
+                PendingMessengerEvent {
+                    kind: FfiMessengerEventKind::DevicePending,
+                    conversation_id: None,
+                    message: None,
+                    conversation: None,
+                    device: Some(FfiMessengerDeviceRecord {
+                        account_id: "account-1".to_owned(),
+                        device_id: "device-1".to_owned(),
+                        display_name: "Device 1".to_owned(),
+                        platform: "ios".to_owned(),
+                        device_status: FfiDeviceStatus::Pending,
+                        available_key_package_count: 0,
+                        is_current_device: false,
+                    }),
+                    read_state: None,
+                    attachment_ref: None,
+                },
+                PendingMessengerEvent {
+                    kind: FfiMessengerEventKind::DeviceApproved,
+                    conversation_id: None,
+                    message: None,
+                    conversation: None,
+                    device: Some(FfiMessengerDeviceRecord {
+                        account_id: "account-1".to_owned(),
+                        device_id: "device-2".to_owned(),
+                        display_name: "Device 2".to_owned(),
+                        platform: "macos".to_owned(),
+                        device_status: FfiDeviceStatus::Active,
+                        available_key_package_count: 16,
+                        is_current_device: true,
+                    }),
+                    read_state: None,
+                    attachment_ref: None,
+                },
+            ],
+        );
+
+        assert_eq!(state.next_event_id, 2);
+        assert_eq!(state.last_event_id, 2);
+        assert_eq!(batch.checkpoint.as_deref(), Some("evt:2"));
+        assert_eq!(
+            batch.events.iter().map(|event| event.event_id.as_str()).collect::<Vec<_>>(),
+            vec!["1", "2"]
+        );
+        assert!(matches!(
+            batch.events[0].kind,
+            FfiMessengerEventKind::DevicePending
+        ));
+        assert!(matches!(
+            batch.events[1].kind,
+            FfiMessengerEventKind::DeviceApproved
+        ));
+    }
+
+    #[test]
+    fn device_transition_events_queue_without_advancing_checkpoint() {
+        let mut state = MessengerClientState {
+            next_event_id: 41,
+            last_event_id: 41,
+            device_statuses: BTreeMap::from([(
+                "device-1".to_owned(),
+                StoredDeviceState {
+                    account_id: "account-1".to_owned(),
+                    device_status: DeviceStatus::Pending,
+                },
+            )]),
+            ..MessengerClientState::default()
+        };
+        let devices = vec![FfiMessengerDeviceRecord {
+            account_id: "account-1".to_owned(),
+            device_id: "device-1".to_owned(),
+            display_name: "Device 1".to_owned(),
+            platform: "ios".to_owned(),
+            device_status: FfiDeviceStatus::Active,
+            available_key_package_count: 8,
+            is_current_device: true,
+        }];
+
+        let changed = record_device_transition_events(&mut state, &devices);
+        let pending = take_pending_device_events(&mut state);
+
+        assert_eq!(state.next_event_id, 41);
+        assert_eq!(state.last_event_id, 41);
+        assert!(changed);
+        assert_eq!(pending.len(), 1);
+        assert!(matches!(
+            pending[0].kind,
+            FfiMessengerEventKind::DeviceApproved
+        ));
+        assert_eq!(
+            state.device_statuses["device-1"].device_status,
+            DeviceStatus::Active
+        );
+    }
+
+    #[test]
+    fn queue_pending_inbox_acks_sorts_and_dedupes() {
+        let mut state = MessengerClientState::default();
+
+        queue_pending_inbox_acks(&mut state, [9, 7, 9, 8]);
+        queue_pending_inbox_acks(&mut state, [8, 10, 7]);
+
+        assert_eq!(state.pending_inbox_ack_ids, vec![7, 8, 9, 10]);
     }
 
     #[test]

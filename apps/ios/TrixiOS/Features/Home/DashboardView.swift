@@ -84,6 +84,7 @@ struct DashboardView: View {
             }
             .tabItem {
                 Label("Chats", systemImage: "bubble.left.and.bubble.right.fill")
+                    .accessibilityIdentifier(TrixAccessibilityID.Dashboard.chatsTab)
             }
 
             NavigationStack {
@@ -113,8 +114,10 @@ struct DashboardView: View {
             }
             .tabItem {
                 Label("Settings", systemImage: "gearshape.fill")
+                    .accessibilityIdentifier(TrixAccessibilityID.Dashboard.settingsTab)
             }
         }
+        .accessibilityIdentifier(TrixAccessibilityID.Root.dashboardScreen)
         .tint(dashboardAccent)
         .alert("Forget this device?", isPresented: $isShowingForgetAlert) {
             Button("Cancel", role: .cancel) {}
@@ -300,7 +303,8 @@ private struct ChatsHomeView: View {
                                 .listRowInsets(EdgeInsets(top: 28, leading: 20, bottom: 28, trailing: 20))
                         } else {
                             ForEach(dashboard.chats) { chat in
-                                NavigationLink {
+                                let fixtureKind = UITestFixtureManifestStore.chatFixtureKind(for: chat.chatId)
+                                let row = NavigationLink {
                                     ConsumerChatDetailView(
                                         chatSummary: chat,
                                         serverBaseURL: $serverBaseURL,
@@ -308,12 +312,19 @@ private struct ChatsHomeView: View {
                                     )
                                 } label: {
                                     ChatListRow(
+                                        chatId: chat.chatId,
                                         snapshot: dashboard.chatListSnapshot(
                                             for: chat,
                                             localChatListItem: model.localCoreState?.chatListItem(for: chat.chatId),
                                             localReadState: model.localCoreState?.chatReadState(for: chat.chatId)
                                         )
                                     )
+                                }
+
+                                if let fixtureKind {
+                                    row.accessibilityIdentifier(TrixAccessibilityID.Dashboard.chatRow(fixtureKind))
+                                } else {
+                                    row
                                 }
                             }
                         }
@@ -322,6 +333,7 @@ private struct ChatsHomeView: View {
                     }
                 }
                 .listStyle(.plain)
+                .accessibilityIdentifier(TrixAccessibilityID.Dashboard.chatsList)
                 .refreshable {
                     onReload()
                 }
@@ -340,6 +352,7 @@ private struct ChatsHomeView: View {
                         .padding(.trailing, 18)
                         .padding(.bottom, 18)
                         .disabled(model.isLoading)
+                        .accessibilityIdentifier(TrixAccessibilityID.Dashboard.composeButton)
                     }
                 }
             } else {
@@ -554,6 +567,7 @@ private struct SettingsHomeView: View {
                 }
             }
         }
+        .accessibilityIdentifier(TrixAccessibilityID.Dashboard.settingsList)
         .navigationTitle("Settings")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -917,9 +931,19 @@ private struct SettingsNavigationRow: View {
 }
 
 private struct ChatListRow: View {
+    let chatId: String
     let snapshot: ChatListSnapshot
 
     var body: some View {
+        if let fixtureKind = UITestFixtureManifestStore.chatFixtureKind(for: chatId) {
+            rowBody
+                .accessibilityIdentifier(TrixAccessibilityID.Dashboard.chatRow(fixtureKind))
+        } else {
+            rowBody
+        }
+    }
+
+    private var rowBody: some View {
         HStack(spacing: 14) {
             AccountAvatarView(title: snapshot.avatarSeedTitle, size: 54)
 
@@ -982,6 +1006,7 @@ private struct EmptyChatsView: View {
             Button("New Chat", action: onCompose)
                 .buttonStyle(.borderedProminent)
                 .tint(dashboardAccent)
+                .accessibilityIdentifier(TrixAccessibilityID.Dashboard.composeButton)
         }
         .frame(maxWidth: .infinity, minHeight: 280)
         .padding(.vertical, 12)
@@ -1072,6 +1097,7 @@ private struct CreateChatSheet: View {
                     Text("The account directory only returns people who currently have at least one active device.")
                 }
             }
+            .accessibilityIdentifier(TrixAccessibilityID.Dashboard.createChatSheet)
             .navigationTitle("New Chat")
             .navigationBarTitleDisplayMode(.inline)
             .task(id: searchTaskID) {
@@ -1083,6 +1109,7 @@ private struct CreateChatSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", action: onCancel)
+                        .accessibilityIdentifier(TrixAccessibilityID.Dashboard.createChatCancelButton)
                 }
 
                 ToolbarItem(placement: .confirmationAction) {

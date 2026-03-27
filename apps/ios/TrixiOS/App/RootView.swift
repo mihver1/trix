@@ -31,7 +31,20 @@ struct RootView: View {
             }
         }
         .task {
-            await model.start(baseURLString: serverBaseURL)
+            do {
+                let launchBaseURL = try await UITestAppBootstrap.prepareForLaunch(
+                    fallbackBaseURLString: serverBaseURL
+                )
+                if launchBaseURL != serverBaseURL {
+                    serverBaseURL = launchBaseURL
+                }
+                await model.start(baseURLString: launchBaseURL)
+            } catch {
+                if UITestLaunchConfiguration.current.isEnabled {
+                    preconditionFailure("UI test bootstrap failed: \(error.localizedDescription)")
+                }
+                await model.start(baseURLString: serverBaseURL)
+            }
         }
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {

@@ -8,6 +8,19 @@ struct RootView: View {
         TrixColors.resolve()
     }
 
+    private var rootDetailAccessibilityIdentifier: String {
+        if model.showsWorkspace {
+            if model.currentAccount == nil {
+                return TrixMacAccessibilityID.Root.restoreSessionScreen
+            }
+            return TrixMacAccessibilityID.Root.workspaceScreen
+        }
+        if model.isAwaitingLinkApproval {
+            return TrixMacAccessibilityID.Root.pendingApprovalScreen
+        }
+        return TrixMacAccessibilityID.Root.onboardingScreen
+    }
+
     var body: some View {
         NavigationSplitView {
             Group {
@@ -27,6 +40,10 @@ struct RootView: View {
                 detailPane(size: proxy.size)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .background(TrixCanvas())
+                    .background {
+                        Color.clear
+                            .accessibilityIdentifier(rootDetailAccessibilityIdentifier)
+                    }
             }
         }
         .navigationSplitViewStyle(.balanced)

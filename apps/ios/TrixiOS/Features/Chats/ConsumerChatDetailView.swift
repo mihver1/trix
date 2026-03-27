@@ -83,6 +83,9 @@ struct ConsumerChatDetailView: View {
     @State private var downloadedAttachment: DownloadedAttachmentFile?
     @State private var downloadingAttachmentMessageId: String?
     @State private var isTypingPublished = false
+    @State private var latestSentMessageId: String?
+    @State private var latestSentText: String?
+    @FocusState private var isComposerFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -92,6 +95,7 @@ struct ConsumerChatDetailView: View {
                     tint: .green,
                     text: activityMessage
                 )
+                .accessibilityIdentifier(TrixAccessibilityID.ChatDetail.successBanner)
             }
 
             if let localErrorMessage {
@@ -100,6 +104,7 @@ struct ConsumerChatDetailView: View {
                     tint: .red,
                     text: localErrorMessage
                 )
+                .accessibilityIdentifier(TrixAccessibilityID.ChatDetail.errorBanner)
             }
 
             if let snapshot {
@@ -123,6 +128,7 @@ struct ConsumerChatDetailView: View {
                 Spacer()
             }
         }
+        .accessibilityIdentifier(TrixAccessibilityID.ChatDetail.screen)
         .background(ConsumerChatBackdrop().ignoresSafeArea())
         .navigationTitle(conversationTitle)
         .navigationBarTitleDisplayMode(.inline)
@@ -161,41 +167,60 @@ struct ConsumerChatDetailView: View {
         let timelineItems = makeTimelineItems(for: snapshot)
 
         return ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    if timelineItems.isEmpty {
-                        ContentUnavailableView(
-                            "No Messages Yet",
-                            systemImage: "bubble.left.and.text.bubble.right",
-                            description: Text("Start the conversation. New messages will appear here in a normal chat timeline.")
-                        )
-                        .padding(.top, 96)
-                    } else {
-                        ForEach(timelineItems) { item in
-                            ConsumerTimelineRow(
-                                item: item,
-                                downloadingAttachmentMessageId: downloadingAttachmentMessageId,
-                                onOpenAttachment: openAttachment
-                            )
+            VStack(spacing: 0) {
+                ScrollView {
+                    Group {
+                        if UITestLaunchConfiguration.current.isEnabled {
+                            VStack(spacing: 0) {
+                                timelineRows(for: timelineItems)
+                            }
+                        } else {
+                            LazyVStack(spacing: 0) {
+                                timelineRows(for: timelineItems)
+                            }
                         }
                     }
-
-                    Color.clear
-                        .frame(height: 1)
-                        .id(consumerTimelineBottomAnchor)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 12)
+                    .padding(.bottom, 10)
                 }
-                .padding(.horizontal, 12)
-                .padding(.top, 12)
-                .padding(.bottom, 10)
+                .scrollDismissesKeyboard(.interactively)
+                .onAppear {
+                    scrollToBottom(using: proxy, animated: false)
+                }
+                .onChange(of: snapshot.latestTimelineAnchorId) { _, _ in
+                    scrollToBottom(using: proxy, animated: true)
+                }
             }
-            .scrollDismissesKeyboard(.interactively)
-            .onAppear {
-                scrollToBottom(using: proxy, animated: false)
-            }
-            .onChange(of: snapshot.latestTimelineAnchorId) { _, _ in
-                scrollToBottom(using: proxy, animated: true)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier(TrixAccessibilityID.ChatDetail.timeline)
+        }
+    }
+
+    @ViewBuilder
+    private func timelineRows(for timelineItems: [ConsumerTimelineItem]) -> some View {
+        if timelineItems.isEmpty {
+            ContentUnavailableView(
+                "No Messages Yet",
+                systemImage: "bubble.left.and.text.bubble.right",
+                description: Text("Start the conversation. New messages will appear here in a normal chat timeline.")
+            )
+            .padding(.top, 96)
+        } else {
+            ForEach(timelineItems) { item in
+                ConsumerTimelineRow(
+                    item: item,
+                    latestSentMessageId: latestSentMessageId,
+                    latestSentText: latestSentText,
+                    downloadingAttachmentMessageId: downloadingAttachmentMessageId,
+                    onOpenAttachment: openAttachment
+                )
             }
         }
+
+        Color.clear
+            .frame(height: 1)
+            .id(consumerTimelineBottomAnchor)
     }
 
     private var composer: some View {
@@ -242,16 +267,27 @@ struct ConsumerChatDetailView: View {
                 }
 
                 if selectedAttachment == nil {
-                    TextField(
-                        "Message",
-                        text: $composerText,
-                        axis: .vertical
-                    )
-                    .lineLimit(1...5)
+                    ZStack {
+                        TextField(
+                            "Message",
+                            text: $composerText,
+                            axis: .vertical
+                        )
+                        .lineLimit(1...5)
+                        .focused($isComposerFocused)
+                    }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .background(Color.white)
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        isComposerFocused = true
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Message composer")
+                    .accessibilityValue(composerText.isEmpty ? "Empty" : composerText)
+                    .accessibilityIdentifier(TrixAccessibilityID.ChatDetail.messageBodyField)
                 } else {
                     Text("Attachments send as secure files. Captions come next.")
                         .font(.footnote)
@@ -269,6 +305,9 @@ struct ConsumerChatDetailView: View {
                         .foregroundStyle(canSend ? consumerChatAccent : .secondary)
                 }
                 .disabled(!canSend || model.isLoading)
+                .accessibilityLabel("Send message")
+                .accessibilityValue(canSend ? "Ready" : "Disabled")
+                .accessibilityIdentifier(TrixAccessibilityID.ChatDetail.sendButton)
             }
         }
         .padding(.horizontal, 12)
@@ -390,13 +429,15 @@ struct ConsumerChatDetailView: View {
 
         Task {
             let draft = DebugMessageDraft(kind: .text, text: trimmedText)
-            if await model.postDebugMessage(
+            if let response = await model.postDebugMessage(
                 baseURLString: serverBaseURL,
                 chatId: snapshot.detail.chatId,
                 draft: draft
-            ) != nil {
+            ) {
                 composerText = ""
                 publishTypingState(for: "", force: true)
+                latestSentMessageId = response.messageId
+                latestSentText = trimmedText
                 activityMessage = "Message sent"
                 await loadSnapshot()
             } else {
@@ -422,6 +463,8 @@ struct ConsumerChatDetailView: View {
                 composerText = ""
                 publishTypingState(for: "", force: true)
                 self.selectedAttachment = nil
+                latestSentMessageId = outcome.createMessage.messageId
+                latestSentText = outcome.fileName ?? "attachment"
                 activityMessage = "Sent \(outcome.fileName ?? "attachment")"
                 await loadSnapshot()
             } else {
@@ -754,10 +797,25 @@ private struct ConsumerChatBackdrop: View {
 
 private struct ConsumerTimelineRow: View {
     let item: ConsumerTimelineItem
+    let latestSentMessageId: String?
+    let latestSentText: String?
     let downloadingAttachmentMessageId: String?
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
 
     var body: some View {
+        if let fixtureKind = fixtureMessageKind {
+            rowBody
+                .accessibilityIdentifier(TrixAccessibilityID.ChatDetail.message(fixtureKind))
+        } else if isLatestSentMessage {
+            rowBody
+                .accessibilityIdentifier(TrixAccessibilityID.ChatDetail.latestSentMessage)
+        } else {
+            rowBody
+        }
+    }
+
+    @ViewBuilder
+    private var rowBody: some View {
         switch item {
         case let .daySeparator(label):
             ConsumerDaySeparator(label: label)
@@ -772,6 +830,26 @@ private struct ConsumerTimelineRow: View {
                 )
             }
         }
+    }
+
+    private var fixtureMessageKind: UITestFixtureMessageKind? {
+        guard case let .message(message) = item else {
+            return nil
+        }
+        return UITestFixtureManifestStore.messageFixtureKind(for: message.id)
+    }
+
+    private var isLatestSentMessage: Bool {
+        guard case let .message(message) = item else {
+            return false
+        }
+        if message.id == latestSentMessageId {
+            return true
+        }
+        guard message.isOutgoing, let latestSentText else {
+            return false
+        }
+        return message.primaryText == latestSentText
     }
 }
 

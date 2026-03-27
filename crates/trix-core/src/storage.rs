@@ -546,6 +546,26 @@ impl LocalHistoryStore {
         Ok(changed)
     }
 
+    fn restore_chat_snapshot(&mut self, chat_key: &str, previous_chat: Option<PersistedChatState>) {
+        match previous_chat {
+            Some(chat) => {
+                self.state.chats.insert(chat_key.to_owned(), chat);
+            }
+            None => {
+                self.state.chats.remove(chat_key);
+            }
+        }
+    }
+
+    fn rollback_chat_snapshot(
+        &mut self,
+        chat_key: &str,
+        previous_chat: Option<PersistedChatState>,
+    ) -> Result<()> {
+        self.restore_chat_snapshot(chat_key, previous_chat);
+        self.save_state()
+    }
+
     pub fn projected_cursor(&self, chat_id: ChatId) -> Option<u64> {
         self.state
             .chats
@@ -667,34 +687,39 @@ impl LocalHistoryStore {
     }
 
     pub fn set_chat_mls_group_id(&mut self, chat_id: ChatId, group_id: &[u8]) -> Result<bool> {
-        let entry = self
-            .state
-            .chats
-            .entry(chat_id.0.to_string())
-            .or_insert_with(|| PersistedChatState {
-                is_active: true,
-                chat_type: ChatType::Dm,
-                title: None,
-                last_server_seq: 0,
-                pending_message_count: 0,
-                last_message: None,
-                epoch: 0,
-                last_commit_message_id: None,
-                participant_profiles: Vec::new(),
-                members: Vec::new(),
-                device_members: Vec::new(),
-                mls_group_id_b64: None,
-                messages: BTreeMap::new(),
-                read_cursor_server_seq: 0,
-                projected_cursor_server_seq: 0,
-                projected_messages: BTreeMap::new(),
-            });
+        let chat_key = chat_id.0.to_string();
+        let previous_chat = self.state.chats.get(&chat_key).cloned();
+        let entry =
+            self.state
+                .chats
+                .entry(chat_key.clone())
+                .or_insert_with(|| PersistedChatState {
+                    is_active: true,
+                    chat_type: ChatType::Dm,
+                    title: None,
+                    last_server_seq: 0,
+                    pending_message_count: 0,
+                    last_message: None,
+                    epoch: 0,
+                    last_commit_message_id: None,
+                    participant_profiles: Vec::new(),
+                    members: Vec::new(),
+                    device_members: Vec::new(),
+                    mls_group_id_b64: None,
+                    messages: BTreeMap::new(),
+                    read_cursor_server_seq: 0,
+                    projected_cursor_server_seq: 0,
+                    projected_messages: BTreeMap::new(),
+                });
         let group_id_b64 = crate::encode_b64(group_id);
         if entry.mls_group_id_b64.as_deref() == Some(group_id_b64.as_str()) {
             return Ok(false);
         }
         entry.mls_group_id_b64 = Some(group_id_b64);
-        self.save_state()?;
+        if let Err(error) = self.save_state() {
+            self.restore_chat_snapshot(&chat_key, previous_chat);
+            return Err(error);
+        }
         Ok(true)
     }
 
@@ -1107,76 +1132,99 @@ impl LocalHistoryStore {
         facade: &MlsFacade,
         limit: Option<usize>,
     ) -> Result<LocalProjectionApplyReport> {
-        let repair_backup = self.prepare_projection_gap_repair(chat_id)?;
-        let had_legacy_unmaterialized = self.chat_has_unmaterialized_application_messages(chat_id);
-        let mut conversation = self
-            .load_or_bootstrap_chat_mls_conversation(chat_id, facade)?
-            .ok_or_else(|| anyhow!("chat {} has no bootstrappable MLS state", chat_id.0))?;
-        let report = match self.project_chat_messages(chat_id, facade, &mut conversation, limit) {
-            Ok(mut report) => {
-                if let Some(backup) = repair_backup.as_ref() {
-                    self.restore_materialized_projection_tail(backup)?;
-                }
-                if repair_backup.is_some() && report.processed_messages == 0 {
-                    report.advanced_to_server_seq = self.projected_cursor(chat_id);
-                }
-                report
-            }
-            Err(error) if is_group_id_mismatch_projection_error(&error) => {
-                let mut attempted_group_ids = vec![conversation.group_id()];
-                if let Some(mapped_group_id) = self.chat_mls_group_id(chat_id) {
-                    if attempted_group_ids
-                        .iter()
-                        .all(|candidate| candidate != &mapped_group_id)
-                    {
-                        attempted_group_ids.push(mapped_group_id);
+        let chat_key = chat_id.0.to_string();
+        let previous_chat = self.state.chats.get(&chat_key).cloned();
+        let result = (|| {
+            let repair_backup = self.prepare_projection_gap_repair(chat_id)?;
+            let had_legacy_unmaterialized =
+                self.chat_has_unmaterialized_application_messages(chat_id);
+            let mut conversation = self
+                .load_or_bootstrap_chat_mls_conversation(chat_id, facade)?
+                .ok_or_else(|| anyhow!("chat {} has no bootstrappable MLS state", chat_id.0))?;
+            let report = match self.project_chat_messages(chat_id, facade, &mut conversation, limit)
+            {
+                Ok(mut report) => {
+                    if let Some(backup) = repair_backup.as_ref() {
+                        self.restore_materialized_projection_tail(backup)?;
                     }
+                    if repair_backup.is_some() && report.processed_messages == 0 {
+                        report.advanced_to_server_seq = self.projected_cursor(chat_id);
+                    }
+                    report
                 }
-                let bootstraps = self.find_welcome_bootstraps(chat_id)?;
-                let Some(mut recovered_conversation) = self
-                    .recover_conversation_after_group_id_mismatch(
+                Err(error) if is_group_id_mismatch_projection_error(&error) => {
+                    let mut attempted_group_ids = vec![conversation.group_id()];
+                    if let Some(mapped_group_id) = self.chat_mls_group_id(chat_id) {
+                        if attempted_group_ids
+                            .iter()
+                            .all(|candidate| candidate != &mapped_group_id)
+                        {
+                            attempted_group_ids.push(mapped_group_id);
+                        }
+                    }
+                    let bootstraps = self.find_welcome_bootstraps(chat_id)?;
+                    let Some(mut recovered_conversation) = self
+                        .recover_conversation_after_group_id_mismatch(
+                            chat_id,
+                            facade,
+                            &bootstraps,
+                            &attempted_group_ids,
+                            "projection mismatch",
+                        )?
+                    else {
+                        return Err(error);
+                    };
+                    match self.project_chat_messages(
                         chat_id,
                         facade,
-                        &bootstraps,
-                        &attempted_group_ids,
-                        "projection mismatch",
-                    )?
-                else {
+                        &mut recovered_conversation,
+                        limit,
+                    ) {
+                        Ok(report) => {
+                            if let Some(backup) = repair_backup.as_ref() {
+                                self.restore_materialized_projection_tail(backup)?;
+                            }
+                            report
+                        }
+                        Err(retry_error) => {
+                            if let Some(backup) = repair_backup {
+                                self.restore_projection_gap_repair(backup)?;
+                            }
+                            return Err(retry_error);
+                        }
+                    }
+                }
+                Err(error) => {
+                    if let Some(backup) = repair_backup {
+                        self.restore_projection_gap_repair(backup)?;
+                    }
                     return Err(error);
-                };
-                match self.project_chat_messages(
-                    chat_id,
-                    facade,
-                    &mut recovered_conversation,
-                    limit,
-                ) {
-                    Ok(report) => {
-                        if let Some(backup) = repair_backup.as_ref() {
-                            self.restore_materialized_projection_tail(backup)?;
-                        }
-                        report
-                    }
-                    Err(retry_error) => {
-                        if let Some(backup) = repair_backup {
-                            self.restore_projection_gap_repair(backup)?;
-                        }
-                        return Err(retry_error);
-                    }
                 }
+            };
+
+            if had_legacy_unmaterialized
+                && self.chat_has_unmaterialized_application_messages(chat_id)
+            {
+                let _ =
+                    self.best_effort_recover_legacy_materialized_messages(chat_id, facade, limit);
             }
+
+            Ok(report)
+        })();
+
+        match result {
+            Ok(report) => Ok(report),
             Err(error) => {
-                if let Some(backup) = repair_backup {
-                    self.restore_projection_gap_repair(backup)?;
+                let error_text = error.to_string();
+                if let Err(rollback_error) = self.rollback_chat_snapshot(&chat_key, previous_chat) {
+                    return Err(rollback_error.context(format!(
+                        "failed to rollback chat {} after projection error: {}",
+                        chat_id.0, error_text
+                    )));
                 }
-                return Err(error);
+                Err(error)
             }
-        };
-
-        if had_legacy_unmaterialized && self.chat_has_unmaterialized_application_messages(chat_id) {
-            let _ = self.best_effort_recover_legacy_materialized_messages(chat_id, facade, limit);
         }
-
-        Ok(report)
     }
 
     fn best_effort_recover_legacy_materialized_messages(
@@ -1185,51 +1233,70 @@ impl LocalHistoryStore {
         facade: &MlsFacade,
         limit: Option<usize>,
     ) -> Result<()> {
-        let Some(backup) = self.prepare_legacy_materialization_repair(chat_id)? else {
-            return Ok(());
-        };
-        let Some(mut conversation) =
-            self.load_or_bootstrap_chat_mls_conversation(chat_id, facade)?
-        else {
-            self.restore_projection_gap_repair(backup)?;
-            return Ok(());
-        };
-        let result = match self.project_chat_messages(chat_id, facade, &mut conversation, limit) {
-            Ok(_) => Ok(()),
-            Err(error) if is_group_id_mismatch_projection_error(&error) => {
-                let mut attempted_group_ids = vec![conversation.group_id()];
-                if let Some(mapped_group_id) = self.chat_mls_group_id(chat_id) {
-                    if attempted_group_ids
-                        .iter()
-                        .all(|candidate| candidate != &mapped_group_id)
-                    {
-                        attempted_group_ids.push(mapped_group_id);
+        let chat_key = chat_id.0.to_string();
+        let previous_chat = self.state.chats.get(&chat_key).cloned();
+        let result = (|| {
+            let Some(backup) = self.prepare_legacy_materialization_repair(chat_id)? else {
+                return Ok(());
+            };
+            let Some(mut conversation) =
+                self.load_or_bootstrap_chat_mls_conversation(chat_id, facade)?
+            else {
+                self.restore_projection_gap_repair(backup)?;
+                return Ok(());
+            };
+            let result = match self.project_chat_messages(chat_id, facade, &mut conversation, limit)
+            {
+                Ok(_) => Ok(()),
+                Err(error) if is_group_id_mismatch_projection_error(&error) => {
+                    let mut attempted_group_ids = vec![conversation.group_id()];
+                    if let Some(mapped_group_id) = self.chat_mls_group_id(chat_id) {
+                        if attempted_group_ids
+                            .iter()
+                            .all(|candidate| candidate != &mapped_group_id)
+                        {
+                            attempted_group_ids.push(mapped_group_id);
+                        }
                     }
+                    let bootstraps = self.find_welcome_bootstraps(chat_id)?;
+                    let Some(mut recovered_conversation) = self
+                        .recover_conversation_after_group_id_mismatch(
+                            chat_id,
+                            facade,
+                            &bootstraps,
+                            &attempted_group_ids,
+                            "legacy recovery mismatch",
+                        )?
+                    else {
+                        return Err(error);
+                    };
+                    self.project_chat_messages(chat_id, facade, &mut recovered_conversation, limit)
+                        .map(|_| ())
                 }
-                let bootstraps = self.find_welcome_bootstraps(chat_id)?;
-                let Some(mut recovered_conversation) = self
-                    .recover_conversation_after_group_id_mismatch(
-                        chat_id,
-                        facade,
-                        &bootstraps,
-                        &attempted_group_ids,
-                        "legacy recovery mismatch",
-                    )?
-                else {
-                    return Err(error);
-                };
-                self.project_chat_messages(chat_id, facade, &mut recovered_conversation, limit)
-                    .map(|_| ())
-            }
-            Err(error) => Err(error),
-        };
+                Err(error) => Err(error),
+            };
 
-        if result.is_ok() {
-            self.restore_materialized_projection_tail(&backup)?;
-        } else {
-            self.restore_projection_gap_repair(backup)?;
+            if result.is_ok() {
+                self.restore_materialized_projection_tail(&backup)?;
+            } else {
+                self.restore_projection_gap_repair(backup)?;
+            }
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let error_text = error.to_string();
+                if let Err(rollback_error) = self.rollback_chat_snapshot(&chat_key, previous_chat) {
+                    return Err(rollback_error.context(format!(
+                        "failed to rollback chat {} after legacy projection recovery error: {}",
+                        chat_id.0, error_text
+                    )));
+                }
+                Err(error)
+            }
         }
-        Ok(())
     }
 
     pub fn needs_history_refresh(&self, chat_id: ChatId) -> bool {
@@ -1240,6 +1307,32 @@ impl LocalHistoryStore {
     }
 
     pub fn align_chat_device_members_with_conversation(
+        &mut self,
+        chat_id: ChatId,
+        facade: &MlsFacade,
+        conversation: &MlsConversation,
+    ) -> Result<bool> {
+        let chat_key = chat_id.0.to_string();
+        let previous_chat = self.state.chats.get(&chat_key).cloned();
+        let changed = match self.align_chat_device_members_with_conversation_in_memory(
+            chat_id,
+            facade,
+            conversation,
+        ) {
+            Ok(changed) => changed,
+            Err(error) => {
+                self.restore_chat_snapshot(&chat_key, previous_chat);
+                return Err(error);
+            }
+        };
+        if let Err(error) = self.persist_if_needed(changed) {
+            self.restore_chat_snapshot(&chat_key, previous_chat);
+            return Err(error);
+        }
+        Ok(changed)
+    }
+
+    fn align_chat_device_members_with_conversation_in_memory(
         &mut self,
         chat_id: ChatId,
         facade: &MlsFacade,
@@ -1273,7 +1366,6 @@ impl LocalHistoryStore {
                     .cmp(&right.leaf_index)
                     .then_with(|| left.device_id.0.cmp(&right.device_id.0))
             });
-            self.save_state()?;
         }
         Ok(changed)
     }
@@ -1282,7 +1374,7 @@ impl LocalHistoryStore {
         self.state
             .chats
             .get(&chat_id.0.to_string())
-            .map(|state| state.read_cursor_server_seq)
+            .and_then(|state| state.is_active.then_some(state.read_cursor_server_seq))
     }
 
     pub fn chat_unread_count(
@@ -1293,7 +1385,7 @@ impl LocalHistoryStore {
         self.state
             .chats
             .get(&chat_id.0.to_string())
-            .map(|state| unread_count_for_chat(state, self_account_id))
+            .and_then(|state| state.is_active.then_some(unread_count_for_chat(state, self_account_id)))
     }
 
     pub fn get_chat_read_state(
@@ -1342,10 +1434,12 @@ impl LocalHistoryStore {
         through_server_seq: Option<u64>,
         self_account_id: Option<trix_types::AccountId>,
     ) -> Result<LocalChatReadState> {
+        let chat_key = chat_id.0.to_string();
+        let previous_chat = self.state.chats.get(&chat_key).cloned();
         let state = self
             .state
             .chats
-            .get_mut(&chat_id.0.to_string())
+            .get_mut(&chat_key)
             .ok_or_else(|| anyhow!("chat {} is missing from local store", chat_id.0))?;
         let target = through_server_seq
             .unwrap_or(state.projected_cursor_server_seq)
@@ -1353,7 +1447,10 @@ impl LocalHistoryStore {
         let changed = state.read_cursor_server_seq != target;
         state.read_cursor_server_seq = target;
         let read_state = local_chat_read_state_from(chat_id, state, self_account_id);
-        self.persist_if_needed(changed)?;
+        if let Err(error) = self.persist_if_needed(changed) {
+            self.restore_chat_snapshot(&chat_key, previous_chat);
+            return Err(error);
+        }
         Ok(read_state)
     }
 
@@ -1363,18 +1460,23 @@ impl LocalHistoryStore {
         read_cursor_server_seq: Option<u64>,
         self_account_id: Option<trix_types::AccountId>,
     ) -> Result<LocalChatReadState> {
+        let chat_key = chat_id.0.to_string();
+        let previous_chat = self.state.chats.get(&chat_key).cloned();
         let state = self
             .state
             .chats
-            .get_mut(&chat_id.0.to_string())
+            .get_mut(&chat_key)
             .ok_or_else(|| anyhow!("chat {} is missing from local store", chat_id.0))?;
         let target = read_cursor_server_seq
-            .unwrap_or_default()
+            .unwrap_or(state.projected_cursor_server_seq)
             .min(state.projected_cursor_server_seq);
         let changed = state.read_cursor_server_seq != target;
         state.read_cursor_server_seq = target;
         let read_state = local_chat_read_state_from(chat_id, state, self_account_id);
-        self.persist_if_needed(changed)?;
+        if let Err(error) = self.persist_if_needed(changed) {
+            self.restore_chat_snapshot(&chat_key, previous_chat);
+            return Err(error);
+        }
         Ok(read_state)
     }
 
@@ -1561,54 +1663,77 @@ impl LocalHistoryStore {
         conversation: &mut MlsConversation,
         limit: Option<usize>,
     ) -> Result<LocalProjectionApplyReport> {
-        let mut changed =
-            self.align_chat_device_members_with_conversation(chat_id, facade, conversation)?;
-        let chat = self
-            .state
-            .chats
-            .get_mut(&chat_id.0.to_string())
-            .ok_or_else(|| anyhow!("chat {} is missing from local store", chat_id.0))?;
-        let envelopes = chat
-            .messages
-            .values()
-            .filter(|message| {
-                message.server_seq > chat.projected_cursor_server_seq
-                    && !chat.projected_messages.contains_key(&message.server_seq)
-            })
-            .take(limit.unwrap_or(usize::MAX))
-            .cloned()
-            .collect::<Vec<_>>();
+        let chat_key = chat_id.0.to_string();
+        let previous_chat = self.state.chats.get(&chat_key).cloned();
+        let result = (|| {
+            let mut changed = self.align_chat_device_members_with_conversation_in_memory(
+                chat_id,
+                facade,
+                conversation,
+            )?;
+            let chat = self
+                .state
+                .chats
+                .get_mut(&chat_key)
+                .ok_or_else(|| anyhow!("chat {} is missing from local store", chat_id.0))?;
+            let envelopes = chat
+                .messages
+                .values()
+                .filter(|message| {
+                    message.server_seq > chat.projected_cursor_server_seq
+                        && !chat.projected_messages.contains_key(&message.server_seq)
+                })
+                .take(limit.unwrap_or(usize::MAX))
+                .cloned()
+                .collect::<Vec<_>>();
 
-        let mut processed_messages = 0usize;
-        let mut projected_messages_upserted = 0usize;
-        let mut advanced_to_server_seq = None;
-        for envelope in envelopes {
-            let projected = project_envelope(facade, conversation, &envelope)?;
-            let persisted = persisted_projected_message_from(projected);
-            let entry_changed = match chat.projected_messages.get(&envelope.server_seq) {
-                Some(existing) => existing != &persisted,
-                None => true,
-            };
-            if entry_changed {
-                chat.projected_messages
-                    .insert(envelope.server_seq, persisted);
-                projected_messages_upserted += 1;
-                changed = true;
+            let mut processed_messages = 0usize;
+            let mut projected_messages_upserted = 0usize;
+            let mut advanced_to_server_seq = None;
+            for envelope in envelopes {
+                let projected = project_envelope(facade, conversation, &envelope)?;
+                let persisted = persisted_projected_message_from(projected);
+                let entry_changed = match chat.projected_messages.get(&envelope.server_seq) {
+                    Some(existing) => existing != &persisted,
+                    None => true,
+                };
+                if entry_changed {
+                    chat.projected_messages
+                        .insert(envelope.server_seq, persisted);
+                    projected_messages_upserted += 1;
+                    changed = true;
+                }
+                processed_messages += 1;
+                if advance_projected_cursor(chat) {
+                    changed = true;
+                advanced_to_server_seq = Some(chat.projected_cursor_server_seq);
+                }
             }
-            processed_messages += 1;
-            if advance_projected_cursor(chat) {
-                changed = true;
+
+            Ok::<_, anyhow::Error>((
+                LocalProjectionApplyReport {
+                    chat_id,
+                    processed_messages,
+                    projected_messages_upserted,
+                    advanced_to_server_seq,
+                },
+                changed,
+            ))
+        })();
+
+        match result {
+            Ok((report, changed)) => {
+                if let Err(error) = self.persist_if_needed(changed) {
+                    self.restore_chat_snapshot(&chat_key, previous_chat);
+                    return Err(error);
+                }
+                Ok(report)
             }
-            advanced_to_server_seq = Some(envelope.server_seq);
+            Err(error) => {
+                self.restore_chat_snapshot(&chat_key, previous_chat);
+                Err(error)
+            }
         }
-
-        self.persist_if_needed(changed)?;
-        Ok(LocalProjectionApplyReport {
-            chat_id,
-            processed_messages,
-            projected_messages_upserted,
-            advanced_to_server_seq,
-        })
     }
 
     pub fn apply_projected_messages(
@@ -1616,6 +1741,28 @@ impl LocalHistoryStore {
         chat_id: ChatId,
         projected_messages: &[LocalProjectedMessage],
     ) -> Result<LocalProjectionApplyReport> {
+        let chat_key = chat_id.0.to_string();
+        let previous_chat = self.state.chats.get(&chat_key).cloned();
+        let (report, changed) =
+            match self.apply_projected_messages_in_memory(chat_id, projected_messages) {
+                Ok(result) => result,
+                Err(error) => {
+                    self.restore_chat_snapshot(&chat_key, previous_chat);
+                    return Err(error);
+                }
+            };
+        if let Err(error) = self.persist_if_needed(changed) {
+            self.restore_chat_snapshot(&chat_key, previous_chat);
+            return Err(error);
+        }
+        Ok(report)
+    }
+
+    fn apply_projected_messages_in_memory(
+        &mut self,
+        chat_id: ChatId,
+        projected_messages: &[LocalProjectedMessage],
+    ) -> Result<(LocalProjectionApplyReport, bool)> {
         let chat = self
             .state
             .chats
@@ -1640,23 +1787,22 @@ impl LocalHistoryStore {
             }
         }
 
-        if advance_projected_cursor(chat) {
+        let cursor_advanced = advance_projected_cursor(chat);
+        if cursor_advanced {
             changed = true;
         }
 
-        let advanced_to_server_seq = if chat.projected_cursor_server_seq == 0 {
-            None
-        } else {
-            Some(chat.projected_cursor_server_seq)
-        };
+        let advanced_to_server_seq = cursor_advanced.then_some(chat.projected_cursor_server_seq);
 
-        self.persist_if_needed(changed)?;
-        Ok(LocalProjectionApplyReport {
-            chat_id,
-            processed_messages: projected_messages.len(),
-            projected_messages_upserted,
-            advanced_to_server_seq,
-        })
+        Ok((
+            LocalProjectionApplyReport {
+                chat_id,
+                processed_messages: projected_messages.len(),
+                projected_messages_upserted,
+                advanced_to_server_seq,
+            },
+            changed,
+        ))
     }
 
     fn ensure_chat_exists(&mut self, chat_id: ChatId) {
@@ -1766,6 +1912,7 @@ impl LocalHistoryStore {
             if !listed_chat_ids.contains(chat_id) {
                 chat_state.is_active = false;
                 chats_upserted += 1;
+                changed_chat_ids.insert(chat_id.clone());
             }
         }
 
@@ -1784,6 +1931,26 @@ impl LocalHistoryStore {
         &mut self,
         detail: &ChatDetailResponse,
     ) -> Result<LocalStoreApplyReport> {
+        let chat_key = detail.chat_id.0.to_string();
+        let previous_chat = self.state.chats.get(&chat_key).cloned();
+        let (report, changed) = match self.apply_chat_detail_in_memory(detail) {
+            Ok(result) => result,
+            Err(error) => {
+                self.restore_chat_snapshot(&chat_key, previous_chat);
+                return Err(error);
+            }
+        };
+        if let Err(error) = self.persist_if_needed(changed) {
+            self.restore_chat_snapshot(&chat_key, previous_chat);
+            return Err(error);
+        }
+        Ok(report)
+    }
+
+    fn apply_chat_detail_in_memory(
+        &mut self,
+        detail: &ChatDetailResponse,
+    ) -> Result<(LocalStoreApplyReport, bool)> {
         let entry = self
             .state
             .chats
@@ -1853,22 +2020,47 @@ impl LocalHistoryStore {
             changed = true;
         }
 
-        self.persist_if_needed(changed)?;
-        Ok(LocalStoreApplyReport {
-            chats_upserted: usize::from(changed),
-            messages_upserted: 0,
-            changed_chat_ids: if changed {
-                vec![detail.chat_id]
-            } else {
-                Vec::new()
+        Ok((
+            LocalStoreApplyReport {
+                chats_upserted: usize::from(changed),
+                messages_upserted: 0,
+                changed_chat_ids: if changed {
+                    vec![detail.chat_id]
+                } else {
+                    Vec::new()
+                },
             },
-        })
+            changed,
+        ))
     }
 
     pub fn apply_chat_history(
         &mut self,
         history: &ChatHistoryResponse,
     ) -> Result<LocalStoreApplyReport> {
+        let chat_key = history.chat_id.0.to_string();
+        let previous_chat = self.state.chats.get(&chat_key).cloned();
+        let previous_outbox = self.state.outbox.clone();
+        let (report, changed) = match self.apply_chat_history_in_memory(history) {
+            Ok(result) => result,
+            Err(error) => {
+                self.restore_chat_snapshot(&chat_key, previous_chat);
+                self.state.outbox = previous_outbox;
+                return Err(error);
+            }
+        };
+        if let Err(error) = self.persist_if_needed(changed) {
+            self.restore_chat_snapshot(&chat_key, previous_chat);
+            self.state.outbox = previous_outbox;
+            return Err(error);
+        }
+        Ok(report)
+    }
+
+    fn apply_chat_history_in_memory(
+        &mut self,
+        history: &ChatHistoryResponse,
+    ) -> Result<(LocalStoreApplyReport, bool)> {
         let mut changed_chat_ids = BTreeSet::new();
         let mut messages_upserted = 0usize;
         let chat_id = history.chat_id;
@@ -1953,15 +2145,17 @@ impl LocalHistoryStore {
         if chat_changed {
             changed_chat_ids.insert(chat_id.0.to_string());
         }
-        self.persist_if_needed(chat_changed || outbox_changed)?;
-        Ok(LocalStoreApplyReport {
-            chats_upserted: usize::from(chat_changed),
-            messages_upserted,
-            changed_chat_ids: changed_chat_ids
-                .into_iter()
-                .filter_map(|chat_id| parse_chat_id(&chat_id).ok())
-                .collect(),
-        })
+        Ok((
+            LocalStoreApplyReport {
+                chats_upserted: usize::from(chat_changed),
+                messages_upserted,
+                changed_chat_ids: changed_chat_ids
+                    .into_iter()
+                    .filter_map(|chat_id| parse_chat_id(&chat_id).ok())
+                    .collect(),
+            },
+            chat_changed || outbox_changed,
+        ))
     }
 
     pub fn apply_inbox_items(&mut self, items: &[InboxItem]) -> Result<LocalStoreApplyReport> {
@@ -2000,36 +2194,61 @@ impl LocalHistoryStore {
         body: &MessageBody,
     ) -> Result<LocalOutgoingMessageApplyOutcome> {
         let chat_id = envelope.chat_id;
-        let mut report = self.apply_chat_history(&ChatHistoryResponse {
-            chat_id,
-            messages: vec![envelope.clone()],
-        })?;
+        let chat_key = chat_id.0.to_string();
+        let previous_chat = self.state.chats.get(&chat_key).cloned();
+        let previous_outbox = self.state.outbox.clone();
+        let result = (|| {
+            let (mut report, history_changed) =
+                self.apply_chat_history_in_memory(&ChatHistoryResponse {
+                    chat_id,
+                    messages: vec![envelope.clone()],
+                })?;
 
-        let projected_message = LocalProjectedMessage {
-            server_seq: envelope.server_seq,
-            message_id: envelope.message_id,
-            sender_account_id: envelope.sender_account_id,
-            sender_device_id: envelope.sender_device_id,
-            epoch: envelope.epoch,
-            message_kind: envelope.message_kind,
-            content_type: envelope.content_type,
-            projection_kind: LocalProjectionKind::ApplicationMessage,
-            payload: Some(body.to_bytes()?),
-            merged_epoch: None,
-            created_at_unix: envelope.created_at_unix,
-        };
-        let projection_report =
-            self.apply_projected_messages(chat_id, &[projected_message.clone()])?;
-        if projection_report.projected_messages_upserted > 0
-            && !report.changed_chat_ids.contains(&chat_id)
-        {
-            report.changed_chat_ids.push(chat_id);
+            let projected_message = LocalProjectedMessage {
+                server_seq: envelope.server_seq,
+                message_id: envelope.message_id,
+                sender_account_id: envelope.sender_account_id,
+                sender_device_id: envelope.sender_device_id,
+                epoch: envelope.epoch,
+                message_kind: envelope.message_kind,
+                content_type: envelope.content_type,
+                projection_kind: LocalProjectionKind::ApplicationMessage,
+                payload: Some(body.to_bytes()?),
+                merged_epoch: None,
+                created_at_unix: envelope.created_at_unix,
+            };
+            let (projection_report, projection_changed) =
+                self.apply_projected_messages_in_memory(chat_id, &[projected_message.clone()])?;
+            if projection_report.projected_messages_upserted > 0
+                && !report.changed_chat_ids.contains(&chat_id)
+            {
+                report.changed_chat_ids.push(chat_id);
+            }
+
+            Ok::<_, anyhow::Error>((
+                LocalOutgoingMessageApplyOutcome {
+                    report,
+                    projected_message,
+                },
+                history_changed || projection_changed,
+            ))
+        })();
+
+        match result {
+            Ok((outcome, changed)) => {
+                if let Err(error) = self.persist_if_needed(changed) {
+                    self.restore_chat_snapshot(&chat_key, previous_chat);
+                    self.state.outbox = previous_outbox;
+                    return Err(error);
+                }
+                Ok(outcome)
+            }
+            Err(error) => {
+                self.restore_chat_snapshot(&chat_key, previous_chat);
+                self.state.outbox = previous_outbox;
+                Err(error)
+            }
         }
-
-        Ok(LocalOutgoingMessageApplyOutcome {
-            report,
-            projected_message,
-        })
     }
 
     pub fn apply_local_projection(
@@ -2039,52 +2258,72 @@ impl LocalHistoryStore {
         payload: Option<Vec<u8>>,
         merged_epoch: Option<u64>,
     ) -> Result<LocalStoreApplyReport> {
-        let mut report = self.apply_chat_history(&ChatHistoryResponse {
-            chat_id: envelope.chat_id,
-            messages: vec![envelope.clone()],
-        })?;
+        let chat_id = envelope.chat_id;
+        let chat_key = chat_id.0.to_string();
+        let previous_chat = self.state.chats.get(&chat_key).cloned();
+        let previous_outbox = self.state.outbox.clone();
+        let result = (|| {
+            let (mut report, history_changed) =
+                self.apply_chat_history_in_memory(&ChatHistoryResponse {
+                    chat_id,
+                    messages: vec![envelope.clone()],
+                })?;
 
-        let chat = self
-            .state
-            .chats
-            .get_mut(&envelope.chat_id.0.to_string())
-            .ok_or_else(|| anyhow!("chat {} is missing from local store", envelope.chat_id.0))?;
-        let projected = LocalProjectedMessage {
-            server_seq: envelope.server_seq,
-            message_id: envelope.message_id,
-            sender_account_id: envelope.sender_account_id,
-            sender_device_id: envelope.sender_device_id,
-            epoch: envelope.epoch,
-            message_kind: envelope.message_kind,
-            content_type: envelope.content_type,
-            projection_kind,
-            payload,
-            merged_epoch,
-            created_at_unix: envelope.created_at_unix,
-        };
-        ensure_application_message_is_materialized(&projected)?;
-        let projected = persisted_projected_message_from(projected);
+            let chat = self.state.chats.get_mut(&chat_key).ok_or_else(|| {
+                anyhow!("chat {} is missing from local store", envelope.chat_id.0)
+            })?;
+            let projected = LocalProjectedMessage {
+                server_seq: envelope.server_seq,
+                message_id: envelope.message_id,
+                sender_account_id: envelope.sender_account_id,
+                sender_device_id: envelope.sender_device_id,
+                epoch: envelope.epoch,
+                message_kind: envelope.message_kind,
+                content_type: envelope.content_type,
+                projection_kind,
+                payload,
+                merged_epoch,
+                created_at_unix: envelope.created_at_unix,
+            };
+            ensure_application_message_is_materialized(&projected)?;
+            let projected = persisted_projected_message_from(projected);
 
-        let mut changed = false;
-        let entry_changed = match chat.projected_messages.get(&envelope.server_seq) {
-            Some(existing) => existing != &projected,
-            None => true,
-        };
-        if entry_changed {
-            chat.projected_messages
-                .insert(envelope.server_seq, projected);
-            changed = true;
-        }
-        if envelope.server_seq > chat.projected_cursor_server_seq {
-            chat.projected_cursor_server_seq = envelope.server_seq;
-            changed = true;
-        }
+            let mut changed = false;
+            let entry_changed = match chat.projected_messages.get(&envelope.server_seq) {
+                Some(existing) => existing != &projected,
+                None => true,
+            };
+            if entry_changed {
+                chat.projected_messages
+                    .insert(envelope.server_seq, projected);
+                changed = true;
+            }
+            if envelope.server_seq > chat.projected_cursor_server_seq {
+                chat.projected_cursor_server_seq = envelope.server_seq;
+                changed = true;
+            }
 
-        self.persist_if_needed(changed)?;
-        if changed && !report.changed_chat_ids.contains(&envelope.chat_id) {
-            report.changed_chat_ids.push(envelope.chat_id);
+            if changed && !report.changed_chat_ids.contains(&envelope.chat_id) {
+                report.changed_chat_ids.push(envelope.chat_id);
+            }
+            Ok::<_, anyhow::Error>((report, history_changed || changed))
+        })();
+
+        match result {
+            Ok((report, changed)) => {
+                if let Err(error) = self.persist_if_needed(changed) {
+                    self.restore_chat_snapshot(&chat_key, previous_chat);
+                    self.state.outbox = previous_outbox;
+                    return Err(error);
+                }
+                Ok(report)
+            }
+            Err(error) => {
+                self.restore_chat_snapshot(&chat_key, previous_chat);
+                self.state.outbox = previous_outbox;
+                Err(error)
+            }
         }
-        Ok(report)
     }
 
     fn persist_if_needed(&self, changed: bool) -> Result<()> {
@@ -3654,7 +3893,7 @@ mod tests {
         );
         assert!(store.get_chat(hidden_chat_id).is_some());
 
-        store
+        let hide_report = store
             .apply_chat_list(&ChatListResponse {
                 chats: vec![ChatSummary {
                     chat_id: visible_chat_id,
@@ -3668,6 +3907,7 @@ mod tests {
                 }],
             })
             .unwrap();
+        assert!(hide_report.changed_chat_ids.contains(&hidden_chat_id));
 
         let visible = store.list_local_chat_list_items(Some(self_account_id));
         assert_eq!(visible.len(), 1);
@@ -3709,6 +3949,125 @@ mod tests {
                 .get_local_chat_list_item(hidden_chat_id, Some(self_account_id))
                 .is_some()
         );
+    }
+
+    #[test]
+    fn hidden_chats_do_not_expose_read_state_helpers() {
+        let mut store = LocalHistoryStore::new();
+        let visible_chat_id = ChatId(Uuid::new_v4());
+        let hidden_chat_id = ChatId(Uuid::new_v4());
+        let self_account_id = AccountId(Uuid::new_v4());
+
+        store
+            .apply_chat_list(&ChatListResponse {
+                chats: vec![
+                    ChatSummary {
+                        chat_id: visible_chat_id,
+                        chat_type: ChatType::Dm,
+                        title: Some("Visible".to_owned()),
+                        last_server_seq: 0,
+                        epoch: 1,
+                        pending_message_count: 0,
+                        last_message: None,
+                        participant_profiles: Vec::new(),
+                    },
+                    ChatSummary {
+                        chat_id: hidden_chat_id,
+                        chat_type: ChatType::Dm,
+                        title: Some("Hidden".to_owned()),
+                        last_server_seq: 0,
+                        epoch: 1,
+                        pending_message_count: 0,
+                        last_message: None,
+                        participant_profiles: Vec::new(),
+                    },
+                ],
+            })
+            .unwrap();
+
+        store
+            .apply_chat_list(&ChatListResponse {
+                chats: vec![ChatSummary {
+                    chat_id: visible_chat_id,
+                    chat_type: ChatType::Dm,
+                    title: Some("Visible".to_owned()),
+                    last_server_seq: 0,
+                    epoch: 1,
+                    pending_message_count: 0,
+                    last_message: None,
+                    participant_profiles: Vec::new(),
+                }],
+            })
+            .unwrap();
+
+        assert_eq!(store.chat_read_cursor(hidden_chat_id), None);
+        assert_eq!(store.chat_unread_count(hidden_chat_id, Some(self_account_id)), None);
+        assert_eq!(store.get_chat_read_state(hidden_chat_id, Some(self_account_id)), None);
+    }
+
+    #[test]
+    fn apply_chat_history_restores_in_memory_state_when_save_fails() {
+        let database_path =
+            env::temp_dir().join(format!("trix-history-rollback-{}.db", Uuid::new_v4()));
+        let mut store = LocalHistoryStore::new_persistent(&database_path).unwrap();
+        let chat_id = ChatId(Uuid::new_v4());
+        let account_id = AccountId(Uuid::new_v4());
+        let device_id = DeviceId(Uuid::new_v4());
+
+        store
+            .apply_chat_detail(&ChatDetailResponse {
+                chat_id,
+                chat_type: ChatType::Dm,
+                title: Some("Rollback".to_owned()),
+                last_server_seq: 0,
+                pending_message_count: 0,
+                epoch: 1,
+                last_commit_message_id: None,
+                last_message: None,
+                participant_profiles: Vec::new(),
+                members: Vec::new(),
+                device_members: Vec::new(),
+            })
+            .unwrap();
+
+        store.inject_save_failure_after(0);
+        let error = store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![MessageEnvelope {
+                    message_id: MessageId(Uuid::new_v4()),
+                    chat_id,
+                    server_seq: 1,
+                    sender_account_id: account_id,
+                    sender_device_id: device_id,
+                    epoch: 1,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    ciphertext_b64: crate::encode_b64(b"rollback"),
+                    aad_json: json!({}),
+                    created_at_unix: 1,
+                }],
+            })
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("injected local history save failure")
+        );
+        assert_eq!(store.get_chat(chat_id).unwrap().last_server_seq, 0,);
+        assert!(
+            store
+                .get_chat_history(chat_id, None, Some(10))
+                .messages
+                .is_empty()
+        );
+        assert!(
+            store
+                .get_projected_messages(chat_id, None, Some(10))
+                .is_empty()
+        );
+
+        cleanup_sqlite_test_path(&database_path);
     }
 
     #[test]
@@ -3960,6 +4319,73 @@ mod tests {
             projected[0].projection_kind,
             LocalProjectionKind::ApplicationMessage
         );
+    }
+
+    #[test]
+    fn project_chat_messages_restores_projection_state_when_save_fails() {
+        let database_path = env::temp_dir().join(format!(
+            "trix-history-project-rollback-{}.db",
+            Uuid::new_v4()
+        ));
+        let mut store = LocalHistoryStore::new_persistent(&database_path).unwrap();
+        let chat_id = ChatId(Uuid::new_v4());
+        let alice_account = AccountId(Uuid::new_v4());
+        let alice_device = DeviceId(Uuid::new_v4());
+        let alice = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+        let bob = MlsFacade::new(b"bob-device".to_vec()).unwrap();
+
+        let bob_key_package = bob.generate_key_package().unwrap();
+        let mut alice_group = alice.create_group(chat_id.0.as_bytes()).unwrap();
+        let add_bundle = alice
+            .add_members(&mut alice_group, &[bob_key_package])
+            .unwrap();
+        let mut bob_group = bob
+            .join_group_from_welcome(
+                add_bundle.welcome_message.as_ref().unwrap(),
+                add_bundle.ratchet_tree.as_deref(),
+            )
+            .unwrap();
+
+        let ciphertext = alice
+            .create_application_message(&mut alice_group, b"projection rollback")
+            .unwrap();
+
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![MessageEnvelope {
+                    message_id: MessageId(Uuid::new_v4()),
+                    chat_id,
+                    server_seq: 1,
+                    sender_account_id: alice_account,
+                    sender_device_id: alice_device,
+                    epoch: 1,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    ciphertext_b64: crate::encode_b64(&ciphertext),
+                    aad_json: json!({}),
+                    created_at_unix: 10,
+                }],
+            })
+            .unwrap();
+        store
+            .set_chat_mls_group_id(chat_id, &bob_group.group_id())
+            .unwrap();
+
+        store.inject_save_failure_after(0);
+        let error = store
+            .project_chat_messages(chat_id, &bob, &mut bob_group, None)
+            .unwrap_err();
+        let error_text = error.to_string();
+        assert!(error_text.contains("injected local history save failure"));
+        assert_eq!(store.projected_cursor(chat_id), Some(0));
+        assert!(
+            store
+                .get_projected_messages(chat_id, None, Some(10))
+                .is_empty()
+        );
+
+        cleanup_sqlite_test_path(&database_path);
     }
 
     #[test]
@@ -4359,6 +4785,204 @@ mod tests {
         );
 
         fs::remove_file(database_path).ok();
+    }
+
+    #[test]
+    fn set_chat_read_cursor_none_defaults_to_projected_cursor() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let self_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+
+        store
+            .apply_chat_list(&ChatListResponse {
+                chats: vec![ChatSummary {
+                    chat_id,
+                    chat_type: ChatType::Dm,
+                    title: Some("Chat".to_owned()),
+                    last_server_seq: 3,
+                    epoch: 1,
+                    pending_message_count: 0,
+                    last_message: None,
+                    participant_profiles: Vec::new(),
+                }],
+            })
+            .unwrap();
+        store
+            .apply_projected_messages(
+                chat_id,
+                &[
+                    LocalProjectedMessage {
+                        server_seq: 1,
+                        message_id: MessageId(Uuid::new_v4()),
+                        sender_account_id: self_account_id,
+                        sender_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        projection_kind: LocalProjectionKind::ApplicationMessage,
+                        payload: Some(
+                            MessageBody::Text(crate::TextMessageBody {
+                                text: "one".to_owned(),
+                            })
+                            .to_bytes()
+                            .unwrap(),
+                        ),
+                        merged_epoch: None,
+                        created_at_unix: 1,
+                    },
+                    LocalProjectedMessage {
+                        server_seq: 2,
+                        message_id: MessageId(Uuid::new_v4()),
+                        sender_account_id: self_account_id,
+                        sender_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        projection_kind: LocalProjectionKind::ApplicationMessage,
+                        payload: Some(
+                            MessageBody::Text(crate::TextMessageBody {
+                                text: "two".to_owned(),
+                            })
+                            .to_bytes()
+                            .unwrap(),
+                        ),
+                        merged_epoch: None,
+                        created_at_unix: 2,
+                    },
+                    LocalProjectedMessage {
+                        server_seq: 3,
+                        message_id: MessageId(Uuid::new_v4()),
+                        sender_account_id: self_account_id,
+                        sender_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        projection_kind: LocalProjectionKind::ApplicationMessage,
+                        payload: Some(
+                            MessageBody::Text(crate::TextMessageBody {
+                                text: "three".to_owned(),
+                            })
+                            .to_bytes()
+                            .unwrap(),
+                        ),
+                        merged_epoch: None,
+                        created_at_unix: 3,
+                    },
+                ],
+            )
+            .unwrap();
+
+        let read_state = store
+            .set_chat_read_cursor(chat_id, None, Some(self_account_id))
+            .unwrap();
+
+        assert_eq!(store.projected_cursor(chat_id), Some(3));
+        assert_eq!(read_state.read_cursor_server_seq, 3);
+        assert_eq!(store.chat_read_cursor(chat_id), Some(3));
+    }
+
+    #[test]
+    fn apply_projected_messages_reports_none_when_cursor_does_not_move() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+
+        let projected_messages = vec![
+            LocalProjectedMessage {
+                server_seq: 1,
+                message_id: MessageId(Uuid::new_v4()),
+                sender_account_id,
+                sender_device_id,
+                epoch: 1,
+                message_kind: MessageKind::Application,
+                content_type: ContentType::Text,
+                projection_kind: LocalProjectionKind::ApplicationMessage,
+                payload: Some(
+                    MessageBody::Text(crate::TextMessageBody {
+                        text: "one".to_owned(),
+                    })
+                    .to_bytes()
+                    .unwrap(),
+                ),
+                merged_epoch: None,
+                created_at_unix: 1,
+            },
+            LocalProjectedMessage {
+                server_seq: 2,
+                message_id: MessageId(Uuid::new_v4()),
+                sender_account_id,
+                sender_device_id,
+                epoch: 1,
+                message_kind: MessageKind::Application,
+                content_type: ContentType::Text,
+                projection_kind: LocalProjectionKind::ApplicationMessage,
+                payload: Some(
+                    MessageBody::Text(crate::TextMessageBody {
+                        text: "two".to_owned(),
+                    })
+                    .to_bytes()
+                    .unwrap(),
+                ),
+                merged_epoch: None,
+                created_at_unix: 2,
+            },
+            LocalProjectedMessage {
+                server_seq: 3,
+                message_id: MessageId(Uuid::new_v4()),
+                sender_account_id,
+                sender_device_id,
+                epoch: 1,
+                message_kind: MessageKind::Application,
+                content_type: ContentType::Text,
+                projection_kind: LocalProjectionKind::ApplicationMessage,
+                payload: Some(
+                    MessageBody::Text(crate::TextMessageBody {
+                        text: "three".to_owned(),
+                    })
+                    .to_bytes()
+                    .unwrap(),
+                ),
+                merged_epoch: None,
+                created_at_unix: 3,
+            },
+        ];
+
+        store.state.chats.insert(
+            chat_id.0.to_string(),
+            PersistedChatState {
+                is_active: true,
+                chat_type: ChatType::Dm,
+                title: Some("Chat".to_owned()),
+                last_server_seq: 3,
+                pending_message_count: 0,
+                last_message: None,
+                epoch: 1,
+                last_commit_message_id: None,
+                participant_profiles: Vec::new(),
+                members: Vec::new(),
+                device_members: Vec::new(),
+                mls_group_id_b64: None,
+                messages: BTreeMap::new(),
+                read_cursor_server_seq: 0,
+                projected_cursor_server_seq: 3,
+                projected_messages: projected_messages
+                    .iter()
+                    .cloned()
+                    .map(persisted_projected_message_from)
+                    .map(|message| (message.server_seq, message))
+                    .collect(),
+            },
+        );
+
+        let report = store
+            .apply_projected_messages(chat_id, &projected_messages)
+            .unwrap();
+
+        assert_eq!(report.projected_messages_upserted, 0);
+        assert_eq!(report.advanced_to_server_seq, None);
+        assert_eq!(store.projected_cursor(chat_id), Some(3));
     }
 
     #[test]

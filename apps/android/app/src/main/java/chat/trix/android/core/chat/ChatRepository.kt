@@ -51,9 +51,10 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.CoroutineContext
 
 class ChatRepository(
     context: Context,
@@ -134,21 +135,26 @@ class ChatRepository(
                 store = store,
                 limitPerChat = HISTORY_SYNC_LIMIT,
             )
-            val inboxOutcome = syncCoordinator.leaseInboxIntoStore(
+            val leasedInbox = syncCoordinator.leaseInbox(
                 client = client,
-                store = store,
                 limit = INBOX_SYNC_LIMIT,
                 leaseTtlSeconds = LEASE_TTL_SECONDS,
             )
+            val inboxReport = applyLeasedInbox(leasedInbox)
             val hydratedChatDetails = hydrateChatDetails(client, store)
             val projectedChatTimelines = projectChatsWithLocalMlsState(store)
+            val ackedInboxIds = if (leasedInbox.items.isEmpty()) {
+                emptyList()
+            } else {
+                ackInboxWithSyncCoordinator(leasedInbox.items.map { it.inboxId })
+            }
             val flushedOutboxCount = flushPendingOutboxNow()
 
             ChatRefreshResult(
                 overview = buildOverview(),
                 historyMessagesUpserted = historyReport.messagesUpserted.toLong(),
-                inboxMessagesUpserted = inboxOutcome.report.messagesUpserted.toLong(),
-                ackedInboxCount = inboxOutcome.ackedInboxIds.size,
+                inboxMessagesUpserted = inboxReport.messagesUpserted.toLong(),
+                ackedInboxCount = ackedInboxIds.size,
                 hydratedChatDetails = hydratedChatDetails,
                 projectedChatTimelines = projectedChatTimelines,
                 flushedOutboxCount = flushedOutboxCount,
@@ -212,10 +218,11 @@ class ChatRepository(
             )
             hydrateChatDetail(client, store, outcome.chatId)
 
-            ChatCreateResult(
-                overview = buildOverview(),
-                conversation = buildConversation(outcome.chatId)
-                    ?: throw IOException("Conversation ${outcome.chatId} is no longer available"),
+            buildMutationConversationResult(
+                unavailableMessage = "Conversation ${outcome.chatId} is no longer available",
+                buildOverview = ::buildOverview,
+                buildConversation = { buildConversation(outcome.chatId) },
+                createResult = ::ChatCreateResult,
             )
         }
     }
@@ -253,10 +260,11 @@ class ChatRepository(
             )
             hydrateChatDetail(client, store, outcome.chatId)
 
-            ChatCreateResult(
-                overview = buildOverview(),
-                conversation = buildConversation(outcome.chatId)
-                    ?: throw IOException("Conversation ${outcome.chatId} is no longer available"),
+            buildMutationConversationResult(
+                unavailableMessage = "Conversation ${outcome.chatId} is no longer available",
+                buildOverview = ::buildOverview,
+                buildConversation = { buildConversation(outcome.chatId) },
+                createResult = ::ChatCreateResult,
             )
         }
     }
@@ -292,10 +300,11 @@ class ChatRepository(
             )
             hydrateChatDetail(client, store, chatId)
 
-            ChatMembershipUpdateResult(
-                overview = buildOverview(),
-                conversation = buildConversation(chatId)
-                    ?: throw IOException("Conversation $chatId is no longer available"),
+            buildMutationConversationResult(
+                unavailableMessage = "Conversation $chatId is no longer available",
+                buildOverview = ::buildOverview,
+                buildConversation = { buildConversation(chatId) },
+                createResult = ::ChatMembershipUpdateResult,
             )
         }
     }
@@ -331,10 +340,11 @@ class ChatRepository(
             )
             hydrateChatDetail(client, store, chatId)
 
-            ChatMembershipUpdateResult(
-                overview = buildOverview(),
-                conversation = buildConversation(chatId)
-                    ?: throw IOException("Conversation $chatId is no longer available"),
+            buildMutationConversationResult(
+                unavailableMessage = "Conversation $chatId is no longer available",
+                buildOverview = ::buildOverview,
+                buildConversation = { buildConversation(chatId) },
+                createResult = ::ChatMembershipUpdateResult,
             )
         }
     }
@@ -378,10 +388,11 @@ class ChatRepository(
             )
             flushPendingOutboxNow(chatId)
 
-            ChatSendResult(
-                overview = buildOverview(),
-                conversation = buildConversation(chatId)
-                    ?: throw IOException("Conversation $chatId is no longer available"),
+            buildMutationConversationResult(
+                unavailableMessage = "Conversation $chatId is no longer available",
+                buildOverview = ::buildOverview,
+                buildConversation = { buildConversation(chatId) },
+                createResult = ::ChatSendResult,
             )
         }
     }
@@ -413,10 +424,11 @@ class ChatRepository(
             )
             flushPendingOutboxNow(chatId)
 
-            ChatSendResult(
-                overview = buildOverview(),
-                conversation = buildConversation(chatId)
-                    ?: throw IOException("Conversation $chatId is no longer available"),
+            buildMutationConversationResult(
+                unavailableMessage = "Conversation $chatId is no longer available",
+                buildOverview = ::buildOverview,
+                buildConversation = { buildConversation(chatId) },
+                createResult = ::ChatSendResult,
             )
         }
     }
@@ -588,10 +600,11 @@ class ChatRepository(
             )
             hydrateChatDetail(client, store, chatId)
 
-            ChatMembershipUpdateResult(
-                overview = buildOverview(),
-                conversation = buildConversation(chatId)
-                    ?: throw IOException("Conversation $chatId is no longer available"),
+            buildMutationConversationResult(
+                unavailableMessage = "Conversation $chatId is no longer available",
+                buildOverview = ::buildOverview,
+                buildConversation = { buildConversation(chatId) },
+                createResult = ::ChatMembershipUpdateResult,
             )
         }
     }
@@ -622,10 +635,11 @@ class ChatRepository(
             )
             hydrateChatDetail(client, store, chatId)
 
-            ChatMembershipUpdateResult(
-                overview = buildOverview(),
-                conversation = buildConversation(chatId)
-                    ?: throw IOException("Conversation $chatId is no longer available"),
+            buildMutationConversationResult(
+                unavailableMessage = "Conversation $chatId is no longer available",
+                buildOverview = ::buildOverview,
+                buildConversation = { buildConversation(chatId) },
+                createResult = ::ChatMembershipUpdateResult,
             )
         }
     }
@@ -709,7 +723,7 @@ class ChatRepository(
         runFfi("Failed to ack inbox") {
             val client = client()
             client.setAccessToken(session.accessToken)
-            client.ackInbox(inboxIds).ackedInboxIds
+            syncCoordinator().ackInbox(client = client, inboxIds = inboxIds).ackedInboxIds
         }
     }
 
@@ -740,7 +754,14 @@ class ChatRepository(
         lease: FfiLeaseInboxResponse,
     ): FfiLocalStoreApplyReport = withContext(Dispatchers.IO) {
         runFfi("Failed to apply leased inbox to local store") {
-            historyStore().applyLeasedInbox(lease)
+            val report = historyStore().applyLeasedInbox(lease)
+            lease.items.forEach { item ->
+                syncCoordinator().recordChatServerSeq(
+                    chatId = item.message.chatId,
+                    serverSeq = item.message.serverSeq,
+                )
+            }
+            report
         }
     }
 
@@ -885,24 +906,27 @@ class ChatRepository(
         val store = historyStore()
         val selfAccountId = session.localState.accountId
         val item = store.getLocalChatListItem(chatId, selfAccountId) ?: return null
-        try {
-            ensureConversationProjection(chatId, store)
-            repairConversationHistoryIfNeeded(
-                chatId = chatId,
-                lastKnownServerSeq = item.lastServerSeq.toLong(),
-                store = store,
-            )
-            ensureConversationProjection(chatId, store)
-        } catch (error: Exception) {
-            val client = client()
-            client.setAccessToken(session.accessToken)
-            refreshConversationFromServer(
-                chatId = chatId,
-                client = client,
-                store = store,
-            )
-            ensureConversationProjection(chatId, store)
-        }
+        recoverConversationProjectionBestEffort(
+            projectLocally = {
+                ensureConversationProjection(chatId, store)
+            },
+            repairHistoryLocally = {
+                repairConversationHistoryIfNeeded(
+                    chatId = chatId,
+                    lastKnownServerSeq = item.lastServerSeq.toLong(),
+                    store = store,
+                )
+            },
+            refreshFromServer = {
+                val client = client()
+                client.setAccessToken(session.accessToken)
+                refreshConversationFromServer(
+                    chatId = chatId,
+                    client = client,
+                    store = store,
+                )
+            },
+        )
         val detail = store.getChat(chatId)
         val timelineItems = store.getLocalTimelineItems(chatId, selfAccountId, null, null)
         val pendingOutboxItems = store.listOutboxMessages(chatId)
@@ -1321,11 +1345,11 @@ class ChatRepository(
 
     private fun attachmentRepository(): AttachmentRepository = attachmentRepositoryDelegate.value
 
-    private suspend inline fun <T> runFfi(
+    private suspend fun <T> runFfi(
         fallbackMessage: String,
-        block: () -> T,
+        block: suspend () -> T,
     ): T {
-        return sessionOperationMutex().withLock {
+        return sessionOperationGate().withLock {
             try {
                 block()
             } catch (error: CancellationException) {
@@ -1340,10 +1364,10 @@ class ChatRepository(
         }
     }
 
-    private fun sessionOperationMutex(): Mutex {
-        return SESSION_OPERATION_MUTEXES.computeIfAbsent(
+    private fun sessionOperationGate(): SessionOperationGate {
+        return SESSION_OPERATION_GATES.computeIfAbsent(
             storageLayout.sessionRoot.absolutePath,
-        ) { Mutex() }
+        ) { SessionOperationGate() }
     }
 
     private fun runBlockingStoreKey(): ByteArray {
@@ -1766,8 +1790,67 @@ class ChatRepository(
         private val MONTH_DAY_FORMATTER = DateTimeFormatter.ofPattern("MMM d")
         private val DATE_FORMATTER = DateTimeFormatter.ofPattern("MMM d, yyyy")
         private const val EMPTY_AAD_JSON = "{}"
-        private val SESSION_OPERATION_MUTEXES = ConcurrentHashMap<String, Mutex>()
+        private val SESSION_OPERATION_GATES = ConcurrentHashMap<String, SessionOperationGate>()
     }
+}
+
+internal class SessionOperationGate {
+    private val mutex = Mutex()
+
+    suspend fun <T> withLock(block: suspend () -> T): T {
+        val token = currentCoroutineContext()[SessionOperationGateContext]
+        if (token?.gate === this) {
+            return block()
+        }
+
+        mutex.lock()
+        try {
+            return withContext(SessionOperationGateContext(this)) {
+                block()
+            }
+        } finally {
+            mutex.unlock()
+        }
+    }
+}
+
+private class SessionOperationGateContext(
+    val gate: SessionOperationGate,
+) : CoroutineContext.Element {
+    companion object Key : CoroutineContext.Key<SessionOperationGateContext>
+
+    override val key: CoroutineContext.Key<*>
+        get() = Key
+}
+
+internal fun recoverConversationProjectionBestEffort(
+    projectLocally: () -> Unit,
+    repairHistoryLocally: () -> Unit,
+    refreshFromServer: () -> Unit,
+) {
+    try {
+        projectLocally()
+        repairHistoryLocally()
+        projectLocally()
+    } catch (_: Exception) {
+        try {
+            refreshFromServer()
+            projectLocally()
+        } catch (_: Exception) {
+            // Keep successful mutations visible even when best-effort repair is offline.
+        }
+    }
+}
+
+internal fun <T> buildMutationConversationResult(
+    unavailableMessage: String,
+    buildOverview: () -> ChatOverview,
+    buildConversation: () -> ChatConversation?,
+    createResult: (ChatOverview, ChatConversation) -> T,
+): T {
+    val overview = buildOverview()
+    val conversation = buildConversation() ?: throw IOException(unavailableMessage)
+    return createResult(overview, conversation)
 }
 
 data class ChatOverview(

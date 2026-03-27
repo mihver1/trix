@@ -2953,6 +2953,27 @@ impl FfiSyncCoordinator {
         })
     }
 
+    pub fn apply_leased_inbox_into_store(
+        &self,
+        store: Arc<FfiLocalHistoryStore>,
+        lease: FfiLeaseInboxResponse,
+    ) -> Result<FfiLocalStoreApplyReport, TrixFfiError> {
+        let items = lease
+            .items
+            .into_iter()
+            .map(ffi_inbox_item_to_api)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(local_store_apply_report_to_ffi(
+            {
+                let mut coordinator = lock(&self.inner)?;
+                let mut store = lock(&store.inner)?;
+                coordinator
+                    .apply_inbox_items_into_store(&mut store, &items)
+                    .map_err(ffi_error)?
+            },
+        ))
+    }
+
     pub fn ack_inbox(
         &self,
         client: Arc<FfiServerApiClient>,
@@ -2968,6 +2989,12 @@ impl FfiSyncCoordinator {
         Ok(FfiAckInboxResponse {
             acked_inbox_ids: response.acked_inbox_ids,
         })
+    }
+
+    pub fn record_acked_inbox_ids(&self, acked_inbox_ids: Vec<u64>) -> Result<(), TrixFfiError> {
+        lock(&self.inner)?
+            .record_acked_inbox_ids(&acked_inbox_ids)
+            .map_err(ffi_error)
     }
 
     pub fn lease_inbox_into_store(
@@ -5230,6 +5257,95 @@ mod tests {
 
         drop(store_guard);
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn apply_leased_inbox_into_store_advances_sparse_chat_cursor() {
+        let coordinator = Arc::new(FfiSyncCoordinator {
+            inner: Mutex::new(SyncCoordinator::new()),
+            runtime: build_runtime().unwrap(),
+        });
+        let store = Arc::new(FfiLocalHistoryStore {
+            inner: Mutex::new(LocalHistoryStore::new()),
+        });
+        let chat_id = Uuid::new_v4().to_string();
+        let sender_account_id = Uuid::new_v4().to_string();
+        let sender_device_id = Uuid::new_v4().to_string();
+
+        let first_report = coordinator
+            .apply_leased_inbox_into_store(
+                Arc::clone(&store),
+                FfiLeaseInboxResponse {
+                    lease_owner: "lease-1".to_owned(),
+                    lease_expires_at_unix: 123,
+                    items: vec![
+                        FfiInboxItem {
+                            inbox_id: 7,
+                            message: FfiMessageEnvelope {
+                                message_id: Uuid::new_v4().to_string(),
+                                chat_id: chat_id.clone(),
+                                server_seq: 1,
+                                sender_account_id: sender_account_id.clone(),
+                                sender_device_id: sender_device_id.clone(),
+                                epoch: 1,
+                                message_kind: FfiMessageKind::Application,
+                                content_type: FfiContentType::Text,
+                                ciphertext: b"ciphertext-1".to_vec(),
+                                aad_json: "{}".to_owned(),
+                                created_at_unix: 1,
+                            },
+                        },
+                        FfiInboxItem {
+                            inbox_id: 8,
+                            message: FfiMessageEnvelope {
+                                message_id: Uuid::new_v4().to_string(),
+                                chat_id: chat_id.clone(),
+                                server_seq: 3,
+                                sender_account_id: sender_account_id.clone(),
+                                sender_device_id: sender_device_id.clone(),
+                                epoch: 1,
+                                message_kind: FfiMessageKind::Application,
+                                content_type: FfiContentType::Text,
+                                ciphertext: b"ciphertext-3".to_vec(),
+                                aad_json: "{}".to_owned(),
+                                created_at_unix: 2,
+                            },
+                        },
+                    ],
+                },
+            )
+            .unwrap();
+
+        assert_eq!(first_report.messages_upserted, 2);
+        assert_eq!(coordinator.chat_cursor(chat_id.clone()).unwrap(), Some(1));
+
+        coordinator
+            .apply_leased_inbox_into_store(
+                Arc::clone(&store),
+                FfiLeaseInboxResponse {
+                    lease_owner: "lease-1".to_owned(),
+                    lease_expires_at_unix: 124,
+                    items: vec![FfiInboxItem {
+                        inbox_id: 9,
+                        message: FfiMessageEnvelope {
+                            message_id: Uuid::new_v4().to_string(),
+                            chat_id: chat_id.clone(),
+                            server_seq: 2,
+                            sender_account_id,
+                            sender_device_id,
+                            epoch: 1,
+                            message_kind: FfiMessageKind::Application,
+                            content_type: FfiContentType::Text,
+                            ciphertext: b"ciphertext-2".to_vec(),
+                            aad_json: "{}".to_owned(),
+                            created_at_unix: 3,
+                        },
+                    }],
+                },
+            )
+            .unwrap();
+
+        assert_eq!(coordinator.chat_cursor(chat_id).unwrap(), Some(3));
     }
 
     #[test]

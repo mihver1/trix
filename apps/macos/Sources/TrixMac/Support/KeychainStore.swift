@@ -77,6 +77,45 @@ struct KeychainStore {
         }
     }
 
+    /// Deletes generic-password items for this service whose `kSecAttrAccount` begins with one of the prefixes (e.g. per-workspace SQLite keys).
+    func removeGenericPasswords(withAccountPrefixes prefixes: [String]) throws {
+        guard !prefixes.isEmpty else { return }
+
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnAttributes as String: kCFBooleanTrue,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        switch status {
+        case errSecItemNotFound:
+            return
+        case errSecSuccess:
+            break
+        default:
+            throw KeychainStoreError.unhandledStatus(status)
+        }
+
+        let itemDictionaries: [[String: Any]]
+        if let array = result as? [[String: Any]] {
+            itemDictionaries = array
+        } else if let single = result as? [String: Any] {
+            itemDictionaries = [single]
+        } else {
+            return
+        }
+
+        for attributes in itemDictionaries {
+            guard let account = attributes[kSecAttrAccount as String] as? String else { continue }
+            guard prefixes.contains(where: { account.hasPrefix($0) }) else { continue }
+            try removeValue(account: account)
+        }
+    }
+
     private func baseQuery(for key: VaultKey) -> [String: Any] {
         baseQuery(account: key.rawValue)
     }

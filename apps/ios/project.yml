@@ -1,4 +1,5 @@
 name: TrixiOS
+# Shared `UITestSupport` sources (e.g. `TrixUITestSupport`, `TrixInteropSupport`) ship in the app + UI-test targets for launch-contract parity.
 
 options:
   minimumXcodeGenVersion: 2.44.0
@@ -20,6 +21,7 @@ targets:
       - path: TrixiOS
         excludes:
           - Bridge/Artifacts
+      - path: UITestSupport
     dependencies:
       - framework: Vendor/TrixCoreFFI.xcframework
         embed: false
@@ -37,6 +39,7 @@ targets:
       gatherCoverageData: false
       testTargets:
         - TrixiOSTests
+        - TrixiOSUITests
 
   TrixiOSTests:
     type: bundle.unit-test
@@ -56,3 +59,22 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Trix.app/Trix"
         BUNDLE_LOADER: "$(TEST_HOST)"
+
+  TrixiOSUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: TrixiOSUITests
+      - path: UITestSupport
+    dependencies:
+      - target: TrixiOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trixapp.uitests
+        PRODUCT_NAME: "$(TARGET_NAME)"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: HGY33KYKQ2
+        TARGETED_DEVICE_FAMILY: "1,2"
+        TEST_TARGET_NAME: TrixiOS

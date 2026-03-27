@@ -11,6 +11,17 @@ struct TrixMacApp: App {
             RootView(model: model)
                 .background(WindowViewportConfigurator())
                 .task {
+                    let configuration = MacUITestLaunchConfiguration.current
+                    do {
+                        let bootstrap = MacUITestAppBootstrap.production()
+                        if let urlString = try await bootstrap.prepareForLaunch(configuration: configuration) {
+                            model.serverBaseURLString = urlString
+                        }
+                    } catch {
+                        if configuration.isEnabled {
+                            fatalError("Mac UI test bootstrap failed: \(error.localizedDescription)")
+                        }
+                    }
                     await model.start()
                 }
         }

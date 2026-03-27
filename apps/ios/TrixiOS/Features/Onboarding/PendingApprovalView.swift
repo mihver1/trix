@@ -46,6 +46,7 @@ struct PendingApprovalView: View {
                 .padding(.bottom, 120)
             }
         }
+        .accessibilityIdentifier(TrixAccessibilityID.Root.pendingApprovalScreen)
         .safeAreaInset(edge: .bottom) {
             bottomActions
         }
@@ -125,6 +126,7 @@ struct PendingApprovalView: View {
         .background(Color.white.opacity(0.88))
         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         .shadow(color: .black.opacity(0.04), radius: 18, y: 10)
+        .accessibilityIdentifier(TrixAccessibilityID.PendingApproval.deviceCard)
     }
 
     private var approvalCard: some View {
@@ -174,6 +176,7 @@ struct PendingApprovalView: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier(TrixAccessibilityID.PendingApproval.technicalDetailsToggle)
 
             if isShowingTechnicalDetails {
                 VStack(alignment: .leading, spacing: 12) {
@@ -215,11 +218,13 @@ struct PendingApprovalView: View {
             .background(pendingApprovalAccent)
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             .disabled(model.isLoading)
+            .accessibilityIdentifier(TrixAccessibilityID.PendingApproval.checkApprovalButton)
 
             Button("Forget This Device", role: .destructive) {
                 isShowingForgetAlert = true
             }
             .font(.subheadline.weight(.semibold))
+            .accessibilityIdentifier(TrixAccessibilityID.PendingApproval.forgetDeviceButton)
         }
         .padding(.horizontal, 20)
         .padding(.top, 12)

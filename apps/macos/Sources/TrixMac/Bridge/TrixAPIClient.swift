@@ -23,7 +23,16 @@ enum TrixAPIError: LocalizedError {
     var isCredentialFailure: Bool {
         switch self {
         case let .server(_, _, statusCode):
-            return statusCode == 401 || statusCode == 404
+            return statusCode == 401
+        default:
+            return false
+        }
+    }
+
+    var isMissingServerState: Bool {
+        switch self {
+        case let .server(_, _, statusCode):
+            return statusCode == 404
         default:
             return false
         }

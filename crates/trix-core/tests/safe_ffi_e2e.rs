@@ -678,7 +678,8 @@ async fn safe_s4_device_link_approve_and_unlink() -> Result<()> {
 
     ffi(move || {
         let trusted = create_safe_client(&base_url, "alice", true)?;
-        trusted.client.load_snapshot()?;
+        let trusted_snapshot = trusted.client.load_snapshot()?;
+        let trusted_checkpoint = trusted_snapshot.checkpoint.clone();
 
         let intent = trusted.client.create_link_device_intent()?;
         assert!(!intent.link_intent_id.is_empty());
@@ -695,6 +696,20 @@ async fn safe_s4_device_link_approve_and_unlink() -> Result<()> {
             device.device_id == pending.device_id
                 && matches!(device.device_status, FfiDeviceStatus::Pending)
         }));
+        let snapshot_after_list = trusted.client.load_snapshot()?;
+        assert_eq!(snapshot_after_list.checkpoint, trusted_checkpoint);
+        let pending_batch = trusted
+            .client
+            .get_new_events(snapshot_after_list.checkpoint.clone())?;
+        assert!(pending_batch.events.iter().any(|event| {
+            matches!(event.kind, FfiMessengerEventKind::DevicePending)
+                && event
+                    .device
+                    .as_ref()
+                    .map(|device| device.device_id.as_str())
+                    == Some(pending.device_id.as_str())
+        }));
+        let pending_checkpoint = expect_checkpoint(&pending_batch)?;
 
         let approved = trusted
             .client
@@ -708,6 +723,23 @@ async fn safe_s4_device_link_approve_and_unlink() -> Result<()> {
             device.device_id == pending.device_id
                 && matches!(device.device_status, FfiDeviceStatus::Active)
         }));
+        let snapshot_after_approve = trusted.client.load_snapshot()?;
+        assert_eq!(
+            snapshot_after_approve.checkpoint.as_deref(),
+            Some(pending_checkpoint.as_str())
+        );
+        let approved_batch = trusted
+            .client
+            .get_new_events(snapshot_after_approve.checkpoint.clone())?;
+        assert!(approved_batch.events.iter().any(|event| {
+            matches!(event.kind, FfiMessengerEventKind::DeviceApproved)
+                && event
+                    .device
+                    .as_ref()
+                    .map(|device| device.device_id.as_str())
+                    == Some(pending.device_id.as_str())
+        }));
+        let approved_checkpoint = expect_checkpoint(&approved_batch)?;
 
         let linked_snapshot = linked.load_snapshot()?;
         assert_eq!(
@@ -740,6 +772,22 @@ async fn safe_s4_device_link_approve_and_unlink() -> Result<()> {
         assert!(revoked.devices.iter().any(|device| {
             device.device_id == pending.device_id
                 && matches!(device.device_status, FfiDeviceStatus::Revoked)
+        }));
+        let snapshot_after_revoke = trusted.client.load_snapshot()?;
+        assert_eq!(
+            snapshot_after_revoke.checkpoint.as_deref(),
+            Some(approved_checkpoint.as_str())
+        );
+        let revoked_batch = trusted
+            .client
+            .get_new_events(snapshot_after_revoke.checkpoint.clone())?;
+        assert!(revoked_batch.events.iter().any(|event| {
+            matches!(event.kind, FfiMessengerEventKind::DeviceRevoked)
+                && event
+                    .device
+                    .as_ref()
+                    .map(|device| device.device_id.as_str())
+                    == Some(pending.device_id.as_str())
         }));
 
         Ok(())

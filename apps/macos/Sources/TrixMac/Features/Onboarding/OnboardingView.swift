@@ -169,11 +169,13 @@ struct OnboardingView: View {
                 TrixInputBlock("Server URL", hint: "Usually `http://127.0.0.1:8080` in local development.") {
                     TextField("http://127.0.0.1:8080", text: $model.serverBaseURLString)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.serverURLField)
                 }
 
                 TrixInputBlock("Profile Name", hint: "Visible name for the account.") {
                     TextField("Maksym", text: $model.draft.profileName)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.profileNameField)
                 }
 
                 if prefersSingleColumn {
@@ -192,6 +194,7 @@ struct OnboardingView: View {
                     TextEditor(text: $model.draft.profileBio)
                         .frame(minHeight: bioHeight)
                         .font(.body)
+                        .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.bioField)
                 }
 
                 createActionRow
@@ -226,11 +229,13 @@ struct OnboardingView: View {
                     TextEditor(text: $model.linkDraft.linkPayload)
                         .frame(minHeight: 160)
                         .font(.system(.body, design: .monospaced))
+                        .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.linkCodeField)
                 }
 
                 TrixInputBlock("Device Name", hint: "How this Mac should appear in the remote device directory.") {
                     TextField("This Mac", text: $model.linkDraft.deviceDisplayName)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.linkDeviceNameField)
                 }
 
                 Group {
@@ -245,6 +250,7 @@ struct OnboardingView: View {
                             }
                             .buttonStyle(.bordered)
                             .frame(maxWidth: 190)
+                            .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.testConnectionButton)
 
                             Button {
                                 Task {
@@ -259,6 +265,7 @@ struct OnboardingView: View {
                             }
                             .buttonStyle(.borderedProminent)
                             .disabled(!model.canCompleteLink || model.isCompletingLink)
+                            .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.registerPendingDeviceButton)
                         }
                     } else {
                         HStack(spacing: 12) {
@@ -271,6 +278,7 @@ struct OnboardingView: View {
                             }
                             .buttonStyle(.bordered)
                             .frame(maxWidth: 190)
+                            .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.testConnectionButton)
 
                             Button {
                                 Task {
@@ -286,6 +294,7 @@ struct OnboardingView: View {
                             .buttonStyle(.borderedProminent)
                             .disabled(!model.canCompleteLink || model.isCompletingLink)
                             .frame(maxWidth: 260)
+                            .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.registerPendingDeviceButton)
                         }
                     }
                 }
@@ -334,7 +343,11 @@ struct OnboardingView: View {
                         "Pending Device ID",
                         hint: "Use this to identify the Mac inside the trusted device directory on another active device."
                     ) {
-                        TrixPayloadBox(payload: deviceID.uuidString, minHeight: 84)
+                        TrixPayloadBox(
+                            payload: deviceID.uuidString,
+                            minHeight: 84,
+                            valueAccessibilityIdentifier: TrixMacAccessibilityID.Onboarding.pendingDeviceIDValue
+                        )
                     }
 
                     Group {
@@ -361,6 +374,7 @@ struct OnboardingView: View {
                                 .buttonStyle(.borderedProminent)
                                 .frame(maxWidth: 280)
                                 .disabled(model.isRestoringSession)
+                                .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.reconnectAfterApprovalButton)
 
                                 Button(role: .destructive) {
                                     model.restartPendingLinkFlow()
@@ -369,6 +383,7 @@ struct OnboardingView: View {
                                 }
                                 .buttonStyle(.borderless)
                                 .frame(maxWidth: 220)
+                                .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.restartLinkButton)
                             }
                         } else {
                             HStack(spacing: 12) {
@@ -393,6 +408,7 @@ struct OnboardingView: View {
                                 .buttonStyle(.borderedProminent)
                                 .frame(maxWidth: 280)
                                 .disabled(model.isRestoringSession)
+                                .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.reconnectAfterApprovalButton)
 
                                 Button(role: .destructive) {
                                     model.restartPendingLinkFlow()
@@ -401,6 +417,7 @@ struct OnboardingView: View {
                                 }
                                 .buttonStyle(.borderless)
                                 .frame(maxWidth: 220)
+                                .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.restartLinkButton)
                             }
                         }
                     }
@@ -418,9 +435,12 @@ struct OnboardingView: View {
 
     private var modeSelector: some View {
         Picker("Setup Flow", selection: $model.onboardingMode) {
-            ForEach(OnboardingMode.allCases, id: \.self) { mode in
-                Text(mode.title).tag(mode)
-            }
+            Text(OnboardingMode.createAccount.title)
+                .tag(OnboardingMode.createAccount)
+                .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.createModeButton)
+            Text(OnboardingMode.linkExisting.title)
+                .tag(OnboardingMode.linkExisting)
+                .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.linkModeButton)
         }
         .pickerStyle(.segmented)
     }
@@ -429,6 +449,7 @@ struct OnboardingView: View {
         TrixInputBlock("Handle", hint: "Optional public handle.") {
             TextField("optional handle", text: $model.draft.handle)
                 .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.handleField)
         }
     }
 
@@ -436,6 +457,7 @@ struct OnboardingView: View {
         TrixInputBlock("Device Name", hint: "How this Mac appears in the device list.") {
             TextField("This Mac", text: $model.draft.deviceDisplayName)
                 .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.deviceNameField)
         }
     }
 
@@ -452,6 +474,7 @@ struct OnboardingView: View {
                     }
                     .buttonStyle(.bordered)
                     .frame(maxWidth: 190)
+                    .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.testConnectionButton)
 
                     Button {
                         Task {
@@ -466,6 +489,7 @@ struct OnboardingView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(!model.canCreateAccount || model.isCreatingAccount)
+                    .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.primaryActionButton)
                 }
             } else {
                 HStack(spacing: 12) {
@@ -478,6 +502,7 @@ struct OnboardingView: View {
                     }
                     .buttonStyle(.bordered)
                     .frame(maxWidth: 190)
+                    .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.testConnectionButton)
 
                     Button {
                         Task {
@@ -493,6 +518,7 @@ struct OnboardingView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(!model.canCreateAccount || model.isCreatingAccount)
                     .frame(maxWidth: 240)
+                    .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.primaryActionButton)
                 }
             }
         }

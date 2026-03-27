@@ -19,3 +19,5 @@ DerivedData/
 *.xcscmblueprint
 apps/ios/Vendor/
 apps/ios/TrixiOS/Bridge/Artifacts/
+/.tmp-*
+/.warp/

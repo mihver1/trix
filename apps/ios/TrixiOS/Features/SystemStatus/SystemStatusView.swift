@@ -16,6 +16,7 @@ struct ServerConnectionSection: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
+                    .accessibilityIdentifier(TrixAccessibilityID.SystemStatus.serverURLField)
 
                 Button(action: onReload) {
                     if isLoading {
@@ -27,6 +28,7 @@ struct ServerConnectionSection: View {
                     }
                 }
                 .disabled(isLoading)
+                .accessibilityIdentifier(TrixAccessibilityID.SystemStatus.reloadButton)
 
                 if let lastUpdatedAt {
                     LabeledContent("Last Updated") {

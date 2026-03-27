@@ -205,6 +205,7 @@ struct WorkspaceView: View {
                     .buttonStyle(.borderedProminent)
                     .frame(maxWidth: 220)
                     .disabled(model.isRestoringSession)
+                    .accessibilityIdentifier(TrixMacAccessibilityID.Restore.reconnectButton)
                 }
             }
         }

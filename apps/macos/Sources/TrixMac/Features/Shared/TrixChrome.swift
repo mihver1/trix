@@ -217,15 +217,28 @@ struct TrixPayloadBox: View {
 
     let payload: String
     var minHeight: CGFloat = 132
+    var valueAccessibilityIdentifier: String?
 
     var body: some View {
         ScrollView {
-            Text(payload)
-                .font(.system(.footnote, design: .monospaced))
-                .foregroundStyle(colors.ink)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
-                .padding(12)
+            Group {
+                if let valueAccessibilityIdentifier {
+                    Text(payload)
+                        .font(.system(.footnote, design: .monospaced))
+                        .foregroundStyle(colors.ink)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .padding(16)
+                        .accessibilityIdentifier(valueAccessibilityIdentifier)
+                } else {
+                    Text(payload)
+                        .font(.system(.footnote, design: .monospaced))
+                        .foregroundStyle(colors.ink)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .padding(16)
+                }
+            }
         }
         .frame(minHeight: minHeight, maxHeight: max(minHeight, 196))
         .background(colors.inputFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))

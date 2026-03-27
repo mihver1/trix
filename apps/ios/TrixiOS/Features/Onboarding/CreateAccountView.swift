@@ -81,6 +81,7 @@ struct CreateAccountView: View {
                 .padding(.bottom, 120)
             }
         }
+        .accessibilityIdentifier(TrixAccessibilityID.Root.onboardingScreen)
         .safeAreaInset(edge: .bottom) {
             bottomActionBar
         }
@@ -126,6 +127,11 @@ struct CreateAccountView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier(
+                    mode == .createAccount
+                        ? TrixAccessibilityID.Onboarding.createModeButton
+                        : TrixAccessibilityID.Onboarding.linkModeButton
+                )
             }
         }
     }
@@ -139,10 +145,33 @@ struct CreateAccountView: View {
             switch setupMode {
             case .createAccount:
                 VStack(spacing: 12) {
-                    OnboardingField(label: "Profile Name", text: $form.profileName, icon: "person.fill")
-                    OnboardingField(label: "Handle", text: $form.handle, icon: "at", autocapitalization: .never, disableAutocorrection: true)
-                    OnboardingField(label: "Bio", text: $form.profileBio, icon: "text.alignleft", axis: .vertical)
-                    OnboardingField(label: "Device Name", text: $form.deviceDisplayName, icon: "iphone.gen3")
+                    OnboardingField(
+                        label: "Profile Name",
+                        text: $form.profileName,
+                        icon: "person.fill",
+                        accessibilityIdentifier: TrixAccessibilityID.Onboarding.profileNameField
+                    )
+                    OnboardingField(
+                        label: "Handle",
+                        text: $form.handle,
+                        icon: "at",
+                        autocapitalization: .never,
+                        disableAutocorrection: true,
+                        accessibilityIdentifier: TrixAccessibilityID.Onboarding.handleField
+                    )
+                    OnboardingField(
+                        label: "Bio",
+                        text: $form.profileBio,
+                        icon: "text.alignleft",
+                        axis: .vertical,
+                        accessibilityIdentifier: TrixAccessibilityID.Onboarding.bioField
+                    )
+                    OnboardingField(
+                        label: "Device Name",
+                        text: $form.deviceDisplayName,
+                        icon: "iphone.gen3",
+                        accessibilityIdentifier: TrixAccessibilityID.Onboarding.deviceNameField
+                    )
                 }
             case .linkExisting:
                 VStack(spacing: 12) {
@@ -153,10 +182,16 @@ struct CreateAccountView: View {
                         axis: .vertical,
                         autocapitalization: .never,
                         disableAutocorrection: true,
-                        lineLimit: 7
+                        lineLimit: 7,
+                        accessibilityIdentifier: TrixAccessibilityID.Onboarding.linkCodeField
                     )
 
-                    OnboardingField(label: "Device Name", text: $linkForm.deviceDisplayName, icon: "iphone.gen3")
+                    OnboardingField(
+                        label: "Device Name",
+                        text: $linkForm.deviceDisplayName,
+                        icon: "iphone.gen3",
+                        accessibilityIdentifier: TrixAccessibilityID.Onboarding.deviceNameField
+                    )
                 }
             }
 
@@ -202,6 +237,7 @@ struct CreateAccountView: View {
                 }
             }
             .font(.subheadline.weight(.semibold))
+            .accessibilityIdentifier(TrixAccessibilityID.Onboarding.serverDetailsToggle)
 
             if isShowingServerDetails {
                 VStack(spacing: 12) {
@@ -216,7 +252,8 @@ struct CreateAccountView: View {
                         icon: "network",
                         autocapitalization: .never,
                         disableAutocorrection: true,
-                        keyboardType: .URL
+                        keyboardType: .URL,
+                        accessibilityIdentifier: TrixAccessibilityID.Onboarding.serverURLField
                     )
 
                     Button(action: reload) {
@@ -230,6 +267,7 @@ struct CreateAccountView: View {
                     }
                     .buttonStyle(.bordered)
                     .disabled(model.isLoading)
+                    .accessibilityIdentifier(TrixAccessibilityID.Onboarding.testConnectionButton)
                 }
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
@@ -257,6 +295,7 @@ struct CreateAccountView: View {
             .background(canSubmit ? onboardingAccent : onboardingAccent.opacity(0.45))
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             .disabled(model.isLoading || !canSubmit)
+            .accessibilityIdentifier(TrixAccessibilityID.Onboarding.primaryActionButton)
 
             Text(setupMode == .createAccount ? "You can link more devices later from Settings." : "Approval usually completes after an existing device confirms this phone.")
                 .font(.caption)
@@ -340,6 +379,7 @@ private struct OnboardingField: View {
     var disableAutocorrection = false
     var keyboardType: UIKeyboardType = .default
     var lineLimit: Int = 3
+    var accessibilityIdentifier: String? = nil
 
     var body: some View {
         HStack(alignment: axis == .vertical ? .top : .center, spacing: 12) {
@@ -353,6 +393,7 @@ private struct OnboardingField: View {
                 .autocorrectionDisabled(disableAutocorrection)
                 .keyboardType(keyboardType)
                 .lineLimit(axis == .vertical ? lineLimit : 1, reservesSpace: axis == .vertical)
+                .accessibilityIdentifier(accessibilityIdentifier ?? label)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
@@ -374,6 +415,7 @@ private struct OnboardingBanner: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(tint.opacity(0.08))
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .accessibilityIdentifier(TrixAccessibilityID.Onboarding.errorBanner)
     }
 }
 

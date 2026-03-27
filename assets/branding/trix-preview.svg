@@ -1,0 +1,111 @@
+<svg width="1600" height="980" viewBox="0 0 1600 980" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="28" y1="20" x2="228" y2="236" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#132332"/>
+      <stop offset="0.58" stop-color="#0A131C"/>
+      <stop offset="1" stop-color="#050A0F"/>
+    </linearGradient>
+    <radialGradient id="auraA" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(84 78) rotate(39) scale(122 92)">
+      <stop stop-color="#3DD9FF" stop-opacity="0.88"/>
+      <stop offset="1" stop-color="#3DD9FF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="auraB" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(186 176) rotate(180) scale(118 86)">
+      <stop stop-color="#B7FF5F" stop-opacity="0.62"/>
+      <stop offset="1" stop-color="#B7FF5F" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="railA" x1="66" y1="128" x2="190" y2="128" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E4F9FF"/>
+      <stop offset="0.46" stop-color="#7DE6FF"/>
+      <stop offset="1" stop-color="#29D5FF"/>
+    </linearGradient>
+    <linearGradient id="railB" x1="66" y1="128" x2="190" y2="128" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#30D8FF"/>
+      <stop offset="0.52" stop-color="#8EF1FF"/>
+      <stop offset="1" stop-color="#A8FFD2"/>
+    </linearGradient>
+    <linearGradient id="railC" x1="66" y1="128" x2="190" y2="128" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#BFFF63"/>
+      <stop offset="0.44" stop-color="#87F9B7"/>
+      <stop offset="1" stop-color="#36D8FF"/>
+    </linearGradient>
+    <radialGradient id="core" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(128 128) scale(16)">
+      <stop stop-color="#E6FCFF"/>
+      <stop offset="1" stop-color="#7FE4FF"/>
+    </radialGradient>
+    <linearGradient id="xStroke" x1="430" y1="44" x2="492" y2="122" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#18D2FF"/>
+      <stop offset="0.55" stop-color="#8EEFFF"/>
+      <stop offset="1" stop-color="#B6FF63"/>
+    </linearGradient>
+    <filter id="softGlow" x="26" y="24" width="204" height="208" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="7"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="980" fill="#E8EEF2"/>
+  <rect width="1600" height="490" fill="#F5F8FB"/>
+  <rect y="490" width="1600" height="490" fill="#09131C"/>
+
+  <g transform="translate(120 96)">
+    <g transform="scale(1.5625)">
+      <rect x="8" y="8" width="240" height="240" rx="58" fill="url(#bg)"/>
+      <rect x="8" y="8" width="240" height="240" rx="58" stroke="#C2F3FF" stroke-opacity="0.14" stroke-width="2"/>
+      <circle cx="92" cy="82" r="76" fill="url(#auraA)"/>
+      <circle cx="182" cy="176" r="72" fill="url(#auraB)"/>
+      <g filter="url(#softGlow)" opacity="0.92">
+        <rect x="66" y="114" width="124" height="28" rx="14" fill="url(#railA)"/>
+        <rect x="66" y="114" width="124" height="28" rx="14" transform="rotate(60 128 128)" fill="url(#railB)"/>
+        <rect x="66" y="114" width="124" height="28" rx="14" transform="rotate(-60 128 128)" fill="url(#railC)"/>
+      </g>
+      <g opacity="0.98">
+        <rect x="66" y="114" width="124" height="28" rx="14" fill="url(#railA)"/>
+        <rect x="66" y="114" width="124" height="28" rx="14" transform="rotate(60 128 128)" fill="url(#railB)"/>
+        <rect x="66" y="114" width="124" height="28" rx="14" transform="rotate(-60 128 128)" fill="url(#railC)"/>
+      </g>
+      <circle cx="128" cy="128" r="22" fill="#09131C" fill-opacity="0.86"/>
+      <circle cx="128" cy="128" r="12" fill="url(#core)"/>
+      <circle cx="128" cy="128" r="29" stroke="#E2FAFF" stroke-opacity="0.22" stroke-width="2"/>
+    </g>
+    <g stroke="#0C1622" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <path d="M520 84H620M570 84V206"/>
+      <path d="M690 206V84H740Q782 84 782 126Q782 168 740 168H690M740 168L786 206"/>
+      <path d="M870 84V206"/>
+    </g>
+    <g stroke="url(#xStroke)" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <path d="M940 84L1034 206"/>
+      <path d="M1034 84L940 206"/>
+    </g>
+  </g>
+
+  <g transform="translate(120 586)">
+    <g transform="scale(1.5625)">
+      <rect x="8" y="8" width="240" height="240" rx="58" fill="url(#bg)"/>
+      <rect x="8" y="8" width="240" height="240" rx="58" stroke="#C2F3FF" stroke-opacity="0.14" stroke-width="2"/>
+      <circle cx="92" cy="82" r="76" fill="url(#auraA)"/>
+      <circle cx="182" cy="176" r="72" fill="url(#auraB)"/>
+      <g filter="url(#softGlow)" opacity="0.92">
+        <rect x="66" y="114" width="124" height="28" rx="14" fill="url(#railA)"/>
+        <rect x="66" y="114" width="124" height="28" rx="14" transform="rotate(60 128 128)" fill="url(#railB)"/>
+        <rect x="66" y="114" width="124" height="28" rx="14" transform="rotate(-60 128 128)" fill="url(#railC)"/>
+      </g>
+      <g opacity="0.98">
+        <rect x="66" y="114" width="124" height="28" rx="14" fill="url(#railA)"/>
+        <rect x="66" y="114" width="124" height="28" rx="14" transform="rotate(60 128 128)" fill="url(#railB)"/>
+        <rect x="66" y="114" width="124" height="28" rx="14" transform="rotate(-60 128 128)" fill="url(#railC)"/>
+      </g>
+      <circle cx="128" cy="128" r="22" fill="#09131C" fill-opacity="0.86"/>
+      <circle cx="128" cy="128" r="12" fill="url(#core)"/>
+      <circle cx="128" cy="128" r="29" stroke="#E2FAFF" stroke-opacity="0.22" stroke-width="2"/>
+    </g>
+    <g stroke="#F4FBFF" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <path d="M520 84H620M570 84V206"/>
+      <path d="M690 206V84H740Q782 84 782 126Q782 168 740 168H690M740 168L786 206"/>
+      <path d="M870 84V206"/>
+    </g>
+    <g stroke="url(#xStroke)" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <path d="M940 84L1034 206"/>
+      <path d="M1034 84L940 206"/>
+    </g>
+  </g>
+</svg>

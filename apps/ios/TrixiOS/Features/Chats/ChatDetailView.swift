@@ -178,6 +178,7 @@ struct ChatDetailView: View {
                     case .text:
                         TextField("Text body", text: $messageDraft.text, axis: .vertical)
                             .lineLimit(3, reservesSpace: true)
+                            .accessibilityIdentifier(TrixAccessibilityID.ChatDetail.messageBodyField)
                     case .attachment:
                         if let selectedAttachment {
                             VStack(alignment: .leading, spacing: 6) {
@@ -255,6 +256,7 @@ struct ChatDetailView: View {
                         }
                     }
                     .disabled(model.isLoading || !canSendSelectedMessage)
+                    .accessibilityIdentifier(TrixAccessibilityID.ChatDetail.sendButton)
                 } header: {
                     Text("Send Message")
                 } footer: {
@@ -398,6 +400,7 @@ struct ChatDetailView: View {
                 }
             }
         }
+        .accessibilityIdentifier(TrixAccessibilityID.ChatDetail.screen)
         .navigationTitle(conversationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

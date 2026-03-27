@@ -304,7 +304,12 @@ final class AppModel: ObservableObject {
         startBackgroundRefreshLoopIfNeeded()
 
         if persistedSession != nil {
-            await restoreSession()
+            let uiTestConfig = MacUITestLaunchConfiguration.current
+            let skipInitialRestore = uiTestConfig.isEnabled
+                && (uiTestConfig.seedScenario == .restoreSession || uiTestConfig.seedScenario == .pendingApproval)
+            if !skipInitialRestore {
+                await restoreSession()
+            }
         }
     }
 
@@ -648,31 +653,31 @@ final class AppModel: ObservableObject {
             )
         } catch let error as TrixAPIError {
             logWarn("auth", "restore_session failed device=\(shortLogID(session.deviceId))", error: error)
-            if error.isCredentialFailure {
+            switch sessionRestoreErrorDisposition(deviceStatus: session.deviceStatus, error: error) {
+            case .restartPendingLink:
                 disconnectRealtimeConnection()
-                if session.deviceStatus == .pending {
-                    if error.suggestsPendingLinkReset {
-                        restartPendingLinkFlow(
-                            baseURLString: session.baseURLString,
-                            deviceDisplayName: session.deviceDisplayName,
-                            errorMessage: "This linked-device session is no longer valid on the server. Start the link flow again on this Mac."
-                        )
-                    } else {
-                        accessToken = nil
-                        clearWorkspaceData()
-                        refreshLocalIdentityState(reportErrors: false)
-                        lastErrorMessage = "This device is still pending approval. Approve it from any active trusted device in the device directory, then reconnect. If that link was rejected or revoked, restart the link flow on this Mac."
-                    }
-                } else {
-                    try? clearSession()
-                    serverBaseURLString = session.baseURLString
-                    draft.profileName = session.profileName
-                    draft.handle = session.handle ?? ""
-                    draft.deviceDisplayName = session.deviceDisplayName
-                    linkDraft.deviceDisplayName = session.deviceDisplayName
-                    lastErrorMessage = "Сохранённая сессия больше невалидна. Создай устройство заново."
-                }
-            } else {
+                restartPendingLinkFlow(
+                    baseURLString: session.baseURLString,
+                    deviceDisplayName: session.deviceDisplayName,
+                    errorMessage: "This linked-device session is no longer available on the server. Start the link flow again on this Mac."
+                )
+            case .preservePendingSession:
+                disconnectRealtimeConnection()
+                accessToken = nil
+                clearWorkspaceData()
+                refreshLocalIdentityState(reportErrors: false)
+                lastErrorMessage = "This device is still pending approval. Approve it from any active trusted device in the device directory, then reconnect. If that link was rejected or revoked, restart the link flow on this Mac."
+            case .preserveActiveSession:
+                disconnectRealtimeConnection()
+                accessToken = nil
+                serverBaseURLString = session.baseURLString
+                draft.profileName = session.profileName
+                draft.handle = session.handle ?? ""
+                draft.deviceDisplayName = session.deviceDisplayName
+                linkDraft.deviceDisplayName = session.deviceDisplayName
+                refreshLocalIdentityState(reportErrors: false)
+                lastErrorMessage = preservedRestoreFailureMessage(for: error)
+            case .surface:
                 lastErrorMessage = error.userFacingMessage
             }
         } catch {
@@ -839,7 +844,7 @@ final class AppModel: ObservableObject {
         return false
     }
 
-    func sendMessage(draftText: String) async -> Bool {
+    func sendMessage(draftText: String, pendingMessageID: UUID? = nil) async -> Bool {
         guard let token = accessToken else {
             await restoreSession()
             return false
@@ -867,7 +872,7 @@ final class AppModel: ObservableObject {
             )
             let messenger = try makeAuthenticatedMessenger(accessToken: token)
             if let attachmentDraft = composerAttachmentDraft {
-                let pendingAttachment = enqueuePendingOutgoing(
+                let pendingAttachment = pendingMessageID ?? enqueuePendingOutgoing(
                     chatId: chatId,
                     payload: .attachment(attachmentDraft)
                 )
@@ -904,6 +909,7 @@ final class AppModel: ObservableObject {
                             eventType: nil,
                             eventJson: nil
                         ),
+                        messageId: pendingAttachment,
                         attachmentTokens: [attachmentToken]
                     )
                     removePendingOutgoing(pendingAttachment)
@@ -917,14 +923,15 @@ final class AppModel: ObservableObject {
             }
 
             if let trimmedText {
-                let pendingText = enqueuePendingOutgoing(
+                let pendingText = pendingMessageID ?? enqueuePendingOutgoing(
                     chatId: chatId,
                     payload: .text(trimmedText)
                 )
                 do {
                     _ = try await messenger.sendMessage(
                         conversationId: chatId,
-                        body: .text(trimmedText)
+                        body: .text(trimmedText),
+                        messageId: pendingText
                     )
                     removePendingOutgoing(pendingText)
                 } catch {
@@ -1005,17 +1012,12 @@ final class AppModel: ObservableObject {
         markPendingOutgoingSending(pendingMessageID)
         composerAttachmentDraft = nil
 
-        let success: Bool
         switch pendingMessage.payload {
         case let .text(text):
-            success = await sendMessage(draftText: text)
+            _ = await sendMessage(draftText: text, pendingMessageID: pendingMessageID)
         case let .attachment(attachmentDraft):
             composerAttachmentDraft = attachmentDraft
-            success = await sendMessage(draftText: "")
-        }
-
-        if success {
-            removePendingOutgoing(pendingMessageID)
+            _ = await sendMessage(draftText: "", pendingMessageID: pendingMessageID)
         }
     }
 
@@ -3242,4 +3244,41 @@ private extension TrixAPIError {
         let combined = "\(code) \(message)".lowercased()
         return combined.contains("revoked") || combined.contains("deleted")
     }
+}
+
+enum SessionRestoreErrorDisposition: Equatable {
+    case restartPendingLink
+    case preservePendingSession
+    case preserveActiveSession
+    case surface
+}
+
+func sessionRestoreErrorDisposition(
+    deviceStatus: DeviceStatus,
+    error: TrixAPIError
+) -> SessionRestoreErrorDisposition {
+    switch deviceStatus {
+    case .pending:
+        if error.suggestsPendingLinkReset || error.isMissingServerState {
+            return .restartPendingLink
+        }
+        if error.isCredentialFailure {
+            return .preservePendingSession
+        }
+    case .active, .revoked:
+        if error.isCredentialFailure || error.isMissingServerState {
+            return .preserveActiveSession
+        }
+    }
+
+    return .surface
+}
+
+func preservedRestoreFailureMessage(for error: TrixAPIError) -> String {
+    let reason = error.userFacingMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+    if reason.isEmpty {
+        return "Не удалось восстановить сессию на сервере. Локальные ключи и история сохранены на этом Mac. Проверь подключение и состояние устройства на сервере, затем попробуй reconnect."
+    }
+
+    return "Не удалось восстановить сессию на сервере (\(reason)). Локальные ключи и история сохранены на этом Mac. Проверь подключение и состояние устройства на сервере, затем попробуй reconnect."
 }
