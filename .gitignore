@@ -9,6 +9,9 @@
 /apps/android/.gradle
 /apps/android/buildSrc/.gradle
 /apps/android/local.properties
+__pycache__/
+*.pyc
+*.pyo
 **/build/
 blobs/
 postgres-data/
