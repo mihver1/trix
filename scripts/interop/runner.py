@@ -95,7 +95,7 @@ def run_steps_with_driver_map(
         for step in suite.steps:
             participant = _participant_for_step(step)
             driver = drivers[participant]
-            raw = driver.perform(step.action)
+            raw = driver.perform(step.action, scenario_label=scenario_label)
             dr = coerce_driver_result(raw)
             arts: dict[str, object] = dict(dr.artifacts) if dr.artifacts is not None else {}
             records.append(StepRunRecord(step_id=step.step_id, ok=dr.ok, artifacts=arts))
@@ -109,9 +109,14 @@ def run_steps_with_driver_map(
                     "actor": step.actor,
                     "artifacts": arts,
                 }
+                if scenario_label is not None:
+                    row["scenario_label"] = scenario_label
                 if dr.detail is not None:
                     row["detail"] = dr.detail
                 append_step_result(output_dir, row)
+            if step.step_id in suite.cleanup_after_step_ids:
+                for d in drivers.values():
+                    d.cleanup()
             if not dr.ok:
                 break
     finally:

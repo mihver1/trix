@@ -972,6 +972,17 @@ private fun NewChatActions(
     }
 }
 
+@Composable
+internal fun NewChatActionsForTesting(
+    onOpenDirectMessages: () -> Unit,
+    onOpenGroupChats: () -> Unit,
+) {
+    NewChatActions(
+        onOpenDirectMessages = onOpenDirectMessages,
+        onOpenGroupChats = onOpenGroupChats,
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DirectoryAccountsSheet(

@@ -34,38 +34,29 @@ def resolve_suite(name: str):
     raise ValueError(f"Unknown suite: {name!r}")
 
 
-def default_participant_drivers() -> dict[str, InteropDriver]:
-    """Map logical participants used by built-in scenarios to stub platform drivers."""
+def default_participant_drivers(
+    *,
+    base_url: str | None,
+    ios_destination: str | None,
+) -> dict[str, InteropDriver]:
+    """Map logical participants used by built-in scenarios to platform drivers."""
     return {
-        "ios-owner": create_ios_driver(),
-        "android-peer": create_android_driver(),
-        "macos-peer": create_macos_driver(),
+        "ios-owner": create_ios_driver(
+            base_url=base_url,
+            ios_destination=ios_destination,
+        ),
+        "android-peer": create_android_driver(base_url=base_url),
+        "macos-peer": create_macos_driver(base_url=base_url),
     }
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m scripts.interop.cli")
-    parser.add_argument(
-        "--suite",
-        required=True,
-        choices=["interop-seeded", "interop-cross", "interop-full"],
-        help="Which interop scenario suite to run.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        required=True,
-        help="Directory for scenario.json and step-results.json evidence.",
-    )
-    parser.add_argument(
-        "--reset",
-        action="store_true",
-        help="Invoke driver cleanup() hooks after the run.",
-    )
-    ns = parser.parse_args(argv)
+def _cmd_run(ns: argparse.Namespace) -> int:
     suite = resolve_suite(ns.suite)
     scenario_label = build_scenario_label(ns.suite)
-    drivers = default_participant_drivers()
+    drivers = default_participant_drivers(
+        base_url=ns.base_url,
+        ios_destination=ns.ios_destination,
+    )
     result = None
     try:
         try:
@@ -91,6 +82,41 @@ def main(argv: list[str] | None = None) -> int:
     if result is None:
         return _EXIT_HARNESS_ERROR
     return 0 if result.ok else 2
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="python3 -m scripts.interop.cli")
+    sub = parser.add_subparsers(dest="command", required=True)
+    run_p = sub.add_parser("run", help="Run an interop scenario suite.")
+    run_p.add_argument(
+        "--suite",
+        required=True,
+        choices=["interop-seeded", "interop-cross", "interop-full"],
+        help="Which interop scenario suite to run.",
+    )
+    run_p.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("interop-evidence"),
+        help="Directory for scenario.json and step-results.json evidence.",
+    )
+    run_p.add_argument(
+        "--base-url",
+        default="http://127.0.0.1:8080",
+        help="Trix backend base URL (used for health checks and bootstraps).",
+    )
+    run_p.add_argument(
+        "--ios-destination",
+        default=None,
+        help="Optional xcodebuild destination string for the iOS driver.",
+    )
+    run_p.add_argument(
+        "--reset",
+        action="store_true",
+        help="Invoke driver cleanup() hooks after the full run completes.",
+    )
+    ns = parser.parse_args(argv)
+    return _cmd_run(ns)
 
 
 if __name__ == "__main__":

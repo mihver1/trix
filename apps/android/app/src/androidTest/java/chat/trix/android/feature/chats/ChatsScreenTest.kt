@@ -17,6 +17,8 @@ import chat.trix.android.core.chat.ChatOverview
 import chat.trix.android.core.chat.ChatTimelineMessage
 import chat.trix.android.core.ffi.FfiChatType
 import chat.trix.android.core.ffi.FfiContentType
+import chat.trix.android.core.ffi.FfiMessageBody
+import chat.trix.android.core.ffi.FfiMessageBodyKind
 import chat.trix.android.designsystem.theme.TrixTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -177,12 +179,32 @@ class ChatsScreenTest {
                     contentType = FfiContentType.ATTACHMENT,
                     attachment = ChatAttachment(
                         messageId = "message-1",
-                        attachmentRef = "attachment-ref-1",
+                        blobId = "attachment-ref-1",
                         mimeType = "application/pdf",
                         fileName = "roadmap.pdf",
                         sizeBytes = 1024,
                         widthPx = null,
                         heightPx = null,
+                        body = FfiMessageBody(
+                            kind = FfiMessageBodyKind.ATTACHMENT,
+                            text = null,
+                            targetMessageId = null,
+                            emoji = null,
+                            reactionAction = null,
+                            receiptType = null,
+                            receiptAtUnix = null,
+                            blobId = "attachment-ref-1",
+                            mimeType = "application/pdf",
+                            sizeBytes = 1024u,
+                            sha256 = null,
+                            fileName = "roadmap.pdf",
+                            widthPx = null,
+                            heightPx = null,
+                            fileKey = null,
+                            nonce = null,
+                            eventType = null,
+                            eventJson = null,
+                        ),
                     ),
                 ),
             ),

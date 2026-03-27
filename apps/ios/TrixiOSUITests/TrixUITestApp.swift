@@ -2,11 +2,18 @@ import XCTest
 
 enum TrixUITestApp {
     private static let runnerBaseURLEnvironmentKey = "TRIX_IOS_UI_TEST_BASE_URL"
+    private static let unitSmokeBaseURLEnvironmentKey = "TRIX_IOS_SERVER_SMOKE_BASE_URL"
 
     static func configuredBaseURL() -> String {
         let candidate = ProcessInfo.processInfo.environment[runnerBaseURLEnvironmentKey]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return candidate?.isEmpty == false ? candidate! : "http://localhost:8080"
+        if candidate?.isEmpty == false {
+            return candidate!
+        }
+
+        let fallback = ProcessInfo.processInfo.environment[unitSmokeBaseURLEnvironmentKey]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return fallback?.isEmpty == false ? fallback! : "http://localhost:8080"
     }
 
     static func skipUnlessServerReachable(baseURL: String? = nil) async throws {

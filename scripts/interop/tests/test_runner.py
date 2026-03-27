@@ -21,7 +21,7 @@ class _FakeDriver:
         self.shutdown_called = False
         self._names = names
 
-    def perform(self, action):  # noqa: ANN001
+    def perform(self, action, *, scenario_label=None):  # noqa: ANN001
         self.calls.append(action.name)
         return {"ok": True}
 
@@ -48,7 +48,7 @@ class InteropRunnerTests(unittest.TestCase):
         artifacts = {"log_path": "/tmp/ios-driver.log", "screenshot_path": None}
 
         class _ArtifactDriver(_FakeDriver):
-            def perform(self, action):  # noqa: ANN001
+            def perform(self, action, *, scenario_label=None):  # noqa: ANN001
                 return {"ok": True, "artifacts": dict(artifacts)}
 
         suite = build_interop_seeded_suite().with_steps(
@@ -93,7 +93,7 @@ class InteropRunnerTests(unittest.TestCase):
 
     def test_runner_fails_fast_when_step_returns_not_ok(self) -> None:
         class _FailThenNeverCalledDriver(_FakeDriver):
-            def perform(self, action):  # noqa: ANN001
+            def perform(self, action, *, scenario_label=None):  # noqa: ANN001
                 self.calls.append(action.name)
                 if len(self.calls) == 1:
                     return {"ok": False, "detail": "simulated failure"}
@@ -109,7 +109,7 @@ class InteropRunnerTests(unittest.TestCase):
 
     def test_fail_fast_still_writes_evidence_for_failed_step_only(self) -> None:
         class _FailDriver(_FakeDriver):
-            def perform(self, action):  # noqa: ANN001
+            def perform(self, action, *, scenario_label=None):  # noqa: ANN001
                 self.calls.append(action.name)
                 return {"ok": False, "detail": "first step failed"}
 

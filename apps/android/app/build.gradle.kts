@@ -44,9 +44,15 @@ val skipAndroidNdkBuild = providers.gradleProperty("trixSkipAndroidNdkBuild")
     .get()
 val hostRustLibrary = File(workspaceRoot, "target/debug/${hostRustLibraryName()}")
 
-val trixBaseUrl = providers.gradleProperty("trixBaseUrl")
+val trixBaseUrlProvider = providers.gradleProperty("trixBaseUrl")
     .orElse(providers.environmentVariable("TRIX_BASE_URL"))
     .orElse("http://10.0.2.2:8080")
+val trixBaseUrl = trixBaseUrlProvider
+    .get()
+    .trimEnd('/')
+val trixInteropBaseUrl = providers.gradleProperty("trixInteropBaseUrl")
+    .orElse(providers.environmentVariable("TRIX_INTEROP_BASE_URL"))
+    .orElse(trixBaseUrlProvider)
     .get()
     .trimEnd('/')
 val releaseStoreFileValue = providers.gradleProperty("trixReleaseStoreFile")
@@ -85,7 +91,10 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunnerArguments["trixBaseUrl"] = trixInteropBaseUrl
         buildConfigField("String", "TRIX_BASE_URL", "\"$trixBaseUrl\"")
+        buildConfigField("String", "TRIX_INTEROP_BASE_URL", "\"$trixInteropBaseUrl\"")
     }
 
     buildFeatures {

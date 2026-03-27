@@ -27,10 +27,11 @@ final class TrixiOSSmokeUITests: XCTestCase {
     }
 
     private func launchSeededConversationBundle(
-        scenarioLabel: String
+        scenarioLabel: String,
+        resetState: Bool = true
     ) -> XCUIApplication {
         TrixUITestApp.launch(
-            resetState: true,
+            resetState: resetState,
             seedScenario: .approvedAccount,
             conversationScenario: .dmAndGroup,
             scenarioLabel: scenarioLabel
@@ -79,6 +80,12 @@ final class TrixiOSSmokeUITests: XCTestCase {
             return
         }
 
+        let fallbackSendButton = app.buttons["arrow.up.circle.fill"]
+        if fallbackSendButton.waitForExistence(timeout: 1) {
+            fallbackSendButton.tap()
+            return
+        }
+
         let composer = composerInput(in: app)
         let composerExists = composer.waitForExistence(timeout: 1)
         let screen = identifiedElement(TrixAccessibilityID.ChatDetail.screen, in: app)
@@ -90,8 +97,6 @@ final class TrixiOSSmokeUITests: XCTestCase {
                 .tap()
             return
         }
-
-        let fallbackSendButton = app.buttons["arrow.up.circle.fill"]
         XCTAssertTrue(fallbackSendButton.waitForExistence(timeout: 5))
         fallbackSendButton.tap()
     }
@@ -211,6 +216,52 @@ final class TrixiOSSmokeUITests: XCTestCase {
             identifiedElement(TrixAccessibilityID.Dashboard.chatRow(.group), in: app)
                 .waitForExistence(timeout: 20)
         )
+    }
+
+    func testSeededConversationBundleRestoresAfterRelaunch() async throws {
+        try await TrixUITestApp.skipUnlessServerReachable()
+
+        let initialApp = launchSeededConversationBundle(
+            scenarioLabel: "seeded-chat-bundle-restore-initial"
+        )
+        assertDashboardVisible(in: initialApp)
+
+        XCTAssertTrue(
+            identifiedElement(TrixAccessibilityID.Dashboard.chatRow(.dm), in: initialApp)
+                .waitForExistence(timeout: 20)
+        )
+        XCTAssertTrue(
+            identifiedElement(TrixAccessibilityID.Dashboard.chatRow(.group), in: initialApp)
+                .waitForExistence(timeout: 20)
+        )
+
+        initialApp.terminate()
+
+        let restoredApp = TrixUITestApp.launch(
+            resetState: false,
+            scenarioLabel: "seeded-chat-bundle-restore-relaunch"
+        )
+        assertDashboardVisible(in: restoredApp)
+
+        guard identifiedElement(TrixAccessibilityID.Dashboard.chatRow(.dm), in: restoredApp)
+            .waitForExistence(timeout: 20) else {
+            return XCTFail("Expected seeded DM row to remain visible after relaunch.")
+        }
+        guard identifiedElement(TrixAccessibilityID.Dashboard.chatRow(.group), in: restoredApp)
+            .waitForExistence(timeout: 20) else {
+            return XCTFail("Expected seeded group row to remain visible after relaunch.")
+        }
+
+        tapSeededChatRow(.dm, in: restoredApp)
+
+        guard identifiedElement(TrixAccessibilityID.ChatDetail.screen, in: restoredApp)
+            .waitForExistence(timeout: 20) else {
+            return XCTFail("Expected restored DM detail screen after relaunch.")
+        }
+        guard identifiedElement(TrixAccessibilityID.ChatDetail.message(.dmSeed), in: restoredApp)
+            .waitForExistence(timeout: 10) else {
+            return XCTFail("Expected restored seeded DM message after relaunch.")
+        }
     }
 
     func testSeededDMDetailShowsTimelineAndSupportsSendFlow() async throws {

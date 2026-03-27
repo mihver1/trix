@@ -16,12 +16,17 @@ DIST_ROOT="$APP_ROOT/dist"
 BUNDLE_ROOT="$DIST_ROOT/$APP_NAME.app"
 CONTENTS_ROOT="$BUNDLE_ROOT/Contents"
 MACOS_ROOT="$CONTENTS_ROOT/MacOS"
+RESOURCES_ROOT="$CONTENTS_ROOT/Resources"
+ICON_SOURCE="$APP_ROOT/Sources/TrixMac/Resources/AppIcon.icns"
 
 echo "==> Building trix-core release artifact"
 cargo build -p trix-core --release --lib --manifest-path "$REPO_ROOT/Cargo.toml"
 
 echo "==> Regenerating macOS UniFFI bridge"
 "$SCRIPT_DIR/generate-trix-core-bridge.sh"
+
+echo "==> Regenerating app icons"
+swift "$REPO_ROOT/scripts/generate-app-icons.swift"
 
 echo "==> Building macOS client release binary"
 (
@@ -37,9 +42,10 @@ fi
 
 echo "==> Packaging app bundle"
 rm -rf "$BUNDLE_ROOT"
-mkdir -p "$MACOS_ROOT"
+mkdir -p "$MACOS_ROOT" "$RESOURCES_ROOT"
 
 cp "$BINARY_PATH" "$MACOS_ROOT/$APP_NAME"
+cp "$ICON_SOURCE" "$RESOURCES_ROOT/AppIcon.icns"
 
 cat > "$CONTENTS_ROOT/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -52,6 +58,8 @@ cat > "$CONTENTS_ROOT/Info.plist" <<PLIST
   <string>${APP_NAME}</string>
   <key>CFBundleIdentifier</key>
   <string>${BUNDLE_ID}</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>

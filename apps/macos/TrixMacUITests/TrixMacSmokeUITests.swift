@@ -78,6 +78,22 @@ final class TrixMacSmokeUITests: XCTestCase {
         XCTAssertTrue(reconnect.isHittable)
     }
 
+    func testApprovedAccountSeedLaunchesWorkspace() async throws {
+        try await TrixMacUITestApp.skipUnlessServerReachable()
+
+        let app = TrixMacUITestApp.launch(
+            resetState: true,
+            seedScenario: .approvedAccount,
+            scenarioLabel: "approved-account"
+        )
+
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(
+            identifiedElement(TrixMacAccessibilityID.Root.workspaceScreen, in: app)
+                .waitForExistence(timeout: 25)
+        )
+    }
+
     func testRestoreSeedLaunchesWorkspace() async throws {
         try await TrixMacUITestApp.skipUnlessServerReachable()
 

@@ -4,20 +4,21 @@ import XCTest
 @MainActor
 final class UITestConversationSeedStateTests: XCTestCase {
     func testUITestBootstrapConversationScenarioSeedsDMAndGroupChats() async throws {
-        let baseURL = configuredBaseURL()
-        try await skipUnlessServerReachable(at: baseURL)
-        resetLocalAppState()
-        defer { resetLocalAppState() }
+        let baseURL = UITestServerHarness.configuredBaseURL()
+        try await UITestServerHarness.skipUnlessServerReachable(at: baseURL)
+        UITestServerHarness.resetLocalAppState()
+        defer { UITestServerHarness.resetLocalAppState() }
 
         let configuration = UITestLaunchConfiguration.make(
             arguments: [
                 TrixUITestLaunchArgument.enableUITesting,
                 TrixUITestLaunchArgument.resetState,
+                TrixUITestLaunchArgument.disableAnimations,
             ],
             environment: [
                 TrixUITestLaunchEnvironment.baseURL: baseURL,
                 TrixUITestLaunchEnvironment.seedScenario: TrixUITestSeedScenario.approvedAccount.rawValue,
-                "TRIX_UI_TEST_CONVERSATION_SCENARIO": "dm-and-group",
+                TrixUITestLaunchEnvironment.conversationScenario: TrixUITestConversationScenario.dmAndGroup.rawValue,
                 TrixUITestLaunchEnvironment.scenarioLabel: "conversation-bundle",
             ]
         )
@@ -39,11 +40,45 @@ final class UITestConversationSeedStateTests: XCTestCase {
         )
     }
 
+    func testUITestBootstrapPreservesConversationManifestAcrossNonResetRelaunch() async throws {
+        let baseURL = UITestServerHarness.configuredBaseURL()
+        try await UITestServerHarness.skipUnlessServerReachable(at: baseURL)
+        UITestServerHarness.resetLocalAppState()
+        defer { UITestServerHarness.resetLocalAppState() }
+
+        let seededState = try await UITestFixtureSeeder.seedLaunchState(
+            seedScenario: .approvedAccount,
+            conversationScenario: .dmAndGroup,
+            baseURLString: baseURL,
+            scenarioLabel: "conversation-restore-relaunch"
+        )
+        let manifest = try XCTUnwrap(seededState.fixtureManifest)
+        try LocalDeviceIdentityStore().save(seededState.identity)
+        try UITestFixtureManifestStore.save(manifest)
+
+        let configuration = UITestLaunchConfiguration.make(
+            arguments: [TrixUITestLaunchArgument.enableUITesting],
+            environment: [
+                TrixUITestLaunchEnvironment.baseURL: baseURL,
+                TrixUITestLaunchEnvironment.scenarioLabel: "conversation-restore-relaunch",
+            ]
+        )
+
+        let resolvedBaseURL = try await UITestAppBootstrap.prepareForLaunch(
+            fallbackBaseURLString: "http://127.0.0.1:8080",
+            configuration: configuration
+        )
+        XCTAssertEqual(resolvedBaseURL, baseURL)
+
+        let restoredManifest = try XCTUnwrap(UITestFixtureManifestStore.load())
+        XCTAssertEqual(restoredManifest, manifest)
+    }
+
     func testSeededDMPostDebugMessageAppearsInConversationSnapshot() async throws {
-        let baseURL = configuredBaseURL()
-        try await skipUnlessServerReachable(at: baseURL)
-        resetLocalAppState()
-        defer { resetLocalAppState() }
+        let baseURL = UITestServerHarness.configuredBaseURL()
+        try await UITestServerHarness.skipUnlessServerReachable(at: baseURL)
+        UITestServerHarness.resetLocalAppState()
+        defer { UITestServerHarness.resetLocalAppState() }
 
         let seededState = try await UITestFixtureSeeder.seedLaunchState(
             seedScenario: .approvedAccount,
@@ -82,55 +117,6 @@ final class UITestConversationSeedStateTests: XCTestCase {
         )
         XCTAssertTrue(
             updatedSnapshot.messages.contains { $0.body?.text == outgoingText }
-        )
-    }
-
-    private func configuredBaseURL() -> String {
-        ProcessInfo.processInfo.environment["TRIX_IOS_SERVER_SMOKE_BASE_URL"]?
-            .trix_trimmedOrNil() ?? "http://localhost:8080"
-    }
-
-    private func skipUnlessServerReachable(at baseURL: String) async throws {
-        let healthURL = try XCTUnwrap(URL(string: "\(baseURL)/v0/system/health"))
-
-        do {
-            let (_, response) = try await URLSession.shared.data(from: healthURL)
-            let httpResponse = try XCTUnwrap(response as? HTTPURLResponse)
-            guard (200..<300).contains(httpResponse.statusCode) else {
-                throw XCTSkip(
-                    "Conversation seed state test skipped because \(healthURL.absoluteString) returned HTTP \(httpResponse.statusCode)."
-                )
-            }
-        } catch let skip as XCTSkip {
-            throw skip
-        } catch {
-            throw XCTSkip(
-                "Conversation seed state test skipped because \(healthURL.absoluteString) is not reachable: \(error.localizedDescription)"
-            )
-        }
-    }
-
-    private func resetLocalAppState() {
-        if let identity = try? LocalDeviceIdentityStore().load() {
-            try? TrixCorePersistentBridge.deletePersistentState(identity: identity)
-        }
-        try? LocalDeviceIdentityStore().delete()
-
-        guard let appSupportRoot = try? FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        ) else {
-            return
-        }
-
-        let trixDirectory = appSupportRoot.appendingPathComponent("TrixiOS", isDirectory: true)
-        try? FileManager.default.removeItem(
-            at: trixDirectory.appendingPathComponent("CoreState", isDirectory: true)
-        )
-        try? FileManager.default.removeItem(
-            at: trixDirectory.appendingPathComponent("SimulatorKeychainFallback", isDirectory: true)
         )
     }
 }

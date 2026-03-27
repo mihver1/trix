@@ -10,3 +10,9 @@ Palette:
 - `#09131C`: dark anchor
 - `#18D2FF`: electric cyan
 - `#B6FF63`: acid lime accent
+
+To regenerate platform launcher icons from `trix-mark.svg`:
+
+```bash
+swift scripts/generate-app-icons.swift
+```

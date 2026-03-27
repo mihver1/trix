@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -75,15 +76,23 @@ import chat.trix.android.feature.settings.SettingsScreen
 import chat.trix.android.ui.adaptive.TrixAdaptiveInfo
 import chat.trix.android.ui.adaptive.TrixNavigationLayout
 import chat.trix.android.ui.adaptive.rememberTrixAdaptiveInfo
+import chat.trix.android.ui.interop.TrixInteropLaunchCoordinator
 import chat.trix.android.ui.navigation.TrixDestination
+import java.io.File
 import java.io.IOException
 import java.net.URI
+import org.json.JSONObject
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun TrixApp(
     launchIntent: Intent? = null,
+    launchBaseUrlOverride: String? = null,
+    interopActionJson: String? = null,
+    interopResultFileName: String? = null,
 ) {
     TrixTheme {
         val context = LocalContext.current.applicationContext
@@ -95,8 +104,9 @@ fun TrixApp(
             contract = ActivityResultContracts.RequestPermission(),
             onResult = {},
         )
-        var configuredBaseUrl by rememberSaveable {
-            mutableStateOf(backendConfigStore.readBaseUrl() ?: BuildConfig.TRIX_BASE_URL)
+        val defaultBaseUrl = launchBaseUrlOverride ?: BuildConfig.TRIX_BASE_URL
+        var configuredBaseUrl by rememberSaveable(launchBaseUrlOverride) {
+            mutableStateOf(launchBaseUrlOverride ?: backendConfigStore.readBaseUrl() ?: BuildConfig.TRIX_BASE_URL)
         }
         val authCoordinator = remember(context, configuredBaseUrl) {
             AuthBootstrapCoordinator(
@@ -114,7 +124,23 @@ fun TrixApp(
         var backendConfigError by remember { mutableStateOf<String?>(null) }
         var notificationPermissionRequested by rememberSaveable { mutableStateOf(false) }
 
-        LaunchedEffect(authCoordinator, reloadSignal) {
+        val interopStableKey = remember(interopActionJson, interopResultFileName) {
+            TrixInteropLaunchCoordinator.stableInteropRequestKey(interopActionJson, interopResultFileName)
+        }
+        val hasInteropRequest = TrixInteropLaunchCoordinator.hasInteropRequest(interopStableKey)
+
+        var interopBridgeFinished by rememberSaveable(interopStableKey) {
+            mutableStateOf(TrixInteropLaunchCoordinator.initialBridgeFinished(hasInteropRequest))
+        }
+
+        var interopWriteAttempt by remember(interopStableKey) {
+            mutableIntStateOf(0)
+        }
+
+        LaunchedEffect(authCoordinator, reloadSignal, interopStableKey, interopBridgeFinished, hasInteropRequest) {
+            if (TrixInteropLaunchCoordinator.shouldDeferAuthBootstrap(hasInteropRequest, interopBridgeFinished)) {
+                return@LaunchedEffect
+            }
             authState = TrixAuthState.Loading("Restoring local device")
             authState = loadInitialAuthState(authCoordinator)
         }
@@ -127,6 +153,54 @@ fun TrixApp(
             }
             if (!requestedChatId.isNullOrBlank()) {
                 requestedConversationId = requestedChatId
+            }
+        }
+
+        LaunchedEffect(
+            interopStableKey,
+            interopActionJson,
+            interopResultFileName,
+            configuredBaseUrl,
+            interopBridgeFinished,
+            interopWriteAttempt,
+            hasInteropRequest,
+        ) {
+            if (!hasInteropRequest) return@LaunchedEffect
+            if (interopBridgeFinished) return@LaunchedEffect
+
+            val actionJson = interopActionJson?.trim()?.takeIf(String::isNotEmpty) ?: return@LaunchedEffect
+            val resultFileName = interopResultFileName?.trim()?.takeIf(String::isNotEmpty) ?: return@LaunchedEffect
+
+            val outcome = withContext(Dispatchers.IO) {
+                invokeAndroidInteropBridge(
+                    context = context,
+                    actionJson = actionJson,
+                    resultFileName = resultFileName,
+                    baseUrl = configuredBaseUrl,
+                )
+            }
+
+            when (outcome) {
+                AndroidInteropInvocationOutcome.WroteTerminalResult -> {
+                    interopBridgeFinished = true
+                    reloadSignal += 1
+                }
+
+                is AndroidInteropInvocationOutcome.DidNotWrite -> {
+                    if (interopWriteAttempt < MAX_INTEROP_RESULT_WRITE_ATTEMPTS - 1) {
+                        interopWriteAttempt += 1
+                    } else {
+                        withContext(Dispatchers.IO) {
+                            writeInteropFailureResultStub(
+                                context = context,
+                                resultFileName = resultFileName,
+                                detail = outcome.reason,
+                            )
+                        }
+                        interopBridgeFinished = true
+                        reloadSignal += 1
+                    }
+                }
             }
         }
 
@@ -163,10 +237,22 @@ fun TrixApp(
             color = MaterialTheme.colorScheme.background,
         ) {
             when (val state = authState) {
-                is TrixAuthState.Loading -> LoadingScreen(message = state.message)
+                is TrixAuthState.Loading -> {
+                    val loadingMessage = if (
+                        TrixInteropLaunchCoordinator.shouldDeferAuthBootstrap(hasInteropRequest, interopBridgeFinished)
+                    ) {
+                        TrixInteropLaunchCoordinator.loadingMessageWhileDeferred(
+                            hasInteropRequest = hasInteropRequest,
+                            bridgeFinished = interopBridgeFinished,
+                        )
+                    } else {
+                        state.message
+                    }
+                    LoadingScreen(message = loadingMessage)
+                }
                 is TrixAuthState.SignedOut -> BootstrapScreen(
                     baseUrl = configuredBaseUrl,
-                    defaultBaseUrl = BuildConfig.TRIX_BASE_URL,
+                    defaultBaseUrl = defaultBaseUrl,
                     storedDevice = state.storedDevice,
                     busyMessage = null,
                     errorMessage = state.errorMessage,
@@ -189,10 +275,10 @@ fun TrixApp(
                     },
                     onResetBaseUrl = {
                         coroutineScope.launch {
-                            backendConfigStore.writeBaseUrl(BuildConfig.TRIX_BASE_URL)
+                            backendConfigStore.writeBaseUrl(defaultBaseUrl)
                             backendConfigError = null
                             authState = TrixAuthState.Loading("Switching backend")
-                            configuredBaseUrl = BuildConfig.TRIX_BASE_URL
+                            configuredBaseUrl = defaultBaseUrl
                         }
                     },
                     onCreateAccount = { input ->
@@ -492,6 +578,77 @@ private fun normalizeBaseUrl(value: String): String {
     }
 
     return normalized
+}
+
+private const val MAX_INTEROP_RESULT_WRITE_ATTEMPTS = 3
+
+private sealed class AndroidInteropInvocationOutcome {
+    object WroteTerminalResult : AndroidInteropInvocationOutcome()
+
+    data class DidNotWrite(
+        val reason: String,
+    ) : AndroidInteropInvocationOutcome()
+}
+
+private fun invokeAndroidInteropBridge(
+    context: Context,
+    actionJson: String,
+    resultFileName: String,
+    baseUrl: String,
+): AndroidInteropInvocationOutcome {
+    return runCatching {
+        val bridgeClass = Class.forName("chat.trix.android.interop.AndroidInteropActionBridge")
+        val performMethod = bridgeClass.getMethod(
+            "perform",
+            Context::class.java,
+            String::class.java,
+            String::class.java,
+            String::class.java,
+        )
+        when (
+            val raw = performMethod.invoke(
+                null,
+                context,
+                actionJson,
+                resultFileName,
+                baseUrl,
+            )
+        ) {
+            is Boolean ->
+                if (raw) {
+                    AndroidInteropInvocationOutcome.WroteTerminalResult
+                } else {
+                    AndroidInteropInvocationOutcome.DidNotWrite(
+                        "Android interop bridge did not write a result file.",
+                    )
+                }
+
+            else -> AndroidInteropInvocationOutcome.DidNotWrite(
+                "Unexpected Android interop bridge return type: ${raw?.javaClass?.name}",
+            )
+        }
+    }.getOrElse { error ->
+        Log.e("TrixApp", "Android interop bridge invocation failed", error)
+        AndroidInteropInvocationOutcome.DidNotWrite(
+            error.message ?: "Android interop bridge invocation failed.",
+        )
+    }
+}
+
+private fun writeInteropFailureResultStub(
+    context: Context,
+    resultFileName: String,
+    detail: String,
+) {
+    runCatching {
+        val dir = File(context.filesDir, "interop").apply { mkdirs() }
+        val file = File(dir, File(resultFileName).name)
+        val json = JSONObject().apply {
+            put("status", "failed")
+            put("detail", detail)
+        }
+        file.writeText(json.toString())
+    }
 }
 
 @Composable

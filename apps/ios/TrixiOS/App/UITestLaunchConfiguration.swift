@@ -77,6 +77,15 @@ struct UITestLaunchConfiguration {
 enum UITestAppBootstrap {
     private static var didPrepare = false
 
+    static func resetForTesting() {
+        didPrepare = false
+    }
+
+    static func resetLocalStateForTesting() throws {
+        didPrepare = false
+        try resetLocalState()
+    }
+
     static func prepareForLaunch(
         fallbackBaseURLString: String
     ) async throws -> String {
@@ -117,7 +126,7 @@ enum UITestAppBootstrap {
             } else {
                 UITestFixtureManifestStore.clear()
             }
-        } else if configuration.conversationScenario == nil {
+        } else if configuration.resetLocalState {
             UITestFixtureManifestStore.clear()
         }
 
