@@ -375,7 +375,7 @@ enum TrixCoreMessageBridge {
     }
 }
 
-private enum TrixCoreMessageBridgeError: LocalizedError {
+enum TrixCoreMessageBridgeError: LocalizedError, Equatable {
     case invalidTextBody
     case attachmentRequiresUploadFlow
     case invalidAttachmentBody
@@ -407,7 +407,7 @@ private enum TrixCoreMessageBridgeError: LocalizedError {
     }
 }
 
-private extension DebugReactionAction {
+extension DebugReactionAction {
     var trix_ffiReactionAction: FfiReactionAction {
         switch self {
         case .add:
@@ -418,7 +418,7 @@ private extension DebugReactionAction {
     }
 }
 
-private extension DebugReceiptKind {
+extension DebugReceiptKind {
     var trix_ffiReceiptType: FfiReceiptType {
         switch self {
         case .delivered:

@@ -518,7 +518,6 @@ struct ChatDetailView: View {
             if let response = await model.postDebugMessage(
                 baseURLString: serverBaseURL,
                 chatId: snapshot.detail.chatId,
-                epoch: snapshot.detail.epoch,
                 draft: draft
             ) {
                 messageDraft = DebugMessageDraft()
@@ -542,12 +541,15 @@ struct ChatDetailView: View {
             if let outcome = await model.postDebugAttachment(
                 baseURLString: serverBaseURL,
                 chatId: snapshot.detail.chatId,
-                epoch: snapshot.detail.epoch,
                 fileURL: selectedAttachment.fileURL
             ) {
                 messageDraft = DebugMessageDraft()
                 self.selectedAttachment = nil
-                activityMessage = "Uploaded \(outcome.fileName ?? "attachment") as blob \(outcome.blobId) and accepted message \(outcome.createMessage.messageId) at server sequence \(outcome.createMessage.serverSeq)."
+                if let attachmentRef = outcome.attachmentRef {
+                    activityMessage = "Uploaded \(outcome.fileName ?? "attachment") as attachment \(attachmentRef) and accepted message \(outcome.createMessage.messageId) at server sequence \(outcome.createMessage.serverSeq)."
+                } else {
+                    activityMessage = "Uploaded \(outcome.fileName ?? "attachment") and accepted message \(outcome.createMessage.messageId) at server sequence \(outcome.createMessage.serverSeq)."
+                }
                 await loadSnapshot()
             } else {
                 localErrorMessage = model.errorMessage

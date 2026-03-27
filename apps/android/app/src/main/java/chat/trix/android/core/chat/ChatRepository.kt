@@ -48,8 +48,11 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class ChatRepository(
@@ -105,6 +108,16 @@ class ChatRepository(
 
     suspend fun loadConversation(chatId: String): ChatConversation? = withContext(Dispatchers.IO) {
         runFfi("Failed to read conversation") {
+            runCatching {
+                val client = client()
+                val store = historyStore()
+                client.setAccessToken(session.accessToken)
+                refreshConversationFromServer(
+                    chatId = chatId,
+                    client = client,
+                    store = store,
+                )
+            }
             buildConversation(chatId)
         }
     }
@@ -872,7 +885,22 @@ class ChatRepository(
         val store = historyStore()
         val selfAccountId = session.localState.accountId
         val item = store.getLocalChatListItem(chatId, selfAccountId) ?: return null
-        runCatching {
+        try {
+            ensureConversationProjection(chatId, store)
+            repairConversationHistoryIfNeeded(
+                chatId = chatId,
+                lastKnownServerSeq = item.lastServerSeq.toLong(),
+                store = store,
+            )
+            ensureConversationProjection(chatId, store)
+        } catch (error: Exception) {
+            val client = client()
+            client.setAccessToken(session.accessToken)
+            refreshConversationFromServer(
+                chatId = chatId,
+                client = client,
+                store = store,
+            )
             ensureConversationProjection(chatId, store)
         }
         val detail = store.getChat(chatId)
@@ -1214,6 +1242,39 @@ class ChatRepository(
         return true
     }
 
+    private fun repairConversationHistoryIfNeeded(
+        chatId: String,
+        lastKnownServerSeq: Long,
+        store: FfiLocalHistoryStore = historyStore(),
+    ) {
+        val projectedCursor = store.projectedCursor(chatId)?.toLong() ?: 0L
+        if (projectedCursor >= lastKnownServerSeq) {
+            return
+        }
+
+        val client = client()
+        client.setAccessToken(session.accessToken)
+        refreshConversationFromServer(
+            chatId = chatId,
+            client = client,
+            store = store,
+        )
+    }
+
+    private fun refreshConversationFromServer(
+        chatId: String,
+        client: FfiServerApiClient,
+        store: FfiLocalHistoryStore = historyStore(),
+    ) {
+        val detail = client.getChat(chatId)
+        store.applyChatDetail(detail)
+        val history = client.getChatHistory(chatId, null, null)
+        store.applyChatHistory(history)
+        history.messages.maxOfOrNull { it.serverSeq.toLong() }?.let { lastServerSeq ->
+            syncCoordinator().recordChatServerSeq(chatId, lastServerSeq.toULong())
+        }
+    }
+
     private fun loadLocalConversation(chatId: String): FfiMlsConversation? {
         val groupId = resolveChatGroupId(chatId) ?: return null
         return mlsFacade().loadGroup(groupId)
@@ -1260,21 +1321,29 @@ class ChatRepository(
 
     private fun attachmentRepository(): AttachmentRepository = attachmentRepositoryDelegate.value
 
-    private inline fun <T> runFfi(
+    private suspend inline fun <T> runFfi(
         fallbackMessage: String,
         block: () -> T,
     ): T {
-        return try {
-            block()
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: TrixFfiException) {
-            throw IOException(error.message ?: fallbackMessage, error)
-        } catch (error: UnsatisfiedLinkError) {
-            throw IOException("Rust FFI library is not available in the Android app bundle", error)
-        } catch (error: RuntimeException) {
-            throw IOException(fallbackMessage, error)
+        return sessionOperationMutex().withLock {
+            try {
+                block()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: TrixFfiException) {
+                throw IOException(error.message ?: fallbackMessage, error)
+            } catch (error: UnsatisfiedLinkError) {
+                throw IOException("Rust FFI library is not available in the Android app bundle", error)
+            } catch (error: RuntimeException) {
+                throw IOException(fallbackMessage, error)
+            }
         }
+    }
+
+    private fun sessionOperationMutex(): Mutex {
+        return SESSION_OPERATION_MUTEXES.computeIfAbsent(
+            storageLayout.sessionRoot.absolutePath,
+        ) { Mutex() }
     }
 
     private fun runBlockingStoreKey(): ByteArray {
@@ -1516,7 +1585,10 @@ class ChatRepository(
 
     private fun structuredBodyText(body: FfiMessageBody): String {
         return when (body.kind) {
-            FfiMessageBodyKind.TEXT -> body.text ?: "Text message"
+            FfiMessageBodyKind.TEXT -> body.text
+                ?.trim()
+                ?.takeIf(String::isNotEmpty)
+                ?: "Message content is unavailable on this device."
             FfiMessageBodyKind.REACTION -> "Reacted ${body.emoji.orEmpty()} to ${body.targetMessageId?.let(::shortMessageId) ?: "message"}"
             FfiMessageBodyKind.RECEIPT -> "${body.receiptType?.name?.lowercase()?.replaceFirstChar(Char::uppercase) ?: "Delivery"} receipt"
             FfiMessageBodyKind.ATTACHMENT -> body.fileName ?: body.mimeType ?: "Attachment"
@@ -1652,6 +1724,14 @@ class ChatRepository(
         }
     }
 
+    private fun accountDisplayName(accountId: String): String {
+        return if (accountId == session.localState.accountId) {
+            "You"
+        } else {
+            shortAccountId(accountId)
+        }
+    }
+
     private fun normalizeParticipantAccountIds(accountIds: List<String>): List<String> {
         return accountIds
             .asSequence()
@@ -1686,6 +1766,7 @@ class ChatRepository(
         private val MONTH_DAY_FORMATTER = DateTimeFormatter.ofPattern("MMM d")
         private val DATE_FORMATTER = DateTimeFormatter.ofPattern("MMM d, yyyy")
         private const val EMPTY_AAD_JSON = "{}"
+        private val SESSION_OPERATION_MUTEXES = ConcurrentHashMap<String, Mutex>()
     }
 }
 

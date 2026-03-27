@@ -498,27 +498,6 @@ struct TrixCoreServerBridge {
         )
     }
 
-    static func revokeDevice(
-        baseURLString: String,
-        accessToken: String,
-        identity: LocalDeviceIdentity,
-        deviceId: String,
-        reason: String
-    ) throws -> RevokeDeviceResponse {
-        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
-        let response = try client.revokeDeviceWithAccountRoot(
-            deviceId: deviceId,
-            reason: reason,
-            accountRoot: try identity.accountRootMaterial()
-        )
-
-        return RevokeDeviceResponse(
-            accountId: response.accountId,
-            deviceId: response.deviceId,
-            deviceStatus: response.deviceStatus.trix_serverDeviceStatus
-        )
-    }
-
     private static func makeClient(
         baseURLString: String,
         accessToken: String? = nil

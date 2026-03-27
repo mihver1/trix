@@ -122,8 +122,70 @@ func deviceTransferBundleTargetsRecipientTransportKey() throws {
 }
 
 @Test
-func websocketSessionReplacementReasonsThatShouldReconnectStayRecoverable() {
-    #expect(isRecoverableRealtimeSessionReplacement("replaced by a newer websocket session"))
-    #expect(isRecoverableRealtimeSessionReplacement("server shutting down"))
-    #expect(!isRecoverableRealtimeSessionReplacement("manual disconnect"))
+func deviceSortingShowsPendingBeforeCurrentAndRevokedLast() {
+    let currentDeviceID = UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!
+    let pendingDevice = DeviceSummary(
+        deviceId: UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!,
+        displayName: "Pending Mac",
+        platform: "macos",
+        deviceStatus: .pending,
+        availableKeyPackageCount: 0
+    )
+    let currentDevice = DeviceSummary(
+        deviceId: currentDeviceID,
+        displayName: "Current Mac",
+        platform: "macos",
+        deviceStatus: .active,
+        availableKeyPackageCount: 12
+    )
+    let otherActiveDevice = DeviceSummary(
+        deviceId: UUID(uuidString: "cccccccc-cccc-cccc-cccc-cccccccccccc")!,
+        displayName: "Android Phone",
+        platform: "android",
+        deviceStatus: .active,
+        availableKeyPackageCount: 8
+    )
+    let revokedDevice = DeviceSummary(
+        deviceId: UUID(uuidString: "dddddddd-dddd-dddd-dddd-dddddddddddd")!,
+        displayName: "Old Mac",
+        platform: "macos",
+        deviceStatus: .revoked,
+        availableKeyPackageCount: 0
+    )
+
+    let sorted = sortedDevicesForDisplay(
+        [revokedDevice, otherActiveDevice, currentDevice, pendingDevice],
+        currentDeviceID: currentDeviceID
+    )
+
+    #expect(sorted.map(\.deviceId) == [
+        pendingDevice.deviceId,
+        currentDevice.deviceId,
+        otherActiveDevice.deviceId,
+        revokedDevice.deviceId,
+    ])
+}
+
+@Test
+func pendingDeviceIDHelperReturnsOnlyPendingEntries() {
+    let pendingDeviceID = UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!
+
+    let ids = pendingDeviceIDs(in: [
+        DeviceSummary(
+            deviceId: UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!,
+            displayName: "Active Mac",
+            platform: "macos",
+            deviceStatus: .active,
+            availableKeyPackageCount: 4
+        ),
+        DeviceSummary(
+            deviceId: pendingDeviceID,
+            displayName: "Pending Phone",
+            platform: "android",
+            deviceStatus: .pending,
+            availableKeyPackageCount: 0
+        ),
+    ])
+
+    #expect(ids == Set([pendingDeviceID]))
 }

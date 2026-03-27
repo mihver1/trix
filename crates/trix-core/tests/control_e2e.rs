@@ -227,7 +227,7 @@ async fn inbound_welcome_bootstrap_projects_text_and_persists_group_mapping() ->
 
     let bootstrap_projection =
         bot_store.project_chat_with_facade(create_outcome.chat_id, &bot.facade, None)?;
-    assert_eq!(bootstrap_projection.advanced_to_server_seq, Some(2));
+    assert_eq!(bootstrap_projection.processed_messages, 0);
     assert!(
         bot_store
             .chat_mls_group_id(create_outcome.chat_id)
@@ -246,7 +246,7 @@ async fn inbound_welcome_bootstrap_projects_text_and_persists_group_mapping() ->
         .send_message_body(
             &alice.client,
             &mut alice_store,
-            &alice.facade,
+            &mut alice.facade,
             &mut alice_group,
             alice.account_id,
             alice.device_id,
@@ -424,10 +424,8 @@ async fn smoke_websocket_delivers_inbox_items_and_acknowledges() -> Result<()> {
         Some(WebSocketServerFrame::Acked { acked_inbox_ids }) => {
             assert_eq!(acked_inbox_ids, ack_ids);
             bob_sync.record_acked_inbox_ids(&acked_inbox_ids)?;
-            assert_eq!(
-                bob_sync.last_acked_inbox_id(),
-                acked_inbox_ids.iter().copied().max()
-            );
+            let remaining = bob.client.get_inbox(None, Some(10)).await?;
+            assert!(remaining.items.is_empty());
         }
         other => return Err(anyhow!("expected websocket ack frame, got {other:?}")),
     }

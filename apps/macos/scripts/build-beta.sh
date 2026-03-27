@@ -20,6 +20,9 @@ MACOS_ROOT="$CONTENTS_ROOT/MacOS"
 echo "==> Building trix-core release artifact"
 cargo build -p trix-core --release --lib --manifest-path "$REPO_ROOT/Cargo.toml"
 
+echo "==> Regenerating macOS UniFFI bridge"
+"$SCRIPT_DIR/generate-trix-core-bridge.sh"
+
 echo "==> Building macOS client release binary"
 (
   cd "$APP_ROOT"

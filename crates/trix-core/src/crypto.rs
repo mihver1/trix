@@ -305,6 +305,10 @@ impl MlsFacade {
         })
     }
 
+    pub fn clone_detached(&self) -> Result<Self> {
+        Self::build_from_snapshot(self.snapshot_state()?, None)
+    }
+
     pub fn restore_snapshot(&mut self, snapshot: &MlsFacadeSnapshot) -> Result<()> {
         let restored = Self::build_from_snapshot(snapshot.clone(), self.persistence.clone())?;
         *self = restored;
@@ -726,11 +730,13 @@ impl MlsPersistencePaths {
     }
 
     fn storage_tmp_file(&self) -> PathBuf {
-        self.root.join("storage.json.tmp")
+        self.root
+            .join(format!(".storage.json.{}.tmp", uuid::Uuid::new_v4()))
     }
 
     fn metadata_tmp_file(&self) -> PathBuf {
-        self.root.join("metadata.json.tmp")
+        self.root
+            .join(format!(".metadata.json.{}.tmp", uuid::Uuid::new_v4()))
     }
 }
 
@@ -946,5 +952,105 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn mls_facade_can_remove_readded_member_after_persistent_reload() {
+        let storage_root =
+            env::temp_dir().join(format!("trix-mls-remove-readd-{}", Uuid::new_v4()));
+        let alice = MlsFacade::new_persistent(b"alice-device".to_vec(), &storage_root).unwrap();
+        let bob = MlsFacade::new(b"bob-device".to_vec()).unwrap();
+        let charlie = MlsFacade::new(b"charlie-device".to_vec()).unwrap();
+
+        let mut alice_group = alice.create_group(b"chat-remove-readd".as_slice()).unwrap();
+        let bob_key_package = bob.generate_key_package().unwrap();
+        alice
+            .add_members(&mut alice_group, &[bob_key_package])
+            .unwrap();
+
+        let bob_leaf = alice
+            .members(&alice_group)
+            .unwrap()
+            .into_iter()
+            .find(|member| member.credential_identity == b"bob-device".to_vec())
+            .map(|member| member.leaf_index)
+            .expect("bob leaf should exist");
+        alice.remove_members(&mut alice_group, &[bob_leaf]).unwrap();
+        alice.save_state().unwrap();
+
+        let reloaded_alice = MlsFacade::load_persistent(&storage_root).unwrap();
+        let mut reloaded_group = reloaded_alice
+            .load_group(b"chat-remove-readd".as_slice())
+            .unwrap()
+            .expect("persisted group should be present");
+        let charlie_key_package = charlie.generate_key_package().unwrap();
+        reloaded_alice
+            .add_members(&mut reloaded_group, &[charlie_key_package])
+            .unwrap();
+        reloaded_alice.save_state().unwrap();
+
+        let reloaded_again = MlsFacade::load_persistent(&storage_root).unwrap();
+        let mut reloaded_again_group = reloaded_again
+            .load_group(b"chat-remove-readd".as_slice())
+            .unwrap()
+            .expect("reloaded group should be present");
+        let charlie_leaf = reloaded_again
+            .members(&reloaded_again_group)
+            .unwrap()
+            .into_iter()
+            .find(|member| member.credential_identity == b"charlie-device".to_vec())
+            .map(|member| member.leaf_index)
+            .expect("charlie leaf should exist");
+        reloaded_again
+            .remove_members(&mut reloaded_again_group, &[charlie_leaf])
+            .unwrap();
+
+        fs::remove_dir_all(storage_root).ok();
+    }
+
+    #[test]
+    fn mls_facade_member_can_process_add_commit_after_persistent_reload() {
+        let storage_root =
+            env::temp_dir().join(format!("trix-mls-member-reload-{}", Uuid::new_v4()));
+        let alice = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+        let bob = MlsFacade::new_persistent(b"bob-device".to_vec(), &storage_root).unwrap();
+        let charlie = MlsFacade::new(b"charlie-device".to_vec()).unwrap();
+
+        let bob_key_package = bob.generate_key_package().unwrap();
+        let mut alice_group = alice
+            .create_group(b"chat-member-reload".as_slice())
+            .unwrap();
+        let add_bob_bundle = alice
+            .add_members(&mut alice_group, &[bob_key_package])
+            .unwrap();
+        let _bob_group = bob
+            .join_group_from_welcome(
+                add_bob_bundle.welcome_message.as_ref().unwrap(),
+                add_bob_bundle.ratchet_tree.as_deref(),
+            )
+            .unwrap();
+
+        let reloaded_bob = MlsFacade::load_persistent(&storage_root).unwrap();
+        let mut reloaded_bob_group = reloaded_bob
+            .load_group(b"chat-member-reload".as_slice())
+            .unwrap()
+            .expect("persisted bob group should be present");
+
+        let charlie_key_package = charlie.generate_key_package().unwrap();
+        let add_charlie_bundle = alice
+            .add_members(&mut alice_group, &[charlie_key_package])
+            .unwrap();
+
+        let processed = reloaded_bob
+            .process_message(&mut reloaded_bob_group, &add_charlie_bundle.commit_message)
+            .unwrap();
+        assert_eq!(
+            processed,
+            MlsProcessResult::CommitMerged {
+                epoch: add_charlie_bundle.epoch
+            }
+        );
+
+        fs::remove_dir_all(storage_root).ok();
     }
 }

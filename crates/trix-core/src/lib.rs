@@ -4,6 +4,7 @@ pub mod crypto;
 pub mod device_transfer;
 pub mod ffi;
 pub mod message;
+pub mod messenger;
 pub mod realtime;
 pub mod signatures;
 pub mod storage;
@@ -30,6 +31,7 @@ pub use message::{
     AttachmentMessageBody, ChatEventMessageBody, MessageBody, ReactionAction, ReactionMessageBody,
     ReceiptMessageBody, ReceiptType, TextMessageBody,
 };
+pub use messenger::*;
 pub use realtime::{
     RealtimeConfig, RealtimeDriver, RealtimeEvent, RealtimeEventKind, RealtimeMode,
 };
@@ -38,7 +40,8 @@ pub use storage::{
     AttachmentStore, LocalChatListItem, LocalChatReadState, LocalHistoryStore,
     LocalOutboxAttachmentDraft, LocalOutboxMessage, LocalOutboxPayload, LocalOutboxStatus,
     LocalOutgoingMessageApplyOutcome, LocalProjectedMessage, LocalProjectionApplyReport,
-    LocalProjectionKind, LocalStoreApplyReport, LocalTimelineItem, MlsStateStore, SyncStateStore,
+    LocalProjectionKind, LocalStoreApplyReport, LocalTimelineItem, MlsStateStore,
+    PreparedLocalOutboxSend, SyncStateStore,
 };
 pub use sync::{
     CoreEvent, CoreEventSink, CreateChatControlInput, CreateChatControlOutcome, InboxApplyOutcome,

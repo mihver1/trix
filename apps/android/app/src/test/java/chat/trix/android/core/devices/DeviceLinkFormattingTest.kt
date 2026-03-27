@@ -1,6 +1,7 @@
 package chat.trix.android.core.devices
 
 import java.time.ZoneId
+import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -22,11 +23,18 @@ class DeviceLinkFormattingTest {
 
     @Test
     fun `format link expiry uses supplied zone`() {
-        val formatted = formatLinkExpiry(
-            epochSeconds = 1_700_000_000L,
-            zoneId = ZoneId.of("UTC"),
-        )
+        val previousLocale = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.US)
 
-        assertEquals("Nov 14, 22:13", formatted)
+            val formatted = formatLinkExpiry(
+                epochSeconds = 1_700_000_000L,
+                zoneId = ZoneId.of("UTC"),
+            )
+
+            assertEquals("Nov 14, 22:13", formatted)
+        } finally {
+            Locale.setDefault(previousLocale)
+        }
     }
 }

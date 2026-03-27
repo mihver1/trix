@@ -36,11 +36,33 @@ class ChatTimelineOrderingTest {
         )
     }
 
+    @Test
+    fun `receipt metadata suppresses message even when content type is stale`() {
+        val ordered = mergeChatTimelineMessages(
+            listOf(
+                timedMessage(id = "target", sortUnix = 100, sourcePriority = 0, sourceOrder = 0),
+                timedMessage(
+                    id = "receipt",
+                    sortUnix = 200,
+                    sourcePriority = 0,
+                    sourceOrder = 1,
+                    receiptTargetMessageId = "target",
+                    receiptStatus = ChatReceiptStatus.READ,
+                ),
+            ),
+        )
+
+        assertEquals(listOf("target"), ordered.map(ChatTimelineMessage::id))
+        assertEquals(ChatReceiptStatus.READ, ordered.single().receiptStatus)
+    }
+
     private fun timedMessage(
         id: String,
         sortUnix: Long,
         sourcePriority: Int,
         sourceOrder: Int,
+        receiptTargetMessageId: String? = null,
+        receiptStatus: ChatReceiptStatus? = null,
     ): TimedChatTimelineMessage {
         return TimedChatTimelineMessage(
             sortUnix = sortUnix,
@@ -55,6 +77,8 @@ class ChatTimelineOrderingTest {
                 note = null,
                 contentType = FfiContentType.TEXT,
             ),
+            receiptTargetMessageId = receiptTargetMessageId,
+            receiptStatus = receiptStatus,
         )
     }
 }

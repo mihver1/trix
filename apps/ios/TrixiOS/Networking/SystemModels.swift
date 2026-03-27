@@ -214,10 +214,17 @@ struct LinkIntentPayload: Decodable {
     let linkIntentId: String
     let linkToken: String
 
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case baseURL = "base_url"
+        case accountId = "account_id"
+        case linkIntentId = "link_intent_id"
+        case linkToken = "link_token"
+    }
+
     static func parse(_ rawPayload: String) throws -> LinkIntentPayload {
         let data = Data(rawPayload.trimmingCharacters(in: .whitespacesAndNewlines).utf8)
         let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
         return try decoder.decode(LinkIntentPayload.self, from: data)
     }
 }
@@ -508,6 +515,122 @@ struct MessageEnvelope: Decodable, Identifiable {
 struct ChatHistoryResponse: Decodable {
     let chatId: String
     let messages: [MessageEnvelope]
+}
+
+enum SafeMessengerReactionAction: String, Hashable {
+    case add
+    case remove
+}
+
+enum SafeMessengerReceiptType: String, Hashable {
+    case delivered
+    case read
+}
+
+enum SafeMessengerMessageBodyKind: String, Hashable {
+    case text
+    case reaction
+    case receipt
+    case attachment
+    case chatEvent
+}
+
+struct SafeMessengerAttachment: Identifiable, Hashable {
+    let attachmentRef: String
+    let mimeType: String
+    let sizeBytes: UInt64
+    let fileName: String?
+    let widthPx: UInt32?
+    let heightPx: UInt32?
+
+    var id: String { attachmentRef }
+}
+
+struct SafeMessengerMessageBody: Hashable {
+    let kind: SafeMessengerMessageBodyKind
+    let text: String?
+    let targetMessageId: String?
+    let emoji: String?
+    let reactionAction: SafeMessengerReactionAction?
+    let receiptType: SafeMessengerReceiptType?
+    let receiptAtUnix: UInt64?
+    let attachment: SafeMessengerAttachment?
+    let eventType: String?
+    let eventJSON: String?
+}
+
+struct SafeMessengerMessage: Identifiable, Hashable {
+    let conversationId: String
+    let serverSeq: UInt64
+    let messageId: String
+    let senderAccountId: String
+    let senderDeviceId: String
+    let senderDisplayName: String?
+    let isOutgoing: Bool
+    let contentType: ContentType
+    let body: SafeMessengerMessageBody?
+    let previewText: String
+    let createdAtUnix: UInt64
+
+    var id: String { messageId }
+
+    var createdAtDate: Date {
+        Date(timeIntervalSince1970: TimeInterval(createdAtUnix))
+    }
+}
+
+struct SafeConversationSnapshot {
+    let detail: ChatDetailResponse
+    let messages: [SafeMessengerMessage]
+    let nextCursor: String?
+
+    var latestMessageId: String? {
+        messages.last?.messageId
+    }
+
+    var latestTimelineAnchorId: String? {
+        latestMessageId
+    }
+}
+
+struct SafeMessengerSnapshot {
+    let accountId: String?
+    let deviceId: String?
+    let accountSyncChatId: String?
+    let chats: [ChatSummary]
+    let chatListItems: [LocalChatListItemSnapshot]
+    let devices: [DeviceSummary]
+    let checkpoint: String?
+}
+
+enum SafeMessengerEventKind: Hashable {
+    case messageCreated
+    case messageUpdated
+    case conversationUpdated
+    case devicePending
+    case deviceApproved
+    case deviceRevoked
+    case attachmentReady
+    case readStateUpdated
+    case typingUpdated
+}
+
+struct SafeMessengerEvent: Identifiable {
+    let eventId: String
+    let kind: SafeMessengerEventKind
+    let conversationId: String?
+    let message: SafeMessengerMessage?
+    let chat: ChatSummary?
+    let device: DeviceSummary?
+    let readState: LocalChatReadStateSnapshot?
+    let attachmentRef: String?
+
+    var id: String { eventId }
+}
+
+struct SafeMessengerEventBatch {
+    let checkpoint: String?
+    let events: [SafeMessengerEvent]
 }
 
 struct InboxItem: Decodable, Identifiable {

@@ -1,0 +1,12 @@
+.git
+.github
+target
+coverage
+node_modules
+tmp
+*.xcresult
+apps/ios/build
+apps/macos/.build
+apps/android/.gradle
+apps/android/build
+apps/android/app/build

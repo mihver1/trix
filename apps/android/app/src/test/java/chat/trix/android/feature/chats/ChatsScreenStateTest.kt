@@ -50,6 +50,32 @@ class ChatsScreenStateTest {
         assertEquals("Failed to load conversation", result.detailState.errorMessage)
     }
 
+    @Test
+    fun `passive group conversation reload keeps group metadata and manage members affordance`() {
+        val refreshedConversation = sampleConversation(
+            chatId = "chat-group-2",
+            title = "Incident room",
+        ).copy(
+            participantsLabel = "Alex, Sam +2",
+            canManageMembers = true,
+        )
+
+        val result = applyPassiveConversationReload(
+            currentDetailState = ChatsDetailState(
+                conversation = sampleConversation(chatId = "chat-group-2", title = "Old title"),
+                isLoading = true,
+            ),
+            currentSendState = ChatSendState(isSending = false),
+            conversation = refreshedConversation,
+            errorMessage = null,
+        )
+
+        assertEquals(FfiChatType.GROUP, result.detailState.conversation?.chatType)
+        assertEquals("Incident room", result.detailState.conversation?.title)
+        assertEquals("Alex, Sam +2", result.detailState.conversation?.participantsLabel)
+        assertTrue(result.detailState.conversation?.canManageMembers == true)
+    }
+
     private fun sampleConversation(
         chatId: String = "chat-1",
         title: String = "Design review",

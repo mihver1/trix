@@ -2679,7 +2679,29 @@ impl Database {
             .filter(|device_id| *device_id != input.creator_device_id)
             .collect::<Vec<_>>();
 
-        for (leaf_index, row) in active_device_rows.into_iter().enumerate() {
+        let ordered_target_device_ids = consume_reserved_key_packages_for_devices_tx(
+            &mut tx,
+            input.creator_account_id,
+            chat_id,
+            &reserved_target_device_ids,
+            &input.reserved_key_package_ids,
+        )
+        .await?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO chat_device_members (chat_id, device_id, leaf_index, membership_status, added_in_epoch)
+            VALUES ($1, $2, $3, 'active'::device_membership_status, 0)
+            "#,
+        )
+        .bind(chat_id)
+        .bind(input.creator_device_id)
+        .bind(0)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        for (offset, device_id) in ordered_target_device_ids.into_iter().enumerate() {
             sqlx::query(
                 r#"
                 INSERT INTO chat_device_members (chat_id, device_id, leaf_index, membership_status, added_in_epoch)
@@ -2687,8 +2709,8 @@ impl Database {
                 "#,
             )
             .bind(chat_id)
-            .bind(row_uuid(&row, "device_id")?)
-            .bind(leaf_index as i32)
+            .bind(device_id)
+            .bind((offset + 1) as i32)
             .execute(&mut *tx)
             .await
             .map_err(map_db_error)?;
@@ -2706,15 +2728,6 @@ impl Database {
         .execute(&mut *tx)
         .await
         .map_err(map_db_error)?;
-
-        consume_reserved_key_packages_for_devices_tx(
-            &mut tx,
-            input.creator_account_id,
-            chat_id,
-            &reserved_target_device_ids,
-            &input.reserved_key_package_ids,
-        )
-        .await?;
 
         if let Some(commit) = input.initial_commit {
             let commit_message_id = commit.message_id;
@@ -2899,7 +2912,7 @@ impl Database {
         }
 
         let next_epoch = current_epoch + 1;
-        consume_reserved_key_packages_tx(
+        let ordered_target_device_ids = consume_reserved_key_packages_tx(
             &mut tx,
             input.actor_account_id,
             input.chat_id,
@@ -2940,8 +2953,7 @@ impl Database {
         .map_err(map_db_error)?;
         let mut next_leaf_index = row_i32(&leaf_index_row, "max_leaf_index")? + 1;
 
-        for row in active_device_rows {
-            let device_id = row_uuid(&row, "device_id")?;
+        for device_id in ordered_target_device_ids {
             sqlx::query(
                 r#"
                 INSERT INTO chat_device_members (chat_id, device_id, leaf_index, membership_status, added_in_epoch, removed_in_epoch, joined_at, removed_at)
@@ -3345,7 +3357,7 @@ impl Database {
             }
         }
 
-        consume_reserved_key_packages_for_devices_tx(
+        let ordered_target_device_ids = consume_reserved_key_packages_for_devices_tx(
             &mut tx,
             input.actor_account_id,
             input.chat_id,
@@ -3368,7 +3380,7 @@ impl Database {
         .map_err(map_db_error)?;
         let mut next_leaf_index = row_i32(&leaf_index_row, "max_leaf_index")? + 1;
 
-        for target_device_id in &target_device_ids {
+        for target_device_id in &ordered_target_device_ids {
             sqlx::query(
                 r#"
                 INSERT INTO chat_device_members (
@@ -3452,7 +3464,7 @@ impl Database {
                 next_epoch,
                 MessageKind::WelcomeRef,
                 welcome,
-                &target_device_ids,
+                &ordered_target_device_ids,
             )
             .await?;
         }
@@ -4928,10 +4940,10 @@ async fn consume_reserved_key_packages_tx(
     consumed_by_chat_id: Uuid,
     target_account_ids: &[Uuid],
     reserved_key_package_ids: &[Uuid],
-) -> Result<(), AppError> {
+) -> Result<Vec<Uuid>, AppError> {
     if target_account_ids.is_empty() {
         if reserved_key_package_ids.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
         return Err(AppError::bad_request(
             "reserved key packages were provided without target accounts",
@@ -4998,6 +5010,7 @@ async fn consume_reserved_key_packages_tx(
 
     let target_account_ids: BTreeSet<Uuid> = target_account_ids.iter().copied().collect();
     let mut reserved_device_ids = BTreeSet::new();
+    let mut device_id_by_key_package_id = BTreeMap::new();
     for row in reserved_rows {
         let status = row_text(&row, "status")?;
         if status != "reserved" {
@@ -5020,7 +5033,10 @@ async fn consume_reserved_key_packages_tx(
             ));
         }
 
-        reserved_device_ids.insert(row_uuid(&row, "device_id")?);
+        let key_package_id = row_uuid(&row, "key_package_id")?;
+        let device_id = row_uuid(&row, "device_id")?;
+        reserved_device_ids.insert(device_id);
+        device_id_by_key_package_id.insert(key_package_id, device_id);
     }
 
     if reserved_device_ids != active_device_ids {
@@ -5044,7 +5060,20 @@ async fn consume_reserved_key_packages_tx(
     .await
     .map_err(map_db_error)?;
 
-    Ok(())
+    reserved_key_package_ids
+        .iter()
+        .map(|key_package_id| {
+            device_id_by_key_package_id
+                .get(key_package_id)
+                .copied()
+                .ok_or_else(|| {
+                    AppError::internal(format!(
+                        "missing reserved key package device mapping for {}",
+                        key_package_id
+                    ))
+                })
+        })
+        .collect()
 }
 
 async fn reserve_key_packages_for_device_ids_tx(
@@ -5178,10 +5207,10 @@ async fn consume_reserved_key_packages_for_devices_tx(
     consumed_by_chat_id: Uuid,
     target_device_ids: &[Uuid],
     reserved_key_package_ids: &[Uuid],
-) -> Result<(), AppError> {
+) -> Result<Vec<Uuid>, AppError> {
     if target_device_ids.is_empty() {
         if reserved_key_package_ids.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
         return Err(AppError::bad_request(
             "reserved key packages were provided without target devices",
@@ -5227,6 +5256,7 @@ async fn consume_reserved_key_packages_for_devices_tx(
     }
 
     let mut reserved_device_ids = BTreeSet::new();
+    let mut device_id_by_key_package_id = BTreeMap::new();
     for row in reserved_rows {
         let status = row_text(&row, "status")?;
         if status != "reserved" {
@@ -5242,7 +5272,10 @@ async fn consume_reserved_key_packages_for_devices_tx(
             ));
         }
 
-        reserved_device_ids.insert(row_uuid(&row, "device_id")?);
+        let key_package_id = row_uuid(&row, "key_package_id")?;
+        let device_id = row_uuid(&row, "device_id")?;
+        reserved_device_ids.insert(device_id);
+        device_id_by_key_package_id.insert(key_package_id, device_id);
     }
 
     if reserved_device_ids != target_device_ids {
@@ -5266,7 +5299,20 @@ async fn consume_reserved_key_packages_for_devices_tx(
     .await
     .map_err(map_db_error)?;
 
-    Ok(())
+    reserved_key_package_ids
+        .iter()
+        .map(|key_package_id| {
+            device_id_by_key_package_id
+                .get(key_package_id)
+                .copied()
+                .ok_or_else(|| {
+                    AppError::internal(format!(
+                        "missing reserved key package device mapping for {}",
+                        key_package_id
+                    ))
+                })
+        })
+        .collect()
 }
 
 fn parse_device_status(value: &str) -> Result<DeviceStatus, AppError> {
