@@ -28,13 +28,15 @@ final class TrixiOSSmokeUITests: XCTestCase {
 
     private func launchSeededConversationBundle(
         scenarioLabel: String,
-        resetState: Bool = true
+        resetState: Bool = true,
+        interfaceStyle: TrixUITestInterfaceStyle? = nil
     ) -> XCUIApplication {
         TrixUITestApp.launch(
             resetState: resetState,
             seedScenario: .approvedAccount,
             conversationScenario: .dmAndGroup,
-            scenarioLabel: scenarioLabel
+            scenarioLabel: scenarioLabel,
+            interfaceStyle: interfaceStyle
         )
     }
 
@@ -47,6 +49,16 @@ final class TrixiOSSmokeUITests: XCTestCase {
             identifiedElement(TrixAccessibilityID.Dashboard.chatsList, in: app)
                 .waitForExistence(timeout: 20)
         )
+    }
+
+    private func assertAccessibilityValue(
+        _ expectedValue: String,
+        for identifier: String,
+        in app: XCUIApplication
+    ) {
+        let element = identifiedElement(identifier, in: app)
+        XCTAssertTrue(element.waitForExistence(timeout: 5))
+        XCTAssertEqual(element.value as? String, expectedValue)
     }
 
     private func tapSeededChatRow(
@@ -133,6 +145,65 @@ final class TrixiOSSmokeUITests: XCTestCase {
         )
     }
 
+    func testCreateAccountFlowShowsDashboardInDarkMode() async throws {
+        try await TrixUITestApp.skipUnlessServerReachable()
+
+        let app = TrixUITestApp.launch(
+            resetState: true,
+            scenarioLabel: "create-account-dark",
+            interfaceStyle: .dark
+        )
+
+        XCTAssertTrue(
+            identifiedElement(TrixAccessibilityID.Root.onboardingScreen, in: app)
+                .waitForExistence(timeout: 10)
+        )
+        assertAccessibilityValue("dark", for: TrixAccessibilityID.Root.onboardingScreen, in: app)
+
+        let profileNameField = app.textFields[TrixAccessibilityID.Onboarding.profileNameField]
+        XCTAssertTrue(profileNameField.waitForExistence(timeout: 5))
+        profileNameField.tap()
+        profileNameField.typeText("UI Dark Smoke Account")
+
+        let createAccountButton = app.buttons[TrixAccessibilityID.Onboarding.primaryActionButton]
+        XCTAssertTrue(createAccountButton.isHittable)
+        createAccountButton.tap()
+
+        XCTAssertTrue(
+            identifiedElement(TrixAccessibilityID.Root.dashboardScreen, in: app)
+                .waitForExistence(timeout: 20)
+        )
+    }
+
+    func testLinkExistingModeShowsFieldsInDarkMode() async throws {
+        try await TrixUITestApp.skipUnlessServerReachable()
+
+        let app = TrixUITestApp.launch(
+            resetState: true,
+            scenarioLabel: "link-existing-dark",
+            interfaceStyle: .dark
+        )
+
+        XCTAssertTrue(
+            identifiedElement(TrixAccessibilityID.Root.onboardingScreen, in: app)
+                .waitForExistence(timeout: 10)
+        )
+        assertAccessibilityValue("dark", for: TrixAccessibilityID.Root.onboardingScreen, in: app)
+
+        let linkModeButton = app.buttons[TrixAccessibilityID.Onboarding.linkModeButton]
+        XCTAssertTrue(linkModeButton.waitForExistence(timeout: 5))
+        linkModeButton.tap()
+
+        XCTAssertTrue(
+            identifiedElement(TrixAccessibilityID.Onboarding.linkCodeField, in: app)
+                .waitForExistence(timeout: 5)
+        )
+        XCTAssertTrue(
+            identifiedElement(TrixAccessibilityID.Onboarding.deviceNameField, in: app)
+                .waitForExistence(timeout: 5)
+        )
+    }
+
     func testPendingApprovalSeedShowsApprovalScreen() async throws {
         try await TrixUITestApp.skipUnlessServerReachable()
 
@@ -150,6 +221,27 @@ final class TrixiOSSmokeUITests: XCTestCase {
             identifiedElement(TrixAccessibilityID.PendingApproval.checkApprovalButton, in: app)
                 .waitForExistence(timeout: 5)
         )
+        XCTAssertTrue(
+            identifiedElement(TrixAccessibilityID.PendingApproval.deviceCard, in: app)
+                .waitForExistence(timeout: 5)
+        )
+    }
+
+    func testPendingApprovalSeedShowsApprovalScreenInDarkMode() async throws {
+        try await TrixUITestApp.skipUnlessServerReachable()
+
+        let app = TrixUITestApp.launch(
+            resetState: true,
+            seedScenario: .pendingApproval,
+            scenarioLabel: "pending-approval-dark",
+            interfaceStyle: .dark
+        )
+
+        XCTAssertTrue(
+            identifiedElement(TrixAccessibilityID.Root.pendingApprovalScreen, in: app)
+                .waitForExistence(timeout: 20)
+        )
+        assertAccessibilityValue("dark", for: TrixAccessibilityID.Root.pendingApprovalScreen, in: app)
         XCTAssertTrue(
             identifiedElement(TrixAccessibilityID.PendingApproval.deviceCard, in: app)
                 .waitForExistence(timeout: 5)
@@ -306,6 +398,29 @@ final class TrixiOSSmokeUITests: XCTestCase {
         XCTAssertTrue(
             latestSentMessageAppeared || outgoingTextAppeared || sendSuccessBannerAppeared
         )
+    }
+
+    func testSeededDMDetailShowsTimelineInDarkMode() async throws {
+        try await TrixUITestApp.skipUnlessServerReachable()
+
+        let app = launchSeededConversationBundle(
+            scenarioLabel: "seeded-chat-bundle-dm-dark",
+            interfaceStyle: .dark
+        )
+        assertDashboardVisible(in: app)
+
+        tapSeededChatRow(.dm, in: app)
+
+        guard identifiedElement(TrixAccessibilityID.ChatDetail.screen, in: app)
+            .waitForExistence(timeout: 20) else {
+            return XCTFail("Expected consumer chat detail screen for seeded DM in dark mode.")
+        }
+        assertAccessibilityValue("dark", for: TrixAccessibilityID.ChatDetail.screen, in: app)
+        guard identifiedElement(TrixAccessibilityID.ChatDetail.message(.dmSeed), in: app)
+            .waitForExistence(timeout: 10) else {
+            return XCTFail("Expected seeded DM message row in dark mode.")
+        }
+        XCTAssertTrue(composerInput(in: app).waitForExistence(timeout: 5))
     }
 
     func testSeededGroupDetailShowsTimeline() async throws {

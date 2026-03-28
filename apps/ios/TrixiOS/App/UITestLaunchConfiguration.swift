@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 struct UITestLaunchConfiguration {
     let isEnabled: Bool
@@ -8,6 +9,7 @@ struct UITestLaunchConfiguration {
     let seedScenario: TrixUITestSeedScenario?
     let conversationScenario: TrixUITestConversationScenario?
     let scenarioLabel: String?
+    let interfaceStyle: TrixUITestInterfaceStyle?
     /// Inline UTF-8 JSON for `TrixInteropAction` (used by UI tests; avoids `simctl` file staging).
     let interopActionJSON: String?
     /// Filename within the app `Documents` directory; optional host-staged action JSON.
@@ -41,6 +43,7 @@ struct UITestLaunchConfiguration {
                 seedScenario: nil,
                 conversationScenario: nil,
                 scenarioLabel: nil,
+                interfaceStyle: nil,
                 interopActionJSON: nil,
                 interopActionInputFileName: nil,
                 interopResultOutputFileName: nil,
@@ -59,6 +62,8 @@ struct UITestLaunchConfiguration {
             conversationScenario: normalized(environment[TrixUITestLaunchEnvironment.conversationScenario])
                 .flatMap(TrixUITestConversationScenario.init(rawValue:)),
             scenarioLabel: normalized(environment[TrixUITestLaunchEnvironment.scenarioLabel]),
+            interfaceStyle: normalized(environment[TrixUITestLaunchEnvironment.interfaceStyle])
+                .flatMap(TrixUITestInterfaceStyle.init(rawValue:)),
             interopActionJSON: normalized(environment[TrixInteropLaunchEnvironment.actionJSON]),
             interopActionInputFileName: normalized(environment[TrixInteropLaunchEnvironment.actionPath]),
             interopResultOutputFileName: normalized(environment[TrixInteropLaunchEnvironment.resultPath]),
@@ -70,6 +75,19 @@ struct UITestLaunchConfiguration {
     private static func normalized(_ value: String?) -> String? {
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed?.isEmpty == false ? trimmed : nil
+    }
+}
+
+extension UITestLaunchConfiguration {
+    var colorSchemeOverride: ColorScheme? {
+        switch interfaceStyle {
+        case .light:
+            return .light
+        case .dark:
+            return .dark
+        case nil:
+            return nil
+        }
     }
 }
 

@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-private let consumerChatAccent = Color(red: 0.14, green: 0.55, blue: 0.98)
+private let consumerChatAccent = TrixTheme.accent
 private let consumerMessageClusterWindow: TimeInterval = 5 * 60
 private let consumerTimelineBottomAnchor = "consumer-timeline-bottom-anchor"
 
@@ -72,6 +72,7 @@ struct ConsumerChatDetailView: View {
     let chatSummary: ChatSummary
     @Binding var serverBaseURL: String
     @ObservedObject var model: AppModel
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var snapshot: SafeConversationSnapshot?
     @State private var isLoadingSnapshot = false
@@ -129,6 +130,7 @@ struct ConsumerChatDetailView: View {
             }
         }
         .accessibilityIdentifier(TrixAccessibilityID.ChatDetail.screen)
+        .accessibilityValue(colorScheme == .dark ? "dark" : "light")
         .background(ConsumerChatBackdrop().ignoresSafeArea())
         .navigationTitle(conversationTitle)
         .navigationBarTitleDisplayMode(.inline)
@@ -252,8 +254,12 @@ struct ConsumerChatDetailView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
-                .background(Color.white.opacity(0.92))
+                .background(TrixTheme.primarySurface)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(TrixTheme.surfaceStroke, lineWidth: 1)
+                }
             }
 
             HStack(alignment: .bottom, spacing: 10) {
@@ -278,8 +284,12 @@ struct ConsumerChatDetailView: View {
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(Color.white)
+                    .background(TrixTheme.elevatedFieldSurface)
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .stroke(TrixTheme.surfaceStroke, lineWidth: 1)
+                    }
                     .contentShape(Rectangle())
                     .onTapGesture {
                         isComposerFocused = true
@@ -295,8 +305,12 @@ struct ConsumerChatDetailView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 12)
-                        .background(Color.white.opacity(0.88))
+                        .background(TrixTheme.secondarySurface)
                         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                .stroke(TrixTheme.surfaceStroke, lineWidth: 1)
+                        }
                 }
 
                 Button(action: sendCurrentPayload) {
@@ -773,21 +787,21 @@ private struct ConsumerChatBackdrop: View {
         ZStack {
             LinearGradient(
                 colors: [
-                    Color(red: 0.95, green: 0.98, blue: 1.0),
-                    Color(red: 0.90, green: 0.95, blue: 1.0)
+                    TrixTheme.chatBackdropTop,
+                    TrixTheme.chatBackdropBottom,
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
 
             Circle()
-                .fill(Color.white.opacity(0.7))
+                .fill(TrixTheme.chatBackdropGlow)
                 .frame(width: 320, height: 320)
                 .blur(radius: 18)
                 .offset(x: -120, y: -220)
 
             Circle()
-                .fill(consumerChatAccent.opacity(0.11))
+                .fill(TrixTheme.chatAccentGlow)
                 .frame(width: 280, height: 280)
                 .blur(radius: 10)
                 .offset(x: 140, y: 240)
@@ -864,8 +878,12 @@ private struct ConsumerDaySeparator: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(.white.opacity(0.8))
+                .background(TrixTheme.chipSurface)
                 .clipShape(Capsule())
+                .overlay {
+                    Capsule()
+                        .stroke(TrixTheme.surfaceStroke, lineWidth: 1)
+                }
             Spacer()
         }
         .padding(.top, 12)
@@ -949,10 +967,14 @@ private struct ConsumerMessageBubble: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
         .frame(maxWidth: 320, alignment: message.isOutgoing ? .trailing : .leading)
-        .background(message.isOutgoing ? consumerChatAccent : Color.white.opacity(0.94))
+        .background(message.isOutgoing ? consumerChatAccent : TrixTheme.incomingBubbleSurface)
         .clipShape(RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
+                .stroke(message.isOutgoing ? .clear : TrixTheme.surfaceStroke, lineWidth: 1)
+        }
         .shadow(
-            color: message.isOutgoing ? consumerChatAccent.opacity(0.18) : .black.opacity(0.05),
+            color: message.isOutgoing ? consumerChatAccent.opacity(0.18) : TrixTheme.softShadow,
             radius: message.isOutgoing ? 14 : 10,
             y: message.isOutgoing ? 8 : 5
         )
@@ -1044,8 +1066,12 @@ private struct ConsumerSystemEventRow: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .frame(maxWidth: 280)
-        .background(.white.opacity(0.7))
+        .background(TrixTheme.systemEventSurface)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(TrixTheme.surfaceStroke, lineWidth: 1)
+        }
         .frame(maxWidth: .infinity)
         .padding(.top, message.topSpacing)
     }

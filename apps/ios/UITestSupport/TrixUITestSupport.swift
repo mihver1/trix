@@ -11,6 +11,12 @@ enum TrixUITestLaunchEnvironment {
     static let seedScenario = "TRIX_UI_TEST_SEED_SCENARIO"
     static let conversationScenario = "TRIX_UI_TEST_CONVERSATION_SCENARIO"
     static let scenarioLabel = "TRIX_UI_TEST_SCENARIO_LABEL"
+    static let interfaceStyle = "TRIX_UI_TEST_INTERFACE_STYLE"
+}
+
+enum TrixUITestInterfaceStyle: String, Codable {
+    case light
+    case dark
 }
 
 enum TrixUITestSeedScenario: String, Codable {

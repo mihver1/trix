@@ -43,6 +43,7 @@ enum TrixUITestApp {
         seedScenario: TrixUITestSeedScenario? = nil,
         conversationScenario: TrixUITestConversationScenario? = nil,
         scenarioLabel: String? = nil,
+        interfaceStyle: TrixUITestInterfaceStyle? = nil,
         baseURLOverride: String? = nil,
         interopActionJSON: String? = nil,
         interopActionInputFileName: String? = nil,
@@ -68,6 +69,9 @@ enum TrixUITestApp {
         }
         if let scenarioLabel {
             app.launchEnvironment[TrixUITestLaunchEnvironment.scenarioLabel] = scenarioLabel
+        }
+        if let interfaceStyle {
+            app.launchEnvironment[TrixUITestLaunchEnvironment.interfaceStyle] = interfaceStyle.rawValue
         }
         if let interopActionJSON {
             app.launchEnvironment[TrixInteropLaunchEnvironment.actionJSON] = interopActionJSON

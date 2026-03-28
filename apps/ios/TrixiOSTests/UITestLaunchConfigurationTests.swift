@@ -45,6 +45,17 @@ final class UITestLaunchConfigurationTests: XCTestCase {
         XCTAssertTrue(String(describing: conversationScenario).contains("dmAndGroup"))
     }
 
+    func testMakeParsesRequestedInterfaceStyle() {
+        let configuration = UITestLaunchConfiguration.make(
+            arguments: [TrixUITestLaunchArgument.enableUITesting],
+            environment: [
+                TrixUITestLaunchEnvironment.interfaceStyle: "dark",
+            ]
+        )
+
+        XCTAssertEqual(configuration.interfaceStyle, .dark)
+    }
+
     func testMakeDefaultsToDisabledWithoutFlag() {
         let configuration = UITestLaunchConfiguration.make(arguments: [], environment: [:])
 
@@ -54,6 +65,7 @@ final class UITestLaunchConfigurationTests: XCTestCase {
         XCTAssertNil(configuration.baseURLOverride)
         XCTAssertNil(configuration.seedScenario)
         XCTAssertNil(configuration.scenarioLabel)
+        XCTAssertNil(configuration.interfaceStyle)
     }
 }
 
