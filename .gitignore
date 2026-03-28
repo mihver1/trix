@@ -18,9 +18,12 @@ postgres-data/
 /apps/macos/dist/
 DerivedData/
 *.xcuserdata/
+xcuserdata/
+*.xcuserstate
 *.xccheckout
 *.xcscmblueprint
 apps/ios/Vendor/
 apps/ios/TrixiOS/Bridge/Artifacts/
+/testflight-export-options.plist
 /.tmp-*
 /.warp/
