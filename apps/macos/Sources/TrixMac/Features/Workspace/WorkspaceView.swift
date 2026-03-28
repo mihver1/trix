@@ -1105,6 +1105,12 @@ struct WorkspaceView: View {
                                     await model.selectChat(chat.chatId)
                                 }
                             }
+                            .optionalAccessibilityIdentifier(
+                                MacUITestFixtureViewHints.sidebarChatRowIdentifier(
+                                    chatId: chat.chatId,
+                                    chatTypeRawValue: chat.chatType.rawValue
+                                )
+                            )
                         }
                     }
                 }
@@ -1259,7 +1265,11 @@ struct WorkspaceView: View {
                             ForEach(presentedHistoryMessages) { message in
                                 MessageHistoryRow(
                                     message: message.message,
-                                    isOutgoing: message.isOutgoing
+                                    isOutgoing: message.isOutgoing,
+                                    fixtureAccessibilityIdentifier: MacUITestFixtureViewHints.timelineMessageIdentifier(
+                                        messageId: message.message.messageId,
+                                        selectedChatId: message.message.chatId
+                                    )
                                 )
                             }
                         }
@@ -1315,7 +1325,11 @@ struct WorkspaceView: View {
                         ForEach(presentedHistoryMessages) { message in
                             MessageHistoryRow(
                                 message: message.message,
-                                isOutgoing: message.isOutgoing
+                                isOutgoing: message.isOutgoing,
+                                fixtureAccessibilityIdentifier: MacUITestFixtureViewHints.timelineMessageIdentifier(
+                                    messageId: message.message.messageId,
+                                    selectedChatId: message.message.chatId
+                                )
                             )
                         }
 
@@ -1424,7 +1438,11 @@ struct WorkspaceView: View {
                             Task {
                                 await model.openAttachment(for: entry.message)
                             }
-                        } : nil
+                        } : nil,
+                        fixtureAccessibilityIdentifier: MacUITestFixtureViewHints.timelineMessageIdentifier(
+                            messageId: entry.message.messageId,
+                            selectedChatId: model.selectedChatID
+                        )
                     )
                 }
 
@@ -2685,10 +2703,12 @@ private struct MessageHistoryRow: View {
     @Environment(\.trixColors) private var colors
     let message: MessageEnvelope
     let isOutgoing: Bool
+    let fixtureAccessibilityIdentifier: String?
 
-    init(message: MessageEnvelope, isOutgoing: Bool = false) {
+    init(message: MessageEnvelope, isOutgoing: Bool = false, fixtureAccessibilityIdentifier: String? = nil) {
         self.message = message
         self.isOutgoing = isOutgoing
+        self.fixtureAccessibilityIdentifier = fixtureAccessibilityIdentifier
     }
 
     var body: some View {
@@ -2731,6 +2751,7 @@ private struct MessageHistoryRow: View {
                 Spacer(minLength: 64)
             }
         }
+        .optionalAccessibilityIdentifier(fixtureAccessibilityIdentifier)
     }
 
     private var bubbleFill: Color {
@@ -2962,19 +2983,22 @@ private struct LocalTimelineMessageRow: View {
     let receiptStatus: WorkspaceMessageReceiptStatus?
     let isDownloadingAttachment: Bool
     let openAttachment: (() -> Void)?
+    let fixtureAccessibilityIdentifier: String?
 
     init(
         message: LocalTimelineItem,
         isOutgoing: Bool = false,
         receiptStatus: WorkspaceMessageReceiptStatus? = nil,
         isDownloadingAttachment: Bool = false,
-        openAttachment: (() -> Void)? = nil
+        openAttachment: (() -> Void)? = nil,
+        fixtureAccessibilityIdentifier: String? = nil
     ) {
         self.message = message
         self.isOutgoing = isOutgoing
         self.receiptStatus = receiptStatus
         self.isDownloadingAttachment = isDownloadingAttachment
         self.openAttachment = openAttachment
+        self.fixtureAccessibilityIdentifier = fixtureAccessibilityIdentifier
     }
 
     var body: some View {
@@ -3056,6 +3080,7 @@ private struct LocalTimelineMessageRow: View {
                 Spacer(minLength: 64)
             }
         }
+        .optionalAccessibilityIdentifier(fixtureAccessibilityIdentifier)
     }
 
     private var senderLabel: String {

@@ -914,6 +914,8 @@ external fun uniffi_trix_core_checksum_method_ffisynccoordinator_add_chat_device
 ): Short
 external fun uniffi_trix_core_checksum_method_ffisynccoordinator_add_chat_members_control(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffisynccoordinator_apply_leased_inbox_into_store(
+): Short
 external fun uniffi_trix_core_checksum_method_ffisynccoordinator_chat_cursor(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffisynccoordinator_create_chat_control(
@@ -923,6 +925,8 @@ external fun uniffi_trix_core_checksum_method_ffisynccoordinator_lease_inbox(
 external fun uniffi_trix_core_checksum_method_ffisynccoordinator_lease_inbox_into_store(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffisynccoordinator_lease_owner(
+): Short
+external fun uniffi_trix_core_checksum_method_ffisynccoordinator_record_acked_inbox_ids(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffisynccoordinator_record_chat_server_seq(
 ): Short
@@ -1360,6 +1364,8 @@ external fun uniffi_trix_core_fn_method_ffisynccoordinator_add_chat_devices_cont
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffisynccoordinator_add_chat_members_control(`ptr`: Long,`client`: Long,`store`: Long,`facade`: Long,`input`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffisynccoordinator_apply_leased_inbox_into_store(`ptr`: Long,`store`: Long,`lease`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffisynccoordinator_chat_cursor(`ptr`: Long,`chatId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffisynccoordinator_create_chat_control(`ptr`: Long,`client`: Long,`store`: Long,`facade`: Long,`input`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1370,6 +1376,8 @@ external fun uniffi_trix_core_fn_method_ffisynccoordinator_lease_inbox_into_stor
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffisynccoordinator_lease_owner(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffisynccoordinator_record_acked_inbox_ids(`ptr`: Long,`ackedInboxIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 external fun uniffi_trix_core_fn_method_ffisynccoordinator_record_chat_server_seq(`ptr`: Long,`chatId`: RustBuffer.ByValue,`serverSeq`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Byte
 external fun uniffi_trix_core_fn_method_ffisynccoordinator_remove_chat_devices_control(`ptr`: Long,`client`: Long,`store`: Long,`facade`: Long,`input`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1981,6 +1989,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_add_chat_members_control() != 24813.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_apply_leased_inbox_into_store() != 36720.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_chat_cursor() != 10370.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1994,6 +2005,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_lease_owner() != 50562.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_record_acked_inbox_ids() != 7925.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_record_chat_server_seq() != 40744.toShort()) {
@@ -7373,6 +7387,8 @@ public interface FfiSyncCoordinatorInterface {
     
     fun `addChatMembersControl`(`client`: FfiServerApiClient, `store`: FfiLocalHistoryStore, `facade`: FfiMlsFacade, `input`: FfiModifyChatMembersControlInput): FfiModifyChatMembersControlOutcome
     
+    fun `applyLeasedInboxIntoStore`(`store`: FfiLocalHistoryStore, `lease`: FfiLeaseInboxResponse): FfiLocalStoreApplyReport
+    
     fun `chatCursor`(`chatId`: kotlin.String): kotlin.ULong?
     
     fun `createChatControl`(`client`: FfiServerApiClient, `store`: FfiLocalHistoryStore, `facade`: FfiMlsFacade, `input`: FfiCreateChatControlInput): FfiCreateChatControlOutcome
@@ -7382,6 +7398,8 @@ public interface FfiSyncCoordinatorInterface {
     fun `leaseInboxIntoStore`(`client`: FfiServerApiClient, `store`: FfiLocalHistoryStore, `limit`: kotlin.UInt?, `leaseTtlSeconds`: kotlin.ULong?): FfiInboxApplyOutcome
     
     fun `leaseOwner`(): kotlin.String
+    
+    fun `recordAckedInboxIds`(`ackedInboxIds`: List<kotlin.ULong>)
     
     fun `recordChatServerSeq`(`chatId`: kotlin.String, `serverSeq`: kotlin.ULong): kotlin.Boolean
     
@@ -7541,6 +7559,20 @@ open class FfiSyncCoordinator: Disposable, AutoCloseable, FfiSyncCoordinatorInte
     
 
     
+    @Throws(TrixFfiException::class)override fun `applyLeasedInboxIntoStore`(`store`: FfiLocalHistoryStore, `lease`: FfiLeaseInboxResponse): FfiLocalStoreApplyReport {
+            return FfiConverterTypeFfiLocalStoreApplyReport.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffisynccoordinator_apply_leased_inbox_into_store(
+        it,
+        FfiConverterTypeFfiLocalHistoryStore.lower(`store`),FfiConverterTypeFfiLeaseInboxResponse.lower(`lease`),_status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(TrixFfiException::class)override fun `chatCursor`(`chatId`: kotlin.String): kotlin.ULong? {
             return FfiConverterOptionalULong.lift(
     callWithHandle {
@@ -7608,6 +7640,19 @@ open class FfiSyncCoordinator: Disposable, AutoCloseable, FfiSyncCoordinatorInte
     }
     )
     }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `recordAckedInboxIds`(`ackedInboxIds`: List<kotlin.ULong>)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffisynccoordinator_record_acked_inbox_ids(
+        it,
+        FfiConverterSequenceULong.lower(`ackedInboxIds`),_status)
+}
+    }
+    
     
 
     

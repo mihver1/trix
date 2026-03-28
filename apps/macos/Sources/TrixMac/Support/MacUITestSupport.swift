@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 enum MacUITestLaunchArgument {
     static let enableUITesting = "-trix-ui-testing"
@@ -51,6 +52,93 @@ enum TrixMacAccessibilityID {
 
     enum Restore {
         static let reconnectButton = "mac.restore.reconnect"
+    }
+
+    /// Workspace chrome used by UI automation (sidebar list, etc.).
+    enum Workspace {
+        static let chatList = "mac.workspace.chat-list"
+    }
+
+    /// Identifiers for rows that match a loaded `MacUITestFixtureManifest` (UI tests / interop).
+    enum Fixture {
+        static func chatRow(_ kind: MacUITestFixtureChatKind) -> String {
+            "mac.fixture.chat-row.\(kind.rawValue)"
+        }
+
+        static func timelineMessage(_ kind: MacUITestFixtureMessageKind) -> String {
+            "mac.fixture.timeline-message.\(kind.rawValue)"
+        }
+    }
+}
+
+// MARK: - Fixture-driven accessibility hints (main app UI)
+
+enum MacUITestFixtureViewHints {
+    /// Mirrors `MacUITestLaunchConfiguration` gating without referencing types that are not in the UI-test target’s build.
+    private static var isUITestLaunch: Bool {
+        ProcessInfo.processInfo.arguments.contains(MacUITestLaunchArgument.enableUITesting)
+    }
+
+    private static var activeManifest: MacUITestFixtureManifest? {
+        guard isUITestLaunch else {
+            return nil
+        }
+        return MacUITestFixtureManifestStore.load()
+    }
+
+    /// - Parameter chatTypeRawValue: `ChatType.rawValue` from the main app (`dm`, `group`, `account_sync`).
+    static func sidebarChatRowIdentifier(chatId: UUID, chatTypeRawValue: String) -> String? {
+        guard let manifest = activeManifest, manifest.conversationScenario == .dmAndGroup else {
+            return nil
+        }
+        guard let record = manifest.chats.first(where: { $0.chatId == chatId.uuidString }) else {
+            return nil
+        }
+        guard record.kind.rawValue == chatTypeRawValue else {
+            return nil
+        }
+        let sameKindCount = manifest.chats.filter { $0.kind == record.kind }.count
+        guard sameKindCount == 1 else {
+            return nil
+        }
+        return TrixMacAccessibilityID.Fixture.chatRow(record.kind)
+    }
+
+    static func timelineMessageIdentifier(messageId: UUID, selectedChatId: UUID?) -> String? {
+        guard let selectedChatId else {
+            return nil
+        }
+        guard let manifest = activeManifest, manifest.conversationScenario == .dmAndGroup else {
+            return nil
+        }
+        guard let record = manifest.messages.first(where: { $0.messageId == messageId.uuidString && $0.chatId == selectedChatId.uuidString }) else {
+            return nil
+        }
+        let sameKindInChat = manifest.messages.filter { $0.chatId == selectedChatId.uuidString && $0.kind == record.kind }
+        guard sameKindInChat.count == 1 else {
+            return nil
+        }
+        return TrixMacAccessibilityID.Fixture.timelineMessage(record.kind)
+    }
+
+}
+
+struct OptionalAccessibilityIdentifierModifier: ViewModifier {
+    let identifier: String?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let identifier {
+            content.accessibilityIdentifier(identifier)
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    func optionalAccessibilityIdentifier(_ identifier: String?) -> some View {
+        modifier(OptionalAccessibilityIdentifierModifier(identifier: identifier))
     }
 }
 

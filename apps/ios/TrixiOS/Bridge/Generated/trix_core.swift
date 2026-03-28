@@ -3401,6 +3401,8 @@ public protocol FfiSyncCoordinatorProtocol: AnyObject, Sendable {
     
     func addChatMembersControl(client: FfiServerApiClient, store: FfiLocalHistoryStore, facade: FfiMlsFacade, input: FfiModifyChatMembersControlInput) throws  -> FfiModifyChatMembersControlOutcome
     
+    func applyLeasedInboxIntoStore(store: FfiLocalHistoryStore, lease: FfiLeaseInboxResponse) throws  -> FfiLocalStoreApplyReport
+    
     func chatCursor(chatId: String) throws  -> UInt64?
     
     func createChatControl(client: FfiServerApiClient, store: FfiLocalHistoryStore, facade: FfiMlsFacade, input: FfiCreateChatControlInput) throws  -> FfiCreateChatControlOutcome
@@ -3410,6 +3412,8 @@ public protocol FfiSyncCoordinatorProtocol: AnyObject, Sendable {
     func leaseInboxIntoStore(client: FfiServerApiClient, store: FfiLocalHistoryStore, limit: UInt32?, leaseTtlSeconds: UInt64?) throws  -> FfiInboxApplyOutcome
     
     func leaseOwner() throws  -> String
+    
+    func recordAckedInboxIds(ackedInboxIds: [UInt64]) throws 
     
     func recordChatServerSeq(chatId: String, serverSeq: UInt64) throws  -> Bool
     
@@ -3532,6 +3536,16 @@ open func addChatMembersControl(client: FfiServerApiClient, store: FfiLocalHisto
 })
 }
     
+open func applyLeasedInboxIntoStore(store: FfiLocalHistoryStore, lease: FfiLeaseInboxResponse)throws  -> FfiLocalStoreApplyReport  {
+    return try  FfiConverterTypeFfiLocalStoreApplyReport_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffisynccoordinator_apply_leased_inbox_into_store(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiLocalHistoryStore_lower(store),
+        FfiConverterTypeFfiLeaseInboxResponse_lower(lease),$0
+    )
+})
+}
+    
 open func chatCursor(chatId: String)throws  -> UInt64?  {
     return try  FfiConverterOptionUInt64.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffisynccoordinator_chat_cursor(
@@ -3582,6 +3596,14 @@ open func leaseOwner()throws  -> String  {
             self.uniffiCloneHandle(),$0
     )
 })
+}
+    
+open func recordAckedInboxIds(ackedInboxIds: [UInt64])throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffisynccoordinator_record_acked_inbox_ids(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceUInt64.lower(ackedInboxIds),$0
+    )
+}
 }
     
 open func recordChatServerSeq(chatId: String, serverSeq: UInt64)throws  -> Bool  {
@@ -15193,6 +15215,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_add_chat_members_control() != 24813) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffisynccoordinator_apply_leased_inbox_into_store() != 36720) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_chat_cursor() != 10370) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -15206,6 +15231,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_lease_owner() != 50562) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffisynccoordinator_record_acked_inbox_ids() != 7925) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_record_chat_server_seq() != 40744) {

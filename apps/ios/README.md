@@ -61,6 +61,86 @@ xcodebuild \
   build
 ```
 
+Archive, export, validate, and upload for TestFlight from the terminal:
+
+```bash
+cd apps/ios
+
+# Use a monotonically increasing build number for every upload.
+export TRIX_IOS_BUILD_NUMBER=42
+
+# Archive + export only.
+./scripts/build-testflight.sh
+
+# Validate with an Apple ID and app-specific password.
+export TRIX_APPLE_ID="you@example.com"
+export TRIX_APP_SPECIFIC_PASSWORD="app-specific-password"
+./scripts/build-testflight.sh --validate
+
+# Upload an archive with the same xcodebuild/App Store Connect key flow as macOS.
+export TRIX_ASC_AUTH_KEY_PATH="$HOME/.appstoreconnect/private_keys/AuthKey_ABC123XYZ.p8"
+export TRIX_ASC_AUTH_KEY_ID="ABC123XYZ"
+export TRIX_ASC_AUTH_ISSUER_ID="00000000-0000-0000-0000-000000000000"
+./scripts/build-testflight.sh --upload
+
+# Or, if Xcode is already signed in on this Mac, upload without adding any
+# private credentials to the repo or shell history.
+./scripts/build-testflight.sh --upload
+
+# If you already have an IPA, the script falls back to altool upload.
+export TRIX_APPLE_ID="you@example.com"
+export TRIX_APP_SPECIFIC_PASSWORD="app-specific-password"
+./scripts/build-testflight.sh --ipa build/testflight/export/Trix.ipa --upload
+```
+
+The TestFlight driver writes release artifacts under `build/testflight/`:
+
+- `TrixiOS.xcarchive`
+- exported `.ipa` under `build/testflight/export/`
+- archive result bundle at `build/testflight/TrixiOS-archive.xcresult`
+- `archive.log`, `export.log`, `validate.log`, and `upload.log`
+
+The script also:
+
+- regenerates the `UniFFI` bridge and the Xcode project before archiving unless `--skip-bridge` or `--skip-xcodegen` is passed
+- runs `ios-unit` prechecks by default unless `--skip-prechecks` is passed
+- uses `-allowProvisioningUpdates` by default unless `TRIX_IOS_ALLOW_PROVISIONING_UPDATES=0`
+- supports `TRIX_TESTFLIGHT_INTERNAL_ONLY=1` to mark the upload for internal TestFlight testing only
+- can re-validate or upload an existing `.ipa` with `--ipa path/to/Trix.ipa`
+
+With a fresh archive, `--upload` uses the same `xcodebuild -exportArchive` upload path as `apps/macos/scripts/archive-testflight.sh`. If Xcode is signed in locally, you can use that account state directly without checking any private credentials into git.
+
+If you prefer explicit App Store Connect API key auth, set `TRIX_ASC_AUTH_KEY_PATH` / `TRIX_ASC_AUTH_KEY_ID` / `TRIX_ASC_AUTH_ISSUER_ID`.
+
+If you rely on directory-based key discovery, inline auth strings, Apple ID/app-specific-password auth, or an existing `.ipa`, the script falls back to `altool`.
+
+If you pass `--ipa`, upload falls back to `altool`, because `xcodebuild` uploads archives rather than `.ipa` files.
+
+If you want both validation and the mac-style upload path, run:
+
+```bash
+./scripts/build-testflight.sh --validate --upload
+```
+
+That combination exports once for validation and then runs a second `xcodebuild -exportArchive` pass for the actual upload.
+
+If your team uses manual signing or a different export method, point `TRIX_IOS_EXPORT_OPTIONS_PLIST` at another plist before running the script.
+
+To avoid putting the app-specific password in shell history, store it in the keychain once and reuse the keychain item for both validate and upload:
+
+```bash
+xcrun altool \
+  --store-password-in-keychain-item TRIX_APPSTORE_PASSWORD \
+  -u "$TRIX_APPLE_ID" \
+  -p "$TRIX_APP_SPECIFIC_PASSWORD"
+
+TRIX_ALTOOL_KEYCHAIN_ITEM=TRIX_APPSTORE_PASSWORD \
+./scripts/build-testflight.sh --validate
+
+TRIX_ALTOOL_KEYCHAIN_ITEM=TRIX_APPSTORE_PASSWORD \
+./scripts/build-testflight.sh --ipa build/testflight/export/Trix.ipa --upload
+```
+
 ## Notes
 
 - `App Transport Security` is relaxed for this PoC so the client can talk to a local `http://` backend. Tighten this before shipping.

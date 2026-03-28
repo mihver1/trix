@@ -118,4 +118,47 @@ final class TrixMacSmokeUITests: XCTestCase {
                 .waitForExistence(timeout: 25)
         )
     }
+
+    func testDmAndGroupConversationSeedShowsFixtureChatRowsAndTimelineMessages() async throws {
+        try await TrixMacUITestApp.skipUnlessServerReachable()
+
+        let app = TrixMacUITestApp.launch(
+            resetState: true,
+            seedScenario: .approvedAccount,
+            conversationScenario: .dmAndGroup,
+            scenarioLabel: "dm-group-proof"
+        )
+
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        XCTAssertTrue(
+            identifiedElement(TrixMacAccessibilityID.Root.workspaceScreen, in: app)
+                .waitForExistence(timeout: 60)
+        )
+
+        let chatList = identifiedElement(TrixMacAccessibilityID.Workspace.chatList, in: app)
+        XCTAssertTrue(chatList.waitForExistence(timeout: 15))
+
+        let dmRow = identifiedElement(TrixMacAccessibilityID.Fixture.chatRow(.dm), in: app)
+        let groupRow = identifiedElement(TrixMacAccessibilityID.Fixture.chatRow(.group), in: app)
+        XCTAssertTrue(dmRow.waitForExistence(timeout: 45), "Expected seeded DM chat row")
+        XCTAssertTrue(groupRow.waitForExistence(timeout: 10), "Expected seeded group chat row")
+
+        dmRow.click()
+        try await Task.sleep(nanoseconds: 400_000_000)
+
+        let dmSeedMessage = identifiedElement(TrixMacAccessibilityID.Fixture.timelineMessage(.dmSeed), in: app)
+        XCTAssertTrue(dmSeedMessage.waitForExistence(timeout: 30), "Expected DM seed message in timeline")
+
+        let dmSeedText = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "UI DM Seed")).firstMatch
+        XCTAssertTrue(dmSeedText.waitForExistence(timeout: 5))
+
+        groupRow.click()
+        try await Task.sleep(nanoseconds: 400_000_000)
+
+        let groupSeedMessage = identifiedElement(TrixMacAccessibilityID.Fixture.timelineMessage(.groupSeed), in: app)
+        XCTAssertTrue(groupSeedMessage.waitForExistence(timeout: 30), "Expected group seed message in timeline")
+
+        let groupSeedText = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "UI Group Seed")).firstMatch
+        XCTAssertTrue(groupSeedText.waitForExistence(timeout: 5))
+    }
 }

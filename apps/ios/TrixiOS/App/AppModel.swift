@@ -112,7 +112,7 @@ final class AppModel: ObservableObject {
     private var realtimeConnectionID = UUID()
     private var currentServerBaseURLString: String?
     private var hasScheduledBackgroundRefresh = false
-    private var cachedAuthSession: CachedAuthSession?
+    private let authSessionResolutionGate = AuthSessionResolutionGate()
     private var realtimeAccessToken: String?
     private var messengerSnapshot: SafeMessengerSnapshot?
     private var messengerCheckpoint: String?
@@ -242,15 +242,14 @@ final class AppModel: ObservableObject {
         }
 
         if let localIdentity,
-           let cachedAuthSession,
-           cachedAuthSession.isUsable(
+           let cachedAuthSession = authSessionResolutionGate.currentUsableSession(
                for: localIdentity,
                baseURLString: normalizedBaseURLString(baseURLString),
                leewaySeconds: 60
            ) {
             await startRealtimeConnection(
                 baseURLString: baseURLString,
-                accessToken: cachedAuthSession.session.accessToken,
+                accessToken: cachedAuthSession.accessToken,
                 identity: localIdentity
             )
             return
@@ -1892,48 +1891,25 @@ final class AppModel: ObservableObject {
         identity: LocalDeviceIdentity,
         existingSession: AuthSessionResponse? = nil
     ) async throws -> AuthSessionResponse {
-        if let existingSession {
-            cacheAuthenticatedSession(existingSession, for: identity, baseURLString: try client.baseURLString())
-            return existingSession
-        }
-
         let normalizedBaseURL = try client.baseURLString()
-        if let cachedAuthSession,
-           cachedAuthSession.isUsable(
-               for: identity,
-               baseURLString: normalizedBaseURL,
-               leewaySeconds: 60
-           ) {
-            return cachedAuthSession.session
+        return try await authSessionResolutionGate.resolve(
+            identity: identity,
+            baseURLString: normalizedBaseURL,
+            existingSession: existingSession,
+            leewaySeconds: 60
+        ) { [self] in
+            try await authenticate(client: client, identity: identity)
         }
-
-        let session = try await authenticate(client: client, identity: identity)
-        cacheAuthenticatedSession(session, for: identity, baseURLString: normalizedBaseURL)
-        return session
-    }
-
-    private func cacheAuthenticatedSession(
-        _ session: AuthSessionResponse,
-        for identity: LocalDeviceIdentity,
-        baseURLString: String
-    ) {
-        cachedAuthSession = CachedAuthSession(
-            baseURLString: normalizedBaseURLString(baseURLString),
-            accountId: identity.accountId,
-            deviceId: identity.deviceId,
-            session: session
-        )
     }
 
     private func invalidateCachedAuthSession() {
-        if let cachedAuthSession,
+        if let invalidatedSession = authSessionResolutionGate.invalidate(),
            let baseURLString = currentServerBaseURLString {
             try? TrixCoreServerBridge.clearAccessToken(
                 baseURLString: baseURLString,
-                accessToken: cachedAuthSession.session.accessToken
+                accessToken: invalidatedSession.accessToken
             )
         }
-        cachedAuthSession = nil
         realtimeAccessToken = nil
     }
 
@@ -2729,6 +2705,112 @@ private struct AuthenticatedContext {
     let client: APIClient
     let identity: LocalDeviceIdentity
     let session: AuthSessionResponse
+}
+
+@MainActor
+final class AuthSessionResolutionGate {
+    private var cachedAuthSession: CachedAuthSession?
+    private var inFlightResolution: (key: AuthSessionResolutionKey, task: Task<AuthSessionResponse, Error>)?
+
+    func currentUsableSession(
+        for identity: LocalDeviceIdentity,
+        baseURLString: String,
+        leewaySeconds: UInt64
+    ) -> AuthSessionResponse? {
+        guard let cachedAuthSession,
+              cachedAuthSession.isUsable(
+                  for: identity,
+                  baseURLString: normalize(baseURLString),
+                  leewaySeconds: leewaySeconds
+              ) else {
+            return nil
+        }
+
+        return cachedAuthSession.session
+    }
+
+    func resolve(
+        identity: LocalDeviceIdentity,
+        baseURLString: String,
+        existingSession: AuthSessionResponse?,
+        leewaySeconds: UInt64,
+        authenticate: @escaping @MainActor () async throws -> AuthSessionResponse
+    ) async throws -> AuthSessionResponse {
+        let normalizedBaseURL = normalize(baseURLString)
+        if let existingSession {
+            cache(existingSession, for: identity, baseURLString: normalizedBaseURL)
+            return existingSession
+        }
+
+        if let cachedAuthSession,
+           cachedAuthSession.isUsable(
+               for: identity,
+               baseURLString: normalizedBaseURL,
+               leewaySeconds: leewaySeconds
+           ) {
+            return cachedAuthSession.session
+        }
+
+        let key = AuthSessionResolutionKey(
+            baseURLString: normalizedBaseURL,
+            accountId: identity.accountId,
+            deviceId: identity.deviceId
+        )
+        if let inFlightResolution,
+           inFlightResolution.key == key {
+            return try await inFlightResolution.task.value
+        }
+
+        let task = Task { @MainActor in
+            try await authenticate()
+        }
+        inFlightResolution = (key, task)
+
+        do {
+            let session = try await task.value
+            cache(session, for: identity, baseURLString: normalizedBaseURL)
+            if inFlightResolution?.key == key {
+                inFlightResolution = nil
+            }
+            return session
+        } catch {
+            if inFlightResolution?.key == key {
+                inFlightResolution = nil
+            }
+            throw error
+        }
+    }
+
+    func invalidate() -> AuthSessionResponse? {
+        let invalidatedSession = cachedAuthSession?.session
+        cachedAuthSession = nil
+        inFlightResolution?.task.cancel()
+        inFlightResolution = nil
+        return invalidatedSession
+    }
+
+    private func cache(
+        _ session: AuthSessionResponse,
+        for identity: LocalDeviceIdentity,
+        baseURLString: String
+    ) {
+        cachedAuthSession = CachedAuthSession(
+            baseURLString: normalize(baseURLString),
+            accountId: identity.accountId,
+            deviceId: identity.deviceId,
+            session: session
+        )
+    }
+
+    private func normalize(_ baseURLString: String) -> String {
+        baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+private struct AuthSessionResolutionKey: Equatable {
+    let baseURLString: String
+    let accountId: String
+    let deviceId: String
 }
 
 private struct CachedAuthSession {

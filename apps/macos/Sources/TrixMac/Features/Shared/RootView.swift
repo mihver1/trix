@@ -125,6 +125,12 @@ private struct WorkspaceSidebarView: View {
                             isLoading: chat.chatId == model.selectedChatID && model.isLoadingSelectedChat
                         )
                         .tag(chat.chatId as UUID?)
+                        .optionalAccessibilityIdentifier(
+                            MacUITestFixtureViewHints.sidebarChatRowIdentifier(
+                                chatId: chat.chatId,
+                                chatTypeRawValue: chat.chatType.rawValue
+                            )
+                        )
                     }
                 }
             } header: {
@@ -139,6 +145,7 @@ private struct WorkspaceSidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .accessibilityIdentifier(TrixMacAccessibilityID.Workspace.chatList)
     }
 }
 

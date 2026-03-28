@@ -28,12 +28,14 @@
 		8C70941A293E4D29BF209B37 /* TrixAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9E7A0296CF1257C7837E668 /* TrixAPIClient.swift */; };
 		8F80C20276ABC94B54F30C8A /* AppIdentityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31082D89A35E1EB519E206B7 /* AppIdentityTests.swift */; };
 		902FE0A288A07CFC7908BE16 /* TrixCoreFFIConversions.swift in Sources */ = {isa = PBXBuildFile; fileRef = B23C86C8509965588B5B6C9F /* TrixCoreFFIConversions.swift */; };
+		94194CD5F1C1A25BD4870921 /* ImportedAttachmentStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 860409886427C328A4CCB791 /* ImportedAttachmentStoreTests.swift */; };
 		98ADE511A362ADA7AFAA1AF0 /* TrixMessengerClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED0CF18F6A6B6288A8455FA9 /* TrixMessengerClient.swift */; };
 		A7EA5B8CB38E55739C1B93E7 /* SessionRestoreErrorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44EE6F646D2111D046C49025 /* SessionRestoreErrorTests.swift */; };
 		AFA8BDF95FFD3D16FBB4EDD0 /* MacUITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B13124D1505CA449E0D0AECA /* MacUITestSupport.swift */; };
 		B0D6A2556020BCCAEB2445B0 /* TrixMacInteropSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1575427B96432954EC184FEF /* TrixMacInteropSupport.swift */; };
 		B28DCCD25D43F64477ED043C /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 4632E941F51B28ACFAC316E2 /* AppIcon.icns */; };
 		B619C18977430B69EDE2A7D8 /* TrixMacInteropDriverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 448219DEF0BA572AAA5E0C73 /* TrixMacInteropDriverTests.swift */; };
+		BC0437EBB52100727B4A27E8 /* ImportedAttachmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77CA5691815BF735E8B50336 /* ImportedAttachmentStore.swift */; };
 		BE9BD658F14BFEA7B7FF6290 /* TrixMacUITestApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD72ABF5B554DB5E3936BE39 /* TrixMacUITestApp.swift */; };
 		C381CDD42782CCBC2EBC2059 /* DeviceIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8DA7EB980D53B9998B24B3A /* DeviceIdentity.swift */; };
 		CF216EE8A2AC0F42BDD96910 /* trix_core.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E294D6B5626B1D095D94E1E /* trix_core.swift */; };
@@ -94,6 +96,8 @@
 		627F1777C49C1241F0E44A8F /* MacUITestAppBootstrap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacUITestAppBootstrap.swift; sourceTree = "<group>"; };
 		6783D0499D89DC1C138D9884 /* AppIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIdentity.swift; sourceTree = "<group>"; };
 		6F3E9F4D645B6CCBD53E40BF /* AttachmentPreviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentPreviewSheet.swift; sourceTree = "<group>"; };
+		77CA5691815BF735E8B50336 /* ImportedAttachmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportedAttachmentStore.swift; sourceTree = "<group>"; };
+		860409886427C328A4CCB791 /* ImportedAttachmentStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportedAttachmentStoreTests.swift; sourceTree = "<group>"; };
 		9068443F554CD6F8424422A0 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		91B9FDE42BCCD4DCD14CBF7C /* TrixMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TrixMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		91C76B87CB855F822DCF0184 /* MacUITestFixtureSeeder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacUITestFixtureSeeder.swift; sourceTree = "<group>"; };
@@ -155,6 +159,7 @@
 			isa = PBXGroup;
 			children = (
 				6783D0499D89DC1C138D9884 /* AppIdentity.swift */,
+				77CA5691815BF735E8B50336 /* ImportedAttachmentStore.swift */,
 				37FC742545535C1D04FA361B /* KeychainStore.swift */,
 				B13124D1505CA449E0D0AECA /* MacUITestSupport.swift */,
 				DB8B65020EA850F8ECE018C1 /* NotificationSupport.swift */,
@@ -224,6 +229,7 @@
 				E1D8E914C2819EA7CF5E9E97 /* BootstrapMessageTests.swift */,
 				ACD09428B63A34435686262F /* CrossPlatformStabilizationTests.swift */,
 				F2B7388A4D817DC522225FBC /* GroupChatPresentationTests.swift */,
+				860409886427C328A4CCB791 /* ImportedAttachmentStoreTests.swift */,
 				0B094F46233034DE544886BD /* MacUITestAppBootstrapTests.swift */,
 				99D3A143E466D3ED9CE6DA8B /* MacUITestLaunchConfigurationTests.swift */,
 				0A64CBD1808913F7F29312DA /* NativePresentationHelpersTests.swift */,
@@ -301,6 +307,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 6CD79AFB2D85577145021AA9 /* Build configuration list for PBXNativeTarget "TrixMac" */;
 			buildPhases = (
+				0371496D5504A20B8FE8005E /* Build trix-core universal archive */,
 				B41E9D7FA8E3A0B8B5780327 /* Sources */,
 				14EDCD5598B0A83F4A40E472 /* Resources */,
 			);
@@ -343,12 +350,15 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					0FFDE725E4F805981BA3D21B = {
+						DevelopmentTeam = HGY33KYKQ2;
 						ProvisioningStyle = Automatic;
 					};
 					A86A55812F1046A4D674C5FE = {
+						DevelopmentTeam = HGY33KYKQ2;
 						ProvisioningStyle = Automatic;
 					};
 					CC5BE1D0925BE20FDD953377 = {
+						DevelopmentTeam = HGY33KYKQ2;
 						ProvisioningStyle = Automatic;
 						TestTargetID = A86A55812F1046A4D674C5FE;
 					};
@@ -387,6 +397,30 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		0371496D5504A20B8FE8005E /* Build trix-core universal archive */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build trix-core universal archive";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/../../target/macos-universal/$(CONFIGURATION)/libtrix_core.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "bash \"$SRCROOT/scripts/build-trix-core-universal.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		2E01498CFCEC7E34AC633832 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -409,6 +443,7 @@
 				39F5BBFE01907362344FEAB0 /* BootstrapMessageTests.swift in Sources */,
 				4D029DA0BA32A0C8ED0C29C0 /* CrossPlatformStabilizationTests.swift in Sources */,
 				1C1C3A912795772D0F8F5578 /* GroupChatPresentationTests.swift in Sources */,
+				94194CD5F1C1A25BD4870921 /* ImportedAttachmentStoreTests.swift in Sources */,
 				88132E40AAAA1841462225C1 /* MacUITestAppBootstrapTests.swift in Sources */,
 				7CC474A10DB62B83F498DBB7 /* MacUITestLaunchConfigurationTests.swift in Sources */,
 				F76114501CF793C04D6405CE /* NativePresentationHelpersTests.swift in Sources */,
@@ -425,6 +460,7 @@
 				8A6EF6A6DFC34C57E4A18C8E /* AppModel.swift in Sources */,
 				E27AD64FEA1BF6FF3EC86271 /* AttachmentPreviewSheet.swift in Sources */,
 				C381CDD42782CCBC2EBC2059 /* DeviceIdentity.swift in Sources */,
+				BC0437EBB52100727B4A27E8 /* ImportedAttachmentStore.swift in Sources */,
 				7E93F7B01158ECE8D534AEFC /* KeychainStore.swift in Sources */,
 				FD4E8CC52E29BCB49729263D /* MacUITestAppBootstrap.swift in Sources */,
 				E3CD9232F12043D0AF937AD9 /* MacUITestFixtureSeeder.swift in Sources */,
@@ -523,6 +559,7 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = HGY33KYKQ2;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -556,17 +593,19 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = TrixMac.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				OTHER_LDFLAGS = (
-					"$(SRCROOT)/../../target/debug/libtrix_core.a",
+					"$(SRCROOT)/../../target/macos-universal/$(CONFIGURATION)/libtrix_core.a",
 				);
 				OTHER_SWIFT_FLAGS = (
 					"-Xcc",
@@ -650,16 +689,18 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = TrixMac.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				OTHER_LDFLAGS = (
-					"$(SRCROOT)/../../target/debug/libtrix_core.a",
+					"$(SRCROOT)/../../target/macos-universal/$(CONFIGURATION)/libtrix_core.a",
 				);
 				OTHER_SWIFT_FLAGS = (
 					"-Xcc",
@@ -707,6 +748,7 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = HGY33KYKQ2;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;

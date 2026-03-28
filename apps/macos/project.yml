@@ -11,12 +11,21 @@ settings:
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1.0
     MACOSX_DEPLOYMENT_TARGET: "14.0"
+    DEVELOPMENT_TEAM: HGY33KYKQ2
 
 targets:
   TrixMac:
     type: application
     platform: macOS
     deploymentTarget: "14.0"
+    preBuildScripts:
+      - script: |
+          bash "$SRCROOT/scripts/build-trix-core-universal.sh"
+        name: Build trix-core universal archive
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(SRCROOT)/../../target/macos-universal/$(CONFIGURATION)/libtrix_core.a
+        showEnvVars: false
     sources:
       - path: Sources/TrixMac
     settings:
@@ -25,11 +34,13 @@ targets:
         PRODUCT_NAME: TrixMac
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: TrixMac.entitlements
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.social-networking
         OTHER_SWIFT_FLAGS:
           - -Xcc
           - -fmodule-map-file=$(SRCROOT)/Sources/trix_coreFFI/module.modulemap
         OTHER_LDFLAGS:
-          - $(SRCROOT)/../../target/debug/libtrix_core.a
+          - $(SRCROOT)/../../target/macos-universal/$(CONFIGURATION)/libtrix_core.a
       configs:
         Debug:
           ENABLE_TESTABILITY: YES

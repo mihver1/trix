@@ -85,6 +85,7 @@ final class AppModel: ObservableObject {
     private let keychainStore: KeychainStore
     private let notificationPreferencesStore: NotificationPreferencesStore
     private let notificationCoordinator: LocalNotificationCoordinator
+    private let importedAttachmentStore: ImportedAttachmentStore
     private let defaultDeviceName: String
     private var persistedSession: PersistedSession?
     private var accessToken: String?
@@ -110,12 +111,14 @@ final class AppModel: ObservableObject {
         sessionStore: SessionStore = SessionStore(),
         keychainStore: KeychainStore = KeychainStore(),
         notificationPreferencesStore: NotificationPreferencesStore = NotificationPreferencesStore(),
-        notificationCoordinator: LocalNotificationCoordinator = LocalNotificationCoordinator.makeDefault()
+        notificationCoordinator: LocalNotificationCoordinator = LocalNotificationCoordinator.makeDefault(),
+        importedAttachmentStore: ImportedAttachmentStore = ImportedAttachmentStore()
     ) {
         self.sessionStore = sessionStore
         self.keychainStore = keychainStore
         self.notificationPreferencesStore = notificationPreferencesStore
         self.notificationCoordinator = notificationCoordinator
+        self.importedAttachmentStore = importedAttachmentStore
 
         let defaultDeviceName = Host.current().localizedName ?? "This Mac"
         self.defaultDeviceName = defaultDeviceName
@@ -394,13 +397,16 @@ final class AppModel: ObservableObject {
         }
 
         do {
-            composerAttachmentDraft = try makeAttachmentDraft(from: fileURL)
+            let draft = try makeAttachmentDraft(from: fileURL)
+            cleanupImportedComposerAttachmentIfNeeded(replacingWith: draft)
+            composerAttachmentDraft = draft
         } catch {
             lastErrorMessage = error.userFacingMessage
         }
     }
 
     func clearComposerAttachment() {
+        cleanupImportedComposerAttachmentIfNeeded()
         composerAttachmentDraft = nil
     }
 
@@ -948,6 +954,7 @@ final class AppModel: ObservableObject {
                 accessToken: token,
                 selectionPreference: .prefer(chatId)
             )
+            cleanupImportedComposerAttachmentIfNeeded()
             composerAttachmentDraft = nil
             logInfo("message", "send_message success chat=\(shortLogID(chatId))")
             return true
@@ -1010,18 +1017,25 @@ final class AppModel: ObservableObject {
         }
 
         markPendingOutgoingSending(pendingMessageID)
-        composerAttachmentDraft = nil
 
         switch pendingMessage.payload {
         case let .text(text):
+            cleanupImportedComposerAttachmentIfNeeded()
+            composerAttachmentDraft = nil
             _ = await sendMessage(draftText: text, pendingMessageID: pendingMessageID)
         case let .attachment(attachmentDraft):
+            cleanupImportedComposerAttachmentIfNeeded(replacingWith: attachmentDraft)
             composerAttachmentDraft = attachmentDraft
             _ = await sendMessage(draftText: "", pendingMessageID: pendingMessageID)
         }
     }
 
     func discardPendingOutgoingMessage(_ pendingMessageID: UUID) {
+        if let pendingMessage = pendingOutgoingMessages.first(where: { $0.id == pendingMessageID }),
+           case let .attachment(attachmentDraft) = pendingMessage.payload,
+           composerAttachmentDraft?.fileURL != attachmentDraft.fileURL {
+            importedAttachmentStore.removeImportedFileIfOwned(at: attachmentDraft.fileURL)
+        }
         removePendingOutgoing(pendingMessageID)
     }
 
@@ -2051,6 +2065,8 @@ final class AppModel: ObservableObject {
     private func clearWorkspaceData() {
         stopLinkIntentRefreshLoop()
         stopForegroundRealtimeLoop()
+        cleanupImportedPendingAttachmentDrafts()
+        cleanupImportedComposerAttachmentIfNeeded()
         currentAccount = nil
         messengerCheckpoint = nil
         devices = []
@@ -2738,29 +2754,49 @@ final class AppModel: ObservableObject {
     }
 
     private func makeAttachmentDraft(from fileURL: URL) throws -> AttachmentDraft {
-        let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey, .nameKey])
-        let fileName = resourceValues.name ?? fileURL.lastPathComponent
-        let mimeType = resourceValues.contentType?.preferredMIMEType ??
+        let sourceResourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey, .nameKey])
+        let fileName = sourceResourceValues.name ?? fileURL.lastPathComponent
+        let mimeType = sourceResourceValues.contentType?.preferredMIMEType ??
             UTType(filenameExtension: fileURL.pathExtension)?.preferredMIMEType ??
             "application/octet-stream"
-        let sizeBytes = UInt64(resourceValues.fileSize ?? 0)
+        let sizeBytes = UInt64(sourceResourceValues.fileSize ?? 0)
+        let importedFileURL = try importedAttachmentStore.importFile(at: fileURL)
 
         var widthPx: UInt32?
         var heightPx: UInt32?
         if mimeType.hasPrefix("image/"),
-           let image = NSImage(contentsOf: fileURL) {
+           let image = NSImage(contentsOf: importedFileURL) {
             widthPx = UInt32(max(image.size.width.rounded(), 0))
             heightPx = UInt32(max(image.size.height.rounded(), 0))
         }
 
         return AttachmentDraft(
-            fileURL: fileURL,
+            fileURL: importedFileURL,
             fileName: fileName,
             mimeType: mimeType,
             widthPx: widthPx,
             heightPx: heightPx,
             fileSizeBytes: sizeBytes
         )
+    }
+
+    private func cleanupImportedComposerAttachmentIfNeeded(replacingWith newDraft: AttachmentDraft? = nil) {
+        guard let currentDraft = composerAttachmentDraft else {
+            return
+        }
+        guard currentDraft.fileURL != newDraft?.fileURL else {
+            return
+        }
+        importedAttachmentStore.removeImportedFileIfOwned(at: currentDraft.fileURL)
+    }
+
+    private func cleanupImportedPendingAttachmentDrafts() {
+        for pendingMessage in pendingOutgoingMessages {
+            guard case let .attachment(attachmentDraft) = pendingMessage.payload else {
+                continue
+            }
+            importedAttachmentStore.removeImportedFileIfOwned(at: attachmentDraft.fileURL)
+        }
     }
 
     private func presentAttachment(url: URL, body: TypedMessageBody) {
