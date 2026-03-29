@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     collections::{BTreeMap, BTreeSet},
     fs::{self, File},
     io::Read,
@@ -404,12 +405,7 @@ impl LocalHistoryStore {
                 })
             })
             .collect::<Vec<_>>();
-        chats.sort_by(|left, right| {
-            right
-                .last_server_seq
-                .cmp(&left.last_server_seq)
-                .then_with(|| left.chat_id.0.cmp(&right.chat_id.0))
-        });
+        chats.sort_by(compare_chat_summaries_by_recent_activity);
         chats
     }
 
@@ -432,12 +428,7 @@ impl LocalHistoryStore {
                 ))
             })
             .collect::<Vec<_>>();
-        chats.sort_by(|left, right| {
-            right
-                .last_server_seq
-                .cmp(&left.last_server_seq)
-                .then_with(|| left.chat_id.0.cmp(&right.chat_id.0))
-        });
+        chats.sort_by(compare_local_chat_list_items_by_recent_activity);
         chats
     }
 
@@ -2728,6 +2719,28 @@ fn local_chat_list_item_from(
         preview_created_at_unix: preview.as_ref().map(|preview| preview.created_at_unix),
         participant_profiles: state.participant_profiles.clone(),
     }
+}
+
+fn compare_chat_summaries_by_recent_activity(left: &ChatSummary, right: &ChatSummary) -> Ordering {
+    right
+        .last_message
+        .as_ref()
+        .map(|message| message.created_at_unix)
+        .cmp(&left.last_message.as_ref().map(|message| message.created_at_unix))
+        .then_with(|| right.last_server_seq.cmp(&left.last_server_seq))
+        .then_with(|| left.chat_id.0.cmp(&right.chat_id.0))
+}
+
+fn compare_local_chat_list_items_by_recent_activity(
+    left: &LocalChatListItem,
+    right: &LocalChatListItem,
+) -> Ordering {
+    right
+        .preview_created_at_unix
+        .cmp(&left.preview_created_at_unix)
+        .then_with(|| right.preview_server_seq.cmp(&left.preview_server_seq))
+        .then_with(|| right.last_server_seq.cmp(&left.last_server_seq))
+        .then_with(|| left.chat_id.0.cmp(&right.chat_id.0))
 }
 
 fn local_timeline_item_from(
@@ -5090,6 +5103,83 @@ mod tests {
         assert_eq!(item.preview_sender_display_name.as_deref(), Some("Me"));
         assert_eq!(item.preview_is_outgoing, Some(true));
         assert_eq!(item.preview_server_seq, Some(2));
+    }
+
+    #[test]
+    fn chat_lists_sort_by_recent_activity_before_server_seq() {
+        let mut store = LocalHistoryStore::new();
+        let self_account_id = AccountId(Uuid::new_v4());
+        let device_id = DeviceId(Uuid::new_v4());
+        let older_chat_id = ChatId(Uuid::new_v4());
+        let newer_chat_id = ChatId(Uuid::new_v4());
+
+        let older_last_message = MessageEnvelope {
+            message_id: MessageId(Uuid::new_v4()),
+            chat_id: older_chat_id,
+            server_seq: 8,
+            sender_account_id: AccountId(Uuid::new_v4()),
+            sender_device_id: device_id,
+            epoch: 1,
+            message_kind: MessageKind::Application,
+            content_type: ContentType::Text,
+            ciphertext_b64: "YQ==".to_owned(),
+            aad_json: json!({}),
+            created_at_unix: 10,
+        };
+        let newer_last_message = MessageEnvelope {
+            message_id: MessageId(Uuid::new_v4()),
+            chat_id: newer_chat_id,
+            server_seq: 1,
+            sender_account_id: AccountId(Uuid::new_v4()),
+            sender_device_id: device_id,
+            epoch: 1,
+            message_kind: MessageKind::Application,
+            content_type: ContentType::Text,
+            ciphertext_b64: "Yg==".to_owned(),
+            aad_json: json!({}),
+            created_at_unix: 20,
+        };
+
+        store
+            .apply_chat_list(&ChatListResponse {
+                chats: vec![
+                    ChatSummary {
+                        chat_id: older_chat_id,
+                        chat_type: ChatType::Dm,
+                        title: Some("Older".to_owned()),
+                        last_server_seq: 8,
+                        epoch: 1,
+                        pending_message_count: 0,
+                        last_message: Some(older_last_message),
+                        participant_profiles: Vec::new(),
+                    },
+                    ChatSummary {
+                        chat_id: newer_chat_id,
+                        chat_type: ChatType::Dm,
+                        title: Some("Newer".to_owned()),
+                        last_server_seq: 1,
+                        epoch: 1,
+                        pending_message_count: 0,
+                        last_message: Some(newer_last_message),
+                        participant_profiles: Vec::new(),
+                    },
+                ],
+            })
+            .unwrap();
+
+        let summary_order = store
+            .list_chats()
+            .into_iter()
+            .map(|chat| chat.chat_id)
+            .collect::<Vec<_>>();
+        assert_eq!(summary_order, vec![newer_chat_id, older_chat_id]);
+
+        let local_order = store
+            .list_local_chat_list_items(Some(self_account_id))
+            .into_iter()
+            .map(|chat| chat.chat_id)
+            .collect::<Vec<_>>();
+        assert_eq!(local_order, vec![newer_chat_id, older_chat_id]);
     }
 
     #[test]
