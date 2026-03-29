@@ -1,7 +1,7 @@
 import SwiftUI
 
-private let onboardingAccent = Color(red: 0.14, green: 0.55, blue: 0.98)
-private let onboardingSurface = Color.white.opacity(0.88)
+private let onboardingAccent = TrixTheme.accent
+private let onboardingSurface = TrixTheme.primarySurface
 
 struct CreateAccountView: View {
     private enum SetupMode: String, CaseIterable, Identifiable {
@@ -40,6 +40,7 @@ struct CreateAccountView: View {
 
     @Binding var serverBaseURL: String
     @ObservedObject var model: AppModel
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var setupMode: SetupMode = .createAccount
     @State private var form = CreateAccountForm()
@@ -51,9 +52,9 @@ struct CreateAccountView: View {
         ZStack {
             LinearGradient(
                 colors: [
-                    Color(red: 0.95, green: 0.98, blue: 1.0),
-                    Color(red: 0.89, green: 0.95, blue: 1.0),
-                    Color(red: 0.98, green: 0.99, blue: 1.0),
+                    TrixTheme.screenGradientTop,
+                    TrixTheme.screenGradientMiddle,
+                    TrixTheme.screenGradientBottom,
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -82,6 +83,7 @@ struct CreateAccountView: View {
             }
         }
         .accessibilityIdentifier(TrixAccessibilityID.Root.onboardingScreen)
+        .accessibilityValue(colorScheme == .dark ? "dark" : "light")
         .safeAreaInset(edge: .bottom) {
             bottomActionBar
         }
@@ -123,8 +125,12 @@ struct CreateAccountView: View {
                         .foregroundStyle(setupMode == mode ? .white : .primary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(setupMode == mode ? onboardingAccent : Color.white.opacity(0.82))
+                        .background(setupMode == mode ? onboardingAccent : TrixTheme.secondarySurface)
                         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(setupMode == mode ? .clear : TrixTheme.surfaceStroke, lineWidth: 1)
+                        }
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier(
@@ -204,7 +210,11 @@ struct CreateAccountView: View {
         .padding(20)
         .background(onboardingSurface)
         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .shadow(color: .black.opacity(0.04), radius: 18, y: 10)
+        .overlay {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .stroke(TrixTheme.surfaceStroke, lineWidth: 1)
+        }
+        .shadow(color: TrixTheme.softShadow, radius: 18, y: 10)
     }
 
     private var connectionCard: some View {
@@ -273,8 +283,12 @@ struct CreateAccountView: View {
             }
         }
         .padding(18)
-        .background(Color.white.opacity(0.76))
+        .background(TrixTheme.tertiarySurface)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(TrixTheme.surfaceStroke, lineWidth: 1)
+        }
     }
 
     private var bottomActionBar: some View {
@@ -397,8 +411,12 @@ private struct OnboardingField: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
-        .background(Color.white.opacity(0.92))
+        .background(TrixTheme.elevatedFieldSurface)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(TrixTheme.surfaceStroke, lineWidth: 1)
+        }
     }
 }
 

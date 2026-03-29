@@ -19,6 +19,7 @@
 		32DD1CD4D3EDDE9B08297EEF /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD786FA5598DD8B41A0444FE /* APIClient.swift */; };
 		34290FD5C5D6893807F2ED59 /* TrixiOSSmokeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77AFAFDD2946D1C49895D188 /* TrixiOSSmokeUITests.swift */; };
 		3CFB6C6EEB3BF0694F8C2338 /* UITestFixtureSeeder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F9754F6512B52355BDF9422 /* UITestFixtureSeeder.swift */; };
+		44F1ABEC4D9100A89C6C4CA5 /* TrixTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = D57BB0CF361A1E7900DD676C /* TrixTheme.swift */; };
 		52A18846B8478503566F0B39 /* PendingApprovalStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08AA5221B78BFACBC4672FF9 /* PendingApprovalStateTests.swift */; };
 		582EAAAFF9F37CAC55419A05 /* TrixUITestApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4535E64D76739244C2930888 /* TrixUITestApp.swift */; };
 		6417EF0F56F80EA188840E68 /* TrixUITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B94177496704FC2F285C6E07 /* TrixUITestSupport.swift */; };
@@ -53,6 +54,7 @@
 		E12020C5E8DE49261BED6B3D /* DiagnosticsLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DB067EA4F79D6FAD3ECE1F0 /* DiagnosticsLogView.swift */; };
 		E4F971691AB2F86D7BACBBB2 /* ServerConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E8E57CCC8925A9519C5EB59 /* ServerConfiguration.swift */; };
 		E8A8146DB08E4255B1963135 /* TrixUITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B94177496704FC2F285C6E07 /* TrixUITestSupport.swift */; };
+		EB0EBC7EE7D84252AF9CCBBA /* TrixThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3122D826CD1149DA9B2735F3 /* TrixThemeTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -83,6 +85,7 @@
 		26D97D3BE9113B5609B948F5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		2746CAF75EE97A4BDBA763BB /* SystemStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemStatusView.swift; sourceTree = "<group>"; };
 		277AE7DC5FFE2238CFF5B555 /* TrixCoreMessageBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixCoreMessageBridgeTests.swift; sourceTree = "<group>"; };
+		3122D826CD1149DA9B2735F3 /* TrixThemeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixThemeTests.swift; sourceTree = "<group>"; };
 		3776D66EB844AFF0402EFA82 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		39DC437F679BF827B2ECC4D1 /* TrixCoreMessageBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixCoreMessageBridge.swift; sourceTree = "<group>"; };
 		3DB067EA4F79D6FAD3ECE1F0 /* DiagnosticsLogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsLogView.swift; sourceTree = "<group>"; };
@@ -122,6 +125,7 @@
 		CD242B589907CC8D81728515 /* ConsumerChatDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConsumerChatDetailView.swift; sourceTree = "<group>"; };
 		D00F9C01FC1A898BC753D579 /* TrixInteropSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixInteropSupport.swift; sourceTree = "<group>"; };
 		D382E0082C361DD751AE4867 /* trix_coreFFI.modulemap */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.module-map"; path = trix_coreFFI.modulemap; sourceTree = "<group>"; };
+		D57BB0CF361A1E7900DD676C /* TrixTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixTheme.swift; sourceTree = "<group>"; };
 		E53DB9EB4BE8475A31F2189A /* TrixCorePersistentBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixCorePersistentBridge.swift; sourceTree = "<group>"; };
 		EFBAFE33FD857EED36B6B54D /* UITestLaunchConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestLaunchConfigurationTests.swift; sourceTree = "<group>"; };
 		F16E8D46A5E1F90D5FA589FB /* MessagingLabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagingLabView.swift; sourceTree = "<group>"; };
@@ -215,6 +219,7 @@
 			isa = PBXGroup;
 			children = (
 				0B4F5BB41B01FD4D022964E0 /* SafeDiagnosticLogStore.swift */,
+				D57BB0CF361A1E7900DD676C /* TrixTheme.swift */,
 			);
 			path = Support;
 			sourceTree = "<group>";
@@ -281,6 +286,7 @@
 				6CA0CB45A603B4FED3E98410 /* ServerBackedSmokeTests.swift */,
 				277AE7DC5FFE2238CFF5B555 /* TrixCoreMessageBridgeTests.swift */,
 				83EC0F77E907EEF7FE19C1C3 /* TrixInteropActionBridgeTests.swift */,
+				3122D826CD1149DA9B2735F3 /* TrixThemeTests.swift */,
 				4EE27BEB5EF834A79EF67EA6 /* UITestConversationSeedStateTests.swift */,
 				EFBAFE33FD857EED36B6B54D /* UITestLaunchConfigurationTests.swift */,
 				8A0A1D526D790F8A15875A65 /* UITestServerHarness.swift */,
@@ -469,6 +475,7 @@
 				A4388599633E8E37A9BF4580 /* ServerBackedSmokeTests.swift in Sources */,
 				6E3A6D003E1B1071F3141280 /* TrixCoreMessageBridgeTests.swift in Sources */,
 				C00A36BBFC7D79391F25814C /* TrixInteropActionBridgeTests.swift in Sources */,
+				EB0EBC7EE7D84252AF9CCBBA /* TrixThemeTests.swift in Sources */,
 				02221BC8016A7E1FA7EF7917 /* UITestConversationSeedStateTests.swift in Sources */,
 				2F7D3413498393667AF7D47C /* UITestLaunchConfigurationTests.swift in Sources */,
 				B786F9D9F064CC87C5A89B14 /* UITestServerHarness.swift in Sources */,
@@ -502,6 +509,7 @@
 				9FFE059EB1320E146D1865E3 /* TrixCoreServerBridge.swift in Sources */,
 				9276BE9E34B7063E30FA1783 /* TrixInteropActionBridge.swift in Sources */,
 				6D9D86587DA600429E137BFA /* TrixInteropSupport.swift in Sources */,
+				44F1ABEC4D9100A89C6C4CA5 /* TrixTheme.swift in Sources */,
 				6417EF0F56F80EA188840E68 /* TrixUITestSupport.swift in Sources */,
 				BD87D15AEFAF56495250E94C /* TrixiOSApp.swift in Sources */,
 				3CFB6C6EEB3BF0694F8C2338 /* UITestFixtureSeeder.swift in Sources */,

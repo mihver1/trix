@@ -3,8 +3,10 @@ import UIKit
 
 @main
 struct TrixiOSApp: App {
+    private let uiTestConfiguration = UITestLaunchConfiguration.current
+
     init() {
-        if UITestLaunchConfiguration.current.disableAnimations {
+        if uiTestConfiguration.disableAnimations {
             UIView.setAnimationsEnabled(false)
         }
     }
@@ -12,6 +14,7 @@ struct TrixiOSApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .preferredColorScheme(uiTestConfiguration.colorSchemeOverride)
         }
     }
 }

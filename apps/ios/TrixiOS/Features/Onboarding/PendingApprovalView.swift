@@ -1,10 +1,11 @@
 import SwiftUI
 
-private let pendingApprovalAccent = Color(red: 0.14, green: 0.55, blue: 0.98)
+private let pendingApprovalAccent = TrixTheme.accent
 
 struct PendingApprovalView: View {
     @Binding var serverBaseURL: String
     @ObservedObject var model: AppModel
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var isShowingForgetAlert = false
     @State private var isShowingTechnicalDetails = false
@@ -13,9 +14,9 @@ struct PendingApprovalView: View {
         ZStack {
             LinearGradient(
                 colors: [
-                    Color(red: 0.95, green: 0.98, blue: 1.0),
-                    Color(red: 0.9, green: 0.95, blue: 1.0),
-                    Color.white,
+                    TrixTheme.screenGradientTop,
+                    TrixTheme.screenGradientMiddle,
+                    TrixTheme.screenGradientBottom,
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -47,6 +48,7 @@ struct PendingApprovalView: View {
             }
         }
         .accessibilityIdentifier(TrixAccessibilityID.Root.pendingApprovalScreen)
+        .accessibilityValue(colorScheme == .dark ? "dark" : "light")
         .safeAreaInset(edge: .bottom) {
             bottomActions
         }
@@ -123,9 +125,13 @@ struct PendingApprovalView: View {
             }
         }
         .padding(20)
-        .background(Color.white.opacity(0.88))
+        .background(TrixTheme.primarySurface)
         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .shadow(color: .black.opacity(0.04), radius: 18, y: 10)
+        .overlay {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .stroke(TrixTheme.surfaceStroke, lineWidth: 1)
+        }
+        .shadow(color: TrixTheme.softShadow, radius: 18, y: 10)
         .accessibilityIdentifier(TrixAccessibilityID.PendingApproval.deviceCard)
     }
 
@@ -153,8 +159,12 @@ struct PendingApprovalView: View {
             )
         }
         .padding(20)
-        .background(Color.white.opacity(0.82))
+        .background(TrixTheme.secondarySurface)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(TrixTheme.surfaceStroke, lineWidth: 1)
+        }
     }
 
     private var technicalCard: some View {
@@ -196,8 +206,12 @@ struct PendingApprovalView: View {
             }
         }
         .padding(18)
-        .background(Color.white.opacity(0.74))
+        .background(TrixTheme.tertiarySurface)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(TrixTheme.surfaceStroke, lineWidth: 1)
+        }
     }
 
     private var bottomActions: some View {
