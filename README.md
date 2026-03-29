@@ -1,6 +1,6 @@
 # Trix
 
-`Trix` is an experimental native-first end-to-end encrypted messenger workspace. The repository currently combines a Rust backend (`trixd`), a shared Rust core (`trix-core`), a headless bot runtime, and native clients for Android, iOS, and macOS.
+`Trix` is an experimental native-first end-to-end encrypted messenger workspace. The repository currently combines a Rust backend (`trixd`), a shared Rust core (`trix-core`), a headless bot runtime, a separate macOS admin control app, and native clients for Android, iOS, and macOS.
 
 Confirmed components in the repo today:
 
@@ -18,6 +18,7 @@ This is still a development prototype, not a production deployment.
 - `apps/android` Android client project
 - `apps/ios` iOS client project
 - `apps/macos` macOS client project
+- `apps/macos-admin` macOS admin control app project
 - `crates/trix-server` backend server library
 - `crates/trix-core` shared client core, storage, MLS, realtime, and FFI surface
 - `crates/trix-bot` headless bot runtime
@@ -67,6 +68,8 @@ make check
 make run-server
 make ffi-bindings
 cargo test --workspace
+swift test --package-path apps/macos-admin
+./scripts/client-smoke-harness.sh --suite macos-admin --no-postgres
 cargo run -p trix-botd -- stdio
 ```
 
@@ -75,6 +78,7 @@ cargo run -p trix-botd -- stdio
 - Android details: [apps/android/README.md](apps/android/README.md)
 - iOS details: [apps/ios/README.md](apps/ios/README.md)
 - macOS details: [apps/macos/README.md](apps/macos/README.md)
+- macOS admin details: [apps/macos-admin/README.md](apps/macos-admin/README.md)
 - Bot harness: [docs/bot-harness.md](docs/bot-harness.md)
 - FFI surface and binding generation: [docs/ffi-bindings.md](docs/ffi-bindings.md)
 - Bot examples: [examples/bots/README.md](examples/bots/README.md)

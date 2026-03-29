@@ -77,6 +77,7 @@ pub fn build_router(state: AppState) -> Result<Router> {
                 Method::POST,
                 Method::PUT,
                 Method::PATCH,
+                Method::DELETE,
                 Method::HEAD,
                 Method::OPTIONS,
             ])

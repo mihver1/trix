@@ -53,6 +53,8 @@ pub struct CreateAccountRequest {
     pub account_root_pubkey_b64: String,
     pub account_root_signature_b64: String,
     pub transport_pubkey_b64: String,
+    #[serde(default)]
+    pub provision_token: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -580,4 +582,109 @@ pub struct CompleteHistorySyncJobRequest {
 pub struct CompleteHistorySyncJobResponse {
     pub job_id: String,
     pub job_status: HistorySyncJobStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminSessionRequest {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminSessionResponse {
+    pub access_token: String,
+    pub expires_at_unix: u64,
+    pub username: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminRegistrationSettingsResponse {
+    pub allow_public_account_registration: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminServerSettingsResponse {
+    pub brand_display_name: Option<String>,
+    pub support_contact: Option<String>,
+    pub policy_text: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchAdminRegistrationSettingsRequest {
+    pub allow_public_account_registration: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchAdminServerSettingsRequest {
+    #[serde(default)]
+    pub brand_display_name: Option<Option<String>>,
+    #[serde(default)]
+    pub support_contact: Option<Option<String>>,
+    #[serde(default)]
+    pub policy_text: Option<Option<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminOverviewResponse {
+    pub status: String,
+    pub service: String,
+    pub version: String,
+    pub git_sha: Option<String>,
+    pub health_status: ServiceStatus,
+    pub uptime_ms: u64,
+    pub allow_public_account_registration: bool,
+    pub user_count: u64,
+    pub disabled_user_count: u64,
+    pub admin_username: String,
+    pub admin_session_expires_at_unix: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminUserSummary {
+    pub account_id: AccountId,
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
+    pub created_at_unix: u64,
+    pub disabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminUserListResponse {
+    pub users: Vec<AdminUserSummary>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchAdminUserRequest {
+    #[serde(default)]
+    pub handle: Option<Option<String>>,
+    #[serde(default)]
+    pub profile_name: Option<String>,
+    #[serde(default)]
+    pub profile_bio: Option<Option<String>>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminDisableAccountRequest {
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateAdminUserProvisionRequest {
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
+    pub ttl_seconds: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateAdminUserProvisionResponse {
+    pub provision_id: String,
+    pub provision_token: String,
+    pub expires_at_unix: u64,
+    pub profile_name: String,
+    pub handle: Option<String>,
+    pub profile_bio: Option<String>,
 }

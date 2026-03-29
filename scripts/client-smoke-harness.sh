@@ -39,6 +39,7 @@ Optional suites:
   ios-server       xcodebuild server-backed smoke for apps/ios against a running backend
   ios-ui           xcodebuild XCUITest smoke for apps/ios against a running backend
   macos             swift test for apps/macos
+  macos-admin       swift test for apps/macos-admin
   android-unit      ./gradlew testDebugUnitTest
   android-ui        ./gradlew connectedDebugAndroidTest
 
@@ -66,6 +67,7 @@ ios-unit
 ios-server
 ios-ui
 macos
+macos-admin
 android-unit
 android-ui
 EOF
@@ -97,7 +99,7 @@ has_suite() {
 add_suite() {
   local suite="$1"
   case "$suite" in
-    client-scenarios|safe-ffi|bot-runtime|ios-unit|ios-server|ios-ui|macos|android-unit|android-ui) ;;
+    client-scenarios|safe-ffi|bot-runtime|ios-unit|ios-server|ios-ui|macos|macos-admin|android-unit|android-ui) ;;
     *) die "unknown suite '$suite'; use --list-suites to inspect supported values" ;;
   esac
 
@@ -355,6 +357,10 @@ run_suite() {
     macos)
       log "Running macos"
       run_root_command swift test --package-path "$ROOT_DIR/apps/macos"
+      ;;
+    macos-admin)
+      log "Running macos-admin"
+      run_root_command swift test --package-path "$ROOT_DIR/apps/macos-admin"
       ;;
     android-unit)
       log "Running android-unit"

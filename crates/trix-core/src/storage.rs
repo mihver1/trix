@@ -1385,7 +1385,11 @@ impl LocalHistoryStore {
         self.state
             .chats
             .get(&chat_id.0.to_string())
-            .and_then(|state| state.is_active.then_some(unread_count_for_chat(state, self_account_id)))
+            .and_then(|state| {
+                state
+                    .is_active
+                    .then_some(unread_count_for_chat(state, self_account_id))
+            })
     }
 
     pub fn get_chat_read_state(
@@ -1706,7 +1710,7 @@ impl LocalHistoryStore {
                 processed_messages += 1;
                 if advance_projected_cursor(chat) {
                     changed = true;
-                advanced_to_server_seq = Some(chat.projected_cursor_server_seq);
+                    advanced_to_server_seq = Some(chat.projected_cursor_server_seq);
                 }
             }
 
@@ -4001,8 +4005,14 @@ mod tests {
             .unwrap();
 
         assert_eq!(store.chat_read_cursor(hidden_chat_id), None);
-        assert_eq!(store.chat_unread_count(hidden_chat_id, Some(self_account_id)), None);
-        assert_eq!(store.get_chat_read_state(hidden_chat_id, Some(self_account_id)), None);
+        assert_eq!(
+            store.chat_unread_count(hidden_chat_id, Some(self_account_id)),
+            None
+        );
+        assert_eq!(
+            store.get_chat_read_state(hidden_chat_id, Some(self_account_id)),
+            None
+        );
     }
 
     #[test]

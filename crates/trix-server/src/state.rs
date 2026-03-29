@@ -10,6 +10,7 @@ use trix_types::WebSocketServerFrame;
 use uuid::Uuid;
 
 use crate::{
+    admin_auth::{AdminAuthManager, AdminPrincipal},
     auth::{AuthManager, SessionPrincipal},
     blobs::LocalBlobStore,
     build::BuildInfo,
@@ -26,6 +27,7 @@ pub struct AppState {
     pub started_at: Instant,
     pub db: Arc<Database>,
     pub auth: Arc<AuthManager>,
+    pub admin_auth: Arc<AdminAuthManager>,
     pub blob_store: Arc<LocalBlobStore>,
     pub ws_registry: Arc<WebSocketSessionRegistry>,
     pub rate_limiter: Arc<RateLimiter>,
@@ -39,12 +41,17 @@ impl AppState {
         auth: AuthManager,
         blob_store: LocalBlobStore,
     ) -> Self {
+        let admin_auth = AdminAuthManager::new(
+            config.admin_jwt_signing_key.as_bytes(),
+            Duration::from_secs(config.admin_session_ttl_seconds),
+        );
         Self {
             config,
             build,
             started_at: Instant::now(),
             db: Arc::new(db),
             auth: Arc::new(auth),
+            admin_auth: Arc::new(admin_auth),
             blob_store: Arc::new(blob_store),
             ws_registry: Arc::new(WebSocketSessionRegistry::default()),
             rate_limiter: Arc::new(RateLimiter::new()),
@@ -60,6 +67,13 @@ impl AppState {
             .ensure_active_device_session(principal.account_id, principal.device_id)
             .await?;
         Ok(principal)
+    }
+
+    pub fn authenticate_admin_headers(
+        &self,
+        headers: &HeaderMap,
+    ) -> Result<AdminPrincipal, AppError> {
+        self.admin_auth.authenticate_headers(headers)
     }
 
     pub async fn enforce_rate_limit(
@@ -169,5 +183,43 @@ impl WebSocketSessionRegistry {
                 },
             ));
         }
+    }
+
+    pub async fn close_many(&self, device_ids: &[Uuid], reason: &str) {
+        let sessions = self.sessions.lock().await;
+        for device_id in device_ids {
+            if let Some(entry) = sessions.get(device_id) {
+                let _ = entry.sender.send(WebSocketSessionCommand::Frame(
+                    WebSocketServerFrame::SessionReplaced {
+                        reason: reason.to_owned(),
+                    },
+                ));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc;
+    use uuid::Uuid;
+
+    use super::{WebSocketSessionCommand, WebSocketSessionRegistry};
+    use trix_types::WebSocketServerFrame;
+
+    #[tokio::test]
+    async fn close_many_sends_session_replaced_frames() {
+        let registry = WebSocketSessionRegistry::default();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let device_id = Uuid::new_v4();
+
+        registry.register(device_id, tx).await;
+        registry.close_many(&[device_id], "account disabled").await;
+
+        let command = rx.recv().await.expect("command");
+        assert!(matches!(
+            command,
+            WebSocketSessionCommand::Frame(WebSocketServerFrame::SessionReplaced { .. })
+        ));
     }
 }
