@@ -1,0 +1,731 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0680F955D543C44ED76CEE49 /* AdminWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 950EAD177D2F5B6D7BF7D796 /* AdminWorkspaceView.swift */; };
+		0B2BD743204C2BCB9456F7B3 /* ClusterProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AFFDDA5F5285ACE6B99CC05 /* ClusterProfileStore.swift */; };
+		0C99606196AE189F36F116B7 /* AdminLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAE4992C8AADCF951AF8D362 /* AdminLoginView.swift */; };
+		138CFF53562A38CD147CDC98 /* AdminKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E169BF8F1A6AA470113CA27 /* AdminKeychainStore.swift */; };
+		1F8D23CD2BF093CE7D1A2CA1 /* AdminAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94206ADF76BD4E6E198CD162 /* AdminAPIClient.swift */; };
+		1FB37CB402791725223A6A21 /* UserListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FEB71525C9E86E09744CE05 /* UserListView.swift */; };
+		22ECAEB0D0D5292AA8DD8E68 /* MacAdminUITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB5CD32E5CF652AC8BEF5CE9 /* MacAdminUITestSupport.swift */; };
+		286657ED01CAB7C5D02BB76C /* AppIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F91332AFDD07353F3FC97481 /* AppIdentity.swift */; };
+		35F9C84E2721A605B00F241D /* UserDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8F19B5C210FFFA29FF0EBA7 /* UserDetailView.swift */; };
+		3AEFADD7E7093E67E730D7A7 /* AdminRequestCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF328BDEBD704F214C8B1FC7 /* AdminRequestCoordinator.swift */; };
+		4C43B909253CBE14E883949F /* ProvisionUserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA2FD98FA3512820510A097A /* ProvisionUserView.swift */; };
+		502ADA8124B9AA5EED06FA02 /* AdminSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90AD8968A7844B51B4041FF4 /* AdminSessionStore.swift */; };
+		5133385C8BE1BAF8D2BF850D /* AdminAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AADDB9C3BBD00FB34013EB16 /* AdminAPIClientTests.swift */; };
+		53C5B90F4A476DAAC1329A38 /* ClusterProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58456308E6B408A870B2C446 /* ClusterProfile.swift */; };
+		55DC949F65DF42D51A25F17E /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4DEF389B3B5D3540428032F /* RootView.swift */; };
+		5A15E59F2ABAFB3BC0630C8D /* AdminAPIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0770F2AC95D81CA231E257AB /* AdminAPIModels.swift */; };
+		5E0DFB0DBF47CCCEB19A481E /* AdminAppModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B1831A21929134544EE4E02 /* AdminAppModelTests.swift */; };
+		66B55C5A38B3925C2A180285 /* ClusterProfileStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1A5BA412264C794439C7974 /* ClusterProfileStoreTests.swift */; };
+		8F1C53D53291BA5A85534CE3 /* MacAdminUITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB5CD32E5CF652AC8BEF5CE9 /* MacAdminUITestSupport.swift */; };
+		9AF116B7BACDC4567EF17E52 /* AdminAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45CB5A43D330BC7C4FCBBCE8 /* AdminAppModel.swift */; };
+		9DBF0FC2E76B3E9B3350ED39 /* ClusterProfileEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2912BA2FD1648D08EF34C04 /* ClusterProfileEditorView.swift */; };
+		9E1361FC9DF991015E6A3541 /* AdminSessionStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFBF724512B3E8703C645EEB /* AdminSessionStoreTests.swift */; };
+		A6D0ED68AF2283C0C4BB4D1C /* ServerSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2D397AA06E380F8BA89EAC3 /* ServerSettingsView.swift */; };
+		A9819FC58AD9EF0FD3345891 /* TrixMacAdminApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADA8377665880710F50694DD /* TrixMacAdminApp.swift */; };
+		B38079FFEC2EF20004217CB3 /* AppIdentityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BC1ED8776D6B6CEC80265E7 /* AppIdentityTests.swift */; };
+		B83EEE4F7EAB447C78282404 /* UserAdminSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 503A411C91ED2944475622EB /* UserAdminSmokeTests.swift */; };
+		BDA0A66617A1DD0089645F67 /* RegistrationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CDD90AB7E5F754951A8D5F5 /* RegistrationSettingsView.swift */; };
+		C002F508D989E38DB340CC3A /* TrixMacAdminPlaceholderUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CD2497DF2480A2DB67EA7EC /* TrixMacAdminPlaceholderUITests.swift */; };
+		E077BD9AC01ECAFDDD1091B0 /* ClusterSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBAA3FC72D819BE8F7AD9D46 /* ClusterSidebarView.swift */; };
+		E1CCCA8F485ADB4EAF239B75 /* AdminRequestCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A49826814E985E040C9BFBF1 /* AdminRequestCoordinatorTests.swift */; };
+		E796FA3EC13E9A51CA0B8BCB /* AdminWorkspaceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADC46407516A7AEC939ADDEA /* AdminWorkspaceModels.swift */; };
+		F0CE928199C8E1CAA6BD0858 /* OverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06858F099512DC8645464CBE /* OverviewView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A4FFF93EC26646BF8C29576E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1CFA3F6BB24A701445016B41 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AA726EB12D14AD78F3C50094;
+			remoteInfo = TrixMacAdmin;
+		};
+		B0240CBCEDB958E13209E50B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1CFA3F6BB24A701445016B41 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AA726EB12D14AD78F3C50094;
+			remoteInfo = TrixMacAdmin;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		06858F099512DC8645464CBE /* OverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewView.swift; sourceTree = "<group>"; };
+		0770F2AC95D81CA231E257AB /* AdminAPIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminAPIModels.swift; sourceTree = "<group>"; };
+		1AFFDDA5F5285ACE6B99CC05 /* ClusterProfileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterProfileStore.swift; sourceTree = "<group>"; };
+		2CDD90AB7E5F754951A8D5F5 /* RegistrationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegistrationSettingsView.swift; sourceTree = "<group>"; };
+		45CB5A43D330BC7C4FCBBCE8 /* AdminAppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminAppModel.swift; sourceTree = "<group>"; };
+		4E169BF8F1A6AA470113CA27 /* AdminKeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminKeychainStore.swift; sourceTree = "<group>"; };
+		4FEB71525C9E86E09744CE05 /* UserListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserListView.swift; sourceTree = "<group>"; };
+		503A411C91ED2944475622EB /* UserAdminSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserAdminSmokeTests.swift; sourceTree = "<group>"; };
+		58456308E6B408A870B2C446 /* ClusterProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterProfile.swift; sourceTree = "<group>"; };
+		5CD2497DF2480A2DB67EA7EC /* TrixMacAdminPlaceholderUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMacAdminPlaceholderUITests.swift; sourceTree = "<group>"; };
+		6B1831A21929134544EE4E02 /* AdminAppModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminAppModelTests.swift; sourceTree = "<group>"; };
+		8BC1ED8776D6B6CEC80265E7 /* AppIdentityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIdentityTests.swift; sourceTree = "<group>"; };
+		90AD8968A7844B51B4041FF4 /* AdminSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminSessionStore.swift; sourceTree = "<group>"; };
+		94206ADF76BD4E6E198CD162 /* AdminAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminAPIClient.swift; sourceTree = "<group>"; };
+		950EAD177D2F5B6D7BF7D796 /* AdminWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminWorkspaceView.swift; sourceTree = "<group>"; };
+		A2912BA2FD1648D08EF34C04 /* ClusterProfileEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterProfileEditorView.swift; sourceTree = "<group>"; };
+		A49826814E985E040C9BFBF1 /* AdminRequestCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminRequestCoordinatorTests.swift; sourceTree = "<group>"; };
+		AADDB9C3BBD00FB34013EB16 /* AdminAPIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminAPIClientTests.swift; sourceTree = "<group>"; };
+		ADA8377665880710F50694DD /* TrixMacAdminApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMacAdminApp.swift; sourceTree = "<group>"; };
+		ADC46407516A7AEC939ADDEA /* AdminWorkspaceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminWorkspaceModels.swift; sourceTree = "<group>"; };
+		AF328BDEBD704F214C8B1FC7 /* AdminRequestCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminRequestCoordinator.swift; sourceTree = "<group>"; };
+		B1A5BA412264C794439C7974 /* ClusterProfileStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterProfileStoreTests.swift; sourceTree = "<group>"; };
+		B2D397AA06E380F8BA89EAC3 /* ServerSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerSettingsView.swift; sourceTree = "<group>"; };
+		B4DEF389B3B5D3540428032F /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		BA2FD98FA3512820510A097A /* ProvisionUserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProvisionUserView.swift; sourceTree = "<group>"; };
+		BB5CD32E5CF652AC8BEF5CE9 /* MacAdminUITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacAdminUITestSupport.swift; sourceTree = "<group>"; };
+		CAE4992C8AADCF951AF8D362 /* AdminLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminLoginView.swift; sourceTree = "<group>"; };
+		CBAA3FC72D819BE8F7AD9D46 /* ClusterSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterSidebarView.swift; sourceTree = "<group>"; };
+		DFBF724512B3E8703C645EEB /* AdminSessionStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminSessionStoreTests.swift; sourceTree = "<group>"; };
+		E00FFCE7C8E5AE91507B0158 /* TrixMacAdmin.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TrixMacAdmin.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E0CE4C646A2A5EADE5AB9271 /* TrixMacAdminTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TrixMacAdminTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E8F19B5C210FFFA29FF0EBA7 /* UserDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserDetailView.swift; sourceTree = "<group>"; };
+		EF68E893F3C96C77FE640B70 /* TrixMacAdminUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TrixMacAdminUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F91332AFDD07353F3FC97481 /* AppIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIdentity.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		1461AA44095FAECEB5E0629D /* Auth */ = {
+			isa = PBXGroup;
+			children = (
+				CAE4992C8AADCF951AF8D362 /* AdminLoginView.swift */,
+			);
+			path = Auth;
+			sourceTree = "<group>";
+		};
+		31E2A1AC9D266F997DFF08BD /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				94206ADF76BD4E6E198CD162 /* AdminAPIClient.swift */,
+				AF328BDEBD704F214C8B1FC7 /* AdminRequestCoordinator.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		45AE4F23A877A649ACC138AE /* TrixMacAdminTests */ = {
+			isa = PBXGroup;
+			children = (
+				AADDB9C3BBD00FB34013EB16 /* AdminAPIClientTests.swift */,
+				6B1831A21929134544EE4E02 /* AdminAppModelTests.swift */,
+				A49826814E985E040C9BFBF1 /* AdminRequestCoordinatorTests.swift */,
+				DFBF724512B3E8703C645EEB /* AdminSessionStoreTests.swift */,
+				8BC1ED8776D6B6CEC80265E7 /* AppIdentityTests.swift */,
+				B1A5BA412264C794439C7974 /* ClusterProfileStoreTests.swift */,
+			);
+			name = TrixMacAdminTests;
+			path = Tests/TrixMacAdminTests;
+			sourceTree = "<group>";
+		};
+		4CC39F1290AFECA649756E5D /* Shell */ = {
+			isa = PBXGroup;
+			children = (
+				B4DEF389B3B5D3540428032F /* RootView.swift */,
+			);
+			path = Shell;
+			sourceTree = "<group>";
+		};
+		6273D18ACAFA08F6E4431DEA /* Overview */ = {
+			isa = PBXGroup;
+			children = (
+				06858F099512DC8645464CBE /* OverviewView.swift */,
+			);
+			path = Overview;
+			sourceTree = "<group>";
+		};
+		69BEB8A17C83413EC3A4A838 /* Clusters */ = {
+			isa = PBXGroup;
+			children = (
+				A2912BA2FD1648D08EF34C04 /* ClusterProfileEditorView.swift */,
+				CBAA3FC72D819BE8F7AD9D46 /* ClusterSidebarView.swift */,
+			);
+			path = Clusters;
+			sourceTree = "<group>";
+		};
+		71AF3929F2909BB655A4855F /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				E00FFCE7C8E5AE91507B0158 /* TrixMacAdmin.app */,
+				E0CE4C646A2A5EADE5AB9271 /* TrixMacAdminTests.xctest */,
+				EF68E893F3C96C77FE640B70 /* TrixMacAdminUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		74DFDEFBA978E1E30E13690F /* App */ = {
+			isa = PBXGroup;
+			children = (
+				45CB5A43D330BC7C4FCBBCE8 /* AdminAppModel.swift */,
+				ADA8377665880710F50694DD /* TrixMacAdminApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		755E9B930D1DC3A2AF03FDDF /* Support */ = {
+			isa = PBXGroup;
+			children = (
+				4E169BF8F1A6AA470113CA27 /* AdminKeychainStore.swift */,
+				90AD8968A7844B51B4041FF4 /* AdminSessionStore.swift */,
+				F91332AFDD07353F3FC97481 /* AppIdentity.swift */,
+				1AFFDDA5F5285ACE6B99CC05 /* ClusterProfileStore.swift */,
+				BB5CD32E5CF652AC8BEF5CE9 /* MacAdminUITestSupport.swift */,
+			);
+			path = Support;
+			sourceTree = "<group>";
+		};
+		78211E0F4E2350C37FB72935 /* Workspace */ = {
+			isa = PBXGroup;
+			children = (
+				950EAD177D2F5B6D7BF7D796 /* AdminWorkspaceView.swift */,
+			);
+			path = Workspace;
+			sourceTree = "<group>";
+		};
+		8A84979BA73238AAC1CD4D5C /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				1461AA44095FAECEB5E0629D /* Auth */,
+				69BEB8A17C83413EC3A4A838 /* Clusters */,
+				6273D18ACAFA08F6E4431DEA /* Overview */,
+				AC1A9F1C16376F485A455C3F /* Registration */,
+				C037810B90CE9C45832B51E1 /* ServerSettings */,
+				4CC39F1290AFECA649756E5D /* Shell */,
+				D862B342E010C479B36F6027 /* Users */,
+				78211E0F4E2350C37FB72935 /* Workspace */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		AC1A9F1C16376F485A455C3F /* Registration */ = {
+			isa = PBXGroup;
+			children = (
+				2CDD90AB7E5F754951A8D5F5 /* RegistrationSettingsView.swift */,
+			);
+			path = Registration;
+			sourceTree = "<group>";
+		};
+		ACBDCE8725F27D1CD445C57C /* TrixMacAdmin */ = {
+			isa = PBXGroup;
+			children = (
+				74DFDEFBA978E1E30E13690F /* App */,
+				8A84979BA73238AAC1CD4D5C /* Features */,
+				C65F0AF2CD73D557E285B456 /* Models */,
+				31E2A1AC9D266F997DFF08BD /* Services */,
+				755E9B930D1DC3A2AF03FDDF /* Support */,
+			);
+			name = TrixMacAdmin;
+			path = Sources/TrixMacAdmin;
+			sourceTree = "<group>";
+		};
+		C037810B90CE9C45832B51E1 /* ServerSettings */ = {
+			isa = PBXGroup;
+			children = (
+				B2D397AA06E380F8BA89EAC3 /* ServerSettingsView.swift */,
+			);
+			path = ServerSettings;
+			sourceTree = "<group>";
+		};
+		C65F0AF2CD73D557E285B456 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				0770F2AC95D81CA231E257AB /* AdminAPIModels.swift */,
+				ADC46407516A7AEC939ADDEA /* AdminWorkspaceModels.swift */,
+				58456308E6B408A870B2C446 /* ClusterProfile.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		CF585E5589CE9988F90FEB08 /* TrixMacAdminUITests */ = {
+			isa = PBXGroup;
+			children = (
+				5CD2497DF2480A2DB67EA7EC /* TrixMacAdminPlaceholderUITests.swift */,
+				503A411C91ED2944475622EB /* UserAdminSmokeTests.swift */,
+			);
+			path = TrixMacAdminUITests;
+			sourceTree = "<group>";
+		};
+		D862B342E010C479B36F6027 /* Users */ = {
+			isa = PBXGroup;
+			children = (
+				BA2FD98FA3512820510A097A /* ProvisionUserView.swift */,
+				E8F19B5C210FFFA29FF0EBA7 /* UserDetailView.swift */,
+				4FEB71525C9E86E09744CE05 /* UserListView.swift */,
+			);
+			path = Users;
+			sourceTree = "<group>";
+		};
+		F5E0191F560E21AD77A548D3 = {
+			isa = PBXGroup;
+			children = (
+				ACBDCE8725F27D1CD445C57C /* TrixMacAdmin */,
+				45AE4F23A877A649ACC138AE /* TrixMacAdminTests */,
+				CF585E5589CE9988F90FEB08 /* TrixMacAdminUITests */,
+				71AF3929F2909BB655A4855F /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		9F65B713A6BC4540D825FFBD /* TrixMacAdminUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6FF6C467926B3585A5F56397 /* Build configuration list for PBXNativeTarget "TrixMacAdminUITests" */;
+			buildPhases = (
+				0FA4A89C42F4F88096046289 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AEF1DDF669C1274D4A379773 /* PBXTargetDependency */,
+			);
+			name = TrixMacAdminUITests;
+			packageProductDependencies = (
+			);
+			productName = TrixMacAdminUITests;
+			productReference = EF68E893F3C96C77FE640B70 /* TrixMacAdminUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		AA726EB12D14AD78F3C50094 /* TrixMacAdmin */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7F01545EF305BA014CC47645 /* Build configuration list for PBXNativeTarget "TrixMacAdmin" */;
+			buildPhases = (
+				6F59DBA3CA331556F62FAAB6 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TrixMacAdmin;
+			packageProductDependencies = (
+			);
+			productName = TrixMacAdmin;
+			productReference = E00FFCE7C8E5AE91507B0158 /* TrixMacAdmin.app */;
+			productType = "com.apple.product-type.application";
+		};
+		B09CE46D5FD472148FB5BA83 /* TrixMacAdminTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1F82CAFD3538AAC5E3AD1ED5 /* Build configuration list for PBXNativeTarget "TrixMacAdminTests" */;
+			buildPhases = (
+				D95C07EAE28D01F90606274D /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C5583360321906423EC97312 /* PBXTargetDependency */,
+			);
+			name = TrixMacAdminTests;
+			packageProductDependencies = (
+			);
+			productName = TrixMacAdminTests;
+			productReference = E0CE4C646A2A5EADE5AB9271 /* TrixMacAdminTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1CFA3F6BB24A701445016B41 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					9F65B713A6BC4540D825FFBD = {
+						ProvisioningStyle = Automatic;
+						TestTargetID = AA726EB12D14AD78F3C50094;
+					};
+					AA726EB12D14AD78F3C50094 = {
+						ProvisioningStyle = Automatic;
+					};
+					B09CE46D5FD472148FB5BA83 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 3DECC6EB2EFF19043E1F4B2B /* Build configuration list for PBXProject "TrixMacAdmin" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = F5E0191F560E21AD77A548D3;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 71AF3929F2909BB655A4855F /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AA726EB12D14AD78F3C50094 /* TrixMacAdmin */,
+				B09CE46D5FD472148FB5BA83 /* TrixMacAdminTests */,
+				9F65B713A6BC4540D825FFBD /* TrixMacAdminUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		0FA4A89C42F4F88096046289 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8F1C53D53291BA5A85534CE3 /* MacAdminUITestSupport.swift in Sources */,
+				C002F508D989E38DB340CC3A /* TrixMacAdminPlaceholderUITests.swift in Sources */,
+				B83EEE4F7EAB447C78282404 /* UserAdminSmokeTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6F59DBA3CA331556F62FAAB6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1F8D23CD2BF093CE7D1A2CA1 /* AdminAPIClient.swift in Sources */,
+				5A15E59F2ABAFB3BC0630C8D /* AdminAPIModels.swift in Sources */,
+				9AF116B7BACDC4567EF17E52 /* AdminAppModel.swift in Sources */,
+				138CFF53562A38CD147CDC98 /* AdminKeychainStore.swift in Sources */,
+				0C99606196AE189F36F116B7 /* AdminLoginView.swift in Sources */,
+				3AEFADD7E7093E67E730D7A7 /* AdminRequestCoordinator.swift in Sources */,
+				502ADA8124B9AA5EED06FA02 /* AdminSessionStore.swift in Sources */,
+				E796FA3EC13E9A51CA0B8BCB /* AdminWorkspaceModels.swift in Sources */,
+				0680F955D543C44ED76CEE49 /* AdminWorkspaceView.swift in Sources */,
+				286657ED01CAB7C5D02BB76C /* AppIdentity.swift in Sources */,
+				53C5B90F4A476DAAC1329A38 /* ClusterProfile.swift in Sources */,
+				9DBF0FC2E76B3E9B3350ED39 /* ClusterProfileEditorView.swift in Sources */,
+				0B2BD743204C2BCB9456F7B3 /* ClusterProfileStore.swift in Sources */,
+				E077BD9AC01ECAFDDD1091B0 /* ClusterSidebarView.swift in Sources */,
+				22ECAEB0D0D5292AA8DD8E68 /* MacAdminUITestSupport.swift in Sources */,
+				F0CE928199C8E1CAA6BD0858 /* OverviewView.swift in Sources */,
+				4C43B909253CBE14E883949F /* ProvisionUserView.swift in Sources */,
+				BDA0A66617A1DD0089645F67 /* RegistrationSettingsView.swift in Sources */,
+				55DC949F65DF42D51A25F17E /* RootView.swift in Sources */,
+				A6D0ED68AF2283C0C4BB4D1C /* ServerSettingsView.swift in Sources */,
+				A9819FC58AD9EF0FD3345891 /* TrixMacAdminApp.swift in Sources */,
+				35F9C84E2721A605B00F241D /* UserDetailView.swift in Sources */,
+				1FB37CB402791725223A6A21 /* UserListView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D95C07EAE28D01F90606274D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5133385C8BE1BAF8D2BF850D /* AdminAPIClientTests.swift in Sources */,
+				5E0DFB0DBF47CCCEB19A481E /* AdminAppModelTests.swift in Sources */,
+				E1CCCA8F485ADB4EAF239B75 /* AdminRequestCoordinatorTests.swift in Sources */,
+				9E1361FC9DF991015E6A3541 /* AdminSessionStoreTests.swift in Sources */,
+				B38079FFEC2EF20004217CB3 /* AppIdentityTests.swift in Sources */,
+				66B55C5A38B3925C2A180285 /* ClusterProfileStoreTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AEF1DDF669C1274D4A379773 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AA726EB12D14AD78F3C50094 /* TrixMacAdmin */;
+			targetProxy = B0240CBCEDB958E13209E50B /* PBXContainerItemProxy */;
+		};
+		C5583360321906423EC97312 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AA726EB12D14AD78F3C50094 /* TrixMacAdmin */;
+			targetProxy = A4FFF93EC26646BF8C29576E /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		101E82A55BC89C9788A2219C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixadmin.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TrixMacAdmin.app/Contents/MacOS/TrixMacAdmin";
+			};
+			name = Debug;
+		};
+		2A1924FEC102087E416A50A0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixadmin.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				TEST_TARGET_NAME = TrixMacAdmin;
+			};
+			name = Debug;
+		};
+		43814AC06B3B9B4908A612B4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		590C1C54E55BEC32ED9379DC /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = TrixMacAdmin.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixadmin;
+				PRODUCT_NAME = TrixMacAdmin;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		5F06CB4F82993AE8CE0A6E1B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		679F3B5B64697309DEE16182 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixadmin.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				TEST_TARGET_NAME = TrixMacAdmin;
+			};
+			name = Release;
+		};
+		C0AF28ABC00F10A387B9918D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = TrixMacAdmin.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixadmin;
+				PRODUCT_NAME = TrixMacAdmin;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		DEBEDCE3A2CD1DFE99C787B2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixadmin.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TrixMacAdmin.app/Contents/MacOS/TrixMacAdmin";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1F82CAFD3538AAC5E3AD1ED5 /* Build configuration list for PBXNativeTarget "TrixMacAdminTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				101E82A55BC89C9788A2219C /* Debug */,
+				DEBEDCE3A2CD1DFE99C787B2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		3DECC6EB2EFF19043E1F4B2B /* Build configuration list for PBXProject "TrixMacAdmin" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5F06CB4F82993AE8CE0A6E1B /* Debug */,
+				43814AC06B3B9B4908A612B4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		6FF6C467926B3585A5F56397 /* Build configuration list for PBXNativeTarget "TrixMacAdminUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2A1924FEC102087E416A50A0 /* Debug */,
+				679F3B5B64697309DEE16182 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		7F01545EF305BA014CC47645 /* Build configuration list for PBXNativeTarget "TrixMacAdmin" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C0AF28ABC00F10A387B9918D /* Debug */,
+				590C1C54E55BEC32ED9379DC /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 1CFA3F6BB24A701445016B41 /* Project object */;
+}

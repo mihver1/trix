@@ -1,0 +1,71 @@
+name: TrixMacAdmin
+
+options:
+  minimumXcodeGenVersion: 2.44.0
+  deploymentTarget:
+    macOS: "14.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 0.1.0
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+
+targets:
+  TrixMacAdmin:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/TrixMacAdmin
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trixadmin
+        PRODUCT_NAME: TrixMacAdmin
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: TrixMacAdmin.entitlements
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+      configs:
+        Debug:
+          ENABLE_TESTABILITY: YES
+    scheme:
+      gatherCoverageData: false
+      testTargets:
+        - TrixMacAdminTests
+        - TrixMacAdminUITests
+
+  TrixMacAdminTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests/TrixMacAdminTests
+    dependencies:
+      - target: TrixMacAdmin
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trixadmin.tests
+        PRODUCT_NAME: "$(TARGET_NAME)"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/TrixMacAdmin.app/Contents/MacOS/TrixMacAdmin"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
+  TrixMacAdminUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: TrixMacAdminUITests
+      - path: Sources/TrixMacAdmin/Support/MacAdminUITestSupport.swift
+    dependencies:
+      - target: TrixMacAdmin
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trixadmin.uitests
+        PRODUCT_NAME: "$(TARGET_NAME)"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        TEST_TARGET_NAME: TrixMacAdmin

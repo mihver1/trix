@@ -11,6 +11,10 @@ pub struct AppConfig {
     pub blob_max_upload_bytes: u64,
     pub log_filter: String,
     pub jwt_signing_key: String,
+    pub admin_username: String,
+    pub admin_password: String,
+    pub admin_jwt_signing_key: String,
+    pub admin_session_ttl_seconds: u64,
     pub cors_allowed_origins: Vec<String>,
     pub rate_limit_window_seconds: u64,
     pub rate_limit_auth_challenge_limit: usize,
@@ -45,6 +49,14 @@ impl AppConfig {
                 .with_context(|| "invalid TRIX_BLOB_MAX_UPLOAD_BYTES")?,
             log_filter: env_or("TRIX_LOG", "info,trix_server=debug")?,
             jwt_signing_key: env_required("TRIX_JWT_SIGNING_KEY")?,
+            admin_username: normalize_admin_env_value(env_required("TRIX_ADMIN_USERNAME")?),
+            admin_password: normalize_admin_env_value(env_required("TRIX_ADMIN_PASSWORD")?),
+            admin_jwt_signing_key: normalize_admin_env_value(env_required(
+                "TRIX_ADMIN_JWT_SIGNING_KEY",
+            )?),
+            admin_session_ttl_seconds: env_or("TRIX_ADMIN_SESSION_TTL_SECONDS", "900")?
+                .parse()
+                .with_context(|| "invalid TRIX_ADMIN_SESSION_TTL_SECONDS")?,
             cors_allowed_origins: env_csv("TRIX_CORS_ALLOWED_ORIGINS"),
             rate_limit_window_seconds: env_or("TRIX_RATE_LIMIT_WINDOW_SECONDS", "60")?
                 .parse()
@@ -111,6 +123,23 @@ impl AppConfig {
             anyhow::bail!("TRIX_JWT_SIGNING_KEY must not use the insecure default value");
         }
 
+        if self.admin_username.trim().is_empty() {
+            anyhow::bail!("TRIX_ADMIN_USERNAME must not be empty");
+        }
+        if self.admin_password.trim().is_empty() {
+            anyhow::bail!("TRIX_ADMIN_PASSWORD must not be empty");
+        }
+        let admin_jwt = self.admin_jwt_signing_key.trim();
+        if admin_jwt.is_empty() {
+            anyhow::bail!("TRIX_ADMIN_JWT_SIGNING_KEY must not be empty");
+        }
+        if admin_jwt == "replace-me" {
+            anyhow::bail!("TRIX_ADMIN_JWT_SIGNING_KEY must not use the insecure default value");
+        }
+        if self.admin_session_ttl_seconds == 0 {
+            anyhow::bail!("TRIX_ADMIN_SESSION_TTL_SECONDS must be greater than zero");
+        }
+
         if self.rate_limit_window_seconds == 0 {
             anyhow::bail!("TRIX_RATE_LIMIT_WINDOW_SECONDS must be greater than zero");
         }
@@ -133,6 +162,10 @@ fn env_required(key: &str) -> Result<String> {
     env::var(key).with_context(|| format!("{key} is required"))
 }
 
+fn normalize_admin_env_value(value: String) -> String {
+    value.trim().to_owned()
+}
+
 fn env_csv(key: &str) -> Vec<String> {
     env::var(key)
         .ok()
@@ -151,7 +184,7 @@ fn env_csv(key: &str) -> Vec<String> {
 mod tests {
     use std::{net::SocketAddr, path::PathBuf, str::FromStr};
 
-    use super::AppConfig;
+    use super::{AppConfig, normalize_admin_env_value};
 
     fn valid_config() -> AppConfig {
         AppConfig {
@@ -162,6 +195,10 @@ mod tests {
             blob_max_upload_bytes: 1024,
             log_filter: "info".to_owned(),
             jwt_signing_key: "test-secret".to_owned(),
+            admin_username: "admin".to_owned(),
+            admin_password: "admin-pass".to_owned(),
+            admin_jwt_signing_key: "admin-test-secret".to_owned(),
+            admin_session_ttl_seconds: 900,
             cors_allowed_origins: Vec::new(),
             rate_limit_window_seconds: 60,
             rate_limit_auth_challenge_limit: 10,
@@ -191,5 +228,21 @@ mod tests {
         let mut config = valid_config();
         config.jwt_signing_key = " ".to_owned();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_requires_admin_credentials() {
+        let mut config = valid_config();
+        config.admin_username = "".to_owned();
+        config.admin_password = "".to_owned();
+        config.admin_jwt_signing_key = "admin-test-secret".to_owned();
+
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn normalize_admin_env_value_trims_whitespace() {
+        assert_eq!(normalize_admin_env_value("  ops  \n".to_owned()), "ops");
+        assert_eq!(normalize_admin_env_value("secret".to_owned()), "secret");
     }
 }

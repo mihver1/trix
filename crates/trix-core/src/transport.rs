@@ -268,6 +268,7 @@ impl ServerApiClient {
                     account_root_pubkey_b64: encode_b64(&params.account_root_pubkey),
                     account_root_signature_b64: encode_b64(&params.account_root_signature),
                     transport_pubkey_b64: encode_b64(&params.transport_pubkey),
+                    provision_token: None,
                 }),
         )
         .await

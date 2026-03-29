@@ -1520,7 +1520,9 @@ fn merge_projection_report(
     chat_id: ChatId,
     projection_report: &crate::LocalProjectionApplyReport,
 ) {
-    if projection_report_changed_chat(projection_report) && !target.changed_chat_ids.contains(&chat_id) {
+    if projection_report_changed_chat(projection_report)
+        && !target.changed_chat_ids.contains(&chat_id)
+    {
         target.changed_chat_ids.push(chat_id);
         target.changed_chat_ids.sort_by_key(|id| id.0);
         target.changed_chat_ids.dedup();

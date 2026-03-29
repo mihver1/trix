@@ -2437,12 +2437,14 @@ fn record_device_transition_events(
 
         if let Some(previous) = previous.as_ref() {
             match (previous.device_status, current) {
-                (DeviceStatus::Pending, DeviceStatus::Active) => state
-                    .pending_device_events
-                    .push(stored_pending_device_event(
-                        StoredPendingDeviceEventKind::Approved,
-                        device,
-                    )),
+                (DeviceStatus::Pending, DeviceStatus::Active) => {
+                    state
+                        .pending_device_events
+                        .push(stored_pending_device_event(
+                            StoredPendingDeviceEventKind::Approved,
+                            device,
+                        ))
+                }
                 (DeviceStatus::Active | DeviceStatus::Pending, DeviceStatus::Revoked) => {
                     state
                         .pending_device_events
@@ -3162,7 +3164,11 @@ mod tests {
         assert_eq!(state.last_event_id, 2);
         assert_eq!(batch.checkpoint.as_deref(), Some("evt:2"));
         assert_eq!(
-            batch.events.iter().map(|event| event.event_id.as_str()).collect::<Vec<_>>(),
+            batch
+                .events
+                .iter()
+                .map(|event| event.event_id.as_str())
+                .collect::<Vec<_>>(),
             vec!["1", "2"]
         );
         assert!(matches!(
