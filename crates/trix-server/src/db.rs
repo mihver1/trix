@@ -1,11 +1,15 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ops::DerefMut,
     time::Duration,
 };
 
 use anyhow::{Context, Result};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use rand::RngCore;
 use serde_json::Value;
-use sqlx::{PgPool, Row, postgres::PgPoolOptions};
+use sha2::{Digest, Sha256};
+use sqlx::{PgPool, Postgres, Row, postgres::PgPoolOptions};
 use uuid::Uuid;
 
 use crate::error::AppError;
@@ -437,6 +441,115 @@ pub struct BlobCleanupEntry {
     pub relative_path: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct AdminRuntimeSettings {
+    pub allow_public_account_registration: bool,
+    pub brand_display_name: Option<String>,
+    pub support_contact: Option<String>,
+    pub policy_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct UpdateAdminRuntimeSettingsInput {
+    pub allow_public_account_registration: Option<bool>,
+    pub brand_display_name: Option<Option<String>>,
+    pub support_contact: Option<Option<String>>,
+    pub policy_text: Option<Option<String>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct AdminAccountStats {
+    pub user_count: u64,
+    pub disabled_user_count: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ListAdminUsersInput {
+    pub query: Option<String>,
+    pub status: Option<String>,
+    pub cursor: Option<String>,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct AdminUserRow {
+    pub account_id: Uuid,
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
+    pub created_at_unix: u64,
+    pub disabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ListAdminUsersOutput {
+    pub users: Vec<AdminUserRow>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct CreateAdminUserProvisionInput {
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
+    pub ttl_seconds: u64,
+}
+
+#[derive(Debug)]
+pub struct AdminUserProvisionCreated {
+    pub provision_id: Uuid,
+    pub plaintext_token: String,
+    pub expires_at_unix: u64,
+}
+
+#[derive(Debug)]
+pub struct AdminUserProvisionClaimed {
+    pub provision_id: Uuid,
+    pub handle: Option<String>,
+    pub profile_name: String,
+    pub profile_bio: Option<String>,
+}
+
+#[derive(Debug, Default)]
+pub struct PatchAdminAccountInput {
+    pub handle: Option<Option<String>>,
+    pub profile_name: Option<String>,
+    pub profile_bio: Option<Option<String>>,
+}
+
+fn provision_token_hash(plaintext_token: &str) -> Vec<u8> {
+    Sha256::digest(plaintext_token.trim().as_bytes()).to_vec()
+}
+
+const DEFAULT_ADMIN_USER_LIST_LIMIT: usize = 50;
+const MAX_ADMIN_USER_LIST_LIMIT: usize = 100;
+
+fn decode_admin_user_cursor(cursor: &str) -> Result<(i64, Uuid), AppError> {
+    let decoded = base64_decode_admin_cursor(cursor)?;
+    let (us_part, id_part) = decoded
+        .split_once('|')
+        .ok_or_else(|| AppError::bad_request("invalid admin user list cursor"))?;
+    let created_us: i64 = us_part
+        .parse()
+        .map_err(|_| AppError::bad_request("invalid admin user list cursor"))?;
+    let account_id: Uuid = id_part
+        .parse()
+        .map_err(|_| AppError::bad_request("invalid admin user list cursor"))?;
+    Ok((created_us, account_id))
+}
+
+fn encode_admin_user_cursor(created_us: i64, account_id: Uuid) -> String {
+    let raw = format!("{created_us}|{account_id}");
+    URL_SAFE_NO_PAD.encode(raw.as_bytes())
+}
+
+fn base64_decode_admin_cursor(cursor: &str) -> Result<String, AppError> {
+    let bytes = URL_SAFE_NO_PAD
+        .decode(cursor.trim().as_bytes())
+        .map_err(|_| AppError::bad_request("invalid admin user list cursor"))?;
+    String::from_utf8(bytes).map_err(|_| AppError::bad_request("invalid admin user list cursor"))
+}
+
 impl Database {
     pub async fn connect(database_url: &str) -> Result<Self> {
         let pool = PgPoolOptions::new()
@@ -456,16 +569,507 @@ impl Database {
         Ok(())
     }
 
-    pub async fn create_account(
-        &self,
-        input: CreateAccountInput,
-    ) -> Result<CreateAccountOutput, AppError> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+    pub async fn get_admin_runtime_settings(&self) -> Result<AdminRuntimeSettings, AppError> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                allow_public_account_registration,
+                brand_display_name,
+                support_contact,
+                policy_text
+            FROM admin_runtime_settings
+            WHERE singleton = TRUE
+            "#,
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
+        Ok(AdminRuntimeSettings {
+            allow_public_account_registration: row_bool(&row, "allow_public_account_registration")?,
+            brand_display_name: row_optional_text(&row, "brand_display_name")?,
+            support_contact: row_optional_text(&row, "support_contact")?,
+            policy_text: row_optional_text(&row, "policy_text")?,
+        })
+    }
+
+    pub async fn update_admin_runtime_settings(
+        &self,
+        input: &UpdateAdminRuntimeSettingsInput,
+    ) -> Result<(), AppError> {
+        let singleton_ok: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM admin_runtime_settings WHERE singleton = TRUE)",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        if !singleton_ok {
+            return Err(AppError::internal(
+                "admin_runtime_settings singleton row is missing",
+            ));
+        }
+
+        let mut current = self.get_admin_runtime_settings().await?;
+        if let Some(v) = input.allow_public_account_registration {
+            current.allow_public_account_registration = v;
+        }
+        if let Some(v) = &input.brand_display_name {
+            current.brand_display_name = v.clone();
+        }
+        if let Some(v) = &input.support_contact {
+            current.support_contact = v.clone();
+        }
+        if let Some(v) = &input.policy_text {
+            current.policy_text = v.clone();
+        }
+
+        let result = sqlx::query(
+            r#"
+            UPDATE admin_runtime_settings
+            SET
+                allow_public_account_registration = $1,
+                brand_display_name = $2,
+                support_contact = $3,
+                policy_text = $4,
+                updated_at = now()
+            WHERE singleton = TRUE
+            "#,
+        )
+        .bind(current.allow_public_account_registration)
+        .bind(current.brand_display_name.as_deref())
+        .bind(current.support_contact.as_deref())
+        .bind(current.policy_text.as_deref())
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        if result.rows_affected() != 1 {
+            return Err(AppError::internal(
+                "admin_runtime_settings singleton row is missing",
+            ));
+        }
+
+        Ok(())
+    }
+
+    pub async fn get_admin_account_stats(&self) -> Result<AdminAccountStats, AppError> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                COUNT(*)::bigint AS user_count,
+                COUNT(*) FILTER (WHERE disabled_at IS NOT NULL)::bigint AS disabled_user_count
+            FROM accounts
+            WHERE deleted_at IS NULL
+            "#,
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(AdminAccountStats {
+            user_count: row_u64_from_i64(&row, "user_count")?,
+            disabled_user_count: row_u64_from_i64(&row, "disabled_user_count")?,
+        })
+    }
+
+    pub async fn list_admin_users(
+        &self,
+        input: ListAdminUsersInput,
+    ) -> Result<ListAdminUsersOutput, AppError> {
+        let limit = if input.limit == 0 {
+            DEFAULT_ADMIN_USER_LIST_LIMIT
+        } else {
+            input.limit.min(MAX_ADMIN_USER_LIST_LIMIT).max(1)
+        };
+        let fetch_limit = i64::try_from(limit + 1)
+            .map_err(|_| AppError::internal("admin user list limit overflow"))?;
+
+        let q_pat: Option<String> = input.query.as_ref().and_then(|q| {
+            let trimmed = q.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(format!(
+                    "%{}%",
+                    trimmed.replace('%', r"\%").replace('_', r"\_")
+                ))
+            }
+        });
+
+        let status_filter: Option<String> = input.status.as_ref().and_then(|s| {
+            let t = s.trim().to_ascii_lowercase();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t)
+            }
+        });
+        if let Some(ref s) = status_filter {
+            if s != "active" && s != "disabled" {
+                return Err(AppError::bad_request(
+                    "invalid admin user list status filter (use active or disabled)",
+                ));
+            }
+        }
+
+        let cursor_tuple = input
+            .cursor
+            .as_ref()
+            .map(|c| decode_admin_user_cursor(c))
+            .transpose()?;
+
+        let mut qb = sqlx::QueryBuilder::new(
+            r#"
+            SELECT
+                a.account_id,
+                a.handle,
+                a.profile_name,
+                a.profile_bio,
+                floor(extract(epoch from a.created_at))::bigint AS created_at_unix,
+                ((extract(epoch from a.created_at) * 1000000)::bigint) AS created_us,
+                (a.disabled_at IS NOT NULL) AS disabled
+            FROM accounts a
+            WHERE a.deleted_at IS NULL
+            "#,
+        );
+
+        if let Some((c_us, c_id)) = cursor_tuple {
+            qb.push(
+                " AND ((extract(epoch from a.created_at) * 1000000)::bigint, a.account_id) < (",
+            );
+            qb.push_bind(c_us);
+            qb.push(", ");
+            qb.push_bind(c_id);
+            qb.push(")");
+        }
+
+        if let Some(ref pat) = q_pat {
+            qb.push(" AND (a.handle ILIKE ");
+            qb.push_bind(pat);
+            qb.push(" ESCAPE '\\' OR a.profile_name ILIKE ");
+            qb.push_bind(pat);
+            qb.push(" ESCAPE '\\')");
+        }
+
+        match status_filter.as_deref() {
+            Some("active") => {
+                qb.push(" AND a.disabled_at IS NULL");
+            }
+            Some("disabled") => {
+                qb.push(" AND a.disabled_at IS NOT NULL");
+            }
+            Some(_) => {}
+            None => {}
+        }
+
+        qb.push(" ORDER BY a.created_at DESC, a.account_id DESC LIMIT ");
+        qb.push_bind(fetch_limit);
+
+        let rows = qb
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+
+        let mut combined: Vec<(AdminUserRow, i64)> = Vec::with_capacity(rows.len());
+        for row in rows {
+            let created_us: i64 = row
+                .try_get::<i64, _>("created_us")
+                .map_err(|e| AppError::internal(format!("created_us: {e}")))?;
+            combined.push((
+                AdminUserRow {
+                    account_id: row_uuid(&row, "account_id")?,
+                    handle: row_optional_text(&row, "handle")?,
+                    profile_name: row_text(&row, "profile_name")?,
+                    profile_bio: row_optional_text(&row, "profile_bio")?,
+                    created_at_unix: row_u64_from_i64(&row, "created_at_unix")?,
+                    disabled: row_bool(&row, "disabled")?,
+                },
+                created_us,
+            ));
+        }
+
+        let has_more = combined.len() > limit;
+        if has_more {
+            combined.pop();
+        }
+
+        let next_cursor = if has_more {
+            let (last, created_us) = combined.last().ok_or_else(|| {
+                AppError::internal("admin user list cursor row missing after truncation")
+            })?;
+            Some(encode_admin_user_cursor(*created_us, last.account_id))
+        } else {
+            None
+        };
+
+        let users = combined.into_iter().map(|(u, _)| u).collect();
+
+        Ok(ListAdminUsersOutput { users, next_cursor })
+    }
+
+    pub async fn get_admin_user(&self, account_id: Uuid) -> Result<Option<AdminUserRow>, AppError> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                a.account_id,
+                a.handle,
+                a.profile_name,
+                a.profile_bio,
+                floor(extract(epoch from a.created_at))::bigint AS created_at_unix,
+                (a.disabled_at IS NOT NULL) AS disabled
+            FROM accounts a
+            WHERE a.account_id = $1
+              AND a.deleted_at IS NULL
+            "#,
+        )
+        .bind(account_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        Ok(Some(AdminUserRow {
+            account_id: row_uuid(&row, "account_id")?,
+            handle: row_optional_text(&row, "handle")?,
+            profile_name: row_text(&row, "profile_name")?,
+            profile_bio: row_optional_text(&row, "profile_bio")?,
+            created_at_unix: row_u64_from_i64(&row, "created_at_unix")?,
+            disabled: row_bool(&row, "disabled")?,
+        }))
+    }
+
+    pub async fn disable_account(
+        &self,
+        account_id: Uuid,
+        reason: Option<&str>,
+    ) -> Result<(), AppError> {
+        let result = sqlx::query(
+            r#"
+            UPDATE accounts
+            SET
+                disabled_at = now(),
+                disabled_reason = $2
+            WHERE account_id = $1
+              AND deleted_at IS NULL
+            "#,
+        )
+        .bind(account_id)
+        .bind(reason)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        if result.rows_affected() == 0 {
+            return Err(AppError::not_found("account not found"));
+        }
+
+        Ok(())
+    }
+
+    pub async fn reactivate_account(&self, account_id: Uuid) -> Result<(), AppError> {
+        let result = sqlx::query(
+            r#"
+            UPDATE accounts
+            SET
+                disabled_at = NULL,
+                disabled_reason = NULL
+            WHERE account_id = $1
+              AND deleted_at IS NULL
+            "#,
+        )
+        .bind(account_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        if result.rows_affected() == 0 {
+            return Err(AppError::not_found("account not found"));
+        }
+
+        Ok(())
+    }
+
+    pub async fn list_active_device_ids_for_account(
+        &self,
+        account_id: Uuid,
+    ) -> Result<Vec<Uuid>, AppError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT device_id
+            FROM devices
+            WHERE account_id = $1
+              AND device_status = 'active'::device_status
+            "#,
+        )
+        .bind(account_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        rows.into_iter()
+            .map(|row| row_uuid(&row, "device_id"))
+            .collect()
+    }
+
+    pub async fn update_admin_account_profile(
+        &self,
+        account_id: Uuid,
+        patch: &PatchAdminAccountInput,
+    ) -> Result<Option<AdminUserRow>, AppError> {
+        let Some(current) = self.get_admin_user(account_id).await? else {
+            return Ok(None);
+        };
+
+        let handle = match &patch.handle {
+            None => current.handle,
+            Some(h) => h.clone(),
+        };
+        let profile_name = patch
+            .profile_name
+            .clone()
+            .unwrap_or_else(|| current.profile_name.clone());
+        let profile_bio = match &patch.profile_bio {
+            None => current.profile_bio,
+            Some(b) => b.clone(),
+        };
+
+        let updated = self
+            .update_account_profile(UpdateAccountProfileInput {
+                account_id,
+                handle,
+                profile_name,
+                profile_bio,
+            })
+            .await?;
+
+        if !updated {
+            return Ok(None);
+        }
+
+        self.get_admin_user(account_id).await
+    }
+
+    pub async fn create_admin_user_provision(
+        &self,
+        input: CreateAdminUserProvisionInput,
+    ) -> Result<AdminUserProvisionCreated, AppError> {
+        let ttl_seconds = i64::try_from(input.ttl_seconds)
+            .map_err(|_| AppError::bad_request("ttl_seconds is out of range"))?;
+        if ttl_seconds <= 0 {
+            return Err(AppError::bad_request("ttl_seconds must be positive"));
+        }
+
+        let mut raw = [0u8; 32];
+        rand::rng().fill_bytes(&mut raw);
+        let plaintext_token = URL_SAFE_NO_PAD.encode(raw);
+        let token_hash = provision_token_hash(&plaintext_token);
+
+        let row = sqlx::query(
+            r#"
+            INSERT INTO admin_user_provisions (
+                provision_token_hash,
+                handle,
+                profile_name,
+                profile_bio,
+                expires_at
+            )
+            VALUES (
+                $1,
+                $2,
+                $3,
+                $4,
+                now() + ($5::bigint * interval '1 second')
+            )
+            RETURNING provision_id, floor(extract(epoch from expires_at))::bigint AS expires_at_unix
+            "#,
+        )
+        .bind(&token_hash)
+        .bind(input.handle.as_deref())
+        .bind(&input.profile_name)
+        .bind(input.profile_bio.as_deref())
+        .bind(ttl_seconds)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(AdminUserProvisionCreated {
+            provision_id: row_uuid(&row, "provision_id")?,
+            plaintext_token,
+            expires_at_unix: row_u64_from_i64(&row, "expires_at_unix")?,
+        })
+    }
+
+    pub async fn peek_admin_user_provision(
+        &self,
+        plaintext_token: &str,
+    ) -> Result<Option<AdminUserProvisionClaimed>, AppError> {
+        let hash = provision_token_hash(plaintext_token);
+        let row = sqlx::query(
+            r#"
+            SELECT provision_id, handle, profile_name, profile_bio
+            FROM admin_user_provisions
+            WHERE provision_token_hash = $1
+              AND claimed_at IS NULL
+              AND expires_at > now()
+            "#,
+        )
+        .bind(&hash)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        Ok(Some(AdminUserProvisionClaimed {
+            provision_id: row_uuid(&row, "provision_id")?,
+            handle: row_optional_text(&row, "handle")?,
+            profile_name: row_text(&row, "profile_name")?,
+            profile_bio: row_optional_text(&row, "profile_bio")?,
+        }))
+    }
+
+    pub async fn consume_admin_user_provision(
+        &self,
+        plaintext_token: &str,
+    ) -> Result<Option<AdminUserProvisionClaimed>, AppError> {
+        let hash = provision_token_hash(plaintext_token);
+        let row = sqlx::query(
+            r#"
+            UPDATE admin_user_provisions
+            SET claimed_at = now()
+            WHERE provision_token_hash = $1
+              AND claimed_at IS NULL
+              AND expires_at > now()
+            RETURNING provision_id, handle, profile_name, profile_bio
+            "#,
+        )
+        .bind(&hash)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        Ok(Some(AdminUserProvisionClaimed {
+            provision_id: row_uuid(&row, "provision_id")?,
+            handle: row_optional_text(&row, "handle")?,
+            profile_name: row_text(&row, "profile_name")?,
+            profile_bio: row_optional_text(&row, "profile_bio")?,
+        }))
+    }
+
+    async fn create_account_in_transaction(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        input: &CreateAccountInput,
+    ) -> Result<CreateAccountOutput, AppError> {
         let account_row = sqlx::query(
             r#"
             INSERT INTO accounts (handle, profile_name, profile_bio, account_root_pubkey)
@@ -477,7 +1081,7 @@ impl Database {
         .bind(&input.profile_name)
         .bind(input.profile_bio.as_deref())
         .bind(&input.account_root_pubkey)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         let account_id: Uuid = row_uuid(&account_row, "account_id")?;
@@ -504,7 +1108,7 @@ impl Database {
         .bind(&input.credential_identity)
         .bind(&input.account_root_signature)
         .bind(&input.transport_pubkey)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         let device_id: Uuid = row_uuid(&device_row, "device_id")?;
@@ -519,7 +1123,7 @@ impl Database {
         )
         .bind(account_id)
         .bind(device_id)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -531,7 +1135,7 @@ impl Database {
             "#,
         )
         .bind(account_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         let chat_id: Uuid = row_uuid(&chat_row, "chat_id")?;
@@ -544,7 +1148,7 @@ impl Database {
         )
         .bind(chat_id)
         .bind(account_id)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -556,7 +1160,7 @@ impl Database {
         )
         .bind(chat_id)
         .bind(device_id)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -569,19 +1173,105 @@ impl Database {
         )
         .bind(chat_id)
         .bind(group_id_bytes)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
-
-        tx.commit()
-            .await
-            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
 
         Ok(CreateAccountOutput {
             account_id,
             device_id,
             account_sync_chat_id: chat_id,
         })
+    }
+
+    /// Creates an account while consuming a valid provision row, all in one transaction.
+    /// The provision is marked claimed only after the account insert path succeeds.
+    pub async fn create_account_with_provision_token(
+        &self,
+        mut input: CreateAccountInput,
+        provision_plaintext: &str,
+        client_handle: Option<String>,
+    ) -> Result<CreateAccountOutput, AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
+        let hash = provision_token_hash(provision_plaintext);
+        let prov_row = sqlx::query(
+            r#"
+            SELECT provision_id, handle, profile_name, profile_bio
+            FROM admin_user_provisions
+            WHERE provision_token_hash = $1
+              AND claimed_at IS NULL
+              AND expires_at > now()
+            FOR UPDATE
+            "#,
+        )
+        .bind(&hash)
+        .fetch_optional(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(prov_row) = prov_row else {
+            return Err(AppError::bad_request("invalid or expired provision token"));
+        };
+
+        let provision_id = row_uuid(&prov_row, "provision_id")?;
+        let prov_handle = row_optional_text(&prov_row, "handle")?;
+        if let Some(ref expected) = prov_handle {
+            if client_handle.as_deref() != Some(expected.as_str()) {
+                return Err(AppError::bad_request("handle does not match provision"));
+            }
+        }
+
+        input.profile_name = row_text(&prov_row, "profile_name")?;
+        let prov_bio = row_optional_text(&prov_row, "profile_bio")?;
+        input.profile_bio = prov_bio.or(input.profile_bio);
+
+        let output = Self::create_account_in_transaction(&mut tx, &input).await?;
+
+        let claim = sqlx::query(
+            r#"
+            UPDATE admin_user_provisions
+            SET claimed_at = now()
+            WHERE provision_id = $1
+              AND claimed_at IS NULL
+            "#,
+        )
+        .bind(provision_id)
+        .execute(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+        if claim.rows_affected() != 1 {
+            return Err(AppError::internal("provision claim failed after account insert"));
+        }
+
+        tx.commit()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
+
+        Ok(output)
+    }
+
+    pub async fn create_account(
+        &self,
+        input: CreateAccountInput,
+    ) -> Result<CreateAccountOutput, AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
+        let output = Self::create_account_in_transaction(&mut tx, &input).await?;
+
+        tx.commit()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
+
+        Ok(output)
     }
 
     pub async fn create_auth_challenge(
@@ -594,7 +1284,11 @@ impl Database {
             INSERT INTO auth_challenges (device_id, challenge_bytes, expires_at)
             SELECT d.device_id, $2, now() + make_interval(secs => $3)
             FROM devices d
-            WHERE d.device_id = $1 AND d.device_status = 'active'::device_status
+            JOIN accounts a ON a.account_id = d.account_id
+            WHERE d.device_id = $1
+              AND d.device_status = 'active'::device_status
+              AND a.deleted_at IS NULL
+              AND a.disabled_at IS NULL
             RETURNING challenge_id, extract(epoch from expires_at)::bigint AS expires_at_unix
             "#,
         )
@@ -643,6 +1337,9 @@ impl Database {
                 t.challenge_bytes
             FROM taken t
             JOIN devices d ON d.device_id = t.device_id
+            JOIN accounts a ON a.account_id = d.account_id
+            WHERE a.deleted_at IS NULL
+              AND a.disabled_at IS NULL
             "#,
         )
         .bind(challenge_id)
@@ -680,7 +1377,10 @@ impl Database {
                 d.device_status::text AS device_status
             FROM accounts a
             JOIN devices d ON d.account_id = a.account_id
-            WHERE a.account_id = $1 AND d.device_id = $2
+            WHERE a.account_id = $1
+              AND d.device_id = $2
+              AND a.deleted_at IS NULL
+              AND a.disabled_at IS NULL
             "#,
         )
         .bind(account_id)
@@ -733,6 +1433,7 @@ impl Database {
                 a.profile_bio
             FROM accounts a
             WHERE a.deleted_at IS NULL
+              AND a.disabled_at IS NULL
               AND ($1::uuid IS NULL OR a.account_id <> $1)
               AND EXISTS (
                     SELECT 1
@@ -798,6 +1499,7 @@ impl Database {
             FROM accounts a
             WHERE a.account_id = $1
               AND a.deleted_at IS NULL
+              AND a.disabled_at IS NULL
               AND EXISTS (
                     SELECT 1
                     FROM devices d
@@ -864,6 +1566,7 @@ impl Database {
               AND d.device_id = $2
               AND d.device_status = 'active'::device_status
               AND a.deleted_at IS NULL
+              AND a.disabled_at IS NULL
             "#,
         )
         .bind(account_id)
@@ -1060,7 +1763,7 @@ impl Database {
         .bind(job_id)
         .bind(account_id)
         .bind(source_device_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1093,7 +1796,7 @@ impl Database {
         )
         .bind(job_id)
         .bind(u64_to_i64(sequence_no, "history sync sequence_no")?)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1141,7 +1844,7 @@ impl Database {
         .bind(&payload)
         .bind(cursor_json.clone())
         .bind(is_final)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1165,7 +1868,7 @@ impl Database {
         .bind(account_id)
         .bind(source_device_id)
         .bind(cursor_json)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1330,9 +2033,12 @@ impl Database {
                 'open'::link_intent_status,
                 now() + make_interval(secs => $4)
             FROM devices d
+            JOIN accounts a ON a.account_id = d.account_id
             WHERE d.account_id = $1
               AND d.device_id = $2
               AND d.device_status = 'active'::device_status
+              AND a.deleted_at IS NULL
+              AND a.disabled_at IS NULL
             RETURNING
                 link_intent_id,
                 account_id,
@@ -1373,19 +2079,22 @@ impl Database {
         let intent_row = sqlx::query(
             r#"
             SELECT
-                account_id,
-                status::text AS status,
-                pending_device_id
-            FROM device_link_intents
-            WHERE link_intent_id = $1
-              AND link_token = $2
-              AND expires_at > now()
-            FOR UPDATE
+                i.account_id,
+                i.status::text AS status,
+                i.pending_device_id
+            FROM device_link_intents i
+            JOIN accounts a ON a.account_id = i.account_id
+            WHERE i.link_intent_id = $1
+              AND i.link_token = $2
+              AND i.expires_at > now()
+              AND a.deleted_at IS NULL
+              AND a.disabled_at IS NULL
+            FOR UPDATE OF i
             "#,
         )
         .bind(input.link_intent_id)
         .bind(input.link_token)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         let Some(intent_row) = intent_row else {
@@ -1434,7 +2143,7 @@ impl Database {
         .bind(&input.credential_identity)
         .bind(Vec::<u8>::new())
         .bind(&input.transport_pubkey)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         let pending_device_id = row_uuid(&device_row, "device_id")?;
@@ -1447,7 +2156,7 @@ impl Database {
         )
         .bind(account_id)
         .bind(pending_device_id)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1464,7 +2173,7 @@ impl Database {
         )
         .bind(input.link_intent_id)
         .bind(pending_device_id)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1550,7 +2259,7 @@ impl Database {
         )
         .bind(device_id)
         .bind(account_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1570,7 +2279,7 @@ impl Database {
         )
         .bind(device_id)
         .bind(account_id)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1639,7 +2348,7 @@ impl Database {
             "#,
         )
         .bind(input.target_device_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         let Some(target_row) = target_row else {
@@ -1668,7 +2377,7 @@ impl Database {
         )
         .bind(input.actor_device_id)
         .bind(input.actor_account_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         if actor_row.is_none() {
@@ -1694,7 +2403,7 @@ impl Database {
         .bind(input.target_device_id)
         .bind(input.actor_device_id)
         .bind(&input.transfer_bundle_ciphertext)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         let Some(intent_row) = intent_row else {
@@ -1721,7 +2430,7 @@ impl Database {
         )
         .bind(input.target_device_id)
         .bind(&input.account_root_signature)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1734,7 +2443,7 @@ impl Database {
         .bind(input.actor_account_id)
         .bind(input.target_device_id)
         .bind(input.actor_device_id)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1778,7 +2487,7 @@ impl Database {
         )
         .bind(input.actor_device_id)
         .bind(input.actor_account_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         if actor_row.is_none() {
@@ -1800,7 +2509,7 @@ impl Database {
             "#,
         )
         .bind(input.target_device_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         let Some(target_row) = target_row else {
@@ -1828,7 +2537,7 @@ impl Database {
             "#,
         )
         .bind(input.target_device_id)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1841,7 +2550,7 @@ impl Database {
             "#,
         )
         .bind(input.target_device_id)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1856,7 +2565,7 @@ impl Database {
             "#,
         )
         .bind(input.target_device_id)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1873,7 +2582,7 @@ impl Database {
             "#,
         )
         .bind(input.target_device_id)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1886,7 +2595,7 @@ impl Database {
             "#,
         )
         .bind(input.target_device_id)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1900,7 +2609,7 @@ impl Database {
         .bind(input.target_device_id)
         .bind(input.actor_device_id)
         .bind(serde_json::json!({ "reason": input.reason }))
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1950,7 +2659,7 @@ impl Database {
             "#,
         )
         .bind(device_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         if device_row.is_none() {
@@ -1969,7 +2678,7 @@ impl Database {
             .bind(device_id)
             .bind(&package.cipher_suite)
             .bind(&package.key_package_bytes)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.deref_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -2003,10 +2712,11 @@ impl Database {
             FROM accounts
             WHERE account_id = $1
               AND deleted_at IS NULL
+              AND disabled_at IS NULL
             "#,
         )
         .bind(account_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         if account_row.is_none() {
@@ -2023,7 +2733,7 @@ impl Database {
             "#,
         )
         .bind(account_id)
-        .fetch_all(&mut *tx)
+        .fetch_all(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -2104,7 +2814,7 @@ impl Database {
         .bind(input.chat_id)
         .bind(input.creator_device_id)
         .bind(input.creator_account_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         if membership_row.is_none() {
@@ -2142,7 +2852,7 @@ impl Database {
         .bind(&input.sha256)
         .bind(&input.mime_type)
         .bind(input.creator_device_id)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -2163,7 +2873,7 @@ impl Database {
             "#,
         )
         .bind(&input.blob_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -2206,7 +2916,7 @@ impl Database {
         )
         .bind(&input.blob_id)
         .bind(input.chat_id)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -2582,7 +3292,7 @@ impl Database {
         )
         .bind(input.creator_device_id)
         .bind(input.creator_account_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         if creator_row.is_none() {
@@ -2598,7 +3308,7 @@ impl Database {
             "#,
         )
         .bind(&participant_account_ids)
-        .fetch_all(&mut *tx)
+        .fetch_all(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         let existing_accounts: BTreeSet<Uuid> = account_rows
@@ -2622,7 +3332,7 @@ impl Database {
             "#,
         )
         .bind(&participant_account_ids)
-        .fetch_all(&mut *tx)
+        .fetch_all(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -2647,7 +3357,7 @@ impl Database {
         .bind(chat_type_db(input.chat_type))
         .bind(input.title.as_deref())
         .bind(input.creator_account_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         let chat_id = row_uuid(&chat_row, "chat_id")?;
@@ -2666,7 +3376,7 @@ impl Database {
             } else {
                 "member"
             })
-            .execute(&mut *tx)
+            .execute(tx.deref_mut())
             .await
             .map_err(map_db_error)?;
         }
@@ -2697,7 +3407,7 @@ impl Database {
         .bind(chat_id)
         .bind(input.creator_device_id)
         .bind(0)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -2711,7 +3421,7 @@ impl Database {
             .bind(chat_id)
             .bind(device_id)
             .bind((offset + 1) as i32)
-            .execute(&mut *tx)
+            .execute(tx.deref_mut())
             .await
             .map_err(map_db_error)?;
         }
@@ -2725,7 +3435,7 @@ impl Database {
         .bind(chat_id)
         .bind(Uuid::new_v4().as_bytes().to_vec())
         .bind(u64_to_i64(created_epoch, "created epoch")?)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -2824,7 +3534,7 @@ impl Database {
         .bind(input.chat_id)
         .bind(input.actor_account_id)
         .bind(input.actor_device_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -2853,7 +3563,7 @@ impl Database {
             "#,
         )
         .bind(&target_account_ids)
-        .fetch_all(&mut *tx)
+        .fetch_all(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         let existing_accounts: BTreeSet<Uuid> = target_account_rows
@@ -2876,7 +3586,7 @@ impl Database {
         )
         .bind(input.chat_id)
         .bind(&target_account_ids)
-        .fetch_all(&mut *tx)
+        .fetch_all(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         for row in existing_member_rows {
@@ -2897,7 +3607,7 @@ impl Database {
             "#,
         )
         .bind(&target_account_ids)
-        .fetch_all(&mut *tx)
+        .fetch_all(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -2935,7 +3645,7 @@ impl Database {
             )
             .bind(input.chat_id)
             .bind(*account_id)
-            .execute(&mut *tx)
+            .execute(tx.deref_mut())
             .await
             .map_err(map_db_error)?;
         }
@@ -2948,7 +3658,7 @@ impl Database {
             "#,
         )
         .bind(input.chat_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         let mut next_leaf_index = row_i32(&leaf_index_row, "max_leaf_index")? + 1;
@@ -2971,7 +3681,7 @@ impl Database {
             .bind(device_id)
             .bind(next_leaf_index)
             .bind(u64_to_i64(next_epoch, "next epoch")?)
-            .execute(&mut *tx)
+            .execute(tx.deref_mut())
             .await
             .map_err(map_db_error)?;
             next_leaf_index += 1;
@@ -2987,7 +3697,7 @@ impl Database {
         )
         .bind(input.chat_id)
         .bind(u64_to_i64(next_epoch, "next epoch")?)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -3105,7 +3815,7 @@ impl Database {
         .bind(input.chat_id)
         .bind(input.actor_account_id)
         .bind(input.actor_device_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -3134,7 +3844,7 @@ impl Database {
             "#,
         )
         .bind(input.chat_id)
-        .fetch_all(&mut *tx)
+        .fetch_all(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         let active_member_ids: BTreeSet<Uuid> = active_member_rows
@@ -3172,7 +3882,7 @@ impl Database {
         )
         .bind(input.chat_id)
         .bind(&target_account_ids)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -3192,7 +3902,7 @@ impl Database {
         .bind(input.chat_id)
         .bind(&target_account_ids)
         .bind(u64_to_i64(next_epoch, "next epoch")?)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -3206,7 +3916,7 @@ impl Database {
         )
         .bind(input.chat_id)
         .bind(u64_to_i64(next_epoch, "next epoch")?)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -3286,7 +3996,7 @@ impl Database {
         .bind(input.chat_id)
         .bind(input.actor_account_id)
         .bind(input.actor_device_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         let Some(actor_row) = actor_row else {
@@ -3312,7 +4022,7 @@ impl Database {
             "#,
         )
         .bind(&target_device_ids)
-        .fetch_all(&mut *tx)
+        .fetch_all(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         if target_rows.len() != target_device_ids.len() {
@@ -3346,7 +4056,7 @@ impl Database {
         )
         .bind(input.chat_id)
         .bind(&target_device_ids)
-        .fetch_all(&mut *tx)
+        .fetch_all(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         for row in existing_rows {
@@ -3375,7 +4085,7 @@ impl Database {
             "#,
         )
         .bind(input.chat_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         let mut next_leaf_index = row_i32(&leaf_index_row, "max_leaf_index")? + 1;
@@ -3416,7 +4126,7 @@ impl Database {
             .bind(*target_device_id)
             .bind(next_leaf_index)
             .bind(u64_to_i64(next_epoch, "next epoch")?)
-            .execute(&mut *tx)
+            .execute(tx.deref_mut())
             .await
             .map_err(map_db_error)?;
             next_leaf_index += 1;
@@ -3432,7 +4142,7 @@ impl Database {
         )
         .bind(input.chat_id)
         .bind(u64_to_i64(next_epoch, "next epoch")?)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -3537,7 +4247,7 @@ impl Database {
         .bind(input.chat_id)
         .bind(input.actor_account_id)
         .bind(input.actor_device_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         let Some(actor_row) = actor_row else {
@@ -3560,7 +4270,7 @@ impl Database {
             "#,
         )
         .bind(&target_device_ids)
-        .fetch_all(&mut *tx)
+        .fetch_all(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         if target_rows.len() != target_device_ids.len() {
@@ -3589,7 +4299,7 @@ impl Database {
         )
         .bind(input.chat_id)
         .bind(&target_device_ids)
-        .fetch_all(&mut *tx)
+        .fetch_all(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         if membership_rows.len() != target_device_ids.len() {
@@ -3621,7 +4331,7 @@ impl Database {
         .bind(input.chat_id)
         .bind(&target_device_ids)
         .bind(u64_to_i64(next_epoch, "next epoch")?)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -3635,7 +4345,7 @@ impl Database {
         )
         .bind(input.chat_id)
         .bind(u64_to_i64(next_epoch, "next epoch")?)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -3875,7 +4585,7 @@ impl Database {
             "#,
         )
         .bind(input.message_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -3932,7 +4642,7 @@ impl Database {
         .bind(input.chat_id)
         .bind(input.sender_device_id)
         .bind(input.sender_account_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -3954,7 +4664,7 @@ impl Database {
             "#,
         )
         .bind(input.chat_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         let Some(seq_row) = seq_row else {
@@ -3989,7 +4699,7 @@ impl Database {
         .bind(content_type_db(input.content_type))
         .bind(&input.ciphertext)
         .bind(sqlx::types::Json(input.aad_json))
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -4013,7 +4723,7 @@ impl Database {
         .bind(input.chat_id)
         .bind(input.message_id)
         .bind(input.sender_device_id)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -4359,7 +5069,7 @@ impl Database {
               AND expires_at < now()
             "#,
         )
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?
         .rows_affected();
@@ -4382,7 +5092,7 @@ impl Database {
             transfer_bundle_retention_seconds,
             "transfer bundle retention",
         )?)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -4398,7 +5108,7 @@ impl Database {
             "#,
         )
         .bind(u64_to_i64(retention_seconds, "link intent retention")?)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?
         .rows_affected();
@@ -4431,7 +5141,7 @@ impl Database {
             "#,
         )
         .bind(u64_to_i64(retention_seconds, "history sync retention")?)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?
         .rows_affected();
@@ -4448,7 +5158,7 @@ impl Database {
             "#,
         )
         .bind(u64_to_i64(retention_seconds, "history sync retention")?)
-        .execute(&mut *tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?
         .rows_affected();
@@ -4492,7 +5202,7 @@ impl Database {
             pending_blob_retention_seconds,
             "pending blob retention",
         )?)
-        .fetch_all(&mut *tx)
+        .fetch_all(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -4526,7 +5236,7 @@ async fn insert_device_key_packages_tx(
         .bind(device_id)
         .bind(&package.cipher_suite)
         .bind(&package.key_package_bytes)
-        .execute(&mut **tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
     }
@@ -4596,7 +5306,7 @@ async fn schedule_approved_device_sync_jobs_tx(
             "#,
         )
         .bind(account_sync_chat_id)
-        .fetch_one(&mut **tx)
+        .fetch_one(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
         let next_leaf_index = row_i32(&leaf_index_row, "max_leaf_index")? + 1;
@@ -4636,7 +5346,7 @@ async fn schedule_approved_device_sync_jobs_tx(
         .bind(target_device_id)
         .bind(next_leaf_index)
         .bind(u64_to_i64(account_sync_epoch, "account sync epoch")?)
-        .execute(&mut **tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
     }
@@ -4904,7 +5614,7 @@ async fn insert_control_message_tx(
         .bind(chat_id)
         .bind(message.message_id)
         .bind(recipient_device_ids)
-        .execute(&mut **tx)
+        .execute(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
     }
@@ -5095,6 +5805,7 @@ async fn reserve_key_packages_for_device_ids_tx(
         FROM accounts
         WHERE account_id = $1
           AND deleted_at IS NULL
+          AND disabled_at IS NULL
         "#,
     )
     .bind(account_id)
@@ -5502,6 +6213,11 @@ fn row_i32(row: &sqlx::postgres::PgRow, column: &str) -> Result<i32, AppError> {
         .map_err(|err| AppError::internal(format!("failed to read {column}: {err}")))
 }
 
+fn row_bool(row: &sqlx::postgres::PgRow, column: &str) -> Result<bool, AppError> {
+    row.try_get(column)
+        .map_err(|err| AppError::internal(format!("failed to read {column}: {err}")))
+}
+
 fn blob_metadata_row_from_db(row: sqlx::postgres::PgRow) -> Result<BlobMetadataRow, AppError> {
     Ok(BlobMetadataRow {
         blob_id: row_text(&row, "blob_id")?,
@@ -5576,17 +6292,37 @@ fn map_db_error(err: sqlx::Error) -> AppError {
 }
 
 #[cfg(test)]
+impl Database {
+    /// Builds a pool that does not open a TCP connection until the first query and skips
+    /// migrations. Only for tests that never touch the database.
+    pub fn connect_lazy_without_migrations(database_url: &str) -> Result<Self> {
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_lazy(database_url)
+            .context("failed to create lazy postgres pool")?;
+        Ok(Self { pool })
+    }
+
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::env;
 
     use serde_json::json;
     use uuid::Uuid;
 
+    use crate::{error::AppError, test_support::POSTGRES_TEST_LOCK};
+
     use super::{
-        ApprovePendingDeviceInput, CompleteLinkIntentInput, ContentType, CreateAccountInput,
-        CreateChatInput, CreateMessageInput, Database, KeyPackageBytesInput, MessageKind,
-        ModifyChatDevicesInput, PendingControlMessage, PublishKeyPackageInput,
-        UpdateAccountProfileInput,
+        ApprovePendingDeviceInput, CompleteLinkIntentInput, ContentType,
+        CreateAccountInput, CreateAdminUserProvisionInput, CreateChatInput, CreateMessageInput,
+        Database, KeyPackageBytesInput, ListAdminUsersInput, MessageKind, ModifyChatDevicesInput,
+        PendingControlMessage, PublishKeyPackageInput, UpdateAccountProfileInput,
+        UpdateAdminRuntimeSettingsInput,
     };
     use trix_types::{ChatType, HistorySyncJobStatus, HistorySyncJobType};
 
@@ -5595,7 +6331,72 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires local postgres"]
+    async fn admin_runtime_settings_defaults_to_public_registration_enabled() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let settings = db.get_admin_runtime_settings().await.expect("settings");
+
+        assert!(settings.allow_public_account_registration);
+        assert_eq!(settings.brand_display_name, None);
+        assert_eq!(settings.support_contact, None);
+        assert_eq!(settings.policy_text, None);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn update_admin_runtime_settings_errors_when_singleton_row_missing() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        sqlx::query("DELETE FROM admin_runtime_settings")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+
+        let err = db
+            .update_admin_runtime_settings(&UpdateAdminRuntimeSettingsInput {
+                allow_public_account_registration: Some(false),
+                ..Default::default()
+            })
+            .await
+            .expect_err("expected missing singleton row");
+
+        assert!(
+            matches!(err, AppError::Internal(ref msg) if msg.contains("singleton")),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn update_admin_runtime_settings_persists_server_fields() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        db.update_admin_runtime_settings(&UpdateAdminRuntimeSettingsInput {
+            allow_public_account_registration: Some(false),
+            brand_display_name: Some(Some("Trix EU".to_owned())),
+            support_contact: Some(Some("ops@example.com".to_owned())),
+            policy_text: Some(Some("Internal use only".to_owned())),
+        })
+        .await
+        .unwrap();
+
+        let settings = db.get_admin_runtime_settings().await.unwrap();
+        assert!(!settings.allow_public_account_registration);
+        assert_eq!(settings.brand_display_name.as_deref(), Some("Trix EU"));
+        assert_eq!(settings.support_contact.as_deref(), Some("ops@example.com"));
+        assert_eq!(settings.policy_text.as_deref(), Some("Internal use only"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
     async fn smoke_adds_and_removes_account_device_from_existing_chat() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
         let db = connect_test_db().await;
         reset_test_db(&db).await;
 
@@ -5782,6 +6583,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires local postgres"]
     async fn create_chat_consumes_reserved_packages_for_creator_secondary_device() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
         let db = connect_test_db().await;
         reset_test_db(&db).await;
 
@@ -5907,6 +6709,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires local postgres"]
     async fn smoke_leases_and_reclaims_expired_inbox_items() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
         let db = connect_test_db().await;
         reset_test_db(&db).await;
 
@@ -6038,6 +6841,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires local postgres"]
     async fn smoke_persists_transfer_bundle_on_device_approval() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
         let db = connect_test_db().await;
         reset_test_db(&db).await;
 
@@ -6103,6 +6907,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires local postgres"]
     async fn smoke_streams_history_sync_chunks_between_devices() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
         let db = connect_test_db().await;
         reset_test_db(&db).await;
 
@@ -6316,6 +7121,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires local postgres"]
     async fn smoke_searches_account_directory() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
         let db = connect_test_db().await;
         reset_test_db(&db).await;
 
@@ -6399,7 +7205,112 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires local postgres"]
+    async fn disabled_account_is_hidden_from_directory_and_rejected_by_session_gate() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input("alice", "Alice Primary", [41; 32], [42; 32]))
+            .await
+            .unwrap();
+        let bob = db
+            .create_account(make_account_input("bob", "Bob Primary", [51; 32], [52; 32]))
+            .await
+            .unwrap();
+
+        db.disable_account(alice.account_id, Some("policy"))
+            .await
+            .unwrap();
+
+        let directory = db
+            .search_account_directory(bob.account_id, Some("alice"), true, Some(10))
+            .await
+            .unwrap();
+        assert!(directory.is_empty());
+
+        let err = db
+            .ensure_active_device_session(alice.account_id, alice.device_id)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::Unauthorized(_)));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn reactivated_account_reappears_in_directory_and_session_gate() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input("alice", "Alice Primary", [61; 32], [62; 32]))
+            .await
+            .unwrap();
+        let bob = db
+            .create_account(make_account_input("bob", "Bob Primary", [71; 32], [72; 32]))
+            .await
+            .unwrap();
+
+        db.disable_account(alice.account_id, Some("policy"))
+            .await
+            .unwrap();
+        db.reactivate_account(alice.account_id).await.unwrap();
+
+        let directory = db
+            .search_account_directory(bob.account_id, Some("alice"), true, Some(10))
+            .await
+            .unwrap();
+        assert_eq!(directory.len(), 1);
+
+        db.ensure_active_device_session(alice.account_id, alice.device_id)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn reserve_key_packages_rejects_disabled_target_account() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input("alice", "Alice", [81; 32], [82; 32]))
+            .await
+            .unwrap();
+        let bob = db
+            .create_account(make_account_input("bob", "Bob", [83; 32], [84; 32]))
+            .await
+            .unwrap();
+
+        db.publish_key_packages(
+            bob.device_id,
+            vec![PublishKeyPackageInput {
+                device_id: bob.device_id,
+                cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                key_package_bytes: b"bob-kp".to_vec(),
+            }],
+        )
+        .await
+        .unwrap();
+
+        db.disable_account(bob.account_id, None).await.unwrap();
+
+        let err = db
+            .reserve_key_packages_for_account(alice.account_id, bob.account_id)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::NotFound(ref m) if m == "account not found"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
     async fn smoke_updates_account_profile_and_fetches_lookup_entry() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
         let db = connect_test_db().await;
         reset_test_db(&db).await;
 
@@ -6446,6 +7357,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires local postgres"]
     async fn smoke_includes_participant_profiles_in_chat_list_and_detail() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
         let db = connect_test_db().await;
         reset_test_db(&db).await;
 
@@ -6509,14 +7421,13 @@ mod tests {
         assert_eq!(created.epoch, 1);
         assert_eq!(chats[0].epoch, 1);
         assert_eq!(chats[0].participant_profiles.len(), 2);
-        assert_eq!(
-            chats[0]
-                .participant_profiles
-                .iter()
-                .map(|profile| profile.handle.as_deref().unwrap_or_default())
-                .collect::<Vec<_>>(),
-            vec!["alice", "bob"]
-        );
+        let mut chat_handles: Vec<_> = chats[0]
+            .participant_profiles
+            .iter()
+            .map(|profile| profile.handle.as_deref().unwrap_or_default())
+            .collect();
+        chat_handles.sort();
+        assert_eq!(chat_handles, vec!["alice", "bob"]);
 
         let detail = db
             .get_chat_detail_for_device(created.chat_id, alice.device_id)
@@ -6525,20 +7436,20 @@ mod tests {
             .expect("chat detail must exist");
         assert_eq!(detail.epoch, 1);
         assert_eq!(detail.participant_profiles.len(), 2);
-        assert_eq!(
-            detail
-                .participant_profiles
-                .iter()
-                .map(|profile| profile.profile_name.as_str())
-                .collect::<Vec<_>>(),
-            vec!["alice", "bob"]
-        );
+        let mut detail_names: Vec<_> = detail
+            .participant_profiles
+            .iter()
+            .map(|profile| profile.profile_name.as_str())
+            .collect();
+        detail_names.sort();
+        assert_eq!(detail_names, vec!["alice", "bob"]);
         assert_eq!(detail.members.len(), 2);
     }
 
     #[tokio::test]
     #[ignore = "requires local postgres"]
     async fn smoke_includes_pending_count_and_last_message_in_chat_list_and_detail() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
         let db = connect_test_db().await;
         reset_test_db(&db).await;
 
@@ -6664,6 +7575,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires local postgres"]
     async fn smoke_append_message_is_idempotent_by_message_id_and_payload() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
         let db = connect_test_db().await;
         reset_test_db(&db).await;
 
@@ -6793,6 +7705,122 @@ mod tests {
         assert_eq!(bob_inbox[0].message.message_id, first.message_id);
     }
 
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn admin_user_list_paginates_in_reverse_creation_order() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [11; 32],
+                [12; 32],
+            ))
+            .await
+            .unwrap();
+        let bob = db
+            .create_account(make_account_input("bob", "Bob Primary", [21; 32], [22; 32]))
+            .await
+            .unwrap();
+        let carol = db
+            .create_account(make_account_input(
+                "carol",
+                "Carol Primary",
+                [31; 32],
+                [32; 32],
+            ))
+            .await
+            .unwrap();
+
+        let first_page = db
+            .list_admin_users(ListAdminUsersInput {
+                query: None,
+                status: None,
+                cursor: None,
+                limit: 2,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(first_page.users.len(), 2);
+        assert_eq!(first_page.users[0].account_id, carol.account_id);
+        assert_eq!(first_page.users[1].account_id, bob.account_id);
+        let cursor = first_page
+            .next_cursor
+            .expect("first page should expose a cursor when more rows exist");
+
+        let second_page = db
+            .list_admin_users(ListAdminUsersInput {
+                query: None,
+                status: None,
+                cursor: Some(cursor),
+                limit: 2,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(second_page.users.len(), 1);
+        assert_eq!(second_page.users[0].account_id, alice.account_id);
+        assert!(second_page.next_cursor.is_none());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn provision_not_consumed_when_bootstrap_fails_duplicate_handle() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        db.update_admin_runtime_settings(&UpdateAdminRuntimeSettingsInput {
+            allow_public_account_registration: Some(false),
+            brand_display_name: None,
+            support_contact: None,
+            policy_text: None,
+        })
+        .await
+        .unwrap();
+
+        db.create_account(make_account_input("alice", "Alice", [1; 32], [2; 32]))
+            .await
+            .unwrap();
+
+        let provision = db
+            .create_admin_user_provision(CreateAdminUserProvisionInput {
+                handle: Some("alice".to_owned()),
+                profile_name: "Retry".to_owned(),
+                profile_bio: None,
+                ttl_seconds: 86400,
+            })
+            .await
+            .unwrap();
+
+        let err = db
+            .create_account_with_provision_token(
+                make_account_input("alice", "Dup", [3; 32], [4; 32]),
+                &provision.plaintext_token,
+                Some("alice".to_owned()),
+            )
+            .await
+            .expect_err("expected handle conflict");
+
+        assert!(
+            matches!(err, AppError::Conflict(ref m) if m.contains("handle")),
+            "unexpected error: {err:?}"
+        );
+
+        let consumed = db
+            .consume_admin_user_provision(&provision.plaintext_token)
+            .await
+            .unwrap();
+        assert!(
+            consumed.is_some(),
+            "provision must still be unused after failed bootstrap"
+        );
+    }
+
     async fn connect_test_db() -> Database {
         let database_url = env::var("TRIX_TEST_DATABASE_URL")
             .unwrap_or_else(|_| DEFAULT_TEST_DATABASE_URL.to_owned());
@@ -6802,10 +7830,22 @@ mod tests {
     }
 
     async fn reset_test_db(db: &Database) {
-        sqlx::query("TRUNCATE TABLE accounts CASCADE")
+        sqlx::query("TRUNCATE TABLE admin_user_provisions, accounts CASCADE")
             .execute(&db.pool)
             .await
-            .expect("truncate test database");
+            .unwrap();
+
+        sqlx::query("DELETE FROM admin_runtime_settings")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "INSERT INTO admin_runtime_settings (singleton) VALUES (TRUE) ON CONFLICT (singleton) DO NOTHING",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
     }
 
     fn make_account_input(

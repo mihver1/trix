@@ -2963,15 +2963,13 @@ impl FfiSyncCoordinator {
             .into_iter()
             .map(ffi_inbox_item_to_api)
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(local_store_apply_report_to_ffi(
-            {
-                let mut coordinator = lock(&self.inner)?;
-                let mut store = lock(&store.inner)?;
-                coordinator
-                    .apply_inbox_items_into_store(&mut store, &items)
-                    .map_err(ffi_error)?
-            },
-        ))
+        Ok(local_store_apply_report_to_ffi({
+            let mut coordinator = lock(&self.inner)?;
+            let mut store = lock(&store.inner)?;
+            coordinator
+                .apply_inbox_items_into_store(&mut store, &items)
+                .map_err(ffi_error)?
+        }))
     }
 
     pub fn ack_inbox(

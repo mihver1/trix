@@ -52,20 +52,59 @@ async fn create_account(
         &credential_identity,
     )?;
 
-    let created = state
-        .db
-        .create_account(CreateAccountInput {
-            handle,
-            profile_name,
-            profile_bio,
-            device_display_name: request.device_display_name,
-            platform: request.platform,
-            credential_identity,
-            account_root_pubkey,
-            account_root_signature,
-            transport_pubkey,
-        })
-        .await?;
+    let settings = state.db.get_admin_runtime_settings().await?;
+    let handle_for_provision = handle.clone();
+
+    let created = if !settings.allow_public_account_registration {
+        let token = request
+            .provision_token
+            .as_deref()
+            .ok_or_else(|| {
+                AppError::bad_request(
+                    "provision_token is required when public account registration is disabled",
+                )
+            })?
+            .trim();
+        if token.is_empty() {
+            return Err(AppError::bad_request(
+                "provision_token is required when public account registration is disabled",
+            ));
+        }
+
+        state
+            .db
+            .create_account_with_provision_token(
+                CreateAccountInput {
+                    handle,
+                    profile_name,
+                    profile_bio,
+                    device_display_name: request.device_display_name,
+                    platform: request.platform,
+                    credential_identity,
+                    account_root_pubkey,
+                    account_root_signature,
+                    transport_pubkey,
+                },
+                token,
+                handle_for_provision,
+            )
+            .await?
+    } else {
+        state
+            .db
+            .create_account(CreateAccountInput {
+                handle,
+                profile_name,
+                profile_bio,
+                device_display_name: request.device_display_name,
+                platform: request.platform,
+                credential_identity,
+                account_root_pubkey,
+                account_root_signature,
+                transport_pubkey,
+            })
+            .await?
+    };
 
     Ok(Json(CreateAccountResponse {
         account_id: AccountId(created.account_id),

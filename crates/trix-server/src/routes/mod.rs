@@ -2,6 +2,7 @@ use axum::{Json, Router, routing::get};
 use serde_json::{Value, json};
 
 pub mod accounts;
+pub mod admin;
 pub mod auth;
 pub mod blobs;
 pub mod chats;
@@ -25,6 +26,7 @@ pub fn v0_router() -> Router<crate::state::AppState> {
         .route("/system/health", get(system::health))
         .route("/system/version", get(system::version))
         .nest("/auth", auth::router())
+        .nest("/admin", admin::router())
         .nest("/accounts", accounts::router())
         .nest("/devices", devices::router())
         .nest("/chats", chats::router())

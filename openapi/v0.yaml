@@ -15,6 +15,7 @@ tags:
   - name: chats
   - name: inbox
   - name: blobs
+  - name: admin
 paths:
   /v0/system/health:
     get:
@@ -848,12 +849,273 @@ paths:
       responses:
         '101':
           description: WebSocket upgrade successful
+  /v0/admin/session:
+    post:
+      operationId: createAdminSession
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminSessionRequest'
+      responses:
+        '200':
+          description: Admin session token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminSessionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      operationId: deleteAdminSession
+      tags: [admin]
+      summary: Stateless admin logout acknowledgment
+      security:
+        - adminBearerAuth: []
+      responses:
+        '204':
+          description: Session cleared on the client; server holds no server-side session state
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v0/admin/overview:
+    get:
+      operationId: getAdminOverview
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      responses:
+        '200':
+          description: Admin overview with runtime settings and account statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminOverviewResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v0/admin/settings/registration:
+    get:
+      operationId: getAdminRegistrationSettings
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      responses:
+        '200':
+          description: Current public registration policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminRegistrationSettingsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      operationId: patchAdminRegistrationSettings
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchAdminRegistrationSettingsRequest'
+      responses:
+        '200':
+          description: Updated registration policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminRegistrationSettingsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v0/admin/settings/server:
+    get:
+      operationId: getAdminServerSettings
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      responses:
+        '200':
+          description: Server-facing display and policy strings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminServerSettingsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      operationId: patchAdminServerSettings
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchAdminServerSettingsRequest'
+      responses:
+        '200':
+          description: Updated server settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminServerSettingsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v0/admin/users:
+    get:
+      operationId: listAdminUsers
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, disabled]
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: Paginated account list (newest first)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createAdminUserProvision
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAdminUserProvisionRequest'
+      responses:
+        '200':
+          description: One-time onboarding token for account bootstrap
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateAdminUserProvisionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v0/admin/users/{account_id}/disable:
+    post:
+      operationId: disableAdminUser
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminDisableAccountRequest'
+      responses:
+        '204':
+          description: Account disabled; active consumer websocket sessions are closed with a replacement frame
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v0/admin/users/{account_id}/reactivate:
+    post:
+      operationId: reactivateAdminUser
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      responses:
+        '204':
+          description: Account re-enabled for consumer APIs
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v0/admin/users/{account_id}:
+    get:
+      operationId: getAdminUser
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      responses:
+        '200':
+          description: Admin view of an account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: patchAdminUser
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchAdminUserRequest'
+      responses:
+        '200':
+          description: Updated account profile fields
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    adminBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: HS256 admin JWT signed with TRIX_ADMIN_JWT_SIGNING_KEY (distinct from consumer tokens)
   parameters:
     AccountId:
       in: path
@@ -905,6 +1167,12 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
     Conflict:
       description: Request conflicts with current server state
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Authentication failed or missing credentials
       content:
         application/json:
           schema:
@@ -1021,6 +1289,10 @@ components:
           type: string
         transport_pubkey_b64:
           type: string
+        provision_token:
+          type: string
+          nullable: true
+          description: Required when public self-service registration is disabled; one-time token from POST /v0/admin/users
     CreateAccountResponse:
       type: object
       required: [account_id, device_id, account_sync_chat_id]
@@ -1871,3 +2143,191 @@ components:
           $ref: '#/components/schemas/BlobUploadStatus'
         created_by_device_id:
           $ref: '#/components/schemas/Uuid'
+    AdminSessionRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+    AdminSessionResponse:
+      type: object
+      required: [access_token, expires_at_unix, username]
+      properties:
+        access_token:
+          type: string
+        expires_at_unix:
+          type: integer
+          format: int64
+        username:
+          type: string
+    AdminRegistrationSettingsResponse:
+      type: object
+      required: [allow_public_account_registration]
+      properties:
+        allow_public_account_registration:
+          type: boolean
+    AdminServerSettingsResponse:
+      type: object
+      properties:
+        brand_display_name:
+          type: string
+          nullable: true
+        support_contact:
+          type: string
+          nullable: true
+        policy_text:
+          type: string
+          nullable: true
+    PatchAdminRegistrationSettingsRequest:
+      type: object
+      required: [allow_public_account_registration]
+      properties:
+        allow_public_account_registration:
+          type: boolean
+    PatchAdminServerSettingsRequest:
+      type: object
+      properties:
+        brand_display_name:
+          type: string
+          nullable: true
+        support_contact:
+          type: string
+          nullable: true
+        policy_text:
+          type: string
+          nullable: true
+    AdminOverviewResponse:
+      type: object
+      required:
+        - status
+        - service
+        - version
+        - health_status
+        - uptime_ms
+        - allow_public_account_registration
+        - user_count
+        - disabled_user_count
+        - admin_username
+        - admin_session_expires_at_unix
+      properties:
+        status:
+          type: string
+        service:
+          type: string
+        version:
+          type: string
+        git_sha:
+          type: string
+          nullable: true
+        health_status:
+          $ref: '#/components/schemas/ServiceStatus'
+        uptime_ms:
+          type: integer
+          format: int64
+        allow_public_account_registration:
+          type: boolean
+        user_count:
+          type: integer
+          format: int64
+        disabled_user_count:
+          type: integer
+          format: int64
+        admin_username:
+          type: string
+        admin_session_expires_at_unix:
+          type: integer
+          format: int64
+    AdminUserSummary:
+      type: object
+      required:
+        - account_id
+        - profile_name
+        - created_at_unix
+        - disabled
+      properties:
+        account_id:
+          $ref: '#/components/schemas/Uuid'
+        handle:
+          type: string
+          nullable: true
+        profile_name:
+          type: string
+        profile_bio:
+          type: string
+          nullable: true
+        created_at_unix:
+          type: integer
+          format: int64
+        disabled:
+          type: boolean
+    AdminUserListResponse:
+      type: object
+      required: [users]
+      properties:
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminUserSummary'
+        next_cursor:
+          type: string
+          nullable: true
+    PatchAdminUserRequest:
+      type: object
+      properties:
+        handle:
+          type: string
+          nullable: true
+        profile_name:
+          type: string
+        profile_bio:
+          type: string
+          nullable: true
+    AdminDisableAccountRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          nullable: true
+          description: Optional audit note stored as disabled_reason
+    CreateAdminUserProvisionRequest:
+      type: object
+      required: [profile_name, ttl_seconds]
+      properties:
+        handle:
+          type: string
+          nullable: true
+        profile_name:
+          type: string
+        profile_bio:
+          type: string
+          nullable: true
+        ttl_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+    CreateAdminUserProvisionResponse:
+      type: object
+      required:
+        - provision_id
+        - provision_token
+        - expires_at_unix
+        - profile_name
+      properties:
+        provision_id:
+          type: string
+          format: uuid
+        provision_token:
+          type: string
+        expires_at_unix:
+          type: integer
+          format: int64
+        profile_name:
+          type: string
+        handle:
+          type: string
+          nullable: true
+        profile_bio:
+          type: string
+          nullable: true
