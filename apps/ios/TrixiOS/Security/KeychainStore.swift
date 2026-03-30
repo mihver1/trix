@@ -102,12 +102,33 @@ enum KeychainStoreError: LocalizedError {
         case .invalidPayload:
             return "Keychain returned an unexpected payload."
         case let .unexpectedStatus(status):
+            if status == errSecInteractionNotAllowed {
+                return "Secure data is unavailable until the device is unlocked."
+            }
             if let message = SecCopyErrorMessageString(status, nil) as String? {
                 return "Keychain error (\(status)): \(message)"
             }
             return "Keychain error (\(status))."
         }
     }
+}
+
+func keychainOSStatus(from error: Error) -> OSStatus? {
+    if let keychainError = error as? KeychainStoreError,
+       case let .unexpectedStatus(status) = keychainError {
+        return status
+    }
+
+    let nsError = error as NSError
+    if nsError.domain == NSOSStatusErrorDomain {
+        return OSStatus(nsError.code)
+    }
+
+    if let underlyingError = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+        return keychainOSStatus(from: underlyingError)
+    }
+
+    return nil
 }
 
 private struct SimulatorFallbackStore {

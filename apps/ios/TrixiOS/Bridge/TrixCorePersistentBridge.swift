@@ -210,21 +210,34 @@ enum TrixCorePersistentBridge {
                 members: [],
                 deviceMembers: []
             )
-        let pageLimit = UInt32(min(max(messageLimit, 1), 500))
+        let totalLimit = max(messageLimit, 1)
         var pageCursor: String?
         var allMessages: [FfiMessengerMessageRecord] = []
         var seenMessageIDs = Set<String>()
 
-        while true {
+        while allMessages.count < totalLimit {
+            let pageLimit = UInt32(min(max(totalLimit - allMessages.count, 1), 500))
+            let messagesCountBeforePage = allMessages.count
             let page = try client.getMessages(
                 conversationId: chatId,
                 pageCursor: pageCursor,
                 limit: pageLimit
             )
+            guard !page.messages.isEmpty else {
+                break
+            }
             for message in page.messages where seenMessageIDs.insert(message.messageId).inserted {
                 allMessages.append(message)
+                if allMessages.count >= totalLimit {
+                    break
+                }
             }
-            guard let nextCursor = page.nextCursor else {
+            guard allMessages.count > messagesCountBeforePage else {
+                break
+            }
+            guard let nextCursor = page.nextCursor,
+                  allMessages.count < totalLimit
+            else {
                 break
             }
             pageCursor = nextCursor

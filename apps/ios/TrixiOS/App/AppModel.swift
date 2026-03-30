@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import UIKit
 
 @MainActor
@@ -174,7 +175,9 @@ final class AppModel: ObservableObject {
         do {
             localIdentity = try identityStore.load()
         } catch {
-            errorMessage = error.localizedDescription
+            if !shouldSuppressProtectedDataError(error) {
+                errorMessage = error.localizedDescription
+            }
         }
 
         await refresh(baseURLString: baseURLString)
@@ -221,7 +224,9 @@ final class AppModel: ObservableObject {
                 lastUpdatedAt = Date()
             }
         } catch {
-            errorMessage = error.localizedDescription
+            if !shouldSuppressProtectedDataError(error) {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
@@ -2239,6 +2244,12 @@ final class AppModel: ObservableObject {
                 try? await Task.sleep(nanoseconds: delayNanoseconds)
             }
 
+            guard self.canAccessProtectedData() else {
+                await self.stopRealtimeConnection()
+                self.finishBackgroundRefresh()
+                return
+            }
+
             guard !self.isLoading else {
                 self.finishBackgroundRefresh()
                 self.scheduleBackgroundRefresh(delayNanoseconds: 300_000_000)
@@ -2284,6 +2295,12 @@ final class AppModel: ObservableObject {
                 return
             }
 
+            guard self.canAccessProtectedData() else {
+                await self.stopRealtimeConnection()
+                self.endBackgroundRealtimeTask()
+                return
+            }
+
             let recovered = await self.runIncrementalBackgroundRecovery(
                 baseURLString: baseURLString
             )
@@ -2310,6 +2327,9 @@ final class AppModel: ObservableObject {
 
     private func runIncrementalBackgroundRecovery(baseURLString: String) async -> Bool {
         guard dashboard != nil else {
+            return false
+        }
+        guard canAccessProtectedData() else {
             return false
         }
 
@@ -2357,6 +2377,18 @@ final class AppModel: ObservableObject {
             }
             messengerReadStates[readState.chatId] = readState
         }
+    }
+
+    private func canAccessProtectedData() -> Bool {
+        UIApplication.shared.isProtectedDataAvailable
+    }
+
+    private func shouldSuppressProtectedDataError(_ error: Error) -> Bool {
+        guard !canAccessProtectedData() else {
+            return false
+        }
+
+        return keychainOSStatus(from: error) == errSecInteractionNotAllowed
     }
 
     private func applyLocalCoreStateOverlay(

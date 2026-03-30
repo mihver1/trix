@@ -2320,9 +2320,7 @@ final class AppModel: ObservableObject {
             throw TrixAPIError.invalidPayload("Вставь link payload от активного устройства.")
         }
 
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return try decoder.decode(LinkIntentPayload.self, from: data)
+        return try JSONDecoder().decode(LinkIntentPayload.self, from: data)
     }
 
     private func decodeCursorJSON(_ rawValue: String?) throws -> JSONValue? {

@@ -680,4 +680,43 @@ final class ServerBackedSmokeTests: XCTestCase {
         )
         XCTAssertEqual(bobSawCharlie.senderDeviceId, charlie.identity.deviceId)
     }
+
+    func testLoadConversationReturnsLatestMessagesUpToRequestedLimitAgainstServer() async throws {
+        let baseURL = configuredBaseURL()
+        try await skipUnlessServerReachable(at: baseURL)
+
+        var devicesToCleanup: [ScenarioDevice] = []
+        defer { cleanupPersistentState(for: devicesToCleanup) }
+
+        let alice = try createScenarioDevice(baseURL: baseURL, label: "Alice Limit")
+        devicesToCleanup.append(alice)
+        let bob = try createScenarioDevice(baseURL: baseURL, label: "Bob Limit")
+        devicesToCleanup.append(bob)
+
+        let created = try alice.createDM(peerAccountId: bob.identity.accountId)
+        let messageTexts = [
+            "limit-message-\(uniqueSuffix(length: 6))-1",
+            "limit-message-\(uniqueSuffix(length: 6))-2",
+            "limit-message-\(uniqueSuffix(length: 6))-3",
+        ]
+
+        for text in messageTexts {
+            _ = try alice.sendText(chatId: created.chatId, text: text)
+        }
+
+        _ = try await waitForTextMessage(
+            messageTexts[2],
+            on: bob,
+            chatId: created.chatId
+        )
+
+        let limitedConversation = try bob.loadConversation(
+            chatId: created.chatId,
+            limit: 2
+        )
+        let limitedTexts = limitedConversation.messages.compactMap(\.body?.text)
+
+        XCTAssertEqual(limitedTexts, Array(messageTexts.suffix(2)))
+        XCTAssertEqual(limitedConversation.messages.count, 2)
+    }
 }
