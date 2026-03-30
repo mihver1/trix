@@ -94,7 +94,7 @@ async fn bot_receives_text_replies_and_dedupes_after_restart() -> Result<()> {
         .send_message_body(
             &alice.client,
             &mut alice_store,
-            &alice.facade,
+            &mut alice.facade,
             &mut alice_group,
             alice.account_id,
             alice.device_id,
@@ -284,7 +284,7 @@ async fn bot_receives_and_downloads_file_attachments() -> Result<()> {
 
     let payload = b"hello attachment".to_vec();
     send_attachment_from_identity(
-        &alice,
+        &mut alice,
         &mut alice_store,
         &mut alice_sync,
         create_outcome.chat_id,
@@ -624,7 +624,7 @@ fn parse_message_id(value: &str) -> Result<MessageId> {
 }
 
 async fn send_attachment_from_identity(
-    identity: &TestIdentity,
+    identity: &mut TestIdentity,
     store: &mut LocalHistoryStore,
     sync: &mut SyncCoordinator,
     chat_id: ChatId,
@@ -661,7 +661,7 @@ async fn send_attachment_from_identity(
     sync.send_message_body(
         &identity.client,
         store,
-        &identity.facade,
+        &mut identity.facade,
         &mut group,
         identity.account_id,
         identity.device_id,
