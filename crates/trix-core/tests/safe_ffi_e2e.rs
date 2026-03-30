@@ -803,6 +803,66 @@ async fn safe_s4_device_link_approve_and_unlink() -> Result<()> {
 
 #[tokio::test]
 #[ignore = "requires local postgres"]
+async fn safe_s4b_linked_device_history_sync_backfills_prior_messages() -> Result<()> {
+    let server = spawn_test_server().await?;
+    let base_url = server.base_url.clone();
+
+    ffi(move || {
+        let alice = create_safe_client(&base_url, "alice", true)?;
+        let bob = create_safe_client(&base_url, "bob", true)?;
+        alice.client.load_snapshot()?;
+        bob.client.load_snapshot()?;
+
+        let dm = alice.client.create_conversation(dm_request(&bob.account_id))?;
+        bob.client.get_new_events(None)?;
+
+        let sent = alice
+            .client
+            .send_message(text_request(&dm.conversation_id, "hello before linking"))?;
+        assert_eq!(message_text(&sent.message), Some("hello before linking"));
+
+        let intent = alice.client.create_link_device_intent()?;
+        let linked = create_pending_safe_client(&base_url, "alice-linked-history")?;
+        let pending =
+            linked.complete_link_device(intent.payload, "Alice Linked History".to_owned())?;
+        alice.client.approve_linked_device(pending.device_id.clone())?;
+
+        let linked_snapshot = linked.load_snapshot()?;
+        let before_sync = linked.get_messages(dm.conversation_id.clone(), None, None)?;
+        if let Some(message) = before_sync.messages.first() {
+            assert_eq!(message_text(message), None);
+        }
+
+        alice.client.load_snapshot()?;
+
+        let linked_batch = linked.get_new_events(linked_snapshot.checkpoint.clone())?;
+        let backfilled_message = linked_batch
+            .events
+            .iter()
+            .filter_map(|event| event.message.as_ref())
+            .find(|message| {
+                message.conversation_id == dm.conversation_id
+                    && message_text(message) == Some("hello before linking")
+            })
+            .ok_or_else(|| anyhow!("expected history sync message event"))?;
+        assert_eq!(message_text(backfilled_message), Some("hello before linking"));
+        assert!(linked_batch.checkpoint.is_some());
+
+        let after_sync = linked.get_messages(dm.conversation_id.clone(), None, None)?;
+        assert!(after_sync
+            .messages
+            .iter()
+            .any(|message| message_text(message) == Some("hello before linking")));
+
+        Ok(())
+    })
+    .await?;
+
+    server.shutdown().await
+}
+
+#[tokio::test]
+#[ignore = "requires local postgres"]
 async fn safe_s5_conversation_device_removals() -> Result<()> {
     let server = spawn_test_server().await?;
     let base_url = server.base_url.clone();

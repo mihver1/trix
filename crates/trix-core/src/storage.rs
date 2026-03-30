@@ -1758,6 +1758,7 @@ impl LocalHistoryStore {
         chat_id: ChatId,
         projected_messages: &[LocalProjectedMessage],
     ) -> Result<(LocalProjectionApplyReport, bool)> {
+        self.ensure_chat_exists(chat_id);
         let chat = self
             .state
             .chats

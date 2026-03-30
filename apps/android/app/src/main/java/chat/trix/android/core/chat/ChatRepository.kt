@@ -143,6 +143,11 @@ class ChatRepository(
             val inboxReport = applyLeasedInbox(leasedInbox)
             val hydratedChatDetails = hydrateChatDetails(client, store)
             val projectedChatTimelines = projectChatsWithLocalMlsState(store)
+            syncCoordinator.processHistorySyncJobs(
+                client = client,
+                store = store,
+                transportPrivateKey = session.localState.transportPrivateSeed,
+            )
             val ackedInboxIds = if (leasedInbox.items.isEmpty()) {
                 emptyList()
             } else {

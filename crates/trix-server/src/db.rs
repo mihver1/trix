@@ -119,6 +119,13 @@ pub struct DeviceSummaryRow {
 }
 
 #[derive(Debug)]
+pub struct DeviceTransportKeyRow {
+    pub device_id: Uuid,
+    pub device_status: DeviceStatus,
+    pub transport_pubkey: Vec<u8>,
+}
+
+#[derive(Debug)]
 pub struct CreateLinkIntentOutput {
     pub link_intent_id: Uuid,
     pub link_token: Uuid,
@@ -2007,6 +2014,37 @@ impl Database {
                 })
             })
             .collect()
+    }
+
+    pub async fn get_device_transport_key_for_account(
+        &self,
+        account_id: Uuid,
+        device_id: Uuid,
+    ) -> Result<Option<DeviceTransportKeyRow>, AppError> {
+        sqlx::query(
+            r#"
+            SELECT
+                d.device_id,
+                d.device_status::text AS device_status,
+                d.transport_pubkey
+            FROM devices d
+            WHERE d.account_id = $1
+              AND d.device_id = $2
+            "#,
+        )
+        .bind(account_id)
+        .bind(device_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?
+        .map(|row| {
+            Ok(DeviceTransportKeyRow {
+                device_id: row_uuid(&row, "device_id")?,
+                device_status: parse_device_status(&row_text(&row, "device_status")?)?,
+                transport_pubkey: row_bytes(&row, "transport_pubkey")?,
+            })
+        })
+        .transpose()
     }
 
     pub async fn create_link_intent(

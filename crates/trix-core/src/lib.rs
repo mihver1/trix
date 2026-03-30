@@ -3,6 +3,7 @@ pub mod config;
 pub mod crypto;
 pub mod device_transfer;
 pub mod ffi;
+pub mod history_sync_payload;
 pub mod message;
 pub mod messenger;
 pub mod realtime;
@@ -44,15 +45,17 @@ pub use storage::{
     PreparedLocalOutboxSend, SyncStateStore,
 };
 pub use sync::{
-    CoreEvent, CoreEventSink, CreateChatControlInput, CreateChatControlOutcome, InboxApplyOutcome,
-    ModifyChatDevicesControlInput, ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
+    CoreEvent, CoreEventSink, CreateChatControlInput, CreateChatControlOutcome,
+    HistorySyncProcessReport, InboxApplyOutcome, ModifyChatDevicesControlInput,
+    ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
     ModifyChatMembersControlOutcome, SendMessageOutcome, SyncChatCursor, SyncCoordinator,
     SyncStateSnapshot,
 };
 pub use transport::{
     AuthChallengeMaterial, BlobHeadMaterial, BlobMetadataMaterial, CompleteLinkIntentParams,
     CompletedLinkIntentMaterial, CreateAccountParams, DeviceApprovePayloadMaterial,
-    DeviceTransferBundleMaterial, DirectoryAccountMaterial, HistorySyncChunkMaterial,
+    DeviceTransferBundleMaterial, DeviceTransportKeyMaterial, DirectoryAccountMaterial,
+    HistorySyncChunkMaterial,
     PublishKeyPackageMaterial, ReservedKeyPackageMaterial, ServerApiClient, ServerApiError,
     ServerWebSocketClient, UpdateAccountProfileParams, control_message_ratchet_tree,
     decode_b64_field, encode_b64, make_control_message_input,

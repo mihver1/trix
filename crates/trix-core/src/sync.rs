@@ -12,15 +12,23 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use trix_types::{
     AccountId, AckInboxResponse, ChatDetailResponse, ChatDeviceSummary, ChatHistoryResponse,
-    ChatId, ChatType, CreateChatRequest, DeviceId, LeaseInboxRequest, LeaseInboxResponse,
-    MessageEnvelope, MessageId, MessageKind, ModifyChatDevicesRequest, ModifyChatMembersRequest,
+    ChatId, ChatType, CreateChatRequest, DeviceId, HistorySyncJobStatus, HistorySyncJobType,
+    LeaseInboxRequest, LeaseInboxResponse, MessageEnvelope, MessageId, MessageKind,
+    ModifyChatDevicesRequest, ModifyChatMembersRequest,
 };
 use uuid::Uuid;
 
 use crate::{
+    DeviceKeyMaterial,
     LocalHistoryStore, LocalOutgoingMessageApplyOutcome, LocalProjectedMessage,
     LocalProjectionKind, LocalStoreApplyReport, MessageBody, MlsConversation, MlsFacade,
-    PreparedLocalOutboxSend, ServerApiClient, SyncStateStore, decode_b64_field, encode_b64,
+    PreparedLocalOutboxSend, ServerApiClient, ServerApiError, SyncStateStore, decode_b64_field,
+    encode_b64,
+    history_sync_payload::{
+        HistorySyncChatMetadata, HistorySyncExportMetadata, decrypt_projected_message_chunk,
+        encrypt_projected_message_chunk, parse_chat_metadata, parse_export_metadata,
+        with_chat_metadata, with_export_metadata,
+    },
     make_control_message_input_with_ratchet_tree, make_create_message_request,
 };
 
@@ -29,6 +37,8 @@ fn empty_json_object() -> Value {
 }
 
 const SERVER_RESTORE_KEY_PACKAGE_COUNT: usize = 12;
+const HISTORY_SYNC_JOB_FETCH_LIMIT: usize = 200;
+const HISTORY_SYNC_CHUNK_MESSAGE_LIMIT: usize = 200;
 
 #[derive(Debug, Clone)]
 pub enum CoreEvent {
@@ -64,6 +74,13 @@ pub struct InboxApplyOutcome {
     pub lease_expires_at_unix: u64,
     pub acked_inbox_ids: Vec<u64>,
     pub report: LocalStoreApplyReport,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistorySyncProcessReport {
+    pub source_jobs_processed: usize,
+    pub target_jobs_processed: usize,
+    pub changed_chat_ids: Vec<ChatId>,
 }
 
 #[derive(Debug, Clone)]
@@ -145,17 +162,28 @@ struct PersistedSyncState {
     chat_cursors: BTreeMap<String, u64>,
     #[serde(default)]
     pending_chat_server_seqs: BTreeMap<String, BTreeSet<u64>>,
+    #[serde(default)]
+    history_sync_target_jobs: BTreeMap<String, PersistedTargetHistorySyncJobState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+struct PersistedTargetHistorySyncJobState {
+    #[serde(default)]
+    last_applied_sequence_no: u64,
+    #[serde(default)]
+    applied_final_chunk: bool,
 }
 
 impl Default for PersistedSyncState {
     fn default() -> Self {
         Self {
-            version: 2,
+            version: 3,
             lease_owner: Uuid::new_v4().to_string(),
             last_acked_inbox_id: None,
             pending_acked_inbox_ids: BTreeSet::new(),
             chat_cursors: BTreeMap::new(),
             pending_chat_server_seqs: BTreeMap::new(),
+            history_sync_target_jobs: BTreeMap::new(),
         }
     }
 }
@@ -370,6 +398,43 @@ impl SyncCoordinator {
         self.record_chat_server_seq(chat_id, server_seq)
     }
 
+    fn target_history_sync_job_state(&self, job_id: &str) -> PersistedTargetHistorySyncJobState {
+        self.state
+            .history_sync_target_jobs
+            .get(job_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn record_target_history_sync_progress(
+        &mut self,
+        job_id: &str,
+        sequence_no: u64,
+        is_final: bool,
+    ) -> Result<bool> {
+        let previous_state = self.state.clone();
+        let state = self
+            .state
+            .history_sync_target_jobs
+            .entry(job_id.to_owned())
+            .or_default();
+        if sequence_no < state.last_applied_sequence_no {
+            return Ok(false);
+        }
+        let changed =
+            sequence_no != state.last_applied_sequence_no || (is_final && !state.applied_final_chunk);
+        if !changed {
+            return Ok(false);
+        }
+        state.last_applied_sequence_no = sequence_no;
+        state.applied_final_chunk |= is_final;
+        if let Err(error) = self.save_state() {
+            self.state = previous_state;
+            return Err(error);
+        }
+        Ok(true)
+    }
+
     pub async fn sync_chat_histories(
         &mut self,
         client: &ServerApiClient,
@@ -435,6 +500,263 @@ impl SyncCoordinator {
         changed_chat_ids.dedup();
         combined.changed_chat_ids = changed_chat_ids;
         Ok(combined)
+    }
+
+    pub async fn process_history_sync_jobs(
+        &mut self,
+        client: &ServerApiClient,
+        store: &mut LocalHistoryStore,
+        device_keys: &DeviceKeyMaterial,
+    ) -> Result<HistorySyncProcessReport> {
+        let source_jobs = client
+            .list_history_sync_jobs(
+                Some(trix_types::HistorySyncJobRole::Source),
+                None,
+                Some(HISTORY_SYNC_JOB_FETCH_LIMIT),
+            )
+            .await?
+            .jobs;
+        let target_jobs = client
+            .list_history_sync_jobs(
+                Some(trix_types::HistorySyncJobRole::Target),
+                None,
+                Some(HISTORY_SYNC_JOB_FETCH_LIMIT),
+            )
+            .await?
+            .jobs;
+
+        let mut cached_transport_keys = BTreeMap::<String, Vec<u8>>::new();
+        let mut changed_chat_ids = HashSet::new();
+        let mut source_jobs_processed = 0usize;
+        let mut target_jobs_processed = 0usize;
+
+        for job in source_jobs {
+            if !should_process_source_history_sync_job(&job) {
+                continue;
+            }
+            if self
+                .process_source_history_sync_job(
+                    client,
+                    store,
+                    device_keys,
+                    &job,
+                    &mut cached_transport_keys,
+                )
+                .await?
+            {
+                source_jobs_processed += 1;
+            }
+        }
+
+        for job in target_jobs {
+            if !should_process_target_history_sync_job(&job) {
+                continue;
+            }
+            if self
+                .process_target_history_sync_job(client, store, device_keys, &job, &mut changed_chat_ids)
+                .await?
+            {
+                target_jobs_processed += 1;
+            }
+        }
+
+        let mut changed_chat_ids = changed_chat_ids.into_iter().collect::<Vec<_>>();
+        changed_chat_ids.sort_by_key(|chat_id| chat_id.0);
+
+        Ok(HistorySyncProcessReport {
+            source_jobs_processed,
+            target_jobs_processed,
+            changed_chat_ids,
+        })
+    }
+
+    async fn process_source_history_sync_job(
+        &mut self,
+        client: &ServerApiClient,
+        store: &mut LocalHistoryStore,
+        device_keys: &DeviceKeyMaterial,
+        job: &trix_types::HistorySyncJobSummary,
+        cached_transport_keys: &mut BTreeMap<String, Vec<u8>>,
+    ) -> Result<bool> {
+        let Some(chat_id) = job.chat_id else {
+            return Ok(false);
+        };
+        let target_device_key = if let Some(existing) =
+            cached_transport_keys.get(&job.target_device_id.0.to_string())
+        {
+            existing.clone()
+        } else {
+            let transport_key = client
+                .get_device_transport_key(job.target_device_id)
+                .await?
+                .transport_pubkey;
+            cached_transport_keys.insert(job.target_device_id.0.to_string(), transport_key.clone());
+            transport_key
+        };
+
+        let mut cursor_json = job.cursor_json.clone();
+        if let Some(chat) = store.get_chat(chat_id) {
+            cursor_json = with_chat_metadata(
+                &cursor_json,
+                &HistorySyncChatMetadata {
+                    chat_type: chat.chat_type,
+                    title: chat.title,
+                    participant_profiles: chat.participant_profiles,
+                    epoch: chat.epoch,
+                },
+            );
+        }
+        let export_metadata = parse_export_metadata(&cursor_json);
+        let after_server_seq = export_metadata
+            .as_ref()
+            .map(|metadata| metadata.exported_through_server_seq);
+        let projected_messages = store.get_projected_messages(chat_id, after_server_seq, None);
+        let mut next_sequence_no = next_history_sync_sequence_no(export_metadata.as_ref());
+        let mut exported_message_count = export_metadata
+            .as_ref()
+            .map(|metadata| metadata.projected_message_count)
+            .unwrap_or_default();
+
+        for (chunk_index, projected_chunk) in projected_messages
+            .chunks(HISTORY_SYNC_CHUNK_MESSAGE_LIMIT)
+            .enumerate()
+        {
+            let Some(last_projected) = projected_chunk.last() else {
+                continue;
+            };
+            exported_message_count += projected_chunk.len();
+            let metadata = HistorySyncExportMetadata {
+                version: 1,
+                format: "projected_messages".to_owned(),
+                exported_through_server_seq: last_projected.server_seq,
+                projected_message_count: exported_message_count,
+                chunk_message_limit: HISTORY_SYNC_CHUNK_MESSAGE_LIMIT,
+            };
+            cursor_json = with_export_metadata(&cursor_json, &metadata);
+            let payload = encrypt_projected_message_chunk(
+                &job.job_id,
+                &chat_id.0.to_string(),
+                projected_chunk,
+                device_keys,
+                &target_device_key,
+            )?;
+            let is_final = chunk_index + 1 == projected_messages.chunks(HISTORY_SYNC_CHUNK_MESSAGE_LIMIT).len();
+            client
+                .append_history_sync_chunk(
+                    &job.job_id,
+                    next_sequence_no,
+                    &payload,
+                    Some(cursor_json.clone()),
+                    is_final,
+                )
+                .await?;
+            next_sequence_no += 1;
+        }
+
+        client
+            .complete_history_sync_job(&job.job_id, Some(cursor_json))
+            .await?;
+        Ok(true)
+    }
+
+    async fn process_target_history_sync_job(
+        &mut self,
+        client: &ServerApiClient,
+        store: &mut LocalHistoryStore,
+        device_keys: &DeviceKeyMaterial,
+        job: &trix_types::HistorySyncJobSummary,
+        changed_chat_ids: &mut HashSet<ChatId>,
+    ) -> Result<bool> {
+        let Some(chat_id) = job.chat_id else {
+            return Ok(false);
+        };
+        let progress = self.target_history_sync_job_state(&job.job_id);
+        if progress.applied_final_chunk && matches!(job.job_status, HistorySyncJobStatus::Completed) {
+            return Ok(false);
+        }
+
+        let chunks = client.get_history_sync_chunks(&job.job_id).await?;
+        let mut processed_any_chunk = false;
+        for chunk in chunks
+            .into_iter()
+            .filter(|chunk| chunk.sequence_no > progress.last_applied_sequence_no)
+        {
+            let decrypted = decrypt_projected_message_chunk(&chunk.payload, device_keys)?;
+            if decrypted.job_id != job.job_id {
+                return Err(anyhow!(
+                    "history sync chunk job mismatch: expected {}, got {}",
+                    job.job_id,
+                    decrypted.job_id
+                ));
+            }
+            let decrypted_chat_id = parse_chat_id(&decrypted.chat_id)?;
+            if decrypted_chat_id != chat_id {
+                return Err(anyhow!(
+                    "history sync chunk chat mismatch: expected {}, got {}",
+                    chat_id.0,
+                    decrypted.chat_id
+                ));
+            }
+            self.bootstrap_history_sync_chat_if_needed(client, store, job, chat_id)
+                .await?;
+            let report = store.apply_projected_messages(chat_id, &decrypted.projected_messages)?;
+            if let Some(server_seq) = report.advanced_to_server_seq {
+                self.record_chat_server_seq(chat_id, server_seq)?;
+            }
+            if report.projected_messages_upserted > 0 || report.advanced_to_server_seq.is_some() {
+                changed_chat_ids.insert(chat_id);
+            }
+            self.record_target_history_sync_progress(&job.job_id, chunk.sequence_no, chunk.is_final)?;
+            processed_any_chunk = true;
+        }
+
+        Ok(processed_any_chunk)
+    }
+
+    async fn bootstrap_history_sync_chat_if_needed(
+        &mut self,
+        client: &ServerApiClient,
+        store: &mut LocalHistoryStore,
+        job: &trix_types::HistorySyncJobSummary,
+        chat_id: ChatId,
+    ) -> Result<()> {
+        if store.get_chat(chat_id).is_some() {
+            return Ok(());
+        }
+        let detail = match client.get_chat(chat_id).await {
+            Ok(detail) => detail,
+            Err(ServerApiError::Api { status: 404, .. }) => {
+                if let Some(chat_metadata) = parse_chat_metadata(&job.cursor_json) {
+                    store.apply_chat_detail(&trix_types::ChatDetailResponse {
+                        chat_id,
+                        chat_type: chat_metadata.chat_type,
+                        title: chat_metadata.title,
+                        last_server_seq: parse_export_metadata(&job.cursor_json)
+                            .map(|metadata| metadata.exported_through_server_seq)
+                            .unwrap_or_default(),
+                        pending_message_count: 0,
+                        epoch: chat_metadata.epoch,
+                        last_commit_message_id: None,
+                        last_message: None,
+                        participant_profiles: chat_metadata.participant_profiles,
+                        members: Vec::new(),
+                        device_members: Vec::new(),
+                    })?;
+                }
+                return Ok(());
+            }
+            Err(error) => return Err(error.into()),
+        };
+        store.apply_chat_detail(&detail)?;
+        let history = client.get_chat_history(chat_id, None, None).await?;
+        store.apply_chat_history(&history)?;
+        self.record_observed_chat_server_seqs(
+            history
+                .messages
+                .iter()
+                .map(|message| (chat_id, message.server_seq)),
+        )?;
+        Ok(())
     }
 
     pub async fn lease_inbox(
@@ -1690,6 +2012,7 @@ fn save_state_to_path(
         DELETE FROM sync_state_chat_cursors;
         DELETE FROM sync_state_pending_acked_inbox_ids;
         DELETE FROM sync_state_pending_chat_server_seqs;
+        DELETE FROM sync_state_history_sync_target_jobs;
         "#,
     )?;
 
@@ -1756,6 +2079,28 @@ fn save_state_to_path(
     }
     drop(pending_chat_seq_statement);
 
+    let mut history_sync_job_statement = transaction.prepare(
+        r#"
+        INSERT INTO sync_state_history_sync_target_jobs (
+            job_id,
+            last_applied_sequence_no,
+            applied_final_chunk
+        )
+        VALUES (?1, ?2, ?3)
+        "#,
+    )?;
+    for (job_id, job_state) in &state.history_sync_target_jobs {
+        history_sync_job_statement.execute(params![
+            job_id,
+            u64_to_i64(
+                job_state.last_applied_sequence_no,
+                "history sync last_applied_sequence_no",
+            )?,
+            if job_state.applied_final_chunk { 1 } else { 0 },
+        ])?;
+    }
+    drop(history_sync_job_statement);
+
     transaction
         .commit()
         .context("failed to commit sync state transaction")?;
@@ -1792,7 +2137,7 @@ fn load_state_from_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Pe
         .unwrap_or_else(|| "1".to_owned())
         .parse::<u32>()
         .context("failed to parse sync state version")?;
-    if version != 1 && version != 2 {
+    if version != 1 && version != 2 && version != 3 {
         return Err(anyhow!(
             "unsupported sync state version {} in {}",
             version,
@@ -1832,12 +2177,13 @@ fn load_state_from_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Pe
         .transpose()?;
 
     let mut state = PersistedSyncState {
-        version: 2,
+        version: 3,
         lease_owner,
         last_acked_inbox_id,
         pending_acked_inbox_ids: BTreeSet::new(),
         chat_cursors: BTreeMap::new(),
         pending_chat_server_seqs: BTreeMap::new(),
+        history_sync_target_jobs: BTreeMap::new(),
     };
 
     let mut cursor_statement = connection.prepare(
@@ -1890,6 +2236,34 @@ fn load_state_from_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Pe
             .insert(i64_to_u64(server_seq, "pending chat server_seq")?);
     }
 
+    let mut history_sync_job_statement = connection.prepare(
+        r#"
+        SELECT job_id, last_applied_sequence_no, applied_final_chunk
+        FROM sync_state_history_sync_target_jobs
+        ORDER BY job_id
+        "#,
+    )?;
+    let history_sync_job_rows = history_sync_job_statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, i64>(2)?,
+        ))
+    })?;
+    for row in history_sync_job_rows {
+        let (job_id, last_applied_sequence_no, applied_final_chunk) = row?;
+        state.history_sync_target_jobs.insert(
+            job_id,
+            PersistedTargetHistorySyncJobState {
+                last_applied_sequence_no: i64_to_u64(
+                    last_applied_sequence_no,
+                    "history sync last_applied_sequence_no",
+                )?,
+                applied_final_chunk: applied_final_chunk != 0,
+            },
+        );
+    }
+
     Ok(state)
 }
 
@@ -1898,15 +2272,15 @@ fn load_legacy_json_state_from_path(path: &Path) -> Result<PersistedSyncState> {
         .with_context(|| format!("failed to open sync state file {}", path.display()))?;
     let mut state: PersistedSyncState =
         serde_json::from_reader(input_file).context("failed to parse sync state file")?;
-    if state.version != 1 && state.version != 2 {
+    if state.version != 1 && state.version != 2 && state.version != 3 {
         return Err(anyhow!(
             "unsupported sync state version {} in {}",
             state.version,
             path.display()
         ));
     }
-    if state.version == 1 {
-        state.version = 2;
+    if state.version < 3 {
+        state.version = 3;
     }
     Ok(state)
 }
@@ -1950,6 +2324,11 @@ fn open_sync_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Connecti
             chat_id TEXT NOT NULL,
             server_seq INTEGER NOT NULL,
             PRIMARY KEY (chat_id, server_seq)
+        );
+        CREATE TABLE IF NOT EXISTS sync_state_history_sync_target_jobs (
+            job_id TEXT PRIMARY KEY,
+            last_applied_sequence_no INTEGER NOT NULL,
+            applied_final_chunk INTEGER NOT NULL
         );
         "#,
     )?;
@@ -2019,6 +2398,40 @@ fn i64_to_u64(value: i64, field: &str) -> Result<u64> {
     u64::try_from(value).with_context(|| format!("{field} must not be negative"))
 }
 
+fn should_process_source_history_sync_job(job: &trix_types::HistorySyncJobSummary) -> bool {
+    matches!(
+        job.job_status,
+        HistorySyncJobStatus::Pending | HistorySyncJobStatus::Running
+    ) && matches!(
+        job.job_type,
+        HistorySyncJobType::InitialSync | HistorySyncJobType::ChatBackfill
+    )
+}
+
+fn should_process_target_history_sync_job(job: &trix_types::HistorySyncJobSummary) -> bool {
+    matches!(
+        job.job_status,
+        HistorySyncJobStatus::Pending
+            | HistorySyncJobStatus::Running
+            | HistorySyncJobStatus::Completed
+    ) && matches!(
+        job.job_type,
+        HistorySyncJobType::InitialSync | HistorySyncJobType::ChatBackfill
+    )
+}
+
+fn next_history_sync_sequence_no(metadata: Option<&HistorySyncExportMetadata>) -> u64 {
+    let Some(metadata) = metadata else {
+        return 1;
+    };
+    if metadata.projected_message_count == 0 {
+        return 1;
+    }
+    (metadata.projected_message_count as u64)
+        .div_ceil(metadata.chunk_message_limit.max(1) as u64)
+        + 1
+}
+
 fn parse_chat_id(value: &str) -> Result<ChatId> {
     Ok(ChatId(Uuid::parse_str(value).map_err(|err| {
         anyhow!("invalid chat_id in sync state: {err}")
@@ -2050,7 +2463,10 @@ mod tests {
     };
     use uuid::Uuid;
 
-    use super::{PersistedSyncState, SyncCoordinator, is_sqlite_database, merge_projection_report};
+    use super::{
+        PersistedSyncState, PersistedTargetHistorySyncJobState, SyncCoordinator,
+        is_sqlite_database, merge_projection_report,
+    };
     use crate::{
         LocalHistoryStore, LocalOutboxStatus, LocalProjectionKind, LocalStoreApplyReport,
         MessageBody, MlsFacade, MlsProcessResult, ServerApiClient, TextMessageBody,
@@ -2309,6 +2725,28 @@ mod tests {
     }
 
     #[test]
+    fn sync_coordinator_persists_history_sync_target_job_progress() {
+        let state_path =
+            env::temp_dir().join(format!("trix-sync-history-jobs-{}.db", Uuid::new_v4()));
+        let mut coordinator = SyncCoordinator::new_persistent(&state_path).unwrap();
+
+        coordinator
+            .record_target_history_sync_progress("job-123", 7, true)
+            .unwrap();
+
+        let restored = SyncCoordinator::new_persistent(&state_path).unwrap();
+        assert_eq!(
+            restored.target_history_sync_job_state("job-123"),
+            PersistedTargetHistorySyncJobState {
+                last_applied_sequence_no: 7,
+                applied_final_chunk: true,
+            }
+        );
+
+        cleanup_sqlite_test_path(&state_path);
+    }
+
+    #[test]
     fn sync_coordinator_migrates_legacy_json_state_to_sqlite() {
         let state_path = env::temp_dir().join(format!("trix-sync-legacy-{}.json", Uuid::new_v4()));
         let chat_id = ChatId(Uuid::new_v4());
@@ -2319,6 +2757,7 @@ mod tests {
             pending_acked_inbox_ids: BTreeSet::new(),
             chat_cursors: BTreeMap::from([(chat_id.0.to_string(), 44)]),
             pending_chat_server_seqs: BTreeMap::new(),
+            history_sync_target_jobs: BTreeMap::new(),
         };
         let file = fs::File::create(&state_path).unwrap();
         serde_json::to_writer_pretty(file, &state).unwrap();

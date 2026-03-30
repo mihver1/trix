@@ -4,6 +4,7 @@ import android.content.Context
 import chat.trix.android.core.auth.AuthenticatedSession
 import chat.trix.android.core.auth.DeviceTransferBundleInput
 import chat.trix.android.core.auth.Ed25519KeyMaterial
+import chat.trix.android.core.chat.ChatRepository
 import chat.trix.android.core.ffi.FfiDeviceStatus
 import chat.trix.android.core.ffi.FfiDeviceSummary
 import chat.trix.android.core.ffi.FfiServerApiClient
@@ -17,7 +18,6 @@ class DeviceRepository(
     context: Context,
     private val session: AuthenticatedSession,
 ) : AutoCloseable {
-    @Suppress("unused")
     private val appContext = context.applicationContext
     private val clientDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         FfiServerApiClient(session.baseUrl)
@@ -61,6 +61,11 @@ class DeviceRepository(
                 accountRoot = accountRoot.requireAccountRootMaterial(),
                 transferBundle = transferBundle,
             )
+            runCatching {
+                ChatRepository(appContext, session).use { repository ->
+                    repository.refresh()
+                }
+            }
             loadInventoryInternal()
         }
     }

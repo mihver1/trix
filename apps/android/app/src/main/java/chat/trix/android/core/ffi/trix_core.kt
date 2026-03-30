@@ -926,6 +926,8 @@ external fun uniffi_trix_core_checksum_method_ffisynccoordinator_lease_inbox_int
 ): Short
 external fun uniffi_trix_core_checksum_method_ffisynccoordinator_lease_owner(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffisynccoordinator_process_history_sync_jobs(
+): Short
 external fun uniffi_trix_core_checksum_method_ffisynccoordinator_record_acked_inbox_ids(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffisynccoordinator_record_chat_server_seq(
@@ -1375,6 +1377,8 @@ external fun uniffi_trix_core_fn_method_ffisynccoordinator_lease_inbox(`ptr`: Lo
 external fun uniffi_trix_core_fn_method_ffisynccoordinator_lease_inbox_into_store(`ptr`: Long,`client`: Long,`store`: Long,`limit`: RustBuffer.ByValue,`leaseTtlSeconds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffisynccoordinator_lease_owner(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffisynccoordinator_process_history_sync_jobs(`ptr`: Long,`client`: Long,`store`: Long,`transportPrivateKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffisynccoordinator_record_acked_inbox_ids(`ptr`: Long,`ackedInboxIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
@@ -2005,6 +2009,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_lease_owner() != 50562.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_process_history_sync_jobs() != 52647.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_record_acked_inbox_ids() != 7925.toShort()) {
@@ -7399,6 +7406,8 @@ public interface FfiSyncCoordinatorInterface {
     
     fun `leaseOwner`(): kotlin.String
     
+    fun `processHistorySyncJobs`(`client`: FfiServerApiClient, `store`: FfiLocalHistoryStore, `transportPrivateKey`: kotlin.ByteArray): FfiHistorySyncProcessReport
+    
     fun `recordAckedInboxIds`(`ackedInboxIds`: List<kotlin.ULong>)
     
     fun `recordChatServerSeq`(`chatId`: kotlin.String, `serverSeq`: kotlin.ULong): kotlin.Boolean
@@ -7636,6 +7645,20 @@ open class FfiSyncCoordinator: Disposable, AutoCloseable, FfiSyncCoordinatorInte
     UniffiLib.uniffi_trix_core_fn_method_ffisynccoordinator_lease_owner(
         it,
         _status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `processHistorySyncJobs`(`client`: FfiServerApiClient, `store`: FfiLocalHistoryStore, `transportPrivateKey`: kotlin.ByteArray): FfiHistorySyncProcessReport {
+            return FfiConverterTypeFfiHistorySyncProcessReport.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffisynccoordinator_process_history_sync_jobs(
+        it,
+        FfiConverterTypeFfiServerApiClient.lower(`client`),FfiConverterTypeFfiLocalHistoryStore.lower(`store`),FfiConverterByteArray.lower(`transportPrivateKey`),_status)
 }
     }
     )
@@ -10022,6 +10045,49 @@ public object FfiConverterTypeFfiHistorySyncJob: FfiConverterRustBuffer<FfiHisto
             FfiConverterString.write(value.`cursorJson`, buf)
             FfiConverterULong.write(value.`createdAtUnix`, buf)
             FfiConverterULong.write(value.`updatedAtUnix`, buf)
+    }
+}
+
+
+
+data class FfiHistorySyncProcessReport (
+    var `sourceJobsProcessed`: kotlin.UInt
+    , 
+    var `targetJobsProcessed`: kotlin.UInt
+    , 
+    var `changedChatIds`: List<kotlin.String>
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiHistorySyncProcessReport: FfiConverterRustBuffer<FfiHistorySyncProcessReport> {
+    override fun read(buf: ByteBuffer): FfiHistorySyncProcessReport {
+        return FfiHistorySyncProcessReport(
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterSequenceString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiHistorySyncProcessReport) = (
+            FfiConverterUInt.allocationSize(value.`sourceJobsProcessed`) +
+            FfiConverterUInt.allocationSize(value.`targetJobsProcessed`) +
+            FfiConverterSequenceString.allocationSize(value.`changedChatIds`)
+    )
+
+    override fun write(value: FfiHistorySyncProcessReport, buf: ByteBuffer) {
+            FfiConverterUInt.write(value.`sourceJobsProcessed`, buf)
+            FfiConverterUInt.write(value.`targetJobsProcessed`, buf)
+            FfiConverterSequenceString.write(value.`changedChatIds`, buf)
     }
 }
 

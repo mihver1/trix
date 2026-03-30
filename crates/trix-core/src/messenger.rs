@@ -524,7 +524,7 @@ impl FfiMessengerClient {
     }
 
     pub fn load_snapshot(&self) -> Result<FfiMessengerSnapshot, FfiMessengerError> {
-        self.sync_workspace()?;
+        let _ = self.sync_workspace()?;
         self.maybe_import_transfer_bundle()?;
         let devices = self.list_devices()?;
         let conversations = self.list_conversations()?;
@@ -655,6 +655,13 @@ impl FfiMessengerClient {
                     self.project_changed_chats(&active_inbox_changed_chat_ids)?;
                 }
             }
+            let history_sync_changed_chat_ids = self.process_history_sync_jobs(&client)?;
+            if !history_sync_changed_chat_ids.is_empty() {
+                mutated_checkpointed_state = true;
+            }
+            changed_chat_ids.extend(history_sync_changed_chat_ids);
+            changed_chat_ids.sort_by_key(|chat_id| chat_id.0);
+            changed_chat_ids.dedup();
             let inbox_ids = lease
                 .items
                 .iter()
@@ -1388,6 +1395,17 @@ impl FfiMessengerClient {
         )?))
     }
 
+    fn require_transport_key_material(&self) -> Result<DeviceKeyMaterial, FfiMessengerError> {
+        let state = lock_state(&self.state)?;
+        let private_key = state.transport_private_key.clone().ok_or_else(|| {
+            FfiMessengerError::NotConfigured("transport_private_key is missing".to_owned())
+        })?;
+        Ok(DeviceKeyMaterial::from_bytes(to_32_bytes(
+            private_key,
+            "transport private key",
+        )?))
+    }
+
     fn authenticated_client(&self) -> Result<ServerApiClient, FfiMessengerError> {
         let has_token = lock_state(&self.state)?.access_token.is_some();
         if !has_token {
@@ -1481,7 +1499,7 @@ impl FfiMessengerClient {
         Ok(result)
     }
 
-    fn sync_workspace(&self) -> Result<(), FfiMessengerError> {
+    fn sync_workspace(&self) -> Result<Vec<ChatId>, FfiMessengerError> {
         let client = self.authenticated_client()?;
         self.maybe_import_transfer_bundle()?;
         self.flush_pending_inbox_acks_best_effort(&client);
@@ -1503,8 +1521,9 @@ impl FfiMessengerClient {
                 self.project_changed_chats(&active_changed_chat_ids)?;
             }
         }
+        let history_sync_changed_chat_ids = self.process_history_sync_jobs(&client)?;
         self.with_mls_facade(|facade| self.ensure_device_key_packages(&client, facade))?;
-        Ok(())
+        Ok(history_sync_changed_chat_ids)
     }
 
     fn maybe_import_transfer_bundle(&self) -> Result<(), FfiMessengerError> {
@@ -1600,6 +1619,21 @@ impl FfiMessengerClient {
             .map_err(messenger_error)?;
         facade.save_state().map_err(map_domain_error)?;
         Ok(())
+    }
+
+    fn process_history_sync_jobs(
+        &self,
+        client: &ServerApiClient,
+    ) -> Result<Vec<ChatId>, FfiMessengerError> {
+        let device_keys = self.require_transport_key_material()?;
+        let report = {
+            let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
+            let mut store = lock_history_store(&self.history_store)?;
+            self.runtime
+                .block_on(coordinator.process_history_sync_jobs(client, &mut store, &device_keys))
+                .map_err(map_domain_error)?
+        };
+        Ok(report.changed_chat_ids)
     }
 
     fn refresh_chat_details(

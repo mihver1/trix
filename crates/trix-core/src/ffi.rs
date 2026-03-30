@@ -15,19 +15,18 @@ use crate::{
     CompletedLinkIntentMaterial, CreateAccountParams, CreateChatControlInput,
     CreateChatControlOutcome, DeviceApprovePayloadMaterial, DeviceKeyMaterial,
     DeviceTransferBundleMaterial, DirectoryAccountMaterial, HistorySyncChunkMaterial,
-    ImportedDeviceTransferBundle, InboxApplyOutcome, LocalChatListItem, LocalChatReadState,
-    LocalHistoryStore, LocalOutboxAttachmentDraft, LocalOutboxMessage, LocalOutboxPayload,
-    LocalOutboxStatus, LocalProjectedMessage, LocalProjectionApplyReport, LocalProjectionKind,
-    LocalStoreApplyReport, LocalTimelineItem, MessageBody, MlsCommitBundle, MlsFacade,
-    MlsMemberIdentity, MlsProcessResult, ModifyChatDevicesControlInput,
-    ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
-    ModifyChatMembersControlOutcome, PreparedAttachmentUpload, PublishKeyPackageMaterial,
-    ReactionAction, RealtimeConfig, RealtimeDriver, RealtimeEvent, RealtimeEventKind, RealtimeMode,
-    ReceiptType, ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient,
-    ServerWebSocketClient, SyncChatCursor, SyncCoordinator, SyncStateSnapshot,
-    UpdateAccountProfileParams, account_bootstrap_message, create_device_transfer_bundle,
-    decrypt_attachment_payload, decrypt_device_transfer_bundle, device_revoke_message,
-    prepare_attachment_upload,
+    HistorySyncProcessReport, ImportedDeviceTransferBundle, InboxApplyOutcome, LocalChatListItem,
+    LocalChatReadState, LocalHistoryStore, LocalOutboxAttachmentDraft, LocalOutboxMessage,
+    LocalOutboxPayload, LocalOutboxStatus, LocalProjectedMessage, LocalProjectionApplyReport,
+    LocalProjectionKind, LocalStoreApplyReport, LocalTimelineItem, MessageBody, MlsCommitBundle,
+    MlsFacade, MlsMemberIdentity, MlsProcessResult, ModifyChatDevicesControlInput,
+    ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput, ModifyChatMembersControlOutcome,
+    PreparedAttachmentUpload, PublishKeyPackageMaterial, ReactionAction, RealtimeConfig,
+    RealtimeDriver, RealtimeEvent, RealtimeEventKind, RealtimeMode, ReceiptType,
+    ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient, ServerWebSocketClient,
+    SyncChatCursor, SyncCoordinator, SyncStateSnapshot, UpdateAccountProfileParams,
+    account_bootstrap_message, create_device_transfer_bundle, decrypt_attachment_payload,
+    decrypt_device_transfer_bundle, device_revoke_message, prepare_attachment_upload,
 };
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -393,6 +392,13 @@ pub struct FfiHistorySyncChunk {
     pub cursor_json: Option<String>,
     pub is_final: bool,
     pub uploaded_at_unix: u64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiHistorySyncProcessReport {
+    pub source_jobs_processed: u32,
+    pub target_jobs_processed: u32,
+    pub changed_chat_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -2929,6 +2935,25 @@ impl FfiSyncCoordinator {
         Ok(local_store_apply_report_to_ffi(report))
     }
 
+    pub fn process_history_sync_jobs(
+        &self,
+        client: Arc<FfiServerApiClient>,
+        store: Arc<FfiLocalHistoryStore>,
+        transport_private_key: Vec<u8>,
+    ) -> Result<FfiHistorySyncProcessReport, TrixFfiError> {
+        let client = clone_server_api_client(&client.inner)?;
+        let device_keys =
+            DeviceKeyMaterial::from_bytes(to_32_bytes(transport_private_key, "transport_private_key")?);
+        let report = {
+            let mut coordinator = lock(&self.inner)?;
+            let mut store = lock(&store.inner)?;
+            self.runtime
+                .block_on(coordinator.process_history_sync_jobs(&client, &mut store, &device_keys))
+                .map_err(ffi_error)?
+        };
+        Ok(history_sync_process_report_to_ffi(report))
+    }
+
     pub fn lease_inbox(
         &self,
         client: Arc<FfiServerApiClient>,
@@ -3779,6 +3804,18 @@ fn history_sync_chunk_to_ffi(value: HistorySyncChunkMaterial) -> FfiHistorySyncC
         cursor_json: value.cursor_json.map(json_to_string),
         is_final: value.is_final,
         uploaded_at_unix: value.uploaded_at_unix,
+    }
+}
+
+fn history_sync_process_report_to_ffi(value: HistorySyncProcessReport) -> FfiHistorySyncProcessReport {
+    FfiHistorySyncProcessReport {
+        source_jobs_processed: value.source_jobs_processed as u32,
+        target_jobs_processed: value.target_jobs_processed as u32,
+        changed_chat_ids: value
+            .changed_chat_ids
+            .into_iter()
+            .map(|chat_id| chat_id.0.to_string())
+            .collect(),
     }
 }
 
