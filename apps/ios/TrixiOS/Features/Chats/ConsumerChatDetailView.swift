@@ -12,7 +12,7 @@ private struct ConsumerAttachmentDraft {
     let fileSizeLabel: String?
 }
 
-enum ConsumerTimelineItem: Identifiable {
+enum ConsumerTimelineItem: Identifiable, Equatable {
     case daySeparator(String)
     case message(ConsumerRenderedMessage)
 
@@ -26,7 +26,7 @@ enum ConsumerTimelineItem: Identifiable {
     }
 }
 
-enum ConsumerMessageClusterPosition {
+enum ConsumerMessageClusterPosition: Equatable {
     case single
     case top
     case middle
@@ -51,7 +51,7 @@ enum ConsumerReceiptStatus: Int, Comparable {
     }
 }
 
-struct ConsumerRenderedMessage: Identifiable {
+struct ConsumerRenderedMessage: Identifiable, Equatable {
     let id: String
     let senderAccountId: String
     let senderDeviceId: String
@@ -66,6 +66,14 @@ struct ConsumerRenderedMessage: Identifiable {
     let topSpacing: CGFloat
     let usesCenteredEventStyle: Bool
     let receiptStatus: ConsumerReceiptStatus?
+}
+
+struct ConsumerConversationTimelineRenderState: Equatable {
+    let latestTimelineAnchorId: String?
+    let timelineItems: [ConsumerTimelineItem]
+    let latestSentMessageId: String?
+    let latestSentText: String?
+    let downloadingAttachmentMessageId: String?
 }
 
 struct ConsumerChatDetailView: View {
@@ -109,11 +117,15 @@ struct ConsumerChatDetailView: View {
                 .accessibilityIdentifier(TrixAccessibilityID.ChatDetail.errorBanner)
             }
 
-            if let snapshot {
-                conversationTimeline(latestTimelineAnchorId: snapshot.latestTimelineAnchorId)
-                    .safeAreaInset(edge: .bottom, spacing: 0) {
-                        composer
-                    }
+            if let timelineRenderState {
+                ConsumerConversationTimelineView(
+                    renderState: timelineRenderState,
+                    onOpenAttachment: openAttachment
+                )
+                .equatable()
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    composer
+                }
             } else {
                 Spacer()
 
@@ -164,64 +176,6 @@ struct ConsumerChatDetailView: View {
         .onDisappear {
             publishTypingState(for: "", force: true)
         }
-    }
-
-    private func conversationTimeline(latestTimelineAnchorId: String?) -> some View {
-        return ScrollViewReader { proxy in
-            VStack(spacing: 0) {
-                ScrollView {
-                    Group {
-                        if UITestLaunchConfiguration.current.isEnabled {
-                            VStack(spacing: 0) {
-                                timelineRows()
-                            }
-                        } else {
-                            LazyVStack(spacing: 0) {
-                                timelineRows()
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.top, 12)
-                    .padding(.bottom, 10)
-                }
-                .scrollDismissesKeyboard(.interactively)
-                .onAppear {
-                    scrollToBottom(using: proxy, animated: false)
-                }
-                .onChange(of: latestTimelineAnchorId) { _, _ in
-                    scrollToBottom(using: proxy, animated: true)
-                }
-            }
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier(TrixAccessibilityID.ChatDetail.timeline)
-        }
-    }
-
-    @ViewBuilder
-    private func timelineRows() -> some View {
-        if timelineItems.isEmpty {
-            ContentUnavailableView(
-                "No Messages Yet",
-                systemImage: "bubble.left.and.text.bubble.right",
-                description: Text("Start the conversation. New messages will appear here in a normal chat timeline.")
-            )
-            .padding(.top, 96)
-        } else {
-            ForEach(timelineItems) { item in
-                ConsumerTimelineRow(
-                    item: item,
-                    latestSentMessageId: latestSentMessageId,
-                    latestSentText: latestSentText,
-                    downloadingAttachmentMessageId: downloadingAttachmentMessageId,
-                    onOpenAttachment: openAttachment
-                )
-            }
-        }
-
-        Color.clear
-            .frame(height: 1)
-            .id(consumerTimelineBottomAnchor)
     }
 
     private var composer: some View {
@@ -329,6 +283,20 @@ struct ConsumerChatDetailView: View {
         .background(.ultraThinMaterial)
     }
 
+    private var timelineRenderState: ConsumerConversationTimelineRenderState? {
+        guard let snapshot else {
+            return nil
+        }
+
+        return ConsumerConversationTimelineRenderState(
+            latestTimelineAnchorId: snapshot.latestTimelineAnchorId,
+            timelineItems: timelineItems,
+            latestSentMessageId: latestSentMessageId,
+            latestSentText: latestSentText,
+            downloadingAttachmentMessageId: downloadingAttachmentMessageId
+        )
+    }
+
     private var canSend: Bool {
         selectedAttachment != nil || !composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -358,20 +326,6 @@ struct ConsumerChatDetailView: View {
     private func reload() {
         Task {
             await loadSnapshot()
-        }
-    }
-
-    private func scrollToBottom(using proxy: ScrollViewProxy, animated: Bool) {
-        let action = {
-            proxy.scrollTo(consumerTimelineBottomAnchor, anchor: .bottom)
-        }
-
-        if animated {
-            withAnimation(.snappy(duration: 0.24)) {
-                action()
-            }
-        } else {
-            action()
         }
     }
 
@@ -764,6 +718,87 @@ enum ConsumerConversationTimelineBuilder {
         with next: ConsumerReceiptStatus
     ) -> ConsumerReceiptStatus {
         current.map { max($0, next) } ?? next
+    }
+}
+
+private struct ConsumerConversationTimelineView: View, Equatable {
+    let renderState: ConsumerConversationTimelineRenderState
+    let onOpenAttachment: (ConsumerRenderedMessage) -> Void
+
+    nonisolated static func == (lhs: ConsumerConversationTimelineView, rhs: ConsumerConversationTimelineView) -> Bool {
+        lhs.renderState == rhs.renderState
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            VStack(spacing: 0) {
+                ScrollView {
+                    Group {
+                        if UITestLaunchConfiguration.current.isEnabled {
+                            VStack(spacing: 0) {
+                                timelineRows()
+                            }
+                        } else {
+                            LazyVStack(spacing: 0) {
+                                timelineRows()
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 12)
+                    .padding(.bottom, 10)
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .onAppear {
+                    scrollToBottom(using: proxy, animated: false)
+                }
+                .onChange(of: renderState.latestTimelineAnchorId) { _, _ in
+                    scrollToBottom(using: proxy, animated: true)
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier(TrixAccessibilityID.ChatDetail.timeline)
+        }
+    }
+
+    @ViewBuilder
+    private func timelineRows() -> some View {
+        if renderState.timelineItems.isEmpty {
+            ContentUnavailableView(
+                "No Messages Yet",
+                systemImage: "bubble.left.and.text.bubble.right",
+                description: Text("Start the conversation. New messages will appear here in a normal chat timeline.")
+            )
+            .padding(.top, 96)
+        } else {
+            ForEach(renderState.timelineItems) { item in
+                ConsumerTimelineRow(
+                    item: item,
+                    latestSentMessageId: renderState.latestSentMessageId,
+                    latestSentText: renderState.latestSentText,
+                    downloadingAttachmentMessageId: renderState.downloadingAttachmentMessageId,
+                    onOpenAttachment: onOpenAttachment
+                )
+            }
+        }
+
+        Color.clear
+            .frame(height: 1)
+            .id(consumerTimelineBottomAnchor)
+    }
+
+    private func scrollToBottom(using proxy: ScrollViewProxy, animated: Bool) {
+        let action = {
+            proxy.scrollTo(consumerTimelineBottomAnchor, anchor: .bottom)
+        }
+
+        if animated {
+            withAnimation(.snappy(duration: 0.24)) {
+                action()
+            }
+        } else {
+            action()
+        }
     }
 }
 

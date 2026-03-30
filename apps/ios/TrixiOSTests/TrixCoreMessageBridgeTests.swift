@@ -249,6 +249,48 @@ final class ConsumerConversationTimelineBuilderTests: XCTestCase {
         )
     }
 
+    func testTimelineRenderStateEqualityTracksTimelineSpecificInputs() {
+        let snapshot = makeSnapshot(
+            messages: [
+                makeTextMessage(
+                    id: "message-1",
+                    senderAccountId: "bob",
+                    senderDeviceId: "bob-phone",
+                    senderDisplayName: "Bob",
+                    isOutgoing: false,
+                    text: "Hey there",
+                    serverSeq: 1,
+                    createdAtUnix: 1_700_000_000
+                ),
+            ]
+        )
+        let items = ConsumerConversationTimelineBuilder.makeTimelineItems(for: snapshot)
+        let baseline = ConsumerConversationTimelineRenderState(
+            latestTimelineAnchorId: "message-1",
+            timelineItems: items,
+            latestSentMessageId: nil,
+            latestSentText: nil,
+            downloadingAttachmentMessageId: nil
+        )
+        let sameInputs = ConsumerConversationTimelineRenderState(
+            latestTimelineAnchorId: "message-1",
+            timelineItems: items,
+            latestSentMessageId: nil,
+            latestSentText: nil,
+            downloadingAttachmentMessageId: nil
+        )
+        let changedInputs = ConsumerConversationTimelineRenderState(
+            latestTimelineAnchorId: "message-1",
+            timelineItems: items,
+            latestSentMessageId: nil,
+            latestSentText: "different",
+            downloadingAttachmentMessageId: nil
+        )
+
+        XCTAssertEqual(baseline, sameInputs)
+        XCTAssertNotEqual(baseline, changedInputs)
+    }
+
     private func makeSnapshot(messages: [SafeMessengerMessage]) -> SafeConversationSnapshot {
         SafeConversationSnapshot(
             detail: ChatDetailResponse(
