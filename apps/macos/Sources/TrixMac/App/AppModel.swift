@@ -122,7 +122,7 @@ final class AppModel: ObservableObject {
 
         let defaultDeviceName = Host.current().localizedName ?? "This Mac"
         self.defaultDeviceName = defaultDeviceName
-        self.serverBaseURLString = "http://127.0.0.1:8080"
+        self.serverBaseURLString = "https://trix.artelproject.tech"
         self.draft = OnboardingDraft(deviceDisplayName: defaultDeviceName)
         self.linkDraft = LinkDeviceDraft(deviceDisplayName: defaultDeviceName)
         self.notificationPreferences = notificationPreferencesStore.load()

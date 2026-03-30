@@ -84,7 +84,7 @@ The better tradeoff for this PoC is still:
 
 ## Local Backend Wiring
 
-- default Android `debug` base URL is `http://10.0.2.2:8080`
+- default Android `debug` base URL is `https://trix.artelproject.tech`
 - override it when needed with:
   - `./gradlew installDebug -PtrixBaseUrl=http://10.0.2.2:8080`
   - or `TRIX_BASE_URL=http://10.0.2.2:8080 ./gradlew installDebug`
@@ -95,7 +95,7 @@ The better tradeoff for this PoC is still:
 
 - the debug build now exposes a debug-only Android interop bridge for local harness work
 - Genymotion remains the only supported Android runtime for the first interop wave
-- normal app defaults stay on `http://10.0.2.2:8080`; interop uses the explicit debug-only `TRIX_INTEROP_BASE_URL` path instead
+- normal app defaults now point at `https://trix.artelproject.tech`; interop still uses the explicit debug-only `TRIX_INTEROP_BASE_URL` path when you need a local backend
 - if the host backend is described with host loopback such as `http://127.0.0.1:8080`, the interop config remaps that to the Genymotion-reachable `http://10.0.3.2:8080`
 - run the Android smoke driver with:
   - `./gradlew connectedDebugAndroidTest -PtrixBaseUrl=http://10.0.3.2:8080 -Pandroid.testInstrumentationRunnerArguments.class=chat.trix.android.interop.AndroidInteropDriverInstrumentedTest`

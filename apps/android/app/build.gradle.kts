@@ -46,7 +46,7 @@ val hostRustLibrary = File(workspaceRoot, "target/debug/${hostRustLibraryName()}
 
 val trixBaseUrlProvider = providers.gradleProperty("trixBaseUrl")
     .orElse(providers.environmentVariable("TRIX_BASE_URL"))
-    .orElse("http://10.0.2.2:8080")
+    .orElse("https://trix.artelproject.tech")
 val trixBaseUrl = trixBaseUrlProvider
     .get()
     .trimEnd('/')

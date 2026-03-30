@@ -297,7 +297,7 @@ private fun BackendServerCard(
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = "You can switch the test server directly from Android. In the emulator, your host machine is usually `http://10.0.2.2:8080`.",
+                text = "New installs default to `https://trix.artelproject.tech`. In the emulator, you can still switch to `http://10.0.2.2:8080` for local development.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

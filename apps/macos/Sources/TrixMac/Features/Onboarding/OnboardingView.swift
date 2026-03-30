@@ -166,8 +166,8 @@ struct OnboardingView: View {
                         .foregroundStyle(colors.inkMuted)
                 }
 
-                TrixInputBlock("Server URL", hint: "Usually `http://127.0.0.1:8080` in local development.") {
-                    TextField("http://127.0.0.1:8080", text: $model.serverBaseURLString)
+                TrixInputBlock("Server URL", hint: "Defaults to the public test server. Replace it with a localhost URL if you are targeting local development.") {
+                    TextField("https://trix.artelproject.tech", text: $model.serverBaseURLString)
                         .textFieldStyle(.roundedBorder)
                         .accessibilityIdentifier(TrixMacAccessibilityID.Onboarding.serverURLField)
                 }

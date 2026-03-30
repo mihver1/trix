@@ -12,7 +12,7 @@ struct ServerConnectionSection: View {
     var body: some View {
         Group {
             Section("Server") {
-                TextField("http://127.0.0.1:8080", text: $serverBaseURL)
+                TextField("https://trix.artelproject.tech", text: $serverBaseURL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)

@@ -1,0 +1,38 @@
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_started
+    environment:
+      TRIX_PUBLIC_DOMAIN: ${TRIX_PUBLIC_DOMAIN:-trix.artelproject.tech}
+      TRIX_UPSTREAM_HOST: ${TRIX_UPSTREAM_HOST:-app}
+      TRIX_UPSTREAM_PORT: ${TRIX_UPSTREAM_PORT:-8080}
+      TRIX_TLS_READY: ${TRIX_TLS_READY:-0}
+      TRIX_CLIENT_MAX_BODY_SIZE: ${TRIX_CLIENT_MAX_BODY_SIZE:-50m}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/public-test/nginx:/opt/trix/nginx:ro
+      - acme-webroot:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt
+    command: ["/bin/sh", "/opt/trix/nginx/entrypoint.sh"]
+
+  certbot:
+    image: certbot/certbot:latest
+    profiles: ["certbot"]
+    environment:
+      TRIX_PUBLIC_DOMAIN: ${TRIX_PUBLIC_DOMAIN:-trix.artelproject.tech}
+      CERTBOT_EMAIL: ${CERTBOT_EMAIL:-}
+      CERTBOT_STAGING: ${CERTBOT_STAGING:-0}
+    volumes:
+      - ./deploy/public-test/certbot:/opt/trix/certbot:ro
+      - acme-webroot:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt
+    entrypoint: ["/bin/sh", "/opt/trix/certbot/run-certbot.sh"]
+
+volumes:
+  acme-webroot:
+  letsencrypt:
