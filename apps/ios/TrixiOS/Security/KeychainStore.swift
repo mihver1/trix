@@ -15,7 +15,7 @@ struct KeychainStore {
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account,
-            kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
             kSecValueData: data,
         ]
 
@@ -55,6 +55,12 @@ struct KeychainStore {
             }
             throw KeychainStoreError.unexpectedStatus(status)
         }
+    }
+
+    func migrateAccessibilityIfNeeded(account: String) throws {
+        guard let data = try load(account: account) else { return }
+        try delete(account: account)
+        try save(data, account: account)
     }
 
     func delete(account: String) throws {

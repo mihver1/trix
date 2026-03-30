@@ -1413,6 +1413,7 @@ struct WorkspaceView: View {
                     Label(model.isSendingMessage ? "Sending…" : "Send", systemImage: "paperplane.fill")
                 }
                 .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.return, modifiers: .command)
                 .disabled(
                     (
                         composerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&

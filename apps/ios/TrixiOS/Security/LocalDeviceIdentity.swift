@@ -174,6 +174,10 @@ struct LocalDeviceIdentityStore {
         self.keychain = keychain
     }
 
+    func migrateKeychainAccessibilityIfNeeded() throws {
+        try keychain.migrateAccessibilityIfNeeded(account: account)
+    }
+
     func load() throws -> LocalDeviceIdentity? {
         guard let data = try keychain.load(account: account) else {
             return nil

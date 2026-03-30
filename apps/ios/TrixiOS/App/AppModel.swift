@@ -173,6 +173,7 @@ final class AppModel: ObservableObject {
         currentServerBaseURLString = normalizedBaseURLString(baseURLString)
 
         do {
+            try identityStore.migrateKeychainAccessibilityIfNeeded()
             localIdentity = try identityStore.load()
         } catch {
             if !shouldSuppressProtectedDataError(error) {

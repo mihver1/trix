@@ -652,6 +652,10 @@ impl FfiMessengerClient {
                     self.filter_active_chat_ids(&inbox_changed_chat_ids)?;
                 if !active_inbox_changed_chat_ids.is_empty() {
                     self.refresh_chat_details(&client, &active_inbox_changed_chat_ids)?;
+                    {
+                        let mut store = lock_history_store(&self.history_store)?;
+                        store.apply_inbox_items(&lease.items).map_err(map_domain_error)?;
+                    }
                     self.project_changed_chats(&active_inbox_changed_chat_ids)?;
                 }
             }

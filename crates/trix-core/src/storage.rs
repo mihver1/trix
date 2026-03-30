@@ -2161,12 +2161,29 @@ impl LocalHistoryStore {
             changed_chat_ids: Vec::new(),
         };
         let mut changed_chat_ids = BTreeSet::new();
+        let mut changed = false;
+        let mut previous_chats = BTreeMap::new();
+        let previous_outbox = self.state.outbox.clone();
 
         for item in items {
-            let report = self.apply_chat_history(&ChatHistoryResponse {
-                chat_id: item.message.chat_id,
+            let chat_id = item.message.chat_id;
+            let chat_key = chat_id.0.to_string();
+            previous_chats
+                .entry(chat_key.clone())
+                .or_insert_with(|| self.state.chats.get(&chat_key).cloned());
+            let (report, history_changed) = match self.apply_chat_history_in_memory(&ChatHistoryResponse {
+                chat_id,
                 messages: vec![item.message.clone()],
-            })?;
+            }) {
+                Ok(result) => result,
+                Err(error) => {
+                    for (chat_key, snapshot) in previous_chats {
+                        self.restore_chat_snapshot(&chat_key, snapshot);
+                    }
+                    self.state.outbox = previous_outbox;
+                    return Err(error);
+                }
+            };
             combined.chats_upserted += report.chats_upserted;
             combined.messages_upserted += report.messages_upserted;
             changed_chat_ids.extend(
@@ -2175,6 +2192,24 @@ impl LocalHistoryStore {
                     .into_iter()
                     .map(|chat_id| chat_id.0.to_string()),
             );
+            changed |= history_changed;
+
+            if let Some(chat) = self.state.chats.get_mut(&chat_key) {
+                let previous_pending = chat.pending_message_count;
+                chat.pending_message_count = chat.pending_message_count.saturating_sub(1);
+                if chat.pending_message_count != previous_pending {
+                    changed = true;
+                    changed_chat_ids.insert(chat_key);
+                }
+            }
+        }
+
+        if let Err(error) = self.persist_if_needed(changed) {
+            for (chat_key, snapshot) in previous_chats {
+                self.restore_chat_snapshot(&chat_key, snapshot);
+            }
+            self.state.outbox = previous_outbox;
+            return Err(error);
         }
 
         combined.changed_chat_ids = changed_chat_ids
@@ -3685,7 +3720,7 @@ mod tests {
 
     use anyhow::anyhow;
     use serde_json::json;
-    use trix_types::{AccountId, ContentType, DeviceId, MessageKind};
+    use trix_types::{AccountId, ContentType, DeviceId, InboxItem, MessageKind};
 
     use super::*;
 
@@ -5104,6 +5139,65 @@ mod tests {
         assert_eq!(item.preview_sender_display_name.as_deref(), Some("Me"));
         assert_eq!(item.preview_is_outgoing, Some(true));
         assert_eq!(item.preview_server_seq, Some(2));
+    }
+
+    #[test]
+    fn apply_inbox_items_decrements_pending_message_count_for_delivered_messages() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+        let first_message = MessageEnvelope {
+            message_id: MessageId(Uuid::new_v4()),
+            chat_id,
+            server_seq: 1,
+            sender_account_id,
+            sender_device_id,
+            epoch: 1,
+            message_kind: MessageKind::Application,
+            content_type: ContentType::Text,
+            ciphertext_b64: crate::encode_b64(b"hello one"),
+            aad_json: json!({}),
+            created_at_unix: 1,
+        };
+        let second_message = MessageEnvelope {
+            message_id: MessageId(Uuid::new_v4()),
+            server_seq: 2,
+            created_at_unix: 2,
+            ciphertext_b64: crate::encode_b64(b"hello two"),
+            ..first_message.clone()
+        };
+
+        store
+            .apply_chat_list(&ChatListResponse {
+                chats: vec![ChatSummary {
+                    chat_id,
+                    chat_type: ChatType::Dm,
+                    title: None,
+                    last_server_seq: 2,
+                    epoch: 1,
+                    pending_message_count: 2,
+                    last_message: Some(second_message.clone()),
+                    participant_profiles: Vec::new(),
+                }],
+            })
+            .unwrap();
+
+        let report = store
+            .apply_inbox_items(&[
+                InboxItem {
+                    inbox_id: 1,
+                    message: first_message,
+                },
+                InboxItem {
+                    inbox_id: 2,
+                    message: second_message,
+                },
+            ])
+            .unwrap();
+
+        assert!(report.changed_chat_ids.contains(&chat_id));
+        assert_eq!(store.get_chat(chat_id).unwrap().pending_message_count, 0);
     }
 
     #[test]
