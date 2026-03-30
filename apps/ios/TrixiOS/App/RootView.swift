@@ -5,7 +5,7 @@ struct RootView: View {
     @AppStorage(ServerConfiguration.baseURLDefaultsKey)
     private var serverBaseURL = ServerConfiguration.defaultBaseURL.absoluteString
 
-    @StateObject private var model = AppModel()
+    @State private var model = AppModel()
 
     var body: some View {
         Group {

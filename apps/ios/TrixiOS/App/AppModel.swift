@@ -96,33 +96,34 @@ private struct ChatHistoryBackfillResult {
 }
 
 @MainActor
-final class AppModel: ObservableObject {
-    @Published private(set) var localIdentity: LocalDeviceIdentity?
-    @Published private(set) var localCoreState: LocalCoreStateSnapshot?
-    @Published private(set) var dashboard: DashboardData?
-    @Published private(set) var activeLinkIntent: CreateLinkIntentResponse?
-    @Published private(set) var systemSnapshot: ServerSnapshot?
-    @Published private(set) var lastUpdatedAt: Date?
-    @Published private(set) var isLoading = false
-    @Published private(set) var errorMessage: String?
+@Observable
+final class AppModel {
+    private(set) var localIdentity: LocalDeviceIdentity?
+    private(set) var localCoreState: LocalCoreStateSnapshot?
+    private(set) var dashboard: DashboardData?
+    private(set) var activeLinkIntent: CreateLinkIntentResponse?
+    private(set) var systemSnapshot: ServerSnapshot?
+    private(set) var lastUpdatedAt: Date?
+    private(set) var isLoading = false
+    private(set) var errorMessage: String?
 
-    private let identityStore: LocalDeviceIdentityStore
-    private var hasStarted = false
-    private var directoryAccountCache: [String: DirectoryAccountSummary] = [:]
-    private var realtimeClient: RealtimeWebSocketClient?
-    private var realtimeConnectionID = UUID()
-    private var currentServerBaseURLString: String?
-    private var hasScheduledBackgroundRefresh = false
-    private let authSessionResolutionGate = AuthSessionResolutionGate()
-    private var realtimeAccessToken: String?
-    private var messengerSnapshot: SafeMessengerSnapshot?
-    private var messengerCheckpoint: String?
-    private var messengerReadStates: [String: LocalChatReadStateSnapshot] = [:]
-    private var cachedAttachmentFiles: [String: DownloadedAttachmentFile] = [:]
-    private var attachmentDownloadTasks: [String: Task<DownloadedAttachmentFile, Error>] = [:]
-    private var backgroundRealtimeTaskID: UIBackgroundTaskIdentifier = .invalid
-    private var linkIntentPollingTask: Task<Void, Never>?
-    private var linkIntentPendingBaselineDeviceIds: Set<String> = []
+    @ObservationIgnored private let identityStore: LocalDeviceIdentityStore
+    @ObservationIgnored private var hasStarted = false
+    @ObservationIgnored private var directoryAccountCache: [String: DirectoryAccountSummary] = [:]
+    @ObservationIgnored private var realtimeClient: RealtimeWebSocketClient?
+    @ObservationIgnored private var realtimeConnectionID = UUID()
+    @ObservationIgnored private var currentServerBaseURLString: String?
+    @ObservationIgnored private var hasScheduledBackgroundRefresh = false
+    @ObservationIgnored private let authSessionResolutionGate = AuthSessionResolutionGate()
+    @ObservationIgnored private var realtimeAccessToken: String?
+    @ObservationIgnored private var messengerSnapshot: SafeMessengerSnapshot?
+    @ObservationIgnored private var messengerCheckpoint: String?
+    @ObservationIgnored private var messengerReadStates: [String: LocalChatReadStateSnapshot] = [:]
+    @ObservationIgnored private var cachedAttachmentFiles: [String: DownloadedAttachmentFile] = [:]
+    @ObservationIgnored private var attachmentDownloadTasks: [String: Task<DownloadedAttachmentFile, Error>] = [:]
+    @ObservationIgnored private var backgroundRealtimeTaskID: UIBackgroundTaskIdentifier = .invalid
+    @ObservationIgnored private var linkIntentPollingTask: Task<Void, Never>?
+    @ObservationIgnored private var linkIntentPendingBaselineDeviceIds: Set<String> = []
     private static let linkIntentPollingIntervalNanoseconds: UInt64 = 3_000_000_000
 
     init(identityStore: LocalDeviceIdentityStore = LocalDeviceIdentityStore()) {
