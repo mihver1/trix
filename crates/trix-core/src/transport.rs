@@ -21,14 +21,15 @@ use trix_types::{
     ControlMessageInput, CreateAccountRequest, CreateAccountResponse, CreateBlobUploadRequest,
     CreateBlobUploadResponse, CreateChatRequest, CreateChatResponse, CreateLinkIntentResponse,
     CreateMessageRequest, CreateMessageResponse, DeviceApprovePayloadResponse, DeviceId,
-    DeviceListResponse, DeviceStatus, DeviceTransferBundleResponse, DirectoryAccountSummary,
-    ErrorResponse, HealthResponse, HistorySyncChunkListResponse, HistorySyncChunkSummary,
-    HistorySyncJobListResponse, HistorySyncJobRole, HistorySyncJobStatus, LeaseInboxRequest,
-    LeaseInboxResponse, MessageId, ModifyChatDevicesRequest, ModifyChatDevicesResponse,
-    ModifyChatMembersRequest, ModifyChatMembersResponse, PublishKeyPackageItem,
-    PublishKeyPackagesRequest, PublishKeyPackagesResponse, ReserveKeyPackagesRequest,
-    ResetKeyPackagesResponse, RevokeDeviceRequest, RevokeDeviceResponse,
-    UpdateAccountProfileRequest, VersionResponse, WebSocketClientFrame, WebSocketServerFrame,
+    DeviceListResponse, DeviceStatus, DeviceTransferBundleResponse, DeviceTransportKeyResponse,
+    DirectoryAccountSummary, ErrorResponse, HealthResponse, HistorySyncChunkListResponse,
+    HistorySyncChunkSummary, HistorySyncJobListResponse, HistorySyncJobRole,
+    HistorySyncJobStatus, LeaseInboxRequest, LeaseInboxResponse, MessageId,
+    ModifyChatDevicesRequest, ModifyChatDevicesResponse, ModifyChatMembersRequest,
+    ModifyChatMembersResponse, PublishKeyPackageItem, PublishKeyPackagesRequest,
+    PublishKeyPackagesResponse, ReserveKeyPackagesRequest, ResetKeyPackagesResponse,
+    RevokeDeviceRequest, RevokeDeviceResponse, UpdateAccountProfileRequest, VersionResponse,
+    WebSocketClientFrame, WebSocketServerFrame,
 };
 
 const CONTROL_AAD_META_KEY: &str = "_trix";
@@ -144,6 +145,13 @@ pub struct DeviceTransferBundleMaterial {
     pub device_id: DeviceId,
     pub transfer_bundle: Vec<u8>,
     pub uploaded_at_unix: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeviceTransportKeyMaterial {
+    pub device_id: DeviceId,
+    pub device_status: DeviceStatus,
+    pub transport_pubkey: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -469,6 +477,26 @@ impl ServerApiClient {
                 }),
         )
         .await
+    }
+
+    pub async fn get_device_transport_key(
+        &self,
+        device_id: DeviceId,
+    ) -> Result<DeviceTransportKeyMaterial, ServerApiError> {
+        let response: DeviceTransportKeyResponse = self
+            .send_json(self.request(
+                Method::GET,
+                &format!("v0/devices/{}/transport-key", device_id.0),
+            )?)
+            .await?;
+        Ok(DeviceTransportKeyMaterial {
+            device_id: response.device_id,
+            device_status: response.device_status,
+            transport_pubkey: decode_b64_field(
+                "transport_pubkey_b64",
+                &response.transport_pubkey_b64,
+            )?,
+        })
     }
 
     pub async fn get_device_transfer_bundle(

@@ -3401,6 +3401,8 @@ public protocol FfiSyncCoordinatorProtocol: AnyObject, Sendable {
     
     func addChatMembersControl(client: FfiServerApiClient, store: FfiLocalHistoryStore, facade: FfiMlsFacade, input: FfiModifyChatMembersControlInput) throws  -> FfiModifyChatMembersControlOutcome
     
+    func applyLeasedInboxIntoStore(store: FfiLocalHistoryStore, lease: FfiLeaseInboxResponse) throws  -> FfiLocalStoreApplyReport
+    
     func chatCursor(chatId: String) throws  -> UInt64?
     
     func createChatControl(client: FfiServerApiClient, store: FfiLocalHistoryStore, facade: FfiMlsFacade, input: FfiCreateChatControlInput) throws  -> FfiCreateChatControlOutcome
@@ -3410,6 +3412,10 @@ public protocol FfiSyncCoordinatorProtocol: AnyObject, Sendable {
     func leaseInboxIntoStore(client: FfiServerApiClient, store: FfiLocalHistoryStore, limit: UInt32?, leaseTtlSeconds: UInt64?) throws  -> FfiInboxApplyOutcome
     
     func leaseOwner() throws  -> String
+    
+    func processHistorySyncJobs(client: FfiServerApiClient, store: FfiLocalHistoryStore, transportPrivateKey: Data) throws  -> FfiHistorySyncProcessReport
+    
+    func recordAckedInboxIds(ackedInboxIds: [UInt64]) throws 
     
     func recordChatServerSeq(chatId: String, serverSeq: UInt64) throws  -> Bool
     
@@ -3532,6 +3538,16 @@ open func addChatMembersControl(client: FfiServerApiClient, store: FfiLocalHisto
 })
 }
     
+open func applyLeasedInboxIntoStore(store: FfiLocalHistoryStore, lease: FfiLeaseInboxResponse)throws  -> FfiLocalStoreApplyReport  {
+    return try  FfiConverterTypeFfiLocalStoreApplyReport_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffisynccoordinator_apply_leased_inbox_into_store(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiLocalHistoryStore_lower(store),
+        FfiConverterTypeFfiLeaseInboxResponse_lower(lease),$0
+    )
+})
+}
+    
 open func chatCursor(chatId: String)throws  -> UInt64?  {
     return try  FfiConverterOptionUInt64.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffisynccoordinator_chat_cursor(
@@ -3582,6 +3598,25 @@ open func leaseOwner()throws  -> String  {
             self.uniffiCloneHandle(),$0
     )
 })
+}
+    
+open func processHistorySyncJobs(client: FfiServerApiClient, store: FfiLocalHistoryStore, transportPrivateKey: Data)throws  -> FfiHistorySyncProcessReport  {
+    return try  FfiConverterTypeFfiHistorySyncProcessReport_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffisynccoordinator_process_history_sync_jobs(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiServerApiClient_lower(client),
+        FfiConverterTypeFfiLocalHistoryStore_lower(store),
+        FfiConverterData.lower(transportPrivateKey),$0
+    )
+})
+}
+    
+open func recordAckedInboxIds(ackedInboxIds: [UInt64])throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffisynccoordinator_record_acked_inbox_ids(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceUInt64.lower(ackedInboxIds),$0
+    )
+}
 }
     
 open func recordChatServerSeq(chatId: String, serverSeq: UInt64)throws  -> Bool  {
@@ -6484,6 +6519,64 @@ public func FfiConverterTypeFfiHistorySyncJob_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeFfiHistorySyncJob_lower(_ value: FfiHistorySyncJob) -> RustBuffer {
     return FfiConverterTypeFfiHistorySyncJob.lower(value)
+}
+
+
+public struct FfiHistorySyncProcessReport: Equatable, Hashable {
+    public var sourceJobsProcessed: UInt32
+    public var targetJobsProcessed: UInt32
+    public var changedChatIds: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sourceJobsProcessed: UInt32, targetJobsProcessed: UInt32, changedChatIds: [String]) {
+        self.sourceJobsProcessed = sourceJobsProcessed
+        self.targetJobsProcessed = targetJobsProcessed
+        self.changedChatIds = changedChatIds
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiHistorySyncProcessReport: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiHistorySyncProcessReport: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiHistorySyncProcessReport {
+        return
+            try FfiHistorySyncProcessReport(
+                sourceJobsProcessed: FfiConverterUInt32.read(from: &buf), 
+                targetJobsProcessed: FfiConverterUInt32.read(from: &buf), 
+                changedChatIds: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiHistorySyncProcessReport, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.sourceJobsProcessed, into: &buf)
+        FfiConverterUInt32.write(value.targetJobsProcessed, into: &buf)
+        FfiConverterSequenceString.write(value.changedChatIds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiHistorySyncProcessReport_lift(_ buf: RustBuffer) throws -> FfiHistorySyncProcessReport {
+    return try FfiConverterTypeFfiHistorySyncProcessReport.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiHistorySyncProcessReport_lower(_ value: FfiHistorySyncProcessReport) -> RustBuffer {
+    return FfiConverterTypeFfiHistorySyncProcessReport.lower(value)
 }
 
 
@@ -15193,6 +15286,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_add_chat_members_control() != 24813) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffisynccoordinator_apply_leased_inbox_into_store() != 36720) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_chat_cursor() != 10370) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -15206,6 +15302,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_lease_owner() != 50562) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffisynccoordinator_process_history_sync_jobs() != 52647) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffisynccoordinator_record_acked_inbox_ids() != 7925) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_record_chat_server_seq() != 40744) {

@@ -224,13 +224,21 @@ class RealtimeSessionManager(
         when (event.kind) {
             FfiRealtimeEventKind.HELLO -> {
                 telemetry.info(TAG, "websocket hello received")
+                val historySyncChangedChatIds = processHistorySyncJobs()
+                if (historySyncChangedChatIds.isNotEmpty()) {
+                    hydrateChangedChats(historySyncChangedChatIds)
+                    withContext(Dispatchers.Main) {
+                        onChatsChanged(historySyncChangedChatIds)
+                    }
+                }
                 flushPendingOutbox()
             }
 
             FfiRealtimeEventKind.INBOX_ITEMS,
             FfiRealtimeEventKind.ACKED,
             -> {
-                val changedChatIds = event.report?.changedChatIds.orEmpty().toSet()
+                val changedChatIds = event.report?.changedChatIds.orEmpty().toMutableSet()
+                changedChatIds += processHistorySyncJobs()
                 telemetry.info(
                     TAG,
                     "realtime event=${event.kind.name.lowercase()} changed=${changedChatIds.size}",
@@ -334,6 +342,20 @@ class RealtimeSessionManager(
         }.onFailure { error ->
             telemetry.warn(TAG, "failed to hydrate realtime chat changes", error)
         }
+    }
+
+    private suspend fun processHistorySyncJobs(): Set<String> {
+        return runCatching {
+            syncCoordinator().processHistorySyncJobs(
+                client = client(),
+                store = historyStore(),
+                transportPrivateKey = session.localState.transportPrivateSeed,
+            )
+                .changedChatIds
+                .toSet()
+        }.onFailure { error ->
+            telemetry.warn(TAG, "failed to process realtime history sync jobs", error)
+        }.getOrDefault(emptySet())
     }
 
     private fun ensureWebSocket(): FfiServerWebSocketClient {

@@ -20,8 +20,8 @@ use crate::{
 use trix_types::{
     ApproveDeviceRequest, ApproveDeviceResponse, CompleteLinkIntentRequest,
     CompleteLinkIntentResponse, CreateLinkIntentResponse, DeviceApprovePayloadResponse, DeviceId,
-    DeviceListResponse, DeviceSummary, DeviceTransferBundleResponse, RevokeDeviceRequest,
-    RevokeDeviceResponse,
+    DeviceListResponse, DeviceSummary, DeviceTransferBundleResponse, DeviceTransportKeyResponse,
+    RevokeDeviceRequest, RevokeDeviceResponse,
 };
 
 pub fn router() -> Router<AppState> {
@@ -33,6 +33,7 @@ pub fn router() -> Router<AppState> {
             post(complete_link_intent),
         )
         .route("/{device_id}/transfer-bundle", get(get_transfer_bundle))
+        .route("/{device_id}/transport-key", get(get_transport_key))
         .route("/{device_id}/approve-payload", get(get_approve_payload))
         .route("/{device_id}/approve", post(approve_device))
         .route("/{device_id}/revoke", post(revoke_device))
@@ -201,6 +202,25 @@ async fn get_transfer_bundle(
         device_id: DeviceId(bundle.device_id),
         transfer_bundle_b64: general_purpose::STANDARD.encode(bundle.transfer_bundle_ciphertext),
         uploaded_at_unix: bundle.uploaded_at_unix,
+    }))
+}
+
+async fn get_transport_key(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(device_id): Path<DeviceId>,
+) -> Result<Json<DeviceTransportKeyResponse>, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+    let device = state
+        .db
+        .get_device_transport_key_for_account(principal.account_id, device_id.0)
+        .await?
+        .ok_or_else(|| AppError::not_found("device not found"))?;
+
+    Ok(Json(DeviceTransportKeyResponse {
+        device_id: DeviceId(device.device_id),
+        device_status: device.device_status,
+        transport_pubkey_b64: general_purpose::STANDARD.encode(device.transport_pubkey),
     }))
 }
 
