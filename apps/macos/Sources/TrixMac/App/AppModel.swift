@@ -2754,6 +2754,13 @@ final class AppModel: ObservableObject {
     }
 
     private func makeAttachmentDraft(from fileURL: URL) throws -> AttachmentDraft {
+        let didAccessScopedResource = fileURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccessScopedResource {
+                fileURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
         let sourceResourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey, .nameKey])
         let fileName = sourceResourceValues.name ?? fileURL.lastPathComponent
         let mimeType = sourceResourceValues.contentType?.preferredMIMEType ??

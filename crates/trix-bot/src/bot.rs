@@ -352,7 +352,7 @@ impl Bot {
         let client = self.inner.reauthenticate().await?;
         let mut sync = self.inner.sync.lock().await;
         let mut store = self.inner.store.lock().await;
-        let facade = self.inner.facade.lock().await;
+        let mut facade = self.inner.facade.lock().await;
         let mut conversation = store
             .load_or_bootstrap_chat_mls_conversation(chat_id, &facade)?
             .ok_or_else(|| {
@@ -365,7 +365,7 @@ impl Bot {
             .send_message_body(
                 &client,
                 &mut store,
-                &facade,
+                &mut facade,
                 &mut conversation,
                 self.inner.identity.account_id,
                 self.inner.identity.device_id,
@@ -419,7 +419,7 @@ impl Bot {
 
         let mut sync = self.inner.sync.lock().await;
         let mut store = self.inner.store.lock().await;
-        let facade = self.inner.facade.lock().await;
+        let mut facade = self.inner.facade.lock().await;
         let mut conversation = store
             .load_or_bootstrap_chat_mls_conversation(chat_id, &facade)?
             .ok_or_else(|| {
@@ -434,7 +434,7 @@ impl Bot {
             .send_message_body(
                 &client,
                 &mut store,
-                &facade,
+                &mut facade,
                 &mut conversation,
                 self.inner.identity.account_id,
                 self.inner.identity.device_id,
