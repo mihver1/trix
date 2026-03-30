@@ -12,7 +12,7 @@ private struct ConsumerAttachmentDraft {
     let fileSizeLabel: String?
 }
 
-private enum ConsumerTimelineItem: Identifiable {
+enum ConsumerTimelineItem: Identifiable {
     case daySeparator(String)
     case message(ConsumerRenderedMessage)
 
@@ -26,14 +26,14 @@ private enum ConsumerTimelineItem: Identifiable {
     }
 }
 
-private enum ConsumerMessageClusterPosition {
+enum ConsumerMessageClusterPosition {
     case single
     case top
     case middle
     case bottom
 }
 
-private enum ConsumerReceiptStatus: Int, Comparable {
+enum ConsumerReceiptStatus: Int, Comparable {
     case delivered = 0
     case read = 1
 
@@ -51,7 +51,7 @@ private enum ConsumerReceiptStatus: Int, Comparable {
     }
 }
 
-private struct ConsumerRenderedMessage: Identifiable {
+struct ConsumerRenderedMessage: Identifiable {
     let id: String
     let senderAccountId: String
     let senderDeviceId: String
@@ -75,6 +75,7 @@ struct ConsumerChatDetailView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var snapshot: SafeConversationSnapshot?
+    @State private var timelineItems: [ConsumerTimelineItem] = []
     @State private var isLoadingSnapshot = false
     @State private var composerText = ""
     @State private var selectedAttachment: ConsumerAttachmentDraft?
@@ -109,7 +110,7 @@ struct ConsumerChatDetailView: View {
             }
 
             if let snapshot {
-                conversationTimeline(for: snapshot)
+                conversationTimeline(latestTimelineAnchorId: snapshot.latestTimelineAnchorId)
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         composer
                     }
@@ -165,20 +166,18 @@ struct ConsumerChatDetailView: View {
         }
     }
 
-    private func conversationTimeline(for snapshot: SafeConversationSnapshot) -> some View {
-        let timelineItems = makeTimelineItems(for: snapshot)
-
+    private func conversationTimeline(latestTimelineAnchorId: String?) -> some View {
         return ScrollViewReader { proxy in
             VStack(spacing: 0) {
                 ScrollView {
                     Group {
                         if UITestLaunchConfiguration.current.isEnabled {
                             VStack(spacing: 0) {
-                                timelineRows(for: timelineItems)
+                                timelineRows()
                             }
                         } else {
                             LazyVStack(spacing: 0) {
-                                timelineRows(for: timelineItems)
+                                timelineRows()
                             }
                         }
                     }
@@ -190,7 +189,7 @@ struct ConsumerChatDetailView: View {
                 .onAppear {
                     scrollToBottom(using: proxy, animated: false)
                 }
-                .onChange(of: snapshot.latestTimelineAnchorId) { _, _ in
+                .onChange(of: latestTimelineAnchorId) { _, _ in
                     scrollToBottom(using: proxy, animated: true)
                 }
             }
@@ -200,7 +199,7 @@ struct ConsumerChatDetailView: View {
     }
 
     @ViewBuilder
-    private func timelineRows(for timelineItems: [ConsumerTimelineItem]) -> some View {
+    private func timelineRows() -> some View {
         if timelineItems.isEmpty {
             ContentUnavailableView(
                 "No Messages Yet",
@@ -389,6 +388,7 @@ struct ConsumerChatDetailView: View {
                 baseURLString: serverBaseURL,
                 chatId: chatSummary.chatId
             )
+            timelineItems = ConsumerConversationTimelineBuilder.makeTimelineItems(for: loadedSnapshot)
             snapshot = loadedSnapshot
             if loadedSnapshot.latestMessageId != nil {
                 _ = await model.acknowledgeConversationRead(
@@ -404,20 +404,10 @@ struct ConsumerChatDetailView: View {
     }
 
     private func readReceiptTargetMessageId(for snapshot: SafeConversationSnapshot) -> String? {
-        guard let currentAccountId = model.localIdentity?.accountId else {
-            return nil
-        }
-
-        let orderedMessages = snapshot.messages.sorted {
-            if $0.serverSeq == $1.serverSeq {
-                return $0.createdAtUnix < $1.createdAtUnix
-            }
-            return $0.serverSeq < $1.serverSeq
-        }
-
-        return orderedMessages.reversed().first { message in
-            message.senderAccountId != currentAccountId && messageContentType(message) != .receipt
-        }?.id
+        ConsumerConversationTimelineBuilder.latestIncomingNonReceiptMessageID(
+            in: snapshot,
+            currentAccountId: model.localIdentity?.accountId
+        )
     }
 
     private func sendCurrentPayload() {
@@ -538,27 +528,37 @@ struct ConsumerChatDetailView: View {
         }
     }
 
-    private func makeTimelineItems(for snapshot: SafeConversationSnapshot) -> [ConsumerTimelineItem] {
-        let messages = snapshot.messages.sorted {
-            if $0.serverSeq == $1.serverSeq {
-                return $0.createdAtUnix < $1.createdAtUnix
-            }
-            return $0.serverSeq < $1.serverSeq
+    private func publishTypingState(for text: String, force: Bool = false) {
+        let shouldPublish = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard force || shouldPublish != isTypingPublished else {
+            return
         }
+
+        isTypingPublished = shouldPublish
+        Task {
+            await model.sendTypingUpdate(chatId: chatSummary.chatId, isTyping: shouldPublish)
+        }
+    }
+}
+
+enum ConsumerConversationTimelineBuilder {
+    static func makeTimelineItems(for snapshot: SafeConversationSnapshot) -> [ConsumerTimelineItem] {
+        // `loadConversationSnapshot()` already returns ascending server order, so keep typing cheap.
+        let messages = snapshot.messages
         var items: [ConsumerTimelineItem] = []
-        var receiptStatusByMessageId: [String: ConsumerReceiptStatus] = [:]
+        var receiptStatusByMessageID: [String: ConsumerReceiptStatus] = [:]
         let presentationMessages = messages.compactMap { message -> SafeMessengerMessage? in
-            guard isReceiptMessage(message) else {
-                return message
+            guard !isReceiptMessage(message) else {
+                if let targetMessageID = receiptTargetMessageID(for: message) {
+                    receiptStatusByMessageID[targetMessageID] = mergedReceiptStatus(
+                        receiptStatusByMessageID[targetMessageID],
+                        with: receiptStatus(for: message) ?? .delivered
+                    )
+                }
+                return nil
             }
 
-            if let targetMessageId = receiptTargetMessageId(for: message) {
-                receiptStatusByMessageId[targetMessageId] = mergedReceiptStatus(
-                    receiptStatusByMessageId[targetMessageId],
-                    with: receiptStatus(for: message) ?? .delivered
-                )
-            }
-            return nil
+            return message
         }
         var previousMessage: SafeMessengerMessage?
 
@@ -613,7 +613,7 @@ struct ConsumerChatDetailView: View {
                         clusterPosition: clusterPosition,
                         topSpacing: topSpacing,
                         usesCenteredEventStyle: messageUsesCenteredEventStyle(message),
-                        receiptStatus: receiptStatusByMessageId[message.id]
+                        receiptStatus: receiptStatusByMessageID[message.id]
                     )
                 )
             )
@@ -624,7 +624,20 @@ struct ConsumerChatDetailView: View {
         return items
     }
 
-    private func daySeparatorTitle(for date: Date) -> String {
+    static func latestIncomingNonReceiptMessageID(
+        in snapshot: SafeConversationSnapshot,
+        currentAccountId: String?
+    ) -> String? {
+        guard let currentAccountId else {
+            return nil
+        }
+
+        return snapshot.messages.reversed().first { message in
+            message.senderAccountId != currentAccountId && messageContentType(message) != .receipt
+        }?.id
+    }
+
+    private static func daySeparatorTitle(for date: Date) -> String {
         let calendar = Calendar.current
         if calendar.isDateInToday(date) {
             return "Today"
@@ -635,7 +648,7 @@ struct ConsumerChatDetailView: View {
         return date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
     }
 
-    private func canCluster(_ left: SafeMessengerMessage, with right: SafeMessengerMessage) -> Bool {
+    private static func canCluster(_ left: SafeMessengerMessage, with right: SafeMessengerMessage) -> Bool {
         guard !messageUsesCenteredEventStyle(left), !messageUsesCenteredEventStyle(right) else {
             return false
         }
@@ -650,7 +663,7 @@ struct ConsumerChatDetailView: View {
         return delta <= consumerMessageClusterWindow
     }
 
-    private func messageContentType(_ message: SafeMessengerMessage) -> ContentType {
+    private static func messageContentType(_ message: SafeMessengerMessage) -> ContentType {
         switch effectiveBodyKind(for: message) {
         case .text:
             return .text
@@ -665,7 +678,7 @@ struct ConsumerChatDetailView: View {
         }
     }
 
-    private func messageUsesCenteredEventStyle(_ message: SafeMessengerMessage) -> Bool {
+    private static func messageUsesCenteredEventStyle(_ message: SafeMessengerMessage) -> Bool {
         switch messageContentType(message) {
         case .reaction, .receipt, .chatEvent:
             return true
@@ -674,7 +687,7 @@ struct ConsumerChatDetailView: View {
         }
     }
 
-    private func messagePreviewTitle(_ message: SafeMessengerMessage) -> String {
+    private static func messagePreviewTitle(_ message: SafeMessengerMessage) -> String {
         switch effectiveBodyKind(for: message) {
         case .text:
             return message.body?.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
@@ -693,7 +706,7 @@ struct ConsumerChatDetailView: View {
         }
     }
 
-    private func messagePreviewDetail(_ message: SafeMessengerMessage) -> String? {
+    private static func messagePreviewDetail(_ message: SafeMessengerMessage) -> String? {
         switch effectiveBodyKind(for: message) {
         case .reaction, .receipt:
             return message.body?.targetMessageId.map { "Target \($0)" }
@@ -709,25 +722,25 @@ struct ConsumerChatDetailView: View {
         }
     }
 
-    private func receiptStatus(for message: SafeMessengerMessage) -> ConsumerReceiptStatus? {
+    private static func receiptStatus(for message: SafeMessengerMessage) -> ConsumerReceiptStatus? {
         guard isReceiptMessage(message) else {
             return nil
         }
         return message.body?.receiptType == .read ? .read : .delivered
     }
 
-    private func isReceiptMessage(_ message: SafeMessengerMessage) -> Bool {
+    private static func isReceiptMessage(_ message: SafeMessengerMessage) -> Bool {
         effectiveBodyKind(for: message) == .receipt
     }
 
-    private func receiptTargetMessageId(for message: SafeMessengerMessage) -> String? {
+    private static func receiptTargetMessageID(for message: SafeMessengerMessage) -> String? {
         guard isReceiptMessage(message) else {
             return nil
         }
         return message.body?.targetMessageId
     }
 
-    private func fallbackBodyKind(for contentType: ContentType) -> SafeMessengerMessageBodyKind {
+    private static func fallbackBodyKind(for contentType: ContentType) -> SafeMessengerMessageBodyKind {
         switch contentType {
         case .text:
             .text
@@ -742,27 +755,15 @@ struct ConsumerChatDetailView: View {
         }
     }
 
-    private func effectiveBodyKind(for message: SafeMessengerMessage) -> SafeMessengerMessageBodyKind {
+    private static func effectiveBodyKind(for message: SafeMessengerMessage) -> SafeMessengerMessageBodyKind {
         message.body?.kind ?? fallbackBodyKind(for: message.contentType)
     }
 
-    private func mergedReceiptStatus(
+    private static func mergedReceiptStatus(
         _ current: ConsumerReceiptStatus?,
         with next: ConsumerReceiptStatus
     ) -> ConsumerReceiptStatus {
         current.map { max($0, next) } ?? next
-    }
-
-    private func publishTypingState(for text: String, force: Bool = false) {
-        let shouldPublish = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        guard force || shouldPublish != isTypingPublished else {
-            return
-        }
-
-        isTypingPublished = shouldPublish
-        Task {
-            await model.sendTypingUpdate(chatId: chatSummary.chatId, isTyping: shouldPublish)
-        }
     }
 }
 

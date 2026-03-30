@@ -13,6 +13,7 @@ EXPORT_OPTIONS_PLIST="${TRIX_EXPORT_OPTIONS_PLIST:-$APP_ROOT/AppStoreConnectExpo
 DESTINATION="${TRIX_ASC_DESTINATION:-export}"
 SKIP_EXPORT="${TRIX_SKIP_EXPORT:-0}"
 INTERNAL_ONLY="${TRIX_TESTFLIGHT_INTERNAL_ONLY:-0}"
+BUILD_NUMBER="${TRIX_MACOS_BUILD_NUMBER:-$(date '+%Y%m%d%H%M')}"
 
 case "$DESTINATION" in
   export|upload) ;;
@@ -49,6 +50,7 @@ if [[ "$INTERNAL_ONLY" == "1" || "$INTERNAL_ONLY" == "true" ]]; then
   fi
 fi
 
+echo "Using CURRENT_PROJECT_VERSION=$BUILD_NUMBER"
 echo "==> Archiving macOS app for App Store Connect"
 archive_cmd=(
   xcodebuild
@@ -58,6 +60,7 @@ archive_cmd=(
   -destination "generic/platform=macOS"
   -archivePath "$ARCHIVE_PATH"
   -allowProvisioningUpdates
+  CURRENT_PROJECT_VERSION="$BUILD_NUMBER"
   archive
 )
 if [[ ${#XCODEBUILD_AUTH_ARGS[@]} -gt 0 ]]; then
