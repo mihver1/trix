@@ -698,11 +698,7 @@ impl Database {
 
         let status_filter: Option<String> = input.status.as_ref().and_then(|s| {
             let t = s.trim().to_ascii_lowercase();
-            if t.is_empty() {
-                None
-            } else {
-                Some(t)
-            }
+            if t.is_empty() { None } else { Some(t) }
         });
         if let Some(ref s) = status_filter {
             if s != "active" && s != "disabled" {
@@ -1245,7 +1241,9 @@ impl Database {
         .await
         .map_err(map_db_error)?;
         if claim.rows_affected() != 1 {
-            return Err(AppError::internal("provision claim failed after account insert"));
+            return Err(AppError::internal(
+                "provision claim failed after account insert",
+            ));
         }
 
         tx.commit()
@@ -2693,6 +2691,22 @@ impl Database {
             .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
 
         Ok(published)
+    }
+
+    pub async fn reset_device_key_packages(&self, device_id: Uuid) -> Result<u64, AppError> {
+        let result = sqlx::query(
+            r#"
+            UPDATE device_key_packages
+            SET status = 'expired'::key_package_status
+            WHERE device_id = $1
+              AND status IN ('available'::key_package_status, 'reserved'::key_package_status)
+            "#,
+        )
+        .bind(device_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        Ok(result.rows_affected())
     }
 
     pub async fn reserve_key_packages_for_account(
@@ -6318,9 +6332,9 @@ mod tests {
     use crate::{error::AppError, test_support::POSTGRES_TEST_LOCK};
 
     use super::{
-        ApprovePendingDeviceInput, CompleteLinkIntentInput, ContentType,
-        CreateAccountInput, CreateAdminUserProvisionInput, CreateChatInput, CreateMessageInput,
-        Database, KeyPackageBytesInput, ListAdminUsersInput, MessageKind, ModifyChatDevicesInput,
+        ApprovePendingDeviceInput, CompleteLinkIntentInput, ContentType, CreateAccountInput,
+        CreateAdminUserProvisionInput, CreateChatInput, CreateMessageInput, Database,
+        KeyPackageBytesInput, ListAdminUsersInput, MessageKind, ModifyChatDevicesInput,
         PendingControlMessage, PublishKeyPackageInput, UpdateAccountProfileInput,
         UpdateAdminRuntimeSettingsInput,
     };
@@ -7211,7 +7225,12 @@ mod tests {
         reset_test_db(&db).await;
 
         let alice = db
-            .create_account(make_account_input("alice", "Alice Primary", [41; 32], [42; 32]))
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [41; 32],
+                [42; 32],
+            ))
             .await
             .unwrap();
         let bob = db
@@ -7244,7 +7263,12 @@ mod tests {
         reset_test_db(&db).await;
 
         let alice = db
-            .create_account(make_account_input("alice", "Alice Primary", [61; 32], [62; 32]))
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [61; 32],
+                [62; 32],
+            ))
             .await
             .unwrap();
         let bob = db
@@ -7266,6 +7290,73 @@ mod tests {
         db.ensure_active_device_session(alice.account_id, alice.device_id)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn reset_device_key_packages_expires_available_and_reserved_packages() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input("alice", "Alice", [81; 32], [82; 32]))
+            .await
+            .unwrap();
+        let bob = db
+            .create_account(make_account_input("bob", "Bob", [83; 32], [84; 32]))
+            .await
+            .unwrap();
+
+        db.publish_key_packages(
+            bob.device_id,
+            vec![
+                PublishKeyPackageInput {
+                    device_id: bob.device_id,
+                    cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                    key_package_bytes: b"bob-kp-1".to_vec(),
+                },
+                PublishKeyPackageInput {
+                    device_id: bob.device_id,
+                    cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                    key_package_bytes: b"bob-kp-2".to_vec(),
+                },
+            ],
+        )
+        .await
+        .unwrap();
+
+        let reserved = db
+            .reserve_key_packages_for_account(alice.account_id, bob.account_id)
+            .await
+            .unwrap();
+        assert_eq!(reserved.len(), 1);
+
+        let expired = db.reset_device_key_packages(bob.device_id).await.unwrap();
+        assert_eq!(expired, 2);
+
+        let statuses: Vec<String> = sqlx::query_scalar(
+            r#"
+            SELECT status::text
+            FROM device_key_packages
+            WHERE device_id = $1
+            ORDER BY published_at ASC, key_package_id ASC
+            "#,
+        )
+        .bind(bob.device_id)
+        .fetch_all(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(statuses, vec!["expired", "expired"]);
+
+        let err = db
+            .reserve_key_packages_for_account(alice.account_id, bob.account_id)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::Conflict(ref m) if m == "one or more target devices have no available key packages"),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[tokio::test]

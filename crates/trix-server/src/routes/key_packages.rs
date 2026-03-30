@@ -10,6 +10,7 @@ use trix_types::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/key-packages:publish", post(publish_key_packages))
+        .route("/key-packages:reset", post(reset_key_packages))
         .route("/key-packages:reserve", post(reserve_key_packages))
 }
 
@@ -45,6 +46,22 @@ async fn publish_key_packages(
                 cipher_suite: package.cipher_suite,
             })
             .collect(),
+    }))
+}
+
+async fn reset_key_packages(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<trix_types::ResetKeyPackagesResponse>, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+    let expired_key_package_count = state
+        .db
+        .reset_device_key_packages(principal.device_id)
+        .await?;
+
+    Ok(Json(trix_types::ResetKeyPackagesResponse {
+        device_id: DeviceId(principal.device_id),
+        expired_key_package_count,
     }))
 }
 

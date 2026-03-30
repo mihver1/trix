@@ -28,6 +28,8 @@ fn empty_json_object() -> Value {
     Value::Object(Default::default())
 }
 
+const SERVER_RESTORE_KEY_PACKAGE_COUNT: usize = 12;
+
 #[derive(Debug, Clone)]
 pub enum CoreEvent {
     Started,
@@ -1252,6 +1254,7 @@ impl SyncCoordinator {
         facade: &MlsFacade,
         chat_id: ChatId,
     ) -> Result<MlsConversation> {
+        let mut refreshed_full_history = false;
         let needs_bootstrap =
             store.get_chat(chat_id).is_none() || store.chat_mls_group_id(chat_id).is_none();
         if needs_bootstrap {
@@ -1263,6 +1266,7 @@ impl SyncCoordinator {
                 chat_id,
                 history.messages.iter().map(|message| message.server_seq),
             )?;
+            refreshed_full_history = true;
         }
 
         if store.needs_history_refresh(chat_id) {
@@ -1274,8 +1278,46 @@ impl SyncCoordinator {
                 chat_id,
                 history.messages.iter().map(|message| message.server_seq),
             )?;
+            refreshed_full_history = true;
         }
 
+        match self.try_prepare_chat_mutation_conversation_once(store, facade, chat_id) {
+            Ok(conversation) => Ok(conversation),
+            Err(error)
+                if is_chat_bootstrap_recovery_candidate(&error) && !refreshed_full_history =>
+            {
+                let detail = client.get_chat(chat_id).await?;
+                store.apply_chat_detail(&detail)?;
+                let history = client.get_chat_history(chat_id, None, None).await?;
+                store.apply_chat_history(&history)?;
+                self.record_chat_server_seqs(
+                    chat_id,
+                    history.messages.iter().map(|message| message.server_seq),
+                )?;
+
+                match self.try_prepare_chat_mutation_conversation_once(store, facade, chat_id) {
+                    Ok(conversation) => Ok(conversation),
+                    Err(retry_error) if is_missing_key_package_bootstrap_error(&retry_error) => {
+                        let _ = restore_current_device_key_packages(client, facade).await;
+                        Err(chat_rebootstrap_required_error())
+                    }
+                    Err(retry_error) => Err(retry_error),
+                }
+            }
+            Err(error) if is_missing_key_package_bootstrap_error(&error) => {
+                let _ = restore_current_device_key_packages(client, facade).await;
+                Err(chat_rebootstrap_required_error())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn try_prepare_chat_mutation_conversation_once(
+        &mut self,
+        store: &mut LocalHistoryStore,
+        facade: &MlsFacade,
+        chat_id: ChatId,
+    ) -> Result<MlsConversation> {
         if store.needs_projection(chat_id) {
             store.project_chat_with_facade(chat_id, facade, None)?;
             self.record_projected_chat_cursor(store, chat_id)?;
@@ -1382,6 +1424,49 @@ fn normalize_device_ids(device_ids: Vec<DeviceId>, exclude: DeviceId) -> Vec<Dev
     let mut normalized = unique.into_iter().collect::<Vec<_>>();
     normalized.sort_by_key(|device_id| device_id.0);
     normalized
+}
+
+fn is_chat_bootstrap_recovery_candidate(error: &anyhow::Error) -> bool {
+    is_missing_key_package_bootstrap_error(error)
+        || error
+            .chain()
+            .any(|cause| cause.to_string().contains("no bootstrappable MLS state"))
+}
+
+fn is_missing_key_package_bootstrap_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .to_string()
+            .contains(crate::crypto::MISSING_WELCOME_KEY_PACKAGE_ERROR_MARKER)
+            || cause
+                .to_string()
+                .contains("No matching key package was found in the key store")
+    })
+}
+
+async fn restore_current_device_key_packages(
+    client: &ServerApiClient,
+    facade: &MlsFacade,
+) -> Result<()> {
+    client.reset_key_packages().await?;
+    let cipher_suite = facade.ciphersuite_label();
+    let packages = facade
+        .generate_key_packages(SERVER_RESTORE_KEY_PACKAGE_COUNT)?
+        .into_iter()
+        .map(|key_package| crate::PublishKeyPackageMaterial {
+            cipher_suite: cipher_suite.clone(),
+            key_package,
+        })
+        .collect();
+    client.publish_key_packages(packages).await?;
+    facade.save_state()?;
+    Ok(())
+}
+
+fn chat_rebootstrap_required_error() -> anyhow::Error {
+    anyhow!(
+        "This chat can't be opened on this device because its local bootstrap keys were lost. Open it on another active device and add this device to the chat again, then try again here."
+    )
 }
 
 fn collect_leaf_indices_for_accounts(
@@ -1961,7 +2046,7 @@ mod tests {
     use trix_types::{
         AccountId, ChatDetailResponse, ChatId, ChatType, ContentType, CreateMessageRequest,
         CreateMessageResponse, DeviceId, ErrorResponse, InboxItem, MessageEnvelope, MessageId,
-        MessageKind,
+        MessageKind, PublishKeyPackagesRequest, PublishKeyPackagesResponse, PublishedKeyPackage,
     };
     use uuid::Uuid;
 
@@ -1990,6 +2075,8 @@ mod tests {
         chat_detail_requests: usize,
         history_requests: usize,
         history_after_server_seq_requests: Vec<Option<u64>>,
+        reset_requests: usize,
+        published_key_package_requests: Vec<PublishKeyPackagesRequest>,
     }
 
     struct MockChatServer {
@@ -2005,6 +2092,8 @@ mod tests {
                 .route("/v0/chats/{chat_id}", get(mock_get_chat))
                 .route("/v0/chats/{chat_id}/history", get(mock_get_chat_history))
                 .route("/v0/chats/{chat_id}/messages", post(mock_create_message))
+                .route("/v0/key-packages:reset", post(mock_reset_key_packages))
+                .route("/v0/key-packages:publish", post(mock_publish_key_packages))
                 .with_state(state.clone());
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let base_url = format!("http://{}", listener.local_addr().unwrap());
@@ -2139,6 +2228,39 @@ mod tests {
             .create_responses
             .insert(request.message_id.0.to_string(), response.clone());
         Json(response).into_response()
+    }
+
+    async fn mock_reset_key_packages(
+        State(state): State<Arc<Mutex<MockChatServerState>>>,
+    ) -> impl IntoResponse {
+        let mut state = state.lock().unwrap();
+        state.reset_requests += 1;
+        Json(json!({
+            "device_id": state.sender_device_id,
+            "expired_key_package_count": 1u64,
+        }))
+        .into_response()
+    }
+
+    async fn mock_publish_key_packages(
+        State(state): State<Arc<Mutex<MockChatServerState>>>,
+        Json(request): Json<PublishKeyPackagesRequest>,
+    ) -> impl IntoResponse {
+        let mut state = state.lock().unwrap();
+        state.published_key_package_requests.push(request.clone());
+        Json(PublishKeyPackagesResponse {
+            device_id: state.sender_device_id,
+            packages: request
+                .packages
+                .iter()
+                .enumerate()
+                .map(|(index, package)| PublishedKeyPackage {
+                    key_package_id: format!("mock-key-package-{index}"),
+                    cipher_suite: package.cipher_suite.clone(),
+                })
+                .collect(),
+        })
+        .into_response()
     }
 
     fn text_body(text: &str) -> MessageBody {
@@ -2459,6 +2581,8 @@ mod tests {
             chat_detail_requests: 0,
             history_requests: 0,
             history_after_server_seq_requests: Vec::new(),
+            reset_requests: 0,
+            published_key_package_requests: Vec::new(),
         })
         .await;
         let client = server.client();
@@ -2659,6 +2783,8 @@ mod tests {
             chat_detail_requests: 0,
             history_requests: 0,
             history_after_server_seq_requests: Vec::new(),
+            reset_requests: 0,
+            published_key_package_requests: Vec::new(),
         })
         .await;
         let client = server.client();
@@ -2730,6 +2856,8 @@ mod tests {
             chat_detail_requests: 0,
             history_requests: 0,
             history_after_server_seq_requests: Vec::new(),
+            reset_requests: 0,
+            published_key_package_requests: Vec::new(),
         })
         .await;
         let client = server.client();
@@ -2878,6 +3006,8 @@ mod tests {
             chat_detail_requests: 0,
             history_requests: 0,
             history_after_server_seq_requests: Vec::new(),
+            reset_requests: 0,
+            published_key_package_requests: Vec::new(),
         })
         .await;
         let client = server.client();
@@ -3061,6 +3191,8 @@ mod tests {
             chat_detail_requests: 0,
             history_requests: 0,
             history_after_server_seq_requests: Vec::new(),
+            reset_requests: 0,
+            published_key_package_requests: Vec::new(),
         })
         .await;
         let client = server.client();
@@ -3111,6 +3243,337 @@ mod tests {
             MlsProcessResult::ApplicationMessage(bytes) => assert_eq!(bytes, send_body_bytes),
             other => panic!("expected application message, got {other:?}"),
         }
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn send_message_refreshes_full_history_and_recovers_from_newer_valid_welcome_after_local_bootstrap_loss()
+     {
+        let chat_id = ChatId(Uuid::new_v4());
+        let alice_account = AccountId(Uuid::new_v4());
+        let alice_device = DeviceId(Uuid::new_v4());
+        let current_account = AccountId(Uuid::new_v4());
+        let current_device = DeviceId(Uuid::new_v4());
+        let alice = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+        let stale_member = MlsFacade::new(b"stale-device".to_vec()).unwrap();
+        let mut current_member = MlsFacade::new(b"current-device".to_vec()).unwrap();
+
+        let stale_key_package = stale_member.generate_key_package().unwrap();
+        let mut alice_group = alice.create_group(chat_id.0.as_bytes()).unwrap();
+        let stale_add_bundle = alice
+            .add_members(&mut alice_group, &[stale_key_package])
+            .unwrap();
+        let fresh_key_package = current_member.generate_key_package().unwrap();
+        let fresh_add_bundle = alice
+            .add_members(&mut alice_group, &[fresh_key_package])
+            .unwrap();
+        let expected_group_id = alice_group.group_id();
+
+        let stale_commit_message_id = MessageId(Uuid::new_v4());
+        let stale_welcome_message_id = MessageId(Uuid::new_v4());
+        let fresh_commit_message_id = MessageId(Uuid::new_v4());
+        let fresh_welcome_message_id = MessageId(Uuid::new_v4());
+        let stale_history = vec![
+            MessageEnvelope {
+                message_id: stale_commit_message_id,
+                chat_id,
+                server_seq: 1,
+                sender_account_id: alice_account,
+                sender_device_id: alice_device,
+                epoch: stale_add_bundle.epoch,
+                message_kind: MessageKind::Commit,
+                content_type: ContentType::ChatEvent,
+                ciphertext_b64: crate::encode_b64(&stale_add_bundle.commit_message),
+                aad_json: json!({}),
+                created_at_unix: 1,
+            },
+            MessageEnvelope {
+                message_id: stale_welcome_message_id,
+                chat_id,
+                server_seq: 2,
+                sender_account_id: alice_account,
+                sender_device_id: alice_device,
+                epoch: stale_add_bundle.epoch,
+                message_kind: MessageKind::WelcomeRef,
+                content_type: ContentType::ChatEvent,
+                ciphertext_b64: crate::encode_b64(
+                    stale_add_bundle.welcome_message.as_ref().unwrap(),
+                ),
+                aad_json: json!({
+                    "_trix": {
+                        "ratchet_tree_b64": crate::encode_b64(
+                            stale_add_bundle.ratchet_tree.as_ref().unwrap()
+                        )
+                    }
+                }),
+                created_at_unix: 2,
+            },
+        ];
+        let full_history = vec![
+            stale_history[0].clone(),
+            stale_history[1].clone(),
+            MessageEnvelope {
+                message_id: fresh_commit_message_id,
+                chat_id,
+                server_seq: 3,
+                sender_account_id: alice_account,
+                sender_device_id: alice_device,
+                epoch: fresh_add_bundle.epoch,
+                message_kind: MessageKind::Commit,
+                content_type: ContentType::ChatEvent,
+                ciphertext_b64: crate::encode_b64(&fresh_add_bundle.commit_message),
+                aad_json: json!({}),
+                created_at_unix: 3,
+            },
+            MessageEnvelope {
+                message_id: fresh_welcome_message_id,
+                chat_id,
+                server_seq: 4,
+                sender_account_id: alice_account,
+                sender_device_id: alice_device,
+                epoch: fresh_add_bundle.epoch,
+                message_kind: MessageKind::WelcomeRef,
+                content_type: ContentType::ChatEvent,
+                ciphertext_b64: crate::encode_b64(
+                    fresh_add_bundle.welcome_message.as_ref().unwrap(),
+                ),
+                aad_json: json!({
+                    "_trix": {
+                        "ratchet_tree_b64": crate::encode_b64(
+                            fresh_add_bundle.ratchet_tree.as_ref().unwrap()
+                        )
+                    }
+                }),
+                created_at_unix: 4,
+            },
+        ];
+
+        let mut store = LocalHistoryStore::new();
+        store
+            .apply_chat_detail(&empty_chat_detail(
+                chat_id,
+                2,
+                stale_add_bundle.epoch,
+                Some(stale_history[1].clone()),
+                Some(stale_commit_message_id),
+            ))
+            .unwrap();
+        store
+            .apply_chat_history(&trix_types::ChatHistoryResponse {
+                chat_id,
+                messages: stale_history,
+            })
+            .unwrap();
+        store
+            .set_chat_mls_group_id(chat_id, b"stale-group-id")
+            .unwrap();
+
+        let server = MockChatServer::spawn(MockChatServerState {
+            chat_detail: empty_chat_detail(
+                chat_id,
+                4,
+                fresh_add_bundle.epoch,
+                Some(full_history[3].clone()),
+                Some(fresh_commit_message_id),
+            ),
+            history: full_history,
+            sender_account_id: current_account,
+            sender_device_id: current_device,
+            expected_create_epoch: Some(fresh_add_bundle.epoch),
+            create_requests: Vec::new(),
+            create_responses: BTreeMap::new(),
+            chat_detail_requests: 0,
+            history_requests: 0,
+            history_after_server_seq_requests: Vec::new(),
+            reset_requests: 0,
+            published_key_package_requests: Vec::new(),
+        })
+        .await;
+        let client = server.client();
+
+        let mut coordinator = SyncCoordinator::new();
+        let send_body = text_body("fresh after welcome recovery");
+        let send_body_bytes = send_body.to_bytes().unwrap();
+        let mut conversation = current_member
+            .create_group(b"placeholder-conversation")
+            .unwrap();
+        let outcome = coordinator
+            .send_message_body(
+                &client,
+                &mut store,
+                &mut current_member,
+                &mut conversation,
+                current_account,
+                current_device,
+                chat_id,
+                None,
+                &send_body,
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.server_seq, 5);
+        assert_eq!(coordinator.chat_cursor(chat_id), Some(5));
+        assert_eq!(conversation.group_id(), expected_group_id);
+        assert_eq!(
+            store.chat_mls_group_id(chat_id).as_deref(),
+            Some(expected_group_id.as_slice())
+        );
+
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.chat_detail_requests, 1);
+        assert_eq!(state.history_requests, 1);
+        assert_eq!(state.history_after_server_seq_requests, vec![None]);
+        assert_eq!(state.create_requests.len(), 1);
+        let ciphertext =
+            decode_b64_field("ciphertext_b64", &state.create_requests[0].ciphertext_b64).unwrap();
+        drop(state);
+        match alice
+            .process_message(&mut alice_group, &ciphertext)
+            .unwrap()
+        {
+            MlsProcessResult::ApplicationMessage(bytes) => assert_eq!(bytes, send_body_bytes),
+            other => panic!("expected application message, got {other:?}"),
+        }
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn send_message_returns_rebootstrap_guidance_when_no_matching_key_package_exists_even_after_refresh()
+     {
+        let chat_id = ChatId(Uuid::new_v4());
+        let alice_account = AccountId(Uuid::new_v4());
+        let alice_device = DeviceId(Uuid::new_v4());
+        let current_account = AccountId(Uuid::new_v4());
+        let current_device = DeviceId(Uuid::new_v4());
+        let alice = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+        let stale_member = MlsFacade::new(b"stale-device".to_vec()).unwrap();
+        let mut current_member = MlsFacade::new(b"current-device".to_vec()).unwrap();
+
+        let stale_key_package = stale_member.generate_key_package().unwrap();
+        let mut alice_group = alice.create_group(chat_id.0.as_bytes()).unwrap();
+        let stale_add_bundle = alice
+            .add_members(&mut alice_group, &[stale_key_package])
+            .unwrap();
+
+        let stale_commit_message_id = MessageId(Uuid::new_v4());
+        let stale_welcome_message_id = MessageId(Uuid::new_v4());
+        let full_history = vec![
+            MessageEnvelope {
+                message_id: stale_commit_message_id,
+                chat_id,
+                server_seq: 1,
+                sender_account_id: alice_account,
+                sender_device_id: alice_device,
+                epoch: stale_add_bundle.epoch,
+                message_kind: MessageKind::Commit,
+                content_type: ContentType::ChatEvent,
+                ciphertext_b64: crate::encode_b64(&stale_add_bundle.commit_message),
+                aad_json: json!({}),
+                created_at_unix: 1,
+            },
+            MessageEnvelope {
+                message_id: stale_welcome_message_id,
+                chat_id,
+                server_seq: 2,
+                sender_account_id: alice_account,
+                sender_device_id: alice_device,
+                epoch: stale_add_bundle.epoch,
+                message_kind: MessageKind::WelcomeRef,
+                content_type: ContentType::ChatEvent,
+                ciphertext_b64: crate::encode_b64(
+                    stale_add_bundle.welcome_message.as_ref().unwrap(),
+                ),
+                aad_json: json!({
+                    "_trix": {
+                        "ratchet_tree_b64": crate::encode_b64(
+                            stale_add_bundle.ratchet_tree.as_ref().unwrap()
+                        )
+                    }
+                }),
+                created_at_unix: 2,
+            },
+        ];
+
+        let mut store = LocalHistoryStore::new();
+        store
+            .apply_chat_detail(&empty_chat_detail(
+                chat_id,
+                2,
+                stale_add_bundle.epoch,
+                Some(full_history[1].clone()),
+                Some(stale_commit_message_id),
+            ))
+            .unwrap();
+        store
+            .apply_chat_history(&trix_types::ChatHistoryResponse {
+                chat_id,
+                messages: full_history.clone(),
+            })
+            .unwrap();
+        store
+            .set_chat_mls_group_id(chat_id, b"stale-group-id")
+            .unwrap();
+
+        let server = MockChatServer::spawn(MockChatServerState {
+            chat_detail: empty_chat_detail(
+                chat_id,
+                2,
+                stale_add_bundle.epoch,
+                Some(full_history[1].clone()),
+                Some(stale_commit_message_id),
+            ),
+            history: full_history,
+            sender_account_id: current_account,
+            sender_device_id: current_device,
+            expected_create_epoch: Some(stale_add_bundle.epoch),
+            create_requests: Vec::new(),
+            create_responses: BTreeMap::new(),
+            chat_detail_requests: 0,
+            history_requests: 0,
+            history_after_server_seq_requests: Vec::new(),
+            reset_requests: 0,
+            published_key_package_requests: Vec::new(),
+        })
+        .await;
+        let client = server.client();
+
+        let mut coordinator = SyncCoordinator::new();
+        let mut conversation = current_member
+            .create_group(b"placeholder-conversation")
+            .unwrap();
+        let error = coordinator
+            .send_message_body(
+                &client,
+                &mut store,
+                &mut current_member,
+                &mut conversation,
+                current_account,
+                current_device,
+                chat_id,
+                None,
+                &text_body("should fail with recovery guidance"),
+                None,
+            )
+            .await
+            .expect_err("missing key package should produce rebootstrap guidance");
+
+        assert_eq!(
+            error.to_string(),
+            "This chat can't be opened on this device because its local bootstrap keys were lost. Open it on another active device and add this device to the chat again, then try again here."
+        );
+
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.chat_detail_requests, 1);
+        assert_eq!(state.history_requests, 1);
+        assert!(state.create_requests.is_empty());
+        assert_eq!(state.reset_requests, 1);
+        assert_eq!(state.published_key_package_requests.len(), 1);
+        assert_eq!(state.published_key_package_requests[0].packages.len(), 12);
+        drop(state);
 
         server.shutdown().await;
     }

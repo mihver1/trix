@@ -168,6 +168,9 @@ pub struct MlsCommitBundle {
     pub epoch: u64,
 }
 
+pub(crate) const MISSING_WELCOME_KEY_PACKAGE_ERROR_MARKER: &str =
+    "missing welcome key package in local MLS store";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MlsProcessResult {
     ApplicationMessage(Vec<u8>),
@@ -519,11 +522,13 @@ impl MlsFacade {
             .transpose()
             .context("failed to deserialize ratchet tree")?;
         let join_config = default_group_join_config();
-        let group =
+        let staged =
             StagedWelcome::new_from_welcome(&self.provider, &join_config, welcome, ratchet_tree)
-                .context("failed to stage MLS welcome")?
-                .into_group(&self.provider)
-                .context("failed to create MLS group from welcome")?;
+                .map_err(normalize_welcome_stage_error)
+                .context("failed to stage MLS welcome")?;
+        let group = staged
+            .into_group(&self.provider)
+            .context("failed to create MLS group from welcome")?;
         self.persist_if_needed()?;
         Ok(MlsConversation { group })
     }
@@ -790,6 +795,15 @@ fn deserialize_ratchet_tree(bytes: &[u8]) -> Result<RatchetTreeIn> {
     RatchetTreeIn::tls_deserialize_exact(bytes).context("failed to deserialize MLS ratchet tree")
 }
 
+fn normalize_welcome_stage_error(error: impl std::fmt::Display) -> anyhow::Error {
+    let message = error.to_string();
+    if message.contains("No matching key package was found in the key store") {
+        anyhow!(MISSING_WELCOME_KEY_PACKAGE_ERROR_MARKER)
+    } else {
+        anyhow!(message)
+    }
+}
+
 fn export_ratchet_tree(group: &MlsGroup) -> Result<Vec<u8>> {
     group
         .export_ratchet_tree()
@@ -1052,5 +1066,33 @@ mod tests {
         );
 
         fs::remove_dir_all(storage_root).ok();
+    }
+
+    #[test]
+    fn join_group_from_welcome_marks_missing_local_key_package_with_stable_message() {
+        let alice = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+        let stale_member = MlsFacade::new(b"stale-device".to_vec()).unwrap();
+        let current_member = MlsFacade::new(b"current-device".to_vec()).unwrap();
+
+        let stale_key_package = stale_member.generate_key_package().unwrap();
+        let mut alice_group = alice.create_group(b"chat-missing-welcome-key").unwrap();
+        let add_bundle = alice
+            .add_members(&mut alice_group, &[stale_key_package])
+            .unwrap();
+
+        let error = match current_member.join_group_from_welcome(
+            add_bundle.welcome_message.as_ref().unwrap(),
+            add_bundle.ratchet_tree.as_deref(),
+        ) {
+            Ok(_) => panic!("missing local key package should fail"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error.chain().any(|cause| cause
+                .to_string()
+                .contains("missing welcome key package in local MLS store")),
+            "expected stable missing-key-package marker in error chain: {error:#}"
+        );
     }
 }

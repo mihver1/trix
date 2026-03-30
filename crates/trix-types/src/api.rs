@@ -246,6 +246,12 @@ pub struct PublishKeyPackagesResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResetKeyPackagesResponse {
+    pub device_id: DeviceId,
+    pub expired_key_package_count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReservedKeyPackage {
     pub key_package_id: String,
     pub device_id: DeviceId,

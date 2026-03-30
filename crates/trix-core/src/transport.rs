@@ -27,8 +27,8 @@ use trix_types::{
     LeaseInboxResponse, MessageId, ModifyChatDevicesRequest, ModifyChatDevicesResponse,
     ModifyChatMembersRequest, ModifyChatMembersResponse, PublishKeyPackageItem,
     PublishKeyPackagesRequest, PublishKeyPackagesResponse, ReserveKeyPackagesRequest,
-    RevokeDeviceRequest, RevokeDeviceResponse, UpdateAccountProfileRequest, VersionResponse,
-    WebSocketClientFrame, WebSocketServerFrame,
+    ResetKeyPackagesResponse, RevokeDeviceRequest, RevokeDeviceResponse,
+    UpdateAccountProfileRequest, VersionResponse, WebSocketClientFrame, WebSocketServerFrame,
 };
 
 const CONTROL_AAD_META_KEY: &str = "_trix";
@@ -527,6 +527,11 @@ impl ServerApiClient {
             ),
         )
         .await
+    }
+
+    pub async fn reset_key_packages(&self) -> Result<ResetKeyPackagesResponse, ServerApiError> {
+        self.send_json(self.request(Method::POST, "v0/key-packages:reset")?)
+            .await
     }
 
     pub async fn reserve_key_packages(

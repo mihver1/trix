@@ -433,6 +433,19 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PublishKeyPackagesResponse'
+  /v0/key-packages:reset:
+    post:
+      operationId: resetKeyPackages
+      tags: [key_packages]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Expired available and reserved key packages for the authenticated device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResetKeyPackagesResponse'
   /v0/key-packages:reserve:
     post:
       operationId: reserveKeyPackages
@@ -1719,6 +1732,16 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PublishedKeyPackage'
+    ResetKeyPackagesResponse:
+      type: object
+      required: [device_id, expired_key_package_count]
+      properties:
+        device_id:
+          $ref: '#/components/schemas/Uuid'
+        expired_key_package_count:
+          type: integer
+          format: int64
+          minimum: 0
     ReservedKeyPackage:
       type: object
       required: [key_package_id, device_id, cipher_suite, key_package_b64]
