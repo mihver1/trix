@@ -101,6 +101,7 @@ final class AppModel {
     private(set) var localIdentity: LocalDeviceIdentity?
     private(set) var localCoreState: LocalCoreStateSnapshot?
     private(set) var dashboard: DashboardData?
+    private(set) var dashboardConversationRefreshTokens: [String: String] = [:]
     private(set) var activeLinkIntent: CreateLinkIntentResponse?
     private(set) var systemSnapshot: ServerSnapshot?
     private(set) var lastUpdatedAt: Date?
@@ -108,6 +109,7 @@ final class AppModel {
     private(set) var errorMessage: String?
 
     @ObservationIgnored private let identityStore: LocalDeviceIdentityStore
+    @ObservationIgnored private let notificationCoordinator = IOSNotificationCoordinator()
     @ObservationIgnored private var hasStarted = false
     @ObservationIgnored private var directoryAccountCache: [String: DirectoryAccountSummary] = [:]
     @ObservationIgnored private var realtimeClient: RealtimeWebSocketClient?
@@ -121,10 +123,13 @@ final class AppModel {
     @ObservationIgnored private var messengerReadStates: [String: LocalChatReadStateSnapshot] = [:]
     @ObservationIgnored private var cachedAttachmentFiles: [String: DownloadedAttachmentFile] = [:]
     @ObservationIgnored private var attachmentDownloadTasks: [String: Task<DownloadedAttachmentFile, Error>] = [:]
+    @ObservationIgnored private var apnsTokenHex: String?
     @ObservationIgnored private var backgroundRealtimeTaskID: UIBackgroundTaskIdentifier = .invalid
     @ObservationIgnored private var linkIntentPollingTask: Task<Void, Never>?
     @ObservationIgnored private var linkIntentPendingBaselineDeviceIds: Set<String> = []
     private static let linkIntentPollingIntervalNanoseconds: UInt64 = 3_000_000_000
+    private static let didRequestNotificationAuthorizationDefaultsKey =
+        "notifications.ios.authorizationRequested"
 
     init(identityStore: LocalDeviceIdentityStore = LocalDeviceIdentityStore()) {
         self.identityStore = identityStore
@@ -207,7 +212,7 @@ final class AppModel {
                 } catch let error as APIError where isPendingApprovalAuthFailure(error, identity: localIdentity) {
                     invalidateCachedAuthSession()
                     await stopRealtimeConnection()
-                    dashboard = nil
+                    updateDashboardState(nil)
                     messengerSnapshot = nil
                     messengerCheckpoint = nil
                     messengerReadStates = [:]
@@ -217,7 +222,7 @@ final class AppModel {
                 }
             } else {
                 await stopRealtimeConnection()
-                dashboard = nil
+                updateDashboardState(nil)
                 localCoreState = nil
                 messengerSnapshot = nil
                 messengerCheckpoint = nil
@@ -268,6 +273,39 @@ final class AppModel {
     func handleAppDidEnterBackground(baseURLString: String) {
         currentServerBaseURLString = normalizedBaseURLString(baseURLString)
         beginBackgroundRealtimeTask(baseURLString: baseURLString)
+    }
+
+    func handleRegisteredForRemoteNotifications(deviceToken: Data) async {
+        apnsTokenHex = apnsTokenHexString(from: deviceToken)
+        await syncApplePushTokenIfPossible()
+    }
+
+    func handleRemoteNotificationsRegistrationFailure(_ error: Error) {
+        if UITestLaunchConfiguration.current.isEnabled {
+            return
+        }
+        errorMessage = error.localizedDescription
+    }
+
+    func handleRemoteNotification(userInfo: [AnyHashable: Any]) async -> UIBackgroundFetchResult {
+        guard isTrixInboxRemoteNotification(userInfo) else {
+            return .noData
+        }
+        guard let baseURLString = currentServerBaseURLString, localIdentity != nil else {
+            return .noData
+        }
+
+        let recovered = await runIncrementalBackgroundRecovery(
+            baseURLString: baseURLString,
+            resumeRealtimeConnection: false,
+            postNotifications: true
+        )
+        if recovered {
+            return .newData
+        }
+
+        await refresh(baseURLString: baseURLString)
+        return errorMessage == nil ? .newData : .failed
     }
 
     func createAccount(baseURLString: String, form: CreateAccountForm) async {
@@ -356,7 +394,7 @@ final class AppModel {
             try identityStore.save(localIdentity)
             self.localIdentity = localIdentity
             updateLocalCoreStateSnapshot(identity: localIdentity)
-            dashboard = nil
+            updateDashboardState(nil)
             activeLinkIntent = nil
             stopLinkIntentRefreshLoop()
             invalidateCachedAuthSession()
@@ -381,7 +419,7 @@ final class AppModel {
             messengerSnapshot = nil
             messengerCheckpoint = nil
             messengerReadStates = [:]
-            dashboard = nil
+            updateDashboardState(nil)
             activeLinkIntent = nil
             directoryAccountCache = [:]
             errorMessage = nil
@@ -464,19 +502,20 @@ final class AppModel {
         }
     }
 
+    @discardableResult
     func revokeDevice(
         baseURLString: String,
         deviceId: String,
         reason: String
-    ) async {
+    ) async -> Bool {
         guard !isLoading else {
-            return
+            return false
         }
 
         let trimmedReason = reason.trix_trimmed()
         guard !trimmedReason.isEmpty else {
             errorMessage = "Revoke reason must not be empty."
-            return
+            return false
         }
 
         isLoading = true
@@ -497,8 +536,10 @@ final class AppModel {
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -1641,8 +1682,12 @@ final class AppModel {
         dashboard.chats.forEach { chat in
             seedDirectoryAccountCache(with: chat.participantProfiles)
         }
-        self.dashboard = dashboard
+        updateDashboardState(dashboard)
         lastUpdatedAt = Date()
+        await ensureApplePushDeliveryConfigured(
+            client: client,
+            accessToken: session.accessToken
+        )
 
         if restartRealtime {
             await startRealtimeConnection(
@@ -1672,6 +1717,122 @@ final class AppModel {
         }
     }
 
+    private func updateDashboardState(_ newDashboard: DashboardData?) {
+        dashboard = newDashboard
+        dashboardConversationRefreshTokens = Self.makeDashboardConversationRefreshTokens(newDashboard)
+    }
+
+    private static func makeDashboardConversationRefreshTokens(_ dashboard: DashboardData?) -> [String: String] {
+        guard let dashboard else {
+            return [:]
+        }
+
+        var latestInboxIdByChatId: [String: UInt64] = [:]
+        for item in dashboard.inboxItems {
+            let chatId = item.message.chatId
+            latestInboxIdByChatId[chatId] = max(latestInboxIdByChatId[chatId] ?? 0, item.inboxId)
+        }
+
+        var tokens: [String: String] = [:]
+        tokens.reserveCapacity(max(dashboard.chats.count, latestInboxIdByChatId.count))
+
+        for chat in dashboard.chats {
+            let latestInboxId = latestInboxIdByChatId[chat.chatId] ?? 0
+            tokens[chat.chatId] = "\(latestInboxId)-\(chat.lastServerSeq)"
+        }
+
+        for (chatId, latestInboxId) in latestInboxIdByChatId where tokens[chatId] == nil {
+            tokens[chatId] = "\(latestInboxId)-0"
+        }
+
+        return tokens
+    }
+
+    private func ensureApplePushDeliveryConfigured(
+        client: APIClient,
+        accessToken: String
+    ) async {
+        await requestNotificationAuthorizationIfNeeded()
+        registerForRemoteNotificationsIfPossible()
+        guard let tokenHex = apnsTokenHex else {
+            return
+        }
+
+        let _: RegisterApplePushTokenResponse? = try? await client.put(
+            "/v0/devices/push-token",
+            body: RegisterApplePushTokenRequest(
+                tokenHex: tokenHex,
+                environment: ApplePushRegistrationEnvironment.current
+            ),
+            accessToken: accessToken
+        )
+    }
+
+    private func requestNotificationAuthorizationIfNeeded() async {
+        guard !UITestLaunchConfiguration.current.isEnabled else {
+            return
+        }
+        guard UIApplication.shared.applicationState == .active else {
+            return
+        }
+        guard !UserDefaults.standard.bool(
+            forKey: Self.didRequestNotificationAuthorizationDefaultsKey
+        ) else {
+            return
+        }
+
+        UserDefaults.standard.set(
+            true,
+            forKey: Self.didRequestNotificationAuthorizationDefaultsKey
+        )
+
+        do {
+            try await notificationCoordinator.requestAuthorizationIfNeeded()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func registerForRemoteNotificationsIfPossible() {
+        guard !UITestLaunchConfiguration.current.isEnabled else {
+            return
+        }
+        UIApplication.shared.registerForRemoteNotifications()
+    }
+
+    private func syncApplePushTokenIfPossible() async {
+        guard let tokenHex = apnsTokenHex else {
+            return
+        }
+        guard let baseURLString = currentServerBaseURLString else {
+            return
+        }
+        let accessToken =
+            dashboard?.session.accessToken ??
+            localIdentity.flatMap {
+                authSessionResolutionGate.currentUsableSession(
+                    for: $0,
+                    baseURLString: normalizedBaseURLString(baseURLString),
+                    leewaySeconds: 60
+                )?.accessToken
+            }
+        guard let accessToken else {
+            return
+        }
+        guard let client = try? APIClient(baseURLString: baseURLString) else {
+            return
+        }
+
+        let _: RegisterApplePushTokenResponse? = try? await client.put(
+            "/v0/devices/push-token",
+            body: RegisterApplePushTokenRequest(
+                tokenHex: tokenHex,
+                environment: ApplePushRegistrationEnvironment.current
+            ),
+            accessToken: accessToken
+        )
+    }
+
     private func applyLoadedDevicesToDashboard(_ devices: [DeviceSummary]) {
         guard let dashboard else {
             return
@@ -1684,14 +1845,14 @@ final class AppModel {
         let newPendingIds = pendingDeviceIds(in: sortedDevices)
             .subtracting(linkIntentPendingBaselineDeviceIds)
 
-        self.dashboard = DashboardData(
+        updateDashboardState(DashboardData(
             session: dashboard.session,
             profile: dashboard.profile,
             devices: sortedDevices,
             historySyncJobs: dashboard.historySyncJobs,
             chats: dashboard.chats,
             inboxItems: dashboard.inboxItems
-        )
+        ))
         lastUpdatedAt = Date()
 
         guard activeLinkIntent != nil,
@@ -1940,7 +2101,7 @@ final class AppModel {
         updateLocalCoreStateSnapshot(identity: localIdentity ?? identity)
 
         if let dashboard {
-            self.dashboard = DashboardData(
+            updateDashboardState(DashboardData(
                 session: dashboard.session,
                 profile: dashboard.profile,
                 devices: sortedDevicesForDisplay(
@@ -1950,7 +2111,7 @@ final class AppModel {
                 historySyncJobs: dashboard.historySyncJobs,
                 chats: snapshot.chats,
                 inboxItems: []
-            )
+            ))
             lastUpdatedAt = Date()
 
             if activeLinkIntent != nil {
@@ -2327,7 +2488,11 @@ final class AppModel {
         hasScheduledBackgroundRefresh = false
     }
 
-    private func runIncrementalBackgroundRecovery(baseURLString: String) async -> Bool {
+    private func runIncrementalBackgroundRecovery(
+        baseURLString: String,
+        resumeRealtimeConnection: Bool = true,
+        postNotifications: Bool = false
+    ) async -> Bool {
         guard dashboard != nil else {
             return false
         }
@@ -2336,6 +2501,7 @@ final class AppModel {
         }
 
         do {
+            let previousSnapshot = messengerSnapshot
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             let effectiveIdentity = try reconcileAuthenticatedIdentity(
                 baseURLString: try context.client.baseURLString(),
@@ -2361,11 +2527,19 @@ final class AppModel {
                 updateLocalCoreStateSnapshot(identity: localIdentity ?? effectiveIdentity)
             }
 
-            await startRealtimeConnection(
-                baseURLString: baseURLString,
-                accessToken: context.session.accessToken,
-                identity: localIdentity ?? effectiveIdentity
-            )
+            if postNotifications, let currentSnapshot = messengerSnapshot {
+                await postBackgroundMessageNotificationsIfNeeded(
+                    previousSnapshot: previousSnapshot,
+                    currentSnapshot: currentSnapshot
+                )
+            }
+            if resumeRealtimeConnection {
+                await startRealtimeConnection(
+                    baseURLString: baseURLString,
+                    accessToken: context.session.accessToken,
+                    identity: localIdentity ?? effectiveIdentity
+                )
+            }
             return true
         } catch {
             return false
@@ -2381,6 +2555,42 @@ final class AppModel {
         }
     }
 
+    private func postBackgroundMessageNotificationsIfNeeded(
+        previousSnapshot: SafeMessengerSnapshot?,
+        currentSnapshot: SafeMessengerSnapshot
+    ) async {
+        guard UIApplication.shared.applicationState != .active else {
+            return
+        }
+        guard let currentAccountId = currentSnapshot.accountId else {
+            return
+        }
+
+        let previousByChatId = Dictionary(
+            uniqueKeysWithValues: (previousSnapshot?.chatListItems ?? []).map { ($0.chatId, $0) }
+        )
+
+        for item in currentSnapshot.chatListItems {
+            guard item.chatType != .accountSync else {
+                continue
+            }
+
+            let previousServerSeq = previousByChatId[item.chatId]?.lastServerSeq ?? 0
+            guard item.lastServerSeq > previousServerSeq else {
+                continue
+            }
+            guard item.previewSenderAccountId != currentAccountId else {
+                continue
+            }
+
+            await notificationCoordinator.postMessageNotification(
+                identifier: "chat-\(item.chatId)-\(item.lastServerSeq)",
+                title: "\(item.displayTitle): New message",
+                body: item.previewText ?? ""
+            )
+        }
+    }
+
     private func canAccessProtectedData() -> Bool {
         UIApplication.shared.isProtectedDataAvailable
     }
@@ -2391,6 +2601,14 @@ final class AppModel {
         }
 
         return keychainOSStatus(from: error) == errSecInteractionNotAllowed
+    }
+
+    private func isTrixInboxRemoteNotification(_ userInfo: [AnyHashable: Any]) -> Bool {
+        guard let trixPayload = userInfo["trix"] as? [String: Any] else {
+            return userInfo["aps"] != nil
+        }
+
+        return (trixPayload["event"] as? String) == "inbox_update"
     }
 
     private func applyLocalCoreStateOverlay(
@@ -2407,7 +2625,7 @@ final class AppModel {
         let mergedChats = mergeDashboardChatsWithLocalState(existing: dashboard.chats)
         let mergedChatIds = Set(mergedChats.map(\.chatId))
 
-        self.dashboard = DashboardData(
+        updateDashboardState(DashboardData(
             session: session,
             profile: dashboard.profile,
             devices: dashboard.devices,
@@ -2417,7 +2635,7 @@ final class AppModel {
                 inboxItems: remainingInboxItems
             ),
             inboxItems: remainingInboxItems
-        )
+        ))
         lastUpdatedAt = Date()
 
         return Set(changedChatIds).isSubset(of: mergedChatIds)
@@ -2437,7 +2655,7 @@ final class AppModel {
             existing: dashboard.inboxItems,
             incoming: newItems
         )
-        self.dashboard = DashboardData(
+        updateDashboardState(DashboardData(
             session: dashboard.session,
             profile: dashboard.profile,
             devices: dashboard.devices,
@@ -2447,7 +2665,7 @@ final class AppModel {
                 inboxItems: mergedInboxItems
             ),
             inboxItems: mergedInboxItems
-        )
+        ))
         lastUpdatedAt = Date()
 
         if scheduleRefreshForUnknownChats,
@@ -2468,7 +2686,7 @@ final class AppModel {
         }
 
         let remainingInboxItems = dashboard.inboxItems.filter { !acknowledgedSet.contains($0.inboxId) }
-        self.dashboard = DashboardData(
+        updateDashboardState(DashboardData(
             session: dashboard.session,
             profile: dashboard.profile,
             devices: dashboard.devices,
@@ -2478,7 +2696,7 @@ final class AppModel {
                 inboxItems: remainingInboxItems
             ),
             inboxItems: remainingInboxItems
-        )
+        ))
         lastUpdatedAt = Date()
     }
 

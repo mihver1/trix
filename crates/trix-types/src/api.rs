@@ -21,6 +21,13 @@ pub enum BlobUploadStatus {
     Available,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApplePushEnvironment {
+    Sandbox,
+    Production,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HealthResponse {
     pub service: String,
@@ -142,6 +149,19 @@ pub struct DeviceSummary {
 pub struct DeviceListResponse {
     pub account_id: AccountId,
     pub devices: Vec<DeviceSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegisterApplePushTokenRequest {
+    pub token_hex: String,
+    pub environment: ApplePushEnvironment,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegisterApplePushTokenResponse {
+    pub device_id: DeviceId,
+    pub environment: ApplePushEnvironment,
+    pub push_delivery_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -608,6 +628,17 @@ pub struct CompleteHistorySyncJobRequest {
 pub struct CompleteHistorySyncJobResponse {
     pub job_id: String,
     pub job_status: HistorySyncJobStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestChatBackfillRequest {
+    pub chat_id: ChatId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestChatBackfillResponse {
+    pub job_id: String,
+    pub source_device_id: DeviceId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

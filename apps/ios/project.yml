@@ -17,14 +17,21 @@ targets:
     type: application
     platform: iOS
     deploymentTarget: "17.0"
+    preBuildScripts:
+      - script: |
+          bash "$SRCROOT/scripts/generate-trix-core-bridge.sh"
+        name: Generate trix-core iOS bridge
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(SRCROOT)/TrixiOS/Bridge/Generated/trix_core.swift
+          - $(SRCROOT)/../../target/aarch64-apple-ios/release/libtrix_core.a
+          - $(SRCROOT)/../../target/ios-simulator-universal/release/libtrix_core.a
+        showEnvVars: false
     sources:
       - path: TrixiOS
         excludes:
           - Bridge/Artifacts
       - path: UITestSupport
-    dependencies:
-      - framework: Vendor/TrixCoreFFI.xcframework
-        embed: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trixapp
@@ -34,6 +41,19 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: HGY33KYKQ2
+        CODE_SIGN_ENTITLEMENTS: TrixiOS/TrixiOS.entitlements
+        OTHER_SWIFT_FLAGS:
+          - -Xcc
+          - -fmodule-map-file=$(SRCROOT)/TrixiOS/Bridge/Generated/module.modulemap
+        OTHER_LDFLAGS[sdk=iphoneos*]:
+          - $(SRCROOT)/../../target/aarch64-apple-ios/release/libtrix_core.a
+        OTHER_LDFLAGS[sdk=iphonesimulator*]:
+          - $(SRCROOT)/../../target/ios-simulator-universal/release/libtrix_core.a
+      configs:
+        Debug:
+          TRIX_APNS_ENTITLEMENT_ENVIRONMENT: development
+        Release:
+          TRIX_APNS_ENTITLEMENT_ENVIRONMENT: production
     scheme:
       gatherCoverageData: false
       testTargets:
@@ -58,6 +78,9 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Trix.app/Trix"
         BUNDLE_LOADER: "$(TEST_HOST)"
+        OTHER_SWIFT_FLAGS:
+          - -Xcc
+          - -fmodule-map-file=$(SRCROOT)/TrixiOS/Bridge/Generated/module.modulemap
 
   TrixiOSUITests:
     type: bundle.ui-testing
@@ -77,3 +100,6 @@ targets:
         DEVELOPMENT_TEAM: HGY33KYKQ2
         TARGETED_DEVICE_FAMILY: "1,2"
         TEST_TARGET_NAME: TrixiOS
+        OTHER_SWIFT_FLAGS:
+          - -Xcc
+          - -fmodule-map-file=$(SRCROOT)/TrixiOS/Bridge/Generated/module.modulemap

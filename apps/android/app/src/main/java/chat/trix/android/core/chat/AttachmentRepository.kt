@@ -11,6 +11,8 @@ import androidx.core.content.FileProvider
 import chat.trix.android.core.auth.AuthenticatedSession
 import chat.trix.android.core.ffi.FfiAttachmentUploadParams
 import chat.trix.android.core.ffi.FfiDownloadedAttachment
+import chat.trix.android.core.ffi.FfiMessengerAttachmentMetadata
+import chat.trix.android.core.ffi.FfiMessengerException
 import chat.trix.android.core.ffi.FfiMessageBody
 import chat.trix.android.core.ffi.FfiServerApiClient
 import chat.trix.android.core.ffi.FfiUploadedAttachment
@@ -52,6 +54,27 @@ class AttachmentRepository(
                 chatId = chatId,
                 payload = payload,
                 params = FfiAttachmentUploadParams(
+                    mimeType = metadata.mimeType,
+                    fileName = metadata.fileName,
+                    widthPx = metadata.widthPx?.toUInt(),
+                    heightPx = metadata.heightPx?.toUInt(),
+                ),
+            )
+        }
+    }
+
+    suspend fun prepareMessengerAttachment(
+        contentUri: Uri,
+    ): PreparedMessengerAttachment = withContext(Dispatchers.IO) {
+        runFfi("Failed to read attachment") {
+            val contentResolver = appContext.contentResolver
+            val payload = contentResolver.openInputStream(contentUri)?.use { stream ->
+                stream.readBytes()
+            } ?: throw IOException("Attachment content is no longer readable")
+            val metadata = readAttachmentMetadata(contentUri, payload)
+            PreparedMessengerAttachment(
+                payload = payload,
+                metadata = FfiMessengerAttachmentMetadata(
                     mimeType = metadata.mimeType,
                     fileName = metadata.fileName,
                     widthPx = metadata.widthPx?.toUInt(),
@@ -146,12 +169,21 @@ class AttachmentRepository(
     }
 
     private fun materializeAttachment(attachment: ChatAttachment): File {
+        attachment.attachmentRef?.let { attachmentRef ->
+            val messengerFile = AndroidMessengerClient(appContext, session).use { messenger ->
+                messenger.getAttachment(attachmentRef)
+            }
+            return File(messengerFile.localPath)
+        }
+
         val targetFile = decryptedAttachmentFile(attachment)
         if (targetFile.exists() && targetFile.length() > 0L) {
             return targetFile
         }
 
-        val download = authenticatedClient().downloadAttachment(attachment.body)
+        val body = attachment.body
+            ?: throw IOException("Attachment is missing a download descriptor")
+        val download = authenticatedClient().downloadAttachment(body)
         writeDownloadedAttachment(targetFile, download)
         return targetFile
     }
@@ -269,6 +301,8 @@ class AttachmentRepository(
             throw error
         } catch (error: TrixFfiException) {
             throw IOException(error.message ?: fallbackMessage, error)
+        } catch (error: FfiMessengerException) {
+            throw IOException(ffiMessengerMessage(error), error)
         } catch (error: UnsatisfiedLinkError) {
             throw IOException("Rust FFI library is not available in the Android app bundle", error)
         } catch (error: RuntimeException) {
@@ -287,6 +321,11 @@ data class StagedAttachmentDraft(
     val fileName: String?,
     val widthPx: Int?,
     val heightPx: Int?,
+)
+
+data class PreparedMessengerAttachment(
+    val payload: ByteArray,
+    val metadata: FfiMessengerAttachmentMetadata,
 )
 
 data class LocalImagePreviewAttachment(

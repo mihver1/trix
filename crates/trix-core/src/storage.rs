@@ -352,13 +352,17 @@ impl LocalHistoryStore {
     pub fn new_persistent(database_path: impl Into<PathBuf>) -> Result<Self> {
         let database_path = database_path.into();
         if database_path.exists() {
-            Ok(Self {
+            let mut store = Self {
                 state: load_state_from_path(&database_path)?,
                 database_path: Some(database_path),
                 database_key: None,
                 #[cfg(test)]
                 fail_save_after: std::cell::Cell::new(None),
-            })
+            };
+            if !deduplicate_direct_chats_in_state(&mut store.state).is_empty() {
+                store.save_state()?;
+            }
+            Ok(store)
         } else {
             let store = Self {
                 state: PersistedLocalHistoryState::default(),
@@ -375,13 +379,17 @@ impl LocalHistoryStore {
     pub fn new_encrypted(database_path: impl Into<PathBuf>, database_key: Vec<u8>) -> Result<Self> {
         let database_path = database_path.into();
         if database_path.exists() {
-            Ok(Self {
+            let mut store = Self {
                 state: load_state_from_encrypted_path(&database_path, &database_key)?,
                 database_path: Some(database_path),
                 database_key: Some(database_key),
                 #[cfg(test)]
                 fail_save_after: std::cell::Cell::new(None),
-            })
+            };
+            if !deduplicate_direct_chats_in_state(&mut store.state).is_empty() {
+                store.save_state()?;
+            }
+            Ok(store)
         } else {
             let store = Self {
                 state: PersistedLocalHistoryState::default(),
@@ -440,6 +448,37 @@ impl LocalHistoryStore {
             .collect::<Vec<_>>();
         chats.sort_by(compare_chat_summaries_by_recent_activity);
         chats
+    }
+
+    pub(crate) fn find_active_direct_chat(
+        &self,
+        first_account_id: trix_types::AccountId,
+        second_account_id: trix_types::AccountId,
+    ) -> Option<ChatId> {
+        let target_pair_key =
+            direct_chat_pair_key_for_account_ids(&[first_account_id, second_account_id]);
+        self.state
+            .chats
+            .iter()
+            .filter_map(|(chat_id, state)| {
+                if !state.is_active {
+                    return None;
+                }
+                let pair_key = direct_chat_pair_key_from_state(state)?;
+                if pair_key != target_pair_key {
+                    return None;
+                }
+                Some((chat_id.as_str(), state))
+            })
+            .max_by(|(left_chat_id, left_state), (right_chat_id, right_state)| {
+                compare_direct_chat_state_preference(
+                    left_chat_id,
+                    left_state,
+                    right_chat_id,
+                    right_state,
+                )
+            })
+            .and_then(|(chat_id, _)| parse_chat_id(chat_id).ok())
     }
 
     pub fn list_local_chat_list_items(
@@ -1143,6 +1182,25 @@ impl LocalHistoryStore {
         Ok(None)
     }
 
+    pub fn chats_with_unavailable_messages(&self) -> Vec<ChatId> {
+        self.state
+            .chats
+            .iter()
+            .filter_map(|(key, chat)| {
+                let has_unavailable = chat.projected_messages.values().any(|msg| {
+                    msg.projection_kind == LocalProjectionKind::ApplicationMessage
+                        && msg.materialized_body_b64.is_none()
+                        && msg.message_kind == trix_types::MessageKind::Application
+                });
+                if has_unavailable {
+                    uuid::Uuid::parse_str(key).ok().map(ChatId)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     fn prepare_projection_tail_rebuild(
         &mut self,
         chat_id: ChatId,
@@ -1777,6 +1835,20 @@ impl LocalHistoryStore {
         self.persist_if_needed(changed)
     }
 
+    pub fn clear_outbox_prepared_send(&mut self, message_id: MessageId) -> Result<()> {
+        let message = self
+            .state
+            .outbox
+            .get_mut(&message_id.0.to_string())
+            .ok_or_else(|| anyhow!("outbox message {} is missing", message_id.0))?;
+        if message.prepared_send.is_some() {
+            message.prepared_send = None;
+            self.persist_if_needed(true)
+        } else {
+            Ok(())
+        }
+    }
+
     pub fn remove_outbox_message(&mut self, message_id: MessageId) -> Result<()> {
         let removed = self
             .state
@@ -2054,6 +2126,12 @@ impl LocalHistoryStore {
                 chats_upserted += 1;
                 changed_chat_ids.insert(chat_id.clone());
             }
+        }
+
+        let removed_duplicate_chat_ids = deduplicate_direct_chats_in_state(&mut self.state);
+        if !removed_duplicate_chat_ids.is_empty() {
+            chats_upserted += removed_duplicate_chat_ids.len();
+            changed_chat_ids.extend(removed_duplicate_chat_ids);
         }
 
         self.persist_if_needed(chats_upserted > 0)?;
@@ -4020,6 +4098,144 @@ fn parse_chat_id(value: &str) -> Result<ChatId> {
     })?))
 }
 
+fn direct_chat_pair_key_from_state(state: &PersistedChatState) -> Option<String> {
+    if state.chat_type != ChatType::Dm {
+        return None;
+    }
+
+    let mut account_ids = state
+        .members
+        .iter()
+        .filter(|member| member.membership_status == "active")
+        .map(|member| member.account_id)
+        .collect::<Vec<_>>();
+    account_ids.sort_by_key(|account_id| account_id.0);
+    account_ids.dedup();
+    if account_ids.len() == 2 {
+        return Some(direct_chat_pair_key_for_account_ids(&account_ids));
+    }
+
+    let mut participant_account_ids = state
+        .participant_profiles
+        .iter()
+        .map(|profile| profile.account_id)
+        .collect::<Vec<_>>();
+    participant_account_ids.sort_by_key(|account_id| account_id.0);
+    participant_account_ids.dedup();
+    if participant_account_ids.len() != 2 {
+        return None;
+    }
+
+    Some(direct_chat_pair_key_for_account_ids(
+        &participant_account_ids,
+    ))
+}
+
+fn direct_chat_pair_key_for_account_ids(account_ids: &[trix_types::AccountId]) -> String {
+    let mut normalized = account_ids
+        .iter()
+        .map(|account_id| account_id.0.to_string())
+        .collect::<Vec<_>>();
+    normalized.sort();
+    normalized.dedup();
+    normalized.join(":")
+}
+
+fn compare_direct_chat_state_preference(
+    left_chat_id: &str,
+    left: &PersistedChatState,
+    right_chat_id: &str,
+    right: &PersistedChatState,
+) -> Ordering {
+    left.is_active
+        .cmp(&right.is_active)
+        .then_with(|| left.last_server_seq.cmp(&right.last_server_seq))
+        .then_with(|| {
+            left.last_message
+                .as_ref()
+                .map(|message| message.created_at_unix)
+                .unwrap_or_default()
+                .cmp(
+                    &right
+                        .last_message
+                        .as_ref()
+                        .map(|message| message.created_at_unix)
+                        .unwrap_or_default(),
+                )
+        })
+        .then_with(|| left.epoch.cmp(&right.epoch))
+        .then_with(|| {
+            left.projected_cursor_server_seq
+                .cmp(&right.projected_cursor_server_seq)
+        })
+        .then_with(|| {
+            left.read_cursor_server_seq
+                .cmp(&right.read_cursor_server_seq)
+        })
+        .then_with(|| left_chat_id.cmp(right_chat_id))
+}
+
+fn deduplicate_direct_chats_in_state(state: &mut PersistedLocalHistoryState) -> Vec<String> {
+    let chat_ids = state.chats.keys().cloned().collect::<Vec<_>>();
+    let mut canonical_chat_ids_by_pair = BTreeMap::<String, String>::new();
+
+    for chat_id in &chat_ids {
+        let Some(chat_state) = state.chats.get(chat_id) else {
+            continue;
+        };
+        let Some(pair_key) = direct_chat_pair_key_from_state(chat_state) else {
+            continue;
+        };
+
+        let should_replace = canonical_chat_ids_by_pair
+            .get(&pair_key)
+            .and_then(|existing_chat_id| {
+                state.chats.get(existing_chat_id).map(|existing_state| {
+                    compare_direct_chat_state_preference(
+                        chat_id,
+                        chat_state,
+                        existing_chat_id,
+                        existing_state,
+                    ) == Ordering::Greater
+                })
+            })
+            .unwrap_or(true);
+
+        if should_replace {
+            canonical_chat_ids_by_pair.insert(pair_key, chat_id.clone());
+        }
+    }
+
+    let canonical_chat_ids = canonical_chat_ids_by_pair
+        .into_values()
+        .collect::<BTreeSet<_>>();
+    let removed_chat_ids = chat_ids
+        .into_iter()
+        .filter(|chat_id| {
+            state
+                .chats
+                .get(chat_id)
+                .and_then(direct_chat_pair_key_from_state)
+                .is_some()
+                && !canonical_chat_ids.contains(chat_id)
+        })
+        .collect::<Vec<_>>();
+
+    if removed_chat_ids.is_empty() {
+        return removed_chat_ids;
+    }
+
+    let removed_chat_id_set = removed_chat_ids.iter().cloned().collect::<BTreeSet<_>>();
+    for chat_id in &removed_chat_ids {
+        state.chats.remove(chat_id);
+    }
+    state
+        .outbox
+        .retain(|_, message| !removed_chat_id_set.contains(&message.chat_id.0.to_string()));
+
+    removed_chat_ids
+}
+
 #[cfg(test)]
 mod tests {
     use std::{collections::BTreeMap, env, fs, path::Path};
@@ -4672,6 +4888,149 @@ mod tests {
         let shm_path = PathBuf::from(format!("{}-shm", database_path.display()));
         fs::remove_file(wal_path).ok();
         fs::remove_file(shm_path).ok();
+    }
+
+    #[test]
+    fn local_history_store_deduplicates_direct_messages_on_load() {
+        let database_path =
+            env::temp_dir().join(format!("trix-history-dm-dedupe-{}.db", Uuid::new_v4()));
+        let self_account_id = AccountId(Uuid::new_v4());
+        let peer_account_id = AccountId(Uuid::new_v4());
+        let self_device_id = DeviceId(Uuid::new_v4());
+        let older_chat_id = ChatId(Uuid::new_v4());
+        let newer_chat_id = ChatId(Uuid::new_v4());
+
+        let duplicate_dm_state = PersistedLocalHistoryState {
+            version: 1,
+            chats: BTreeMap::from([
+                (
+                    older_chat_id.0.to_string(),
+                    PersistedChatState {
+                        is_active: true,
+                        chat_type: ChatType::Dm,
+                        title: None,
+                        last_server_seq: 2,
+                        pending_message_count: 0,
+                        last_message: None,
+                        epoch: 1,
+                        last_commit_message_id: None,
+                        participant_profiles: vec![
+                            ChatParticipantProfileSummary {
+                                account_id: self_account_id,
+                                handle: Some("alice".to_owned()),
+                                profile_name: "Alice".to_owned(),
+                                profile_bio: None,
+                            },
+                            ChatParticipantProfileSummary {
+                                account_id: peer_account_id,
+                                handle: Some("bob".to_owned()),
+                                profile_name: "Bob".to_owned(),
+                                profile_bio: None,
+                            },
+                        ],
+                        members: Vec::new(),
+                        device_members: Vec::new(),
+                        mls_group_id_b64: None,
+                        messages: BTreeMap::new(),
+                        read_cursor_server_seq: 1,
+                        projected_cursor_server_seq: 1,
+                        projected_messages: BTreeMap::new(),
+                    },
+                ),
+                (
+                    newer_chat_id.0.to_string(),
+                    PersistedChatState {
+                        is_active: true,
+                        chat_type: ChatType::Dm,
+                        title: None,
+                        last_server_seq: 5,
+                        pending_message_count: 0,
+                        last_message: None,
+                        epoch: 3,
+                        last_commit_message_id: None,
+                        participant_profiles: vec![
+                            ChatParticipantProfileSummary {
+                                account_id: self_account_id,
+                                handle: Some("alice".to_owned()),
+                                profile_name: "Alice".to_owned(),
+                                profile_bio: None,
+                            },
+                            ChatParticipantProfileSummary {
+                                account_id: peer_account_id,
+                                handle: Some("bob".to_owned()),
+                                profile_name: "Bob".to_owned(),
+                                profile_bio: None,
+                            },
+                        ],
+                        members: Vec::new(),
+                        device_members: Vec::new(),
+                        mls_group_id_b64: None,
+                        messages: BTreeMap::new(),
+                        read_cursor_server_seq: 4,
+                        projected_cursor_server_seq: 4,
+                        projected_messages: BTreeMap::new(),
+                    },
+                ),
+            ]),
+            attachment_refs: BTreeMap::new(),
+            attachment_ref_index: BTreeMap::new(),
+            outbox: BTreeMap::from([
+                (
+                    MessageId(Uuid::new_v4()).0.to_string(),
+                    LocalOutboxMessage {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id: older_chat_id,
+                        sender_account_id: self_account_id,
+                        sender_device_id: self_device_id,
+                        payload: LocalOutboxPayload::Body {
+                            body: MessageBody::Text(crate::TextMessageBody {
+                                text: "older".to_owned(),
+                            }),
+                        },
+                        queued_at_unix: 10,
+                        status: LocalOutboxStatus::Pending,
+                        failure_message: None,
+                        prepared_send: None,
+                    },
+                ),
+                (
+                    MessageId(Uuid::new_v4()).0.to_string(),
+                    LocalOutboxMessage {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id: newer_chat_id,
+                        sender_account_id: self_account_id,
+                        sender_device_id: self_device_id,
+                        payload: LocalOutboxPayload::Body {
+                            body: MessageBody::Text(crate::TextMessageBody {
+                                text: "newer".to_owned(),
+                            }),
+                        },
+                        queued_at_unix: 11,
+                        status: LocalOutboxStatus::Pending,
+                        failure_message: None,
+                        prepared_send: None,
+                    },
+                ),
+            ]),
+        };
+
+        save_state_to_path(&database_path, None, &duplicate_dm_state).unwrap();
+
+        let restored = LocalHistoryStore::new_persistent(&database_path).unwrap();
+        let chats = restored.list_chats();
+        assert_eq!(chats.len(), 1);
+        assert_eq!(chats[0].chat_id, newer_chat_id);
+        assert!(restored.get_chat(older_chat_id).is_none());
+        assert_eq!(
+            restored
+                .list_outbox_messages(None)
+                .into_iter()
+                .map(|message| message.chat_id)
+                .collect::<Vec<_>>(),
+            vec![newer_chat_id]
+        );
+
+        cleanup_sqlite_test_path(&database_path);
     }
 
     #[test]

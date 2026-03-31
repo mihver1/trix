@@ -11,6 +11,11 @@ enum DeviceStatus: String, Codable {
     case revoked
 }
 
+enum ApplePushEnvironment: String, Codable {
+    case sandbox
+    case production
+}
+
 enum ChatType: String, Codable, CaseIterable {
     case dm
     case group
@@ -193,6 +198,17 @@ struct DeviceSummary: Decodable, Identifiable {
 struct DeviceListResponse: Decodable {
     let accountId: String
     let devices: [DeviceSummary]
+}
+
+struct RegisterApplePushTokenRequest: Encodable {
+    let tokenHex: String
+    let environment: ApplePushEnvironment
+}
+
+struct RegisterApplePushTokenResponse: Decodable {
+    let deviceId: String
+    let environment: ApplePushEnvironment
+    let pushDeliveryEnabled: Bool
 }
 
 struct CreateLinkIntentResponse: Decodable, Identifiable {

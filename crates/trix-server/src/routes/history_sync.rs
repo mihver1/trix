@@ -12,13 +12,15 @@ use trix_types::{
     AppendHistorySyncChunkRequest, AppendHistorySyncChunkResponse, CompleteHistorySyncJobRequest,
     CompleteHistorySyncJobResponse, HistorySyncChunkListResponse, HistorySyncChunkSummary,
     HistorySyncJobListResponse, HistorySyncJobRole, HistorySyncJobStatus, HistorySyncJobSummary,
-    RequestHistorySyncRepairRequest, RequestHistorySyncRepairResponse,
+    RequestChatBackfillRequest, RequestChatBackfillResponse, RequestHistorySyncRepairRequest,
+    RequestHistorySyncRepairResponse,
 };
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/jobs", get(list_jobs))
         .route("/jobs:request-repair", post(request_repair))
+        .route("/jobs/request", post(request_backfill))
         .route("/jobs/{job_id}/chunks", get(list_chunks).post(append_chunk))
         .route("/jobs/{job_id}/complete", post(complete_job))
 }
@@ -63,6 +65,25 @@ async fn list_jobs(
 
     Ok(Json(HistorySyncJobListResponse {
         jobs: jobs.into_iter().map(job_to_api).collect(),
+    }))
+}
+
+async fn request_backfill(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<RequestChatBackfillRequest>,
+) -> Result<Json<RequestChatBackfillResponse>, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+
+    let job = state
+        .db
+        .request_chat_backfill(principal.account_id, principal.device_id, request.chat_id.0)
+        .await?
+        .ok_or_else(|| AppError::not_found("no active source device available for backfill"))?;
+
+    Ok(Json(RequestChatBackfillResponse {
+        job_id: job.job_id.to_string(),
+        source_device_id: trix_types::DeviceId(job.source_device_id),
     }))
 }
 

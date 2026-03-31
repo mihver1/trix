@@ -20,12 +20,12 @@
 		34290FD5C5D6893807F2ED59 /* TrixiOSSmokeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77AFAFDD2946D1C49895D188 /* TrixiOSSmokeUITests.swift */; };
 		3CFB6C6EEB3BF0694F8C2338 /* UITestFixtureSeeder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F9754F6512B52355BDF9422 /* UITestFixtureSeeder.swift */; };
 		44F1ABEC4D9100A89C6C4CA5 /* TrixTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = D57BB0CF361A1E7900DD676C /* TrixTheme.swift */; };
+		4E5328738A4BBEEE44B65458 /* NotificationSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D27B6C1180F85DBE115F739 /* NotificationSupport.swift */; };
 		52A18846B8478503566F0B39 /* PendingApprovalStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08AA5221B78BFACBC4672FF9 /* PendingApprovalStateTests.swift */; };
 		582EAAAFF9F37CAC55419A05 /* TrixUITestApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4535E64D76739244C2930888 /* TrixUITestApp.swift */; };
 		6417EF0F56F80EA188840E68 /* TrixUITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B94177496704FC2F285C6E07 /* TrixUITestSupport.swift */; };
 		6D9D86587DA600429E137BFA /* TrixInteropSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00F9C01FC1A898BC753D579 /* TrixInteropSupport.swift */; };
 		6E3A6D003E1B1071F3141280 /* TrixCoreMessageBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 277AE7DC5FFE2238CFF5B555 /* TrixCoreMessageBridgeTests.swift */; };
-		6ED0BC0781B8D0D40D666E4B /* TrixCoreFFI.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF953E0FF2B7D830771DC6DA /* TrixCoreFFI.xcframework */; };
 		6FEC0B6CA6C8DD295B34506C /* TrixCorePersistentBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E53DB9EB4BE8475A31F2189A /* TrixCorePersistentBridge.swift */; };
 		7DA8A99622CCCA79A97EE7BF /* CreateAccountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB561F04E1C44D1888D73336 /* CreateAccountView.swift */; };
 		7EDED62A58B17E6F48430C05 /* UITestLaunchConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B51840115EF40A8C585C795 /* UITestLaunchConfiguration.swift */; };
@@ -89,6 +89,7 @@
 		3122D826CD1149DA9B2735F3 /* TrixThemeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixThemeTests.swift; sourceTree = "<group>"; };
 		3776D66EB844AFF0402EFA82 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		39DC437F679BF827B2ECC4D1 /* TrixCoreMessageBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixCoreMessageBridge.swift; sourceTree = "<group>"; };
+		3D27B6C1180F85DBE115F739 /* NotificationSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSupport.swift; sourceTree = "<group>"; };
 		3DB067EA4F79D6FAD3ECE1F0 /* DiagnosticsLogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsLogView.swift; sourceTree = "<group>"; };
 		3E8E57CCC8925A9519C5EB59 /* ServerConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConfiguration.swift; sourceTree = "<group>"; };
 		4535E64D76739244C2930888 /* TrixUITestApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixUITestApp.swift; sourceTree = "<group>"; };
@@ -114,7 +115,6 @@
 		9E6C5B8826FF255BAF650A38 /* ChatDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatDetailView.swift; sourceTree = "<group>"; };
 		9E99B20CD4D5A31B630CCE43 /* TrixiOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixiOSApp.swift; sourceTree = "<group>"; };
 		A96D86962664B4EFF403EA16 /* trix_coreFFI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = trix_coreFFI.h; sourceTree = "<group>"; };
-		AF953E0FF2B7D830771DC6DA /* TrixCoreFFI.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = TrixCoreFFI.xcframework; path = Vendor/TrixCoreFFI.xcframework; sourceTree = "<group>"; };
 		B2512DCDBA23CAA2DD01D887 /* KeychainStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStoreTests.swift; sourceTree = "<group>"; };
 		B94177496704FC2F285C6E07 /* TrixUITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixUITestSupport.swift; sourceTree = "<group>"; };
 		BC373B8F990B456994383982 /* FormAndPayloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FormAndPayloadTests.swift; sourceTree = "<group>"; };
@@ -128,32 +128,14 @@
 		D00F9C01FC1A898BC753D579 /* TrixInteropSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixInteropSupport.swift; sourceTree = "<group>"; };
 		D382E0082C361DD751AE4867 /* trix_coreFFI.modulemap */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.module-map"; path = trix_coreFFI.modulemap; sourceTree = "<group>"; };
 		D57BB0CF361A1E7900DD676C /* TrixTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixTheme.swift; sourceTree = "<group>"; };
+		DA0DA6EB261D5CAD9AE308F7 /* TrixiOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TrixiOS.entitlements; sourceTree = "<group>"; };
 		E53DB9EB4BE8475A31F2189A /* TrixCorePersistentBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixCorePersistentBridge.swift; sourceTree = "<group>"; };
 		EFBAFE33FD857EED36B6B54D /* UITestLaunchConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestLaunchConfigurationTests.swift; sourceTree = "<group>"; };
 		F16E8D46A5E1F90D5FA589FB /* MessagingLabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagingLabView.swift; sourceTree = "<group>"; };
 		FB561F04E1C44D1888D73336 /* CreateAccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateAccountView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
-/* Begin PBXFrameworksBuildPhase section */
-		47F172B22F4348BDB8B8185D /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				6ED0BC0781B8D0D40D666E4B /* TrixCoreFFI.xcframework in Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXFrameworksBuildPhase section */
-
 /* Begin PBXGroup section */
-		1C49F9CBC0D1F6A9418A6BE5 /* Frameworks */ = {
-			isa = PBXGroup;
-			children = (
-				AF953E0FF2B7D830771DC6DA /* TrixCoreFFI.xcframework */,
-			);
-			name = Frameworks;
-			sourceTree = "<group>";
-		};
 		291D9E665D29513C2BC7CA74 /* Networking */ = {
 			isa = PBXGroup;
 			children = (
@@ -169,6 +151,7 @@
 			isa = PBXGroup;
 			children = (
 				22C33A945CFEA9105871D033 /* AppModel.swift */,
+				3D27B6C1180F85DBE115F739 /* NotificationSupport.swift */,
 				6B9EE7D8E7C908B372176F97 /* RootView.swift */,
 				3E8E57CCC8925A9519C5EB59 /* ServerConfiguration.swift */,
 				7FDA29FF36D9B8FD309A8CD9 /* TrixInteropActionBridge.swift */,
@@ -268,6 +251,7 @@
 		A2DC788B5278576D5E39C8EC /* TrixiOS */ = {
 			isa = PBXGroup;
 			children = (
+				DA0DA6EB261D5CAD9AE308F7 /* TrixiOS.entitlements */,
 				2CA7D68080A784175AE79AEF /* App */,
 				E58A7DEF110BE8B6DAC446CB /* Bridge */,
 				32A0C8F0C29984AE88B0A1C4 /* Features */,
@@ -324,7 +308,6 @@
 				A4E621A93A6C6CFE42659866 /* TrixiOSTests */,
 				F9EF5F3CAE5CDC2C96F7A74F /* TrixiOSUITests */,
 				33C8067C7EE352B89690CDA4 /* UITestSupport */,
-				1C49F9CBC0D1F6A9418A6BE5 /* Frameworks */,
 				2D93899E1C1D88CEABAB3352 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -377,9 +360,9 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 30FCD116EF8786C50C1E5B59 /* Build configuration list for PBXNativeTarget "TrixiOS" */;
 			buildPhases = (
+				039B02BC37AF207158729C3A /* Generate trix-core iOS bridge */,
 				B310ED466CDDDF295B8C766A /* Sources */,
 				40F4BEBCFD16BD22B90AD4EA /* Resources */,
-				47F172B22F4348BDB8B8185D /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -467,6 +450,32 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		039B02BC37AF207158729C3A /* Generate trix-core iOS bridge */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Generate trix-core iOS bridge";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/TrixiOS/Bridge/Generated/trix_core.swift",
+				"$(SRCROOT)/../../target/aarch64-apple-ios/release/libtrix_core.a",
+				"$(SRCROOT)/../../target/ios-simulator-universal/release/libtrix_core.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "bash \"$SRCROOT/scripts/generate-trix-core-bridge.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		261027205A7C9E4993D89407 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -501,6 +510,7 @@
 				D5B3D522018E2EDCC239D6B3 /* KeychainStore.swift in Sources */,
 				0C59311F8E54EDC1AD82DE2A /* LocalDeviceIdentity.swift in Sources */,
 				8010E114AB48C5DB7FC15A51 /* MessagingLabView.swift in Sources */,
+				4E5328738A4BBEEE44B65458 /* NotificationSupport.swift in Sources */,
 				B44143903FCFD7AC94B12123 /* PendingApprovalView.swift in Sources */,
 				9A12FED66BED4B7F021152E5 /* RealtimeWebSocketClient.swift in Sources */,
 				D8728BF5E7629A0B84E4CAB4 /* RootView.swift in Sources */,
@@ -555,13 +565,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = TrixiOS/TrixiOS.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = HGY33KYKQ2;
-				FRAMEWORK_SEARCH_PATHS = (
-					"$(inherited)",
-					"\"Vendor\"",
-				);
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = TrixiOS/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -569,10 +576,21 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
+					"$(SRCROOT)/../../target/aarch64-apple-ios/release/libtrix_core.a",
+				);
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
+					"$(SRCROOT)/../../target/ios-simulator-universal/release/libtrix_core.a",
+				);
+				OTHER_SWIFT_FLAGS = (
+					"-Xcc",
+					"-fmodule-map-file=$(SRCROOT)/TrixiOS/Bridge/Generated/module.modulemap",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixapp;
 				PRODUCT_NAME = Trix;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
+				TRIX_APNS_ENTITLEMENT_ENVIRONMENT = production;
 			};
 			name = Release;
 		};
@@ -588,6 +606,10 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
+				);
+				OTHER_SWIFT_FLAGS = (
+					"-Xcc",
+					"-fmodule-map-file=$(SRCROOT)/TrixiOS/Bridge/Generated/module.modulemap",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixapp.uitests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -666,13 +688,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = TrixiOS/TrixiOS.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = HGY33KYKQ2;
-				FRAMEWORK_SEARCH_PATHS = (
-					"$(inherited)",
-					"\"Vendor\"",
-				);
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = TrixiOS/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -680,10 +699,21 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
+					"$(SRCROOT)/../../target/aarch64-apple-ios/release/libtrix_core.a",
+				);
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
+					"$(SRCROOT)/../../target/ios-simulator-universal/release/libtrix_core.a",
+				);
+				OTHER_SWIFT_FLAGS = (
+					"-Xcc",
+					"-fmodule-map-file=$(SRCROOT)/TrixiOS/Bridge/Generated/module.modulemap",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixapp;
 				PRODUCT_NAME = Trix;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
+				TRIX_APNS_ENTITLEMENT_ENVIRONMENT = development;
 			};
 			name = Debug;
 		};
@@ -699,6 +729,10 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
+				);
+				OTHER_SWIFT_FLAGS = (
+					"-Xcc",
+					"-fmodule-map-file=$(SRCROOT)/TrixiOS/Bridge/Generated/module.modulemap",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixapp.uitests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -721,6 +755,10 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
+				OTHER_SWIFT_FLAGS = (
+					"-Xcc",
+					"-fmodule-map-file=$(SRCROOT)/TrixiOS/Bridge/Generated/module.modulemap",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixapp.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -741,6 +779,10 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
+				);
+				OTHER_SWIFT_FLAGS = (
+					"-Xcc",
+					"-fmodule-map-file=$(SRCROOT)/TrixiOS/Bridge/Generated/module.modulemap",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixapp.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";

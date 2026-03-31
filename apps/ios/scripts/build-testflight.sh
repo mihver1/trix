@@ -252,6 +252,7 @@ print_runtime_summary() {
     log "Overriding MARKETING_VERSION=$TRIX_IOS_MARKETING_VERSION"
   fi
 
+
   if [[ -n "${TRIX_IOS_BUILD_NUMBER:-}" ]]; then
     log "Overriding CURRENT_PROJECT_VERSION=$TRIX_IOS_BUILD_NUMBER"
   fi
@@ -312,9 +313,8 @@ archive_app() {
     archive_args+=(MARKETING_VERSION="$TRIX_IOS_MARKETING_VERSION")
   fi
 
-  if [[ -n "${TRIX_IOS_BUILD_NUMBER:-}" ]]; then
-    archive_args+=(CURRENT_PROJECT_VERSION="$TRIX_IOS_BUILD_NUMBER")
-  fi
+
+  archive_args+=(CURRENT_PROJECT_VERSION="$(date '+%Y%m%d%H%M')")
 
   if [[ -n "${TRIX_IOS_DEVELOPMENT_TEAM:-}" ]]; then
     archive_args+=(DEVELOPMENT_TEAM="$TRIX_IOS_DEVELOPMENT_TEAM")

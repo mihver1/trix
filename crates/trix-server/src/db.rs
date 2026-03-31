@@ -14,8 +14,8 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 use trix_types::{
-    BlobUploadStatus, ChatType, ContentType, DeviceStatus, HistorySyncJobStatus,
-    HistorySyncJobType, MessageKind,
+    ApplePushEnvironment, BlobUploadStatus, ChatType, ContentType, DeviceStatus,
+    HistorySyncJobStatus, HistorySyncJobType, MessageKind,
 };
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./../../migrations");
@@ -116,6 +116,21 @@ pub struct DeviceSummaryRow {
     pub platform: String,
     pub device_status: DeviceStatus,
     pub available_key_package_count: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct RegisterApplePushTokenInput {
+    pub device_id: Uuid,
+    pub token_hex: String,
+    pub environment: ApplePushEnvironment,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeviceApnsRegistrationRow {
+    pub device_id: Uuid,
+    pub platform: String,
+    pub token_hex: String,
+    pub environment: ApplePushEnvironment,
 }
 
 #[derive(Debug)]
@@ -1890,6 +1905,142 @@ impl Database {
         Ok(jobs)
     }
 
+    pub async fn request_chat_backfill(
+        &self,
+        account_id: Uuid,
+        target_device_id: Uuid,
+        chat_id: Uuid,
+    ) -> Result<Option<HistorySyncJobRow>, AppError> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let is_member = sqlx::query_scalar::<_, bool>(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM chat_account_members
+                WHERE chat_id = $1 AND account_id = $2
+                  AND membership_status = 'active'::membership_status
+            )
+            "#,
+        )
+        .bind(chat_id)
+        .bind(account_id)
+        .fetch_one(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        if !is_member {
+            return Err(AppError::not_found("chat not found"));
+        }
+
+        let source_row = sqlx::query(
+            r#"
+            SELECT d.device_id
+            FROM devices d
+            WHERE d.account_id = $1
+              AND d.device_id <> $2
+              AND d.device_status = 'active'::device_status
+            ORDER BY d.created_at ASC
+            LIMIT 1
+            "#,
+        )
+        .bind(account_id)
+        .bind(target_device_id)
+        .fetch_optional(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(source_row) = source_row else {
+            return Ok(None);
+        };
+        let source_device_id: Uuid = row_uuid(&source_row, "device_id")?;
+
+        let existing_job_row = sqlx::query(
+            r#"
+            SELECT
+                job_id,
+                job_type::text AS job_type,
+                job_status::text AS job_status,
+                source_device_id,
+                target_device_id,
+                chat_id,
+                cursor_json,
+                extract(epoch from created_at)::bigint AS created_at_unix,
+                extract(epoch from updated_at)::bigint AS updated_at_unix
+            FROM history_sync_jobs
+            WHERE account_id = $1
+              AND target_device_id = $2
+              AND chat_id = $3
+              AND job_type = 'chat_backfill'::history_sync_job_type
+              AND job_status IN ('pending'::history_sync_job_status, 'running'::history_sync_job_status)
+            ORDER BY created_at DESC
+            LIMIT 1
+            FOR UPDATE
+            "#,
+        )
+        .bind(account_id)
+        .bind(target_device_id)
+        .bind(chat_id)
+        .fetch_optional(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        if let Some(existing_row) = existing_job_row {
+            tx.commit().await.map_err(map_db_error)?;
+            return Ok(Some(history_sync_job_row_from_db(existing_row)?));
+        }
+
+        schedule_history_sync_job_tx(
+            &mut tx,
+            account_id,
+            source_device_id,
+            target_device_id,
+            Some(chat_id),
+            HistorySyncJobType::ChatBackfill,
+            serde_json::json!({
+                "kind": "chat_backfill",
+                "chat_id": chat_id,
+                "target_device_id": target_device_id,
+                "requested_by_target": true,
+            }),
+        )
+        .await?;
+
+        let row = sqlx::query(
+            r#"
+            SELECT
+                job_id,
+                job_type::text AS job_type,
+                job_status::text AS job_status,
+                source_device_id,
+                target_device_id,
+                chat_id,
+                cursor_json,
+                extract(epoch from created_at)::bigint AS created_at_unix,
+                extract(epoch from updated_at)::bigint AS updated_at_unix
+            FROM history_sync_jobs
+            WHERE account_id = $1
+              AND target_device_id = $2
+              AND chat_id = $3
+              AND job_status = 'pending'::history_sync_job_status
+            ORDER BY created_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(account_id)
+        .bind(target_device_id)
+        .bind(chat_id)
+        .fetch_optional(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
+
+        match row {
+            Some(row) => Ok(Some(history_sync_job_row_from_db(row)?)),
+            None => Ok(None),
+        }
+    }
+
     pub async fn append_history_sync_chunk_for_source_device(
         &self,
         account_id: Uuid,
@@ -2165,6 +2316,154 @@ impl Database {
                 })
             })
             .collect()
+    }
+
+    pub async fn register_device_apns_token(
+        &self,
+        input: RegisterApplePushTokenInput,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            r#"
+            INSERT INTO device_push_registrations (
+                device_id,
+                provider,
+                token_hex,
+                environment,
+                updated_at,
+                last_success_at,
+                last_failure_at,
+                failure_reason,
+                disabled_at
+            )
+            VALUES ($1, 'apns', $2, $3, now(), NULL, NULL, NULL, NULL)
+            ON CONFLICT (device_id, provider)
+            DO UPDATE SET
+                token_hex = EXCLUDED.token_hex,
+                environment = EXCLUDED.environment,
+                updated_at = now(),
+                last_success_at = NULL,
+                last_failure_at = NULL,
+                failure_reason = NULL,
+                disabled_at = NULL
+            "#,
+        )
+        .bind(input.device_id)
+        .bind(&input.token_hex)
+        .bind(apple_push_environment_as_str(input.environment))
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(())
+    }
+
+    pub async fn delete_device_apns_token(&self, device_id: Uuid) -> Result<(), AppError> {
+        sqlx::query(
+            r#"
+            DELETE FROM device_push_registrations
+            WHERE device_id = $1
+              AND provider = 'apns'
+            "#,
+        )
+        .bind(device_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(())
+    }
+
+    pub async fn list_device_apns_registrations(
+        &self,
+        device_ids: &[Uuid],
+    ) -> Result<Vec<DeviceApnsRegistrationRow>, AppError> {
+        if device_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                dpr.device_id,
+                d.platform,
+                dpr.token_hex,
+                dpr.environment
+            FROM device_push_registrations dpr
+            JOIN devices d
+              ON d.device_id = dpr.device_id
+            WHERE dpr.provider = 'apns'
+              AND dpr.device_id = ANY($1)
+              AND d.device_status = 'active'::device_status
+              AND d.platform IN ('ios', 'macos')
+              AND dpr.disabled_at IS NULL
+            ORDER BY dpr.updated_at DESC
+            "#,
+        )
+        .bind(device_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(DeviceApnsRegistrationRow {
+                    device_id: row_uuid(&row, "device_id")?,
+                    platform: row_text(&row, "platform")?,
+                    token_hex: row_text(&row, "token_hex")?,
+                    environment: parse_apple_push_environment(&row_text(&row, "environment")?)?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn mark_device_apns_delivery_success(&self, device_id: Uuid) -> Result<(), AppError> {
+        sqlx::query(
+            r#"
+            UPDATE device_push_registrations
+            SET updated_at = now(),
+                last_success_at = now(),
+                last_failure_at = NULL,
+                failure_reason = NULL
+            WHERE device_id = $1
+              AND provider = 'apns'
+            "#,
+        )
+        .bind(device_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(())
+    }
+
+    pub async fn record_device_apns_delivery_failure(
+        &self,
+        device_id: Uuid,
+        reason: &str,
+        disable_registration: bool,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            r#"
+            UPDATE device_push_registrations
+            SET updated_at = now(),
+                last_failure_at = now(),
+                failure_reason = $2,
+                disabled_at = CASE
+                    WHEN $3 THEN COALESCE(disabled_at, now())
+                    ELSE NULL
+                END
+            WHERE device_id = $1
+              AND provider = 'apns'
+            "#,
+        )
+        .bind(device_id)
+        .bind(reason)
+        .bind(disable_registration)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(())
     }
 
     pub async fn get_device_transport_key_for_account(
@@ -3462,6 +3761,10 @@ impl Database {
         participant_account_ids.extend(target_account_ids.iter().copied());
         let participant_account_ids: Vec<Uuid> = participant_account_ids.into_iter().collect();
         let created_epoch = u64::from(input.initial_commit.is_some());
+        let direct_chat_pair_key = match input.chat_type {
+            ChatType::Dm => Some(dm_member_pair_key(&participant_account_ids)?),
+            ChatType::Group | ChatType::AccountSync => None,
+        };
 
         match input.chat_type {
             ChatType::Dm if participant_account_ids.len() != 2 => {
@@ -3550,16 +3853,35 @@ impl Database {
             ));
         }
 
+        if let Some(pair_key) = direct_chat_pair_key.as_deref() {
+            let existing_dm = sqlx::query(
+                r#"
+                SELECT chat_id
+                FROM chats
+                WHERE dm_member_pair_key = $1
+                LIMIT 1
+                "#,
+            )
+            .bind(pair_key)
+            .fetch_optional(tx.deref_mut())
+            .await
+            .map_err(map_db_error)?;
+            if existing_dm.is_some() {
+                return Err(AppError::conflict("dm chat already exists"));
+            }
+        }
+
         let chat_row = sqlx::query(
             r#"
-            INSERT INTO chats (chat_type, title, created_by_account_id)
-            VALUES ($1::chat_type, $2, $3)
+            INSERT INTO chats (chat_type, title, created_by_account_id, dm_member_pair_key)
+            VALUES ($1::chat_type, $2, $3, $4)
             RETURNING chat_id
             "#,
         )
         .bind(chat_type_db(input.chat_type))
         .bind(input.title.as_deref())
         .bind(input.creator_account_id)
+        .bind(direct_chat_pair_key.as_deref())
         .fetch_one(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
@@ -6240,6 +6562,23 @@ fn parse_device_status(value: &str) -> Result<DeviceStatus, AppError> {
     }
 }
 
+fn parse_apple_push_environment(value: &str) -> Result<ApplePushEnvironment, AppError> {
+    match value {
+        "sandbox" => Ok(ApplePushEnvironment::Sandbox),
+        "production" => Ok(ApplePushEnvironment::Production),
+        other => Err(AppError::internal(format!(
+            "unknown apple push environment from database: {other}"
+        ))),
+    }
+}
+
+fn apple_push_environment_as_str(value: ApplePushEnvironment) -> &'static str {
+    match value {
+        ApplePushEnvironment::Sandbox => "sandbox",
+        ApplePushEnvironment::Production => "production",
+    }
+}
+
 fn parse_chat_type(value: &str) -> Result<ChatType, AppError> {
     match value {
         "dm" => Ok(ChatType::Dm),
@@ -6367,6 +6706,19 @@ fn clamp_ttl_seconds(requested: Option<u64>, default_ttl: u64, max_ttl: u64) -> 
     ttl.clamp(1, max_ttl)
 }
 
+fn dm_member_pair_key(account_ids: &[Uuid]) -> Result<String, AppError> {
+    if account_ids.len() != 2 {
+        return Err(AppError::bad_request(
+            "dm chats require exactly two unique accounts",
+        ));
+    }
+    Ok(account_ids
+        .iter()
+        .map(Uuid::to_string)
+        .collect::<Vec<_>>()
+        .join(":"))
+}
+
 fn u64_to_i64(value: u64, field: &str) -> Result<i64, AppError> {
     i64::try_from(value)
         .map_err(|_| AppError::bad_request(format!("{field} exceeds supported range")))
@@ -6490,6 +6842,10 @@ fn map_db_error(err: sqlx::Error) -> AppError {
 
         if db_err.constraint() == Some("messages_pkey") {
             return AppError::conflict("message already exists");
+        }
+
+        if db_err.constraint() == Some("chats_dm_member_pair_key_idx") {
+            return AppError::conflict("dm chat already exists");
         }
     }
 
@@ -8126,6 +8482,83 @@ mod tests {
         detail_names.sort();
         assert_eq!(detail_names, vec!["alice", "bob"]);
         assert_eq!(detail.members.len(), 2);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn duplicate_direct_messages_are_rejected_for_the_same_pair() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [107; 32],
+                [108; 32],
+            ))
+            .await
+            .expect("create alice");
+        let bob = db
+            .create_account(make_account_input(
+                "bob",
+                "Bob Primary",
+                [109; 32],
+                [110; 32],
+            ))
+            .await
+            .expect("create bob");
+
+        db.publish_key_packages(
+            bob.device_id,
+            vec![PublishKeyPackageInput {
+                device_id: bob.device_id,
+                cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                key_package_bytes: b"bob-primary-kp".to_vec(),
+            }],
+        )
+        .await
+        .expect("publish bob key package");
+
+        let bob_reserved = db
+            .reserve_key_packages_for_account(alice.account_id, bob.account_id)
+            .await
+            .expect("reserve bob key package");
+        db.create_chat(CreateChatInput {
+            creator_account_id: alice.account_id,
+            creator_device_id: alice.device_id,
+            chat_type: ChatType::Dm,
+            title: None,
+            participant_account_ids: vec![bob.account_id],
+            reserved_key_package_ids: bob_reserved
+                .iter()
+                .map(|package| package.key_package_id)
+                .collect(),
+            initial_commit: Some(make_control_message("dm-create-commit")),
+            welcome_message: Some(make_control_message("dm-create-welcome")),
+        })
+        .await
+        .expect("create first dm");
+
+        let duplicate_error = db
+            .create_chat(CreateChatInput {
+                creator_account_id: alice.account_id,
+                creator_device_id: alice.device_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                participant_account_ids: vec![bob.account_id],
+                reserved_key_package_ids: Vec::new(),
+                initial_commit: None,
+                welcome_message: None,
+            })
+            .await
+            .expect_err("duplicate dm must fail");
+
+        match duplicate_error {
+            AppError::Conflict(message) => assert_eq!(message, "dm chat already exists"),
+            other => panic!("expected duplicate dm conflict, got {other:?}"),
+        }
     }
 
     #[tokio::test]

@@ -29,11 +29,27 @@ pub struct AppConfig {
     pub history_sync_retention_seconds: u64,
     pub pending_blob_retention_seconds: u64,
     pub shutdown_grace_period_seconds: u64,
+    pub apns_team_id: Option<String>,
+    pub apns_key_id: Option<String>,
+    pub apns_topic: Option<String>,
+    pub apns_private_key_pem: Option<String>,
 }
 
 impl AppConfig {
     pub fn from_env() -> Result<Self> {
         let bind_addr = env_or("TRIX_BIND_ADDR", "127.0.0.1:8080")?;
+        let apns_private_key_path = env::var("TRIX_APNS_PRIVATE_KEY_PATH").ok();
+        let apns_private_key_pem =
+            match (
+                env::var("TRIX_APNS_PRIVATE_KEY_PEM").ok(),
+                apns_private_key_path.as_deref(),
+            ) {
+                (Some(value), _) => Some(value),
+                (None, Some(path)) => Some(std::fs::read_to_string(path).with_context(|| {
+                    format!("failed to read TRIX_APNS_PRIVATE_KEY_PATH: {path}")
+                })?),
+                (None, None) => None,
+            };
         let bind_addr = SocketAddr::from_str(&bind_addr)
             .with_context(|| format!("invalid TRIX_BIND_ADDR: {bind_addr}"))?;
         let config = Self {
@@ -108,6 +124,16 @@ impl AppConfig {
             shutdown_grace_period_seconds: env_or("TRIX_SHUTDOWN_GRACE_PERIOD_SECONDS", "15")?
                 .parse()
                 .with_context(|| "invalid TRIX_SHUTDOWN_GRACE_PERIOD_SECONDS")?,
+            apns_team_id: env::var("TRIX_APNS_TEAM_ID")
+                .ok()
+                .map(normalize_optional_env_value),
+            apns_key_id: env::var("TRIX_APNS_KEY_ID")
+                .ok()
+                .map(normalize_optional_env_value),
+            apns_topic: env::var("TRIX_APNS_TOPIC")
+                .ok()
+                .map(normalize_optional_env_value),
+            apns_private_key_pem: apns_private_key_pem.map(normalize_optional_env_value),
         };
 
         config.validate()?;
@@ -150,6 +176,41 @@ impl AppConfig {
             anyhow::bail!("TRIX_SHUTDOWN_GRACE_PERIOD_SECONDS must be greater than zero");
         }
 
+        let apns_field_count = [
+            self.apns_team_id.is_some(),
+            self.apns_key_id.is_some(),
+            self.apns_topic.is_some(),
+            self.apns_private_key_pem.is_some(),
+        ]
+        .into_iter()
+        .filter(|is_present| *is_present)
+        .count();
+        if apns_field_count > 0 && apns_field_count < 4 {
+            anyhow::bail!(
+                "TRIX_APNS_TEAM_ID, TRIX_APNS_KEY_ID, TRIX_APNS_TOPIC, and TRIX_APNS_PRIVATE_KEY_PEM/TRIX_APNS_PRIVATE_KEY_PATH must be configured together"
+            );
+        }
+        if let Some(team_id) = &self.apns_team_id {
+            if team_id.is_empty() {
+                anyhow::bail!("TRIX_APNS_TEAM_ID must not be empty");
+            }
+        }
+        if let Some(key_id) = &self.apns_key_id {
+            if key_id.is_empty() {
+                anyhow::bail!("TRIX_APNS_KEY_ID must not be empty");
+            }
+        }
+        if let Some(topic) = &self.apns_topic {
+            if topic.is_empty() {
+                anyhow::bail!("TRIX_APNS_TOPIC must not be empty");
+            }
+        }
+        if let Some(private_key_pem) = &self.apns_private_key_pem {
+            if private_key_pem.is_empty() {
+                anyhow::bail!("TRIX_APNS private key must not be empty");
+            }
+        }
+
         Ok(())
     }
 }
@@ -164,6 +225,15 @@ fn env_required(key: &str) -> Result<String> {
 
 fn normalize_admin_env_value(value: String) -> String {
     value.trim().to_owned()
+}
+
+fn normalize_optional_env_value(value: String) -> String {
+    let trimmed = value.trim().to_owned();
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        trimmed
+    }
 }
 
 fn env_csv(key: &str) -> Vec<String> {
@@ -213,6 +283,10 @@ mod tests {
             history_sync_retention_seconds: 60,
             pending_blob_retention_seconds: 60,
             shutdown_grace_period_seconds: 10,
+            apns_team_id: None,
+            apns_key_id: None,
+            apns_topic: None,
+            apns_private_key_pem: None,
         }
     }
 
@@ -244,5 +318,14 @@ mod tests {
     fn normalize_admin_env_value_trims_whitespace() {
         assert_eq!(normalize_admin_env_value("  ops  \n".to_owned()), "ops");
         assert_eq!(normalize_admin_env_value("secret".to_owned()), "secret");
+    }
+
+    #[test]
+    fn validate_rejects_partial_apns_configuration() {
+        let mut config = valid_config();
+        config.apns_team_id = Some("team".to_owned());
+        config.apns_key_id = Some("key".to_owned());
+
+        assert!(config.validate().is_err());
     }
 }
