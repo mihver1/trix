@@ -103,12 +103,16 @@ async fn spawn_test_server() -> Result<TestServer> {
         history_sync_retention_seconds: 604800,
         pending_blob_retention_seconds: 86400,
         shutdown_grace_period_seconds: 1,
+        apns_team_id: None,
+        apns_key_id: None,
+        apns_topic: None,
+        apns_private_key_pem: None,
     };
 
     let db = Database::connect(&config.database_url).await?;
     let blob_store = LocalBlobStore::new(&config.blob_root)?;
     let auth = AuthManager::new(&config.jwt_signing_key);
-    let state = AppState::new(config, BuildInfo::current(), db, auth, blob_store);
+    let state = AppState::new(config, BuildInfo::current(), db, auth, blob_store)?;
     let router = trix_server::app::build_router(state)?;
 
     let task = tokio::spawn(async move {

@@ -109,6 +109,7 @@ final class AppModel {
     private(set) var errorMessage: String?
 
     @ObservationIgnored private let identityStore: LocalDeviceIdentityStore
+    @ObservationIgnored private let notificationCoordinator = IOSNotificationCoordinator()
     @ObservationIgnored private var hasStarted = false
     @ObservationIgnored private var directoryAccountCache: [String: DirectoryAccountSummary] = [:]
     @ObservationIgnored private var realtimeClient: RealtimeWebSocketClient?
@@ -122,10 +123,13 @@ final class AppModel {
     @ObservationIgnored private var messengerReadStates: [String: LocalChatReadStateSnapshot] = [:]
     @ObservationIgnored private var cachedAttachmentFiles: [String: DownloadedAttachmentFile] = [:]
     @ObservationIgnored private var attachmentDownloadTasks: [String: Task<DownloadedAttachmentFile, Error>] = [:]
+    @ObservationIgnored private var apnsTokenHex: String?
     @ObservationIgnored private var backgroundRealtimeTaskID: UIBackgroundTaskIdentifier = .invalid
     @ObservationIgnored private var linkIntentPollingTask: Task<Void, Never>?
     @ObservationIgnored private var linkIntentPendingBaselineDeviceIds: Set<String> = []
     private static let linkIntentPollingIntervalNanoseconds: UInt64 = 3_000_000_000
+    private static let didRequestNotificationAuthorizationDefaultsKey =
+        "notifications.ios.authorizationRequested"
 
     init(identityStore: LocalDeviceIdentityStore = LocalDeviceIdentityStore()) {
         self.identityStore = identityStore
@@ -269,6 +273,39 @@ final class AppModel {
     func handleAppDidEnterBackground(baseURLString: String) {
         currentServerBaseURLString = normalizedBaseURLString(baseURLString)
         beginBackgroundRealtimeTask(baseURLString: baseURLString)
+    }
+
+    func handleRegisteredForRemoteNotifications(deviceToken: Data) async {
+        apnsTokenHex = apnsTokenHexString(from: deviceToken)
+        await syncApplePushTokenIfPossible()
+    }
+
+    func handleRemoteNotificationsRegistrationFailure(_ error: Error) {
+        if UITestLaunchConfiguration.current.isEnabled {
+            return
+        }
+        errorMessage = error.localizedDescription
+    }
+
+    func handleRemoteNotification(userInfo: [AnyHashable: Any]) async -> UIBackgroundFetchResult {
+        guard isTrixInboxRemoteNotification(userInfo) else {
+            return .noData
+        }
+        guard let baseURLString = currentServerBaseURLString, localIdentity != nil else {
+            return .noData
+        }
+
+        let recovered = await runIncrementalBackgroundRecovery(
+            baseURLString: baseURLString,
+            resumeRealtimeConnection: false,
+            postNotifications: true
+        )
+        if recovered {
+            return .newData
+        }
+
+        await refresh(baseURLString: baseURLString)
+        return errorMessage == nil ? .newData : .failed
     }
 
     func createAccount(baseURLString: String, form: CreateAccountForm) async {
@@ -1647,6 +1684,10 @@ final class AppModel {
         }
         updateDashboardState(dashboard)
         lastUpdatedAt = Date()
+        await ensureApplePushDeliveryConfigured(
+            client: client,
+            accessToken: session.accessToken
+        )
 
         if restartRealtime {
             await startRealtimeConnection(
@@ -1705,6 +1746,91 @@ final class AppModel {
         }
 
         return tokens
+    }
+
+    private func ensureApplePushDeliveryConfigured(
+        client: APIClient,
+        accessToken: String
+    ) async {
+        await requestNotificationAuthorizationIfNeeded()
+        registerForRemoteNotificationsIfPossible()
+        guard let tokenHex = apnsTokenHex else {
+            return
+        }
+
+        let _: RegisterApplePushTokenResponse? = try? await client.put(
+            "/v0/devices/push-token",
+            body: RegisterApplePushTokenRequest(
+                tokenHex: tokenHex,
+                environment: ApplePushRegistrationEnvironment.current
+            ),
+            accessToken: accessToken
+        )
+    }
+
+    private func requestNotificationAuthorizationIfNeeded() async {
+        guard !UITestLaunchConfiguration.current.isEnabled else {
+            return
+        }
+        guard UIApplication.shared.applicationState == .active else {
+            return
+        }
+        guard !UserDefaults.standard.bool(
+            forKey: Self.didRequestNotificationAuthorizationDefaultsKey
+        ) else {
+            return
+        }
+
+        UserDefaults.standard.set(
+            true,
+            forKey: Self.didRequestNotificationAuthorizationDefaultsKey
+        )
+
+        do {
+            try await notificationCoordinator.requestAuthorizationIfNeeded()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func registerForRemoteNotificationsIfPossible() {
+        guard !UITestLaunchConfiguration.current.isEnabled else {
+            return
+        }
+        UIApplication.shared.registerForRemoteNotifications()
+    }
+
+    private func syncApplePushTokenIfPossible() async {
+        guard let tokenHex = apnsTokenHex else {
+            return
+        }
+        guard let baseURLString = currentServerBaseURLString else {
+            return
+        }
+        let accessToken =
+            dashboard?.session.accessToken ??
+            localIdentity.flatMap {
+                authSessionResolutionGate.currentUsableSession(
+                    for: $0,
+                    baseURLString: normalizedBaseURLString(baseURLString),
+                    leewaySeconds: 60
+                )?.accessToken
+            }
+        guard let accessToken else {
+            return
+        }
+        guard let client = try? APIClient(baseURLString: baseURLString) else {
+            return
+        }
+
+        let _: RegisterApplePushTokenResponse? = try? await client.put(
+            "/v0/devices/push-token",
+            body: RegisterApplePushTokenRequest(
+                tokenHex: tokenHex,
+                environment: ApplePushRegistrationEnvironment.current
+            ),
+            accessToken: accessToken
+        )
     }
 
     private func applyLoadedDevicesToDashboard(_ devices: [DeviceSummary]) {
@@ -2362,7 +2488,11 @@ final class AppModel {
         hasScheduledBackgroundRefresh = false
     }
 
-    private func runIncrementalBackgroundRecovery(baseURLString: String) async -> Bool {
+    private func runIncrementalBackgroundRecovery(
+        baseURLString: String,
+        resumeRealtimeConnection: Bool = true,
+        postNotifications: Bool = false
+    ) async -> Bool {
         guard dashboard != nil else {
             return false
         }
@@ -2371,6 +2501,7 @@ final class AppModel {
         }
 
         do {
+            let previousSnapshot = messengerSnapshot
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             let effectiveIdentity = try reconcileAuthenticatedIdentity(
                 baseURLString: try context.client.baseURLString(),
@@ -2396,11 +2527,19 @@ final class AppModel {
                 updateLocalCoreStateSnapshot(identity: localIdentity ?? effectiveIdentity)
             }
 
-            await startRealtimeConnection(
-                baseURLString: baseURLString,
-                accessToken: context.session.accessToken,
-                identity: localIdentity ?? effectiveIdentity
-            )
+            if postNotifications, let currentSnapshot = messengerSnapshot {
+                await postBackgroundMessageNotificationsIfNeeded(
+                    previousSnapshot: previousSnapshot,
+                    currentSnapshot: currentSnapshot
+                )
+            }
+            if resumeRealtimeConnection {
+                await startRealtimeConnection(
+                    baseURLString: baseURLString,
+                    accessToken: context.session.accessToken,
+                    identity: localIdentity ?? effectiveIdentity
+                )
+            }
             return true
         } catch {
             return false
@@ -2416,6 +2555,42 @@ final class AppModel {
         }
     }
 
+    private func postBackgroundMessageNotificationsIfNeeded(
+        previousSnapshot: SafeMessengerSnapshot?,
+        currentSnapshot: SafeMessengerSnapshot
+    ) async {
+        guard UIApplication.shared.applicationState != .active else {
+            return
+        }
+        guard let currentAccountId = currentSnapshot.accountId else {
+            return
+        }
+
+        let previousByChatId = Dictionary(
+            uniqueKeysWithValues: (previousSnapshot?.chatListItems ?? []).map { ($0.chatId, $0) }
+        )
+
+        for item in currentSnapshot.chatListItems {
+            guard item.chatType != .accountSync else {
+                continue
+            }
+
+            let previousServerSeq = previousByChatId[item.chatId]?.lastServerSeq ?? 0
+            guard item.lastServerSeq > previousServerSeq else {
+                continue
+            }
+            guard item.previewSenderAccountId != currentAccountId else {
+                continue
+            }
+
+            await notificationCoordinator.postMessageNotification(
+                identifier: "chat-\(item.chatId)-\(item.lastServerSeq)",
+                title: item.displayTitle,
+                body: item.previewText ?? "You have a new message."
+            )
+        }
+    }
+
     private func canAccessProtectedData() -> Bool {
         UIApplication.shared.isProtectedDataAvailable
     }
@@ -2426,6 +2601,14 @@ final class AppModel {
         }
 
         return keychainOSStatus(from: error) == errSecInteractionNotAllowed
+    }
+
+    private func isTrixInboxRemoteNotification(_ userInfo: [AnyHashable: Any]) -> Bool {
+        guard let trixPayload = userInfo["trix"] as? [String: Any] else {
+            return userInfo["aps"] != nil
+        }
+
+        return (trixPayload["event"] as? String) == "inbox_update"
     }
 
     private func applyLocalCoreStateOverlay(

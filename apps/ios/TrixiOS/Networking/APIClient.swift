@@ -58,6 +58,39 @@ struct APIClient {
         return try await perform(request)
     }
 
+    func put<Request: Encodable, Response: Decodable>(
+        _ path: String,
+        body: Request,
+        accessToken: String? = nil
+    ) async throws -> Response {
+        let bodyData: Data
+        do {
+            bodyData = try encoder.encode(body)
+        } catch {
+            throw APIError.encoding(error)
+        }
+
+        let request = try URLRequest(
+            url: url(for: path),
+            method: "PUT",
+            body: bodyData,
+            accessToken: accessToken
+        )
+        return try await perform(request)
+    }
+
+    func delete(
+        _ path: String,
+        accessToken: String? = nil
+    ) async throws {
+        let request = try URLRequest(
+            url: url(for: path),
+            method: "DELETE",
+            accessToken: accessToken
+        )
+        _ = try await performWithoutBody(request)
+    }
+
     func baseURLString() throws -> String {
         baseURL.absoluteString.removingPercentEncoding ?? baseURL.absoluteString
     }
@@ -74,6 +107,29 @@ struct APIClient {
         do {
             let (data, response) = try await session.data(for: request)
             return try decode(Response.self, from: data, response: response)
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.transport(error)
+        }
+    }
+
+    private func performWithoutBody(_ request: URLRequest) async throws -> VoidResponse {
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw APIError.invalidResponse
+            }
+
+            guard (200 ..< 300).contains(httpResponse.statusCode) else {
+                let serverError = try? decoder.decode(APIErrorEnvelope.self, from: data)
+                throw APIError.http(
+                    statusCode: httpResponse.statusCode,
+                    message: serverError?.message
+                )
+            }
+
+            return VoidResponse()
         } catch let error as APIError {
             throw error
         } catch {
@@ -106,6 +162,12 @@ struct APIClient {
 private struct APIErrorEnvelope: Decodable {
     let code: String
     let message: String
+}
+
+private struct VoidResponse: Decodable {
+    init() {}
+
+    init(from decoder: Decoder) throws {}
 }
 
 private extension URLRequest {

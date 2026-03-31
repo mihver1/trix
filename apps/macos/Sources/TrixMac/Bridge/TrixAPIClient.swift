@@ -65,9 +65,11 @@ struct TrixAPIClient {
     let baseURL: URL
 
     private let ffiClient: FfiServerApiClient
+    private let session: URLSession
 
     init(baseURL: URL) throws {
         self.baseURL = baseURL
+        self.session = .shared
 
         do {
             self.ffiClient = try FfiServerApiClient(baseUrl: baseURL.absoluteString)
@@ -200,6 +202,27 @@ struct TrixAPIClient {
         try await callFFI(accessToken: accessToken) { client in
             try DeviceListResponse(ffiValue: client.listDevices())
         }
+    }
+
+    func registerApplePushToken(
+        accessToken: String,
+        request: RegisterApplePushTokenRequest
+    ) async throws -> RegisterApplePushTokenResponse {
+        try await performJSONRequest(
+            path: "/v0/devices/push-token",
+            method: "PUT",
+            accessToken: accessToken,
+            body: request,
+            responseType: RegisterApplePushTokenResponse.self
+        )
+    }
+
+    func deleteApplePushToken(accessToken: String) async throws {
+        try await performEmptyRequest(
+            path: "/v0/devices/push-token",
+            method: "DELETE",
+            accessToken: accessToken
+        )
     }
 
     func fetchAccountKeyPackages(
@@ -1427,6 +1450,115 @@ struct TrixAPIClient {
         }
     }
 
+    private func performJSONRequest<Request: Encodable, Response: Decodable>(
+        path: String,
+        method: String,
+        accessToken: String,
+        body: Request,
+        responseType: Response.Type
+    ) async throws -> Response {
+        let url = absoluteURL(for: path)
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let payload: Data
+        do {
+            payload = try encoder.encode(body)
+        } catch {
+            throw TrixAPIError.invalidPayload(error.localizedDescription)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.httpBody = payload
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            return try decodeJSONResponse(response: response, data: data, as: responseType)
+        } catch let error as TrixAPIError {
+            throw error
+        } catch {
+            throw TrixAPIError.transport(error)
+        }
+    }
+
+    private func performEmptyRequest(
+        path: String,
+        method: String,
+        accessToken: String
+    ) async throws {
+        let url = absoluteURL(for: path)
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw TrixAPIError.invalidResponse
+            }
+
+            guard (200 ..< 300).contains(httpResponse.statusCode) else {
+                throw decodeServerError(statusCode: httpResponse.statusCode, data: data)
+            }
+        } catch let error as TrixAPIError {
+            throw error
+        } catch {
+            throw TrixAPIError.transport(error)
+        }
+    }
+
+    private func absoluteURL(for path: String) -> URL {
+        if let url = URL(string: path, relativeTo: baseURL)?.absoluteURL {
+            return url
+        }
+        return baseURL
+    }
+
+    private func decodeJSONResponse<Response: Decodable>(
+        response: URLResponse,
+        data: Data,
+        as responseType: Response.Type
+    ) throws -> Response {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw TrixAPIError.invalidResponse
+        }
+
+        guard (200 ..< 300).contains(httpResponse.statusCode) else {
+            throw decodeServerError(statusCode: httpResponse.statusCode, data: data)
+        }
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        do {
+            return try decoder.decode(responseType, from: data)
+        } catch {
+            throw TrixAPIError.invalidPayload(error.localizedDescription)
+        }
+    }
+
+    private func decodeServerError(statusCode: Int, data: Data) -> TrixAPIError {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        if let envelope = try? decoder.decode(ServerErrorEnvelope.self, from: data) {
+            return .server(
+                code: envelope.code,
+                message: envelope.message,
+                statusCode: statusCode
+            )
+        }
+
+        return .server(
+            code: "server_error",
+            message: HTTPURLResponse.localizedString(forStatusCode: statusCode),
+            statusCode: statusCode
+        )
+    }
+
     private static func makeLocalHistoryStore(databasePath: URL) throws -> FfiLocalHistoryStore {
         if let clientStore = try makeWorkspaceClientStore(
             workspaceRoot: databasePath.deletingLastPathComponent()
@@ -1743,6 +1875,11 @@ struct TrixAPIClient {
             statusCode: statusCode
         )
     }
+}
+
+private struct ServerErrorEnvelope: Decodable {
+    let code: String
+    let message: String
 }
 
 private struct LegacyWorkspaceState {

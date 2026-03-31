@@ -23,7 +23,7 @@ pub async fn run(config: AppConfig) -> Result<()> {
     let blob_store = LocalBlobStore::new(&config.blob_root)?;
     let auth = AuthManager::new(&config.jwt_signing_key);
     let build = BuildInfo::current();
-    let state = AppState::new(config.clone(), build, db, auth, blob_store);
+    let state = AppState::new(config.clone(), build, db, auth, blob_store)?;
     let app = build_router(state.clone())?;
 
     let (cleanup_shutdown_tx, cleanup_shutdown_rx) = watch::channel(false);

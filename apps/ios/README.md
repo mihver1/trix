@@ -17,6 +17,7 @@ The current slice covers:
 - history sync job visibility and completion against `/v0/history-sync/jobs`
 - real MLS key package publication through the persistent `trix-core` bridge against `/v0/key-packages:publish`
 - chat list, detail, history, and inbox flows against `/v0/chats`, `/v0/chats/{chat_id}/history`, `/v0/inbox`, and `/v0/inbox/lease`
+- APNs-backed background inbox wake-up pushes registered through `/v0/devices/push-token`, with notification content resolved locally after sync
 - PoC chat creation plus member/device add-remove flows using reserved key packages
 - working integration with `/v0/system/health` and `/v0/system/version`
 - working `UniFFI` bridge generation for `trix-core`
@@ -52,7 +53,6 @@ xcodegen generate
 Build for the simulator:
 
 ```bash
-./scripts/generate-trix-core-bridge.sh
 xcodebuild \
   -project TrixiOS.xcodeproj \
   -scheme TrixiOS \
@@ -146,7 +146,8 @@ TRIX_ALTOOL_KEYCHAIN_ITEM=TRIX_APPSTORE_PASSWORD \
 - `App Transport Security` is relaxed for this PoC so the client can talk to a local `http://` backend. Tighten this before shipping.
 - The app currently defaults to `http://127.0.0.1:8080`, which works for the simulator when the server runs on the same Mac.
 - `xcodebuild` requires an installed `iOS Simulator` runtime or device platform in the local `Xcode` setup.
-- `./scripts/generate-trix-core-bridge.sh` installs missing Rust iOS targets automatically, regenerates `UniFFI` Swift sources under `TrixiOS/Bridge/Generated`, and rebuilds the local `xcframework` under `Vendor/TrixCoreFFI.xcframework`.
+- `xcodebuild` now runs `./scripts/generate-trix-core-bridge.sh` automatically before app builds; the script still regenerates `UniFFI` Swift sources under `TrixiOS/Bridge/Generated` and rebuilds the local `xcframework` under `Vendor/TrixCoreFFI.xcframework` for manual inspection/debugging.
+- APNs wake-up pushes require matching Apple entitlements plus `trixd` APNs config; the server sends only safe background payloads, and message/body text is produced on-device after inbox sync.
 - Linked devices currently store only transport key material locally. They can authenticate once approved, but account-management actions that require the shared account-root key remain disabled on-device.
 - Device approval now accepts an optional `transfer_bundle_b64`, and the server exposes `GET /v0/devices/{device_id}/transfer-bundle`. The current iOS bridge still sends `nil` there until transfer-bundle generation/decryption is wired through `trix-core`.
 - The app now stores `trix-core` state under `Application Support/TrixiOS/CoreState/<account_id>/<device_id>/`, including `mls/`, `history-store.sqlite`, and `sync-state.sqlite`.
