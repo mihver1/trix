@@ -79,7 +79,7 @@ Swift bindings are checked into `apps/macos`:
 - `Sources/trix_coreFFI/trix_coreFFI.h`
 - `Sources/trix_coreFFI/module.modulemap`
 
-To regenerate them, follow [docs/ffi-bindings.md](/Users/m.verhovyh/.codex/worktrees/e1d0/trix/docs/ffi-bindings.md).
+To regenerate them, follow [../../docs/ffi-bindings.md](../../docs/ffi-bindings.md).
 
 ## Remaining Gaps
 

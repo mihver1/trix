@@ -4,10 +4,10 @@
 
 Confirmed components in the repo today:
 
-- single-binary `Axum` backend with `PostgreSQL`, automatic `sqlx` migrations, local blob storage, rate limiting, cleanup jobs, and websocket inbox delivery
-- optional APNs-backed background inbox wake-up pushes for iOS and macOS devices, with message content resolved locally after sync rather than embedded in push payloads
-- `v0` API surface for auth, accounts, directory search, device linking and approval, device revoke, key packages, chats, message history, inbox lease and ack, history sync, and blob upload and download
-- shared `trix-core` library with `OpenMLS` group state, encrypted local stores, attachment helpers, device-transfer helpers, realtime and sync runtime, and `UniFFI` bindings
+- single-binary `Axum` backend with `PostgreSQL`, automatic `sqlx` migrations, local blob storage, rate limiting, cleanup jobs, websocket inbox delivery, a separate `/v0/admin/*` control surface, and optional APNs-backed background inbox wake-up pushes for iOS and macOS devices
+- `v0` API surface for auth, accounts, directory search, device linking and approval, transfer bundles, device revoke, key packages, chats, message history, inbox lease and ack, history sync, blob upload and download, and operator admin/session/settings/users flows
+- shared `trix-core` library with `OpenMLS` group state, encrypted local stores, attachment helpers, device-transfer helpers, safe messenger snapshots/timelines, realtime and sync runtime, and `UniFFI` bindings
+- Android now routes primary messaging flows through the shared messenger core; iOS ships the consumer chat surface with projected timelines plus file/photo/video attachments; macOS ships the beta client and a separate macOS admin app
 - `trix-bot` and `trix-botd` for headless encrypted bot accounts, plus Rust, Python, and Go echo-bot examples
 
 This is still a development prototype, not a production deployment.
@@ -25,13 +25,14 @@ This is still a development prototype, not a production deployment.
 - `crates/trix-bot` headless bot runtime
 - `crates/trix-types` shared API and domain types
 - `docs/` project documentation
+- `deploy/public-test/` ingress and TLS overlay for `trix.artelproject.tech`
 - `examples/bots/` Rust, Python, and Go bot examples
 - `migrations/` SQL migrations applied by the server on startup
 - `openapi/v0.yaml` current HTTP API contract
 
 ## Local Backend Quick Start
 
-`trixd` reads process environment directly. Copying `.env.example` to `.env` is useful, but the file is not auto-loaded by the binary.
+`trixd` reads process environment directly. Copying `.env.example` to `.env` is useful, but the file is not auto-loaded by the binary. The example file includes both consumer auth config and the admin control-plane credentials required by the current backend startup path.
 
 1. Prepare local environment variables:
 
@@ -62,9 +63,9 @@ curl http://127.0.0.1:8080/v0/system/health
 
 The repo also includes a `Dockerfile` for `trixd` and a `docker-compose.yml` with `postgres` and `app` services.
 
-To enable Apple background push delivery on top of websocket/polling inbox sync, configure `TRIX_APNS_TEAM_ID`, `TRIX_APNS_KEY_ID`, `TRIX_APNS_TOPIC`, and either `TRIX_APNS_PRIVATE_KEY_PATH` or `TRIX_APNS_PRIVATE_KEY_PEM`. `trixd` sends only safe wake-up pushes (`content-available` plus a `trix.event=inbox_update` marker), so notification text stays derived on-device from synced encrypted state.
+For environment variable meanings, admin credentials, retention knobs, and rollout notes, see [docs/server-config.md](docs/server-config.md).
 
-For the full operator guide covering server startup, APNs key placement, and the first-device / linked-device / revoke lifecycle, see [docs/server-operations.md](docs/server-operations.md).
+For APNs key placement and device lifecycle operations, see [docs/server-operations.md](docs/server-operations.md). `trixd` sends only safe wake-up pushes (`content-available` plus a `trix.event=inbox_update` marker), so notification text stays derived on-device from synced encrypted state.
 
 ## Common Commands
 
@@ -72,8 +73,10 @@ For the full operator guide covering server startup, APNs key placement, and the
 make check
 make run-server
 make ffi-bindings
+make ffi-parity-audit
 cargo test --workspace
 swift test --package-path apps/macos-admin
+./scripts/client-smoke-harness.sh --list-suites
 ./scripts/client-smoke-harness.sh --suite macos-admin --no-postgres
 cargo run -p trix-botd -- stdio
 ```
@@ -90,6 +93,10 @@ cargo run -p trix-botd -- stdio
 
 ## Additional Docs
 
+- Server config and admin/runtime knobs: [docs/server-config.md](docs/server-config.md)
+- Client smoke harness: [docs/client-smoke-harness.md](docs/client-smoke-harness.md)
+- Manual client QA checklist: [docs/client-test-checklist.md](docs/client-test-checklist.md)
 - Product and architecture spec: [docs/v0-spec.md](docs/v0-spec.md)
 - Server setup, APNs, and device lifecycle: [docs/server-operations.md](docs/server-operations.md)
 - HTTP API contract: [openapi/v0.yaml](openapi/v0.yaml)
+- Public test ingress and TLS overlay: [deploy/public-test/README.md](deploy/public-test/README.md)
