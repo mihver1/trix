@@ -80,6 +80,13 @@ struct WorkspaceView: View {
         model.selectedChatListItem?.chatType ?? model.selectedChatSummary?.chatType
     }
 
+    private var previewedAttachmentBinding: Binding<PreviewedAttachmentFile?> {
+        Binding(
+            get: { model.previewedAttachment },
+            set: { model.previewedAttachment = $0 }
+        )
+    }
+
     private var presentedTimelineMessages: [PresentedTimelineMessage] {
         var receiptStatusByMessageID: [UUID: WorkspaceMessageReceiptStatus] = [:]
         let visibleMessages = model.selectedChatTimelineItems.compactMap { message -> LocalTimelineItem? in
@@ -134,8 +141,8 @@ struct WorkspaceView: View {
                     isPresented: $isPresentingCreateChat
                 ) {}
             }
-            .sheet(isPresented: $isPresentingSettings) {
-                settingsSheet
+            .sheet(item: previewedAttachmentBinding) { attachment in
+                AttachmentPreviewSheet(attachment: attachment)
             }
             .toolbar {
                 ToolbarItemGroup {
@@ -146,10 +153,7 @@ struct WorkspaceView: View {
                         Label("New Chat", systemImage: "square.and.pencil")
                     }
 
-                    Button {
-                        activeSettingsTab = .profile
-                        isPresentingSettings = true
-                    } label: {
+                    SettingsLink {
                         Label("Settings", systemImage: "gearshape")
                     }
                 }
@@ -1566,6 +1570,344 @@ struct WorkspaceView: View {
             get: { model.historySyncChunkDrafts[jobID] ?? HistorySyncChunkDraft() },
             set: { model.historySyncChunkDrafts[jobID] = $0 }
         )
+    }
+
+    private static let linkExpiryFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter
+    }()
+}
+
+struct WorkspaceSettingsView: View {
+    @Environment(\.trixColors) private var colors
+    @ObservedObject var model: AppModel
+    @State private var activeSettingsTab: SettingsTab = .profile
+
+    var body: some View {
+        NavigationSplitView {
+            List(SettingsTab.allCases, selection: $activeSettingsTab) { tab in
+                Label(tab.title, systemImage: tab.iconName)
+                    .tag(tab)
+            }
+            .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 260)
+            .listStyle(.sidebar)
+        } detail: {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    settingsContent
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .navigationTitle("Settings")
+        }
+        .frame(minWidth: 960, minHeight: 720)
+    }
+
+    @ViewBuilder
+    private var settingsContent: some View {
+        switch activeSettingsTab {
+        case .profile:
+            profileSettingsPanel
+        case .devices:
+            devicesSettingsPanel
+        case .notifications:
+            notificationsSettingsPanel
+        case .advanced:
+            advancedSettingsPanel
+        }
+    }
+
+    private var profileSettingsPanel: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            TrixPanel(
+                title: "Profile",
+                subtitle: "This is how your account appears in directory search and conversations."
+            ) {
+                VStack(alignment: .leading, spacing: 16) {
+                    TrixInputBlock("Display Name", hint: "Visible account name.") {
+                        TextField("Maksym", text: $model.editProfileDraft.profileName)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    TrixInputBlock("Handle", hint: "Optional public handle.") {
+                        TextField("mihver", text: $model.editProfileDraft.handle)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    TrixInputBlock("Bio", hint: "Optional short profile bio.") {
+                        TextEditor(text: $model.editProfileDraft.profileBio)
+                            .frame(minHeight: 120)
+                            .font(.body)
+                    }
+
+                    HStack(spacing: 12) {
+                        Button {
+                            Task {
+                                await model.updateProfile()
+                            }
+                        } label: {
+                            Label(
+                                model.isUpdatingProfile ? "Saving…" : "Save Profile",
+                                systemImage: "checkmark.circle.fill"
+                            )
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!model.canUpdateProfile)
+
+                        Button(role: .destructive) {
+                            model.signOut()
+                        } label: {
+                            Label("Forget This Device", systemImage: "trash")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+            }
+
+            if let account = model.currentAccount {
+                TrixPanel(
+                    title: "Account",
+                    subtitle: "Reference details for this signed-in identity."
+                ) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], alignment: .leading, spacing: 12) {
+                        ConversationMetaChip(label: "Account", value: shortID(account.accountId))
+                        ConversationMetaChip(label: "Handle", value: trimmedValue(account.handle) ?? "not set")
+                        ConversationMetaChip(label: "Device", value: shortID(account.deviceId))
+                        ConversationMetaChip(label: "Status", value: account.deviceStatus.label)
+                    }
+                }
+            }
+        }
+    }
+
+    private var devicesSettingsPanel: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            TrixPanel(
+                title: "Link A New Device",
+                subtitle: model.hasAccountRootKey
+                    ? "Create a link payload here, then approve the new Mac from your trusted device list."
+                    : "This Mac can create a link payload, but approval still needs a root-capable device."
+            ) {
+                VStack(alignment: .leading, spacing: 16) {
+                    Button {
+                        Task {
+                            await model.createLinkIntent()
+                        }
+                    } label: {
+                        Label(
+                            model.isCreatingLinkIntent ? "Creating Link…" : "Create Link Intent",
+                            systemImage: "qrcode.viewfinder"
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.isCreatingLinkIntent)
+
+                    if let linkIntent = model.outgoingLinkIntent {
+                        TrixInputBlock("Link Payload", hint: "Move this payload to the Mac you want to add.") {
+                            TrixPayloadBox(payload: linkIntent.payload, minHeight: 150)
+                        }
+
+                        HStack(spacing: 12) {
+                            Button {
+                                copyStringToPasteboard(linkIntent.payload)
+                            } label: {
+                                Label("Copy Payload", systemImage: "doc.on.doc")
+                            }
+                            .buttonStyle(.bordered)
+
+                            Text("expires \(Self.linkExpiryFormatter.localizedString(for: linkIntent.expiresAt, relativeTo: .now))")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(colors.inkMuted)
+                        }
+                    }
+                }
+            }
+
+            TrixPanel(
+                title: "Trusted Devices",
+                subtitle: "Approve pending devices, revoke old ones and keep your account inventory clean."
+            ) {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .center, spacing: 12) {
+                        Button {
+                            Task {
+                                await model.refreshDevices()
+                            }
+                        } label: {
+                            Label(
+                                model.isRefreshingDevices || model.isRefreshingWorkspace ? "Refreshing Devices…" : "Refresh Devices",
+                                systemImage: "arrow.triangle.2.circlepath"
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(model.isRefreshingDevices || model.isRefreshingWorkspace)
+
+                        if model.devices.contains(where: { $0.deviceStatus == .pending }) {
+                            Text("Pending devices are shown first.")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(colors.warning)
+                        }
+                    }
+
+                    if model.devices.isEmpty {
+                        EmptyWorkspaceLabel("No devices are visible for this account yet.")
+                    } else {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(model.devices) { device in
+                                DeviceRow(
+                                    device: device,
+                                    isCurrentDevice: device.deviceId == model.currentDeviceID,
+                                    canApprove: model.hasAccountRootKey &&
+                                        device.deviceStatus == .pending &&
+                                        device.deviceId != model.currentDeviceID,
+                                    isApproving: model.approvingDeviceIDs.contains(device.deviceId),
+                                    canRevoke: model.hasAccountRootKey && device.deviceId != model.currentDeviceID,
+                                    isRevoking: model.revokingDeviceIDs.contains(device.deviceId),
+                                    approve: {
+                                        Task {
+                                            await model.approvePendingDevice(device)
+                                        }
+                                    },
+                                    revoke: {
+                                        Task {
+                                            await model.revokeDevice(device)
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var notificationsSettingsPanel: some View {
+        let intervalOptions: [TimeInterval] = [15, 30, 60, 120, 300]
+
+        return VStack(alignment: .leading, spacing: 20) {
+            TrixPanel(
+                title: "Notifications",
+                subtitle: "Background polling keeps unread counts fresh and surfaces incoming messages while the app is in the background."
+            ) {
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack(spacing: 12) {
+                        TrixToneBadge(
+                            label: model.notificationPreferences.permissionState.label,
+                            tint: notificationPermissionTint
+                        )
+                        TrixToneBadge(
+                            label: model.notificationPreferences.isEnabled ? "Enabled" : "Disabled",
+                            tint: model.notificationPreferences.isEnabled ? colors.success : colors.inkMuted
+                        )
+                    }
+
+                    Toggle(
+                        "Allow background polling and message notifications",
+                        isOn: Binding(
+                            get: { model.notificationPreferences.isEnabled },
+                            set: { model.setNotificationsEnabled($0) }
+                        )
+                    )
+                    .toggleStyle(.switch)
+
+                    HStack(spacing: 12) {
+                        Button {
+                            Task {
+                                await model.requestNotificationPermission()
+                            }
+                        } label: {
+                            Label("Request Permission", systemImage: "bell.badge")
+                        }
+                        .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+
+                        Picker(
+                            "Polling Interval",
+                            selection: Binding(
+                                get: { model.notificationPreferences.backgroundPollingIntervalSeconds },
+                                set: { model.setNotificationPollingInterval($0) }
+                            )
+                        ) {
+                            ForEach(intervalOptions, id: \.self) { seconds in
+                                Text(seconds >= 60 ? "\(Int(seconds / 60)) min" : "\(Int(seconds)) sec")
+                                    .tag(seconds)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                    }
+
+                    Text("When the app is open, sync stays live in the foreground. When it is in the background, polling continues only if notifications are enabled.")
+                        .font(.footnote)
+                        .foregroundStyle(colors.inkMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private var advancedSettingsPanel: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            TrixPanel(
+                title: "Device Linking",
+                subtitle: model.hasAccountRootKey
+                    ? "Create a link intent here, then approve the pending Mac directly from the device directory once it registers."
+                    : "This device can create link intents, but approval must happen on another root-capable trusted device."
+            ) {
+                VStack(alignment: .leading, spacing: 16) {
+                    Button {
+                        Task {
+                            await model.createLinkIntent()
+                        }
+                    } label: {
+                        Label(
+                            model.isCreatingLinkIntent ? "Creating Link Intent…" : "Create Link Intent",
+                            systemImage: "qrcode.viewfinder"
+                        )
+                    }
+                    .buttonStyle(TrixActionButtonStyle(tone: .primary))
+                    .disabled(model.isCreatingLinkIntent)
+
+                    if let linkIntent = model.outgoingLinkIntent {
+                        TrixInputBlock(
+                            "Link Payload",
+                            hint: "Move this JSON to the Mac that should join the account."
+                        ) {
+                            TrixPayloadBox(payload: linkIntent.payload, minHeight: 160)
+                        }
+
+                        HStack(spacing: 12) {
+                            Button {
+                                copyStringToPasteboard(linkIntent.payload)
+                            } label: {
+                                Label("Copy Payload", systemImage: "doc.on.doc")
+                            }
+                            .buttonStyle(TrixActionButtonStyle(tone: .secondary))
+
+                            Text("expires \(Self.linkExpiryFormatter.localizedString(for: linkIntent.expiresAt, relativeTo: .now))")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(colors.inkMuted)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var notificationPermissionTint: Color {
+        switch model.notificationPreferences.permissionState {
+        case .authorized, .provisional, .ephemeral:
+            return colors.success
+        case .denied:
+            return colors.rust
+        case .notDetermined:
+            return colors.warning
+        }
+    }
+
+    private func shortID(_ uuid: UUID) -> String {
+        String(uuid.uuidString.prefix(8)).lowercased()
     }
 
     private static let linkExpiryFormatter: RelativeDateTimeFormatter = {

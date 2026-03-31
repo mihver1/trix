@@ -57,15 +57,41 @@ private struct ChatListSnapshot {
     let unreadCount: Int
 }
 
+private struct DashboardChatListRowModel: Identifiable {
+    let chat: ChatSummary
+    let snapshot: ChatListSnapshot
+    let fixtureKind: UITestFixtureChatKind?
+
+    var id: String { chat.chatId }
+}
+
+private enum DashboardSheet: Identifiable {
+    case createChat
+    case editProfile
+    case revokeDevice(DeviceSummary)
+    case linkIntent(CreateLinkIntentResponse)
+
+    var id: String {
+        switch self {
+        case .createChat:
+            return "create-chat"
+        case .editProfile:
+            return "edit-profile"
+        case let .revokeDevice(device):
+            return "revoke-\(device.deviceId)"
+        case let .linkIntent(linkIntent):
+            return "link-intent-\(linkIntent.linkIntentId)"
+        }
+    }
+}
+
 struct DashboardView: View {
     @Binding var serverBaseURL: String
     var model: AppModel
 
     @State private var isShowingForgetAlert = false
-    @State private var revokeCandidate: DeviceSummary?
+    @State private var activeSheet: DashboardSheet?
     @State private var revokeReason = ""
-    @State private var isPresentingCreateChat = false
-    @State private var isPresentingEditProfile = false
     @State private var createChatDraft = DashboardCreateChatDraft()
     @State private var editProfileDraft = EditProfileForm()
 
@@ -78,7 +104,7 @@ struct DashboardView: View {
                     onReload: reload,
                     onCompose: {
                         createChatDraft = DashboardCreateChatDraft()
-                        isPresentingCreateChat = true
+                        activeSheet = .createChat
                     }
                 )
             }
@@ -98,7 +124,7 @@ struct DashboardView: View {
                         } else {
                             editProfileDraft = EditProfileForm()
                         }
-                        isPresentingEditProfile = true
+                        activeSheet = .editProfile
                     },
                     onForgetLocalDevice: {
                         isShowingForgetAlert = true
@@ -106,8 +132,8 @@ struct DashboardView: View {
                     onCreateLinkIntent: createLinkIntent,
                     onApprovePendingDevice: approvePendingDevice(deviceId:),
                     onRevokeDevice: { device in
-                        revokeCandidate = device
                         revokeReason = ""
+                        activeSheet = .revokeDevice(device)
                     },
                     onCompleteHistorySyncJob: completeHistorySyncJob(jobId:)
                 )
@@ -127,61 +153,40 @@ struct DashboardView: View {
         } message: {
             Text("This removes local keys and session state from the iPhone. The server-side account and device record stay unchanged.")
         }
-        .sheet(isPresented: $isPresentingCreateChat) {
-            CreateChatSheet(
-                serverBaseURL: serverBaseURL,
-                model: model,
-                draft: $createChatDraft,
-                isSubmitting: model.isLoading,
-                onCancel: {
-                    isPresentingCreateChat = false
-                },
-                onCreate: createChat
-            )
-            .presentationDetents([.medium, .large])
-        }
-        .sheet(isPresented: $isPresentingEditProfile) {
-            EditProfileSheet(
-                draft: $editProfileDraft,
-                errorMessage: model.errorMessage,
-                isSubmitting: model.isLoading,
-                onCancel: {
-                    isPresentingEditProfile = false
-                },
-                onSave: saveProfile
-            )
-            .presentationDetents([.medium, .large])
-        }
-        .sheet(item: $revokeCandidate) { device in
-            RevokeDeviceSheet(
-                device: device,
-                revokeReason: $revokeReason,
-                isSubmitting: model.isLoading,
-                onCancel: {
-                    revokeCandidate = nil
-                },
-                onConfirm: {
-                    let deviceId = device.deviceId
-                    let reason = revokeReason
-                    revokeCandidate = nil
-                    revokeReason = ""
-                    Task {
-                        await model.revokeDevice(
-                            baseURLString: serverBaseURL,
-                            deviceId: deviceId,
-                            reason: reason
-                        )
+        .sheet(item: presentedSheetBinding) { sheet in
+            switch sheet {
+            case .createChat:
+                CreateChatSheet(
+                    serverBaseURL: serverBaseURL,
+                    model: model,
+                    draft: $createChatDraft,
+                    isSubmitting: model.isLoading,
+                    createAction: createChat
+                )
+                .presentationDetents([.medium, .large])
+            case .editProfile:
+                EditProfileSheet(
+                    draft: $editProfileDraft,
+                    errorMessage: model.errorMessage,
+                    isSubmitting: model.isLoading,
+                    saveAction: saveProfile
+                )
+                .presentationDetents([.medium, .large])
+            case let .revokeDevice(device):
+                RevokeDeviceSheet(
+                    device: device,
+                    revokeReason: $revokeReason,
+                    errorMessage: model.errorMessage,
+                    isSubmitting: model.isLoading,
+                    confirmAction: {
+                        await revokeDevice(deviceId: device.deviceId, reason: revokeReason)
                     }
-                }
-            )
-            .presentationDetents([.medium])
-        }
-        .sheet(item: linkIntentBinding) { linkIntent in
-            LinkIntentSheet(
-                linkIntent: linkIntent,
-                onClose: model.dismissActiveLinkIntent
-            )
-            .presentationDetents([.medium, .large])
+                )
+                .presentationDetents([.medium])
+            case let .linkIntent(linkIntent):
+                LinkIntentSheet(linkIntent: linkIntent)
+                    .presentationDetents([.medium, .large])
+            }
         }
     }
 
@@ -191,18 +196,18 @@ struct DashboardView: View {
         }
     }
 
-    private func createChat() {
-        Task {
-            if await model.createChat(
-                baseURLString: serverBaseURL,
-                chatType: createChatDraft.chatType,
-                title: createChatDraft.title,
-                participantAccountIds: createChatDraft.selectedAccountIds
-            ) != nil {
-                isPresentingCreateChat = false
-                createChatDraft = DashboardCreateChatDraft()
-            }
+    private func createChat() async -> Bool {
+        if await model.createChat(
+            baseURLString: serverBaseURL,
+            chatType: createChatDraft.chatType,
+            title: createChatDraft.title,
+            participantAccountIds: createChatDraft.selectedAccountIds
+        ) != nil {
+            createChatDraft = DashboardCreateChatDraft()
+            return true
         }
+
+        return false
     }
 
     private func completeHistorySyncJob(jobId: String) {
@@ -220,15 +225,15 @@ struct DashboardView: View {
         }
     }
 
-    private func saveProfile() {
-        Task {
-            if await model.updateAccountProfile(
-                baseURLString: serverBaseURL,
-                form: editProfileDraft
-            ) != nil {
-                isPresentingEditProfile = false
-            }
+    private func saveProfile() async -> Bool {
+        if await model.updateAccountProfile(
+            baseURLString: serverBaseURL,
+            form: editProfileDraft
+        ) != nil {
+            return true
         }
+
+        return false
     }
 
     private func approvePendingDevice(deviceId: String) {
@@ -240,12 +245,31 @@ struct DashboardView: View {
         }
     }
 
-    private var linkIntentBinding: Binding<CreateLinkIntentResponse?> {
+    private func revokeDevice(deviceId: String, reason: String) async -> Bool {
+        let didRevoke = await model.revokeDevice(
+            baseURLString: serverBaseURL,
+            deviceId: deviceId,
+            reason: reason
+        )
+        if didRevoke {
+            revokeReason = ""
+        }
+        return didRevoke
+    }
+
+    private var presentedSheet: DashboardSheet? {
+        activeSheet ?? model.activeLinkIntent.map(DashboardSheet.linkIntent)
+    }
+
+    private var presentedSheetBinding: Binding<DashboardSheet?> {
         Binding(
-            get: { model.activeLinkIntent },
+            get: { presentedSheet },
             set: { value in
                 if value == nil {
-                    model.dismissActiveLinkIntent()
+                    if case .linkIntent? = presentedSheet {
+                        model.dismissActiveLinkIntent()
+                    }
+                    activeSheet = nil
                 }
             }
         )
@@ -261,6 +285,8 @@ private struct ChatsHomeView: View {
     var body: some View {
         Group {
             if let dashboard = model.dashboard {
+                let chatRows = chatListRows(for: dashboard)
+
                 List {
                     if let errorMessage = model.errorMessage {
                         Section {
@@ -298,33 +324,28 @@ private struct ChatsHomeView: View {
                     }
 
                     Section {
-                        if dashboard.chats.isEmpty {
+                        if chatRows.isEmpty {
                             EmptyChatsView(onCompose: onCompose)
                                 .listRowInsets(EdgeInsets(top: 28, leading: 20, bottom: 28, trailing: 20))
                         } else {
-                            ForEach(dashboard.chats) { chat in
-                                let fixtureKind = UITestFixtureManifestStore.chatFixtureKind(for: chat.chatId)
-                                let row = NavigationLink {
+                            ForEach(chatRows) { row in
+                                let link = NavigationLink {
                                     ConsumerChatDetailView(
-                                        chatSummary: chat,
+                                        chatSummary: row.chat,
                                         serverBaseURL: $serverBaseURL,
                                         model: model
                                     )
                                 } label: {
                                     ChatListRow(
-                                        chatId: chat.chatId,
-                                        snapshot: dashboard.chatListSnapshot(
-                                            for: chat,
-                                            localChatListItem: model.localCoreState?.chatListItem(for: chat.chatId),
-                                            localReadState: model.localCoreState?.chatReadState(for: chat.chatId)
-                                        )
+                                        snapshot: row.snapshot,
+                                        fixtureKind: row.fixtureKind
                                     )
                                 }
 
-                                if let fixtureKind {
-                                    row.accessibilityIdentifier(TrixAccessibilityID.Dashboard.chatRow(fixtureKind))
+                                if let fixtureKind = row.fixtureKind {
+                                    link.accessibilityIdentifier(TrixAccessibilityID.Dashboard.chatRow(fixtureKind))
                                 } else {
-                                    row
+                                    link
                                 }
                             }
                         }
@@ -339,7 +360,7 @@ private struct ChatsHomeView: View {
                 }
                 .navigationTitle("Chats")
                 .overlay(alignment: .bottomTrailing) {
-                    if !dashboard.chats.isEmpty {
+                    if !chatRows.isEmpty {
                         Button(action: onCompose) {
                             Image(systemName: "square.and.pencil")
                                 .font(.system(size: 18, weight: .semibold))
@@ -370,6 +391,13 @@ private struct ChatsHomeView: View {
             }
         }
         .background(Color(uiColor: .systemGroupedBackground))
+    }
+
+    private func chatListRows(for dashboard: DashboardData) -> [DashboardChatListRowModel] {
+        dashboard.chatListRows(
+            localCoreState: model.localCoreState,
+            fixtureManifest: UITestLaunchConfiguration.current.isEnabled ? UITestFixtureManifestStore.load() : nil
+        )
     }
 }
 
@@ -931,11 +959,11 @@ private struct SettingsNavigationRow: View {
 }
 
 private struct ChatListRow: View {
-    let chatId: String
     let snapshot: ChatListSnapshot
+    let fixtureKind: UITestFixtureChatKind?
 
     var body: some View {
-        if let fixtureKind = UITestFixtureManifestStore.chatFixtureKind(for: chatId) {
+        if let fixtureKind {
             rowBody
                 .accessibilityIdentifier(TrixAccessibilityID.Dashboard.chatRow(fixtureKind))
         } else {
@@ -1014,12 +1042,12 @@ private struct EmptyChatsView: View {
 }
 
 private struct CreateChatSheet: View {
+    @Environment(\.dismiss) private var dismiss
     let serverBaseURL: String
     var model: AppModel
     @Binding var draft: DashboardCreateChatDraft
     let isSubmitting: Bool
-    let onCancel: () -> Void
-    let onCreate: () -> Void
+    let createAction: () async -> Bool
 
     @State private var directoryResults: [DirectoryAccountSummary] = []
     @State private var isSearching = false
@@ -1108,12 +1136,20 @@ private struct CreateChatSheet: View {
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: onCancel)
+                    Button("Cancel") {
+                        dismiss()
+                    }
                         .accessibilityIdentifier(TrixAccessibilityID.Dashboard.createChatCancelButton)
                 }
 
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Create", action: onCreate)
+                    Button("Create") {
+                        Task {
+                            if await createAction() {
+                                dismiss()
+                            }
+                        }
+                    }
                         .disabled(isSubmitting || !draft.canSubmit)
                 }
             }
@@ -1159,11 +1195,11 @@ private struct CreateChatSheet: View {
 }
 
 private struct EditProfileSheet: View {
+    @Environment(\.dismiss) private var dismiss
     @Binding var draft: EditProfileForm
     let errorMessage: String?
     let isSubmitting: Bool
-    let onCancel: () -> Void
-    let onSave: () -> Void
+    let saveAction: () async -> Bool
 
     var body: some View {
         NavigationStack {
@@ -1194,14 +1230,22 @@ private struct EditProfileSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: onCancel)
+                    Button("Cancel") {
+                        dismiss()
+                    }
                 }
 
                 ToolbarItem(placement: .confirmationAction) {
                     if isSubmitting {
                         ProgressView()
                     } else {
-                        Button("Save", action: onSave)
+                        Button("Save") {
+                            Task {
+                                if await saveAction() {
+                                    dismiss()
+                                }
+                            }
+                        }
                             .disabled(!draft.canSubmit)
                     }
                 }
@@ -1376,12 +1420,42 @@ private extension String {
 }
 
 private extension DashboardData {
+    func chatListRows(
+        localCoreState: LocalCoreStateSnapshot?,
+        fixtureManifest: UITestFixtureManifest?
+    ) -> [DashboardChatListRowModel] {
+        let latestInboxMessagesByChatId = latestInboxMessagesByChatId()
+        let localChatListItemsByChatId = localCoreState?.localChatListItems.reduce(into: [String: LocalChatListItemSnapshot]()) { partialResult, item in
+            partialResult[item.chatId] = item
+        } ?? [:]
+        let localReadStatesByChatId = localCoreState?.chatReadStates.reduce(into: [String: LocalChatReadStateSnapshot]()) { partialResult, readState in
+            partialResult[readState.chatId] = readState
+        } ?? [:]
+        let fixtureKindsByChatId = fixtureManifest?.chats.reduce(into: [String: UITestFixtureChatKind]()) { partialResult, record in
+            partialResult[record.chatId] = record.kind
+        } ?? [:]
+
+        return chats.map { chat in
+            DashboardChatListRowModel(
+                chat: chat,
+                snapshot: chatListSnapshot(
+                    for: chat,
+                    localChatListItem: localChatListItemsByChatId[chat.chatId],
+                    localReadState: localReadStatesByChatId[chat.chatId],
+                    latestInboxMessage: latestInboxMessagesByChatId[chat.chatId]
+                ),
+                fixtureKind: fixtureKindsByChatId[chat.chatId]
+            )
+        }
+    }
+
     func chatListSnapshot(
         for chat: ChatSummary,
         localChatListItem: LocalChatListItemSnapshot?,
-        localReadState: LocalChatReadStateSnapshot?
+        localReadState: LocalChatReadStateSnapshot?,
+        latestInboxMessage: MessageEnvelope?
     ) -> ChatListSnapshot {
-        let latestMessage = chat.lastMessage ?? latestInboxMessage(for: chat.chatId)
+        let latestMessage = chat.lastMessage ?? latestInboxMessage
         return ChatListSnapshot(
             title: localChatListItem?.displayTitle ?? chat.resolvedTitle(currentAccountId: profile.accountId),
             avatarSeedTitle: localChatListItem?.displayTitle ?? chat.avatarSeedTitle(currentAccountId: profile.accountId),
@@ -1398,12 +1472,17 @@ private extension DashboardData {
         )
     }
 
-    private func latestInboxMessage(for chatId: String) -> MessageEnvelope? {
-        inboxItems
-            .filter { $0.message.chatId == chatId }
-            .sorted { $0.message.createdAtUnix > $1.message.createdAtUnix }
-            .first?
-            .message
+    private func latestInboxMessagesByChatId() -> [String: MessageEnvelope] {
+        inboxItems.reduce(into: [String: MessageEnvelope]()) { partialResult, item in
+            let message = item.message
+            if let current = partialResult[message.chatId] {
+                if message.createdAtUnix > current.createdAtUnix {
+                    partialResult[message.chatId] = message
+                }
+            } else {
+                partialResult[message.chatId] = message
+            }
+        }
     }
 
     private func chatListPreviewText(
@@ -1617,15 +1696,23 @@ private extension HistorySyncJobStatus {
 }
 
 private struct RevokeDeviceSheet: View {
+    @Environment(\.dismiss) private var dismiss
     let device: DeviceSummary
     @Binding var revokeReason: String
+    let errorMessage: String?
     let isSubmitting: Bool
-    let onCancel: () -> Void
-    let onConfirm: () -> Void
+    let confirmAction: () async -> Bool
 
     var body: some View {
         NavigationStack {
             Form {
+                if let errorMessage {
+                    Section {
+                        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                    }
+                }
+
                 Section("Device") {
                     LabeledContent("Name") {
                         Text(device.displayName)
@@ -1655,11 +1742,19 @@ private struct RevokeDeviceSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: onCancel)
+                    Button("Cancel") {
+                        dismiss()
+                    }
                 }
 
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Remove", role: .destructive, action: onConfirm)
+                    Button("Remove", role: .destructive) {
+                        Task {
+                            if await confirmAction() {
+                                dismiss()
+                            }
+                        }
+                    }
                         .disabled(isSubmitting || revokeReason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
@@ -1668,8 +1763,8 @@ private struct RevokeDeviceSheet: View {
 }
 
 private struct LinkIntentSheet: View {
+    @Environment(\.dismiss) private var dismiss
     let linkIntent: CreateLinkIntentResponse
-    let onClose: () -> Void
     @State private var isShowingRawPayload = false
 
     var body: some View {
@@ -1727,7 +1822,9 @@ private struct LinkIntentSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close", action: onClose)
+                    Button("Close") {
+                        dismiss()
+                    }
                 }
             }
         }
@@ -1736,8 +1833,7 @@ private struct LinkIntentSheet: View {
 
 private struct LinkIntentQRCodeView: View {
     let payload: String
-    private let context = CIContext()
-    private let filter = CIFilter.qrCodeGenerator()
+    @State private var qrImage: UIImage?
 
     var body: some View {
         Group {
@@ -1756,9 +1852,16 @@ private struct LinkIntentQRCodeView: View {
             }
         }
         .frame(maxWidth: .infinity)
+        .task(id: payload) {
+            qrImage = await Task.detached(priority: .userInitiated) {
+                Self.makeQRCodeImage(for: payload)
+            }.value
+        }
     }
 
-    private var qrImage: UIImage? {
+    nonisolated private static func makeQRCodeImage(for payload: String) -> UIImage? {
+        let context = CIContext()
+        let filter = CIFilter.qrCodeGenerator()
         filter.message = Data(payload.utf8)
         filter.correctionLevel = "M"
 

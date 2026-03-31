@@ -71,9 +71,15 @@ struct ConsumerRenderedMessage: Identifiable, Equatable {
 struct ConsumerConversationTimelineRenderState: Equatable {
     let latestTimelineAnchorId: String?
     let timelineItems: [ConsumerTimelineItem]
+    let fixtureKindsByMessageId: [String: UITestFixtureMessageKind]
     let latestSentMessageId: String?
     let latestSentText: String?
     let downloadingAttachmentMessageId: String?
+}
+
+struct ConsumerTimelineRenderPayload {
+    let items: [ConsumerTimelineItem]
+    let fixtureKindsByMessageId: [String: UITestFixtureMessageKind]
 }
 
 struct ConsumerChatDetailView: View {
@@ -95,6 +101,7 @@ struct ConsumerChatDetailView: View {
     @State private var isTypingPublished = false
     @State private var latestSentMessageId: String?
     @State private var latestSentText: String?
+    @State private var fixtureKindsByMessageId: [String: UITestFixtureMessageKind] = [:]
     @FocusState private var isComposerFocused: Bool
 
     var body: some View {
@@ -291,6 +298,7 @@ struct ConsumerChatDetailView: View {
         return ConsumerConversationTimelineRenderState(
             latestTimelineAnchorId: snapshot.latestTimelineAnchorId,
             timelineItems: timelineItems,
+            fixtureKindsByMessageId: fixtureKindsByMessageId,
             latestSentMessageId: latestSentMessageId,
             latestSentText: latestSentText,
             downloadingAttachmentMessageId: downloadingAttachmentMessageId
@@ -310,17 +318,9 @@ struct ConsumerChatDetailView: View {
     }
 
     private var snapshotTaskID: String {
-        let latestInboxId = model.dashboard?
-            .inboxItems
-            .filter { $0.message.chatId == chatSummary.chatId }
-            .map(\.inboxId)
-            .max() ?? 0
-        let latestServerSeq = model.dashboard?
-            .chats
-            .first { $0.chatId == chatSummary.chatId }?
-            .lastServerSeq ?? chatSummary.lastServerSeq
-
-        return "\(chatSummary.chatId)-\(latestInboxId)-\(latestServerSeq)"
+        let refreshToken = model.dashboardConversationRefreshTokens[chatSummary.chatId]
+            ?? "0-\(snapshot?.detail.lastServerSeq ?? chatSummary.lastServerSeq)"
+        return "\(chatSummary.chatId)-\(refreshToken)"
     }
 
     private func reload() {
@@ -342,7 +342,12 @@ struct ConsumerChatDetailView: View {
                 baseURLString: serverBaseURL,
                 chatId: chatSummary.chatId
             )
-            timelineItems = ConsumerConversationTimelineBuilder.makeTimelineItems(for: loadedSnapshot)
+            let renderPayload = ConsumerConversationTimelineBuilder.makeRenderPayload(
+                for: loadedSnapshot,
+                fixtureManifest: UITestLaunchConfiguration.current.isEnabled ? UITestFixtureManifestStore.load() : nil
+            )
+            timelineItems = renderPayload.items
+            fixtureKindsByMessageId = renderPayload.fixtureKindsByMessageId
             snapshot = loadedSnapshot
             if loadedSnapshot.latestMessageId != nil {
                 _ = await model.acknowledgeConversationRead(
@@ -353,6 +358,7 @@ struct ConsumerChatDetailView: View {
                 )
             }
         } catch {
+            fixtureKindsByMessageId = [:]
             localErrorMessage = error.localizedDescription
         }
     }
@@ -496,11 +502,20 @@ struct ConsumerChatDetailView: View {
 }
 
 enum ConsumerConversationTimelineBuilder {
-    static func makeTimelineItems(for snapshot: SafeConversationSnapshot) -> [ConsumerTimelineItem] {
+    static func makeRenderPayload(
+        for snapshot: SafeConversationSnapshot,
+        fixtureManifest: UITestFixtureManifest?
+    ) -> ConsumerTimelineRenderPayload {
         // `loadConversationSnapshot()` already returns ascending server order, so keep typing cheap.
         let messages = snapshot.messages
         var items: [ConsumerTimelineItem] = []
         var receiptStatusByMessageID: [String: ConsumerReceiptStatus] = [:]
+        let participantDisplayNamesByAccountId = snapshot.detail.participantProfiles.reduce(into: [String: String]()) { partialResult, profile in
+            partialResult[profile.accountId] = profile.primaryDisplayName
+        }
+        let fixtureKindsByMessageId = fixtureManifest?.messages.reduce(into: [String: UITestFixtureMessageKind]()) { partialResult, record in
+            partialResult[record.messageId] = record.kind
+        } ?? [:]
         let presentationMessages = messages.compactMap { message -> SafeMessengerMessage? in
             guard !isReceiptMessage(message) else {
                 if let targetMessageID = receiptTargetMessageID(for: message) {
@@ -524,9 +539,7 @@ enum ConsumerConversationTimelineBuilder {
             let nextMessage = presentationMessages.indices.contains(index + 1) ? presentationMessages[index + 1] : nil
             let continuesFromPrevious = previousMessage.map { canCluster($0, with: message) } ?? false
             let continuesToNext = nextMessage.map { canCluster(message, with: $0) } ?? false
-            let senderName = snapshot.detail
-                .participantProfile(accountId: message.senderAccountId)?
-                .primaryDisplayName ?? message.senderDisplayName
+            let senderName = participantDisplayNamesByAccountId[message.senderAccountId] ?? message.senderDisplayName
             let shouldShowSender = snapshot.detail.chatType == .group && !message.isOutgoing && !continuesFromPrevious
             let clusterPosition: ConsumerMessageClusterPosition
 
@@ -575,7 +588,10 @@ enum ConsumerConversationTimelineBuilder {
             previousMessage = message
         }
 
-        return items
+        return ConsumerTimelineRenderPayload(
+            items: items,
+            fixtureKindsByMessageId: fixtureKindsByMessageId
+        )
     }
 
     static func latestIncomingNonReceiptMessageID(
@@ -774,6 +790,7 @@ private struct ConsumerConversationTimelineView: View, Equatable {
             ForEach(renderState.timelineItems) { item in
                 ConsumerTimelineRow(
                     item: item,
+                    fixtureKind: fixtureKind(for: item),
                     latestSentMessageId: renderState.latestSentMessageId,
                     latestSentText: renderState.latestSentText,
                     downloadingAttachmentMessageId: renderState.downloadingAttachmentMessageId,
@@ -785,6 +802,14 @@ private struct ConsumerConversationTimelineView: View, Equatable {
         Color.clear
             .frame(height: 1)
             .id(consumerTimelineBottomAnchor)
+    }
+
+    private func fixtureKind(for item: ConsumerTimelineItem) -> UITestFixtureMessageKind? {
+        guard case let .message(message) = item else {
+            return nil
+        }
+
+        return renderState.fixtureKindsByMessageId[message.id]
     }
 
     private func scrollToBottom(using proxy: ScrollViewProxy, animated: Bool) {
@@ -847,13 +872,14 @@ private struct ConsumerChatBackdrop: View {
 
 private struct ConsumerTimelineRow: View {
     let item: ConsumerTimelineItem
+    let fixtureKind: UITestFixtureMessageKind?
     let latestSentMessageId: String?
     let latestSentText: String?
     let downloadingAttachmentMessageId: String?
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
 
     var body: some View {
-        if let fixtureKind = fixtureMessageKind {
+        if let fixtureKind {
             rowBody
                 .accessibilityIdentifier(TrixAccessibilityID.ChatDetail.message(fixtureKind))
         } else if isLatestSentMessage {
@@ -880,13 +906,6 @@ private struct ConsumerTimelineRow: View {
                 )
             }
         }
-    }
-
-    private var fixtureMessageKind: UITestFixtureMessageKind? {
-        guard case let .message(message) = item else {
-            return nil
-        }
-        return UITestFixtureManifestStore.messageFixtureKind(for: message.id)
     }
 
     private var isLatestSentMessage: Bool {
