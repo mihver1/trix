@@ -16,6 +16,7 @@ WITH dm_pairs AS (
 ranked_dm_chats AS (
     SELECT
         c.chat_id,
+        dm_pairs.pair_key,
         row_number() OVER (
             PARTITION BY dm_pairs.pair_key
             ORDER BY
@@ -28,11 +29,31 @@ ranked_dm_chats AS (
     JOIN dm_pairs
       ON dm_pairs.chat_id = c.chat_id
     WHERE dm_pairs.member_count = 2
+),
+canonical_dm_chats AS (
+    SELECT
+        ranked.pair_key,
+        ranked.chat_id AS canonical_chat_id
+    FROM ranked_dm_chats ranked
+    WHERE ranked.chat_rank = 1
+),
+duplicate_dm_chats AS (
+    SELECT
+        ranked.chat_id AS duplicate_chat_id,
+        canonical.canonical_chat_id
+    FROM ranked_dm_chats ranked
+    JOIN canonical_dm_chats canonical
+      ON canonical.pair_key = ranked.pair_key
+    WHERE ranked.chat_rank > 1
 )
+UPDATE device_key_packages kp
+SET consumed_by_chat_id = duplicates.canonical_chat_id
+FROM duplicate_dm_chats duplicates
+WHERE kp.consumed_by_chat_id = duplicates.duplicate_chat_id;
+
 DELETE FROM chats c
-USING ranked_dm_chats ranked
-WHERE c.chat_id = ranked.chat_id
-  AND ranked.chat_rank > 1;
+USING duplicate_dm_chats duplicates
+WHERE c.chat_id = duplicates.duplicate_chat_id;
 
 WITH dm_pairs AS (
     SELECT
