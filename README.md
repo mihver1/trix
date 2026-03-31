@@ -64,6 +64,8 @@ The repo also includes a `Dockerfile` for `trixd` and a `docker-compose.yml` wit
 
 To enable Apple background push delivery on top of websocket/polling inbox sync, configure `TRIX_APNS_TEAM_ID`, `TRIX_APNS_KEY_ID`, `TRIX_APNS_TOPIC`, and either `TRIX_APNS_PRIVATE_KEY_PATH` or `TRIX_APNS_PRIVATE_KEY_PEM`. `trixd` sends only safe wake-up pushes (`content-available` plus a `trix.event=inbox_update` marker), so notification text stays derived on-device from synced encrypted state.
 
+For the full operator guide covering server startup, APNs key placement, and the first-device / linked-device / revoke lifecycle, see [docs/server-operations.md](docs/server-operations.md).
+
 ## Common Commands
 
 ```bash
@@ -89,4 +91,5 @@ cargo run -p trix-botd -- stdio
 ## Additional Docs
 
 - Product and architecture spec: [docs/v0-spec.md](docs/v0-spec.md)
+- Server setup, APNs, and device lifecycle: [docs/server-operations.md](docs/server-operations.md)
 - HTTP API contract: [openapi/v0.yaml](openapi/v0.yaml)
