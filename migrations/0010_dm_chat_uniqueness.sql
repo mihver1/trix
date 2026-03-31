@@ -1,6 +1,8 @@
 ALTER TABLE chats
     ADD COLUMN dm_member_pair_key text;
 
+CREATE TEMP TABLE duplicate_dm_chat_replacements
+ON COMMIT DROP AS
 WITH dm_pairs AS (
     SELECT
         c.chat_id,
@@ -36,23 +38,22 @@ canonical_dm_chats AS (
         ranked.chat_id AS canonical_chat_id
     FROM ranked_dm_chats ranked
     WHERE ranked.chat_rank = 1
-),
-duplicate_dm_chats AS (
-    SELECT
-        ranked.chat_id AS duplicate_chat_id,
-        canonical.canonical_chat_id
-    FROM ranked_dm_chats ranked
-    JOIN canonical_dm_chats canonical
-      ON canonical.pair_key = ranked.pair_key
-    WHERE ranked.chat_rank > 1
 )
+SELECT
+    ranked.chat_id AS duplicate_chat_id,
+    canonical.canonical_chat_id
+FROM ranked_dm_chats ranked
+JOIN canonical_dm_chats canonical
+  ON canonical.pair_key = ranked.pair_key
+WHERE ranked.chat_rank > 1;
+
 UPDATE device_key_packages kp
 SET consumed_by_chat_id = duplicates.canonical_chat_id
-FROM duplicate_dm_chats duplicates
+FROM duplicate_dm_chat_replacements duplicates
 WHERE kp.consumed_by_chat_id = duplicates.duplicate_chat_id;
 
 DELETE FROM chats c
-USING duplicate_dm_chats duplicates
+USING duplicate_dm_chat_replacements duplicates
 WHERE c.chat_id = duplicates.duplicate_chat_id;
 
 WITH dm_pairs AS (
