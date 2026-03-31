@@ -909,7 +909,7 @@ impl SyncCoordinator {
 
         let normalized_aad_json = aad_json.unwrap_or_else(empty_json_object);
         let normalized_aad_string = serde_json::to_string(&normalized_aad_json)?;
-        let prepared_send = if let Some(existing) = store.prepared_outbox_send(message_id) {
+        let mut prepared_send = if let Some(existing) = store.prepared_outbox_send(message_id) {
             if existing.aad_json_string != normalized_aad_string {
                 let error = anyhow!(
                     "outbox message {} already exists with different AAD",
@@ -969,6 +969,100 @@ impl SyncCoordinator {
             .await
         {
             Ok(response) => response,
+            Err(ref error) if is_epoch_mismatch_error(error) => {
+                let _ = store.clear_outbox_prepared_send(message_id);
+
+                let refresh_result: Result<()> = (async {
+                    let detail = client.get_chat(chat_id).await?;
+                    store.apply_chat_detail(&detail)?;
+                    let history = client.get_chat_history(chat_id, None, None).await?;
+                    store.apply_chat_history(&history)?;
+                    self.record_chat_server_seqs(
+                        chat_id,
+                        history.messages.iter().map(|m| m.server_seq),
+                    )?;
+                    store.project_chat_with_facade(chat_id, facade, None)?;
+                    self.record_projected_chat_cursor(store, chat_id)?;
+                    Ok(())
+                })
+                .await;
+                if let Err(error) = refresh_result {
+                    let _ = store.mark_outbox_failure(message_id, error.to_string());
+                    return Err(error);
+                }
+
+                let refreshed_conversation = match store
+                    .load_or_bootstrap_chat_mls_conversation(chat_id, facade)
+                {
+                    Ok(Some(conv)) => conv,
+                    Ok(None) => {
+                        let error = anyhow!("chat {} has no bootstrappable MLS state after epoch refresh", chat_id.0);
+                        let _ = store.mark_outbox_failure(message_id, error.to_string());
+                        return Err(error);
+                    }
+                    Err(error) => {
+                        let _ = store.mark_outbox_failure(message_id, error.to_string());
+                        return Err(error);
+                    }
+                };
+                *conversation = refreshed_conversation;
+
+                let retry_snapshot = facade.snapshot_state()?;
+                let plaintext = body.to_bytes()?;
+                let epoch = conversation.epoch();
+                let retry_ciphertext =
+                    match facade.create_application_message(conversation, &plaintext) {
+                        Ok(ct) => ct,
+                        Err(error) => {
+                            let _ = store.mark_outbox_failure(message_id, error.to_string());
+                            return Err(error);
+                        }
+                    };
+                let retry_prepared = PreparedLocalOutboxSend {
+                    epoch,
+                    ciphertext_b64: encode_b64(&retry_ciphertext),
+                    aad_json_string: normalized_aad_string.clone(),
+                };
+                if let Err(error) = store.prepare_outbox_message_send(message_id, retry_prepared.clone()) {
+                    facade.restore_snapshot(&retry_snapshot).with_context(|| {
+                        format!(
+                            "failed to rollback MLS state after persisting retry outbox {}",
+                            message_id.0
+                        )
+                    })?;
+                    let _ = store.mark_outbox_failure(message_id, error.to_string());
+                    return Err(error);
+                }
+
+                let retry_ct = decode_b64_field(
+                    "retry outbox ciphertext",
+                    &retry_prepared.ciphertext_b64,
+                )
+                .map_err(|e| anyhow!("failed to decode retry outbox ciphertext: {e}"))?;
+                match client
+                    .create_message(
+                        chat_id,
+                        make_create_message_request(
+                            message_id,
+                            retry_prepared.epoch,
+                            MessageKind::Application,
+                            body.content_type(),
+                            &retry_ct,
+                            Some(normalized_aad_json.clone()),
+                        ),
+                    )
+                    .await
+                {
+                    Ok(response) => {
+                        prepared_send = retry_prepared;
+                        response
+                    }
+                    Err(error) => {
+                        let _ = store.mark_outbox_failure(message_id, error.to_string());
+                        return Err(error.into());
+                    }
+                }
+            }
             Err(error) => {
                 let _ = store.mark_outbox_failure(message_id, error.to_string());
                 return Err(error.into());
@@ -1862,6 +1956,10 @@ fn normalize_device_ids(device_ids: Vec<DeviceId>, exclude: DeviceId) -> Vec<Dev
     let mut normalized = unique.into_iter().collect::<Vec<_>>();
     normalized.sort_by_key(|device_id| device_id.0);
     normalized
+}
+
+fn is_epoch_mismatch_error(error: &ServerApiError) -> bool {
+    matches!(error, ServerApiError::Api { status: 409, message, .. } if message.contains("epoch"))
 }
 
 fn is_existing_direct_chat_conflict(error: &ServerApiError) -> bool {

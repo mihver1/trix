@@ -1739,6 +1739,144 @@ impl Database {
         rows.into_iter().map(history_sync_job_row_from_db).collect()
     }
 
+    pub async fn request_chat_backfill(
+        &self,
+        account_id: Uuid,
+        target_device_id: Uuid,
+        chat_id: Uuid,
+    ) -> Result<Option<HistorySyncJobRow>, AppError> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let is_member = sqlx::query_scalar::<_, bool>(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM chat_account_members
+                WHERE chat_id = $1 AND account_id = $2
+                  AND membership_status = 'active'::membership_status
+            )
+            "#,
+        )
+        .bind(chat_id)
+        .bind(account_id)
+        .fetch_one(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        if !is_member {
+            return Err(AppError::not_found("chat not found"));
+        }
+
+        let source_row = sqlx::query(
+            r#"
+            SELECT d.device_id
+            FROM devices d
+            WHERE d.account_id = $1
+              AND d.device_id <> $2
+              AND d.device_status = 'active'::device_status
+            ORDER BY d.created_at ASC
+            LIMIT 1
+            "#,
+        )
+        .bind(account_id)
+        .bind(target_device_id)
+        .fetch_optional(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(source_row) = source_row else {
+            return Ok(None);
+        };
+        let source_device_id: Uuid = row_uuid(&source_row, "device_id")?;
+
+        // Lock existing pending/running jobs FOR UPDATE to prevent TOCTOU races
+        // between concurrent backfill requests for the same chat.
+        let existing_job_row = sqlx::query(
+            r#"
+            SELECT
+                job_id,
+                job_type::text AS job_type,
+                job_status::text AS job_status,
+                source_device_id,
+                target_device_id,
+                chat_id,
+                cursor_json,
+                extract(epoch from created_at)::bigint AS created_at_unix,
+                extract(epoch from updated_at)::bigint AS updated_at_unix
+            FROM history_sync_jobs
+            WHERE account_id = $1
+              AND target_device_id = $2
+              AND chat_id = $3
+              AND job_type = 'chat_backfill'::history_sync_job_type
+              AND job_status IN ('pending'::history_sync_job_status, 'running'::history_sync_job_status)
+            ORDER BY created_at DESC
+            LIMIT 1
+            FOR UPDATE
+            "#,
+        )
+        .bind(account_id)
+        .bind(target_device_id)
+        .bind(chat_id)
+        .fetch_optional(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        if let Some(existing_row) = existing_job_row {
+            tx.commit().await.map_err(map_db_error)?;
+            return Ok(Some(history_sync_job_row_from_db(existing_row)?));
+        }
+
+        schedule_history_sync_job_tx(
+            &mut tx,
+            account_id,
+            source_device_id,
+            target_device_id,
+            Some(chat_id),
+            HistorySyncJobType::ChatBackfill,
+            serde_json::json!({
+                "kind": "chat_backfill",
+                "chat_id": chat_id,
+                "target_device_id": target_device_id,
+                "requested_by_target": true,
+            }),
+        )
+        .await?;
+
+        let row = sqlx::query(
+            r#"
+            SELECT
+                job_id,
+                job_type::text AS job_type,
+                job_status::text AS job_status,
+                source_device_id,
+                target_device_id,
+                chat_id,
+                cursor_json,
+                extract(epoch from created_at)::bigint AS created_at_unix,
+                extract(epoch from updated_at)::bigint AS updated_at_unix
+            FROM history_sync_jobs
+            WHERE account_id = $1
+              AND target_device_id = $2
+              AND chat_id = $3
+              AND job_status = 'pending'::history_sync_job_status
+            ORDER BY created_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(account_id)
+        .bind(target_device_id)
+        .bind(chat_id)
+        .fetch_optional(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
+
+        match row {
+            Some(row) => Ok(Some(history_sync_job_row_from_db(row)?)),
+            None => Ok(None),
+        }
+    }
+
     pub async fn append_history_sync_chunk_for_source_device(
         &self,
         account_id: Uuid,
