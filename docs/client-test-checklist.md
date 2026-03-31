@@ -51,11 +51,14 @@ Android uses `AuthBootstrapCoordinator.createAccount()`.
 |---|------|----------|-----|-------|---------|-----|
 | 1 | Ensure own key packages (≥8) | Key packages published if needed | ✓ | ✓ | ✓ | ✓ |
 | 2 | Create DM via control plane | Chat created with MLS group, 2 members, commit+welcome in store | ✓ | ✓ | ✓ | · |
-| 3 | Create group chat (3+ participants) | Same as above, chat_type = group | ✓ | ✓ | ✓ | · |
-| 4 | List chats | Created chat appears | ✓ | ✓ | ✓ | ✓ |
-| 5 | Get chat detail | Members, device_members, epoch visible | · | ✓ | ✓ | ✓ |
-| 6 | Second user syncs | Chat appears in their store via inbox/history | ✓ | ✓ | ✓ | ✓ |
-| 7 | Second user bootstraps MLS conversation | project_chat_with_facade succeeds, group_id mapped | ✓ | ✓ | ✓ | ✓ |
+| 3 | Repeat DM create for the same pair | No second DM is created; server returns conflict or client reuses the existing chat after reload | ✓ | ✓ | ✓ | · |
+| 4 | Create group chat (3+ participants) | Same as above, chat_type = group | ✓ | ✓ | ✓ | · |
+| 5 | List chats | Created chat appears | ✓ | ✓ | ✓ | ✓ |
+| 6 | Get chat detail | Members, device_members, epoch visible | · | ✓ | ✓ | ✓ |
+| 7 | Second user syncs | Chat appears in their store via inbox/history | ✓ | ✓ | ✓ | ✓ |
+| 8 | Second user bootstraps MLS conversation | project_chat_with_facade succeeds, group_id mapped | ✓ | ✓ | ✓ | ✓ |
+
+**Note**: The backend now enforces DM uniqueness by sorted account pair, and `trix-core` also removes legacy duplicate DM projections on load.
 
 ---
 

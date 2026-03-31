@@ -1,12 +1,12 @@
-# Android Client Scaffold
+# Android Client
 
-This directory now contains a standalone Android project for the future Trix client.
+This directory contains the current Android client slice for `Trix`.
 
 ## Direction
 
 - Kotlin + Jetpack Compose first, not KMP or Flutter
 - native adaptive layouts for phone, tablet, foldable, and resizable windows
-- native Android shell first, with Rust FFI now used where the boundary has stabilized
+- native Android shell first, with Rust FFI used wherever the messaging/storage boundary has stabilized
 - messaging-first UX using canonical Android patterns instead of a single stretched phone screen
 
 ## Current Layout Decisions
@@ -32,6 +32,7 @@ The UI, lifecycle, adaptive navigation, and Android-secure local persistence sti
 - encrypted local chat/sync state through `FfiClientStore` on top of a single `state-v1.db`
 - MLS state and persistent group storage through `FfiMlsFacade`
 - realtime websocket delivery through `FfiRealtimeDriver`
+- safe messenger conversation snapshots, unread counts, message history, attachment send/download, receipts, typing, and member/device mutations through `FfiMessengerClient`
 
 The Android project now generates Kotlin bindings from UniFFI during the Gradle build and cross-compiles `libtrix_core.so` for `arm64-v8a` and `x86_64` via `cargo ndk`.
 
@@ -45,9 +46,9 @@ The better tradeoff for this PoC is still:
 
 ## Next Android Tasks
 
-- bridge canonical MLS `group_id` from the backend into Android so local state matches cross-device traffic
-- extend the current text send path into attachments, receipts, and commit/welcome handling
-- implement device linking and trusted-device approval flows on top of the FFI server client
+- expand Compose and instrumented coverage around attachment failure/retry, lifecycle resume, and linked-device recovery paths
+- surface richer messenger-core events more explicitly in the UI instead of collapsing some states into generic labels
+- keep converging remaining debug-only or legacy repository paths on the shared messenger-core runtime
 
 ## Current Live Flow
 
@@ -64,9 +65,12 @@ The better tradeoff for this PoC is still:
 - restore a saved device session on app launch
 - migrate legacy JSON/plaintext SQLite caches into the encrypted `state-v1.db` on first open
 - sync cached chats and inbox items into the local Rust-backed encrypted SQLite store
+- open `FfiMessengerClient` against the same account/device root so projected timelines, unread counts, and preview ordering stay in one shared state layer
 - keep a foreground realtime websocket active while the app is in the foreground, with `WorkManager` catch-up as a background fallback
-- project decryptable transcripts through persistent `FfiMlsFacade` state when this device has the group locally
-- send text messages into chats backed by local MLS state, with local projection applied immediately after server accept
+- list conversations, participant labels, unread counts, and previews from the shared messenger core
+- send text and attachment messages through the shared messenger core, with local projection applied immediately after server accept
+- mark conversations read and apply receipt state from shared messenger events
+- manage group members and device membership through the shared messenger-core mutation APIs
 - render trusted-device link intents as QR codes and share/copy them from Android
 - list linked devices, create link intents, and approve/revoke devices when this Android client has local account-root material
 

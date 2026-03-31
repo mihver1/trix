@@ -2,12 +2,16 @@
 
 ## Status
 
-Draft.
+Implementation-backed draft.
+
+`openapi/v0.yaml` is the canonical route and field contract. This document explains the model, lifecycle rules, and implementation-level constraints that shape the current `v0` behavior.
 
 This document defines the initial `v0` architecture for a native-first end-to-end encrypted messenger with:
 
-- `macOS` as the first client platform
+- native consumer clients for `macOS`, `iOS`, and `Android`
 - `Rust` backend as a single binary
+- a separate macOS operator control app over `/v0/admin/*`
+- a headless bot runtime for ordinary encrypted accounts
 - `PostgreSQL` as the primary metadata store
 - local filesystem blob storage for encrypted attachments
 - `OpenMLS` as the group encryption layer
@@ -78,11 +82,13 @@ This document defines the initial `v0` architecture for a native-first end-to-en
 
 ### Client
 
-- `macOS` application built with `SwiftUI`
+- `macOS` and `iOS` applications built with `SwiftUI`
+- `Android` application built with `Jetpack Compose`
 - shared `Rust core`
 - `OpenMLS`
 - encrypted local `SQLite`
-- `Keychain` for device keys and account root material
+- `Keychain` / Android Keystore for device keys, database keys, and account-root material
+- projected local timelines, unread state, attachment round-trips, and device-transfer helpers exposed through `trix-core`
 
 ### Headless Bot Harness
 
@@ -91,6 +97,14 @@ This document defines the initial `v0` architecture for a native-first end-to-en
 - There are no bot-only backend endpoints, discovery flags, webhook modes, or plaintext message paths.
 - `Rust` bots link against `trix-bot`; `Python` and `Go` integrate through `trix-botd` over `JSON-RPC 2.0` on stdio.
 - Attachments are part of the `v1` bot event surface; reactions, receipts, and admin-control automation remain outside it.
+
+### Admin Control App
+
+- separate `SwiftUI` macOS operator app under `apps/macos-admin`
+- multi-cluster profile management with one admin session per cluster
+- no `trix-core` / consumer FFI usage; the app talks directly to `/v0/admin/*`
+- user search, detail, provision, disable, and reactivate flows
+- runtime registration and server settings views backed by DB-managed admin settings
 
 ### Backend Binary
 
@@ -590,6 +604,7 @@ Request:
 - first device metadata
 - signed account root bundle
 - first batch of `KeyPackage` objects
+- optional `provision_token` when public self-service registration is disabled by admin settings
 
 Response:
 
@@ -795,6 +810,12 @@ Response:
 - `chat_id`
 - current epoch
 
+Rules:
+
+- direct-message chats are unique per sorted pair of active account IDs
+- a second create attempt for the same DM pair returns `409 conflict` with `dm chat already exists`
+- clients should refresh local chat state instead of assuming a second DM row exists
+
 ### `GET /v0/chats`
 
 Lists chats visible to the authenticated device.
@@ -950,6 +971,70 @@ Streams the encrypted blob to an authenticated device that is authorized by chat
 
 Returns blob metadata as headers.
 
+## Admin Control Plane
+
+Admin authentication is separate from consumer device authentication.
+
+Rules:
+
+- `/v0/admin/*` accepts only admin JWTs signed with `TRIX_ADMIN_JWT_SIGNING_KEY`
+- admin login uses the cluster-local `TRIX_ADMIN_USERNAME` / `TRIX_ADMIN_PASSWORD` credentials
+- consumer bearer tokens are rejected on admin routes
+- admin tokens are not valid for consumer account/device/chat routes
+- runtime-administered settings are DB-backed; deploy-time env such as bind address, database URL, and signing keys stay outside the admin API
+
+### `POST /v0/admin/session`
+
+Creates a short-lived admin JWT for the selected cluster.
+
+### `DELETE /v0/admin/session`
+
+Client-side session clear. The server does not hold a mutable server-side admin session object.
+
+### `GET /v0/admin/overview`
+
+Returns service/build metadata, health summary, runtime registration state, user counts, and the current admin-session expiry.
+
+### `GET /v0/admin/settings/registration`
+
+Returns runtime registration policy, including whether public account creation is allowed.
+
+### `PATCH /v0/admin/settings/registration`
+
+Updates the runtime public-registration toggle.
+
+### `GET /v0/admin/settings/server`
+
+Returns DB-backed operator-facing server branding and support text.
+
+### `PATCH /v0/admin/settings/server`
+
+Updates DB-backed server branding and support text.
+
+### `GET /v0/admin/users`
+
+Returns cursor-paginated users with optional search and `active` / `disabled` filtering.
+
+### `GET /v0/admin/users/{account_id}`
+
+Returns the admin view of one account.
+
+### `POST /v0/admin/users`
+
+Creates a provisioning record and one-time `provision_token`. It does not mint a fully bootstrapped cryptographic account.
+
+### `PATCH /v0/admin/users/{account_id}`
+
+Updates admin-safe profile fields for the target account.
+
+### `POST /v0/admin/users/{account_id}/disable`
+
+Disables the account and closes active consumer websocket sessions with `session_replaced`.
+
+### `POST /v0/admin/users/{account_id}/reactivate`
+
+Re-enables a previously disabled account.
+
 ## WebSocket Session
 
 ### Connect
@@ -1017,12 +1102,13 @@ Compatibility-only client frames accepted as no-ops in `v0`:
 2. New device scans the QR and uploads its device metadata and `KeyPackage` batch.
 3. Existing trusted device fetches `GET /v0/devices/{device_id}/approve-payload`, signs `bootstrap_payload_b64` with the account root key, and submits `POST /v0/devices/{device_id}/approve`.
 4. Server marks the new device `active` and appends a `device_log` event.
-5. Existing trusted device adds the new device to:
+5. If approval included a transfer bundle, the new device imports shared account-root material on first authenticated refresh.
+6. Existing trusted device adds the new device to:
    - the `account sync group`
    - every active chat group where that account currently participates
-6. Server stores the resulting commits and welcome references.
-7. Existing trusted device begins history backfill jobs for the new device.
-8. New device gradually reaches steady state as chats finish syncing.
+7. Server stores the resulting commits and welcome references.
+8. Existing trusted device begins history backfill jobs for the new device.
+9. New device gradually reaches steady state as chats finish syncing. If no transfer bundle was available, messaging still works but account-management actions remain limited until the device imports shared account-root material later.
 
 ## 5. Revoke Device
 

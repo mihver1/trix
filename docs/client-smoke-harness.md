@@ -22,7 +22,7 @@ That default pack is the current best "local client baseline" because it combine
 
 ## Compose Runtime
 
-When `podman compose` is available, the harness uses it to start local services from [`docker-compose.yml`](/Users/mihver/Projects/trix/docker-compose.yml). It now checks both `podman` from `PATH` and the Podman Desktop install at `/opt/podman/bin/podman`. If Podman is not available, it falls back to `docker compose`.
+When `podman compose` is available, the harness uses it to start local services from [`docker-compose.yml`](../docker-compose.yml). It now checks both `podman` from `PATH` and the Podman Desktop install at `/opt/podman/bin/podman`. If Podman is not available, it falls back to `docker compose`.
 
 The compose file intentionally uses relaxed dev-only auth challenge/session limits so server-backed native smoke flows can reseed multiple simulator/device identities in one pass without tripping local rate limiting.
 
@@ -55,6 +55,7 @@ Current suites:
 - `ios-server`: native iOS server-backed smoke through `xcodebuild test` against a live backend on `TRIX_IOS_SERVER_SMOKE_BASE_URL` (defaults to `http://localhost:8080`), including server-backed bootstrap/fixture assertions that are intentionally excluded from `ios-unit`.
 - `ios-ui`: simulator-backed iOS `XCUITest` smoke through `xcodebuild test` against a live backend on `TRIX_IOS_UI_TEST_BASE_URL` (defaults to `http://localhost:8080`), including onboarding, approval-state, and seeded real-chat flows.
 - `macos`: `swift test` for the macOS client package.
+- `macos-admin`: `swift test` for the macOS admin control app package.
 - `android-unit`: local Android JVM unit tests. The harness runs these with `-PtrixSkipAndroidNdkBuild=true`, so they do not require cross-compiling JNI libs through the Android NDK.
 - `android-ui`: Android instrumented UI tests for emulator/device runs.
 
@@ -66,12 +67,13 @@ Examples:
 ./scripts/client-smoke-harness.sh --suite ios-server --stop-postgres
 ./scripts/client-smoke-harness.sh --suite ios-ui --stop-postgres
 ./scripts/client-smoke-harness.sh --suite macos --no-postgres
+./scripts/client-smoke-harness.sh --suite macos-admin --no-postgres
 ./scripts/client-smoke-harness.sh --suite android-unit --suite android-ui
 ```
 
 ## Coverage Map
 
-The harness intentionally aligns with the manual checklist in [`docs/client-test-checklist.md`](/Users/mihver/Projects/trix/docs/client-test-checklist.md).
+The harness intentionally aligns with the manual checklist in [`docs/client-test-checklist.md`](./client-test-checklist.md).
 
 Practical mapping today:
 
@@ -82,6 +84,7 @@ Practical mapping today:
 - `ios-server` covers live iOS user scenarios against the local server: bootstrap/auth, link intent, DM delivery, cross-device DM delivery, group chat delivery, and deterministic seeded bootstrap/message-snapshot assertions used by the UI harness.
 - `ios-ui` covers simulator-backed native screen flows against the live backend: create-account onboarding, pending linked-device approval waiting state, seeded DM/group chat-list rows, real consumer chat-detail timelines, and DM send flow through the production composer.
 - `macos` covers host-level macOS model and presentation logic, including group-chat naming/subtitle behavior and device/workspace stabilization helpers.
+- `macos-admin` covers admin workspace state, cluster/session persistence, overview/settings loads, and operator user-management flows without touching the consumer FFI layer.
 - `android-unit` covers Android local state reducers and repository-adjacent logic on the JVM; `android-ui` adds Compose coverage for DM/group chat surfaces, group actions, and chat list/detail presentation.
 
 ## Known Gaps
