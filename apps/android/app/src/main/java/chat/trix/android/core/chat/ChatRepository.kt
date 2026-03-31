@@ -27,6 +27,12 @@ import chat.trix.android.core.ffi.FfiLocalStoreApplyReport
 import chat.trix.android.core.ffi.FfiLeaseInboxParams
 import chat.trix.android.core.ffi.FfiLeaseInboxResponse
 import chat.trix.android.core.ffi.FfiLocalTimelineItem
+import chat.trix.android.core.ffi.FfiMessengerConversationSummary
+import chat.trix.android.core.ffi.FfiMessengerException
+import chat.trix.android.core.ffi.FfiMessengerMessageBody
+import chat.trix.android.core.ffi.FfiMessengerMessageBodyKind
+import chat.trix.android.core.ffi.FfiMessengerMessageRecord
+import chat.trix.android.core.ffi.FfiMessengerParticipantProfile
 import chat.trix.android.core.ffi.FfiMessageBody
 import chat.trix.android.core.ffi.FfiMessageBodyKind
 import chat.trix.android.core.ffi.FfiModifyChatMembersControlInput
@@ -94,6 +100,9 @@ class ChatRepository(
     private val mlsFacadeDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         clientStore().openMlsFacade(session.localState.credentialIdentity)
     }
+    private val messengerDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        AndroidMessengerClient(appContext, session)
+    }
     private val attachmentRepositoryDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         AttachmentRepository(
             context = appContext,
@@ -103,79 +112,47 @@ class ChatRepository(
 
     suspend fun loadOverview(): ChatOverview = withContext(Dispatchers.IO) {
         runFfi("Failed to read local chat cache") {
-            buildOverview()
+            buildMessengerOverview(
+                conversations = messenger().listConversations(),
+                rootPath = messenger().rootPath(),
+            )
         }
     }
 
     suspend fun loadConversation(chatId: String): ChatConversation? = withContext(Dispatchers.IO) {
         runFfi("Failed to read conversation") {
-            runCatching {
-                val client = client()
-                val store = historyStore()
-                client.setAccessToken(session.accessToken)
-                refreshConversationFromServer(
-                    chatId = chatId,
-                    client = client,
-                    store = store,
-                )
-            }
-            buildConversation(chatId)
+            buildMessengerConversation(chatId)
         }
     }
 
     suspend fun refresh(): ChatRefreshResult = withContext(Dispatchers.IO) {
         runFfi("Failed to sync chats") {
-            val client = client()
-            val store = historyStore()
-            val syncCoordinator = syncCoordinator()
-
-            client.setAccessToken(session.accessToken)
-            val historyReport = syncCoordinator.syncChatHistoriesIntoStore(
-                client = client,
-                store = store,
-                limitPerChat = HISTORY_SYNC_LIMIT,
-            )
-            val leasedInbox = syncCoordinator.leaseInbox(
-                client = client,
-                limit = INBOX_SYNC_LIMIT,
-                leaseTtlSeconds = LEASE_TTL_SECONDS,
-            )
-            val inboxReport = applyLeasedInbox(leasedInbox)
-            val hydratedChatDetails = hydrateChatDetails(client, store)
-            val projectedChatTimelines = projectChatsWithLocalMlsState(store)
-            syncCoordinator.processHistorySyncJobs(
-                client = client,
-                store = store,
-                transportPrivateKey = session.localState.transportPrivateSeed,
-            )
-            val ackedInboxIds = if (leasedInbox.items.isEmpty()) {
-                emptyList()
-            } else {
-                ackInboxWithSyncCoordinator(leasedInbox.items.map { it.inboxId })
-            }
-            val flushedOutboxCount = flushPendingOutboxNow()
+            val snapshot = messenger().loadSnapshot()
 
             ChatRefreshResult(
-                overview = buildOverview(),
-                historyMessagesUpserted = historyReport.messagesUpserted.toLong(),
-                inboxMessagesUpserted = inboxReport.messagesUpserted.toLong(),
-                ackedInboxCount = ackedInboxIds.size,
-                hydratedChatDetails = hydratedChatDetails,
-                projectedChatTimelines = projectedChatTimelines,
-                flushedOutboxCount = flushedOutboxCount,
+                overview = buildMessengerOverview(
+                    conversations = snapshot.conversations,
+                    rootPath = messenger().rootPath(),
+                ),
+                historyMessagesUpserted = 0,
+                inboxMessagesUpserted = 0,
+                ackedInboxCount = 0,
+                hydratedChatDetails = 0,
+                projectedChatTimelines = snapshot.conversations.size,
+                flushedOutboxCount = 0,
             )
         }
     }
 
     suspend fun hydrateChangedChats(chatIds: Set<String>): Int = withContext(Dispatchers.IO) {
         runFfi("Failed to hydrate changed chats") {
-            hydrateChangedChatsNow(chatIds)
+            chatIds.count { chatId -> buildMessengerConversation(chatId) != null }
         }
     }
 
     suspend fun flushPendingOutbox(): Int = withContext(Dispatchers.IO) {
         runFfi("Failed to flush local outbox") {
-            flushPendingOutboxNow()
+            0
         }
     }
 
@@ -200,33 +177,21 @@ class ChatRepository(
         }
 
         runFfi("Failed to create direct message") {
-            val client = client()
-            val store = historyStore()
-            val syncCoordinator = syncCoordinator()
-            val facade = mlsFacade()
-
-            client.setAccessToken(session.accessToken)
-            val outcome = syncCoordinator.createChatControl(
-                client = client,
-                store = store,
-                facade = facade,
-                input = FfiCreateChatControlInput(
-                    creatorAccountId = session.localState.accountId,
-                    creatorDeviceId = session.localState.deviceId,
-                    chatType = FfiChatType.DM,
-                    title = null,
-                    participantAccountIds = normalizedParticipants,
-                    groupId = null,
-                    commitAadJson = EMPTY_AAD_JSON,
-                    welcomeAadJson = EMPTY_AAD_JSON,
-                ),
+            val outcome = messenger().createConversation(
+                chatType = FfiChatType.DM,
+                title = null,
+                participantAccountIds = normalizedParticipants,
             )
-            hydrateChatDetail(client, store, outcome.chatId)
 
             buildMutationConversationResult(
-                unavailableMessage = "Conversation ${outcome.chatId} is no longer available",
-                buildOverview = ::buildOverview,
-                buildConversation = { buildConversation(outcome.chatId) },
+                unavailableMessage = "Conversation ${outcome.conversationId} is no longer available",
+                buildOverview = {
+                    buildMessengerOverview(
+                        conversations = messenger().listConversations(),
+                        rootPath = messenger().rootPath(),
+                    )
+                },
+                buildConversation = { buildMessengerConversation(outcome.conversationId) },
                 createResult = ::ChatCreateResult,
             )
         }
@@ -242,33 +207,21 @@ class ChatRepository(
         }
 
         runFfi("Failed to create group chat") {
-            val client = client()
-            val store = historyStore()
-            val syncCoordinator = syncCoordinator()
-            val facade = mlsFacade()
-
-            client.setAccessToken(session.accessToken)
-            val outcome = syncCoordinator.createChatControl(
-                client = client,
-                store = store,
-                facade = facade,
-                input = FfiCreateChatControlInput(
-                    creatorAccountId = session.localState.accountId,
-                    creatorDeviceId = session.localState.deviceId,
-                    chatType = FfiChatType.GROUP,
-                    title = title?.trim()?.takeIf(String::isNotEmpty),
-                    participantAccountIds = normalizedParticipants,
-                    groupId = null,
-                    commitAadJson = EMPTY_AAD_JSON,
-                    welcomeAadJson = EMPTY_AAD_JSON,
-                ),
+            val outcome = messenger().createConversation(
+                chatType = FfiChatType.GROUP,
+                title = title,
+                participantAccountIds = normalizedParticipants,
             )
-            hydrateChatDetail(client, store, outcome.chatId)
 
             buildMutationConversationResult(
-                unavailableMessage = "Conversation ${outcome.chatId} is no longer available",
-                buildOverview = ::buildOverview,
-                buildConversation = { buildConversation(outcome.chatId) },
+                unavailableMessage = "Conversation ${outcome.conversationId} is no longer available",
+                buildOverview = {
+                    buildMessengerOverview(
+                        conversations = messenger().listConversations(),
+                        rootPath = messenger().rootPath(),
+                    )
+                },
+                buildConversation = { buildMessengerConversation(outcome.conversationId) },
                 createResult = ::ChatCreateResult,
             )
         }
@@ -284,31 +237,20 @@ class ChatRepository(
         }
 
         runFfi("Failed to add group members") {
-            val client = client()
-            val store = historyStore()
-            val syncCoordinator = syncCoordinator()
-            val facade = mlsFacade()
-
-            client.setAccessToken(session.accessToken)
-            syncCoordinator.addChatMembersControl(
-                client = client,
-                store = store,
-                facade = facade,
-                input = FfiModifyChatMembersControlInput(
-                    actorAccountId = session.localState.accountId,
-                    actorDeviceId = session.localState.deviceId,
-                    chatId = chatId,
-                    participantAccountIds = normalizedParticipants,
-                    commitAadJson = EMPTY_AAD_JSON,
-                    welcomeAadJson = EMPTY_AAD_JSON,
-                ),
+            messenger().updateConversationMembers(
+                conversationId = chatId,
+                participantAccountIds = normalizedParticipants,
             )
-            hydrateChatDetail(client, store, chatId)
 
             buildMutationConversationResult(
                 unavailableMessage = "Conversation $chatId is no longer available",
-                buildOverview = ::buildOverview,
-                buildConversation = { buildConversation(chatId) },
+                buildOverview = {
+                    buildMessengerOverview(
+                        conversations = messenger().listConversations(),
+                        rootPath = messenger().rootPath(),
+                    )
+                },
+                buildConversation = { buildMessengerConversation(chatId) },
                 createResult = ::ChatMembershipUpdateResult,
             )
         }
@@ -324,31 +266,20 @@ class ChatRepository(
         }
 
         runFfi("Failed to remove group member") {
-            val client = client()
-            val store = historyStore()
-            val syncCoordinator = syncCoordinator()
-            val facade = mlsFacade()
-
-            client.setAccessToken(session.accessToken)
-            syncCoordinator.removeChatMembersControl(
-                client = client,
-                store = store,
-                facade = facade,
-                input = FfiModifyChatMembersControlInput(
-                    actorAccountId = session.localState.accountId,
-                    actorDeviceId = session.localState.deviceId,
-                    chatId = chatId,
-                    participantAccountIds = normalizedParticipants,
-                    commitAadJson = EMPTY_AAD_JSON,
-                    welcomeAadJson = EMPTY_AAD_JSON,
-                ),
+            messenger().removeConversationMembers(
+                conversationId = chatId,
+                participantAccountIds = normalizedParticipants,
             )
-            hydrateChatDetail(client, store, chatId)
 
             buildMutationConversationResult(
                 unavailableMessage = "Conversation $chatId is no longer available",
-                buildOverview = ::buildOverview,
-                buildConversation = { buildConversation(chatId) },
+                buildOverview = {
+                    buildMessengerOverview(
+                        conversations = messenger().listConversations(),
+                        rootPath = messenger().rootPath(),
+                    )
+                },
+                buildConversation = { buildMessengerConversation(chatId) },
                 createResult = ::ChatMembershipUpdateResult,
             )
         }
@@ -361,42 +292,17 @@ class ChatRepository(
         }
 
         runFfi("Failed to send message") {
-            val store = historyStore()
-            store.enqueueOutboxMessage(
-                chatId = chatId,
-                senderAccountId = session.localState.accountId,
-                senderDeviceId = session.localState.deviceId,
-                messageId = UUID.randomUUID().toString(),
-                body = canonicalizeMessageBody(
-                    FfiMessageBody(
-                        kind = FfiMessageBodyKind.TEXT,
-                        text = normalizedDraft,
-                        targetMessageId = null,
-                        emoji = null,
-                        reactionAction = null,
-                        receiptType = null,
-                        receiptAtUnix = null,
-                        blobId = null,
-                        mimeType = null,
-                        sizeBytes = null,
-                        sha256 = null,
-                        fileName = null,
-                        widthPx = null,
-                        heightPx = null,
-                        fileKey = null,
-                        nonce = null,
-                        eventType = null,
-                        eventJson = null,
-                    ),
-                ),
-                queuedAtUnix = currentUnixSeconds().toULong(),
-            )
-            flushPendingOutboxNow(chatId)
+            messenger().sendTextMessage(chatId, normalizedDraft)
 
             buildMutationConversationResult(
                 unavailableMessage = "Conversation $chatId is no longer available",
-                buildOverview = ::buildOverview,
-                buildConversation = { buildConversation(chatId) },
+                buildOverview = {
+                    buildMessengerOverview(
+                        conversations = messenger().listConversations(),
+                        rootPath = messenger().rootPath(),
+                    )
+                },
+                buildConversation = { buildMessengerConversation(chatId) },
                 createResult = ::ChatSendResult,
             )
         }
@@ -407,32 +313,22 @@ class ChatRepository(
         contentUri: Uri,
     ): ChatSendResult = withContext(Dispatchers.IO) {
         runFfi("Failed to send attachment") {
-            val store = historyStore()
-            val messageId = UUID.randomUUID().toString()
-            val stagedAttachment = attachmentRepository().stageAttachmentForOutbox(
-                contentUri = contentUri,
-                messageId = messageId,
+            val attachment = attachmentRepository().prepareMessengerAttachment(contentUri)
+            messenger().sendAttachmentMessage(
+                conversationId = chatId,
+                payload = attachment.payload,
+                metadata = attachment.metadata,
             )
-            store.enqueueOutboxAttachment(
-                chatId = chatId,
-                senderAccountId = session.localState.accountId,
-                senderDeviceId = session.localState.deviceId,
-                messageId = messageId,
-                attachment = FfiLocalOutboxAttachmentDraft(
-                    localPath = stagedAttachment.localPath,
-                    mimeType = stagedAttachment.mimeType,
-                    fileName = stagedAttachment.fileName,
-                    widthPx = stagedAttachment.widthPx?.toUInt(),
-                    heightPx = stagedAttachment.heightPx?.toUInt(),
-                ),
-                queuedAtUnix = currentUnixSeconds().toULong(),
-            )
-            flushPendingOutboxNow(chatId)
 
             buildMutationConversationResult(
                 unavailableMessage = "Conversation $chatId is no longer available",
-                buildOverview = ::buildOverview,
-                buildConversation = { buildConversation(chatId) },
+                buildOverview = {
+                    buildMessengerOverview(
+                        conversations = messenger().listConversations(),
+                        rootPath = messenger().rootPath(),
+                    )
+                },
+                buildConversation = { buildMessengerConversation(chatId) },
                 createResult = ::ChatSendResult,
             )
         }
@@ -448,42 +344,16 @@ class ChatRepository(
 
     suspend fun markConversationRead(chatId: String): ChatReadResult = withContext(Dispatchers.IO) {
         runFfi("Failed to update chat read state") {
-            val store = historyStore()
-            val selfAccountId = session.localState.accountId
-            val previous = store.getChatReadState(chatId, selfAccountId)
-            val directPreviousReadCursor = store.chatReadCursor(chatId)?.toLong()
-            val directPreviousUnreadCount = store.chatUnreadCount(chatId, selfAccountId)?.toLong()
-            val updated = store.markChatRead(chatId, null, selfAccountId)
-            var directUpdatedReadCursor = store.chatReadCursor(chatId)?.toLong()
-            var directUpdatedUnreadCount = store.chatUnreadCount(chatId, selfAccountId)?.toLong()
-            if (
-                updated.readCursorServerSeq > 0uL &&
-                    (directUpdatedReadCursor == null || directUpdatedReadCursor < updated.readCursorServerSeq.toLong())
-            ) {
-                store.setChatReadCursor(chatId, updated.readCursorServerSeq, selfAccountId)
-                directUpdatedReadCursor = store.chatReadCursor(chatId)?.toLong()
-                directUpdatedUnreadCount = store.chatUnreadCount(chatId, selfAccountId)?.toLong()
-            }
-            val previousReadCursor = previous?.readCursorServerSeq?.toLong()
-            val updatedReadCursor = updated.readCursorServerSeq.toLong()
-            if (updatedReadCursor > 0 && updatedReadCursor > (previousReadCursor ?: 0L)) {
-                enqueueReadReceiptIfNeeded(
-                    chatId = chatId,
-                    selfAccountId = selfAccountId,
-                    readCursorServerSeq = updatedReadCursor,
-                    previousReadCursorServerSeq = previousReadCursor,
-                    store = store,
-                )
-                flushPendingOutboxNow(chatId)
-            }
+            val previousUnreadCount = messengerConversationSummary(chatId)?.unreadCount?.toLong()
+            messenger().markRead(chatId)
+            val updatedUnreadCount = messengerConversationSummary(chatId)?.unreadCount?.toLong()
 
             ChatReadResult(
-                overview = buildOverview(),
-                changed = previous == null ||
-                    previous.readCursorServerSeq != updated.readCursorServerSeq ||
-                    previous.unreadCount != updated.unreadCount ||
-                    directPreviousReadCursor != directUpdatedReadCursor ||
-                    directPreviousUnreadCount != directUpdatedUnreadCount,
+                overview = buildMessengerOverview(
+                    conversations = messenger().listConversations(),
+                    rootPath = messenger().rootPath(),
+                ),
+                changed = previousUnreadCount != updatedUnreadCount,
             )
         }
     }
@@ -542,26 +412,18 @@ class ChatRepository(
 
     suspend fun pollOnce(): ChatRefreshResult = withContext(Dispatchers.IO) {
         runFfi("Failed to poll realtime") {
-            val client = client()
-            val store = historyStore()
-            val syncCoordinator = syncCoordinator()
-
-            client.setAccessToken(session.accessToken)
-            val driver = chat.trix.android.core.ffi.FfiRealtimeDriver()
-            val outcome = driver.pollOnce(
-                client = client,
-                coordinator = syncCoordinator,
-                store = store,
-            )
-            val projectedChatTimelines = projectChatsWithLocalMlsState(store)
+            val batch = messenger().getNewEvents(checkpoint = null)
 
             ChatRefreshResult(
-                overview = buildOverview(),
+                overview = buildMessengerOverview(
+                    conversations = messenger().listConversations(),
+                    rootPath = messenger().rootPath(),
+                ),
                 historyMessagesUpserted = 0,
-                inboxMessagesUpserted = outcome.report.messagesUpserted.toLong(),
-                ackedInboxCount = outcome.ackedInboxIds.size,
+                inboxMessagesUpserted = batch.changedChatIds.size.toLong(),
+                ackedInboxCount = 0,
                 hydratedChatDetails = 0,
-                projectedChatTimelines = projectedChatTimelines,
+                projectedChatTimelines = batch.changedChatIds.size,
                 flushedOutboxCount = 0,
             )
         }
@@ -584,31 +446,20 @@ class ChatRepository(
         deviceIds: List<String>,
     ): ChatMembershipUpdateResult = withContext(Dispatchers.IO) {
         runFfi("Failed to add chat devices") {
-            val client = client()
-            val store = historyStore()
-            val syncCoordinator = syncCoordinator()
-            val facade = mlsFacade()
-
-            client.setAccessToken(session.accessToken)
-            syncCoordinator.addChatDevicesControl(
-                client = client,
-                store = store,
-                facade = facade,
-                input = chat.trix.android.core.ffi.FfiModifyChatDevicesControlInput(
-                    actorAccountId = session.localState.accountId,
-                    actorDeviceId = session.localState.deviceId,
-                    chatId = chatId,
-                    deviceIds = deviceIds,
-                    commitAadJson = EMPTY_AAD_JSON,
-                    welcomeAadJson = EMPTY_AAD_JSON,
-                ),
+            messenger().updateConversationDevices(
+                conversationId = chatId,
+                deviceIds = deviceIds,
             )
-            hydrateChatDetail(client, store, chatId)
 
             buildMutationConversationResult(
                 unavailableMessage = "Conversation $chatId is no longer available",
-                buildOverview = ::buildOverview,
-                buildConversation = { buildConversation(chatId) },
+                buildOverview = {
+                    buildMessengerOverview(
+                        conversations = messenger().listConversations(),
+                        rootPath = messenger().rootPath(),
+                    )
+                },
+                buildConversation = { buildMessengerConversation(chatId) },
                 createResult = ::ChatMembershipUpdateResult,
             )
         }
@@ -619,31 +470,20 @@ class ChatRepository(
         deviceIds: List<String>,
     ): ChatMembershipUpdateResult = withContext(Dispatchers.IO) {
         runFfi("Failed to remove chat devices") {
-            val client = client()
-            val store = historyStore()
-            val syncCoordinator = syncCoordinator()
-            val facade = mlsFacade()
-
-            client.setAccessToken(session.accessToken)
-            syncCoordinator.removeChatDevicesControl(
-                client = client,
-                store = store,
-                facade = facade,
-                input = chat.trix.android.core.ffi.FfiModifyChatDevicesControlInput(
-                    actorAccountId = session.localState.accountId,
-                    actorDeviceId = session.localState.deviceId,
-                    chatId = chatId,
-                    deviceIds = deviceIds,
-                    commitAadJson = EMPTY_AAD_JSON,
-                    welcomeAadJson = EMPTY_AAD_JSON,
-                ),
+            messenger().removeConversationDevices(
+                conversationId = chatId,
+                deviceIds = deviceIds,
             )
-            hydrateChatDetail(client, store, chatId)
 
             buildMutationConversationResult(
                 unavailableMessage = "Conversation $chatId is no longer available",
-                buildOverview = ::buildOverview,
-                buildConversation = { buildConversation(chatId) },
+                buildOverview = {
+                    buildMessengerOverview(
+                        conversations = messenger().listConversations(),
+                        rootPath = messenger().rootPath(),
+                    )
+                },
+                buildConversation = { buildMessengerConversation(chatId) },
                 createResult = ::ChatMembershipUpdateResult,
             )
         }
@@ -815,6 +655,9 @@ class ChatRepository(
     // endregion
 
     override fun close() {
+        if (messengerDelegate.isInitialized()) {
+            messengerDelegate.value.close()
+        }
         if (clientDelegate.isInitialized()) {
             clientDelegate.value.close()
         }
@@ -830,6 +673,262 @@ class ChatRepository(
         if (clientStoreDelegate.isInitialized()) {
             clientStoreDelegate.value.close()
         }
+    }
+
+    private fun buildMessengerOverview(
+        conversations: List<FfiMessengerConversationSummary>,
+        rootPath: String,
+    ): ChatOverview {
+        val summaries = conversations.map(::mapMessengerConversationSummary)
+        val cachedMessageCount = conversations.sumOf { conversation ->
+            conversation.lastServerSeq.toLong().coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        }
+
+        return ChatOverview(
+            conversations = summaries,
+            diagnostics = ChatDiagnostics(
+                cachedChatCount = summaries.size,
+                cachedMessageCount = cachedMessageCount,
+                projectedChatCount = summaries.size,
+                pendingOutboxCount = conversations.sumOf { it.pendingMessageCount.toIntClamped() },
+                lastAckedInboxId = null,
+                leaseOwner = "messenger-core",
+                historyStorePath = "$rootPath/client-store.sqlite",
+                syncStatePath = "$rootPath/messenger-state.bin",
+            ),
+        )
+    }
+
+    private fun buildMessengerConversation(chatId: String): ChatConversation? {
+        val conversation = messengerConversationSummary(chatId) ?: return null
+        val messages = messenger().getAllMessages(chatId)
+        return ChatConversation(
+            chatId = conversation.conversationId,
+            chatType = conversation.conversationType,
+            title = conversation.displayTitle,
+            participantsLabel = messengerParticipantsLabel(conversation),
+            timelineLabel = if (messages.isEmpty()) "No messages yet" else "Synced by messenger core",
+            isAccountSyncChat = conversation.conversationId == session.localState.accountSyncChatId,
+            canSend = session.localState.deviceStatus.equals("active", ignoreCase = true),
+            canManageMembers = conversation.conversationType == FfiChatType.GROUP,
+            composerHint = when (conversation.conversationType) {
+                FfiChatType.ACCOUNT_SYNC ->
+                    "This private account sync thread is fully handled by the shared messenger core."
+
+                FfiChatType.GROUP ->
+                    "Messages, attachments, receipts, and membership changes are handled by the shared messenger core."
+
+                FfiChatType.DM ->
+                    "Messages, attachments, and receipts are handled by the shared messenger core."
+            },
+            members = messengerConversationMembers(conversation),
+            messages = mapMessengerTimelineMessages(messages),
+        )
+    }
+
+    private fun mapMessengerConversationSummary(
+        conversation: FfiMessengerConversationSummary,
+    ): ChatConversationSummary {
+        return ChatConversationSummary(
+            chatId = conversation.conversationId,
+            chatType = conversation.conversationType,
+            title = conversation.displayTitle,
+            participantsLabel = messengerParticipantsLabel(conversation),
+            lastMessagePreview = messengerPreviewLabel(conversation),
+            timestampLabel = conversation.previewCreatedAtUnix?.toLong()?.formatChatTimestamp() ?: "No messages yet",
+            messageCount = conversation.lastServerSeq.toIntClamped(),
+            unreadCount = conversation.unreadCount.toIntClamped(),
+            hasProjectedTimeline = true,
+            isAccountSyncChat = conversation.conversationId == session.localState.accountSyncChatId,
+        )
+    }
+
+    private fun messengerConversationSummary(chatId: String): FfiMessengerConversationSummary? {
+        return messenger().listConversations().firstOrNull { it.conversationId == chatId }
+    }
+
+    private fun messengerParticipantsLabel(
+        conversation: FfiMessengerConversationSummary,
+    ): String {
+        val participants = conversation.participantProfiles
+            .filterNot { profile ->
+                profile.accountId == session.localState.accountId && conversation.participantProfiles.size > 1
+            }
+            .ifEmpty { conversation.participantProfiles }
+
+        if (participants.isEmpty()) {
+            return when (conversation.conversationType) {
+                FfiChatType.ACCOUNT_SYNC -> "Private cross-device sync channel"
+                FfiChatType.GROUP -> "Member metadata pending"
+                FfiChatType.DM -> "Direct conversation"
+            }
+        }
+
+        val visibleMembers = participants
+            .take(MAX_VISIBLE_MEMBERS)
+            .joinToString(", ", transform = ::messengerParticipantDisplayName)
+        val remainder = participants.size - MAX_VISIBLE_MEMBERS
+        return if (remainder > 0) {
+            "$visibleMembers +$remainder"
+        } else {
+            visibleMembers
+        }
+    }
+
+    private fun messengerConversationMembers(
+        conversation: FfiMessengerConversationSummary,
+    ): List<ChatConversationMember> {
+        return conversation.participantProfiles.map { profile ->
+            ChatConversationMember(
+                accountId = profile.accountId,
+                displayName = messengerParticipantDisplayName(profile),
+                role = if (profile.accountId == session.localState.accountId) "self" else "participant",
+                membershipStatus = "active",
+                isSelf = profile.accountId == session.localState.accountId,
+            )
+        }
+    }
+
+    private fun messengerParticipantDisplayName(profile: FfiMessengerParticipantProfile): String {
+        if (profile.accountId == session.localState.accountId) {
+            return "You"
+        }
+        return profile.profileName.takeIf(String::isNotBlank)
+            ?: profile.handle?.takeIf(String::isNotBlank)?.let { "@$it" }
+            ?: shortAccountId(profile.accountId)
+    }
+
+    private fun messengerPreviewLabel(conversation: FfiMessengerConversationSummary): String {
+        val previewText = conversation.previewText?.trim()?.takeIf(String::isNotEmpty) ?: return "No messages yet"
+        val senderLabel = when {
+            conversation.previewIsOutgoing == true -> "You"
+            !conversation.previewSenderDisplayName.isNullOrBlank() -> conversation.previewSenderDisplayName
+            !conversation.previewSenderAccountId.isNullOrBlank() -> shortAccountId(conversation.previewSenderAccountId!!)
+            else -> null
+        }
+        return if (senderLabel != null) {
+            "$senderLabel: $previewText"
+        } else {
+            previewText
+        }
+    }
+
+    private fun mapMessengerTimelineMessages(
+        messages: List<FfiMessengerMessageRecord>,
+    ): List<ChatTimelineMessage> {
+        val latestReceiptByTarget = mutableMapOf<String, ChatReceiptStatus>()
+        messages.forEach { message ->
+            val targetMessageId = messengerReceiptTargetMessageId(message) ?: return@forEach
+            val nextStatus = messengerReceiptStatus(message) ?: return@forEach
+            val previousStatus = latestReceiptByTarget[targetMessageId]
+            latestReceiptByTarget[targetMessageId] = when {
+                previousStatus == ChatReceiptStatus.READ || nextStatus == ChatReceiptStatus.READ -> ChatReceiptStatus.READ
+                else -> ChatReceiptStatus.DELIVERED
+            }
+        }
+
+        return messages
+            .filterNot(::isMessengerReceiptMessage)
+            .map { message ->
+                mapMessengerTimelineMessage(
+                    message = message,
+                    receiptStatus = latestReceiptByTarget[message.messageId],
+                )
+            }
+    }
+
+    private fun mapMessengerTimelineMessage(
+        message: FfiMessengerMessageRecord,
+        receiptStatus: ChatReceiptStatus?,
+    ): ChatTimelineMessage {
+        return ChatTimelineMessage(
+            id = message.messageId,
+            author = if (message.isOutgoing) {
+                "You"
+            } else {
+                message.senderDisplayName?.takeIf(String::isNotBlank)
+                    ?: shortAccountId(message.senderAccountId)
+            },
+            body = messengerTimelineBody(message),
+            timestampLabel = message.createdAtUnix.toLong().formatChatTimestamp(),
+            isMine = message.isOutgoing,
+            note = null,
+            contentType = message.contentType,
+            attachment = messengerAttachmentFrom(message),
+            receiptStatus = if (message.isOutgoing) receiptStatus else null,
+        )
+    }
+
+    private fun messengerAttachmentFrom(
+        message: FfiMessengerMessageRecord,
+    ): ChatAttachment? {
+        val attachment = message.body?.attachment ?: return null
+        return ChatAttachment(
+            messageId = message.messageId,
+            blobId = attachment.attachmentRef,
+            attachmentRef = attachment.attachmentRef,
+            mimeType = attachment.mimeType,
+            fileName = attachment.fileName,
+            sizeBytes = attachment.sizeBytes.toLong(),
+            widthPx = attachment.widthPx?.toInt(),
+            heightPx = attachment.heightPx?.toInt(),
+            body = null,
+        )
+    }
+
+    private fun messengerTimelineBody(message: FfiMessengerMessageRecord): String {
+        val body = message.body ?: return message.previewText.trim().takeIf(String::isNotEmpty)
+            ?: "Encrypted application payload"
+        return when (body.kind) {
+            FfiMessengerMessageBodyKind.TEXT -> body.text
+                ?.trim()
+                ?.takeIf(String::isNotEmpty)
+                ?: message.previewText.trim().takeIf(String::isNotEmpty)
+                ?: "Message content is unavailable on this device."
+
+            FfiMessengerMessageBodyKind.REACTION ->
+                "Reacted ${body.emoji.orEmpty()} to ${body.targetMessageId?.let(::shortMessageId) ?: "message"}"
+
+            FfiMessengerMessageBodyKind.RECEIPT ->
+                "${body.receiptType?.name?.lowercase()?.replaceFirstChar(Char::uppercase) ?: "Delivery"} receipt"
+
+            FfiMessengerMessageBodyKind.ATTACHMENT ->
+                body.attachment?.fileName ?: body.attachment?.mimeType ?: "Attachment"
+
+            FfiMessengerMessageBodyKind.CHAT_EVENT ->
+                body.eventType?.trim()?.takeIf(String::isNotEmpty) ?: "Chat event"
+        }
+    }
+
+    private fun messengerReceiptTargetMessageId(
+        message: FfiMessengerMessageRecord,
+    ): String? {
+        val body = message.body ?: return null
+        return if (body.kind == FfiMessengerMessageBodyKind.RECEIPT) {
+            body.targetMessageId
+        } else {
+            null
+        }
+    }
+
+    private fun messengerReceiptStatus(
+        message: FfiMessengerMessageRecord,
+    ): ChatReceiptStatus? {
+        val body = message.body ?: return null
+        if (body.kind != FfiMessengerMessageBodyKind.RECEIPT || body.targetMessageId == null) {
+            return null
+        }
+        return when (body.receiptType) {
+            FfiReceiptType.READ -> ChatReceiptStatus.READ
+            FfiReceiptType.DELIVERED,
+            null,
+            -> ChatReceiptStatus.DELIVERED
+        }
+    }
+
+    private fun isMessengerReceiptMessage(message: FfiMessengerMessageRecord): Boolean {
+        return message.contentType == FfiContentType.RECEIPT ||
+            message.body?.kind == FfiMessengerMessageBodyKind.RECEIPT
     }
 
     private fun buildOverview(): ChatOverview {
@@ -1338,6 +1437,8 @@ class ChatRepository(
         return ffiParseMessageBody(ffiContentTypeForBody(body), payload)
     }
 
+    private fun messenger(): AndroidMessengerClient = messengerDelegate.value
+
     private fun client(): FfiServerApiClient = clientDelegate.value
 
     private fun clientStore(): FfiClientStore = clientStoreDelegate.value
@@ -1359,6 +1460,8 @@ class ChatRepository(
                 block()
             } catch (error: CancellationException) {
                 throw error
+            } catch (error: FfiMessengerException) {
+                throw IOException(ffiMessengerMessage(error), error)
             } catch (error: TrixFfiException) {
                 throw IOException(error.message ?: fallbackMessage, error)
             } catch (error: UnsatisfiedLinkError) {
@@ -1709,7 +1812,7 @@ class ChatRepository(
         if (body?.kind != FfiMessageBodyKind.RECEIPT || body.targetMessageId == null) {
             return null
         }
-        return when (body?.receiptType) {
+        return when (body.receiptType) {
             FfiReceiptType.READ -> ChatReceiptStatus.READ
             FfiReceiptType.DELIVERED, null -> ChatReceiptStatus.DELIVERED
         }
@@ -1751,6 +1854,10 @@ class ChatRepository(
         } else {
             "${messageId.take(6)}…"
         }
+    }
+
+    private fun ULong.toIntClamped(): Int {
+        return toLong().coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     }
 
     private fun accountDisplayName(accountId: String): String {
@@ -1983,10 +2090,11 @@ private data class PendingOutboxPreview(
 data class ChatAttachment(
     val messageId: String,
     val blobId: String,
+    val attachmentRef: String? = null,
     val mimeType: String,
     val fileName: String?,
     val sizeBytes: Long?,
     val widthPx: Int?,
     val heightPx: Int?,
-    val body: FfiMessageBody,
+    val body: FfiMessageBody? = null,
 )
