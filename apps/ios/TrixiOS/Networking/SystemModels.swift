@@ -41,6 +41,7 @@ enum HistorySyncJobType: String, Codable {
     case initialSync = "initial_sync"
     case chatBackfill = "chat_backfill"
     case deviceRekey = "device_rekey"
+    case timelineRepair = "timeline_repair"
 }
 
 enum HistorySyncJobStatus: String, Codable {

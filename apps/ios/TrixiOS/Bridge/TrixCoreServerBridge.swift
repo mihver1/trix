@@ -662,6 +662,8 @@ private extension FfiHistorySyncJobType {
             return .chatBackfill
         case .deviceRekey:
             return .deviceRekey
+        case .timelineRepair:
+            return .timelineRepair
         }
     }
 }

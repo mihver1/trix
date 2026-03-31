@@ -678,12 +678,19 @@ struct ConsumerChatDetailView: View {
 }
 
 enum ConsumerConversationTimelineBuilder {
+    static func makeTimelineItems(
+        for snapshot: SafeConversationSnapshot,
+        fixtureManifest: UITestFixtureManifest? = nil
+    ) -> [ConsumerTimelineItem] {
+        makeRenderPayload(for: snapshot, fixtureManifest: fixtureManifest).items
+    }
+
     static func makeRenderPayload(
         for snapshot: SafeConversationSnapshot,
         fixtureManifest: UITestFixtureManifest?
     ) -> ConsumerTimelineRenderPayload {
         // `loadConversationSnapshot()` already returns ascending server order, so keep typing cheap.
-        let messages = snapshot.messages.filter(\.isVisibleInTimeline)
+        let messages = snapshot.messages
         var items: [ConsumerTimelineItem] = []
         var receiptStatusByMessageID: [String: ConsumerReceiptStatus] = [:]
         let participantDisplayNamesByAccountId = snapshot.detail.participantProfiles.reduce(into: [String: String]()) { partialResult, profile in
@@ -700,6 +707,10 @@ enum ConsumerConversationTimelineBuilder {
                         with: receiptStatus(for: message) ?? .delivered
                     )
                 }
+                return nil
+            }
+
+            guard message.isVisibleInTimeline else {
                 return nil
             }
 
@@ -756,10 +767,8 @@ enum ConsumerConversationTimelineBuilder {
                         clusterPosition: clusterPosition,
                         topSpacing: topSpacing,
                         usesCenteredEventStyle: messageUsesCenteredEventStyle(message),
-                        receiptStatus: message.isOutgoing
-                            ? (receiptStatusByMessageID[message.id]
-                                ?? message.receiptStatus.map(ConsumerReceiptStatus.init))
-                            : nil,
+                        receiptStatus: receiptStatusByMessageID[message.id]
+                            ?? message.receiptStatus.map(ConsumerReceiptStatus.init),
                         reactions: message.reactions
                     )
                 )
@@ -783,7 +792,9 @@ enum ConsumerConversationTimelineBuilder {
         }
 
         return snapshot.messages.reversed().first { message in
-            message.isVisibleInTimeline && message.senderAccountId != currentAccountId
+            message.isVisibleInTimeline
+                && message.senderAccountId != currentAccountId
+                && !isReceiptMessage(message)
         }?.id
     }
 
@@ -890,6 +901,38 @@ enum ConsumerConversationTimelineBuilder {
 
     private static func effectiveBodyKind(for message: SafeMessengerMessage) -> SafeMessengerMessageBodyKind {
         message.body?.kind ?? fallbackBodyKind(for: message.contentType)
+    }
+
+    private static func isReceiptMessage(_ message: SafeMessengerMessage) -> Bool {
+        effectiveBodyKind(for: message) == .receipt
+    }
+
+    private static func receiptTargetMessageID(for message: SafeMessengerMessage) -> String? {
+        guard isReceiptMessage(message) else {
+            return nil
+        }
+
+        return message.body?.targetMessageId?.trix_trimmedOrNil()
+    }
+
+    private static func receiptStatus(for message: SafeMessengerMessage) -> ConsumerReceiptStatus? {
+        guard isReceiptMessage(message) else {
+            return nil
+        }
+
+        return message.body?.receiptType.map(ConsumerReceiptStatus.init)
+            ?? message.receiptStatus.map(ConsumerReceiptStatus.init)
+    }
+
+    private static func mergedReceiptStatus(
+        _ current: ConsumerReceiptStatus?,
+        with incoming: ConsumerReceiptStatus
+    ) -> ConsumerReceiptStatus {
+        guard let current else {
+            return incoming
+        }
+
+        return max(current, incoming)
     }
 }
 

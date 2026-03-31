@@ -1650,6 +1650,8 @@ private extension HistorySyncJobType {
             return "Chat Backfill"
         case .deviceRekey:
             return "Device Rekey"
+        case .timelineRepair:
+            return "Timeline Repair"
         }
     }
 }
