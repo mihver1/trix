@@ -38,21 +38,37 @@ struct UITestFixtureManifest: Codable, Equatable {
 
 enum UITestFixtureManifestStore {
     private static let defaultsKey = "ui-test.fixture-manifest"
+    nonisolated(unsafe) private static var cachedManifest: UITestFixtureManifest?
+    nonisolated(unsafe) private static var hasLoadedManifest = false
 
     static func load() -> UITestFixtureManifest? {
+        if hasLoadedManifest {
+            return cachedManifest
+        }
+
+        hasLoadedManifest = true
+
         guard let data = UserDefaults.standard.data(forKey: defaultsKey) else {
+            cachedManifest = nil
             return nil
         }
-        return try? JSONDecoder().decode(UITestFixtureManifest.self, from: data)
+
+        let manifest = try? JSONDecoder().decode(UITestFixtureManifest.self, from: data)
+        cachedManifest = manifest
+        return manifest
     }
 
     static func save(_ manifest: UITestFixtureManifest) throws {
         let data = try JSONEncoder().encode(manifest)
         UserDefaults.standard.set(data, forKey: defaultsKey)
+        cachedManifest = manifest
+        hasLoadedManifest = true
     }
 
     static func clear() {
         UserDefaults.standard.removeObject(forKey: defaultsKey)
+        cachedManifest = nil
+        hasLoadedManifest = true
     }
 
     static func chatFixtureKind(for chatId: String) -> UITestFixtureChatKind? {

@@ -101,6 +101,7 @@ final class AppModel {
     private(set) var localIdentity: LocalDeviceIdentity?
     private(set) var localCoreState: LocalCoreStateSnapshot?
     private(set) var dashboard: DashboardData?
+    private(set) var dashboardConversationRefreshTokens: [String: String] = [:]
     private(set) var activeLinkIntent: CreateLinkIntentResponse?
     private(set) var systemSnapshot: ServerSnapshot?
     private(set) var lastUpdatedAt: Date?
@@ -207,7 +208,7 @@ final class AppModel {
                 } catch let error as APIError where isPendingApprovalAuthFailure(error, identity: localIdentity) {
                     invalidateCachedAuthSession()
                     await stopRealtimeConnection()
-                    dashboard = nil
+                    updateDashboardState(nil)
                     messengerSnapshot = nil
                     messengerCheckpoint = nil
                     messengerReadStates = [:]
@@ -217,7 +218,7 @@ final class AppModel {
                 }
             } else {
                 await stopRealtimeConnection()
-                dashboard = nil
+                updateDashboardState(nil)
                 localCoreState = nil
                 messengerSnapshot = nil
                 messengerCheckpoint = nil
@@ -356,7 +357,7 @@ final class AppModel {
             try identityStore.save(localIdentity)
             self.localIdentity = localIdentity
             updateLocalCoreStateSnapshot(identity: localIdentity)
-            dashboard = nil
+            updateDashboardState(nil)
             activeLinkIntent = nil
             stopLinkIntentRefreshLoop()
             invalidateCachedAuthSession()
@@ -381,7 +382,7 @@ final class AppModel {
             messengerSnapshot = nil
             messengerCheckpoint = nil
             messengerReadStates = [:]
-            dashboard = nil
+            updateDashboardState(nil)
             activeLinkIntent = nil
             directoryAccountCache = [:]
             errorMessage = nil
@@ -464,19 +465,20 @@ final class AppModel {
         }
     }
 
+    @discardableResult
     func revokeDevice(
         baseURLString: String,
         deviceId: String,
         reason: String
-    ) async {
+    ) async -> Bool {
         guard !isLoading else {
-            return
+            return false
         }
 
         let trimmedReason = reason.trix_trimmed()
         guard !trimmedReason.isEmpty else {
             errorMessage = "Revoke reason must not be empty."
-            return
+            return false
         }
 
         isLoading = true
@@ -497,8 +499,10 @@ final class AppModel {
             )
 
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -1641,7 +1645,7 @@ final class AppModel {
         dashboard.chats.forEach { chat in
             seedDirectoryAccountCache(with: chat.participantProfiles)
         }
-        self.dashboard = dashboard
+        updateDashboardState(dashboard)
         lastUpdatedAt = Date()
 
         if restartRealtime {
@@ -1672,6 +1676,37 @@ final class AppModel {
         }
     }
 
+    private func updateDashboardState(_ newDashboard: DashboardData?) {
+        dashboard = newDashboard
+        dashboardConversationRefreshTokens = Self.makeDashboardConversationRefreshTokens(newDashboard)
+    }
+
+    private static func makeDashboardConversationRefreshTokens(_ dashboard: DashboardData?) -> [String: String] {
+        guard let dashboard else {
+            return [:]
+        }
+
+        var latestInboxIdByChatId: [String: UInt64] = [:]
+        for item in dashboard.inboxItems {
+            let chatId = item.message.chatId
+            latestInboxIdByChatId[chatId] = max(latestInboxIdByChatId[chatId] ?? 0, item.inboxId)
+        }
+
+        var tokens: [String: String] = [:]
+        tokens.reserveCapacity(max(dashboard.chats.count, latestInboxIdByChatId.count))
+
+        for chat in dashboard.chats {
+            let latestInboxId = latestInboxIdByChatId[chat.chatId] ?? 0
+            tokens[chat.chatId] = "\(latestInboxId)-\(chat.lastServerSeq)"
+        }
+
+        for (chatId, latestInboxId) in latestInboxIdByChatId where tokens[chatId] == nil {
+            tokens[chatId] = "\(latestInboxId)-0"
+        }
+
+        return tokens
+    }
+
     private func applyLoadedDevicesToDashboard(_ devices: [DeviceSummary]) {
         guard let dashboard else {
             return
@@ -1684,14 +1719,14 @@ final class AppModel {
         let newPendingIds = pendingDeviceIds(in: sortedDevices)
             .subtracting(linkIntentPendingBaselineDeviceIds)
 
-        self.dashboard = DashboardData(
+        updateDashboardState(DashboardData(
             session: dashboard.session,
             profile: dashboard.profile,
             devices: sortedDevices,
             historySyncJobs: dashboard.historySyncJobs,
             chats: dashboard.chats,
             inboxItems: dashboard.inboxItems
-        )
+        ))
         lastUpdatedAt = Date()
 
         guard activeLinkIntent != nil,
@@ -1940,7 +1975,7 @@ final class AppModel {
         updateLocalCoreStateSnapshot(identity: localIdentity ?? identity)
 
         if let dashboard {
-            self.dashboard = DashboardData(
+            updateDashboardState(DashboardData(
                 session: dashboard.session,
                 profile: dashboard.profile,
                 devices: sortedDevicesForDisplay(
@@ -1950,7 +1985,7 @@ final class AppModel {
                 historySyncJobs: dashboard.historySyncJobs,
                 chats: snapshot.chats,
                 inboxItems: []
-            )
+            ))
             lastUpdatedAt = Date()
 
             if activeLinkIntent != nil {
@@ -2407,7 +2442,7 @@ final class AppModel {
         let mergedChats = mergeDashboardChatsWithLocalState(existing: dashboard.chats)
         let mergedChatIds = Set(mergedChats.map(\.chatId))
 
-        self.dashboard = DashboardData(
+        updateDashboardState(DashboardData(
             session: session,
             profile: dashboard.profile,
             devices: dashboard.devices,
@@ -2417,7 +2452,7 @@ final class AppModel {
                 inboxItems: remainingInboxItems
             ),
             inboxItems: remainingInboxItems
-        )
+        ))
         lastUpdatedAt = Date()
 
         return Set(changedChatIds).isSubset(of: mergedChatIds)
@@ -2437,7 +2472,7 @@ final class AppModel {
             existing: dashboard.inboxItems,
             incoming: newItems
         )
-        self.dashboard = DashboardData(
+        updateDashboardState(DashboardData(
             session: dashboard.session,
             profile: dashboard.profile,
             devices: dashboard.devices,
@@ -2447,7 +2482,7 @@ final class AppModel {
                 inboxItems: mergedInboxItems
             ),
             inboxItems: mergedInboxItems
-        )
+        ))
         lastUpdatedAt = Date()
 
         if scheduleRefreshForUnknownChats,
@@ -2468,7 +2503,7 @@ final class AppModel {
         }
 
         let remainingInboxItems = dashboard.inboxItems.filter { !acknowledgedSet.contains($0.inboxId) }
-        self.dashboard = DashboardData(
+        updateDashboardState(DashboardData(
             session: dashboard.session,
             profile: dashboard.profile,
             devices: dashboard.devices,
@@ -2478,7 +2513,7 @@ final class AppModel {
                 inboxItems: remainingInboxItems
             ),
             inboxItems: remainingInboxItems
-        )
+        ))
         lastUpdatedAt = Date()
     }
 

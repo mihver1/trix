@@ -26,6 +26,11 @@ struct TrixMacApp: App {
                 }
         }
         .defaultSize(width: 1180, height: 720)
+
+        Settings {
+            WorkspaceSettingsView(model: model)
+        }
+        .defaultSize(width: 960, height: 720)
     }
 }
 
