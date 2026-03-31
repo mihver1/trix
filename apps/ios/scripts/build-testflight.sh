@@ -252,6 +252,7 @@ print_runtime_summary() {
     log "Overriding MARKETING_VERSION=$TRIX_IOS_MARKETING_VERSION"
   fi
 
+
   if [[ -n "${TRIX_IOS_BUILD_NUMBER:-}" ]]; then
     log "Overriding CURRENT_PROJECT_VERSION=$TRIX_IOS_BUILD_NUMBER"
   fi

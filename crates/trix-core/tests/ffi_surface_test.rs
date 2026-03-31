@@ -19,6 +19,20 @@ fn temp_dir(label: &str) -> std::path::PathBuf {
     dir
 }
 
+#[test]
+fn quick_reaction_emoji_defaults_match_product_selection() {
+    let reactions = default_quick_reaction_emojis();
+    assert_eq!(
+        reactions,
+        vec![
+            "👍", "❤️", "🔥", "👎", "💔", "🤔", "😕", "🤨", "😡", "🤡", "💩", "🗿"
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>()
+    );
+}
+
 // ─── 1. Crypto key material ───
 
 #[test]

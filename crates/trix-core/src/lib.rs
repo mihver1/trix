@@ -14,6 +14,17 @@ pub mod transport;
 
 uniffi::setup_scaffolding!();
 
+pub const DEFAULT_QUICK_REACTION_EMOJIS: [&str; 12] = [
+    "👍", "❤️", "🔥", "👎", "💔", "🤔", "😕", "🤨", "😡", "🤡", "💩", "🗿",
+];
+
+pub fn default_quick_reaction_emojis() -> Vec<String> {
+    DEFAULT_QUICK_REACTION_EMOJIS
+        .iter()
+        .map(|emoji| (*emoji).to_owned())
+        .collect()
+}
+
 pub use attachments::{
     ATTACHMENT_FILE_KEY_BYTES, ATTACHMENT_NONCE_BYTES, PreparedAttachmentUpload,
     decrypt_attachment_payload, prepare_attachment_upload,
@@ -40,10 +51,10 @@ pub use signatures::{account_bootstrap_message, device_revoke_message};
 pub use storage::{
     AttachmentStore, LocalChatListItem, LocalChatReadState, LocalHistoryRepairCandidate,
     LocalHistoryRepairReason, LocalHistoryRepairWindow, LocalHistoryStore,
-    LocalMessageRecoveryState, LocalOutboxAttachmentDraft, LocalOutboxMessage, LocalOutboxPayload,
-    LocalOutboxStatus, LocalOutgoingMessageApplyOutcome, LocalProjectedMessage,
-    LocalProjectionApplyReport, LocalProjectionKind, LocalStoreApplyReport, LocalTimelineItem,
-    MlsStateStore, PreparedLocalOutboxSend, SyncStateStore,
+    LocalMessageReactionSummary, LocalMessageRecoveryState, LocalOutboxAttachmentDraft,
+    LocalOutboxMessage, LocalOutboxPayload, LocalOutboxStatus, LocalOutgoingMessageApplyOutcome,
+    LocalProjectedMessage, LocalProjectionApplyReport, LocalProjectionKind, LocalStoreApplyReport,
+    LocalTimelineItem, MlsStateStore, PreparedLocalOutboxSend, SyncStateStore,
 };
 pub use sync::{
     CoreEvent, CoreEventSink, CreateChatControlInput, CreateChatControlOutcome,

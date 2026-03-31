@@ -16,11 +16,11 @@ use crate::{
     CreateChatControlOutcome, DeviceApprovePayloadMaterial, DeviceKeyMaterial,
     DeviceTransferBundleMaterial, DirectoryAccountMaterial, HistorySyncChunkMaterial,
     HistorySyncProcessReport, ImportedDeviceTransferBundle, InboxApplyOutcome, LocalChatListItem,
-    LocalChatReadState, LocalHistoryStore, LocalOutboxAttachmentDraft, LocalOutboxMessage,
-    LocalOutboxPayload, LocalOutboxStatus, LocalProjectedMessage, LocalProjectionApplyReport,
-    LocalProjectionKind, LocalStoreApplyReport, LocalTimelineItem, MessageBody, MlsCommitBundle,
-    MlsFacade, MlsMemberIdentity, MlsProcessResult, ModifyChatDevicesControlInput,
-    ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
+    LocalChatReadState, LocalHistoryStore, LocalMessageReactionSummary, LocalOutboxAttachmentDraft,
+    LocalOutboxMessage, LocalOutboxPayload, LocalOutboxStatus, LocalProjectedMessage,
+    LocalProjectionApplyReport, LocalProjectionKind, LocalStoreApplyReport, LocalTimelineItem,
+    MessageBody, MlsCommitBundle, MlsFacade, MlsMemberIdentity, MlsProcessResult,
+    ModifyChatDevicesControlInput, ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
     ModifyChatMembersControlOutcome, PreparedAttachmentUpload, PublishKeyPackageMaterial,
     ReactionAction, RealtimeConfig, RealtimeDriver, RealtimeEvent, RealtimeEventKind, RealtimeMode,
     ReceiptType, ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient,
@@ -747,6 +747,14 @@ pub struct FfiMessageBody {
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiMessageReactionSummary {
+    pub emoji: String,
+    pub reactor_account_ids: Vec<String>,
+    pub count: u64,
+    pub includes_self: bool,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct FfiLocalProjectedMessage {
     pub server_seq: u64,
     pub message_id: String,
@@ -778,6 +786,9 @@ pub struct FfiLocalTimelineItem {
     pub body: Option<FfiMessageBody>,
     pub body_parse_error: Option<String>,
     pub preview_text: String,
+    pub receipt_status: Option<FfiReceiptType>,
+    pub reactions: Vec<FfiMessageReactionSummary>,
+    pub is_visible_in_timeline: bool,
     pub merged_epoch: Option<u64>,
     pub created_at_unix: u64,
 }
@@ -1106,6 +1117,11 @@ fn ffi_decrypt_attachment_payload(
         ));
     };
     decrypt_attachment_payload(&body, &encrypted_payload).map_err(ffi_error)
+}
+
+#[uniffi::export]
+fn ffi_default_quick_reaction_emojis() -> Vec<String> {
+    crate::default_quick_reaction_emojis()
 }
 
 #[uniffi::export]
@@ -4504,8 +4520,30 @@ fn local_timeline_item_to_ffi(value: LocalTimelineItem) -> FfiLocalTimelineItem 
         body: value.body.map(message_body_to_ffi),
         body_parse_error: value.body_parse_error,
         preview_text: value.preview_text,
+        receipt_status: value.receipt_status.map(Into::into),
+        reactions: value
+            .reactions
+            .into_iter()
+            .map(message_reaction_summary_to_ffi)
+            .collect(),
+        is_visible_in_timeline: value.is_visible_in_timeline,
         merged_epoch: value.merged_epoch,
         created_at_unix: value.created_at_unix,
+    }
+}
+
+fn message_reaction_summary_to_ffi(
+    value: LocalMessageReactionSummary,
+) -> FfiMessageReactionSummary {
+    FfiMessageReactionSummary {
+        emoji: value.emoji,
+        reactor_account_ids: value
+            .reactor_account_ids
+            .into_iter()
+            .map(|account_id| account_id.0.to_string())
+            .collect(),
+        count: value.count,
+        includes_self: value.includes_self,
     }
 }
 

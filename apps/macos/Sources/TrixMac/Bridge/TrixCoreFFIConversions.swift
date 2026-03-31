@@ -413,6 +413,19 @@ extension TypedMessageBody {
     }
 }
 
+extension MessageReactionSummary {
+    init(ffiValue: FfiMessageReactionSummary) throws {
+        self.init(
+            emoji: ffiValue.emoji,
+            reactorAccountIds: try ffiValue.reactorAccountIds.map {
+                try TrixCoreCodec.uuid($0, label: "reactor_account_id")
+            },
+            count: ffiValue.count,
+            includesSelf: ffiValue.includesSelf
+        )
+    }
+}
+
 extension HealthResponse {
     init(ffiValue: FfiHealthResponse) {
         let status: ServiceStatus
@@ -871,6 +884,9 @@ extension LocalTimelineItem {
             body: try ffiValue.body.map { try TypedMessageBody(ffiValue: $0) },
             bodyParseError: ffiValue.bodyParseError,
             previewText: ffiValue.previewText,
+            receiptStatus: ffiValue.receiptStatus.map(ReceiptType.init),
+            reactions: try ffiValue.reactions.map(MessageReactionSummary.init),
+            isVisibleInTimeline: ffiValue.isVisibleInTimeline,
             mergedEpoch: ffiValue.mergedEpoch,
             createdAtUnix: ffiValue.createdAtUnix
         )
@@ -912,6 +928,9 @@ extension LocalTimelineItem {
             body: resolvedBody,
             bodyParseError: nil,
             previewText: ffiMessengerValue.previewText,
+            receiptStatus: ffiMessengerValue.receiptStatus.map(ReceiptType.init),
+            reactions: try ffiMessengerValue.reactions.map(MessageReactionSummary.init),
+            isVisibleInTimeline: ffiMessengerValue.isVisibleInTimeline,
             mergedEpoch: nil,
             createdAtUnix: ffiMessengerValue.createdAtUnix
         )

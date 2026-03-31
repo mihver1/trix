@@ -5,7 +5,10 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -92,17 +95,45 @@ import chat.trix.android.core.chat.ChatConversationSummary
 import chat.trix.android.core.chat.ChatDirectoryAccount
 import chat.trix.android.core.chat.ChatDiagnostics
 import chat.trix.android.core.chat.ChatOverview
+import chat.trix.android.core.chat.ChatMessageReaction
 import chat.trix.android.core.chat.ChatRefreshResult
 import chat.trix.android.core.chat.ChatRepository
 import chat.trix.android.core.chat.ChatReceiptStatus
 import chat.trix.android.core.chat.ChatTimelineMessage
 import chat.trix.android.core.ffi.FfiChatType
+import chat.trix.android.core.ffi.ffiDefaultQuickReactionEmojis
 import chat.trix.android.core.runtime.RealtimeForegroundService
 import chat.trix.android.ui.adaptive.TrixAdaptiveInfo
 import chat.trix.android.ui.adaptive.TrixFoldPosture
 import java.io.IOException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+private val fallbackQuickReactionEmojis = listOf(
+    "👍", "❤️", "🔥", "👎", "💔", "🤔", "😕", "🤨", "😡", "🤡", "💩", "🗿",
+)
+
+internal fun resolveQuickReactionEmojis(
+    loadFromFfi: () -> List<String>,
+    fallback: List<String> = fallbackQuickReactionEmojis,
+): List<String> {
+    return runCatching {
+        loadFromFfi().ifEmpty { fallback }
+    }.getOrElse {
+        fallback
+    }
+}
+
+internal fun reactionSendBlockReason(
+    conversation: ChatConversation,
+    isSending: Boolean,
+): String? {
+    return when {
+        !conversation.canSend -> conversation.composerHint
+        isSending -> "Finish the current send before adding a reaction."
+        else -> null
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -147,8 +178,14 @@ fun ChatsScreen(
     var groupMembershipErrorMessage by remember(repository) { mutableStateOf<String?>(null) }
     var activeAttachmentMessageId by remember(repository) { mutableStateOf<String?>(null) }
     var attachmentErrorMessage by remember(repository) { mutableStateOf<String?>(null) }
+    var reactionPickerMessageId by rememberSaveable(selectedConversationId) { mutableStateOf<String?>(null) }
     var publishedTypingState by remember(session.localState.deviceId) {
         mutableStateOf<Pair<String?, Boolean>>(null to false)
+    }
+    val quickReactionEmojis = remember {
+        resolveQuickReactionEmojis(
+            loadFromFfi = ::ffiDefaultQuickReactionEmojis,
+        )
     }
 
     fun openDirectorySheet(config: DirectorySheetConfig) {
@@ -308,6 +345,53 @@ fun ChatsScreen(
             sendState = sendState.copy(
                 isSending = false,
                 sendErrorMessage = error.message ?: "Failed to send attachment",
+            )
+        }
+    }
+
+    suspend fun sendReaction(message: ChatTimelineMessage, emoji: String) {
+        val chatId = selectedConversationId ?: return
+        val conversation = detailState.conversation?.takeIf { it.chatId == chatId } ?: return
+        val blockReason = reactionSendBlockReason(conversation, sendState.isSending)
+        if (blockReason != null) {
+            reactionPickerMessageId = null
+            sendState = sendState.copy(
+                sendErrorMessage = blockReason,
+            )
+            return
+        }
+
+        sendState = sendState.copy(isSending = true, sendErrorMessage = null)
+
+        try {
+            val removeExisting = message.reactions.any {
+                it.emoji == emoji && it.includesSelf
+            }
+            val result = repository.sendReaction(
+                chatId = chatId,
+                targetMessageId = message.id,
+                emoji = emoji,
+                removeExisting = removeExisting,
+            )
+            reactionPickerMessageId = null
+            overviewState = overviewState.copy(
+                overview = result.overview,
+                errorMessage = null,
+            )
+            overviewVersion += 1
+            detailState = detailState.copy(
+                conversation = result.conversation,
+                isLoading = false,
+                errorMessage = null,
+            )
+            sendState = sendState.copy(
+                isSending = false,
+                sendErrorMessage = null,
+            )
+        } catch (error: IOException) {
+            sendState = sendState.copy(
+                isSending = false,
+                sendErrorMessage = error.message ?: "Failed to send reaction",
             )
         }
     }
@@ -672,6 +756,15 @@ fun ChatsScreen(
     val selectedConversationSummary = conversations.firstOrNull { it.chatId == selectedConversationId }
     val selectedConversation = detailState.conversation
         ?.takeIf { it.chatId == selectedConversationId }
+    val onReactToMessage: ((ChatTimelineMessage) -> Unit)? =
+        if (selectedConversation?.canSend == true && !sendState.isSending) {
+            { reactionPickerMessageId = it.id }
+        } else {
+            null
+        }
+    val reactionTargetMessage = selectedConversation
+        ?.messages
+        ?.firstOrNull { it.id == reactionPickerMessageId }
     val activeDirectorySheetConfig = directorySheetConfig
     val directoryExistingAccountIds = if (directorySheetConfig?.mode == DirectorySheetMode.GROUP_ADD_MEMBERS) {
         selectedConversation?.members.orEmpty().map { it.accountId }.toSet()
@@ -761,6 +854,19 @@ fun ChatsScreen(
             onRemoveMember = { accountId ->
                 coroutineScope.launch {
                     removeGroupMember(accountId)
+                }
+            },
+        )
+    }
+
+    if (reactionTargetMessage != null) {
+        QuickReactionSheet(
+            message = reactionTargetMessage,
+            emojis = quickReactionEmojis,
+            onDismissRequest = { reactionPickerMessageId = null },
+            onEmojiSelected = { emoji ->
+                coroutineScope.launch {
+                    sendReaction(reactionTargetMessage, emoji)
                 }
             },
         )
@@ -863,6 +969,7 @@ fun ChatsScreen(
                             shareAttachment(attachment)
                         }
                     },
+                    onReactToMessage = onReactToMessage,
                     onManageMembers = {
                         isGroupMembersSheetVisible = true
                         groupMembershipErrorMessage = null
@@ -897,6 +1004,7 @@ fun ChatsScreen(
                             shareAttachment(attachment)
                         }
                     },
+                    onReactToMessage = onReactToMessage,
                     onManageMembers = {
                         isGroupMembersSheetVisible = true
                         groupMembershipErrorMessage = null
@@ -930,6 +1038,7 @@ fun ChatsScreen(
                             shareAttachment(attachment)
                         }
                     },
+                    onReactToMessage = onReactToMessage,
                     onManageMembers = {
                         isGroupMembersSheetVisible = true
                         groupMembershipErrorMessage = null
@@ -1561,6 +1670,7 @@ private fun WideConversationLayout(
     onSend: () -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
     onShareAttachment: (ChatAttachment) -> Unit,
+    onReactToMessage: ((ChatTimelineMessage) -> Unit)?,
     onManageMembers: (() -> Unit)?,
     foldPosture: TrixFoldPosture,
     foldBounds: Rect?,
@@ -1616,6 +1726,7 @@ private fun WideConversationLayout(
                 onSend = onSend,
                 onOpenAttachment = onOpenAttachment,
                 onShareAttachment = onShareAttachment,
+                onReactToMessage = onReactToMessage,
                 onManageMembers = onManageMembers,
                 modifier = Modifier
                     .weight(1f)
@@ -1640,6 +1751,7 @@ private fun TabletopConversationLayout(
     onSend: () -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
     onShareAttachment: (ChatAttachment) -> Unit,
+    onReactToMessage: ((ChatTimelineMessage) -> Unit)?,
     onManageMembers: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
@@ -1660,6 +1772,7 @@ private fun TabletopConversationLayout(
             onSend = onSend,
             onOpenAttachment = onOpenAttachment,
             onShareAttachment = onShareAttachment,
+            onReactToMessage = onReactToMessage,
             onManageMembers = onManageMembers,
             modifier = Modifier
                 .weight(1f)
@@ -1951,6 +2064,7 @@ private fun ConversationDetailPane(
     onSend: () -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
     onShareAttachment: (ChatAttachment) -> Unit,
+    onReactToMessage: ((ChatTimelineMessage) -> Unit)?,
     onManageMembers: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
@@ -1968,6 +2082,7 @@ private fun ConversationDetailPane(
         onSend = onSend,
         onOpenAttachment = onOpenAttachment,
         onShareAttachment = onShareAttachment,
+        onReactToMessage = onReactToMessage,
         onManageMembers = onManageMembers,
         modifier = modifier,
         showComposer = true,
@@ -1990,6 +2105,7 @@ private fun ConversationDetailContent(
     onSend: () -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
     onShareAttachment: (ChatAttachment) -> Unit,
+    onReactToMessage: ((ChatTimelineMessage) -> Unit)?,
     onManageMembers: (() -> Unit)?,
     modifier: Modifier = Modifier,
     showComposer: Boolean,
@@ -2060,6 +2176,7 @@ private fun ConversationDetailContent(
                     activeAttachmentMessageId = activeAttachmentMessageId,
                     onOpenAttachment = onOpenAttachment,
                     onShareAttachment = onShareAttachment,
+                    onReactToMessage = onReactToMessage,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
@@ -2094,6 +2211,7 @@ private fun ConversationTranscript(
     activeAttachmentMessageId: String?,
     onOpenAttachment: (ChatAttachment) -> Unit,
     onShareAttachment: (ChatAttachment) -> Unit,
+    onReactToMessage: ((ChatTimelineMessage) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     if (conversation.messages.isEmpty()) {
@@ -2132,7 +2250,14 @@ private fun ConversationTranscript(
                         MaterialTheme.colorScheme.surfaceContainerHigh
                     },
                     tonalElevation = 1.dp,
-                    modifier = Modifier.widthIn(max = 420.dp),
+                    modifier = Modifier
+                        .widthIn(max = 420.dp)
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = onReactToMessage?.let { callback ->
+                                { callback(message) }
+                            },
+                        ),
                 ) {
                     Column(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
@@ -2190,6 +2315,17 @@ private fun ConversationTranscript(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                        if (message.reactions.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                message.reactions.forEach { reaction ->
+                                    MessageReactionBadge(reaction = reaction)
+                                }
+                            }
+                        }
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -2212,6 +2348,80 @@ private fun ConversationTranscript(
                 }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun QuickReactionSheet(
+    message: ChatTimelineMessage,
+    emojis: List<String>,
+    onDismissRequest: () -> Unit,
+    onEmojiSelected: (String) -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismissRequest,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = "Choose reaction",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = message.body,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+            emojis.chunked(4).forEach { rowEmojis ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    rowEmojis.forEach { emoji ->
+                        val removeExisting = message.reactions.any {
+                            it.emoji == emoji && it.includesSelf
+                        }
+                        ElevatedAssistChip(
+                            onClick = { onEmojiSelected(emoji) },
+                            label = {
+                                Text(if (removeExisting) "$emoji ✓" else emoji)
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessageReactionBadge(reaction: ChatMessageReaction) {
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = if (reaction.includesSelf) {
+            MaterialTheme.colorScheme.secondaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerHighest
+        },
+    ) {
+        Text(
+            text = if (reaction.count > 1) "${reaction.emoji} ${reaction.count}" else reaction.emoji,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (reaction.includesSelf) {
+                MaterialTheme.colorScheme.onSecondaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+        )
     }
 }
 
@@ -2467,6 +2677,7 @@ internal fun ConversationDetailPaneForTesting(
     onSend: () -> Unit = {},
     onOpenAttachment: (ChatAttachment) -> Unit = {},
     onShareAttachment: (ChatAttachment) -> Unit = {},
+    onReactToMessage: ((ChatTimelineMessage) -> Unit)? = null,
     onManageMembers: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -2484,6 +2695,7 @@ internal fun ConversationDetailPaneForTesting(
         onSend = onSend,
         onOpenAttachment = onOpenAttachment,
         onShareAttachment = onShareAttachment,
+        onReactToMessage = onReactToMessage,
         onManageMembers = onManageMembers,
         modifier = modifier,
     )

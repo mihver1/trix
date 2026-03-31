@@ -562,6 +562,13 @@ struct SafeMessengerAttachment: Identifiable, Hashable {
     var id: String { attachmentRef }
 }
 
+struct SafeMessengerReactionSummary: Hashable {
+    let emoji: String
+    let reactorAccountIds: [String]
+    let count: UInt64
+    let includesSelf: Bool
+}
+
 struct SafeMessengerMessageBody: Hashable {
     let kind: SafeMessengerMessageBodyKind
     let text: String?
@@ -586,7 +593,42 @@ struct SafeMessengerMessage: Identifiable, Hashable {
     let contentType: ContentType
     let body: SafeMessengerMessageBody?
     let previewText: String
+    let receiptStatus: SafeMessengerReceiptType?
+    let reactions: [SafeMessengerReactionSummary]
+    let isVisibleInTimeline: Bool
     let createdAtUnix: UInt64
+
+    init(
+        conversationId: String,
+        serverSeq: UInt64,
+        messageId: String,
+        senderAccountId: String,
+        senderDeviceId: String,
+        senderDisplayName: String?,
+        isOutgoing: Bool,
+        contentType: ContentType,
+        body: SafeMessengerMessageBody?,
+        previewText: String,
+        receiptStatus: SafeMessengerReceiptType? = nil,
+        reactions: [SafeMessengerReactionSummary] = [],
+        isVisibleInTimeline: Bool = true,
+        createdAtUnix: UInt64
+    ) {
+        self.conversationId = conversationId
+        self.serverSeq = serverSeq
+        self.messageId = messageId
+        self.senderAccountId = senderAccountId
+        self.senderDeviceId = senderDeviceId
+        self.senderDisplayName = senderDisplayName
+        self.isOutgoing = isOutgoing
+        self.contentType = contentType
+        self.body = body
+        self.previewText = previewText
+        self.receiptStatus = receiptStatus
+        self.reactions = reactions
+        self.isVisibleInTimeline = isVisibleInTimeline
+        self.createdAtUnix = createdAtUnix
+    }
 
     var id: String { messageId }
 
@@ -601,7 +643,7 @@ struct SafeConversationSnapshot {
     let nextCursor: String?
 
     var latestMessageId: String? {
-        messages.last?.messageId
+        messages.last(where: \.isVisibleInTimeline)?.messageId
     }
 
     var latestTimelineAnchorId: String? {

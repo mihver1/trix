@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
@@ -149,6 +149,9 @@ pub struct LocalTimelineItem {
     pub body: Option<MessageBody>,
     pub body_parse_error: Option<String>,
     pub preview_text: String,
+    pub receipt_status: Option<crate::ReceiptType>,
+    pub reactions: Vec<LocalMessageReactionSummary>,
+    pub is_visible_in_timeline: bool,
     pub merged_epoch: Option<u64>,
     pub created_at_unix: u64,
     pub recovery_state: Option<LocalMessageRecoveryState>,
@@ -177,6 +180,14 @@ pub struct LocalHistoryRepairCandidate {
     pub chat_id: ChatId,
     pub window: LocalHistoryRepairWindow,
     pub reason: LocalHistoryRepairReason,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalMessageReactionSummary {
+    pub emoji: String,
+    pub reactor_account_ids: Vec<trix_types::AccountId>,
+    pub count: u64,
+    pub includes_self: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1181,7 +1192,6 @@ impl LocalHistoryStore {
         self.clear_pending_history_repair_window(chat_id)?;
         Ok(None)
     }
-
     pub fn chats_with_unavailable_messages(&self) -> Vec<ChatId> {
         self.state
             .chats
@@ -1710,6 +1720,7 @@ impl LocalHistoryStore {
             .chats
             .get(&chat_id.0.to_string())
             .map(|state| {
+                let decorations = local_timeline_decorations(state);
                 state
                     .projected_messages
                     .values()
@@ -1720,7 +1731,9 @@ impl LocalHistoryStore {
                     })
                     .cloned()
                     .map(projected_message_from_persisted)
-                    .map(|message| local_timeline_item_from(message, state, self_account_id))
+                    .map(|message| {
+                        local_timeline_item_from(message, state, self_account_id, &decorations)
+                    })
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
@@ -3119,6 +3132,7 @@ fn local_timeline_item_from(
     message: LocalProjectedMessage,
     state: &PersistedChatState,
     self_account_id: Option<trix_types::AccountId>,
+    decorations: &LocalTimelineDecorations,
 ) -> LocalTimelineItem {
     let sender_display_name =
         resolve_account_display_name(&state.participant_profiles, message.sender_account_id);
@@ -3153,10 +3167,123 @@ fn local_timeline_item_from(
         body,
         body_parse_error,
         preview_text,
+        receipt_status: decorations
+            .receipt_status_by_message_id
+            .get(&message.message_id)
+            .copied(),
+        reactions: local_message_reaction_summaries(
+            decorations,
+            message.message_id,
+            self_account_id,
+        ),
+        is_visible_in_timeline: !decorations.hidden_message_ids.contains(&message.message_id),
         merged_epoch: message.merged_epoch,
         created_at_unix: message.created_at_unix,
         recovery_state,
     }
+}
+
+#[derive(Debug, Default)]
+struct LocalTimelineDecorations {
+    receipt_status_by_message_id: HashMap<MessageId, crate::ReceiptType>,
+    reaction_account_ids_by_message_id:
+        HashMap<MessageId, HashMap<String, HashSet<trix_types::AccountId>>>,
+    hidden_message_ids: HashSet<MessageId>,
+}
+
+fn local_timeline_decorations(state: &PersistedChatState) -> LocalTimelineDecorations {
+    let mut decorations = LocalTimelineDecorations::default();
+
+    for message in state.projected_messages.values() {
+        let Ok(Some(body)) = projected_message_from_persisted(message.clone()).parse_body() else {
+            continue;
+        };
+
+        match body {
+            MessageBody::Receipt(receipt) => {
+                let current = decorations
+                    .receipt_status_by_message_id
+                    .get(&receipt.target_message_id)
+                    .copied();
+                decorations.receipt_status_by_message_id.insert(
+                    receipt.target_message_id,
+                    merge_receipt_status(current, receipt.receipt_type),
+                );
+                decorations.hidden_message_ids.insert(message.message_id);
+            }
+            MessageBody::Reaction(reaction) => {
+                let should_remove_target = {
+                    let emoji_map = decorations
+                        .reaction_account_ids_by_message_id
+                        .entry(reaction.target_message_id)
+                        .or_default();
+                    let reactor_ids = emoji_map.entry(reaction.emoji).or_default();
+                    match reaction.action {
+                        crate::ReactionAction::Add => {
+                            reactor_ids.insert(message.sender_account_id);
+                        }
+                        crate::ReactionAction::Remove => {
+                            reactor_ids.remove(&message.sender_account_id);
+                        }
+                    }
+                    emoji_map.retain(|_, account_ids| !account_ids.is_empty());
+                    emoji_map.is_empty()
+                };
+                if should_remove_target {
+                    decorations
+                        .reaction_account_ids_by_message_id
+                        .remove(&reaction.target_message_id);
+                }
+                decorations.hidden_message_ids.insert(message.message_id);
+            }
+            _ => {}
+        }
+    }
+
+    decorations
+}
+
+fn merge_receipt_status(
+    current: Option<crate::ReceiptType>,
+    next: crate::ReceiptType,
+) -> crate::ReceiptType {
+    match (current, next) {
+        (Some(crate::ReceiptType::Read), _) | (_, crate::ReceiptType::Read) => {
+            crate::ReceiptType::Read
+        }
+        _ => crate::ReceiptType::Delivered,
+    }
+}
+
+fn local_message_reaction_summaries(
+    decorations: &LocalTimelineDecorations,
+    message_id: MessageId,
+    self_account_id: Option<trix_types::AccountId>,
+) -> Vec<LocalMessageReactionSummary> {
+    let Some(emoji_map) = decorations
+        .reaction_account_ids_by_message_id
+        .get(&message_id)
+    else {
+        return Vec::new();
+    };
+
+    let mut reactions = emoji_map
+        .iter()
+        .map(|(emoji, account_ids)| {
+            let mut reactor_account_ids = account_ids.iter().copied().collect::<Vec<_>>();
+            reactor_account_ids.sort_by_key(|account_id| account_id.0);
+            LocalMessageReactionSummary {
+                emoji: emoji.clone(),
+                count: reactor_account_ids.len() as u64,
+                includes_self: self_account_id
+                    .map(|account_id| account_ids.contains(&account_id))
+                    .unwrap_or(false),
+                reactor_account_ids,
+            }
+        })
+        .collect::<Vec<_>>();
+    reactions.sort_by(|left, right| left.emoji.cmp(&right.emoji));
+    reactions
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3173,8 +3300,8 @@ fn latest_preview_from_chat(
     state: &PersistedChatState,
     self_account_id: Option<trix_types::AccountId>,
 ) -> Option<LocalChatPreview> {
-    let projected = latest_non_receipt_projected_message(state);
-    let raw = latest_non_receipt_raw_message(state);
+    let projected = latest_visible_projected_message(state);
+    let raw = latest_visible_raw_message(state);
 
     match (projected, raw) {
         (Some(projected), Some(raw)) if raw.server_seq > projected.server_seq => {
@@ -3190,28 +3317,49 @@ fn latest_preview_from_chat(
     }
 }
 
-fn latest_non_receipt_projected_message(
+fn latest_visible_projected_message(
     state: &PersistedChatState,
 ) -> Option<&PersistedProjectedMessage> {
     state
         .projected_messages
         .values()
         .rev()
-        .find(|message| message.content_type != trix_types::ContentType::Receipt)
+        .find(|message| persisted_projected_message_is_visible_in_timeline(message))
 }
 
-fn latest_non_receipt_raw_message(state: &PersistedChatState) -> Option<&MessageEnvelope> {
+fn latest_visible_raw_message(state: &PersistedChatState) -> Option<&MessageEnvelope> {
     state
         .messages
         .values()
         .rev()
-        .find(|message| message.content_type != trix_types::ContentType::Receipt)
+        .find(|message| raw_message_is_visible_in_timeline(message))
         .or_else(|| {
             state
                 .last_message
                 .as_ref()
-                .filter(|message| message.content_type != trix_types::ContentType::Receipt)
+                .filter(|message| raw_message_is_visible_in_timeline(message))
         })
+}
+
+fn raw_message_is_visible_in_timeline(message: &MessageEnvelope) -> bool {
+    !matches!(
+        message.content_type,
+        trix_types::ContentType::Reaction | trix_types::ContentType::Receipt
+    )
+}
+
+fn persisted_projected_message_is_visible_in_timeline(message: &PersistedProjectedMessage) -> bool {
+    if !matches!(
+        message.content_type,
+        trix_types::ContentType::Reaction | trix_types::ContentType::Receipt
+    ) {
+        return true;
+    }
+
+    !matches!(
+        projected_message_from_persisted(message.clone()).parse_body(),
+        Ok(Some(MessageBody::Reaction(_) | MessageBody::Receipt(_)))
+    )
 }
 
 fn preview_from_projected_message(
@@ -3459,7 +3607,7 @@ fn projected_message_counts_as_unread(
     if message.projection_kind != LocalProjectionKind::ApplicationMessage {
         return false;
     }
-    if matches!(message.content_type, trix_types::ContentType::Receipt) {
+    if !persisted_projected_message_is_visible_in_timeline(message) {
         return false;
     }
     if let Some(self_account_id) = self_account_id {
@@ -4935,6 +5083,8 @@ mod tests {
                         read_cursor_server_seq: 1,
                         projected_cursor_server_seq: 1,
                         projected_messages: BTreeMap::new(),
+                        pending_history_repair_from_server_seq: None,
+                        pending_history_repair_through_server_seq: None,
                     },
                 ),
                 (
@@ -4969,6 +5119,8 @@ mod tests {
                         read_cursor_server_seq: 4,
                         projected_cursor_server_seq: 4,
                         projected_messages: BTreeMap::new(),
+                        pending_history_repair_from_server_seq: None,
+                        pending_history_repair_through_server_seq: None,
                     },
                 ),
             ]),
@@ -6154,6 +6306,250 @@ mod tests {
             }))
         );
         assert_eq!(item.body_parse_error, None);
+    }
+
+    #[test]
+    fn local_timeline_items_merge_receipts_and_reactions_into_message_decorations() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let self_account_id = AccountId(Uuid::new_v4());
+        let other_account_id = AccountId(Uuid::new_v4());
+        let third_account_id = AccountId(Uuid::new_v4());
+        let self_device_id = DeviceId(Uuid::new_v4());
+        let other_device_id = DeviceId(Uuid::new_v4());
+        let third_device_id = DeviceId(Uuid::new_v4());
+        let target_message_id = MessageId(Uuid::new_v4());
+
+        store
+            .apply_chat_list(&ChatListResponse {
+                chats: vec![ChatSummary {
+                    chat_id,
+                    chat_type: ChatType::Group,
+                    title: Some("Decorations".to_owned()),
+                    last_server_seq: 7,
+                    epoch: 1,
+                    pending_message_count: 0,
+                    last_message: None,
+                    participant_profiles: vec![
+                        ChatParticipantProfileSummary {
+                            account_id: self_account_id,
+                            handle: Some("me".to_owned()),
+                            profile_name: "Me".to_owned(),
+                            profile_bio: None,
+                        },
+                        ChatParticipantProfileSummary {
+                            account_id: other_account_id,
+                            handle: Some("alice".to_owned()),
+                            profile_name: "Alice".to_owned(),
+                            profile_bio: None,
+                        },
+                        ChatParticipantProfileSummary {
+                            account_id: third_account_id,
+                            handle: Some("bob".to_owned()),
+                            profile_name: "Bob".to_owned(),
+                            profile_bio: None,
+                        },
+                    ],
+                }],
+            })
+            .unwrap();
+
+        let delivered_receipt_id = MessageId(Uuid::new_v4());
+        let read_receipt_id = MessageId(Uuid::new_v4());
+        let other_reaction_id = MessageId(Uuid::new_v4());
+        let self_reaction_id = MessageId(Uuid::new_v4());
+        let removed_reaction_id = MessageId(Uuid::new_v4());
+        let third_reaction_id = MessageId(Uuid::new_v4());
+
+        store
+            .apply_projected_messages(
+                chat_id,
+                &[
+                    LocalProjectedMessage {
+                        server_seq: 1,
+                        message_id: target_message_id,
+                        sender_account_id: self_account_id,
+                        sender_device_id: self_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        projection_kind: LocalProjectionKind::ApplicationMessage,
+                        payload: Some(b"hello".to_vec()),
+                        merged_epoch: None,
+                        created_at_unix: 1,
+                    },
+                    LocalProjectedMessage {
+                        server_seq: 2,
+                        message_id: delivered_receipt_id,
+                        sender_account_id: other_account_id,
+                        sender_device_id: other_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Receipt,
+                        projection_kind: LocalProjectionKind::ApplicationMessage,
+                        payload: Some(
+                            MessageBody::Receipt(crate::ReceiptMessageBody {
+                                target_message_id,
+                                receipt_type: crate::ReceiptType::Delivered,
+                                at_unix: Some(2),
+                            })
+                            .to_bytes()
+                            .unwrap(),
+                        ),
+                        merged_epoch: None,
+                        created_at_unix: 2,
+                    },
+                    LocalProjectedMessage {
+                        server_seq: 3,
+                        message_id: read_receipt_id,
+                        sender_account_id: other_account_id,
+                        sender_device_id: other_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Receipt,
+                        projection_kind: LocalProjectionKind::ApplicationMessage,
+                        payload: Some(
+                            MessageBody::Receipt(crate::ReceiptMessageBody {
+                                target_message_id,
+                                receipt_type: crate::ReceiptType::Read,
+                                at_unix: Some(3),
+                            })
+                            .to_bytes()
+                            .unwrap(),
+                        ),
+                        merged_epoch: None,
+                        created_at_unix: 3,
+                    },
+                    LocalProjectedMessage {
+                        server_seq: 4,
+                        message_id: other_reaction_id,
+                        sender_account_id: other_account_id,
+                        sender_device_id: other_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Reaction,
+                        projection_kind: LocalProjectionKind::ApplicationMessage,
+                        payload: Some(
+                            MessageBody::Reaction(crate::ReactionMessageBody {
+                                target_message_id,
+                                emoji: "👍".to_owned(),
+                                action: crate::ReactionAction::Add,
+                            })
+                            .to_bytes()
+                            .unwrap(),
+                        ),
+                        merged_epoch: None,
+                        created_at_unix: 4,
+                    },
+                    LocalProjectedMessage {
+                        server_seq: 5,
+                        message_id: self_reaction_id,
+                        sender_account_id: self_account_id,
+                        sender_device_id: self_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Reaction,
+                        projection_kind: LocalProjectionKind::ApplicationMessage,
+                        payload: Some(
+                            MessageBody::Reaction(crate::ReactionMessageBody {
+                                target_message_id,
+                                emoji: "👍".to_owned(),
+                                action: crate::ReactionAction::Add,
+                            })
+                            .to_bytes()
+                            .unwrap(),
+                        ),
+                        merged_epoch: None,
+                        created_at_unix: 5,
+                    },
+                    LocalProjectedMessage {
+                        server_seq: 6,
+                        message_id: removed_reaction_id,
+                        sender_account_id: other_account_id,
+                        sender_device_id: other_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Reaction,
+                        projection_kind: LocalProjectionKind::ApplicationMessage,
+                        payload: Some(
+                            MessageBody::Reaction(crate::ReactionMessageBody {
+                                target_message_id,
+                                emoji: "👍".to_owned(),
+                                action: crate::ReactionAction::Remove,
+                            })
+                            .to_bytes()
+                            .unwrap(),
+                        ),
+                        merged_epoch: None,
+                        created_at_unix: 6,
+                    },
+                    LocalProjectedMessage {
+                        server_seq: 7,
+                        message_id: third_reaction_id,
+                        sender_account_id: third_account_id,
+                        sender_device_id: third_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Reaction,
+                        projection_kind: LocalProjectionKind::ApplicationMessage,
+                        payload: Some(
+                            MessageBody::Reaction(crate::ReactionMessageBody {
+                                target_message_id,
+                                emoji: "🔥".to_owned(),
+                                action: crate::ReactionAction::Add,
+                            })
+                            .to_bytes()
+                            .unwrap(),
+                        ),
+                        merged_epoch: None,
+                        created_at_unix: 7,
+                    },
+                ],
+            )
+            .unwrap();
+
+        let timeline = store.get_local_timeline_items(chat_id, Some(self_account_id), None, None);
+
+        let target = timeline
+            .iter()
+            .find(|item| item.message_id == target_message_id)
+            .unwrap();
+        assert!(target.is_visible_in_timeline);
+        assert_eq!(target.receipt_status, Some(crate::ReceiptType::Read));
+        assert_eq!(target.reactions.len(), 2);
+
+        let thumbs_up = target
+            .reactions
+            .iter()
+            .find(|reaction| reaction.emoji == "👍")
+            .unwrap();
+        assert_eq!(thumbs_up.count, 1);
+        assert!(thumbs_up.includes_self);
+        assert_eq!(thumbs_up.reactor_account_ids, vec![self_account_id]);
+
+        let fire = target
+            .reactions
+            .iter()
+            .find(|reaction| reaction.emoji == "🔥")
+            .unwrap();
+        assert_eq!(fire.count, 1);
+        assert!(!fire.includes_self);
+        assert_eq!(fire.reactor_account_ids, vec![third_account_id]);
+
+        for hidden_id in [
+            delivered_receipt_id,
+            read_receipt_id,
+            other_reaction_id,
+            self_reaction_id,
+            removed_reaction_id,
+            third_reaction_id,
+        ] {
+            let item = timeline
+                .iter()
+                .find(|item| item.message_id == hidden_id)
+                .unwrap();
+            assert!(!item.is_visible_in_timeline);
+        }
     }
 
     #[test]

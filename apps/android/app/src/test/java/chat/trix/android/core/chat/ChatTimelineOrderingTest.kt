@@ -1,6 +1,5 @@
 package chat.trix.android.core.chat
 
-import chat.trix.android.core.ffi.FfiContentType
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -37,23 +36,21 @@ class ChatTimelineOrderingTest {
     }
 
     @Test
-    fun `receipt metadata suppresses message even when content type is stale`() {
+    fun `invisible timeline items are filtered after ordering`() {
         val ordered = mergeChatTimelineMessages(
             listOf(
                 timedMessage(id = "target", sortUnix = 100, sourcePriority = 0, sourceOrder = 0),
                 timedMessage(
-                    id = "receipt",
+                    id = "hidden",
                     sortUnix = 200,
                     sourcePriority = 0,
                     sourceOrder = 1,
-                    receiptTargetMessageId = "target",
-                    receiptStatus = ChatReceiptStatus.READ,
+                    isVisibleInTimeline = false,
                 ),
             ),
         )
 
         assertEquals(listOf("target"), ordered.map(ChatTimelineMessage::id))
-        assertEquals(ChatReceiptStatus.READ, ordered.single().receiptStatus)
     }
 
     private fun timedMessage(
@@ -61,8 +58,7 @@ class ChatTimelineOrderingTest {
         sortUnix: Long,
         sourcePriority: Int,
         sourceOrder: Int,
-        receiptTargetMessageId: String? = null,
-        receiptStatus: ChatReceiptStatus? = null,
+        isVisibleInTimeline: Boolean = true,
     ): TimedChatTimelineMessage {
         return TimedChatTimelineMessage(
             sortUnix = sortUnix,
@@ -75,10 +71,9 @@ class ChatTimelineOrderingTest {
                 timestampLabel = "10:42",
                 isMine = true,
                 note = null,
-                contentType = FfiContentType.TEXT,
+                contentType = chat.trix.android.core.ffi.FfiContentType.TEXT,
             ),
-            receiptTargetMessageId = receiptTargetMessageId,
-            receiptStatus = receiptStatus,
+            isVisibleInTimeline = isVisibleInTimeline,
         )
     }
 }

@@ -80,6 +80,7 @@ struct ConsumerRenderedMessage: Identifiable, Equatable {
     let topSpacing: CGFloat
     let usesCenteredEventStyle: Bool
     let receiptStatus: ConsumerReceiptStatus?
+    let reactions: [SafeMessengerReactionSummary]
 }
 
 struct ConsumerConversationTimelineRenderState: Equatable {
@@ -146,7 +147,9 @@ struct ConsumerChatDetailView: View {
             if let timelineRenderState {
                 ConsumerConversationTimelineView(
                     renderState: timelineRenderState,
-                    onOpenAttachment: openAttachment
+                    canReact: canReact,
+                    onOpenAttachment: openAttachment,
+                    onSelectReaction: sendReaction
                 )
                 .equatable()
                 .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -363,6 +366,10 @@ struct ConsumerChatDetailView: View {
         selectedAttachment != nil || !composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var canReact: Bool {
+        snapshot != nil && !model.isLoading && !isLoadingSnapshot
+    }
+
     private var conversationTitle: String {
         if let detail = snapshot?.detail {
             return detail.resolvedTitle(currentAccountId: model.localIdentity?.accountId)
@@ -484,6 +491,42 @@ struct ConsumerChatDetailView: View {
                 latestSentMessageId = outcome.createMessage.messageId
                 latestSentText = outcome.fileName ?? "attachment"
                 activityMessage = "Sent \(outcome.fileName ?? "attachment")"
+                await loadSnapshot()
+            } else {
+                localErrorMessage = model.errorMessage
+            }
+        }
+    }
+
+    private func sendReaction(for message: ConsumerRenderedMessage, emoji: String) {
+        guard let snapshot else {
+            return
+        }
+        guard canReact else {
+            localErrorMessage = "Reaction is unavailable right now."
+            return
+        }
+
+        let trimmedEmoji = emoji.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedEmoji.isEmpty else {
+            return
+        }
+
+        localErrorMessage = nil
+        activityMessage = nil
+
+        Task {
+            let removeExisting = message.reactions.contains {
+                $0.emoji == trimmedEmoji && $0.includesSelf
+            }
+            if await model.postReaction(
+                baseURLString: serverBaseURL,
+                chatId: snapshot.detail.chatId,
+                targetMessageId: message.id,
+                emoji: trimmedEmoji,
+                removeExisting: removeExisting
+            ) != nil {
+                activityMessage = removeExisting ? "Reaction removed" : "Reaction added"
                 await loadSnapshot()
             } else {
                 localErrorMessage = model.errorMessage
@@ -640,7 +683,7 @@ enum ConsumerConversationTimelineBuilder {
         fixtureManifest: UITestFixtureManifest?
     ) -> ConsumerTimelineRenderPayload {
         // `loadConversationSnapshot()` already returns ascending server order, so keep typing cheap.
-        let messages = snapshot.messages
+        let messages = snapshot.messages.filter(\.isVisibleInTimeline)
         var items: [ConsumerTimelineItem] = []
         var receiptStatusByMessageID: [String: ConsumerReceiptStatus] = [:]
         let participantDisplayNamesByAccountId = snapshot.detail.participantProfiles.reduce(into: [String: String]()) { partialResult, profile in
@@ -713,7 +756,11 @@ enum ConsumerConversationTimelineBuilder {
                         clusterPosition: clusterPosition,
                         topSpacing: topSpacing,
                         usesCenteredEventStyle: messageUsesCenteredEventStyle(message),
-                        receiptStatus: receiptStatusByMessageID[message.id]
+                        receiptStatus: message.isOutgoing
+                            ? (receiptStatusByMessageID[message.id]
+                                ?? message.receiptStatus.map(ConsumerReceiptStatus.init))
+                            : nil,
+                        reactions: message.reactions
                     )
                 )
             )
@@ -736,7 +783,7 @@ enum ConsumerConversationTimelineBuilder {
         }
 
         return snapshot.messages.reversed().first { message in
-            message.senderAccountId != currentAccountId && messageContentType(message) != .receipt
+            message.isVisibleInTimeline && message.senderAccountId != currentAccountId
         }?.id
     }
 
@@ -799,9 +846,10 @@ enum ConsumerConversationTimelineBuilder {
         case .reaction:
             let emoji = message.body?.emoji ?? ""
             let actionLabel = message.body?.reactionAction == .remove ? "Removed" : "Reacted"
-            return "\(actionLabel) \(emoji)".trimmingCharacters(in: .whitespacesAndNewlines)
+            let summary = "\(actionLabel) \(emoji)".trimmingCharacters(in: .whitespacesAndNewlines)
+            return summary.isEmpty ? message.previewText : summary
         case .receipt:
-            return message.body?.receiptType == .read ? "Read receipt" : "Delivered receipt"
+            return message.body?.receiptType == .read ? "Read receipt" : message.previewText
         case .attachment:
             return message.body?.attachment?.fileName ?? message.previewText
         case .chatEvent:
@@ -825,24 +873,6 @@ enum ConsumerConversationTimelineBuilder {
         }
     }
 
-    private static func receiptStatus(for message: SafeMessengerMessage) -> ConsumerReceiptStatus? {
-        guard isReceiptMessage(message) else {
-            return nil
-        }
-        return message.body?.receiptType == .read ? .read : .delivered
-    }
-
-    private static func isReceiptMessage(_ message: SafeMessengerMessage) -> Bool {
-        effectiveBodyKind(for: message) == .receipt
-    }
-
-    private static func receiptTargetMessageID(for message: SafeMessengerMessage) -> String? {
-        guard isReceiptMessage(message) else {
-            return nil
-        }
-        return message.body?.targetMessageId
-    }
-
     private static func fallbackBodyKind(for contentType: ContentType) -> SafeMessengerMessageBodyKind {
         switch contentType {
         case .text:
@@ -861,21 +891,27 @@ enum ConsumerConversationTimelineBuilder {
     private static func effectiveBodyKind(for message: SafeMessengerMessage) -> SafeMessengerMessageBodyKind {
         message.body?.kind ?? fallbackBodyKind(for: message.contentType)
     }
+}
 
-    private static func mergedReceiptStatus(
-        _ current: ConsumerReceiptStatus?,
-        with next: ConsumerReceiptStatus
-    ) -> ConsumerReceiptStatus {
-        current.map { max($0, next) } ?? next
+private extension ConsumerReceiptStatus {
+    init(_ value: SafeMessengerReceiptType) {
+        switch value {
+        case .delivered:
+            self = .delivered
+        case .read:
+            self = .read
+        }
     }
 }
 
 private struct ConsumerConversationTimelineView: View, Equatable {
     let renderState: ConsumerConversationTimelineRenderState
+    let canReact: Bool
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
+    let onSelectReaction: (ConsumerRenderedMessage, String) -> Void
 
     nonisolated static func == (lhs: ConsumerConversationTimelineView, rhs: ConsumerConversationTimelineView) -> Bool {
-        lhs.renderState == rhs.renderState
+        lhs.renderState == rhs.renderState && lhs.canReact == rhs.canReact
     }
 
     var body: some View {
@@ -927,7 +963,9 @@ private struct ConsumerConversationTimelineView: View, Equatable {
                     latestSentMessageId: renderState.latestSentMessageId,
                     latestSentText: renderState.latestSentText,
                     downloadingAttachmentMessageId: renderState.downloadingAttachmentMessageId,
-                    onOpenAttachment: onOpenAttachment
+                    canReact: canReact,
+                    onOpenAttachment: onOpenAttachment,
+                    onSelectReaction: onSelectReaction
                 )
             }
         }
@@ -1009,7 +1047,9 @@ private struct ConsumerTimelineRow: View {
     let latestSentMessageId: String?
     let latestSentText: String?
     let downloadingAttachmentMessageId: String?
+    let canReact: Bool
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
+    let onSelectReaction: (ConsumerRenderedMessage, String) -> Void
 
     var body: some View {
         if let fixtureKind {
@@ -1035,7 +1075,9 @@ private struct ConsumerTimelineRow: View {
                 ConsumerBubbleRow(
                     message: message,
                     isDownloadingAttachment: downloadingAttachmentMessageId == message.id,
-                    onOpenAttachment: onOpenAttachment
+                    canReact: canReact,
+                    onOpenAttachment: onOpenAttachment,
+                    onSelectReaction: onSelectReaction
                 )
             }
         }
@@ -1082,7 +1124,9 @@ private struct ConsumerDaySeparator: View {
 private struct ConsumerBubbleRow: View {
     let message: ConsumerRenderedMessage
     let isDownloadingAttachment: Bool
+    let canReact: Bool
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
+    let onSelectReaction: (ConsumerRenderedMessage, String) -> Void
 
     var body: some View {
         HStack {
@@ -1101,7 +1145,9 @@ private struct ConsumerBubbleRow: View {
                 ConsumerMessageBubble(
                     message: message,
                     isDownloadingAttachment: isDownloadingAttachment,
-                    onOpenAttachment: onOpenAttachment
+                    canReact: canReact,
+                    onOpenAttachment: onOpenAttachment,
+                    onSelectReaction: onSelectReaction
                 )
             }
             .frame(maxWidth: .infinity, alignment: message.isOutgoing ? .trailing : .leading)
@@ -1117,7 +1163,10 @@ private struct ConsumerBubbleRow: View {
 private struct ConsumerMessageBubble: View {
     let message: ConsumerRenderedMessage
     let isDownloadingAttachment: Bool
+    let canReact: Bool
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
+    let onSelectReaction: (ConsumerRenderedMessage, String) -> Void
+    @State private var isReactionPickerPresented = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1151,6 +1200,13 @@ private struct ConsumerMessageBubble: View {
                 }
                 .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
             }
+
+            if !message.reactions.isEmpty {
+                ConsumerReactionChipRow(
+                    reactions: message.reactions,
+                    isOutgoing: message.isOutgoing
+                )
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
@@ -1166,6 +1222,27 @@ private struct ConsumerMessageBubble: View {
             radius: message.isOutgoing ? 14 : 10,
             y: message.isOutgoing ? 8 : 5
         )
+        .contentShape(RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
+        .onLongPressGesture {
+            guard canReact else {
+                return
+            }
+            isReactionPickerPresented = true
+        }
+        .confirmationDialog(
+            "Choose reaction",
+            isPresented: $isReactionPickerPresented,
+            titleVisibility: .visible
+        ) {
+            ForEach(TrixCoreMessageBridge.defaultQuickReactionEmojis, id: \.self) { emoji in
+                let includesSelf = message.reactions.contains {
+                    $0.emoji == emoji && $0.includesSelf
+                }
+                Button(includesSelf ? "\(emoji) ✓" : emoji) {
+                    onSelectReaction(message, emoji)
+                }
+            }
+        }
     }
 
     private var bubbleCornerRadius: CGFloat {
@@ -1177,6 +1254,35 @@ private struct ConsumerMessageBubble: View {
         case .middle:
             return 18
         }
+    }
+}
+
+private struct ConsumerReactionChipRow: View {
+    let reactions: [SafeMessengerReactionSummary]
+    let isOutgoing: Bool
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(reactions, id: \.emoji) { reaction in
+                    Text(reactionLabel(reaction))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(reaction.includesSelf ? consumerChatAccent : .secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            reaction.includesSelf
+                                ? Color.white.opacity(isOutgoing ? 0.96 : 0.72)
+                                : Color.black.opacity(isOutgoing ? 0.12 : 0.04)
+                        )
+                        .clipShape(Capsule())
+                }
+            }
+        }
+    }
+
+    private func reactionLabel(_ reaction: SafeMessengerReactionSummary) -> String {
+        reaction.count > 1 ? "\(reaction.emoji) \(reaction.count)" : reaction.emoji
     }
 }
 

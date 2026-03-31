@@ -59,7 +59,7 @@ struct DebugMessageDraft {
     var kind: DebugMessageDraftKind = .text
     var text = ""
     var targetMessageId = ""
-    var emoji = "👍"
+    var emoji = TrixCoreMessageBridge.defaultQuickReactionEmojis.first ?? "👍"
     var reactionAction: DebugReactionAction = .add
     var receiptKind: DebugReceiptKind = .delivered
     var receiptAtUnix = ""
@@ -95,6 +95,11 @@ struct AttachmentUploadMaterial {
 }
 
 enum TrixCoreMessageBridge {
+    static let defaultQuickReactionEmojis: [String] = {
+        let emojis = ffiDefaultQuickReactionEmojis()
+        return emojis.isEmpty ? ["👍", "❤️", "🔥", "👎", "💔", "🤔", "😕", "🤨", "😡", "🤡", "💩", "🗿"] : emojis
+    }()
+
     static func messageBody(for draft: DebugMessageDraft) throws -> FfiMessageBody {
         try buildMessageBody(for: draft)
     }

@@ -7480,12 +7480,15 @@ public struct FfiLocalTimelineItem: Equatable, Hashable {
     public var body: FfiMessageBody?
     public var bodyParseError: String?
     public var previewText: String
+    public var receiptStatus: FfiReceiptType?
+    public var reactions: [FfiMessageReactionSummary]
+    public var isVisibleInTimeline: Bool
     public var mergedEpoch: UInt64?
     public var createdAtUnix: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(serverSeq: UInt64, messageId: String, senderAccountId: String, senderDeviceId: String, senderDisplayName: String, isOutgoing: Bool, epoch: UInt64, messageKind: FfiMessageKind, contentType: FfiContentType, projectionKind: FfiLocalProjectionKind, body: FfiMessageBody?, bodyParseError: String?, previewText: String, mergedEpoch: UInt64?, createdAtUnix: UInt64) {
+    public init(serverSeq: UInt64, messageId: String, senderAccountId: String, senderDeviceId: String, senderDisplayName: String, isOutgoing: Bool, epoch: UInt64, messageKind: FfiMessageKind, contentType: FfiContentType, projectionKind: FfiLocalProjectionKind, body: FfiMessageBody?, bodyParseError: String?, previewText: String, receiptStatus: FfiReceiptType?, reactions: [FfiMessageReactionSummary], isVisibleInTimeline: Bool, mergedEpoch: UInt64?, createdAtUnix: UInt64) {
         self.serverSeq = serverSeq
         self.messageId = messageId
         self.senderAccountId = senderAccountId
@@ -7499,6 +7502,9 @@ public struct FfiLocalTimelineItem: Equatable, Hashable {
         self.body = body
         self.bodyParseError = bodyParseError
         self.previewText = previewText
+        self.receiptStatus = receiptStatus
+        self.reactions = reactions
+        self.isVisibleInTimeline = isVisibleInTimeline
         self.mergedEpoch = mergedEpoch
         self.createdAtUnix = createdAtUnix
     }
@@ -7532,6 +7538,9 @@ public struct FfiConverterTypeFfiLocalTimelineItem: FfiConverterRustBuffer {
                 body: FfiConverterOptionTypeFfiMessageBody.read(from: &buf), 
                 bodyParseError: FfiConverterOptionString.read(from: &buf), 
                 previewText: FfiConverterString.read(from: &buf), 
+                receiptStatus: FfiConverterOptionTypeFfiReceiptType.read(from: &buf), 
+                reactions: FfiConverterSequenceTypeFfiMessageReactionSummary.read(from: &buf), 
+                isVisibleInTimeline: FfiConverterBool.read(from: &buf), 
                 mergedEpoch: FfiConverterOptionUInt64.read(from: &buf), 
                 createdAtUnix: FfiConverterUInt64.read(from: &buf)
         )
@@ -7551,6 +7560,9 @@ public struct FfiConverterTypeFfiLocalTimelineItem: FfiConverterRustBuffer {
         FfiConverterOptionTypeFfiMessageBody.write(value.body, into: &buf)
         FfiConverterOptionString.write(value.bodyParseError, into: &buf)
         FfiConverterString.write(value.previewText, into: &buf)
+        FfiConverterOptionTypeFfiReceiptType.write(value.receiptStatus, into: &buf)
+        FfiConverterSequenceTypeFfiMessageReactionSummary.write(value.reactions, into: &buf)
+        FfiConverterBool.write(value.isVisibleInTimeline, into: &buf)
         FfiConverterOptionUInt64.write(value.mergedEpoch, into: &buf)
         FfiConverterUInt64.write(value.createdAtUnix, into: &buf)
     }
@@ -7777,6 +7789,68 @@ public func FfiConverterTypeFfiMessageEnvelope_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeFfiMessageEnvelope_lower(_ value: FfiMessageEnvelope) -> RustBuffer {
     return FfiConverterTypeFfiMessageEnvelope.lower(value)
+}
+
+
+public struct FfiMessageReactionSummary: Equatable, Hashable {
+    public var emoji: String
+    public var reactorAccountIds: [String]
+    public var count: UInt64
+    public var includesSelf: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(emoji: String, reactorAccountIds: [String], count: UInt64, includesSelf: Bool) {
+        self.emoji = emoji
+        self.reactorAccountIds = reactorAccountIds
+        self.count = count
+        self.includesSelf = includesSelf
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiMessageReactionSummary: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiMessageReactionSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiMessageReactionSummary {
+        return
+            try FfiMessageReactionSummary(
+                emoji: FfiConverterString.read(from: &buf), 
+                reactorAccountIds: FfiConverterSequenceString.read(from: &buf), 
+                count: FfiConverterUInt64.read(from: &buf), 
+                includesSelf: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiMessageReactionSummary, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.emoji, into: &buf)
+        FfiConverterSequenceString.write(value.reactorAccountIds, into: &buf)
+        FfiConverterUInt64.write(value.count, into: &buf)
+        FfiConverterBool.write(value.includesSelf, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiMessageReactionSummary_lift(_ buf: RustBuffer) throws -> FfiMessageReactionSummary {
+    return try FfiConverterTypeFfiMessageReactionSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiMessageReactionSummary_lower(_ value: FfiMessageReactionSummary) -> RustBuffer {
+    return FfiConverterTypeFfiMessageReactionSummary.lower(value)
 }
 
 
@@ -8822,11 +8896,14 @@ public struct FfiMessengerMessageRecord: Equatable, Hashable {
     public var contentType: FfiContentType
     public var body: FfiMessengerMessageBody?
     public var previewText: String
+    public var receiptStatus: FfiReceiptType?
+    public var reactions: [FfiMessageReactionSummary]
+    public var isVisibleInTimeline: Bool
     public var createdAtUnix: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(conversationId: String, serverSeq: UInt64, messageId: String, senderAccountId: String, senderDeviceId: String, senderDisplayName: String?, isOutgoing: Bool, epoch: UInt64, contentType: FfiContentType, body: FfiMessengerMessageBody?, previewText: String, createdAtUnix: UInt64) {
+    public init(conversationId: String, serverSeq: UInt64, messageId: String, senderAccountId: String, senderDeviceId: String, senderDisplayName: String?, isOutgoing: Bool, epoch: UInt64, contentType: FfiContentType, body: FfiMessengerMessageBody?, previewText: String, receiptStatus: FfiReceiptType?, reactions: [FfiMessageReactionSummary], isVisibleInTimeline: Bool, createdAtUnix: UInt64) {
         self.conversationId = conversationId
         self.serverSeq = serverSeq
         self.messageId = messageId
@@ -8838,6 +8915,9 @@ public struct FfiMessengerMessageRecord: Equatable, Hashable {
         self.contentType = contentType
         self.body = body
         self.previewText = previewText
+        self.receiptStatus = receiptStatus
+        self.reactions = reactions
+        self.isVisibleInTimeline = isVisibleInTimeline
         self.createdAtUnix = createdAtUnix
     }
 
@@ -8868,6 +8948,9 @@ public struct FfiConverterTypeFfiMessengerMessageRecord: FfiConverterRustBuffer 
                 contentType: FfiConverterTypeFfiContentType.read(from: &buf), 
                 body: FfiConverterOptionTypeFfiMessengerMessageBody.read(from: &buf), 
                 previewText: FfiConverterString.read(from: &buf), 
+                receiptStatus: FfiConverterOptionTypeFfiReceiptType.read(from: &buf), 
+                reactions: FfiConverterSequenceTypeFfiMessageReactionSummary.read(from: &buf), 
+                isVisibleInTimeline: FfiConverterBool.read(from: &buf), 
                 createdAtUnix: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -8884,6 +8967,9 @@ public struct FfiConverterTypeFfiMessengerMessageRecord: FfiConverterRustBuffer 
         FfiConverterTypeFfiContentType.write(value.contentType, into: &buf)
         FfiConverterOptionTypeFfiMessengerMessageBody.write(value.body, into: &buf)
         FfiConverterString.write(value.previewText, into: &buf)
+        FfiConverterOptionTypeFfiReceiptType.write(value.receiptStatus, into: &buf)
+        FfiConverterSequenceTypeFfiMessageReactionSummary.write(value.reactions, into: &buf)
+        FfiConverterBool.write(value.isVisibleInTimeline, into: &buf)
         FfiConverterUInt64.write(value.createdAtUnix, into: &buf)
     }
 }
@@ -14555,6 +14641,31 @@ fileprivate struct FfiConverterSequenceTypeFfiMessageEnvelope: FfiConverterRustB
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiMessageReactionSummary: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiMessageReactionSummary]
+
+    public static func write(_ value: [FfiMessageReactionSummary], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiMessageReactionSummary.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiMessageReactionSummary] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiMessageReactionSummary]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiMessageReactionSummary.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiMessengerConversationSummary: FfiConverterRustBuffer {
     typealias SwiftType = [FfiMessengerConversationSummary]
 
@@ -14825,6 +14936,12 @@ public func ffiDecryptAttachmentPayload(body: FfiMessageBody, encryptedPayload: 
     )
 })
 }
+public func ffiDefaultQuickReactionEmojis() -> [String]  {
+    return try!  FfiConverterSequenceString.lift(try! rustCall() {
+    uniffi_trix_core_fn_func_ffi_default_quick_reaction_emojis($0
+    )
+})
+}
 public func ffiDeviceRevokePayload(deviceId: String, reason: String)throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_func_ffi_device_revoke_payload(
@@ -14879,6 +14996,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_func_ffi_decrypt_attachment_payload() != 49747) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_func_ffi_default_quick_reaction_emojis() != 50913) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_func_ffi_device_revoke_payload() != 8012) {
