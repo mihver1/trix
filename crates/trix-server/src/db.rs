@@ -3311,6 +3311,10 @@ impl Database {
         participant_account_ids.extend(target_account_ids.iter().copied());
         let participant_account_ids: Vec<Uuid> = participant_account_ids.into_iter().collect();
         let created_epoch = u64::from(input.initial_commit.is_some());
+        let direct_chat_pair_key = match input.chat_type {
+            ChatType::Dm => Some(dm_member_pair_key(&participant_account_ids)?),
+            ChatType::Group | ChatType::AccountSync => None,
+        };
 
         match input.chat_type {
             ChatType::Dm if participant_account_ids.len() != 2 => {
@@ -3399,16 +3403,35 @@ impl Database {
             ));
         }
 
+        if let Some(pair_key) = direct_chat_pair_key.as_deref() {
+            let existing_dm = sqlx::query(
+                r#"
+                SELECT chat_id
+                FROM chats
+                WHERE dm_member_pair_key = $1
+                LIMIT 1
+                "#,
+            )
+            .bind(pair_key)
+            .fetch_optional(tx.deref_mut())
+            .await
+            .map_err(map_db_error)?;
+            if existing_dm.is_some() {
+                return Err(AppError::conflict("dm chat already exists"));
+            }
+        }
+
         let chat_row = sqlx::query(
             r#"
-            INSERT INTO chats (chat_type, title, created_by_account_id)
-            VALUES ($1::chat_type, $2, $3)
+            INSERT INTO chats (chat_type, title, created_by_account_id, dm_member_pair_key)
+            VALUES ($1::chat_type, $2, $3, $4)
             RETURNING chat_id
             "#,
         )
         .bind(chat_type_db(input.chat_type))
         .bind(input.title.as_deref())
         .bind(input.creator_account_id)
+        .bind(direct_chat_pair_key.as_deref())
         .fetch_one(tx.deref_mut())
         .await
         .map_err(map_db_error)?;
@@ -6214,6 +6237,19 @@ fn clamp_ttl_seconds(requested: Option<u64>, default_ttl: u64, max_ttl: u64) -> 
     ttl.clamp(1, max_ttl)
 }
 
+fn dm_member_pair_key(account_ids: &[Uuid]) -> Result<String, AppError> {
+    if account_ids.len() != 2 {
+        return Err(AppError::bad_request(
+            "dm chats require exactly two unique accounts",
+        ));
+    }
+    Ok(account_ids
+        .iter()
+        .map(Uuid::to_string)
+        .collect::<Vec<_>>()
+        .join(":"))
+}
+
 fn u64_to_i64(value: u64, field: &str) -> Result<i64, AppError> {
     i64::try_from(value)
         .map_err(|_| AppError::bad_request(format!("{field} exceeds supported range")))
@@ -6337,6 +6373,10 @@ fn map_db_error(err: sqlx::Error) -> AppError {
 
         if db_err.constraint() == Some("messages_pkey") {
             return AppError::conflict("message already exists");
+        }
+
+        if db_err.constraint() == Some("chats_dm_member_pair_key_idx") {
+            return AppError::conflict("dm chat already exists");
         }
     }
 
@@ -7573,6 +7613,83 @@ mod tests {
         detail_names.sort();
         assert_eq!(detail_names, vec!["alice", "bob"]);
         assert_eq!(detail.members.len(), 2);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn duplicate_direct_messages_are_rejected_for_the_same_pair() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [107; 32],
+                [108; 32],
+            ))
+            .await
+            .expect("create alice");
+        let bob = db
+            .create_account(make_account_input(
+                "bob",
+                "Bob Primary",
+                [109; 32],
+                [110; 32],
+            ))
+            .await
+            .expect("create bob");
+
+        db.publish_key_packages(
+            bob.device_id,
+            vec![PublishKeyPackageInput {
+                device_id: bob.device_id,
+                cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                key_package_bytes: b"bob-primary-kp".to_vec(),
+            }],
+        )
+        .await
+        .expect("publish bob key package");
+
+        let bob_reserved = db
+            .reserve_key_packages_for_account(alice.account_id, bob.account_id)
+            .await
+            .expect("reserve bob key package");
+        db.create_chat(CreateChatInput {
+            creator_account_id: alice.account_id,
+            creator_device_id: alice.device_id,
+            chat_type: ChatType::Dm,
+            title: None,
+            participant_account_ids: vec![bob.account_id],
+            reserved_key_package_ids: bob_reserved
+                .iter()
+                .map(|package| package.key_package_id)
+                .collect(),
+            initial_commit: Some(make_control_message("dm-create-commit")),
+            welcome_message: Some(make_control_message("dm-create-welcome")),
+        })
+        .await
+        .expect("create first dm");
+
+        let duplicate_error = db
+            .create_chat(CreateChatInput {
+                creator_account_id: alice.account_id,
+                creator_device_id: alice.device_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                participant_account_ids: vec![bob.account_id],
+                reserved_key_package_ids: Vec::new(),
+                initial_commit: None,
+                welcome_message: None,
+            })
+            .await
+            .expect_err("duplicate dm must fail");
+
+        match duplicate_error {
+            AppError::Conflict(message) => assert_eq!(message, "dm chat already exists"),
+            other => panic!("expected duplicate dm conflict, got {other:?}"),
+        }
     }
 
     #[tokio::test]
