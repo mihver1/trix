@@ -1,11 +1,25 @@
 import SwiftUI
 
+enum RootStartupBehavior {
+    case live
+    case preview
+}
+
 struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(ServerConfiguration.baseURLDefaultsKey)
     private var serverBaseURL = ServerConfiguration.defaultBaseURL.absoluteString
 
     @State private var model = AppModel()
+    private let startupBehavior: RootStartupBehavior
+
+    init(
+        model: AppModel = AppModel(),
+        startupBehavior: RootStartupBehavior = .live
+    ) {
+        _model = State(initialValue: model)
+        self.startupBehavior = startupBehavior
+    }
 
     var body: some View {
         Group {
@@ -31,6 +45,10 @@ struct RootView: View {
             }
         }
         .task {
+            guard startupBehavior == .live else {
+                return
+            }
+
             do {
                 let launchBaseURL = try await UITestAppBootstrap.prepareForLaunch(
                     fallbackBaseURLString: serverBaseURL
@@ -47,6 +65,10 @@ struct RootView: View {
             }
         }
         .onChange(of: scenePhase) { _, newPhase in
+            guard startupBehavior == .live else {
+                return
+            }
+
             switch newPhase {
             case .active:
                 Task {
@@ -64,5 +86,5 @@ struct RootView: View {
 }
 
 #Preview {
-    RootView()
+    RootView(startupBehavior: .preview)
 }

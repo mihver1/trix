@@ -1,8 +1,8 @@
 use axum::{
     Json, Router,
     extract::{Path, State},
-    http::HeaderMap,
-    routing::{get, post},
+    http::{HeaderMap, StatusCode},
+    routing::{get, post, put},
 };
 use base64::{Engine as _, engine::general_purpose};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
@@ -11,7 +11,8 @@ use uuid::Uuid;
 
 use crate::{
     db::{
-        ApprovePendingDeviceInput, CompleteLinkIntentInput, KeyPackageBytesInput, RevokeDeviceInput,
+        ApprovePendingDeviceInput, CompleteLinkIntentInput, KeyPackageBytesInput,
+        RegisterApplePushTokenInput, RevokeDeviceInput,
     },
     error::AppError,
     signatures::{account_bootstrap_message, device_revoke_message},
@@ -21,12 +22,17 @@ use trix_types::{
     ApproveDeviceRequest, ApproveDeviceResponse, CompleteLinkIntentRequest,
     CompleteLinkIntentResponse, CreateLinkIntentResponse, DeviceApprovePayloadResponse, DeviceId,
     DeviceListResponse, DeviceSummary, DeviceTransferBundleResponse, DeviceTransportKeyResponse,
-    RevokeDeviceRequest, RevokeDeviceResponse,
+    RegisterApplePushTokenRequest, RegisterApplePushTokenResponse, RevokeDeviceRequest,
+    RevokeDeviceResponse,
 };
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_devices))
+        .route(
+            "/push-token",
+            put(register_apple_push_token).delete(delete_apple_push_token),
+        )
         .route("/link-intents", post(create_link_intent))
         .route(
             "/link-intents/{link_intent_id}/complete",
@@ -95,6 +101,42 @@ async fn create_link_intent(
         qr_payload,
         expires_at_unix: created.expires_at_unix,
     }))
+}
+
+async fn register_apple_push_token(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<RegisterApplePushTokenRequest>,
+) -> Result<Json<RegisterApplePushTokenResponse>, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+    let token_hex = normalize_apns_token_hex(&request.token_hex)?;
+
+    state
+        .db
+        .register_device_apns_token(RegisterApplePushTokenInput {
+            device_id: principal.device_id,
+            token_hex,
+            environment: request.environment,
+        })
+        .await?;
+
+    Ok(Json(RegisterApplePushTokenResponse {
+        device_id: DeviceId(principal.device_id),
+        environment: request.environment,
+        push_delivery_enabled: state.push_notifications.is_delivery_enabled(),
+    }))
+}
+
+async fn delete_apple_push_token(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<StatusCode, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+    state
+        .db
+        .delete_device_apns_token(principal.device_id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn complete_link_intent(
@@ -390,4 +432,31 @@ fn pending_bootstrap_to_api(
             &bootstrap.credential_identity,
         )),
     }
+}
+
+fn normalize_apns_token_hex(raw_value: &str) -> Result<String, AppError> {
+    let normalized: String = raw_value
+        .chars()
+        .filter(|character| !character.is_ascii_whitespace())
+        .map(|character| character.to_ascii_lowercase())
+        .collect();
+
+    if normalized.is_empty() {
+        return Err(AppError::bad_request("token_hex must not be empty"));
+    }
+    if normalized.len() % 2 != 0 {
+        return Err(AppError::bad_request(
+            "token_hex must contain an even number of hex characters",
+        ));
+    }
+    if !normalized
+        .chars()
+        .all(|character| character.is_ascii_hexdigit())
+    {
+        return Err(AppError::bad_request(
+            "token_hex must be a hex-encoded APNs token",
+        ));
+    }
+
+    Ok(normalized)
 }

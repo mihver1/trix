@@ -89,6 +89,7 @@ final class AppModel: ObservableObject {
     private let defaultDeviceName: String
     private var persistedSession: PersistedSession?
     private var accessToken: String?
+    private var apnsTokenHex: String?
     private var messengerCheckpoint: String?
     private var didStart = false
     private var backgroundRefreshTask: Task<Void, Never>?
@@ -304,6 +305,7 @@ final class AppModel: ObservableObject {
         refreshLocalIdentityState(reportErrors: true)
         await refreshServerStatus()
         await refreshNotificationPermissionState()
+        registerForRemoteNotificationsIfNeeded()
         startBackgroundRefreshLoopIfNeeded()
 
         if persistedSession != nil {
@@ -361,9 +363,40 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func handleRegisteredForRemoteNotifications(deviceToken: Data) async {
+        apnsTokenHex = apnsTokenHexString(from: deviceToken)
+        await syncApplePushTokenIfPossible()
+    }
+
+    func handleRemoteNotificationsRegistrationFailure(_ error: Error) {
+        lastErrorMessage = error.userFacingMessage
+    }
+
+    func handleRemoteNotification(userInfo: [String: Any]) async {
+        guard isTrixInboxRemoteNotification(userInfo) else {
+            return
+        }
+        guard notificationPreferences.isEnabled else {
+            return
+        }
+
+        await performBackgroundRefreshIfNeeded()
+    }
+
     func setNotificationsEnabled(_ isEnabled: Bool) {
         notificationPreferences.isEnabled = isEnabled
         notificationPreferencesStore.save(notificationPreferences)
+
+        if isEnabled {
+            registerForRemoteNotificationsIfNeeded()
+            Task {
+                await syncApplePushTokenIfPossible()
+            }
+        } else {
+            Task {
+                await deleteApplePushTokenIfPossible()
+            }
+        }
     }
 
     func setNotificationPollingInterval(_ seconds: TimeInterval) {
@@ -383,6 +416,8 @@ final class AppModel: ObservableObject {
                 notificationPreferences.permissionState == .provisional ||
                 notificationPreferences.permissionState == .ephemeral {
                 notificationPreferences.isEnabled = true
+                registerForRemoteNotificationsIfNeeded()
+                await syncApplePushTokenIfPossible()
             }
             notificationPreferencesStore.save(notificationPreferences)
         } catch {
@@ -1711,6 +1746,88 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func ensureApplePushDeliveryConfigured(
+        client: TrixAPIClient,
+        accessToken: String
+    ) async {
+        guard notificationPreferences.isEnabled else {
+            await deleteApplePushTokenIfPossible()
+            return
+        }
+
+        registerForRemoteNotificationsIfNeeded()
+        guard let tokenHex = apnsTokenHex else {
+            return
+        }
+
+        do {
+            _ = try await client.registerApplePushToken(
+                accessToken: accessToken,
+                request: RegisterApplePushTokenRequest(
+                    tokenHex: tokenHex,
+                    environment: ApplePushRegistrationEnvironment.current
+                )
+            )
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    private func syncApplePushTokenIfPossible() async {
+        guard notificationPreferences.isEnabled else {
+            return
+        }
+        guard let tokenHex = apnsTokenHex else {
+            return
+        }
+        guard let accessToken else {
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
+
+        do {
+            _ = try await client.registerApplePushToken(
+                accessToken: accessToken,
+                request: RegisterApplePushTokenRequest(
+                    tokenHex: tokenHex,
+                    environment: ApplePushRegistrationEnvironment.current
+                )
+            )
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    private func deleteApplePushTokenIfPossible() async {
+        guard let accessToken else {
+            return
+        }
+        guard let client = makeClient() else {
+            return
+        }
+
+        do {
+            try await client.deleteApplePushToken(accessToken: accessToken)
+        } catch {
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    private func registerForRemoteNotificationsIfNeeded() {
+        guard notificationPreferences.isEnabled else {
+            return
+        }
+
+        switch notificationPreferences.permissionState {
+        case .authorized, .provisional, .ephemeral:
+            NSApplication.shared.registerForRemoteNotifications(matching: [.alert, .badge, .sound])
+        case .notDetermined, .denied:
+            break
+        }
+    }
+
     private func makeMessengerConfiguration(
         baseURLString: String? = nil,
         accessToken: String? = nil,
@@ -1899,10 +2016,18 @@ final class AppModel: ObservableObject {
 
             await notificationCoordinator.postMessageNotification(
                 identifier: "chat-\(chatId.uuidString)-\(currentItem.lastServerSeq)",
-                title: currentItem.displayTitle,
-                body: currentItem.previewText ?? "You have a new message."
+                title: "\(currentItem.displayTitle): New message",
+                body: currentItem.previewText ?? ""
             )
         }
+    }
+
+    private func isTrixInboxRemoteNotification(_ userInfo: [String: Any]) -> Bool {
+        if let trixPayload = userInfo["trix"] as? [String: Any] {
+            return (trixPayload["event"] as? String) == "inbox_update"
+        }
+
+        return userInfo["aps"] != nil
     }
 
     private func scheduleRealtimeRecovery(delayNanoseconds: UInt64) {
@@ -1962,6 +2087,7 @@ final class AppModel: ObservableObject {
         currentAccount = loadedProfile
         try updatePersistedSessionProfile(from: loadedProfile)
         try applyMessengerSnapshot(snapshot)
+        await ensureApplePushDeliveryConfigured(client: client, accessToken: accessToken)
         refreshLocalIdentityState(reportErrors: false)
         syncKeyPackageDrafts(with: loadedProfile)
         syncEditProfileDraft(with: loadedProfile)
@@ -2117,6 +2243,13 @@ final class AppModel: ObservableObject {
     }
 
     private func clearSession() throws {
+        if let accessToken,
+           let client = makeClient(baseURLString: persistedSession?.baseURLString) {
+            Task {
+                try? await client.deleteApplePushToken(accessToken: accessToken)
+            }
+        }
+
         disconnectRealtimeConnection()
         stopLinkIntentRefreshLoop()
         try sessionStore.clear()

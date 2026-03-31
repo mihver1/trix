@@ -178,9 +178,14 @@ final class ConsumerConversationTimelineBuilderTests: XCTestCase {
             ]
         )
 
-        let items = ConsumerConversationTimelineBuilder.makeTimelineItems(for: snapshot)
+        let renderPayload = ConsumerConversationTimelineBuilder.makeRenderPayload(
+            for: snapshot,
+            fixtureManifest: nil
+        )
+        let items = renderPayload.items
 
         XCTAssertEqual(items.count, 3)
+        XCTAssertTrue(renderPayload.fixtureKindsByMessageId.isEmpty)
 
         guard case .daySeparator = items[0] else {
             return XCTFail("Expected the first timeline item to be a day separator")
@@ -192,8 +197,8 @@ final class ConsumerConversationTimelineBuilderTests: XCTestCase {
         XCTAssertEqual(firstMessage.id, "message-1")
         XCTAssertEqual(firstMessage.primaryText, "Hey there")
         XCTAssertEqual(firstMessage.senderName, "Bob")
-        XCTAssertEqual(firstMessage.clusterPosition, .top)
-        XCTAssertEqual(firstMessage.receiptStatus, .read)
+        XCTAssertEqual(firstMessage.clusterPosition, ConsumerMessageClusterPosition.top)
+        XCTAssertEqual(firstMessage.receiptStatus, ConsumerReceiptStatus.read)
 
         guard case let .message(secondMessage) = items[2] else {
             return XCTFail("Expected the second rendered item to be a message")
@@ -201,7 +206,7 @@ final class ConsumerConversationTimelineBuilderTests: XCTestCase {
         XCTAssertEqual(secondMessage.id, "message-2")
         XCTAssertEqual(secondMessage.primaryText, "You there?")
         XCTAssertNil(secondMessage.senderName)
-        XCTAssertEqual(secondMessage.clusterPosition, .bottom)
+        XCTAssertEqual(secondMessage.clusterPosition, ConsumerMessageClusterPosition.bottom)
     }
 
     func testLatestIncomingNonReceiptMessageIDSkipsOwnMessagesAndReceipts() {
@@ -334,10 +339,15 @@ final class ConsumerConversationTimelineBuilderTests: XCTestCase {
                 ),
             ]
         )
-        let items = ConsumerConversationTimelineBuilder.makeTimelineItems(for: snapshot)
+        let renderPayload = ConsumerConversationTimelineBuilder.makeRenderPayload(
+            for: snapshot,
+            fixtureManifest: nil
+        )
+        let items = renderPayload.items
         let baseline = ConsumerConversationTimelineRenderState(
             latestTimelineAnchorId: "message-1",
             timelineItems: items,
+            fixtureKindsByMessageId: renderPayload.fixtureKindsByMessageId,
             latestSentMessageId: nil,
             latestSentText: nil,
             downloadingAttachmentMessageId: nil
@@ -345,6 +355,7 @@ final class ConsumerConversationTimelineBuilderTests: XCTestCase {
         let sameInputs = ConsumerConversationTimelineRenderState(
             latestTimelineAnchorId: "message-1",
             timelineItems: items,
+            fixtureKindsByMessageId: renderPayload.fixtureKindsByMessageId,
             latestSentMessageId: nil,
             latestSentText: nil,
             downloadingAttachmentMessageId: nil
@@ -352,6 +363,7 @@ final class ConsumerConversationTimelineBuilderTests: XCTestCase {
         let changedInputs = ConsumerConversationTimelineRenderState(
             latestTimelineAnchorId: "message-1",
             timelineItems: items,
+            fixtureKindsByMessageId: renderPayload.fixtureKindsByMessageId,
             latestSentMessageId: nil,
             latestSentText: "different",
             downloadingAttachmentMessageId: nil

@@ -129,6 +129,9 @@ pub struct LocalChatListItem {
     pub preview_server_seq: Option<u64>,
     pub preview_created_at_unix: Option<u64>,
     pub participant_profiles: Vec<ChatParticipantProfileSummary>,
+    pub history_recovery_pending: bool,
+    pub history_recovery_from_server_seq: Option<u64>,
+    pub history_recovery_through_server_seq: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -151,6 +154,32 @@ pub struct LocalTimelineItem {
     pub is_visible_in_timeline: bool,
     pub merged_epoch: Option<u64>,
     pub created_at_unix: u64,
+    pub recovery_state: Option<LocalMessageRecoveryState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalMessageRecoveryState {
+    PendingSiblingHistory,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalHistoryRepairReason {
+    ProjectedGap,
+    UnmaterializedProjection,
+    ProjectionFailure,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalHistoryRepairWindow {
+    pub from_server_seq: u64,
+    pub through_server_seq: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalHistoryRepairCandidate {
+    pub chat_id: ChatId,
+    pub window: LocalHistoryRepairWindow,
+    pub reason: LocalHistoryRepairReason,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -262,6 +291,10 @@ struct PersistedChatState {
     projected_cursor_server_seq: u64,
     #[serde(default)]
     projected_messages: BTreeMap<u64, PersistedProjectedMessage>,
+    #[serde(default)]
+    pending_history_repair_from_server_seq: Option<u64>,
+    #[serde(default)]
+    pending_history_repair_through_server_seq: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -330,13 +363,17 @@ impl LocalHistoryStore {
     pub fn new_persistent(database_path: impl Into<PathBuf>) -> Result<Self> {
         let database_path = database_path.into();
         if database_path.exists() {
-            Ok(Self {
+            let mut store = Self {
                 state: load_state_from_path(&database_path)?,
                 database_path: Some(database_path),
                 database_key: None,
                 #[cfg(test)]
                 fail_save_after: std::cell::Cell::new(None),
-            })
+            };
+            if !deduplicate_direct_chats_in_state(&mut store.state).is_empty() {
+                store.save_state()?;
+            }
+            Ok(store)
         } else {
             let store = Self {
                 state: PersistedLocalHistoryState::default(),
@@ -353,13 +390,17 @@ impl LocalHistoryStore {
     pub fn new_encrypted(database_path: impl Into<PathBuf>, database_key: Vec<u8>) -> Result<Self> {
         let database_path = database_path.into();
         if database_path.exists() {
-            Ok(Self {
+            let mut store = Self {
                 state: load_state_from_encrypted_path(&database_path, &database_key)?,
                 database_path: Some(database_path),
                 database_key: Some(database_key),
                 #[cfg(test)]
                 fail_save_after: std::cell::Cell::new(None),
-            })
+            };
+            if !deduplicate_direct_chats_in_state(&mut store.state).is_empty() {
+                store.save_state()?;
+            }
+            Ok(store)
         } else {
             let store = Self {
                 state: PersistedLocalHistoryState::default(),
@@ -418,6 +459,37 @@ impl LocalHistoryStore {
             .collect::<Vec<_>>();
         chats.sort_by(compare_chat_summaries_by_recent_activity);
         chats
+    }
+
+    pub(crate) fn find_active_direct_chat(
+        &self,
+        first_account_id: trix_types::AccountId,
+        second_account_id: trix_types::AccountId,
+    ) -> Option<ChatId> {
+        let target_pair_key =
+            direct_chat_pair_key_for_account_ids(&[first_account_id, second_account_id]);
+        self.state
+            .chats
+            .iter()
+            .filter_map(|(chat_id, state)| {
+                if !state.is_active {
+                    return None;
+                }
+                let pair_key = direct_chat_pair_key_from_state(state)?;
+                if pair_key != target_pair_key {
+                    return None;
+                }
+                Some((chat_id.as_str(), state))
+            })
+            .max_by(|(left_chat_id, left_state), (right_chat_id, right_state)| {
+                compare_direct_chat_state_preference(
+                    left_chat_id,
+                    left_state,
+                    right_chat_id,
+                    right_state,
+                )
+            })
+            .and_then(|(chat_id, _)| parse_chat_id(chat_id).ok())
     }
 
     pub fn list_local_chat_list_items(
@@ -712,6 +784,8 @@ impl LocalHistoryStore {
                     read_cursor_server_seq: 0,
                     projected_cursor_server_seq: 0,
                     projected_messages: BTreeMap::new(),
+                    pending_history_repair_from_server_seq: None,
+                    pending_history_repair_through_server_seq: None,
                 });
         let group_id_b64 = crate::encode_b64(group_id);
         if entry.mls_group_id_b64.as_deref() == Some(group_id_b64.as_str()) {
@@ -1019,6 +1093,105 @@ impl LocalHistoryStore {
             .unwrap_or(false)
     }
 
+    pub fn history_repair_candidate(&self, chat_id: ChatId) -> Option<LocalHistoryRepairCandidate> {
+        let chat = self.state.chats.get(&chat_id.0.to_string())?;
+        projected_gap_after_cursor(chat)
+            .map(|window| LocalHistoryRepairCandidate {
+                chat_id,
+                window,
+                reason: LocalHistoryRepairReason::ProjectedGap,
+            })
+            .or_else(|| {
+                unmaterialized_application_window(chat).map(|window| LocalHistoryRepairCandidate {
+                    chat_id,
+                    window,
+                    reason: LocalHistoryRepairReason::UnmaterializedProjection,
+                })
+            })
+    }
+
+    pub fn history_repair_candidate_after_projection_failure(
+        &self,
+        chat_id: ChatId,
+    ) -> Option<LocalHistoryRepairCandidate> {
+        self.history_repair_candidate(chat_id).or_else(|| {
+            let chat = self.state.chats.get(&chat_id.0.to_string())?;
+            unprojected_tail_window(chat).map(|window| LocalHistoryRepairCandidate {
+                chat_id,
+                window,
+                reason: LocalHistoryRepairReason::ProjectionFailure,
+            })
+        })
+    }
+
+    pub fn pending_history_repair_window(
+        &self,
+        chat_id: ChatId,
+    ) -> Option<LocalHistoryRepairWindow> {
+        self.state
+            .chats
+            .get(&chat_id.0.to_string())
+            .and_then(pending_history_repair_window_from)
+    }
+
+    pub fn set_pending_history_repair_window(
+        &mut self,
+        chat_id: ChatId,
+        window: LocalHistoryRepairWindow,
+    ) -> Result<bool> {
+        self.ensure_chat_exists(chat_id);
+        let Some(chat) = self.state.chats.get_mut(&chat_id.0.to_string()) else {
+            return Ok(false);
+        };
+        let changed = chat.pending_history_repair_from_server_seq != Some(window.from_server_seq)
+            || chat.pending_history_repair_through_server_seq != Some(window.through_server_seq);
+        if !changed {
+            return Ok(false);
+        }
+        chat.pending_history_repair_from_server_seq = Some(window.from_server_seq);
+        chat.pending_history_repair_through_server_seq = Some(window.through_server_seq);
+        self.save_state()?;
+        Ok(true)
+    }
+
+    pub fn clear_pending_history_repair_window(&mut self, chat_id: ChatId) -> Result<bool> {
+        let Some(chat) = self.state.chats.get_mut(&chat_id.0.to_string()) else {
+            return Ok(false);
+        };
+        let changed = chat.pending_history_repair_from_server_seq.take().is_some()
+            || chat
+                .pending_history_repair_through_server_seq
+                .take()
+                .is_some();
+        if !changed {
+            return Ok(false);
+        }
+        self.save_state()?;
+        Ok(true)
+    }
+
+    pub fn refresh_pending_history_repair_window(
+        &mut self,
+        chat_id: ChatId,
+    ) -> Result<Option<LocalHistoryRepairWindow>> {
+        let had_pending = self.pending_history_repair_window(chat_id).is_some();
+        if !had_pending {
+            return Ok(None);
+        }
+
+        if let Some(next_window) = self
+            .state
+            .chats
+            .get(&chat_id.0.to_string())
+            .and_then(next_pending_history_repair_window)
+        {
+            self.set_pending_history_repair_window(chat_id, next_window)?;
+            return Ok(Some(next_window));
+        }
+
+        self.clear_pending_history_repair_window(chat_id)?;
+        Ok(None)
+    }
     pub fn chats_with_unavailable_messages(&self) -> Vec<ChatId> {
         self.state
             .chats
@@ -1835,6 +2008,11 @@ impl LocalHistoryStore {
             changed = true;
         }
 
+        let pending_repair_changed = reconcile_pending_history_repair_in_chat(chat);
+        if pending_repair_changed {
+            changed = true;
+        }
+
         let advanced_to_server_seq = cursor_advanced.then_some(chat.projected_cursor_server_seq);
 
         Ok((
@@ -1869,6 +2047,8 @@ impl LocalHistoryStore {
                 read_cursor_server_seq: 0,
                 projected_cursor_server_seq: 0,
                 projected_messages: BTreeMap::new(),
+                pending_history_repair_from_server_seq: None,
+                pending_history_repair_through_server_seq: None,
             });
     }
 
@@ -1901,6 +2081,8 @@ impl LocalHistoryStore {
                     read_cursor_server_seq: 0,
                     projected_cursor_server_seq: 0,
                     projected_messages: BTreeMap::new(),
+                    pending_history_repair_from_server_seq: None,
+                    pending_history_repair_through_server_seq: None,
                 });
 
             let mut changed = false;
@@ -1959,6 +2141,12 @@ impl LocalHistoryStore {
             }
         }
 
+        let removed_duplicate_chat_ids = deduplicate_direct_chats_in_state(&mut self.state);
+        if !removed_duplicate_chat_ids.is_empty() {
+            chats_upserted += removed_duplicate_chat_ids.len();
+            changed_chat_ids.extend(removed_duplicate_chat_ids);
+        }
+
         self.persist_if_needed(chats_upserted > 0)?;
         Ok(LocalStoreApplyReport {
             chats_upserted,
@@ -2015,6 +2203,8 @@ impl LocalHistoryStore {
                 read_cursor_server_seq: 0,
                 projected_cursor_server_seq: 0,
                 projected_messages: BTreeMap::new(),
+                pending_history_repair_from_server_seq: None,
+                pending_history_repair_through_server_seq: None,
             });
 
         let mut changed = false;
@@ -2128,6 +2318,8 @@ impl LocalHistoryStore {
                 read_cursor_server_seq: 0,
                 projected_cursor_server_seq: 0,
                 projected_messages: BTreeMap::new(),
+                pending_history_repair_from_server_seq: None,
+                pending_history_repair_through_server_seq: None,
             });
 
         let mut chat_changed = false;
@@ -2752,6 +2944,22 @@ fn first_projection_gap_with_projected_tail(chat: &PersistedChatState) -> Option
     })
 }
 
+fn projected_gap_after_cursor(chat: &PersistedChatState) -> Option<LocalHistoryRepairWindow> {
+    let next_expected = chat.projected_cursor_server_seq.checked_add(1)?;
+    let first_projected_after_cursor = chat
+        .projected_messages
+        .range(next_expected..)
+        .next()
+        .map(|(server_seq, _)| *server_seq)?;
+    if first_projected_after_cursor <= next_expected {
+        return None;
+    }
+    Some(LocalHistoryRepairWindow {
+        from_server_seq: next_expected,
+        through_server_seq: first_projected_after_cursor.saturating_sub(1),
+    })
+}
+
 fn first_unmaterialized_application_projection(chat: &PersistedChatState) -> Option<u64> {
     chat.projected_messages
         .iter()
@@ -2762,8 +2970,92 @@ fn first_unmaterialized_application_projection(chat: &PersistedChatState) -> Opt
         })
 }
 
+fn unmaterialized_application_window(
+    chat: &PersistedChatState,
+) -> Option<LocalHistoryRepairWindow> {
+    let start = first_unmaterialized_application_projection(chat)?;
+    let mut through = start;
+    for (server_seq, message) in chat.projected_messages.range(start..) {
+        if *server_seq == start {
+            continue;
+        }
+        if *server_seq != through.saturating_add(1)
+            || message.projection_kind != LocalProjectionKind::ApplicationMessage
+            || message.materialized_body_b64.is_some()
+        {
+            break;
+        }
+        through = *server_seq;
+    }
+    Some(LocalHistoryRepairWindow {
+        from_server_seq: start,
+        through_server_seq: through,
+    })
+}
+
+fn unprojected_tail_window(chat: &PersistedChatState) -> Option<LocalHistoryRepairWindow> {
+    let start = chat.messages.keys().copied().find(|server_seq| {
+        *server_seq > chat.projected_cursor_server_seq
+            && !chat.projected_messages.contains_key(server_seq)
+    })?;
+    let mut through = start;
+    for server_seq in chat
+        .messages
+        .keys()
+        .copied()
+        .filter(|server_seq| *server_seq >= start)
+    {
+        if server_seq != through && server_seq != through.saturating_add(1) {
+            break;
+        }
+        if chat.projected_messages.contains_key(&server_seq) {
+            break;
+        }
+        through = server_seq;
+    }
+    Some(LocalHistoryRepairWindow {
+        from_server_seq: start,
+        through_server_seq: through,
+    })
+}
+
+fn next_pending_history_repair_window(
+    chat: &PersistedChatState,
+) -> Option<LocalHistoryRepairWindow> {
+    projected_gap_after_cursor(chat)
+        .or_else(|| unmaterialized_application_window(chat))
+        .or_else(|| unprojected_tail_window(chat))
+}
+
 fn chat_has_unmaterialized_application_messages(chat: &PersistedChatState) -> bool {
     first_unmaterialized_application_projection(chat).is_some()
+}
+
+fn pending_history_repair_window_from(
+    chat: &PersistedChatState,
+) -> Option<LocalHistoryRepairWindow> {
+    Some(LocalHistoryRepairWindow {
+        from_server_seq: chat.pending_history_repair_from_server_seq?,
+        through_server_seq: chat.pending_history_repair_through_server_seq?,
+    })
+}
+
+fn reconcile_pending_history_repair_in_chat(chat: &mut PersistedChatState) -> bool {
+    let Some(current_window) = pending_history_repair_window_from(chat) else {
+        return false;
+    };
+    let next_window = next_pending_history_repair_window(chat);
+    if next_window == Some(current_window) {
+        return false;
+    }
+    if let Some(next_window) = next_window {
+        chat.pending_history_repair_from_server_seq = Some(next_window.from_server_seq);
+        chat.pending_history_repair_through_server_seq = Some(next_window.through_server_seq);
+    } else {
+        chat.pending_history_repair_from_server_seq = None;
+        chat.pending_history_repair_through_server_seq = None;
+    }
+    true
 }
 
 fn local_chat_read_state_from(
@@ -2784,6 +3076,7 @@ fn local_chat_list_item_from(
     self_account_id: Option<trix_types::AccountId>,
 ) -> LocalChatListItem {
     let preview = latest_preview_from_chat(state, self_account_id);
+    let pending_window = pending_history_repair_window_from(state);
     LocalChatListItem {
         chat_id,
         chat_type: state.chat_type,
@@ -2802,6 +3095,9 @@ fn local_chat_list_item_from(
         preview_server_seq: preview.as_ref().map(|preview| preview.server_seq),
         preview_created_at_unix: preview.as_ref().map(|preview| preview.created_at_unix),
         participant_profiles: state.participant_profiles.clone(),
+        history_recovery_pending: pending_window.is_some(),
+        history_recovery_from_server_seq: pending_window.map(|window| window.from_server_seq),
+        history_recovery_through_server_seq: pending_window.map(|window| window.through_server_seq),
     }
 }
 
@@ -2849,6 +3145,14 @@ fn local_timeline_item_from(
     };
     let preview_text =
         preview_text_for_projected_message(&message, body.as_ref(), body_parse_error.as_deref());
+    let recovery_state = pending_history_repair_window_from(state).and_then(|window| {
+        body.is_none()
+            .then_some(message.server_seq)
+            .filter(|server_seq| {
+                *server_seq >= window.from_server_seq && *server_seq <= window.through_server_seq
+            })
+            .map(|_| LocalMessageRecoveryState::PendingSiblingHistory)
+    });
     LocalTimelineItem {
         server_seq: message.server_seq,
         message_id: message.message_id,
@@ -2875,6 +3179,7 @@ fn local_timeline_item_from(
         is_visible_in_timeline: !decorations.hidden_message_ids.contains(&message.message_id),
         merged_epoch: message.merged_epoch,
         created_at_unix: message.created_at_unix,
+        recovery_state,
     }
 }
 
@@ -3361,8 +3666,10 @@ fn save_state_to_path(
             device_members_json,
             mls_group_id_b64,
             read_cursor_server_seq,
-            projected_cursor_server_seq
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+            projected_cursor_server_seq,
+            pending_history_repair_from_server_seq,
+            pending_history_repair_through_server_seq
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
         "#,
     )?;
     let mut message_statement = transaction.prepare(
@@ -3414,6 +3721,12 @@ fn save_state_to_path(
                 chat.projected_cursor_server_seq,
                 "projected_cursor_server_seq"
             )?,
+            chat.pending_history_repair_from_server_seq
+                .map(|value| u64_to_i64(value, "pending_history_repair_from_server_seq"))
+                .transpose()?,
+            chat.pending_history_repair_through_server_seq
+                .map(|value| u64_to_i64(value, "pending_history_repair_through_server_seq"))
+                .transpose()?,
         ])?;
 
         for (server_seq, message) in &chat.messages {
@@ -3532,7 +3845,9 @@ fn load_state_from_sqlite(
             device_members_json,
             mls_group_id_b64,
             read_cursor_server_seq,
-            projected_cursor_server_seq
+            projected_cursor_server_seq,
+            pending_history_repair_from_server_seq,
+            pending_history_repair_through_server_seq
         FROM local_history_chats
         ORDER BY chat_id
         "#,
@@ -3553,6 +3868,8 @@ fn load_state_from_sqlite(
         let mls_group_id_b64: Option<String> = row.get(12)?;
         let read_cursor_server_seq: i64 = row.get(13)?;
         let projected_cursor_server_seq: i64 = row.get(14)?;
+        let pending_history_repair_from_server_seq: Option<i64> = row.get(15)?;
+        let pending_history_repair_through_server_seq: Option<i64> = row.get(16)?;
 
         Ok((
             chat_id,
@@ -3589,6 +3906,19 @@ fn load_state_from_sqlite(
                 )
                 .map_err(sqlite_anyhow_error)?,
                 projected_messages: BTreeMap::new(),
+                pending_history_repair_from_server_seq: pending_history_repair_from_server_seq
+                    .map(|value| {
+                        i64_to_u64(value, "pending_history_repair_from_server_seq")
+                            .map_err(sqlite_anyhow_error)
+                    })
+                    .transpose()?,
+                pending_history_repair_through_server_seq:
+                    pending_history_repair_through_server_seq
+                        .map(|value| {
+                            i64_to_u64(value, "pending_history_repair_through_server_seq")
+                                .map_err(sqlite_anyhow_error)
+                        })
+                        .transpose()?,
             },
         ))
     })?;
@@ -3760,7 +4090,9 @@ fn open_history_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Conne
             device_members_json TEXT NOT NULL,
             mls_group_id_b64 TEXT,
             read_cursor_server_seq INTEGER NOT NULL,
-            projected_cursor_server_seq INTEGER NOT NULL
+            projected_cursor_server_seq INTEGER NOT NULL,
+            pending_history_repair_from_server_seq INTEGER,
+            pending_history_repair_through_server_seq INTEGER
         );
         CREATE TABLE IF NOT EXISTS local_history_messages (
             chat_id TEXT NOT NULL,
@@ -3790,6 +4122,18 @@ fn open_history_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Conne
         "local_history_chats",
         "is_active",
         "INTEGER NOT NULL DEFAULT 1",
+    )?;
+    ensure_sqlite_column(
+        &connection,
+        "local_history_chats",
+        "pending_history_repair_from_server_seq",
+        "INTEGER",
+    )?;
+    ensure_sqlite_column(
+        &connection,
+        "local_history_chats",
+        "pending_history_repair_through_server_seq",
+        "INTEGER",
     )?;
     Ok(connection)
 }
@@ -3900,6 +4244,144 @@ fn parse_chat_id(value: &str) -> Result<ChatId> {
     Ok(ChatId(Uuid::parse_str(value).map_err(|err| {
         anyhow!("invalid chat_id in local history: {err}")
     })?))
+}
+
+fn direct_chat_pair_key_from_state(state: &PersistedChatState) -> Option<String> {
+    if state.chat_type != ChatType::Dm {
+        return None;
+    }
+
+    let mut account_ids = state
+        .members
+        .iter()
+        .filter(|member| member.membership_status == "active")
+        .map(|member| member.account_id)
+        .collect::<Vec<_>>();
+    account_ids.sort_by_key(|account_id| account_id.0);
+    account_ids.dedup();
+    if account_ids.len() == 2 {
+        return Some(direct_chat_pair_key_for_account_ids(&account_ids));
+    }
+
+    let mut participant_account_ids = state
+        .participant_profiles
+        .iter()
+        .map(|profile| profile.account_id)
+        .collect::<Vec<_>>();
+    participant_account_ids.sort_by_key(|account_id| account_id.0);
+    participant_account_ids.dedup();
+    if participant_account_ids.len() != 2 {
+        return None;
+    }
+
+    Some(direct_chat_pair_key_for_account_ids(
+        &participant_account_ids,
+    ))
+}
+
+fn direct_chat_pair_key_for_account_ids(account_ids: &[trix_types::AccountId]) -> String {
+    let mut normalized = account_ids
+        .iter()
+        .map(|account_id| account_id.0.to_string())
+        .collect::<Vec<_>>();
+    normalized.sort();
+    normalized.dedup();
+    normalized.join(":")
+}
+
+fn compare_direct_chat_state_preference(
+    left_chat_id: &str,
+    left: &PersistedChatState,
+    right_chat_id: &str,
+    right: &PersistedChatState,
+) -> Ordering {
+    left.is_active
+        .cmp(&right.is_active)
+        .then_with(|| left.last_server_seq.cmp(&right.last_server_seq))
+        .then_with(|| {
+            left.last_message
+                .as_ref()
+                .map(|message| message.created_at_unix)
+                .unwrap_or_default()
+                .cmp(
+                    &right
+                        .last_message
+                        .as_ref()
+                        .map(|message| message.created_at_unix)
+                        .unwrap_or_default(),
+                )
+        })
+        .then_with(|| left.epoch.cmp(&right.epoch))
+        .then_with(|| {
+            left.projected_cursor_server_seq
+                .cmp(&right.projected_cursor_server_seq)
+        })
+        .then_with(|| {
+            left.read_cursor_server_seq
+                .cmp(&right.read_cursor_server_seq)
+        })
+        .then_with(|| left_chat_id.cmp(right_chat_id))
+}
+
+fn deduplicate_direct_chats_in_state(state: &mut PersistedLocalHistoryState) -> Vec<String> {
+    let chat_ids = state.chats.keys().cloned().collect::<Vec<_>>();
+    let mut canonical_chat_ids_by_pair = BTreeMap::<String, String>::new();
+
+    for chat_id in &chat_ids {
+        let Some(chat_state) = state.chats.get(chat_id) else {
+            continue;
+        };
+        let Some(pair_key) = direct_chat_pair_key_from_state(chat_state) else {
+            continue;
+        };
+
+        let should_replace = canonical_chat_ids_by_pair
+            .get(&pair_key)
+            .and_then(|existing_chat_id| {
+                state.chats.get(existing_chat_id).map(|existing_state| {
+                    compare_direct_chat_state_preference(
+                        chat_id,
+                        chat_state,
+                        existing_chat_id,
+                        existing_state,
+                    ) == Ordering::Greater
+                })
+            })
+            .unwrap_or(true);
+
+        if should_replace {
+            canonical_chat_ids_by_pair.insert(pair_key, chat_id.clone());
+        }
+    }
+
+    let canonical_chat_ids = canonical_chat_ids_by_pair
+        .into_values()
+        .collect::<BTreeSet<_>>();
+    let removed_chat_ids = chat_ids
+        .into_iter()
+        .filter(|chat_id| {
+            state
+                .chats
+                .get(chat_id)
+                .and_then(direct_chat_pair_key_from_state)
+                .is_some()
+                && !canonical_chat_ids.contains(chat_id)
+        })
+        .collect::<Vec<_>>();
+
+    if removed_chat_ids.is_empty() {
+        return removed_chat_ids;
+    }
+
+    let removed_chat_id_set = removed_chat_ids.iter().cloned().collect::<BTreeSet<_>>();
+    for chat_id in &removed_chat_ids {
+        state.chats.remove(chat_id);
+    }
+    state
+        .outbox
+        .retain(|_, message| !removed_chat_id_set.contains(&message.chat_id.0.to_string()));
+
+    removed_chat_ids
 }
 
 #[cfg(test)]
@@ -4351,6 +4833,57 @@ mod tests {
     }
 
     #[test]
+    fn encrypted_local_history_store_persists_pending_history_repair_window() {
+        let database_path =
+            env::temp_dir().join(format!("trix-history-repair-window-{}.db", Uuid::new_v4()));
+        let database_key = vec![17u8; 32];
+        let chat_id = ChatId(Uuid::new_v4());
+        let mut store =
+            LocalHistoryStore::new_encrypted(&database_path, database_key.clone()).unwrap();
+
+        store
+            .apply_chat_list(&ChatListResponse {
+                chats: vec![ChatSummary {
+                    chat_id,
+                    chat_type: ChatType::Dm,
+                    title: Some("Repair".to_owned()),
+                    last_server_seq: 8,
+                    epoch: 1,
+                    pending_message_count: 0,
+                    last_message: None,
+                    participant_profiles: Vec::new(),
+                }],
+            })
+            .unwrap();
+        store
+            .set_pending_history_repair_window(
+                chat_id,
+                LocalHistoryRepairWindow {
+                    from_server_seq: 3,
+                    through_server_seq: 6,
+                },
+            )
+            .unwrap();
+        drop(store);
+
+        let restored = LocalHistoryStore::new_encrypted(&database_path, database_key).unwrap();
+        assert_eq!(
+            restored.pending_history_repair_window(chat_id),
+            Some(LocalHistoryRepairWindow {
+                from_server_seq: 3,
+                through_server_seq: 6,
+            })
+        );
+
+        let summary = restored.get_local_chat_list_item(chat_id, None).unwrap();
+        assert!(summary.history_recovery_pending);
+        assert_eq!(summary.history_recovery_from_server_seq, Some(3));
+        assert_eq!(summary.history_recovery_through_server_seq, Some(6));
+
+        cleanup_sqlite_test_path(&database_path);
+    }
+
+    #[test]
     fn encrypted_local_history_store_persists_attachment_refs() {
         let database_path =
             env::temp_dir().join(format!("trix-history-attachments-{}.db", Uuid::new_v4()));
@@ -4480,6 +5013,8 @@ mod tests {
                     read_cursor_server_seq: 0,
                     projected_cursor_server_seq: 0,
                     projected_messages: BTreeMap::new(),
+                    pending_history_repair_from_server_seq: None,
+                    pending_history_repair_through_server_seq: None,
                 },
             )]),
             attachment_refs: BTreeMap::new(),
@@ -4501,6 +5036,153 @@ mod tests {
         let shm_path = PathBuf::from(format!("{}-shm", database_path.display()));
         fs::remove_file(wal_path).ok();
         fs::remove_file(shm_path).ok();
+    }
+
+    #[test]
+    fn local_history_store_deduplicates_direct_messages_on_load() {
+        let database_path =
+            env::temp_dir().join(format!("trix-history-dm-dedupe-{}.db", Uuid::new_v4()));
+        let self_account_id = AccountId(Uuid::new_v4());
+        let peer_account_id = AccountId(Uuid::new_v4());
+        let self_device_id = DeviceId(Uuid::new_v4());
+        let older_chat_id = ChatId(Uuid::new_v4());
+        let newer_chat_id = ChatId(Uuid::new_v4());
+
+        let duplicate_dm_state = PersistedLocalHistoryState {
+            version: 1,
+            chats: BTreeMap::from([
+                (
+                    older_chat_id.0.to_string(),
+                    PersistedChatState {
+                        is_active: true,
+                        chat_type: ChatType::Dm,
+                        title: None,
+                        last_server_seq: 2,
+                        pending_message_count: 0,
+                        last_message: None,
+                        epoch: 1,
+                        last_commit_message_id: None,
+                        participant_profiles: vec![
+                            ChatParticipantProfileSummary {
+                                account_id: self_account_id,
+                                handle: Some("alice".to_owned()),
+                                profile_name: "Alice".to_owned(),
+                                profile_bio: None,
+                            },
+                            ChatParticipantProfileSummary {
+                                account_id: peer_account_id,
+                                handle: Some("bob".to_owned()),
+                                profile_name: "Bob".to_owned(),
+                                profile_bio: None,
+                            },
+                        ],
+                        members: Vec::new(),
+                        device_members: Vec::new(),
+                        mls_group_id_b64: None,
+                        messages: BTreeMap::new(),
+                        read_cursor_server_seq: 1,
+                        projected_cursor_server_seq: 1,
+                        projected_messages: BTreeMap::new(),
+                        pending_history_repair_from_server_seq: None,
+                        pending_history_repair_through_server_seq: None,
+                    },
+                ),
+                (
+                    newer_chat_id.0.to_string(),
+                    PersistedChatState {
+                        is_active: true,
+                        chat_type: ChatType::Dm,
+                        title: None,
+                        last_server_seq: 5,
+                        pending_message_count: 0,
+                        last_message: None,
+                        epoch: 3,
+                        last_commit_message_id: None,
+                        participant_profiles: vec![
+                            ChatParticipantProfileSummary {
+                                account_id: self_account_id,
+                                handle: Some("alice".to_owned()),
+                                profile_name: "Alice".to_owned(),
+                                profile_bio: None,
+                            },
+                            ChatParticipantProfileSummary {
+                                account_id: peer_account_id,
+                                handle: Some("bob".to_owned()),
+                                profile_name: "Bob".to_owned(),
+                                profile_bio: None,
+                            },
+                        ],
+                        members: Vec::new(),
+                        device_members: Vec::new(),
+                        mls_group_id_b64: None,
+                        messages: BTreeMap::new(),
+                        read_cursor_server_seq: 4,
+                        projected_cursor_server_seq: 4,
+                        projected_messages: BTreeMap::new(),
+                        pending_history_repair_from_server_seq: None,
+                        pending_history_repair_through_server_seq: None,
+                    },
+                ),
+            ]),
+            attachment_refs: BTreeMap::new(),
+            attachment_ref_index: BTreeMap::new(),
+            outbox: BTreeMap::from([
+                (
+                    MessageId(Uuid::new_v4()).0.to_string(),
+                    LocalOutboxMessage {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id: older_chat_id,
+                        sender_account_id: self_account_id,
+                        sender_device_id: self_device_id,
+                        payload: LocalOutboxPayload::Body {
+                            body: MessageBody::Text(crate::TextMessageBody {
+                                text: "older".to_owned(),
+                            }),
+                        },
+                        queued_at_unix: 10,
+                        status: LocalOutboxStatus::Pending,
+                        failure_message: None,
+                        prepared_send: None,
+                    },
+                ),
+                (
+                    MessageId(Uuid::new_v4()).0.to_string(),
+                    LocalOutboxMessage {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id: newer_chat_id,
+                        sender_account_id: self_account_id,
+                        sender_device_id: self_device_id,
+                        payload: LocalOutboxPayload::Body {
+                            body: MessageBody::Text(crate::TextMessageBody {
+                                text: "newer".to_owned(),
+                            }),
+                        },
+                        queued_at_unix: 11,
+                        status: LocalOutboxStatus::Pending,
+                        failure_message: None,
+                        prepared_send: None,
+                    },
+                ),
+            ]),
+        };
+
+        save_state_to_path(&database_path, None, &duplicate_dm_state).unwrap();
+
+        let restored = LocalHistoryStore::new_persistent(&database_path).unwrap();
+        let chats = restored.list_chats();
+        assert_eq!(chats.len(), 1);
+        assert_eq!(chats[0].chat_id, newer_chat_id);
+        assert!(restored.get_chat(older_chat_id).is_none());
+        assert_eq!(
+            restored
+                .list_outbox_messages(None)
+                .into_iter()
+                .map(|message| message.chat_id)
+                .collect::<Vec<_>>(),
+            vec![newer_chat_id]
+        );
+
+        cleanup_sqlite_test_path(&database_path);
     }
 
     #[test]
@@ -5220,6 +5902,8 @@ mod tests {
                     .map(persisted_projected_message_from)
                     .map(|message| (message.server_seq, message))
                     .collect(),
+                pending_history_repair_from_server_seq: None,
+                pending_history_repair_through_server_seq: None,
             },
         );
 
@@ -6889,6 +7573,268 @@ mod tests {
         );
         assert_eq!(timeline[0].body, None);
         assert_eq!(timeline[0].body_parse_error, None);
+    }
+
+    #[test]
+    fn local_timeline_items_mark_pending_sibling_history_inside_pending_window() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+
+        store
+            .apply_chat_list(&ChatListResponse {
+                chats: vec![ChatSummary {
+                    chat_id,
+                    chat_type: ChatType::Dm,
+                    title: Some("Repair".to_owned()),
+                    last_server_seq: 2,
+                    epoch: 1,
+                    pending_message_count: 0,
+                    last_message: None,
+                    participant_profiles: Vec::new(),
+                }],
+            })
+            .unwrap();
+
+        let materialized_body = MessageBody::Text(crate::TextMessageBody {
+            text: "available".to_owned(),
+        })
+        .to_bytes()
+        .unwrap();
+
+        {
+            let chat = store.state.chats.get_mut(&chat_id.0.to_string()).unwrap();
+            chat.projected_messages.insert(
+                1,
+                PersistedProjectedMessage {
+                    server_seq: 1,
+                    message_id: MessageId(Uuid::new_v4()),
+                    sender_account_id,
+                    sender_device_id,
+                    epoch: 1,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    projection_kind: LocalProjectionKind::ApplicationMessage,
+                    materialized_body_b64: None,
+                    merged_epoch: None,
+                    created_at_unix: 10,
+                },
+            );
+            chat.projected_messages.insert(
+                2,
+                PersistedProjectedMessage {
+                    server_seq: 2,
+                    message_id: MessageId(Uuid::new_v4()),
+                    sender_account_id,
+                    sender_device_id,
+                    epoch: 1,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    projection_kind: LocalProjectionKind::ApplicationMessage,
+                    materialized_body_b64: Some(crate::encode_b64(&materialized_body)),
+                    merged_epoch: None,
+                    created_at_unix: 11,
+                },
+            );
+            chat.projected_cursor_server_seq = 2;
+        }
+
+        store
+            .set_pending_history_repair_window(
+                chat_id,
+                LocalHistoryRepairWindow {
+                    from_server_seq: 1,
+                    through_server_seq: 1,
+                },
+            )
+            .unwrap();
+
+        let timeline = store.get_local_timeline_items(chat_id, None, None, Some(10));
+        assert_eq!(timeline.len(), 2);
+        assert_eq!(
+            timeline[0].recovery_state,
+            Some(LocalMessageRecoveryState::PendingSiblingHistory)
+        );
+        assert_eq!(timeline[1].recovery_state, None);
+    }
+
+    #[test]
+    fn local_chat_list_item_marks_pending_history_for_pure_gap_without_placeholder_message() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+        let body = MessageBody::Text(crate::TextMessageBody {
+            text: "visible tail".to_owned(),
+        })
+        .to_bytes()
+        .unwrap();
+
+        store
+            .apply_chat_list(&ChatListResponse {
+                chats: vec![ChatSummary {
+                    chat_id,
+                    chat_type: ChatType::Dm,
+                    title: Some("Gap".to_owned()),
+                    last_server_seq: 3,
+                    epoch: 1,
+                    pending_message_count: 0,
+                    last_message: None,
+                    participant_profiles: Vec::new(),
+                }],
+            })
+            .unwrap();
+
+        {
+            let chat = store.state.chats.get_mut(&chat_id.0.to_string()).unwrap();
+            chat.projected_messages.insert(
+                3,
+                PersistedProjectedMessage {
+                    server_seq: 3,
+                    message_id: MessageId(Uuid::new_v4()),
+                    sender_account_id,
+                    sender_device_id,
+                    epoch: 1,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    projection_kind: LocalProjectionKind::ApplicationMessage,
+                    materialized_body_b64: Some(crate::encode_b64(&body)),
+                    merged_epoch: None,
+                    created_at_unix: 10,
+                },
+            );
+        }
+
+        store
+            .set_pending_history_repair_window(
+                chat_id,
+                LocalHistoryRepairWindow {
+                    from_server_seq: 2,
+                    through_server_seq: 2,
+                },
+            )
+            .unwrap();
+
+        let summary = store.get_local_chat_list_item(chat_id, None).unwrap();
+        assert!(summary.history_recovery_pending);
+        assert_eq!(summary.history_recovery_from_server_seq, Some(2));
+        assert_eq!(summary.history_recovery_through_server_seq, Some(2));
+
+        let timeline = store.get_local_timeline_items(chat_id, None, None, Some(10));
+        assert_eq!(timeline.len(), 1);
+        assert_eq!(timeline[0].server_seq, 3);
+        assert_eq!(timeline[0].recovery_state, None);
+    }
+
+    #[test]
+    fn refresh_pending_history_repair_window_keeps_unprojected_tail_gap() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 1,
+                        sender_account_id,
+                        sender_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        ciphertext_b64: crate::encode_b64(b"first"),
+                        aad_json: json!({}),
+                        created_at_unix: 1,
+                    },
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 2,
+                        sender_account_id,
+                        sender_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        ciphertext_b64: crate::encode_b64(b"second"),
+                        aad_json: json!({}),
+                        created_at_unix: 2,
+                    },
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 3,
+                        sender_account_id,
+                        sender_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        ciphertext_b64: crate::encode_b64(b"third"),
+                        aad_json: json!({}),
+                        created_at_unix: 3,
+                    },
+                ],
+            })
+            .unwrap();
+
+        {
+            let chat = store.state.chats.get_mut(&chat_id.0.to_string()).unwrap();
+            chat.projected_messages.insert(
+                1,
+                PersistedProjectedMessage {
+                    server_seq: 1,
+                    message_id: MessageId(Uuid::new_v4()),
+                    sender_account_id,
+                    sender_device_id,
+                    epoch: 1,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    projection_kind: LocalProjectionKind::ApplicationMessage,
+                    materialized_body_b64: Some(crate::encode_b64(
+                        &MessageBody::Text(crate::TextMessageBody {
+                            text: "first".to_owned(),
+                        })
+                        .to_bytes()
+                        .unwrap(),
+                    )),
+                    merged_epoch: None,
+                    created_at_unix: 1,
+                },
+            );
+            chat.projected_cursor_server_seq = 1;
+        }
+
+        store
+            .set_pending_history_repair_window(
+                chat_id,
+                LocalHistoryRepairWindow {
+                    from_server_seq: 2,
+                    through_server_seq: 2,
+                },
+            )
+            .unwrap();
+
+        let refreshed = store
+            .refresh_pending_history_repair_window(chat_id)
+            .unwrap();
+        assert_eq!(
+            refreshed,
+            Some(LocalHistoryRepairWindow {
+                from_server_seq: 2,
+                through_server_seq: 3,
+            })
+        );
+        assert_eq!(
+            store.pending_history_repair_window(chat_id),
+            Some(LocalHistoryRepairWindow {
+                from_server_seq: 2,
+                through_server_seq: 3,
+            })
+        );
     }
 
     #[test]

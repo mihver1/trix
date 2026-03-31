@@ -109,6 +109,7 @@ See `docs/bot-harness.md` for runtime setup and payload examples.
 - `trix-core` now exposes a typed message body model through `ffi_serialize_message_body()` and `ffi_parse_message_body()`.
 - `FfiServerApiClient` now exposes `search_account_directory(query, limit, exclude_self)` for authenticated handle/profile discovery.
 - `FfiServerApiClient` also exposes `get_account(account_id)` and `update_account_profile(...)`.
+- `FfiHistorySyncJobType` now includes `TimelineRepair`, and the shared history-sync transport layer can request both explicit chat backfill and bounded replay repair windows.
 - `FfiChatSummary` and `FfiChatDetail` now include `participant_profiles`, so clients can render chat lists and membership UIs without extra directory round-trips.
 - `FfiChatSummary` and `FfiChatDetail` also include `pending_message_count` and optional `last_message`, so list UIs can show transport backlog and latest encrypted envelope without extra history calls.
 - `FfiChatSummary` now also includes `epoch`, and `FfiLocalChatListItem` carries the locally known `epoch`, so clients can keep control flows on the current MLS epoch without a separate detail fetch.
@@ -157,6 +158,8 @@ See `docs/bot-harness.md` for runtime setup and payload examples.
 - `FfiMlsFacade.generate_publish_key_packages(count)` returns `FfiPublishKeyPackage` values already shaped for `publish_key_packages(...)` and `complete_link_intent(...)`, including the current MLS ciphersuite label.
 - `FfiLocalProjectedMessage` now includes parsed `body` and `body_parse_error`, so clients can render typed text/reaction/receipt/attachment/chat-event items directly from the projected timeline.
 - `FfiSyncCoordinator` now also exposes `send_message_body()`, which performs `MessageBody -> MLS encrypt -> POST /messages -> local store -> projected timeline` in one core call.
+- `FfiSyncCoordinator.process_history_sync_jobs()` now processes `initial_sync`, `chat_backfill`, `device_rekey`, and `timeline_repair` jobs through the same encrypted chunk pipeline.
+- `FfiLocalHistoryStore` now persists pending per-chat repair windows internally, so repeated resumes do not keep re-requesting the same replay span while a repair job is already in flight.
 - `FfiChatDetail` now includes `device_members` with `device_id`, `account_id`, `leaf_index`, and `credential_identity`, so clients can resolve removals against MLS leaf indices without a parallel side channel.
 - `FfiSyncCoordinator` now also exposes high-level control-plane flows:
   - `create_chat_control()`

@@ -49,11 +49,12 @@ pub use realtime::{
 };
 pub use signatures::{account_bootstrap_message, device_revoke_message};
 pub use storage::{
-    AttachmentStore, LocalChatListItem, LocalChatReadState, LocalHistoryStore,
-    LocalMessageReactionSummary, LocalOutboxAttachmentDraft, LocalOutboxMessage,
-    LocalOutboxPayload, LocalOutboxStatus, LocalOutgoingMessageApplyOutcome, LocalProjectedMessage,
-    LocalProjectionApplyReport, LocalProjectionKind, LocalStoreApplyReport, LocalTimelineItem,
-    MlsStateStore, PreparedLocalOutboxSend, SyncStateStore,
+    AttachmentStore, LocalChatListItem, LocalChatReadState, LocalHistoryRepairCandidate,
+    LocalHistoryRepairReason, LocalHistoryRepairWindow, LocalHistoryStore,
+    LocalMessageReactionSummary, LocalMessageRecoveryState, LocalOutboxAttachmentDraft,
+    LocalOutboxMessage, LocalOutboxPayload, LocalOutboxStatus, LocalOutgoingMessageApplyOutcome,
+    LocalProjectedMessage, LocalProjectionApplyReport, LocalProjectionKind, LocalStoreApplyReport,
+    LocalTimelineItem, MlsStateStore, PreparedLocalOutboxSend, SyncStateStore,
 };
 pub use sync::{
     CoreEvent, CoreEventSink, CreateChatControlInput, CreateChatControlOutcome,

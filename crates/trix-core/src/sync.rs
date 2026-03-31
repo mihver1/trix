@@ -19,10 +19,10 @@ use trix_types::{
 use uuid::Uuid;
 
 use crate::{
-    DeviceKeyMaterial, LocalHistoryStore, LocalOutgoingMessageApplyOutcome, LocalProjectedMessage,
-    LocalProjectionKind, LocalStoreApplyReport, MessageBody, MlsConversation, MlsFacade,
-    PreparedLocalOutboxSend, ServerApiClient, ServerApiError, SyncStateStore, decode_b64_field,
-    encode_b64,
+    DeviceKeyMaterial, LocalHistoryRepairWindow, LocalHistoryStore,
+    LocalOutgoingMessageApplyOutcome, LocalProjectedMessage, LocalProjectionKind,
+    LocalStoreApplyReport, MessageBody, MlsConversation, MlsFacade, PreparedLocalOutboxSend,
+    ServerApiClient, ServerApiError, SyncStateStore, decode_b64_field, encode_b64,
     history_sync_payload::{
         HistorySyncChatMetadata, HistorySyncExportMetadata, decrypt_projected_message_chunk,
         encrypt_projected_message_chunk, parse_chat_metadata, parse_export_metadata,
@@ -528,6 +528,16 @@ impl SyncCoordinator {
         let mut changed_chat_ids = HashSet::new();
         let mut source_jobs_processed = 0usize;
         let mut target_jobs_processed = 0usize;
+        let active_timeline_repair_chats = target_jobs
+            .iter()
+            .filter(|job| {
+                matches!(
+                    job.job_status,
+                    HistorySyncJobStatus::Pending | HistorySyncJobStatus::Running
+                ) && job.job_type == HistorySyncJobType::TimelineRepair
+            })
+            .filter_map(|job| job.chat_id)
+            .collect::<HashSet<_>>();
 
         for job in source_jobs {
             if !should_process_source_history_sync_job(&job) {
@@ -557,6 +567,9 @@ impl SyncCoordinator {
                     store,
                     device_keys,
                     &job,
+                    job.chat_id
+                        .map(|chat_id| active_timeline_repair_chats.contains(&chat_id))
+                        .unwrap_or(false),
                     &mut changed_chat_ids,
                 )
                 .await?
@@ -615,7 +628,14 @@ impl SyncCoordinator {
         let after_server_seq = export_metadata
             .as_ref()
             .map(|metadata| metadata.exported_through_server_seq);
-        let projected_messages = store.get_projected_messages(chat_id, after_server_seq, None);
+        let repair_window = parse_timeline_repair_window(&cursor_json);
+        let mut projected_messages = store.get_projected_messages(chat_id, after_server_seq, None);
+        if let Some(repair_window) = repair_window {
+            projected_messages.retain(|message| {
+                message.server_seq >= repair_window.from_server_seq
+                    && message.server_seq <= repair_window.through_server_seq
+            });
+        }
         let mut next_sequence_no = next_history_sync_sequence_no(export_metadata.as_ref());
         let mut exported_message_count = export_metadata
             .as_ref()
@@ -673,6 +693,7 @@ impl SyncCoordinator {
         store: &mut LocalHistoryStore,
         device_keys: &DeviceKeyMaterial,
         job: &trix_types::HistorySyncJobSummary,
+        has_active_timeline_repair_for_chat: bool,
         changed_chat_ids: &mut HashSet<ChatId>,
     ) -> Result<bool> {
         let Some(chat_id) = job.chat_id else {
@@ -709,10 +730,22 @@ impl SyncCoordinator {
             self.bootstrap_history_sync_chat_if_needed(client, store, job, chat_id)
                 .await?;
             let report = store.apply_projected_messages(chat_id, &decrypted.projected_messages)?;
-            if let Some(server_seq) = report.advanced_to_server_seq {
+            let pending_repair_window = store
+                .refresh_pending_history_repair_window(chat_id)?
+                .is_some();
+            if let Some(server_seq) = decrypted
+                .projected_messages
+                .iter()
+                .map(|message| message.server_seq)
+                .max()
+                .or(report.advanced_to_server_seq)
+            {
                 self.record_chat_server_seq(chat_id, server_seq)?;
             }
-            if report.projected_messages_upserted > 0 || report.advanced_to_server_seq.is_some() {
+            if report.projected_messages_upserted > 0
+                || report.advanced_to_server_seq.is_some()
+                || pending_repair_window
+            {
                 changed_chat_ids.insert(chat_id);
             }
             self.record_target_history_sync_progress(
@@ -721,6 +754,24 @@ impl SyncCoordinator {
                 chunk.is_final,
             )?;
             processed_any_chunk = true;
+        }
+
+        if !processed_any_chunk
+            && job.job_type == HistorySyncJobType::TimelineRepair
+            && matches!(job.job_status, HistorySyncJobStatus::Completed)
+            && !has_active_timeline_repair_for_chat
+            && let Some(job_window) = parse_timeline_repair_window(&job.cursor_json)
+            && let Some(pending_window) = store.pending_history_repair_window(chat_id)
+            && history_repair_windows_overlap(
+                pending_window,
+                LocalHistoryRepairWindow {
+                    from_server_seq: job_window.from_server_seq,
+                    through_server_seq: job_window.through_server_seq,
+                },
+            )
+            && store.clear_pending_history_repair_window(chat_id)?
+        {
+            changed_chat_ids.insert(chat_id);
         }
 
         Ok(processed_any_chunk)
@@ -1161,6 +1212,32 @@ impl SyncCoordinator {
     ) -> Result<CreateChatControlOutcome> {
         let participant_account_ids =
             normalize_account_ids(input.participant_account_ids, input.creator_account_id);
+        let direct_message_peer_account_id = match input.chat_type {
+            ChatType::Dm => Some(
+                participant_account_ids
+                    .first()
+                    .copied()
+                    .filter(|_| participant_account_ids.len() == 1)
+                    .ok_or_else(|| anyhow!("dm chats require exactly one peer account"))?,
+            ),
+            ChatType::Group => None,
+            ChatType::AccountSync => {
+                return Err(anyhow!("account sync chats are created internally"));
+            }
+        };
+        if let Some(peer_account_id) = direct_message_peer_account_id {
+            if let Some(existing) = self
+                .resolve_existing_direct_chat(
+                    client,
+                    store,
+                    input.creator_account_id,
+                    peer_account_id,
+                )
+                .await?
+            {
+                return Ok(existing);
+            }
+        }
         let group_id = input
             .group_id
             .unwrap_or_else(|| Uuid::new_v4().as_bytes().to_vec());
@@ -1233,6 +1310,19 @@ impl SyncCoordinator {
                 facade.restore_snapshot(&snapshot).with_context(|| {
                     format!("failed to rollback MLS state after server rejected create_chat: {err}")
                 })?;
+                if let Some(peer_account_id) = direct_message_peer_account_id
+                    && is_existing_direct_chat_conflict(&err)
+                    && let Some(existing) = self
+                        .resolve_existing_direct_chat(
+                            client,
+                            store,
+                            input.creator_account_id,
+                            peer_account_id,
+                        )
+                        .await?
+                {
+                    return Ok(existing);
+                }
                 return Err(err.into());
             }
         };
@@ -1863,6 +1953,70 @@ impl SyncCoordinator {
 
         Ok(())
     }
+
+    async fn resolve_existing_direct_chat(
+        &mut self,
+        client: &ServerApiClient,
+        store: &mut LocalHistoryStore,
+        self_account_id: AccountId,
+        peer_account_id: AccountId,
+    ) -> Result<Option<CreateChatControlOutcome>> {
+        if let Some(chat_id) = store.find_active_direct_chat(self_account_id, peer_account_id) {
+            return self
+                .existing_chat_control_outcome_from_store(
+                    store,
+                    chat_id,
+                    LocalStoreApplyReport {
+                        chats_upserted: 0,
+                        messages_upserted: 0,
+                        changed_chat_ids: Vec::new(),
+                    },
+                )
+                .map(Some);
+        }
+
+        let chats = client.list_chats().await?;
+        let mut report = store.apply_chat_list(&chats)?;
+        let Some(chat_id) = store.find_active_direct_chat(self_account_id, peer_account_id) else {
+            return Ok(None);
+        };
+
+        let (detail, _history, refresh_report) = self
+            .refresh_chat_state(client, store, chat_id, None)
+            .await?;
+        merge_store_report(&mut report, refresh_report);
+        Ok(Some(self.existing_chat_control_outcome_from_detail(
+            store, detail, report,
+        )?))
+    }
+
+    fn existing_chat_control_outcome_from_store(
+        &self,
+        store: &LocalHistoryStore,
+        chat_id: ChatId,
+        report: LocalStoreApplyReport,
+    ) -> Result<CreateChatControlOutcome> {
+        let detail = store
+            .get_chat(chat_id)
+            .ok_or_else(|| anyhow!("existing chat {} is missing from local store", chat_id.0))?;
+        self.existing_chat_control_outcome_from_detail(store, detail, report)
+    }
+
+    fn existing_chat_control_outcome_from_detail(
+        &self,
+        store: &LocalHistoryStore,
+        detail: ChatDetailResponse,
+        report: LocalStoreApplyReport,
+    ) -> Result<CreateChatControlOutcome> {
+        Ok(CreateChatControlOutcome {
+            chat_id: detail.chat_id,
+            chat_type: detail.chat_type,
+            epoch: detail.epoch,
+            mls_group_id: store.chat_mls_group_id(detail.chat_id).unwrap_or_default(),
+            report,
+            projected_messages: store.get_projected_messages(detail.chat_id, None, None),
+        })
+    }
 }
 
 async fn reserve_initial_chat_packages(
@@ -1925,6 +2079,16 @@ fn is_epoch_mismatch_error(error: &ServerApiError) -> bool {
     matches!(error, ServerApiError::Api { status: 409, message, .. } if message.contains("epoch"))
 }
 
+fn is_existing_direct_chat_conflict(error: &ServerApiError) -> bool {
+    matches!(
+        error,
+        ServerApiError::Api {
+            status: 409,
+            message,
+            ..
+        } if message == "dm chat already exists"
+    )
+}
 fn is_chat_bootstrap_recovery_candidate(error: &anyhow::Error) -> bool {
     is_missing_key_package_bootstrap_error(error)
         || error
@@ -2581,7 +2745,10 @@ fn should_process_source_history_sync_job(job: &trix_types::HistorySyncJobSummar
         HistorySyncJobStatus::Pending | HistorySyncJobStatus::Running
     ) && matches!(
         job.job_type,
-        HistorySyncJobType::InitialSync | HistorySyncJobType::ChatBackfill
+        HistorySyncJobType::InitialSync
+            | HistorySyncJobType::ChatBackfill
+            | HistorySyncJobType::DeviceRekey
+            | HistorySyncJobType::TimelineRepair
     )
 }
 
@@ -2593,8 +2760,34 @@ fn should_process_target_history_sync_job(job: &trix_types::HistorySyncJobSummar
             | HistorySyncJobStatus::Completed
     ) && matches!(
         job.job_type,
-        HistorySyncJobType::InitialSync | HistorySyncJobType::ChatBackfill
+        HistorySyncJobType::InitialSync
+            | HistorySyncJobType::ChatBackfill
+            | HistorySyncJobType::DeviceRekey
+            | HistorySyncJobType::TimelineRepair
     )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TimelineRepairWindow {
+    from_server_seq: u64,
+    through_server_seq: u64,
+}
+
+fn parse_timeline_repair_window(cursor_json: &Value) -> Option<TimelineRepairWindow> {
+    let repair_from_server_seq = cursor_json.get("repair_from_server_seq")?.as_u64()?;
+    let repair_through_server_seq = cursor_json.get("repair_through_server_seq")?.as_u64()?;
+    (repair_from_server_seq <= repair_through_server_seq).then_some(TimelineRepairWindow {
+        from_server_seq: repair_from_server_seq,
+        through_server_seq: repair_through_server_seq,
+    })
+}
+
+fn history_repair_windows_overlap(
+    left: LocalHistoryRepairWindow,
+    right: LocalHistoryRepairWindow,
+) -> bool {
+    left.from_server_seq <= right.through_server_seq
+        && right.from_server_seq <= left.through_server_seq
 }
 
 fn next_history_sync_sequence_no(metadata: Option<&HistorySyncExportMetadata>) -> u64 {
@@ -2633,8 +2826,11 @@ mod tests {
     use serde_json::json;
     use tokio::{net::TcpListener, task::JoinHandle};
     use trix_types::{
-        AccountId, ChatDetailResponse, ChatId, ChatType, ContentType, CreateMessageRequest,
-        CreateMessageResponse, DeviceId, ErrorResponse, InboxItem, MessageEnvelope, MessageId,
+        AccountId, ChatDetailResponse, ChatHistoryResponse, ChatId, ChatParticipantProfileSummary,
+        ChatSummary, ChatType, ContentType, CreateMessageRequest, CreateMessageResponse, DeviceId,
+        DeviceStatus, DeviceTransportKeyResponse, ErrorResponse, HistorySyncChunkListResponse,
+        HistorySyncChunkSummary, HistorySyncJobListResponse, HistorySyncJobRole,
+        HistorySyncJobStatus, HistorySyncJobSummary, InboxItem, MessageEnvelope, MessageId,
         MessageKind, PublishKeyPackagesRequest, PublishKeyPackagesResponse, PublishedKeyPackage,
     };
     use uuid::Uuid;
@@ -2644,9 +2840,9 @@ mod tests {
         is_sqlite_database, merge_projection_report,
     };
     use crate::{
-        LocalHistoryStore, LocalOutboxStatus, LocalProjectionKind, LocalStoreApplyReport,
-        MessageBody, MlsFacade, MlsProcessResult, ServerApiClient, TextMessageBody,
-        decode_b64_field,
+        DeviceKeyMaterial, LocalHistoryRepairWindow, LocalHistoryStore, LocalOutboxStatus,
+        LocalProjectedMessage, LocalProjectionKind, LocalStoreApplyReport, MessageBody, MlsFacade,
+        MlsProcessResult, ServerApiClient, TextMessageBody, decode_b64_field,
     };
 
     const MOCK_HISTORY_PAGE_LIMIT: usize = 100;
@@ -2855,6 +3051,194 @@ mod tests {
         .into_response()
     }
 
+    #[derive(Debug, Deserialize)]
+    struct MockHistorySyncJobsQuery {
+        role: Option<HistorySyncJobRole>,
+        status: Option<HistorySyncJobStatus>,
+        limit: Option<usize>,
+    }
+
+    #[derive(Debug)]
+    struct MockHistorySyncServerState {
+        source_jobs: Vec<HistorySyncJobSummary>,
+        target_jobs: Vec<HistorySyncJobSummary>,
+        chunks_by_job_id: BTreeMap<String, Vec<HistorySyncChunkSummary>>,
+        device_transport_keys: BTreeMap<String, Vec<u8>>,
+        completed_job_ids: Vec<String>,
+    }
+
+    struct MockHistorySyncServer {
+        base_url: String,
+        state: Arc<Mutex<MockHistorySyncServerState>>,
+        task: JoinHandle<()>,
+    }
+
+    impl MockHistorySyncServer {
+        async fn spawn(state: MockHistorySyncServerState) -> Self {
+            let state = Arc::new(Mutex::new(state));
+            let app = Router::new()
+                .route(
+                    "/v0/devices/{device_id}/transport-key",
+                    get(mock_get_device_transport_key),
+                )
+                .route("/v0/history-sync/jobs", get(mock_list_history_sync_jobs))
+                .route(
+                    "/v0/history-sync/jobs/{job_id}/chunks",
+                    get(mock_get_history_sync_chunks).post(mock_append_history_sync_chunk),
+                )
+                .route(
+                    "/v0/history-sync/jobs/{job_id}/complete",
+                    post(mock_complete_history_sync_job),
+                )
+                .with_state(state.clone());
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base_url = format!("http://{}", listener.local_addr().unwrap());
+            let task = tokio::spawn(async move {
+                axum::serve(listener, app)
+                    .await
+                    .expect("mock history sync server should stay up");
+            });
+
+            Self {
+                base_url,
+                state,
+                task,
+            }
+        }
+
+        fn client(&self) -> ServerApiClient {
+            ServerApiClient::new(&self.base_url).expect("mock base url should be valid")
+        }
+
+        async fn shutdown(self) {
+            self.task.abort();
+            let _ = self.task.await;
+        }
+    }
+
+    async fn mock_get_device_transport_key(
+        AxumPath(device_id): AxumPath<Uuid>,
+        State(state): State<Arc<Mutex<MockHistorySyncServerState>>>,
+    ) -> impl IntoResponse {
+        let state = state.lock().unwrap();
+        let Some(transport_pubkey) = state.device_transport_keys.get(&device_id.to_string()) else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        Json(DeviceTransportKeyResponse {
+            device_id: DeviceId(device_id),
+            device_status: DeviceStatus::Active,
+            transport_pubkey_b64: crate::encode_b64(transport_pubkey),
+        })
+        .into_response()
+    }
+
+    async fn mock_list_history_sync_jobs(
+        Query(query): Query<MockHistorySyncJobsQuery>,
+        State(state): State<Arc<Mutex<MockHistorySyncServerState>>>,
+    ) -> impl IntoResponse {
+        let state = state.lock().unwrap();
+        let mut jobs = match query.role.unwrap_or(HistorySyncJobRole::Source) {
+            HistorySyncJobRole::Source => state.source_jobs.clone(),
+            HistorySyncJobRole::Target => state.target_jobs.clone(),
+        };
+        if let Some(status) = query.status {
+            jobs.retain(|job| job.job_status == status);
+        }
+        if let Some(limit) = query.limit {
+            jobs.truncate(limit);
+        }
+        Json(HistorySyncJobListResponse { jobs }).into_response()
+    }
+
+    async fn mock_append_history_sync_chunk(
+        AxumPath(job_id): AxumPath<String>,
+        State(state): State<Arc<Mutex<MockHistorySyncServerState>>>,
+        Json(request): Json<trix_types::AppendHistorySyncChunkRequest>,
+    ) -> impl IntoResponse {
+        let mut state = state.lock().unwrap();
+        let chunks = state.chunks_by_job_id.entry(job_id.clone()).or_default();
+        let chunk_id = chunks.len() as u64 + 1;
+        chunks.push(HistorySyncChunkSummary {
+            chunk_id,
+            sequence_no: request.sequence_no,
+            payload_b64: request.payload_b64.clone(),
+            cursor_json: request.cursor_json.clone(),
+            is_final: request.is_final,
+            uploaded_at_unix: 1_700_000_000 + chunk_id,
+        });
+        if let Some(job) = state
+            .source_jobs
+            .iter_mut()
+            .find(|job| job.job_id == job_id)
+        {
+            job.job_status = HistorySyncJobStatus::Running;
+            job.updated_at_unix += 1;
+            if let Some(cursor_json) = request.cursor_json {
+                job.cursor_json = cursor_json;
+            }
+        }
+        Json(trix_types::AppendHistorySyncChunkResponse {
+            job_id,
+            chunk_id,
+            job_status: HistorySyncJobStatus::Running,
+        })
+        .into_response()
+    }
+
+    async fn mock_get_history_sync_chunks(
+        AxumPath(job_id): AxumPath<String>,
+        State(state): State<Arc<Mutex<MockHistorySyncServerState>>>,
+    ) -> impl IntoResponse {
+        let state = state.lock().unwrap();
+        let chunks = state
+            .chunks_by_job_id
+            .get(&job_id)
+            .cloned()
+            .unwrap_or_default();
+        Json(HistorySyncChunkListResponse {
+            job_id,
+            role: HistorySyncJobRole::Target,
+            chunks,
+        })
+        .into_response()
+    }
+
+    async fn mock_complete_history_sync_job(
+        AxumPath(job_id): AxumPath<String>,
+        State(state): State<Arc<Mutex<MockHistorySyncServerState>>>,
+        Json(request): Json<trix_types::CompleteHistorySyncJobRequest>,
+    ) -> impl IntoResponse {
+        let mut state = state.lock().unwrap();
+        state.completed_job_ids.push(job_id.clone());
+        for job in state
+            .source_jobs
+            .iter_mut()
+            .filter(|job| job.job_id == job_id)
+        {
+            job.job_status = HistorySyncJobStatus::Completed;
+            job.updated_at_unix += 1;
+            if let Some(cursor_json) = request.cursor_json.clone() {
+                job.cursor_json = cursor_json;
+            }
+        }
+        for job in state
+            .target_jobs
+            .iter_mut()
+            .filter(|job| job.job_id == job_id)
+        {
+            job.job_status = HistorySyncJobStatus::Completed;
+            job.updated_at_unix += 1;
+            if let Some(cursor_json) = request.cursor_json.clone() {
+                job.cursor_json = cursor_json;
+            }
+        }
+        Json(trix_types::CompleteHistorySyncJobResponse {
+            job_id,
+            job_status: HistorySyncJobStatus::Completed,
+        })
+        .into_response()
+    }
+
     fn text_body(text: &str) -> MessageBody {
         MessageBody::Text(TextMessageBody {
             text: text.to_owned(),
@@ -2880,6 +3264,28 @@ mod tests {
             participant_profiles: Vec::new(),
             members: Vec::new(),
             device_members: Vec::new(),
+        }
+    }
+
+    fn projected_text_message(
+        server_seq: u64,
+        sender_account_id: AccountId,
+        sender_device_id: DeviceId,
+        epoch: u64,
+        text: &str,
+    ) -> LocalProjectedMessage {
+        LocalProjectedMessage {
+            server_seq,
+            message_id: MessageId(Uuid::new_v4()),
+            sender_account_id,
+            sender_device_id,
+            epoch,
+            message_kind: MessageKind::Application,
+            content_type: ContentType::Text,
+            projection_kind: LocalProjectionKind::ApplicationMessage,
+            payload: Some(text_body(text).to_bytes().unwrap()),
+            merged_epoch: None,
+            created_at_unix: 1_700_000_000 + server_seq,
         }
     }
 
@@ -2976,6 +3382,69 @@ mod tests {
         );
 
         cleanup_sqlite_test_path(&state_path);
+    }
+
+    #[tokio::test]
+    async fn create_chat_control_returns_existing_local_direct_chat() {
+        let existing_chat_id = ChatId(Uuid::new_v4());
+        let self_account_id = AccountId(Uuid::new_v4());
+        let peer_account_id = AccountId(Uuid::new_v4());
+        let self_device_id = DeviceId(Uuid::new_v4());
+        let mut coordinator = SyncCoordinator::new();
+        let mut store = LocalHistoryStore::new();
+        let mut facade = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+
+        store
+            .apply_chat_list(&trix_types::ChatListResponse {
+                chats: vec![ChatSummary {
+                    chat_id: existing_chat_id,
+                    chat_type: ChatType::Dm,
+                    title: None,
+                    last_server_seq: 7,
+                    epoch: 2,
+                    pending_message_count: 0,
+                    last_message: None,
+                    participant_profiles: vec![
+                        ChatParticipantProfileSummary {
+                            account_id: self_account_id,
+                            handle: Some("alice".to_owned()),
+                            profile_name: "Alice".to_owned(),
+                            profile_bio: None,
+                        },
+                        ChatParticipantProfileSummary {
+                            account_id: peer_account_id,
+                            handle: Some("bob".to_owned()),
+                            profile_name: "Bob".to_owned(),
+                            profile_bio: None,
+                        },
+                    ],
+                }],
+            })
+            .unwrap();
+
+        let outcome = coordinator
+            .create_chat_control(
+                &ServerApiClient::new("http://127.0.0.1:9").unwrap(),
+                &mut store,
+                &mut facade,
+                super::CreateChatControlInput {
+                    creator_account_id: self_account_id,
+                    creator_device_id: self_device_id,
+                    chat_type: ChatType::Dm,
+                    title: None,
+                    participant_account_ids: vec![peer_account_id],
+                    group_id: None,
+                    commit_aad_json: None,
+                    welcome_aad_json: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.chat_id, existing_chat_id);
+        assert_eq!(outcome.chat_type, ChatType::Dm);
+        assert_eq!(outcome.epoch, 2);
+        assert_eq!(outcome.projected_messages, Vec::new());
     }
 
     #[test]
@@ -3089,6 +3558,286 @@ mod tests {
         );
 
         assert_eq!(report.changed_chat_ids, vec![chat_id]);
+    }
+
+    #[tokio::test]
+    async fn process_history_sync_jobs_exports_device_rekey_source_jobs() {
+        let chat_id = ChatId(Uuid::new_v4());
+        let source_account_id = AccountId(Uuid::new_v4());
+        let source_device_id = DeviceId(Uuid::new_v4());
+        let target_device_id = DeviceId(Uuid::new_v4());
+        let source_keys = DeviceKeyMaterial::generate();
+        let target_keys = DeviceKeyMaterial::generate();
+        let projected = projected_text_message(
+            7,
+            source_account_id,
+            source_device_id,
+            3,
+            "history that should survive device rekey",
+        );
+        let job_id = Uuid::new_v4().to_string();
+
+        let mut store = LocalHistoryStore::new();
+        store
+            .apply_chat_detail(&empty_chat_detail(chat_id, 7, 3, None, None))
+            .unwrap();
+        store
+            .apply_projected_messages(chat_id, &[projected.clone()])
+            .unwrap();
+
+        let server = MockHistorySyncServer::spawn(MockHistorySyncServerState {
+            source_jobs: vec![HistorySyncJobSummary {
+                job_id: job_id.clone(),
+                job_type: trix_types::HistorySyncJobType::DeviceRekey,
+                job_status: HistorySyncJobStatus::Pending,
+                source_device_id,
+                target_device_id,
+                chat_id: Some(chat_id),
+                cursor_json: json!({
+                    "kind": "device_rekey",
+                    "chat_id": chat_id.0,
+                }),
+                created_at_unix: 1,
+                updated_at_unix: 1,
+            }],
+            target_jobs: Vec::new(),
+            chunks_by_job_id: BTreeMap::new(),
+            device_transport_keys: BTreeMap::from([(
+                target_device_id.0.to_string(),
+                target_keys.public_key_bytes(),
+            )]),
+            completed_job_ids: Vec::new(),
+        })
+        .await;
+
+        let client = server.client();
+        let mut coordinator = SyncCoordinator::new();
+        let report = coordinator
+            .process_history_sync_jobs(&client, &mut store, &source_keys)
+            .await
+            .unwrap();
+
+        assert_eq!(report.source_jobs_processed, 1);
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.completed_job_ids, vec![job_id.clone()]);
+        let chunks = state
+            .chunks_by_job_id
+            .get(&job_id)
+            .expect("device rekey source job should append a chunk");
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].sequence_no, 1);
+        assert!(chunks[0].is_final);
+
+        let payload = decode_b64_field("payload_b64", &chunks[0].payload_b64).unwrap();
+        let decrypted =
+            crate::history_sync_payload::decrypt_projected_message_chunk(&payload, &target_keys)
+                .unwrap();
+        assert_eq!(decrypted.projected_messages, vec![projected]);
+        drop(state);
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn process_history_sync_jobs_imports_device_rekey_target_jobs() {
+        let chat_id = ChatId(Uuid::new_v4());
+        let source_account_id = AccountId(Uuid::new_v4());
+        let source_device_id = DeviceId(Uuid::new_v4());
+        let target_device_id = DeviceId(Uuid::new_v4());
+        let source_keys = DeviceKeyMaterial::generate();
+        let target_keys = DeviceKeyMaterial::generate();
+        let projected = projected_text_message(
+            9,
+            source_account_id,
+            source_device_id,
+            4,
+            "history recovered after device rekey",
+        );
+        let job_id = Uuid::new_v4().to_string();
+        let payload = crate::history_sync_payload::encrypt_projected_message_chunk(
+            &job_id,
+            &chat_id.0.to_string(),
+            &[projected.clone()],
+            &source_keys,
+            &target_keys.public_key_bytes(),
+        )
+        .unwrap();
+
+        let mut store = LocalHistoryStore::new();
+        store
+            .apply_chat_detail(&empty_chat_detail(chat_id, 9, 4, None, None))
+            .unwrap();
+
+        let server = MockHistorySyncServer::spawn(MockHistorySyncServerState {
+            source_jobs: Vec::new(),
+            target_jobs: vec![HistorySyncJobSummary {
+                job_id: job_id.clone(),
+                job_type: trix_types::HistorySyncJobType::DeviceRekey,
+                job_status: HistorySyncJobStatus::Completed,
+                source_device_id,
+                target_device_id,
+                chat_id: Some(chat_id),
+                cursor_json: json!({
+                    "kind": "device_rekey",
+                    "chat_id": chat_id.0,
+                }),
+                created_at_unix: 1,
+                updated_at_unix: 2,
+            }],
+            chunks_by_job_id: BTreeMap::from([(
+                job_id.clone(),
+                vec![HistorySyncChunkSummary {
+                    chunk_id: 1,
+                    sequence_no: 1,
+                    payload_b64: crate::encode_b64(&payload),
+                    cursor_json: None,
+                    is_final: true,
+                    uploaded_at_unix: 2,
+                }],
+            )]),
+            device_transport_keys: BTreeMap::new(),
+            completed_job_ids: Vec::new(),
+        })
+        .await;
+
+        let client = server.client();
+        let mut coordinator = SyncCoordinator::new();
+        let report = coordinator
+            .process_history_sync_jobs(&client, &mut store, &target_keys)
+            .await
+            .unwrap();
+
+        assert_eq!(report.target_jobs_processed, 1);
+        assert_eq!(report.changed_chat_ids, vec![chat_id]);
+        assert_eq!(coordinator.chat_cursor(chat_id), Some(projected.server_seq));
+        assert_eq!(
+            coordinator.target_history_sync_job_state(&job_id),
+            PersistedTargetHistorySyncJobState {
+                last_applied_sequence_no: 1,
+                applied_final_chunk: true,
+            }
+        );
+        assert_eq!(
+            store.get_projected_messages(chat_id, None, Some(10)),
+            vec![projected]
+        );
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn process_history_sync_jobs_clears_stale_pending_window_after_empty_completed_timeline_repair()
+     {
+        let chat_id = ChatId(Uuid::new_v4());
+        let source_account_id = AccountId(Uuid::new_v4());
+        let source_device_id = DeviceId(Uuid::new_v4());
+        let target_device_id = DeviceId(Uuid::new_v4());
+        let target_keys = DeviceKeyMaterial::generate();
+        let job_id = Uuid::new_v4().to_string();
+
+        let mut store = LocalHistoryStore::new();
+        store
+            .apply_chat_detail(&empty_chat_detail(chat_id, 12, 4, None, None))
+            .unwrap();
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: (1..=12)
+                    .map(|server_seq| MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq,
+                        sender_account_id: source_account_id,
+                        sender_device_id: source_device_id,
+                        epoch: 4,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        ciphertext_b64: crate::encode_b64(
+                            format!("cipher-{server_seq}").as_bytes(),
+                        ),
+                        aad_json: json!({}),
+                        created_at_unix: 1_700_000_000 + server_seq,
+                    })
+                    .collect(),
+            })
+            .unwrap();
+        store
+            .apply_projected_messages(
+                chat_id,
+                &(1..=9)
+                    .chain(std::iter::once(12))
+                    .map(|server_seq| {
+                        projected_text_message(
+                            server_seq,
+                            source_account_id,
+                            source_device_id,
+                            4,
+                            if server_seq == 12 {
+                                "tail after gap"
+                            } else {
+                                "before gap"
+                            },
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+        store
+            .set_pending_history_repair_window(
+                chat_id,
+                LocalHistoryRepairWindow {
+                    from_server_seq: 10,
+                    through_server_seq: 11,
+                },
+            )
+            .unwrap();
+
+        let server = MockHistorySyncServer::spawn(MockHistorySyncServerState {
+            source_jobs: Vec::new(),
+            target_jobs: vec![HistorySyncJobSummary {
+                job_id: job_id.clone(),
+                job_type: trix_types::HistorySyncJobType::TimelineRepair,
+                job_status: HistorySyncJobStatus::Completed,
+                source_device_id,
+                target_device_id,
+                chat_id: Some(chat_id),
+                cursor_json: json!({
+                    "kind": "timeline_repair",
+                    "chat_id": chat_id.0,
+                    "repair_from_server_seq": 10,
+                    "repair_through_server_seq": 11,
+                    "reason": "projection_gap",
+                }),
+                created_at_unix: 1,
+                updated_at_unix: 2,
+            }],
+            chunks_by_job_id: BTreeMap::new(),
+            device_transport_keys: BTreeMap::new(),
+            completed_job_ids: Vec::new(),
+        })
+        .await;
+
+        let client = server.client();
+        let mut coordinator = SyncCoordinator::new();
+        let report = coordinator
+            .process_history_sync_jobs(&client, &mut store, &target_keys)
+            .await
+            .unwrap();
+
+        assert_eq!(report.target_jobs_processed, 0);
+        assert_eq!(report.changed_chat_ids, vec![chat_id]);
+        assert_eq!(store.pending_history_repair_window(chat_id), None);
+        assert_eq!(
+            store
+                .history_repair_candidate(chat_id)
+                .map(|candidate| candidate.window),
+            Some(LocalHistoryRepairWindow {
+                from_server_seq: 10,
+                through_server_seq: 11,
+            })
+        );
+
+        server.shutdown().await;
     }
 
     #[tokio::test]

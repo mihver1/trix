@@ -205,6 +205,35 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeviceListResponse'
+  /v0/devices/push-token:
+    put:
+      operationId: registerApplePushToken
+      tags: [devices]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterApplePushTokenRequest'
+      responses:
+        '200':
+          description: APNs token registered for the authenticated device. Server-side delivery remains disabled until `trixd` has complete APNs credentials.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterApplePushTokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    delete:
+      operationId: deleteApplePushToken
+      tags: [devices]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: APNs token removed for the authenticated device
   /v0/devices/link-intents:
     post:
       operationId: createLinkIntent
@@ -350,6 +379,50 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HistorySyncJobListResponse'
+  /v0/history-sync/jobs/request:
+    post:
+      operationId: requestChatBackfill
+      tags: [history_sync]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestChatBackfillRequest'
+      responses:
+        '200':
+          description: Chat backfill job scheduled for the authenticated target device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestChatBackfillResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v0/history-sync/jobs:request-repair:
+    post:
+      operationId: requestHistorySyncRepair
+      tags: [history_sync]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestHistorySyncRepairRequest'
+      responses:
+        '200':
+          description: One or more bounded timeline repair jobs scheduled for the authenticated target device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestHistorySyncRepairResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v0/history-sync/jobs/{job_id}/chunks:
     get:
       operationId: listHistorySyncChunks
@@ -1178,6 +1251,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    BadRequest:
+      description: Invalid request payload
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     Conflict:
       description: Request conflicts with current server state
       content:
@@ -1220,7 +1299,7 @@ components:
       enum: [pending, active, revoked]
     HistorySyncJobType:
       type: string
-      enum: [initial_sync, chat_backfill, device_rekey]
+      enum: [initial_sync, chat_backfill, device_rekey, timeline_repair]
     HistorySyncJobRole:
       type: string
       enum: [source, target]
@@ -1446,6 +1525,29 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DeviceSummary'
+    ApplePushEnvironment:
+      type: string
+      enum: [sandbox, production]
+    RegisterApplePushTokenRequest:
+      type: object
+      required: [token_hex, environment]
+      properties:
+        token_hex:
+          type: string
+          description: Hex-encoded APNs device token without separators.
+        environment:
+          $ref: '#/components/schemas/ApplePushEnvironment'
+    RegisterApplePushTokenResponse:
+      type: object
+      required: [device_id, environment, push_delivery_enabled]
+      properties:
+        device_id:
+          $ref: '#/components/schemas/Uuid'
+        environment:
+          $ref: '#/components/schemas/ApplePushEnvironment'
+        push_delivery_enabled:
+          type: boolean
+          description: True when `trixd` has complete APNs credentials and can actively deliver push wake-ups.
     CreateLinkIntentResponse:
       type: object
       required: [link_intent_id, qr_payload, expires_at_unix]
@@ -1606,6 +1708,44 @@ components:
           type: integer
           format: int64
     HistorySyncJobListResponse:
+      type: object
+      required: [jobs]
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/HistorySyncJobSummary'
+    RequestChatBackfillRequest:
+      type: object
+      required: [chat_id]
+      properties:
+        chat_id:
+          $ref: '#/components/schemas/Uuid'
+    RequestChatBackfillResponse:
+      type: object
+      required: [job_id, source_device_id]
+      properties:
+        job_id:
+          $ref: '#/components/schemas/Uuid'
+        source_device_id:
+          $ref: '#/components/schemas/Uuid'
+    RequestHistorySyncRepairRequest:
+      type: object
+      required: [chat_id, repair_from_server_seq, repair_through_server_seq, reason]
+      properties:
+        chat_id:
+          $ref: '#/components/schemas/Uuid'
+        repair_from_server_seq:
+          type: integer
+          format: int64
+          minimum: 1
+        repair_through_server_seq:
+          type: integer
+          format: int64
+          minimum: 1
+        reason:
+          type: string
+    RequestHistorySyncRepairResponse:
       type: object
       required: [jobs]
       properties:

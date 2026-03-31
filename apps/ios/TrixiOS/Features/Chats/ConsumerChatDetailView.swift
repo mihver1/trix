@@ -1,6 +1,9 @@
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
+#if os(iOS)
+import PhotosUI
+#endif
 
 private let consumerChatAccent = TrixTheme.accent
 private let consumerMessageClusterWindow: TimeInterval = 5 * 60
@@ -10,6 +13,17 @@ private struct ConsumerAttachmentDraft {
     let fileURL: URL
     let fileName: String
     let fileSizeLabel: String?
+}
+
+private enum ConsumerAttachmentImportError: LocalizedError {
+    case failedToLoadSelectedMedia
+
+    var errorDescription: String? {
+        switch self {
+        case .failedToLoadSelectedMedia:
+            return "Couldn't load the selected photo or video."
+        }
+    }
 }
 
 enum ConsumerTimelineItem: Identifiable, Equatable {
@@ -72,9 +86,15 @@ struct ConsumerRenderedMessage: Identifiable, Equatable {
 struct ConsumerConversationTimelineRenderState: Equatable {
     let latestTimelineAnchorId: String?
     let timelineItems: [ConsumerTimelineItem]
+    let fixtureKindsByMessageId: [String: UITestFixtureMessageKind]
     let latestSentMessageId: String?
     let latestSentText: String?
     let downloadingAttachmentMessageId: String?
+}
+
+struct ConsumerTimelineRenderPayload {
+    let items: [ConsumerTimelineItem]
+    let fixtureKindsByMessageId: [String: UITestFixtureMessageKind]
 }
 
 struct ConsumerChatDetailView: View {
@@ -89,6 +109,11 @@ struct ConsumerChatDetailView: View {
     @State private var composerText = ""
     @State private var selectedAttachment: ConsumerAttachmentDraft?
     @State private var isImportingAttachment = false
+    #if os(iOS)
+    @State private var isShowingAttachmentOptions = false
+    @State private var isImportingPhotoVideo = false
+    @State private var selectedPhotoVideoItem: PhotosPickerItem?
+    #endif
     @State private var localErrorMessage: String?
     @State private var activityMessage: String?
     @State private var downloadedAttachment: DownloadedAttachmentFile?
@@ -96,6 +121,7 @@ struct ConsumerChatDetailView: View {
     @State private var isTypingPublished = false
     @State private var latestSentMessageId: String?
     @State private var latestSentText: String?
+    @State private var fixtureKindsByMessageId: [String: UITestFixtureMessageKind] = [:]
     @FocusState private var isComposerFocused: Bool
 
     var body: some View {
@@ -170,6 +196,37 @@ struct ConsumerChatDetailView: View {
         ) { result in
             handleAttachmentImport(result)
         }
+        #if os(iOS)
+        .confirmationDialog(
+            "Choose Attachment",
+            isPresented: $isShowingAttachmentOptions,
+            titleVisibility: .visible
+        ) {
+            Button("Photo or Video") {
+                isImportingPhotoVideo = true
+            }
+
+            Button("File") {
+                isImportingAttachment = true
+            }
+
+            Button("Cancel", role: .cancel) {}
+        }
+        .photosPicker(
+            isPresented: $isImportingPhotoVideo,
+            selection: $selectedPhotoVideoItem,
+            matching: .any(of: [.images, .videos])
+        )
+        .onChange(of: selectedPhotoVideoItem) { _, newValue in
+            guard let newValue else {
+                return
+            }
+
+            Task {
+                await importPhotoVideoAttachment(from: newValue)
+            }
+        }
+        #endif
         .sheet(item: $downloadedAttachment) { downloadedAttachment in
             AttachmentActivitySheet(items: [downloadedAttachment.fileURL])
         }
@@ -220,7 +277,11 @@ struct ConsumerChatDetailView: View {
 
             HStack(alignment: .bottom, spacing: 10) {
                 Button {
+                    #if os(iOS)
+                    isShowingAttachmentOptions = true
+                    #else
                     isImportingAttachment = true
+                    #endif
                 } label: {
                     Image(systemName: "paperclip")
                         .font(.system(size: 18, weight: .semibold))
@@ -294,6 +355,7 @@ struct ConsumerChatDetailView: View {
         return ConsumerConversationTimelineRenderState(
             latestTimelineAnchorId: snapshot.latestTimelineAnchorId,
             timelineItems: timelineItems,
+            fixtureKindsByMessageId: fixtureKindsByMessageId,
             latestSentMessageId: latestSentMessageId,
             latestSentText: latestSentText,
             downloadingAttachmentMessageId: downloadingAttachmentMessageId
@@ -317,17 +379,9 @@ struct ConsumerChatDetailView: View {
     }
 
     private var snapshotTaskID: String {
-        let latestInboxId = model.dashboard?
-            .inboxItems
-            .filter { $0.message.chatId == chatSummary.chatId }
-            .map(\.inboxId)
-            .max() ?? 0
-        let latestServerSeq = model.dashboard?
-            .chats
-            .first { $0.chatId == chatSummary.chatId }?
-            .lastServerSeq ?? chatSummary.lastServerSeq
-
-        return "\(chatSummary.chatId)-\(latestInboxId)-\(latestServerSeq)"
+        let refreshToken = model.dashboardConversationRefreshTokens[chatSummary.chatId]
+            ?? "0-\(snapshot?.detail.lastServerSeq ?? chatSummary.lastServerSeq)"
+        return "\(chatSummary.chatId)-\(refreshToken)"
     }
 
     private func reload() {
@@ -349,7 +403,12 @@ struct ConsumerChatDetailView: View {
                 baseURLString: serverBaseURL,
                 chatId: chatSummary.chatId
             )
-            timelineItems = ConsumerConversationTimelineBuilder.makeTimelineItems(for: loadedSnapshot)
+            let renderPayload = ConsumerConversationTimelineBuilder.makeRenderPayload(
+                for: loadedSnapshot,
+                fixtureManifest: UITestLaunchConfiguration.current.isEnabled ? UITestFixtureManifestStore.load() : nil
+            )
+            timelineItems = renderPayload.items
+            fixtureKindsByMessageId = renderPayload.fixtureKindsByMessageId
             snapshot = loadedSnapshot
             if loadedSnapshot.latestMessageId != nil {
                 _ = await model.acknowledgeConversationRead(
@@ -360,6 +419,7 @@ struct ConsumerChatDetailView: View {
                 )
             }
         } catch {
+            fixtureKindsByMessageId = [:]
             localErrorMessage = error.localizedDescription
         }
     }
@@ -477,28 +537,107 @@ struct ConsumerChatDetailView: View {
     private func handleAttachmentImport(_ result: Result<URL, Error>) {
         switch result {
         case let .success(fileURL):
-            let didAccessScopedResource = fileURL.startAccessingSecurityScopedResource()
-            defer {
-                if didAccessScopedResource {
-                    fileURL.stopAccessingSecurityScopedResource()
-                }
+            do {
+                selectedAttachment = try makeAttachmentDraft(fileURL: fileURL)
+                localErrorMessage = nil
+            } catch {
+                localErrorMessage = error.localizedDescription
             }
-
-            let fileName = fileURL.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
-            let fileSizeLabel = try? fileURL
-                .resourceValues(forKeys: [.fileSizeKey])
-                .fileSize
-                .map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) }
-            selectedAttachment = ConsumerAttachmentDraft(
-                fileURL: fileURL,
-                fileName: fileName.isEmpty ? "Attachment" : fileName,
-                fileSizeLabel: fileSizeLabel ?? nil
-            )
-            localErrorMessage = nil
         case let .failure(error):
             localErrorMessage = error.localizedDescription
         }
     }
+
+    private func makeAttachmentDraft(fileURL: URL, preferredFileName: String? = nil) throws -> ConsumerAttachmentDraft {
+        let didAccessScopedResource = fileURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccessScopedResource {
+                fileURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let fallbackName = preferredFileName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawFileName: String
+        if let fallbackName, !fallbackName.isEmpty {
+            rawFileName = fallbackName
+        } else {
+            rawFileName = fileURL.lastPathComponent
+        }
+        let fileName = rawFileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fileSizeLabel = try? fileURL
+            .resourceValues(forKeys: [.fileSizeKey])
+            .fileSize
+            .map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) }
+
+        return ConsumerAttachmentDraft(
+            fileURL: fileURL,
+            fileName: fileName.isEmpty ? "Attachment" : fileName,
+            fileSizeLabel: fileSizeLabel ?? nil
+        )
+    }
+
+    #if os(iOS)
+    @MainActor
+    private func importPhotoVideoAttachment(from item: PhotosPickerItem) async {
+        defer {
+            selectedPhotoVideoItem = nil
+        }
+
+        do {
+            let pickedMedia = try await makeTemporaryPhotoVideoAttachment(from: item)
+            selectedAttachment = try makeAttachmentDraft(
+                fileURL: pickedMedia.fileURL,
+                preferredFileName: pickedMedia.fileName
+            )
+            localErrorMessage = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            localErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func makeTemporaryPhotoVideoAttachment(
+        from item: PhotosPickerItem
+    ) async throws -> (fileURL: URL, fileName: String) {
+        guard let data = try await item.loadTransferable(type: Data.self) else {
+            throw ConsumerAttachmentImportError.failedToLoadSelectedMedia
+        }
+
+        let contentType = item.supportedContentTypes.first(where: {
+            $0.conforms(to: .image) || $0.conforms(to: .movie)
+        }) ?? item.supportedContentTypes.first ?? .data
+        let baseName: String
+        if contentType.conforms(to: .movie) {
+            baseName = "Video"
+        } else if contentType.conforms(to: .image) {
+            baseName = "Photo"
+        } else {
+            baseName = "Attachment"
+        }
+        let fileExtension = contentType.preferredFilenameExtension ?? defaultAttachmentExtension(for: contentType)
+        let tempFileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("consumer-attachment-\(UUID().uuidString)")
+            .appendingPathExtension(fileExtension)
+
+        try data.write(to: tempFileURL, options: [.atomic])
+
+        let displayName = fileExtension.isEmpty ? baseName : "\(baseName).\(fileExtension)"
+        return (tempFileURL, displayName)
+    }
+
+    private func defaultAttachmentExtension(for contentType: UTType) -> String {
+        if contentType.conforms(to: .movie) {
+            return "mov"
+        }
+
+        if contentType.conforms(to: .image) {
+            return "jpg"
+        }
+
+        return "bin"
+    }
+    #endif
 
     private func openAttachment(_ message: ConsumerRenderedMessage) {
         guard let attachmentBody = message.attachmentBody else {
@@ -539,11 +678,33 @@ struct ConsumerChatDetailView: View {
 }
 
 enum ConsumerConversationTimelineBuilder {
-    static func makeTimelineItems(for snapshot: SafeConversationSnapshot) -> [ConsumerTimelineItem] {
+    static func makeRenderPayload(
+        for snapshot: SafeConversationSnapshot,
+        fixtureManifest: UITestFixtureManifest?
+    ) -> ConsumerTimelineRenderPayload {
         // `loadConversationSnapshot()` already returns ascending server order, so keep typing cheap.
         let messages = snapshot.messages.filter(\.isVisibleInTimeline)
         var items: [ConsumerTimelineItem] = []
-        let presentationMessages = messages
+        var receiptStatusByMessageID: [String: ConsumerReceiptStatus] = [:]
+        let participantDisplayNamesByAccountId = snapshot.detail.participantProfiles.reduce(into: [String: String]()) { partialResult, profile in
+            partialResult[profile.accountId] = profile.primaryDisplayName
+        }
+        let fixtureKindsByMessageId = fixtureManifest?.messages.reduce(into: [String: UITestFixtureMessageKind]()) { partialResult, record in
+            partialResult[record.messageId] = record.kind
+        } ?? [:]
+        let presentationMessages = messages.compactMap { message -> SafeMessengerMessage? in
+            guard !isReceiptMessage(message) else {
+                if let targetMessageID = receiptTargetMessageID(for: message) {
+                    receiptStatusByMessageID[targetMessageID] = mergedReceiptStatus(
+                        receiptStatusByMessageID[targetMessageID],
+                        with: receiptStatus(for: message) ?? .delivered
+                    )
+                }
+                return nil
+            }
+
+            return message
+        }
         var previousMessage: SafeMessengerMessage?
 
         for (index, message) in presentationMessages.enumerated() {
@@ -554,9 +715,7 @@ enum ConsumerConversationTimelineBuilder {
             let nextMessage = presentationMessages.indices.contains(index + 1) ? presentationMessages[index + 1] : nil
             let continuesFromPrevious = previousMessage.map { canCluster($0, with: message) } ?? false
             let continuesToNext = nextMessage.map { canCluster(message, with: $0) } ?? false
-            let senderName = snapshot.detail
-                .participantProfile(accountId: message.senderAccountId)?
-                .primaryDisplayName ?? message.senderDisplayName
+            let senderName = participantDisplayNamesByAccountId[message.senderAccountId] ?? message.senderDisplayName
             let shouldShowSender = snapshot.detail.chatType == .group && !message.isOutgoing && !continuesFromPrevious
             let clusterPosition: ConsumerMessageClusterPosition
 
@@ -598,7 +757,8 @@ enum ConsumerConversationTimelineBuilder {
                         topSpacing: topSpacing,
                         usesCenteredEventStyle: messageUsesCenteredEventStyle(message),
                         receiptStatus: message.isOutgoing
-                            ? message.receiptStatus.map(ConsumerReceiptStatus.init)
+                            ? (receiptStatusByMessageID[message.id]
+                                ?? message.receiptStatus.map(ConsumerReceiptStatus.init))
                             : nil,
                         reactions: message.reactions
                     )
@@ -608,7 +768,10 @@ enum ConsumerConversationTimelineBuilder {
             previousMessage = message
         }
 
-        return items
+        return ConsumerTimelineRenderPayload(
+            items: items,
+            fixtureKindsByMessageId: fixtureKindsByMessageId
+        )
     }
 
     static func latestIncomingNonReceiptMessageID(
@@ -796,6 +959,7 @@ private struct ConsumerConversationTimelineView: View, Equatable {
             ForEach(renderState.timelineItems) { item in
                 ConsumerTimelineRow(
                     item: item,
+                    fixtureKind: fixtureKind(for: item),
                     latestSentMessageId: renderState.latestSentMessageId,
                     latestSentText: renderState.latestSentText,
                     downloadingAttachmentMessageId: renderState.downloadingAttachmentMessageId,
@@ -809,6 +973,14 @@ private struct ConsumerConversationTimelineView: View, Equatable {
         Color.clear
             .frame(height: 1)
             .id(consumerTimelineBottomAnchor)
+    }
+
+    private func fixtureKind(for item: ConsumerTimelineItem) -> UITestFixtureMessageKind? {
+        guard case let .message(message) = item else {
+            return nil
+        }
+
+        return renderState.fixtureKindsByMessageId[message.id]
     }
 
     private func scrollToBottom(using proxy: ScrollViewProxy, animated: Bool) {
@@ -871,6 +1043,7 @@ private struct ConsumerChatBackdrop: View {
 
 private struct ConsumerTimelineRow: View {
     let item: ConsumerTimelineItem
+    let fixtureKind: UITestFixtureMessageKind?
     let latestSentMessageId: String?
     let latestSentText: String?
     let downloadingAttachmentMessageId: String?
@@ -879,7 +1052,7 @@ private struct ConsumerTimelineRow: View {
     let onSelectReaction: (ConsumerRenderedMessage, String) -> Void
 
     var body: some View {
-        if let fixtureKind = fixtureMessageKind {
+        if let fixtureKind {
             rowBody
                 .accessibilityIdentifier(TrixAccessibilityID.ChatDetail.message(fixtureKind))
         } else if isLatestSentMessage {
@@ -908,13 +1081,6 @@ private struct ConsumerTimelineRow: View {
                 )
             }
         }
-    }
-
-    private var fixtureMessageKind: UITestFixtureMessageKind? {
-        guard case let .message(message) = item else {
-            return nil
-        }
-        return UITestFixtureManifestStore.messageFixtureKind(for: message.id)
     }
 
     private var isLatestSentMessage: Bool {

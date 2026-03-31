@@ -41,6 +41,7 @@ pub enum HistorySyncJobType {
     InitialSync,
     ChatBackfill,
     DeviceRekey,
+    TimelineRepair,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

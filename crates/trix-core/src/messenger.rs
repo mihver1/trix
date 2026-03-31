@@ -19,10 +19,12 @@ use uuid::Uuid;
 use crate::{
     AttachmentMessageBody, AuthChallengeMaterial, CompleteLinkIntentParams, CreateChatControlInput,
     DeviceKeyMaterial, FfiChatType, FfiContentType, FfiDeviceStatus, FfiMessageReactionSummary,
-    FfiReactionAction, FfiReceiptType, LocalChatListItem, LocalHistoryStore, LocalTimelineItem,
-    MessageBody, MlsFacade, ModifyChatDevicesControlInput, ModifyChatMembersControlInput,
-    PublishKeyPackageMaterial, ReactionAction, ReceiptType, SendMessageOutcome, ServerApiClient,
-    ServerApiError, SyncCoordinator, account_bootstrap_message, create_device_transfer_bundle,
+    FfiReactionAction, FfiReceiptType, LocalChatListItem, LocalHistoryRepairCandidate,
+    LocalHistoryRepairReason, LocalHistoryRepairWindow, LocalHistoryStore,
+    LocalMessageRecoveryState, LocalTimelineItem, MessageBody, MlsFacade,
+    ModifyChatDevicesControlInput, ModifyChatMembersControlInput, PublishKeyPackageMaterial,
+    ReactionAction, ReceiptType, SendMessageOutcome, ServerApiClient, ServerApiError,
+    SyncCoordinator, account_bootstrap_message, create_device_transfer_bundle,
     decrypt_attachment_payload, decrypt_device_transfer_bundle, device_revoke_message, encode_b64,
     prepare_attachment_upload,
 };
@@ -32,6 +34,14 @@ const SAFE_DEVICE_KEY_PACKAGE_MINIMUM: u32 = 5;
 const SAFE_DEVICE_KEY_PACKAGE_TARGET: u32 = 12;
 const SAFE_DEFAULT_REVOKE_REASON: &str = "revoked_from_safe_messenger_ffi";
 const SNAPSHOT_SYNC_LIMIT_PER_CHAT: usize = 200;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HistoryRepairRequestStatus {
+    NotNeeded,
+    Unavailable,
+    PendingUnchanged,
+    Updated,
+}
 
 #[derive(Debug, Error, uniffi::Error)]
 pub enum FfiMessengerError {
@@ -56,6 +66,11 @@ pub enum FfiMessengerMessageBodyKind {
     Receipt,
     Attachment,
     ChatEvent,
+}
+
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum FfiMessageRecoveryState {
+    PendingSiblingHistory,
 }
 
 #[derive(Debug, Clone, Copy, uniffi::Enum)]
@@ -121,6 +136,9 @@ pub struct FfiMessengerConversationSummary {
     pub preview_server_seq: Option<u64>,
     pub preview_created_at_unix: Option<u64>,
     pub participant_profiles: Vec<FfiMessengerParticipantProfile>,
+    pub history_recovery_pending: bool,
+    pub history_recovery_from_server_seq: Option<u64>,
+    pub history_recovery_through_server_seq: Option<u64>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -159,6 +177,7 @@ pub struct FfiMessengerMessageRecord {
     pub epoch: u64,
     pub content_type: FfiContentType,
     pub body: Option<FfiMessengerMessageBody>,
+    pub recovery_state: Option<FfiMessageRecoveryState>,
     pub preview_text: String,
     pub receipt_status: Option<FfiReceiptType>,
     pub reactions: Vec<FfiMessageReactionSummary>,
@@ -531,6 +550,8 @@ impl FfiMessengerClient {
     pub fn load_snapshot(&self) -> Result<FfiMessengerSnapshot, FfiMessengerError> {
         let _ = self.sync_workspace()?;
         self.maybe_import_transfer_bundle()?;
+        let client = self.authenticated_client()?;
+        let _ = self.request_history_repairs_if_needed(&client, None)?;
         let devices = self.list_devices()?;
         let conversations = self.list_conversations()?;
         self.clear_requires_resync()?;
@@ -663,7 +684,18 @@ impl FfiMessengerClient {
                             .apply_inbox_items(&lease.items)
                             .map_err(map_domain_error)?;
                     }
-                    self.project_changed_chats(&active_inbox_changed_chat_ids)?;
+                    if let Err(error) = self.project_changed_chats(&active_inbox_changed_chat_ids) {
+                        let (repaired_chat_ids, repair_available) = self
+                            .request_history_repairs_after_projection_failure_resolution(
+                                &client,
+                                &active_inbox_changed_chat_ids,
+                            )?;
+                        if !repair_available {
+                            return Err(error);
+                        }
+                        mutated_checkpointed_state = true;
+                        changed_chat_ids.extend(repaired_chat_ids);
+                    }
                 }
             }
             let history_sync_changed_chat_ids = self.process_history_sync_jobs(&client)?;
@@ -671,6 +703,11 @@ impl FfiMessengerClient {
                 mutated_checkpointed_state = true;
             }
             changed_chat_ids.extend(history_sync_changed_chat_ids);
+            let repair_changed_chat_ids = self.request_history_repairs_if_needed(&client, None)?;
+            if !repair_changed_chat_ids.is_empty() {
+                mutated_checkpointed_state = true;
+            }
+            changed_chat_ids.extend(repair_changed_chat_ids);
             changed_chat_ids.sort_by_key(|chat_id| chat_id.0);
             changed_chat_ids.dedup();
             let inbox_ids = lease
@@ -1529,13 +1566,28 @@ impl FfiMessengerClient {
             let active_changed_chat_ids = self.filter_active_chat_ids(&report.changed_chat_ids)?;
             if !active_changed_chat_ids.is_empty() {
                 self.refresh_chat_details(&client, &active_changed_chat_ids)?;
-                self.project_changed_chats(&active_changed_chat_ids)?;
+                if let Err(error) = self.project_changed_chats(&active_changed_chat_ids) {
+                    let (repaired_chat_ids, repair_available) = self
+                        .request_history_repairs_after_projection_failure_resolution(
+                            &client,
+                            &active_changed_chat_ids,
+                        )?;
+                    if !repair_available {
+                        return Err(error);
+                    }
+                    let _ = repaired_chat_ids;
+                }
             }
         }
         let history_sync_changed_chat_ids = self.process_history_sync_jobs(&client)?;
+        let repair_changed_chat_ids = self.request_history_repairs_if_needed(&client, None)?;
         self.request_backfill_for_unavailable_chats_best_effort(&client);
         self.with_mls_facade(|facade| self.ensure_device_key_packages(&client, facade))?;
-        Ok(history_sync_changed_chat_ids)
+        let mut changed_chat_ids = history_sync_changed_chat_ids;
+        changed_chat_ids.extend(repair_changed_chat_ids);
+        changed_chat_ids.sort_by_key(|chat_id| chat_id.0);
+        changed_chat_ids.dedup();
+        Ok(changed_chat_ids)
     }
 
     fn request_backfill_for_unavailable_chats_best_effort(&self, client: &ServerApiClient) {
@@ -1670,6 +1722,166 @@ impl FfiMessengerClient {
         Ok(report.changed_chat_ids)
     }
 
+    fn request_history_repairs_if_needed(
+        &self,
+        client: &ServerApiClient,
+        chat_ids: Option<&[ChatId]>,
+    ) -> Result<Vec<ChatId>, FfiMessengerError> {
+        let candidate_chat_ids = chat_ids
+            .map(|chat_ids| chat_ids.to_vec())
+            .unwrap_or_else(|| {
+                let store = lock_history_store(&self.history_store).ok();
+                store
+                    .map(|store| {
+                        store
+                            .list_local_chat_list_items(None)
+                            .into_iter()
+                            .map(|chat| chat.chat_id)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            });
+        let mut changed_chat_ids = Vec::new();
+        for chat_id in candidate_chat_ids {
+            if matches!(
+                self.request_chat_history_repair_status(client, chat_id)?,
+                HistoryRepairRequestStatus::Updated
+            ) {
+                changed_chat_ids.push(chat_id);
+            }
+        }
+        changed_chat_ids.sort_by_key(|chat_id| chat_id.0);
+        changed_chat_ids.dedup();
+        Ok(changed_chat_ids)
+    }
+
+    fn request_history_repairs_after_projection_failure_resolution(
+        &self,
+        client: &ServerApiClient,
+        chat_ids: &[ChatId],
+    ) -> Result<(Vec<ChatId>, bool), FfiMessengerError> {
+        let mut changed_chat_ids = Vec::new();
+        let mut repair_available = false;
+        for chat_id in chat_ids {
+            match self
+                .request_chat_history_repair_after_projection_failure_status(client, *chat_id)?
+            {
+                HistoryRepairRequestStatus::NotNeeded => {}
+                HistoryRepairRequestStatus::Unavailable => {
+                    return Ok((changed_chat_ids, false));
+                }
+                HistoryRepairRequestStatus::PendingUnchanged => {
+                    repair_available = true;
+                }
+                HistoryRepairRequestStatus::Updated => {
+                    repair_available = true;
+                    changed_chat_ids.push(*chat_id);
+                }
+            }
+        }
+        changed_chat_ids.sort_by_key(|chat_id| chat_id.0);
+        changed_chat_ids.dedup();
+        Ok((changed_chat_ids, repair_available))
+    }
+
+    fn request_chat_history_repair_if_needed(
+        &self,
+        client: &ServerApiClient,
+        chat_id: ChatId,
+    ) -> Result<bool, FfiMessengerError> {
+        Ok(matches!(
+            self.request_chat_history_repair_status(client, chat_id)?,
+            HistoryRepairRequestStatus::PendingUnchanged | HistoryRepairRequestStatus::Updated
+        ))
+    }
+
+    fn request_chat_history_repair_status(
+        &self,
+        client: &ServerApiClient,
+        chat_id: ChatId,
+    ) -> Result<HistoryRepairRequestStatus, FfiMessengerError> {
+        let (candidate, existing_window) = {
+            let store = lock_history_store(&self.history_store)?;
+            (
+                store.history_repair_candidate(chat_id),
+                store.pending_history_repair_window(chat_id),
+            )
+        };
+        let Some(candidate) = candidate else {
+            let _ = existing_window;
+            return Ok(HistoryRepairRequestStatus::NotNeeded);
+        };
+        self.ensure_chat_history_repair_requested(client, candidate)
+    }
+
+    fn request_chat_history_repair_after_projection_failure(
+        &self,
+        client: &ServerApiClient,
+        chat_id: ChatId,
+    ) -> Result<bool, FfiMessengerError> {
+        Ok(matches!(
+            self.request_chat_history_repair_after_projection_failure_status(client, chat_id)?,
+            HistoryRepairRequestStatus::PendingUnchanged | HistoryRepairRequestStatus::Updated
+        ))
+    }
+
+    fn request_chat_history_repair_after_projection_failure_status(
+        &self,
+        client: &ServerApiClient,
+        chat_id: ChatId,
+    ) -> Result<HistoryRepairRequestStatus, FfiMessengerError> {
+        let (candidate, existing_window) = {
+            let store = lock_history_store(&self.history_store)?;
+            (
+                store.history_repair_candidate_after_projection_failure(chat_id),
+                store.pending_history_repair_window(chat_id),
+            )
+        };
+        let Some(candidate) = candidate else {
+            let _ = existing_window;
+            return Ok(HistoryRepairRequestStatus::NotNeeded);
+        };
+        self.ensure_chat_history_repair_requested(client, candidate)
+    }
+
+    fn ensure_chat_history_repair_requested(
+        &self,
+        client: &ServerApiClient,
+        candidate: LocalHistoryRepairCandidate,
+    ) -> Result<HistoryRepairRequestStatus, FfiMessengerError> {
+        let existing_window = {
+            let store = lock_history_store(&self.history_store)?;
+            store.pending_history_repair_window(candidate.chat_id)
+        };
+        if existing_window
+            .map(|existing| history_repair_window_covers(existing, candidate.window))
+            .unwrap_or(false)
+        {
+            return Ok(HistoryRepairRequestStatus::PendingUnchanged);
+        }
+
+        let response = self
+            .runtime
+            .block_on(client.request_history_sync_repair(
+                trix_types::RequestHistorySyncRepairRequest {
+                    chat_id: candidate.chat_id,
+                    repair_from_server_seq: candidate.window.from_server_seq,
+                    repair_through_server_seq: candidate.window.through_server_seq,
+                    reason: history_repair_reason_label(candidate.reason).to_owned(),
+                },
+            ))
+            .map_err(messenger_error)?;
+        if response.jobs.is_empty() {
+            return Ok(HistoryRepairRequestStatus::Unavailable);
+        }
+
+        let mut store = lock_history_store(&self.history_store)?;
+        store
+            .set_pending_history_repair_window(candidate.chat_id, candidate.window)
+            .map_err(map_domain_error)?;
+        Ok(HistoryRepairRequestStatus::Updated)
+    }
+
     fn refresh_chat_details(
         &self,
         client: &ServerApiClient,
@@ -1753,14 +1965,23 @@ impl FfiMessengerClient {
                 store.needs_projection(chat_id),
             )
         };
+        let client = self.authenticated_client()?;
 
         if needs_history_refresh {
-            let client = self.authenticated_client()?;
             self.refresh_chat_history_fully(&client, chat_id)?;
         }
 
+        if self.request_chat_history_repair_if_needed(&client, chat_id)? {
+            return Ok(());
+        }
+
         if needs_history_refresh || needs_projection {
-            self.project_changed_chats(&[chat_id])?;
+            if let Err(error) = self.project_changed_chats(&[chat_id]) {
+                if self.request_chat_history_repair_after_projection_failure(&client, chat_id)? {
+                    return Ok(());
+                }
+                return Err(error);
+            }
         }
 
         Ok(())
@@ -2003,6 +2224,7 @@ impl FfiMessengerClient {
             epoch: message.epoch,
             content_type: message.content_type.into(),
             body: safe_body,
+            recovery_state: None,
             preview_text,
             receipt_status: None,
             reactions: Vec::new(),
@@ -2031,6 +2253,7 @@ impl FfiMessengerClient {
             epoch: item.epoch,
             content_type: item.content_type.into(),
             body,
+            recovery_state: item.recovery_state.map(message_recovery_state_to_ffi),
             preview_text: item.preview_text,
             receipt_status: item.receipt_status.map(receipt_type_to_ffi),
             reactions: item
@@ -2919,6 +3142,17 @@ fn conversation_summary_to_ffi(value: LocalChatListItem) -> FfiMessengerConversa
                 profile_bio: profile.profile_bio,
             })
             .collect(),
+        history_recovery_pending: value.history_recovery_pending,
+        history_recovery_from_server_seq: value.history_recovery_from_server_seq,
+        history_recovery_through_server_seq: value.history_recovery_through_server_seq,
+    }
+}
+
+fn message_recovery_state_to_ffi(value: LocalMessageRecoveryState) -> FfiMessageRecoveryState {
+    match value {
+        LocalMessageRecoveryState::PendingSiblingHistory => {
+            FfiMessageRecoveryState::PendingSiblingHistory
+        }
     }
 }
 
@@ -3015,6 +3249,22 @@ fn is_unauthorized(error: &ServerApiError) -> bool {
     matches!(error, ServerApiError::Api { status: 401, .. })
 }
 
+fn history_repair_reason_label(value: LocalHistoryRepairReason) -> &'static str {
+    match value {
+        LocalHistoryRepairReason::ProjectedGap => "projected_gap",
+        LocalHistoryRepairReason::UnmaterializedProjection => "unmaterialized_projection",
+        LocalHistoryRepairReason::ProjectionFailure => "projection_failure",
+    }
+}
+
+fn history_repair_window_covers(
+    existing: LocalHistoryRepairWindow,
+    candidate: LocalHistoryRepairWindow,
+) -> bool {
+    existing.from_server_seq <= candidate.from_server_seq
+        && existing.through_server_seq >= candidate.through_server_seq
+}
+
 fn map_domain_error(error: impl std::fmt::Display) -> FfiMessengerError {
     let message = error.to_string();
     if message.contains("requires resync:")
@@ -3035,11 +3285,22 @@ fn messenger_error(error: impl std::fmt::Display) -> FfiMessengerError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{env, fs};
+    use std::{
+        env, fs,
+        sync::{Arc, Mutex},
+    };
 
+    use axum::{Json, Router, extract::State, response::IntoResponse, routing::post};
+    use tokio::{
+        net::TcpListener,
+        runtime::{Builder, Runtime},
+        task::JoinHandle,
+    };
     use trix_types::{
         ChatDetailResponse, ChatHistoryResponse, ChatParticipantProfileSummary, ChatType,
-        ContentType, MessageEnvelope, MessageKind,
+        ContentType, HistorySyncJobStatus, HistorySyncJobSummary, HistorySyncJobType,
+        MessageEnvelope, MessageKind, RequestHistorySyncRepairRequest,
+        RequestHistorySyncRepairResponse,
     };
 
     #[test]
@@ -3382,6 +3643,7 @@ mod tests {
                     is_visible_in_timeline: true,
                     merged_epoch: None,
                     created_at_unix: 8,
+                    recovery_state: None,
                 },
             )
             .unwrap();
@@ -3639,6 +3901,176 @@ mod tests {
             before.transport_private_key
         );
 
+        fs::remove_dir_all(root_path).ok();
+    }
+
+    #[derive(Debug)]
+    struct MockRepairServerState {
+        unavailable_chat_id: ChatId,
+        requested_chat_ids: Vec<ChatId>,
+    }
+
+    struct MockRepairServer {
+        base_url: String,
+        state: Arc<Mutex<MockRepairServerState>>,
+        runtime: Runtime,
+        task: JoinHandle<()>,
+    }
+
+    impl MockRepairServer {
+        fn spawn(unavailable_chat_id: ChatId) -> Self {
+            let runtime = Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .unwrap();
+            let (base_url, state, task) = runtime.block_on(async move {
+                let state = Arc::new(Mutex::new(MockRepairServerState {
+                    unavailable_chat_id,
+                    requested_chat_ids: Vec::new(),
+                }));
+                let app = Router::new()
+                    .route(
+                        "/v0/history-sync/jobs:request-repair",
+                        post(mock_request_history_sync_repair),
+                    )
+                    .with_state(state.clone());
+                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let base_url = format!("http://{}", listener.local_addr().unwrap());
+                let task = tokio::spawn(async move {
+                    axum::serve(listener, app)
+                        .await
+                        .expect("mock repair server should stay up");
+                });
+
+                (base_url, state, task)
+            });
+
+            Self {
+                base_url,
+                state,
+                runtime,
+                task,
+            }
+        }
+
+        fn shutdown(self) {
+            self.runtime.block_on(async {
+                self.task.abort();
+                let _ = self.task.await;
+            });
+        }
+    }
+
+    async fn mock_request_history_sync_repair(
+        State(state): State<Arc<Mutex<MockRepairServerState>>>,
+        Json(request): Json<RequestHistorySyncRepairRequest>,
+    ) -> impl IntoResponse {
+        let mut state = state.lock().unwrap();
+        state.requested_chat_ids.push(request.chat_id);
+        let jobs = if request.chat_id == state.unavailable_chat_id {
+            Vec::new()
+        } else {
+            vec![HistorySyncJobSummary {
+                job_id: Uuid::new_v4().to_string(),
+                job_type: HistorySyncJobType::TimelineRepair,
+                job_status: HistorySyncJobStatus::Pending,
+                source_device_id: DeviceId(Uuid::new_v4()),
+                target_device_id: DeviceId(Uuid::new_v4()),
+                chat_id: Some(request.chat_id),
+                cursor_json: serde_json::json!({
+                    "kind": "timeline_repair",
+                    "chat_id": request.chat_id.0,
+                    "repair_from_server_seq": request.repair_from_server_seq,
+                    "repair_through_server_seq": request.repair_through_server_seq,
+                    "reason": request.reason,
+                }),
+                created_at_unix: 1,
+                updated_at_unix: 1,
+            }]
+        };
+        Json(RequestHistorySyncRepairResponse { jobs }).into_response()
+    }
+
+    #[test]
+    fn projection_failure_resolution_does_not_mask_unavailable_chat_with_other_pending_chat() {
+        let root_path = env::temp_dir().join(format!(
+            "trix-messenger-projection-repair-mask-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let unavailable_chat_id = ChatId(Uuid::new_v4());
+        let pending_chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+
+        let client = FfiMessengerClient::open(FfiMessengerOpenConfig {
+            root_path: root_path.to_string_lossy().into_owned(),
+            database_key: vec![19u8; 32],
+            base_url: "http://127.0.0.1:9".to_owned(),
+            access_token: None,
+            account_id: None,
+            device_id: None,
+            account_sync_chat_id: None,
+            device_display_name: Some("test-device".to_owned()),
+            platform: Some("test".to_owned()),
+            credential_identity: None,
+            account_root_private_key: None,
+            transport_private_key: None,
+        })
+        .unwrap();
+
+        {
+            let mut store = lock_history_store(&client.history_store).unwrap();
+            for chat_id in [unavailable_chat_id, pending_chat_id] {
+                store
+                    .apply_chat_history(&ChatHistoryResponse {
+                        chat_id,
+                        messages: vec![MessageEnvelope {
+                            message_id: MessageId(Uuid::new_v4()),
+                            chat_id,
+                            server_seq: 1,
+                            sender_account_id,
+                            sender_device_id,
+                            epoch: 1,
+                            message_kind: MessageKind::Application,
+                            content_type: ContentType::Text,
+                            ciphertext_b64: encode_b64(b"missing"),
+                            aad_json: serde_json::json!({}),
+                            created_at_unix: 1,
+                        }],
+                    })
+                    .unwrap();
+            }
+            store
+                .set_pending_history_repair_window(
+                    pending_chat_id,
+                    LocalHistoryRepairWindow {
+                        from_server_seq: 1,
+                        through_server_seq: 1,
+                    },
+                )
+                .unwrap();
+        }
+
+        let server = MockRepairServer::spawn(unavailable_chat_id);
+        let repair_client = ServerApiClient::new(&server.base_url).unwrap();
+
+        let (changed_chat_ids, repair_available) = client
+            .request_history_repairs_after_projection_failure_resolution(
+                &repair_client,
+                &[unavailable_chat_id, pending_chat_id],
+            )
+            .unwrap();
+
+        assert!(changed_chat_ids.is_empty());
+        assert!(!repair_available);
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.requested_chat_ids, vec![unavailable_chat_id]);
+        drop(state);
+
+        server.shutdown();
         fs::remove_dir_all(root_path).ok();
     }
 }

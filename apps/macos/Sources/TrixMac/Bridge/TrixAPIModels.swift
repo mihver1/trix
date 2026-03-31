@@ -76,6 +76,11 @@ enum DeviceStatus: String, Codable {
     }
 }
 
+enum ApplePushEnvironment: String, Codable {
+    case sandbox
+    case production
+}
+
 struct AccountProfileResponse: Codable {
     let accountId: UUID
     let handle: String?
@@ -123,6 +128,17 @@ struct UpdateAccountProfileRequest: Codable {
 struct DeviceListResponse: Codable {
     let accountId: UUID
     let devices: [DeviceSummary]
+}
+
+struct RegisterApplePushTokenRequest: Codable {
+    let tokenHex: String
+    let environment: ApplePushEnvironment
+}
+
+struct RegisterApplePushTokenResponse: Codable {
+    let deviceId: UUID
+    let environment: ApplePushEnvironment
+    let pushDeliveryEnabled: Bool
 }
 
 struct CreateLinkIntentResponse: Codable {

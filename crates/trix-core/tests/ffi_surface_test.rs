@@ -685,6 +685,7 @@ fn ffi_enums_cover_all_variants() {
     let _ = FfiHistorySyncJobType::InitialSync;
     let _ = FfiHistorySyncJobType::ChatBackfill;
     let _ = FfiHistorySyncJobType::DeviceRekey;
+    let _ = FfiHistorySyncJobType::TimelineRepair;
     let _ = FfiHistorySyncJobStatus::Pending;
     let _ = FfiHistorySyncJobStatus::Running;
     let _ = FfiHistorySyncJobStatus::Completed;

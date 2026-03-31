@@ -78,6 +78,7 @@ pub enum FfiHistorySyncJobType {
     InitialSync,
     ChatBackfill,
     DeviceRekey,
+    TimelineRepair,
 }
 
 #[derive(Debug, Clone, Copy, uniffi::Enum)]
@@ -4940,6 +4941,7 @@ impl From<trix_types::HistorySyncJobType> for FfiHistorySyncJobType {
             trix_types::HistorySyncJobType::InitialSync => Self::InitialSync,
             trix_types::HistorySyncJobType::ChatBackfill => Self::ChatBackfill,
             trix_types::HistorySyncJobType::DeviceRekey => Self::DeviceRekey,
+            trix_types::HistorySyncJobType::TimelineRepair => Self::TimelineRepair,
         }
     }
 }
