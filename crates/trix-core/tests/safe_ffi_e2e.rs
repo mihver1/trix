@@ -6,9 +6,16 @@
 //! Run with:
 //! `cargo test -p trix-core --test safe_ffi_e2e -- --ignored --test-threads=1`
 
-use std::{env, fs, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{Context, Result, anyhow};
+use rusqlite::{Connection, params};
+use serde_json::Value;
 use sqlx::postgres::PgPoolOptions;
 use tokio::{
     net::TcpListener,
@@ -64,6 +71,12 @@ struct SafeClientIdentity {
     root_path: String,
     database_key: Vec<u8>,
     credential_identity: Vec<u8>,
+    client: Arc<FfiMessengerClient>,
+}
+
+struct PendingSafeClientIdentity {
+    root_path: String,
+    database_key: Vec<u8>,
     client: Arc<FfiMessengerClient>,
 }
 
@@ -187,13 +200,20 @@ fn create_safe_client(
 }
 
 fn create_pending_safe_client(base_url: &str, label: &str) -> Result<Arc<FfiMessengerClient>> {
+    Ok(create_pending_safe_client_identity(base_url, label)?.client)
+}
+
+fn create_pending_safe_client_identity(
+    base_url: &str,
+    label: &str,
+) -> Result<PendingSafeClientIdentity> {
     let device_keys = FfiDeviceKeyMaterial::generate();
     let credential_identity = format!("{label}-credential").into_bytes();
     let root_path = temp_dir(&format!("{label}-pending-safe-root"))?;
-
-    Ok(FfiMessengerClient::open(FfiMessengerOpenConfig {
+    let database_key = vec![label.as_bytes().first().copied().unwrap_or(b'p'); 32];
+    let client = FfiMessengerClient::open(FfiMessengerOpenConfig {
         root_path: root_path.display().to_string(),
-        database_key: vec![label.as_bytes().first().copied().unwrap_or(b'p'); 32],
+        database_key: database_key.clone(),
         base_url: base_url.to_owned(),
         access_token: None,
         account_id: None,
@@ -201,10 +221,16 @@ fn create_pending_safe_client(base_url: &str, label: &str) -> Result<Arc<FfiMess
         account_sync_chat_id: None,
         device_display_name: Some(format!("{label}-device")),
         platform: Some("test".to_owned()),
-        credential_identity: Some(credential_identity),
+        credential_identity: Some(credential_identity.clone()),
         account_root_private_key: None,
         transport_private_key: Some(device_keys.private_key_bytes()),
-    })?)
+    })?;
+
+    Ok(PendingSafeClientIdentity {
+        root_path: root_path.display().to_string(),
+        database_key,
+        client,
+    })
 }
 
 fn reopen_safe_client(
@@ -228,6 +254,91 @@ fn reopen_safe_client(
     })?)
 }
 
+fn client_store_config(root_path: &str, database_key: Vec<u8>) -> FfiClientStoreConfig {
+    FfiClientStoreConfig {
+        database_path: format!("{root_path}/client-store.sqlite"),
+        database_key,
+        attachment_cache_root: format!("{root_path}/attachments"),
+    }
+}
+
+fn encode_hex(input: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(input.len() * 2);
+    for byte in input {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
+
+fn open_encrypted_connection(path: &Path, database_key: &[u8]) -> Result<Connection> {
+    let connection = Connection::open(path)
+        .with_context(|| format!("failed to open sqlite store {}", path.display()))?;
+    let encoded_key = encode_hex(database_key);
+    connection
+        .execute_batch(&format!(
+            "PRAGMA key = \"x'{encoded_key}'\"; PRAGMA cipher_compatibility = 4;"
+        ))
+        .with_context(|| format!("failed to configure SQLCipher for {}", path.display()))?;
+    connection
+        .query_row("SELECT count(*) FROM sqlite_master", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .with_context(|| format!("failed to validate SQLCipher key for {}", path.display()))?;
+    Ok(connection)
+}
+
+fn dematerialize_projected_message(
+    root_path: &str,
+    database_key: &[u8],
+    conversation_id: &str,
+    server_seq: u64,
+) -> Result<()> {
+    let database_path = PathBuf::from(root_path).join("client-store.sqlite");
+    let connection = open_encrypted_connection(&database_path, database_key)?;
+    let projected_json: String = connection
+        .query_row(
+            r#"
+            SELECT projected_json
+            FROM local_history_projected_messages
+            WHERE chat_id = ?1 AND server_seq = ?2
+            "#,
+            params![conversation_id, server_seq as i64],
+            |row| row.get(0),
+        )
+        .with_context(|| {
+            format!(
+                "missing projected message {server_seq} in {}",
+                database_path.display()
+            )
+        })?;
+    let mut projected_value: Value =
+        serde_json::from_str(&projected_json).context("failed to parse projected_json")?;
+    let projected_object = projected_value
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("projected_json is not a JSON object"))?;
+    projected_object.insert("materialized_body_b64".to_owned(), Value::Null);
+    let updated_projected_json =
+        serde_json::to_string(&projected_value).context("failed to serialize projected_json")?;
+    let updated = connection
+        .execute(
+            r#"
+            UPDATE local_history_projected_messages
+            SET projected_json = ?3
+            WHERE chat_id = ?1 AND server_seq = ?2
+            "#,
+            params![conversation_id, server_seq as i64, updated_projected_json],
+        )
+        .context("failed to update projected message materialization")?;
+    if updated != 1 {
+        return Err(anyhow!(
+            "expected to update one projected message row, updated {updated}"
+        ));
+    }
+    Ok(())
+}
+
 async fn wait_for_server(client: &ServerApiClient) -> Result<()> {
     for _ in 0..20 {
         if client.get_health().await.is_ok() {
@@ -249,6 +360,65 @@ async fn reset_test_database(database_url: &str) -> Result<()> {
         .await
         .with_context(|| "failed to truncate test database")?;
     pool.close().await;
+    Ok(())
+}
+
+async fn purge_server_message_for_device_gap(
+    database_url: &str,
+    device_id: &str,
+    conversation_id: &str,
+    server_seq: u64,
+) -> Result<()> {
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(database_url)
+        .await
+        .with_context(|| "failed to connect to test postgres for inbox mutation")?;
+    let device_id = Uuid::parse_str(device_id).context("invalid device_id for inbox mutation")?;
+    let conversation_id =
+        Uuid::parse_str(conversation_id).context("invalid conversation_id for inbox mutation")?;
+    let deleted = sqlx::query(
+        r#"
+        DELETE FROM device_inbox di
+        USING messages m
+        WHERE di.message_id = m.message_id
+          AND di.device_id = $1
+          AND di.chat_id = $2
+          AND m.chat_id = $2
+          AND m.server_seq = $3
+        "#,
+    )
+    .bind(device_id)
+    .bind(conversation_id)
+    .bind(i64::try_from(server_seq).context("server_seq does not fit into i64")?)
+    .execute(&pool)
+    .await
+    .with_context(|| "failed to delete missed device inbox item")?;
+    if deleted.rows_affected() != 1 {
+        return Err(anyhow!(
+            "expected to delete one device_inbox row for server_seq {server_seq}, deleted {}",
+            deleted.rows_affected()
+        ));
+    }
+    let deleted_message = sqlx::query(
+        r#"
+        DELETE FROM messages
+        WHERE chat_id = $1
+          AND server_seq = $2
+        "#,
+    )
+    .bind(conversation_id)
+    .bind(i64::try_from(server_seq).context("server_seq does not fit into i64")?)
+    .execute(&pool)
+    .await
+    .with_context(|| "failed to delete server message for device gap simulation")?;
+    pool.close().await;
+    if deleted_message.rows_affected() != 1 {
+        return Err(anyhow!(
+            "expected to delete one server message row for server_seq {server_seq}, deleted {}",
+            deleted_message.rows_affected()
+        ));
+    }
     Ok(())
 }
 
@@ -813,7 +983,9 @@ async fn safe_s4b_linked_device_history_sync_backfills_prior_messages() -> Resul
         alice.client.load_snapshot()?;
         bob.client.load_snapshot()?;
 
-        let dm = alice.client.create_conversation(dm_request(&bob.account_id))?;
+        let dm = alice
+            .client
+            .create_conversation(dm_request(&bob.account_id))?;
         bob.client.get_new_events(None)?;
 
         let sent = alice
@@ -825,7 +997,9 @@ async fn safe_s4b_linked_device_history_sync_backfills_prior_messages() -> Resul
         let linked = create_pending_safe_client(&base_url, "alice-linked-history")?;
         let pending =
             linked.complete_link_device(intent.payload, "Alice Linked History".to_owned())?;
-        alice.client.approve_linked_device(pending.device_id.clone())?;
+        alice
+            .client
+            .approve_linked_device(pending.device_id.clone())?;
 
         let linked_snapshot = linked.load_snapshot()?;
         let before_sync = linked.get_messages(dm.conversation_id.clone(), None, None)?;
@@ -845,14 +1019,19 @@ async fn safe_s4b_linked_device_history_sync_backfills_prior_messages() -> Resul
                     && message_text(message) == Some("hello before linking")
             })
             .ok_or_else(|| anyhow!("expected history sync message event"))?;
-        assert_eq!(message_text(backfilled_message), Some("hello before linking"));
+        assert_eq!(
+            message_text(backfilled_message),
+            Some("hello before linking")
+        );
         assert!(linked_batch.checkpoint.is_some());
 
         let after_sync = linked.get_messages(dm.conversation_id.clone(), None, None)?;
-        assert!(after_sync
-            .messages
-            .iter()
-            .any(|message| message_text(message) == Some("hello before linking")));
+        assert!(
+            after_sync
+                .messages
+                .iter()
+                .any(|message| message_text(message) == Some("hello before linking"))
+        );
 
         Ok(())
     })
@@ -1232,6 +1411,291 @@ async fn safe_s9_stale_checkpoint_requires_resync_and_snapshot_rebaseline() -> R
                 .and_then(|message| message_text(message))
                 == Some("message after rebaseline")
         }));
+
+        Ok(())
+    })
+    .await?;
+
+    server.shutdown().await
+}
+
+#[tokio::test]
+#[ignore = "requires local postgres"]
+async fn safe_s10_same_device_pool_recovers_unmaterialized_message_from_sibling_history()
+-> Result<()> {
+    let server = spawn_test_server().await?;
+    let base_url = server.base_url.clone();
+
+    ffi(move || {
+        let alice_primary = create_safe_client(&base_url, "alice", true)?;
+        let bob = create_safe_client(&base_url, "bob", true)?;
+        alice_primary.client.load_snapshot()?;
+        bob.client.load_snapshot()?;
+
+        let intent = alice_primary.client.create_link_device_intent()?;
+        let alice_secondary =
+            create_pending_safe_client_identity(&base_url, "alice-secondary-recovery")?;
+        let pending = alice_secondary
+            .client
+            .complete_link_device(intent.payload, "Alice Secondary Recovery".to_owned())?;
+        alice_primary
+            .client
+            .approve_linked_device(pending.device_id.clone())?;
+        alice_secondary.client.load_snapshot()?;
+
+        let dm = alice_primary
+            .client
+            .create_conversation(dm_request(&bob.account_id))?;
+        bob.client.get_new_events(None)?;
+        alice_secondary.client.load_snapshot()?;
+
+        let primary_snapshot = alice_primary.client.load_snapshot()?;
+        let first_send = alice_secondary
+            .client
+            .send_message(text_request(&dm.conversation_id, "secondary-first-gap"))?;
+        let second_send = alice_secondary
+            .client
+            .send_message(text_request(&dm.conversation_id, "secondary-second-gap"))?;
+        assert_eq!(
+            message_text(&first_send.message),
+            Some("secondary-first-gap")
+        );
+        assert_eq!(
+            message_text(&second_send.message),
+            Some("secondary-second-gap")
+        );
+
+        let primary_batch = alice_primary
+            .client
+            .get_new_events(primary_snapshot.checkpoint.clone())?;
+        let primary_texts = primary_batch
+            .events
+            .iter()
+            .filter_map(|event| event.message.as_ref())
+            .filter_map(message_text)
+            .collect::<Vec<_>>();
+        assert!(primary_texts.contains(&"secondary-first-gap"));
+        assert!(primary_texts.contains(&"secondary-second-gap"));
+
+        let secondary_root_path = alice_secondary.root_path.clone();
+        let secondary_database_key = alice_secondary.database_key.clone();
+        drop(alice_secondary);
+
+        dematerialize_projected_message(
+            &secondary_root_path,
+            &secondary_database_key,
+            &dm.conversation_id,
+            first_send.message.server_seq,
+        )?;
+        fs::remove_dir_all(PathBuf::from(&secondary_root_path).join("mls")).ok();
+
+        let secondary = reopen_safe_client(
+            &base_url,
+            &secondary_root_path,
+            secondary_database_key.clone(),
+        )?;
+        let store = FfiClientStore::open(client_store_config(
+            &secondary_root_path,
+            secondary_database_key.clone(),
+        ))?;
+        let projected = store.history_store().get_projected_messages(
+            dm.conversation_id.clone(),
+            None,
+            Some(20),
+        )?;
+        let first_projected = projected
+            .iter()
+            .find(|message| message.server_seq == first_send.message.server_seq)
+            .ok_or_else(|| anyhow!("expected first projected message in secondary store"))?;
+        assert_eq!(
+            first_projected
+                .body
+                .as_ref()
+                .and_then(|body| body.text.as_deref()),
+            None
+        );
+        let second_projected = projected
+            .iter()
+            .find(|message| message.server_seq == second_send.message.server_seq)
+            .ok_or_else(|| anyhow!("expected second projected message in secondary store"))?;
+        assert_eq!(
+            second_projected
+                .body
+                .as_ref()
+                .and_then(|body| body.text.as_deref()),
+            Some("secondary-second-gap")
+        );
+        drop(store);
+
+        let secondary_snapshot = secondary
+            .load_snapshot()
+            .context("secondary should reload snapshot and request same-pool recovery")?;
+        alice_primary
+            .client
+            .load_snapshot()
+            .context("primary should tick same-pool recovery source side after repair request")?;
+        let _resume_batch = secondary
+            .get_new_events(secondary_snapshot.checkpoint.clone())
+            .context("secondary should process same-pool recovery events")?;
+
+        let recovered_page = secondary
+            .get_messages(dm.conversation_id.clone(), None, Some(20))
+            .context("secondary should read recovered messages after same-pool resume cycle")?;
+        let recovered_first = recovered_page
+            .messages
+            .iter()
+            .find(|message| message.server_seq == first_send.message.server_seq)
+            .and_then(message_text);
+        assert_eq!(recovered_first, Some("secondary-first-gap"));
+        assert!(
+            recovered_page
+                .messages
+                .iter()
+                .any(|message| message_text(message) == Some("secondary-second-gap"))
+        );
+
+        Ok(())
+    })
+    .await?;
+
+    server.shutdown().await
+}
+
+#[tokio::test]
+#[ignore = "requires local postgres"]
+async fn safe_s11_same_device_pool_recovers_missed_offline_message_from_sibling_history()
+-> Result<()> {
+    let server = spawn_test_server().await?;
+    let base_url = server.base_url.clone();
+    let database_url = server.database_url.clone();
+
+    ffi(move || {
+        let alice_primary = create_safe_client(&base_url, "alice", true)?;
+        let bob = create_safe_client(&base_url, "bob", true)?;
+        alice_primary.client.load_snapshot()?;
+        bob.client.load_snapshot()?;
+
+        let intent = alice_primary.client.create_link_device_intent()?;
+        let alice_secondary =
+            create_pending_safe_client_identity(&base_url, "alice-secondary-offline-gap")?;
+        let pending = alice_secondary
+            .client
+            .complete_link_device(intent.payload, "Alice Secondary Offline Gap".to_owned())?;
+        alice_primary
+            .client
+            .approve_linked_device(pending.device_id.clone())?;
+        alice_secondary.client.load_snapshot()?;
+
+        let dm = alice_primary
+            .client
+            .create_conversation(dm_request(&bob.account_id))?;
+        bob.client.get_new_events(None)?;
+        let secondary_initial_snapshot = alice_secondary.client.load_snapshot()?;
+
+        let secondary_root_path = alice_secondary.root_path.clone();
+        let secondary_database_key = alice_secondary.database_key.clone();
+        let secondary_device_id = pending.device_id.clone();
+        drop(alice_secondary);
+
+        let primary_snapshot = alice_primary.client.load_snapshot()?;
+        let first_send = bob
+            .client
+            .send_message(text_request(&dm.conversation_id, "bob-offline-gap"))?;
+        assert_eq!(message_text(&first_send.message), Some("bob-offline-gap"));
+
+        let primary_batch = alice_primary
+            .client
+            .get_new_events(primary_snapshot.checkpoint.clone())?;
+        assert!(primary_batch.events.iter().any(|event| {
+            event
+                .message
+                .as_ref()
+                .and_then(|message| message_text(message))
+                == Some("bob-offline-gap")
+        }));
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("failed to build runtime for inbox mutation")?;
+        runtime.block_on(purge_server_message_for_device_gap(
+            &database_url,
+            &secondary_device_id,
+            &dm.conversation_id,
+            first_send.message.server_seq,
+        ))?;
+
+        let secondary = reopen_safe_client(
+            &base_url,
+            &secondary_root_path,
+            secondary_database_key.clone(),
+        )?;
+        let secondary_snapshot = secondary
+            .load_snapshot()
+            .context("secondary should reload snapshot after offline window")?;
+        assert_eq!(
+            secondary_snapshot.checkpoint, secondary_initial_snapshot.checkpoint,
+            "secondary should still be positioned before the missed message"
+        );
+
+        let second_send = bob
+            .client
+            .send_message(text_request(&dm.conversation_id, "bob-after-gap"))?;
+        assert_eq!(message_text(&second_send.message), Some("bob-after-gap"));
+
+        let resumed_batch = secondary
+            .get_new_events(secondary_snapshot.checkpoint.clone())
+            .context("secondary should resume from its pre-gap checkpoint")?;
+        assert!(resumed_batch.events.iter().any(|event| {
+            event
+                .message
+                .as_ref()
+                .and_then(|message| message_text(message))
+                == Some("bob-after-gap")
+        }));
+
+        let before_recovery = secondary
+            .get_messages(dm.conversation_id.clone(), None, Some(20))
+            .context("secondary should inspect local history before sibling recovery")?;
+        let missing_first = before_recovery
+            .messages
+            .iter()
+            .find(|message| message.server_seq == first_send.message.server_seq)
+            .and_then(message_text);
+        assert_eq!(missing_first, None);
+        assert!(
+            before_recovery
+                .messages
+                .iter()
+                .any(|message| message_text(message) == Some("bob-after-gap"))
+        );
+
+        alice_primary
+            .client
+            .load_snapshot()
+            .context("primary should tick sibling history export for missed offline message")?;
+        let recovery_snapshot = secondary
+            .load_snapshot()
+            .context("secondary should reload snapshot before same-pool gap recovery")?;
+        let _recovery_batch = secondary
+            .get_new_events(recovery_snapshot.checkpoint.clone())
+            .context("secondary should process same-pool history recovery after reconnect")?;
+
+        let recovered_page = secondary
+            .get_messages(dm.conversation_id.clone(), None, Some(20))
+            .context("secondary should read recovered history after same-pool gap recovery")?;
+        let recovered_first = recovered_page
+            .messages
+            .iter()
+            .find(|message| message.server_seq == first_send.message.server_seq)
+            .and_then(message_text);
+        assert_eq!(recovered_first, Some("bob-offline-gap"));
+        assert!(
+            recovered_page
+                .messages
+                .iter()
+                .any(|message| message_text(message) == Some("bob-after-gap"))
+        );
 
         Ok(())
     })
