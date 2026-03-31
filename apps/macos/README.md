@@ -11,7 +11,7 @@
 - local FFI chat list, timeline and read-state
 - text and attachment messaging with optimistic local send rows
 - profile editing, device approval/revoke and notification settings
-- background inbox polling for local notifications
+- background inbox sync via polling fallback plus APNs wake-up pushes for local notifications
 - local session persistence in `Application Support`
 - secret material persisted in `Keychain`
 - persistent local history store and sync cursor state under `Application Support/com.softgrid.trixapp/workspaces/<account-id>/`
@@ -85,5 +85,5 @@ To regenerate them, follow [docs/ffi-bindings.md](/Users/m.verhovyh/.codex/workt
 
 - group rename still needs a server/API contract; member/device admin is already wired
 - attachment preview/open flows are basic and still need more polish
-- notifications currently use polling only; there is no push infrastructure in `v0`
+- APNs delivery still depends on `trixd` being configured with valid `TRIX_APNS_*` credentials and matching app entitlements
 - the beta build script packages/signs/notarizes, but distribution and update hosting stay manual

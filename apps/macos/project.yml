@@ -44,6 +44,9 @@ targets:
       configs:
         Debug:
           ENABLE_TESTABILITY: YES
+          TRIX_APNS_ENTITLEMENT_ENVIRONMENT: development
+        Release:
+          TRIX_APNS_ENTITLEMENT_ENVIRONMENT: production
     scheme:
       gatherCoverageData: false
       testTargets:

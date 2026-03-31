@@ -14,8 +14,8 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 use trix_types::{
-    BlobUploadStatus, ChatType, ContentType, DeviceStatus, HistorySyncJobStatus,
-    HistorySyncJobType, MessageKind,
+    ApplePushEnvironment, BlobUploadStatus, ChatType, ContentType, DeviceStatus,
+    HistorySyncJobStatus, HistorySyncJobType, MessageKind,
 };
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./../../migrations");
@@ -116,6 +116,21 @@ pub struct DeviceSummaryRow {
     pub platform: String,
     pub device_status: DeviceStatus,
     pub available_key_package_count: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct RegisterApplePushTokenInput {
+    pub device_id: Uuid,
+    pub token_hex: String,
+    pub environment: ApplePushEnvironment,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeviceApnsRegistrationRow {
+    pub device_id: Uuid,
+    pub platform: String,
+    pub token_hex: String,
+    pub environment: ApplePushEnvironment,
 }
 
 #[derive(Debug)]
@@ -2152,6 +2167,154 @@ impl Database {
                 })
             })
             .collect()
+    }
+
+    pub async fn register_device_apns_token(
+        &self,
+        input: RegisterApplePushTokenInput,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            r#"
+            INSERT INTO device_push_registrations (
+                device_id,
+                provider,
+                token_hex,
+                environment,
+                updated_at,
+                last_success_at,
+                last_failure_at,
+                failure_reason,
+                disabled_at
+            )
+            VALUES ($1, 'apns', $2, $3, now(), NULL, NULL, NULL, NULL)
+            ON CONFLICT (device_id, provider)
+            DO UPDATE SET
+                token_hex = EXCLUDED.token_hex,
+                environment = EXCLUDED.environment,
+                updated_at = now(),
+                last_success_at = NULL,
+                last_failure_at = NULL,
+                failure_reason = NULL,
+                disabled_at = NULL
+            "#,
+        )
+        .bind(input.device_id)
+        .bind(&input.token_hex)
+        .bind(apple_push_environment_as_str(input.environment))
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(())
+    }
+
+    pub async fn delete_device_apns_token(&self, device_id: Uuid) -> Result<(), AppError> {
+        sqlx::query(
+            r#"
+            DELETE FROM device_push_registrations
+            WHERE device_id = $1
+              AND provider = 'apns'
+            "#,
+        )
+        .bind(device_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(())
+    }
+
+    pub async fn list_device_apns_registrations(
+        &self,
+        device_ids: &[Uuid],
+    ) -> Result<Vec<DeviceApnsRegistrationRow>, AppError> {
+        if device_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                dpr.device_id,
+                d.platform,
+                dpr.token_hex,
+                dpr.environment
+            FROM device_push_registrations dpr
+            JOIN devices d
+              ON d.device_id = dpr.device_id
+            WHERE dpr.provider = 'apns'
+              AND dpr.device_id = ANY($1)
+              AND d.device_status = 'active'::device_status
+              AND d.platform IN ('ios', 'macos')
+              AND dpr.disabled_at IS NULL
+            ORDER BY dpr.updated_at DESC
+            "#,
+        )
+        .bind(device_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(DeviceApnsRegistrationRow {
+                    device_id: row_uuid(&row, "device_id")?,
+                    platform: row_text(&row, "platform")?,
+                    token_hex: row_text(&row, "token_hex")?,
+                    environment: parse_apple_push_environment(&row_text(&row, "environment")?)?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn mark_device_apns_delivery_success(&self, device_id: Uuid) -> Result<(), AppError> {
+        sqlx::query(
+            r#"
+            UPDATE device_push_registrations
+            SET updated_at = now(),
+                last_success_at = now(),
+                last_failure_at = NULL,
+                failure_reason = NULL
+            WHERE device_id = $1
+              AND provider = 'apns'
+            "#,
+        )
+        .bind(device_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(())
+    }
+
+    pub async fn record_device_apns_delivery_failure(
+        &self,
+        device_id: Uuid,
+        reason: &str,
+        disable_registration: bool,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            r#"
+            UPDATE device_push_registrations
+            SET updated_at = now(),
+                last_failure_at = now(),
+                failure_reason = $2,
+                disabled_at = CASE
+                    WHEN $3 THEN COALESCE(disabled_at, now())
+                    ELSE NULL
+                END
+            WHERE device_id = $1
+              AND provider = 'apns'
+            "#,
+        )
+        .bind(device_id)
+        .bind(reason)
+        .bind(disable_registration)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(())
     }
 
     pub async fn get_device_transport_key_for_account(
@@ -6247,6 +6410,23 @@ fn parse_device_status(value: &str) -> Result<DeviceStatus, AppError> {
         other => Err(AppError::internal(format!(
             "unknown device status from database: {other}"
         ))),
+    }
+}
+
+fn parse_apple_push_environment(value: &str) -> Result<ApplePushEnvironment, AppError> {
+    match value {
+        "sandbox" => Ok(ApplePushEnvironment::Sandbox),
+        "production" => Ok(ApplePushEnvironment::Production),
+        other => Err(AppError::internal(format!(
+            "unknown apple push environment from database: {other}"
+        ))),
+    }
+}
+
+fn apple_push_environment_as_str(value: ApplePushEnvironment) -> &'static str {
+    match value {
+        ApplePushEnvironment::Sandbox => "sandbox",
+        ApplePushEnvironment::Production => "production",
     }
 }
 

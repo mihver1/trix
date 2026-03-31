@@ -3,11 +3,12 @@ pub mod ids;
 pub mod model;
 
 pub use api::{
-    AccountDirectoryResponse, AccountKeyPackagesResponse, AccountProfileResponse, AckInboxRequest,
-    AckInboxResponse, AdminDisableAccountRequest, AdminOverviewResponse,
+    AccountDirectoryResponse, AccountKeyPackagesResponse, AccountProfileResponse,
+    AckInboxRequest, AckInboxResponse, AdminDisableAccountRequest, AdminOverviewResponse,
     AdminRegistrationSettingsResponse, AdminServerSettingsResponse, AdminSessionRequest,
-    AdminSessionResponse, AdminUserListResponse, AdminUserSummary, AppendHistorySyncChunkRequest,
-    AppendHistorySyncChunkResponse, ApproveDeviceRequest, ApproveDeviceResponse,
+    AdminSessionResponse, AdminUserListResponse, AdminUserSummary, ApplePushEnvironment,
+    AppendHistorySyncChunkRequest, AppendHistorySyncChunkResponse, ApproveDeviceRequest,
+    ApproveDeviceResponse,
     AuthChallengeRequest, AuthChallengeResponse, AuthSessionRequest, AuthSessionResponse,
     BlobMetadataResponse, BlobUploadStatus, ChatDetailResponse, ChatDeviceSummary,
     ChatHistoryResponse, ChatListResponse, ChatMemberSummary, ChatParticipantProfileSummary,
@@ -25,10 +26,10 @@ pub use api::{
     PatchAdminRegistrationSettingsRequest, PatchAdminServerSettingsRequest,
     PatchAdminUserRequest, PublishKeyPackageItem, PublishKeyPackagesRequest,
     PublishKeyPackagesResponse, PublishedKeyPackage, RequestChatBackfillRequest,
-    RequestChatBackfillResponse, ReserveKeyPackagesRequest,
-    ReservedKeyPackage, ResetKeyPackagesResponse, RevokeDeviceRequest, RevokeDeviceResponse,
-    ServiceStatus, UpdateAccountProfileRequest, VersionResponse, WebSocketClientFrame,
-    WebSocketServerFrame,
+    RequestChatBackfillResponse, RegisterApplePushTokenRequest,
+    RegisterApplePushTokenResponse, ReserveKeyPackagesRequest, ReservedKeyPackage,
+    ResetKeyPackagesResponse, RevokeDeviceRequest, RevokeDeviceResponse, ServiceStatus,
+    UpdateAccountProfileRequest, VersionResponse, WebSocketClientFrame, WebSocketServerFrame,
 };
 pub use ids::{AccountId, ChatId, DeviceId, MessageId};
 pub use model::{

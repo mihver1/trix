@@ -205,6 +205,35 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeviceListResponse'
+  /v0/devices/push-token:
+    put:
+      operationId: registerApplePushToken
+      tags: [devices]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterApplePushTokenRequest'
+      responses:
+        '200':
+          description: APNs token registered for the authenticated device. Server-side delivery remains disabled until `trixd` has complete APNs credentials.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterApplePushTokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    delete:
+      operationId: deleteApplePushToken
+      tags: [devices]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: APNs token removed for the authenticated device
   /v0/devices/link-intents:
     post:
       operationId: createLinkIntent
@@ -1178,6 +1207,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    BadRequest:
+      description: Invalid request payload
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     Conflict:
       description: Request conflicts with current server state
       content:
@@ -1446,6 +1481,29 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DeviceSummary'
+    ApplePushEnvironment:
+      type: string
+      enum: [sandbox, production]
+    RegisterApplePushTokenRequest:
+      type: object
+      required: [token_hex, environment]
+      properties:
+        token_hex:
+          type: string
+          description: Hex-encoded APNs device token without separators.
+        environment:
+          $ref: '#/components/schemas/ApplePushEnvironment'
+    RegisterApplePushTokenResponse:
+      type: object
+      required: [device_id, environment, push_delivery_enabled]
+      properties:
+        device_id:
+          $ref: '#/components/schemas/Uuid'
+        environment:
+          $ref: '#/components/schemas/ApplePushEnvironment'
+        push_delivery_enabled:
+          type: boolean
+          description: True when `trixd` has complete APNs credentials and can actively deliver push wake-ups.
     CreateLinkIntentResponse:
       type: object
       required: [link_intent_id, qr_payload, expires_at_unix]

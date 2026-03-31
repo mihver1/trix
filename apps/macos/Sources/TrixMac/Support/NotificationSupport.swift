@@ -105,3 +105,17 @@ private extension NotificationPermissionState {
         }
     }
 }
+
+enum ApplePushRegistrationEnvironment {
+    static var current: ApplePushEnvironment {
+        #if DEBUG
+        .sandbox
+        #else
+        .production
+        #endif
+    }
+}
+
+func apnsTokenHexString(from deviceToken: Data) -> String {
+    deviceToken.map { String(format: "%02x", $0) }.joined()
+}

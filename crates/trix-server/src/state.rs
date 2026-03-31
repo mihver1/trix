@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::Result;
 use axum::http::HeaderMap;
 use tokio::sync::{Mutex, mpsc};
 use trix_types::WebSocketServerFrame;
@@ -17,6 +18,7 @@ use crate::{
     config::AppConfig,
     db::Database,
     error::AppError,
+    push::PushNotificationService,
     rate_limit::{RateLimitRule, RateLimiter},
 };
 
@@ -30,6 +32,7 @@ pub struct AppState {
     pub admin_auth: Arc<AdminAuthManager>,
     pub blob_store: Arc<LocalBlobStore>,
     pub ws_registry: Arc<WebSocketSessionRegistry>,
+    pub push_notifications: Arc<PushNotificationService>,
     pub rate_limiter: Arc<RateLimiter>,
 }
 
@@ -40,12 +43,13 @@ impl AppState {
         db: Database,
         auth: AuthManager,
         blob_store: LocalBlobStore,
-    ) -> Self {
+    ) -> Result<Self> {
         let admin_auth = AdminAuthManager::new(
             config.admin_jwt_signing_key.as_bytes(),
             Duration::from_secs(config.admin_session_ttl_seconds),
         );
-        Self {
+        let push_notifications = PushNotificationService::from_config(&config)?;
+        Ok(Self {
             config,
             build,
             started_at: Instant::now(),
@@ -54,8 +58,9 @@ impl AppState {
             admin_auth: Arc::new(admin_auth),
             blob_store: Arc::new(blob_store),
             ws_registry: Arc::new(WebSocketSessionRegistry::default()),
+            push_notifications: Arc::new(push_notifications),
             rate_limiter: Arc::new(RateLimiter::new()),
-        }
+        })
     }
 
     pub async fn authenticate_active_headers(
@@ -99,7 +104,17 @@ impl AppState {
             .list_pending_inbox_device_ids_for_chat(chat_id)
             .await
         {
+            let disconnected_device_ids = self.ws_registry.disconnected_device_ids(&device_ids).await;
             self.ws_registry.notify_inbox_many(&device_ids).await;
+            if !disconnected_device_ids.is_empty() {
+                let db = self.db.clone();
+                let push_notifications = self.push_notifications.clone();
+                tokio::spawn(async move {
+                    push_notifications
+                        .notify_inbox_for_devices(db, disconnected_device_ids)
+                        .await;
+                });
+            }
         }
     }
 }
@@ -172,6 +187,15 @@ impl WebSocketSessionRegistry {
         for device_id in device_ids {
             let _ = self.notify_inbox(*device_id).await;
         }
+    }
+
+    pub async fn disconnected_device_ids(&self, device_ids: &[Uuid]) -> Vec<Uuid> {
+        let sessions = self.sessions.lock().await;
+        device_ids
+            .iter()
+            .copied()
+            .filter(|device_id| !sessions.contains_key(device_id))
+            .collect()
     }
 
     pub async fn close_all(&self, reason: &str) {

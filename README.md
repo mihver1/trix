@@ -5,6 +5,7 @@
 Confirmed components in the repo today:
 
 - single-binary `Axum` backend with `PostgreSQL`, automatic `sqlx` migrations, local blob storage, rate limiting, cleanup jobs, and websocket inbox delivery
+- optional APNs-backed background inbox wake-up pushes for iOS and macOS devices, with message content resolved locally after sync rather than embedded in push payloads
 - `v0` API surface for auth, accounts, directory search, device linking and approval, device revoke, key packages, chats, message history, inbox lease and ack, history sync, and blob upload and download
 - shared `trix-core` library with `OpenMLS` group state, encrypted local stores, attachment helpers, device-transfer helpers, realtime and sync runtime, and `UniFFI` bindings
 - `trix-bot` and `trix-botd` for headless encrypted bot accounts, plus Rust, Python, and Go echo-bot examples
@@ -60,6 +61,8 @@ curl http://127.0.0.1:8080/v0/system/health
 ```
 
 The repo also includes a `Dockerfile` for `trixd` and a `docker-compose.yml` with `postgres` and `app` services.
+
+To enable Apple background push delivery on top of websocket/polling inbox sync, configure `TRIX_APNS_TEAM_ID`, `TRIX_APNS_KEY_ID`, `TRIX_APNS_TOPIC`, and either `TRIX_APNS_PRIVATE_KEY_PATH` or `TRIX_APNS_PRIVATE_KEY_PEM`. `trixd` sends only safe wake-up pushes (`content-available` plus a `trix.event=inbox_update` marker), so notification text stays derived on-device from synced encrypted state.
 
 ## Common Commands
 
