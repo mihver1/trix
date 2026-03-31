@@ -10,7 +10,7 @@ private struct AttachmentDraftSelection {
 struct ChatDetailView: View {
     let chatSummary: ChatSummary
     @Binding var serverBaseURL: String
-    @ObservedObject var model: AppModel
+    var model: AppModel
 
     @State private var snapshot: ChatSnapshot?
     @State private var isLoadingSnapshot = false

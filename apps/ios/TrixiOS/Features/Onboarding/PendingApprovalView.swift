@@ -4,7 +4,7 @@ private let pendingApprovalAccent = TrixTheme.accent
 
 struct PendingApprovalView: View {
     @Binding var serverBaseURL: String
-    @ObservedObject var model: AppModel
+    var model: AppModel
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var isShowingForgetAlert = false

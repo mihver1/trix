@@ -59,7 +59,7 @@ private struct ChatListSnapshot {
 
 struct DashboardView: View {
     @Binding var serverBaseURL: String
-    @ObservedObject var model: AppModel
+    var model: AppModel
 
     @State private var isShowingForgetAlert = false
     @State private var revokeCandidate: DeviceSummary?
@@ -254,7 +254,7 @@ struct DashboardView: View {
 
 private struct ChatsHomeView: View {
     @Binding var serverBaseURL: String
-    @ObservedObject var model: AppModel
+    var model: AppModel
     let onReload: () -> Void
     let onCompose: () -> Void
 
@@ -375,7 +375,7 @@ private struct ChatsHomeView: View {
 
 private struct SettingsHomeView: View {
     @Binding var serverBaseURL: String
-    @ObservedObject var model: AppModel
+    var model: AppModel
     let onReload: () -> Void
     let onEditProfile: () -> Void
     let onForgetLocalDevice: () -> Void
@@ -1015,7 +1015,7 @@ private struct EmptyChatsView: View {
 
 private struct CreateChatSheet: View {
     let serverBaseURL: String
-    @ObservedObject var model: AppModel
+    var model: AppModel
     @Binding var draft: DashboardCreateChatDraft
     let isSubmitting: Bool
     let onCancel: () -> Void

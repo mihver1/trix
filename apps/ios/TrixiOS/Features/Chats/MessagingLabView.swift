@@ -25,7 +25,7 @@ private struct LocalConversationDebugDraft {
 
 struct MessagingLabView: View {
     @Binding var serverBaseURL: String
-    @ObservedObject var model: AppModel
+    var model: AppModel
 
     @State private var createChatDraft = CreateChatDraft()
     @State private var keyPackageDebugDraft = KeyPackageDebugDraft()
