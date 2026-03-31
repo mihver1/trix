@@ -19,8 +19,7 @@ use trix_types::{
 use uuid::Uuid;
 
 use crate::{
-    DeviceKeyMaterial,
-    LocalHistoryStore, LocalOutgoingMessageApplyOutcome, LocalProjectedMessage,
+    DeviceKeyMaterial, LocalHistoryStore, LocalOutgoingMessageApplyOutcome, LocalProjectedMessage,
     LocalProjectionKind, LocalStoreApplyReport, MessageBody, MlsConversation, MlsFacade,
     PreparedLocalOutboxSend, ServerApiClient, ServerApiError, SyncStateStore, decode_b64_field,
     encode_b64,
@@ -421,8 +420,8 @@ impl SyncCoordinator {
         if sequence_no < state.last_applied_sequence_no {
             return Ok(false);
         }
-        let changed =
-            sequence_no != state.last_applied_sequence_no || (is_final && !state.applied_final_chunk);
+        let changed = sequence_no != state.last_applied_sequence_no
+            || (is_final && !state.applied_final_chunk);
         if !changed {
             return Ok(false);
         }
@@ -553,7 +552,13 @@ impl SyncCoordinator {
                 continue;
             }
             if self
-                .process_target_history_sync_job(client, store, device_keys, &job, &mut changed_chat_ids)
+                .process_target_history_sync_job(
+                    client,
+                    store,
+                    device_keys,
+                    &job,
+                    &mut changed_chat_ids,
+                )
                 .await?
             {
                 target_jobs_processed += 1;
@@ -640,7 +645,10 @@ impl SyncCoordinator {
                 device_keys,
                 &target_device_key,
             )?;
-            let is_final = chunk_index + 1 == projected_messages.chunks(HISTORY_SYNC_CHUNK_MESSAGE_LIMIT).len();
+            let is_final = chunk_index + 1
+                == projected_messages
+                    .chunks(HISTORY_SYNC_CHUNK_MESSAGE_LIMIT)
+                    .len();
             client
                 .append_history_sync_chunk(
                     &job.job_id,
@@ -671,7 +679,8 @@ impl SyncCoordinator {
             return Ok(false);
         };
         let progress = self.target_history_sync_job_state(&job.job_id);
-        if progress.applied_final_chunk && matches!(job.job_status, HistorySyncJobStatus::Completed) {
+        if progress.applied_final_chunk && matches!(job.job_status, HistorySyncJobStatus::Completed)
+        {
             return Ok(false);
         }
 
@@ -706,7 +715,11 @@ impl SyncCoordinator {
             if report.projected_messages_upserted > 0 || report.advanced_to_server_seq.is_some() {
                 changed_chat_ids.insert(chat_id);
             }
-            self.record_target_history_sync_progress(&job.job_id, chunk.sequence_no, chunk.is_final)?;
+            self.record_target_history_sync_progress(
+                &job.job_id,
+                chunk.sequence_no,
+                chunk.is_final,
+            )?;
             processed_any_chunk = true;
         }
 
@@ -1122,6 +1135,32 @@ impl SyncCoordinator {
     ) -> Result<CreateChatControlOutcome> {
         let participant_account_ids =
             normalize_account_ids(input.participant_account_ids, input.creator_account_id);
+        let direct_message_peer_account_id = match input.chat_type {
+            ChatType::Dm => Some(
+                participant_account_ids
+                    .first()
+                    .copied()
+                    .filter(|_| participant_account_ids.len() == 1)
+                    .ok_or_else(|| anyhow!("dm chats require exactly one peer account"))?,
+            ),
+            ChatType::Group => None,
+            ChatType::AccountSync => {
+                return Err(anyhow!("account sync chats are created internally"));
+            }
+        };
+        if let Some(peer_account_id) = direct_message_peer_account_id {
+            if let Some(existing) = self
+                .resolve_existing_direct_chat(
+                    client,
+                    store,
+                    input.creator_account_id,
+                    peer_account_id,
+                )
+                .await?
+            {
+                return Ok(existing);
+            }
+        }
         let group_id = input
             .group_id
             .unwrap_or_else(|| Uuid::new_v4().as_bytes().to_vec());
@@ -1194,6 +1233,19 @@ impl SyncCoordinator {
                 facade.restore_snapshot(&snapshot).with_context(|| {
                     format!("failed to rollback MLS state after server rejected create_chat: {err}")
                 })?;
+                if let Some(peer_account_id) = direct_message_peer_account_id
+                    && is_existing_direct_chat_conflict(&err)
+                    && let Some(existing) = self
+                        .resolve_existing_direct_chat(
+                            client,
+                            store,
+                            input.creator_account_id,
+                            peer_account_id,
+                        )
+                        .await?
+                {
+                    return Ok(existing);
+                }
                 return Err(err.into());
             }
         };
@@ -1784,6 +1836,70 @@ impl SyncCoordinator {
         )?;
         Ok((detail, history, report))
     }
+
+    async fn resolve_existing_direct_chat(
+        &mut self,
+        client: &ServerApiClient,
+        store: &mut LocalHistoryStore,
+        self_account_id: AccountId,
+        peer_account_id: AccountId,
+    ) -> Result<Option<CreateChatControlOutcome>> {
+        if let Some(chat_id) = store.find_active_direct_chat(self_account_id, peer_account_id) {
+            return self
+                .existing_chat_control_outcome_from_store(
+                    store,
+                    chat_id,
+                    LocalStoreApplyReport {
+                        chats_upserted: 0,
+                        messages_upserted: 0,
+                        changed_chat_ids: Vec::new(),
+                    },
+                )
+                .map(Some);
+        }
+
+        let chats = client.list_chats().await?;
+        let mut report = store.apply_chat_list(&chats)?;
+        let Some(chat_id) = store.find_active_direct_chat(self_account_id, peer_account_id) else {
+            return Ok(None);
+        };
+
+        let (detail, _history, refresh_report) = self
+            .refresh_chat_state(client, store, chat_id, None)
+            .await?;
+        merge_store_report(&mut report, refresh_report);
+        Ok(Some(self.existing_chat_control_outcome_from_detail(
+            store, detail, report,
+        )?))
+    }
+
+    fn existing_chat_control_outcome_from_store(
+        &self,
+        store: &LocalHistoryStore,
+        chat_id: ChatId,
+        report: LocalStoreApplyReport,
+    ) -> Result<CreateChatControlOutcome> {
+        let detail = store
+            .get_chat(chat_id)
+            .ok_or_else(|| anyhow!("existing chat {} is missing from local store", chat_id.0))?;
+        self.existing_chat_control_outcome_from_detail(store, detail, report)
+    }
+
+    fn existing_chat_control_outcome_from_detail(
+        &self,
+        store: &LocalHistoryStore,
+        detail: ChatDetailResponse,
+        report: LocalStoreApplyReport,
+    ) -> Result<CreateChatControlOutcome> {
+        Ok(CreateChatControlOutcome {
+            chat_id: detail.chat_id,
+            chat_type: detail.chat_type,
+            epoch: detail.epoch,
+            mls_group_id: store.chat_mls_group_id(detail.chat_id).unwrap_or_default(),
+            report,
+            projected_messages: store.get_projected_messages(detail.chat_id, None, None),
+        })
+    }
 }
 
 async fn reserve_initial_chat_packages(
@@ -1844,6 +1960,17 @@ fn normalize_device_ids(device_ids: Vec<DeviceId>, exclude: DeviceId) -> Vec<Dev
 
 fn is_epoch_mismatch_error(error: &ServerApiError) -> bool {
     matches!(error, ServerApiError::Api { status: 409, message, .. } if message.contains("epoch"))
+}
+
+fn is_existing_direct_chat_conflict(error: &ServerApiError) -> bool {
+    matches!(
+        error,
+        ServerApiError::Api {
+            status: 409,
+            message,
+            ..
+        } if message == "dm chat already exists"
+    )
 }
 
 fn is_chat_bootstrap_recovery_candidate(error: &anyhow::Error) -> bool {
@@ -2525,8 +2652,7 @@ fn next_history_sync_sequence_no(metadata: Option<&HistorySyncExportMetadata>) -
     if metadata.projected_message_count == 0 {
         return 1;
     }
-    (metadata.projected_message_count as u64)
-        .div_ceil(metadata.chunk_message_limit.max(1) as u64)
+    (metadata.projected_message_count as u64).div_ceil(metadata.chunk_message_limit.max(1) as u64)
         + 1
 }
 
@@ -2555,9 +2681,10 @@ mod tests {
     use serde_json::json;
     use tokio::{net::TcpListener, task::JoinHandle};
     use trix_types::{
-        AccountId, ChatDetailResponse, ChatId, ChatType, ContentType, CreateMessageRequest,
-        CreateMessageResponse, DeviceId, ErrorResponse, InboxItem, MessageEnvelope, MessageId,
-        MessageKind, PublishKeyPackagesRequest, PublishKeyPackagesResponse, PublishedKeyPackage,
+        AccountId, ChatDetailResponse, ChatId, ChatParticipantProfileSummary, ChatSummary,
+        ChatType, ContentType, CreateMessageRequest, CreateMessageResponse, DeviceId,
+        ErrorResponse, InboxItem, MessageEnvelope, MessageId, MessageKind,
+        PublishKeyPackagesRequest, PublishKeyPackagesResponse, PublishedKeyPackage,
     };
     use uuid::Uuid;
 
@@ -2898,6 +3025,69 @@ mod tests {
         );
 
         cleanup_sqlite_test_path(&state_path);
+    }
+
+    #[tokio::test]
+    async fn create_chat_control_returns_existing_local_direct_chat() {
+        let existing_chat_id = ChatId(Uuid::new_v4());
+        let self_account_id = AccountId(Uuid::new_v4());
+        let peer_account_id = AccountId(Uuid::new_v4());
+        let self_device_id = DeviceId(Uuid::new_v4());
+        let mut coordinator = SyncCoordinator::new();
+        let mut store = LocalHistoryStore::new();
+        let mut facade = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+
+        store
+            .apply_chat_list(&trix_types::ChatListResponse {
+                chats: vec![ChatSummary {
+                    chat_id: existing_chat_id,
+                    chat_type: ChatType::Dm,
+                    title: None,
+                    last_server_seq: 7,
+                    epoch: 2,
+                    pending_message_count: 0,
+                    last_message: None,
+                    participant_profiles: vec![
+                        ChatParticipantProfileSummary {
+                            account_id: self_account_id,
+                            handle: Some("alice".to_owned()),
+                            profile_name: "Alice".to_owned(),
+                            profile_bio: None,
+                        },
+                        ChatParticipantProfileSummary {
+                            account_id: peer_account_id,
+                            handle: Some("bob".to_owned()),
+                            profile_name: "Bob".to_owned(),
+                            profile_bio: None,
+                        },
+                    ],
+                }],
+            })
+            .unwrap();
+
+        let outcome = coordinator
+            .create_chat_control(
+                &ServerApiClient::new("http://127.0.0.1:9").unwrap(),
+                &mut store,
+                &mut facade,
+                super::CreateChatControlInput {
+                    creator_account_id: self_account_id,
+                    creator_device_id: self_device_id,
+                    chat_type: ChatType::Dm,
+                    title: None,
+                    participant_account_ids: vec![peer_account_id],
+                    group_id: None,
+                    commit_aad_json: None,
+                    welcome_aad_json: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.chat_id, existing_chat_id);
+        assert_eq!(outcome.chat_type, ChatType::Dm);
+        assert_eq!(outcome.epoch, 2);
+        assert_eq!(outcome.projected_messages, Vec::new());
     }
 
     #[test]
