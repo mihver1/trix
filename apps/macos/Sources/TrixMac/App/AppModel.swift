@@ -1941,8 +1941,8 @@ final class AppModel: ObservableObject {
 
             await notificationCoordinator.postMessageNotification(
                 identifier: "chat-\(chatId.uuidString)-\(currentItem.lastServerSeq)",
-                title: currentItem.displayTitle,
-                body: currentItem.previewText ?? "You have a new message."
+                title: "\(currentItem.displayTitle): New message",
+                body: currentItem.previewText ?? ""
             )
         }
     }
