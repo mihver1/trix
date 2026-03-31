@@ -264,6 +264,20 @@ If the approving device uploaded a transfer bundle, the target device can fetch 
 
 That route is only available to the target device itself after it can authenticate.
 
+## History Sync Backfill And Repair
+
+History sync is no longer only the initial link-device catch-up path. The current backend exposes two authenticated recovery triggers for already-linked devices:
+
+- `POST /v0/history-sync/jobs/request` with `{ "chat_id": ... }` schedules a `chat_backfill` job from one sibling active device to the current target device for that chat.
+- `POST /v0/history-sync/jobs:request-repair` with `{ "chat_id", "repair_from_server_seq", "repair_through_server_seq", "reason" }` schedules bounded `timeline_repair` jobs from every sibling active device for the requested `server_seq` window.
+
+Operational behavior:
+
+- `timeline_repair` is intended for targeted replay after projected gaps, unmaterialized application messages, or projection failures, not for whole-account rebootstrap.
+- overlapping pending repair requests coalesce server-side to the smallest requested `repair_from_server_seq` and the largest requested `repair_through_server_seq`.
+- if the target device has no sibling active device to source history from, `/v0/history-sync/jobs/request` returns `404` and `/v0/history-sync/jobs:request-repair` returns `{ "jobs": [] }`.
+- `TRIX_HISTORY_SYNC_RETENTION_SECONDS` governs these repair/backfill jobs and their stored encrypted chunks just like initial sync jobs.
+
 ### Push Registration For iOS And macOS
 
 After a device is active and authenticated, iOS/macOS register APNs tokens with:

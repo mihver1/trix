@@ -172,7 +172,7 @@ iOS uses `poll_once()` only.
 | 3 | Get history sync chunks | Chunks retrievable | · | · | · | · |
 | 4 | Complete history sync job | Job status → completed | · | ✓ | · | · |
 
-**Gap**: Only macOS implements history sync job listing/completion.
+**Gap**: Only macOS currently implements history sync job listing/completion in a native client. The backend and shared core also support `POST /v0/history-sync/jobs/request` and `POST /v0/history-sync/jobs:request-repair`, and the shared `safe_ffi` e2e suite now covers same-pool repair recovery, but no native client exposes a first-class manual repair trigger yet.
 Append/get chunks are not used by any client.
 
 ---

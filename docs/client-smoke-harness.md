@@ -49,7 +49,7 @@ List everything the harness knows about:
 Current suites:
 
 - `client-scenarios`: `trix-core` FFI client lifecycle, chat creation, text delivery, read state, realtime, and Android-style outbox flow.
-- `safe-ffi`: high-level messenger client flows, paging, attachments, device linking, member and device removal, restart/reopen persistence.
+- `safe-ffi`: high-level messenger client flows, paging, attachments, device linking, member and device removal, restart/reopen persistence, and same-pool history-repair recovery.
 - `bot-runtime`: headless bot runtime smoke coverage, websocket to polling fallback, text reply loop, and attachment download.
 - `ios-unit`: native iOS unit tests through `xcodebuild test` on an available iPhone simulator.
 - `ios-server`: native iOS server-backed smoke through `xcodebuild test` against a live backend on `TRIX_IOS_SERVER_SMOKE_BASE_URL` (defaults to `http://localhost:8080`), including server-backed bootstrap/fixture assertions that are intentionally excluded from `ios-unit`.
@@ -78,7 +78,7 @@ The harness intentionally aligns with the manual checklist in [`docs/client-test
 Practical mapping today:
 
 - `client-scenarios` covers the basic account bootstrap, profile update, device-link smoke, DM creation, message send/receive, read-state, realtime inbox, and Android outbox scenarios.
-- `safe-ffi` covers the richer safe-messenger flows that native clients are converging on: snapshots, pagination, attachments, chat scoping, device approval/revoke, member removal, device removal, and reopen persistence.
+- `safe-ffi` covers the richer safe-messenger flows that native clients are converging on: snapshots, pagination, attachments, chat scoping, device approval/revoke, member removal, device removal, reopen persistence, and targeted history-repair recovery after projected gaps or projection failures.
 - `bot-runtime` covers the lowest-friction end-to-end external client path and is useful as a regression canary for inbox delivery, eventing, and attachment round-trips.
 - `ios-unit` covers the iOS-native bridge and model layer without requiring a live backend: onboarding/edit forms, link payload parsing, message-body serialization, attachment filename normalization, safe diagnostic log redaction/rotation, and pending-approval bootstrap state.
 - `ios-server` covers live iOS user scenarios against the local server: bootstrap/auth, link intent, DM delivery, cross-device DM delivery, group chat delivery, and deterministic seeded bootstrap/message-snapshot assertions used by the UI harness.
@@ -90,6 +90,7 @@ Practical mapping today:
 ## Known Gaps
 
 - iOS UI smoke still does not cover attachment send/download, group membership mutations, or background/resume behavior.
+- no smoke suite currently drives native UI affordances for manual chat-backfill or manual timeline-repair triggers; that recovery path is covered today at the shared `safe-ffi` layer.
 - The harness does not boot a simulator or emulator for you. `android-ui` still expects an attached device or running emulator.
 - `ios-ui` expects an available iPhone simulator plus a reachable backend on `TRIX_IOS_UI_TEST_BASE_URL`.
 - `android-unit` still expects the normal Android/Gradle toolchain plus the Rust host toolchain used for checked-in UniFFI regeneration, but it no longer needs the Android NDK.

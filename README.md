@@ -5,7 +5,7 @@
 Confirmed components in the repo today:
 
 - single-binary `Axum` backend with `PostgreSQL`, automatic `sqlx` migrations, local blob storage, rate limiting, cleanup jobs, websocket inbox delivery, a separate `/v0/admin/*` control surface, and optional APNs-backed background inbox wake-up pushes for iOS and macOS devices
-- `v0` API surface for auth, accounts, directory search, device linking and approval, transfer bundles, device revoke, key packages, chats, message history, inbox lease and ack, history sync, blob upload and download, and operator admin/session/settings/users flows
+- `v0` API surface for auth, accounts, directory search, device linking and approval, transfer bundles, device revoke, key packages, chats, message history, inbox lease and ack, history sync backfill and repair, blob upload and download, and operator admin/session/settings/users flows
 - shared `trix-core` library with `OpenMLS` group state, encrypted local stores, attachment helpers, device-transfer helpers, safe messenger snapshots/timelines, realtime and sync runtime, and `UniFFI` bindings
 - Android now routes primary messaging flows through the shared messenger core; iOS ships the consumer chat surface with projected timelines plus file/photo/video attachments; macOS ships the beta client and a separate macOS admin app
 - `trix-bot` and `trix-botd` for headless encrypted bot accounts, plus Rust, Python, and Go echo-bot examples
