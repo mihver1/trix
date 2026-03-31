@@ -73,6 +73,9 @@ cd apps/ios
 # Use a monotonically increasing build number for every upload.
 export TRIX_IOS_BUILD_NUMBER=42
 
+# If you omit TRIX_IOS_BUILD_NUMBER, the script falls back to a
+# YYYYmmddHHMM timestamp for ad hoc local archives.
+
 # Archive + export only.
 ./scripts/build-testflight.sh
 
@@ -111,6 +114,7 @@ The script also:
 - uses `-allowProvisioningUpdates` by default unless `TRIX_IOS_ALLOW_PROVISIONING_UPDATES=0`
 - supports `TRIX_TESTFLIGHT_INTERNAL_ONLY=1` to mark the upload for internal TestFlight testing only
 - can re-validate or upload an existing `.ipa` with `--ipa path/to/Trix.ipa`
+- honors an explicit `TRIX_IOS_BUILD_NUMBER`; if the env var is unset, archive builds fall back to a generated timestamp-based `CURRENT_PROJECT_VERSION`
 
 With a fresh archive, `--upload` uses the same `xcodebuild -exportArchive` upload path as `apps/macos/scripts/archive-testflight.sh`. If Xcode is signed in locally, you can use that account state directly without checking any private credentials into git.
 

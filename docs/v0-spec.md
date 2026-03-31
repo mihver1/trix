@@ -350,7 +350,7 @@ Fields:
 
 ### History Sync Job
 
-Tracks background backfill from one trusted device to another.
+Tracks background backfill or targeted replay from one trusted device to another.
 
 Fields:
 
@@ -359,11 +359,13 @@ Fields:
 - `source_device_id`
 - `target_device_id`
 - `chat_id`, optional
-- `job_type` enum: `initial_sync`, `chat_backfill`, `device_rekey`
+- `job_type` enum: `initial_sync`, `chat_backfill`, `device_rekey`, `timeline_repair`
 - `job_status` enum: `pending`, `running`, `completed`, `failed`, `canceled`
 - `cursor_json`
 - `created_at`
 - `updated_at`
+
+`timeline_repair` jobs replay a bounded `server_seq` window for one chat after a client detects a projected gap, an unmaterialized application message, or a projection failure.
 
 ## PostgreSQL Schema Outline
 
@@ -742,6 +744,39 @@ Rules:
 
 - `role=source` returns jobs where the current device must produce encrypted history data
 - `role=target` returns jobs where the current device waits for encrypted history data from another trusted device
+
+### `POST /v0/history-sync/jobs/request`
+
+Schedules a fresh `chat_backfill` job for one chat from another active device in the same account.
+
+Request:
+
+- `chat_id`
+
+Rules:
+
+- caller must be an authenticated active device for an account that still has at least one sibling active device
+- the target device must already be an active member of the requested chat
+- server picks a sibling active device as the source and returns `404` if none are available
+
+### `POST /v0/history-sync/jobs:request-repair`
+
+Schedules one or more bounded `timeline_repair` jobs for a specific chat.
+
+Request:
+
+- `chat_id`
+- inclusive `repair_from_server_seq`
+- inclusive `repair_through_server_seq`
+- caller-supplied `reason`
+
+Rules:
+
+- `repair_from_server_seq` must be at least `1`
+- `repair_through_server_seq` must be greater than or equal to `repair_from_server_seq`
+- the current shared core uses this path automatically after projected gaps, unmaterialized application messages, or projection failures
+- server fans the request out to every sibling active device and coalesces overlapping pending repair windows instead of creating duplicate pending jobs
+- if no sibling active source device exists, the response succeeds with an empty `jobs` array
 
 ### `POST /v0/history-sync/jobs/{job_id}/chunks`
 
@@ -1138,6 +1173,7 @@ Compatibility-only client frames accepted as no-ops in `v0`:
 
 - Treat server history as opaque encrypted transport data.
 - Trust a chat only if local MLS state and current device log agree.
+- If a projected timeline has a bounded gap or a projection failure, request targeted `timeline_repair` rather than forcing a whole-account reset.
 - Do not show a newly linked device as fully synchronized until:
   - account sync group joined
   - active chat memberships established

@@ -63,6 +63,14 @@ The current admin API is stateless except for the issued JWT. Routes live under 
 
 These control server-side garbage collection for auth challenges, device-link artifacts, single-consume transfer bundles, history-sync ciphertext, staged blob uploads, and shutdown drain behavior.
 
+## History Sync Orchestration
+
+- `TRIX_HISTORY_SYNC_RETENTION_SECONDS` applies to all history-sync job families: `initial_sync`, explicit `chat_backfill`, `device_rekey`, and targeted `timeline_repair`.
+- `POST /v0/history-sync/jobs/request` lets an authenticated target device ask one sibling active device for a fresh `chat_backfill` job for a specific chat.
+- `POST /v0/history-sync/jobs:request-repair` lets an authenticated target device ask all sibling active devices for a bounded replay window when local history projection detects a gap, an unmaterialized application message, or a projection failure.
+- overlapping pending `timeline_repair` requests are coalesced server-side by widening the stored `repair_from_server_seq` / `repair_through_server_seq` window instead of creating duplicate pending jobs.
+- if an account has no other active source device, `/v0/history-sync/jobs/request` returns `404` and `/v0/history-sync/jobs:request-repair` returns an empty `jobs` array.
+
 ## Admin API Summary
 
 Current operator routes:
