@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
@@ -18,9 +18,9 @@ use uuid::Uuid;
 
 use crate::{
     AttachmentMessageBody, AuthChallengeMaterial, CompleteLinkIntentParams, CreateChatControlInput,
-    DeviceKeyMaterial, FfiChatType, FfiContentType, FfiDeviceStatus, FfiReactionAction,
-    FfiReceiptType, LocalChatListItem, LocalHistoryStore, LocalTimelineItem, MessageBody,
-    MlsFacade, ModifyChatDevicesControlInput, ModifyChatMembersControlInput,
+    DeviceKeyMaterial, FfiChatType, FfiContentType, FfiDeviceStatus, FfiMessageReactionSummary,
+    FfiReactionAction, FfiReceiptType, LocalChatListItem, LocalHistoryStore, LocalTimelineItem,
+    MessageBody, MlsFacade, ModifyChatDevicesControlInput, ModifyChatMembersControlInput,
     PublishKeyPackageMaterial, ReactionAction, ReceiptType, SendMessageOutcome, ServerApiClient,
     ServerApiError, SyncCoordinator, account_bootstrap_message, create_device_transfer_bundle,
     decrypt_attachment_payload, decrypt_device_transfer_bundle, device_revoke_message, encode_b64,
@@ -160,6 +160,9 @@ pub struct FfiMessengerMessageRecord {
     pub content_type: FfiContentType,
     pub body: Option<FfiMessengerMessageBody>,
     pub preview_text: String,
+    pub receipt_status: Option<FfiReceiptType>,
+    pub reactions: Vec<FfiMessageReactionSummary>,
+    pub is_visible_in_timeline: bool,
     pub created_at_unix: u64,
 }
 
@@ -430,6 +433,7 @@ pub struct FfiMessengerClient {
     state_path: String,
     mls_storage_root: String,
     attachment_cache_root: String,
+    backfill_requested_chats: Mutex<HashSet<ChatId>>,
 }
 
 #[uniffi::export]
@@ -516,6 +520,7 @@ impl FfiMessengerClient {
             state_path: state_path.to_string_lossy().into_owned(),
             mls_storage_root: mls_storage_root.to_string_lossy().into_owned(),
             attachment_cache_root: attachment_cache_root.to_string_lossy().into_owned(),
+            backfill_requested_chats: Mutex::new(HashSet::new()),
         }))
     }
 
@@ -654,7 +659,9 @@ impl FfiMessengerClient {
                     self.refresh_chat_details(&client, &active_inbox_changed_chat_ids)?;
                     {
                         let mut store = lock_history_store(&self.history_store)?;
-                        store.apply_inbox_items(&lease.items).map_err(map_domain_error)?;
+                        store
+                            .apply_inbox_items(&lease.items)
+                            .map_err(map_domain_error)?;
                     }
                     self.project_changed_chats(&active_inbox_changed_chat_ids)?;
                 }
@@ -1526,8 +1533,31 @@ impl FfiMessengerClient {
             }
         }
         let history_sync_changed_chat_ids = self.process_history_sync_jobs(&client)?;
+        self.request_backfill_for_unavailable_chats_best_effort(&client);
         self.with_mls_facade(|facade| self.ensure_device_key_packages(&client, facade))?;
         Ok(history_sync_changed_chat_ids)
+    }
+
+    fn request_backfill_for_unavailable_chats_best_effort(&self, client: &ServerApiClient) {
+        let chats_needing_backfill = match lock_history_store(&self.history_store) {
+            Ok(store) => store.chats_with_unavailable_messages(),
+            Err(_) => return,
+        };
+        let mut requested = match self.backfill_requested_chats.lock() {
+            Ok(guard) => guard,
+            Err(_) => return,
+        };
+        for chat_id in chats_needing_backfill {
+            if requested.contains(&chat_id) {
+                continue;
+            }
+            match self.runtime.block_on(client.request_chat_backfill(chat_id)) {
+                Ok(_) => {
+                    requested.insert(chat_id);
+                }
+                Err(_) => {}
+            }
+        }
     }
 
     fn maybe_import_transfer_bundle(&self) -> Result<(), FfiMessengerError> {
@@ -1955,6 +1985,10 @@ impl FfiMessengerClient {
             .as_ref()
             .map(preview_text_for_body)
             .unwrap_or_else(|| "Message".to_owned());
+        let is_visible_in_timeline = !matches!(
+            body,
+            Some(MessageBody::Reaction(_) | MessageBody::Receipt(_))
+        );
         let safe_body = body
             .map(|body| self.safe_message_body_from(chat_id, message.message_id, body))
             .transpose()?;
@@ -1970,6 +2004,9 @@ impl FfiMessengerClient {
             content_type: message.content_type.into(),
             body: safe_body,
             preview_text,
+            receipt_status: None,
+            reactions: Vec::new(),
+            is_visible_in_timeline,
             created_at_unix: message.created_at_unix,
         })
     }
@@ -1995,6 +2032,13 @@ impl FfiMessengerClient {
             content_type: item.content_type.into(),
             body,
             preview_text: item.preview_text,
+            receipt_status: item.receipt_status.map(receipt_type_to_ffi),
+            reactions: item
+                .reactions
+                .into_iter()
+                .map(reaction_summary_to_ffi)
+                .collect(),
+            is_visible_in_timeline: item.is_visible_in_timeline,
             created_at_unix: item.created_at_unix,
         })
     }
@@ -2917,6 +2961,19 @@ fn reaction_action_to_ffi(value: ReactionAction) -> FfiReactionAction {
     }
 }
 
+fn reaction_summary_to_ffi(value: crate::LocalMessageReactionSummary) -> FfiMessageReactionSummary {
+    FfiMessageReactionSummary {
+        emoji: value.emoji,
+        reactor_account_ids: value
+            .reactor_account_ids
+            .into_iter()
+            .map(|account_id| account_id.0.to_string())
+            .collect(),
+        count: value.count,
+        includes_self: value.includes_self,
+    }
+}
+
 fn ffi_reaction_action_to_model(value: FfiReactionAction) -> ReactionAction {
     match value {
         FfiReactionAction::Add => ReactionAction::Add,
@@ -3268,6 +3325,79 @@ mod tests {
         queue_pending_inbox_acks(&mut state, [8, 10, 7]);
 
         assert_eq!(state.pending_inbox_ack_ids, vec![7, 8, 9, 10]);
+    }
+
+    #[test]
+    fn timeline_item_to_message_record_preserves_message_decorations() {
+        let root_path =
+            env::temp_dir().join(format!("trix-messenger-decorations-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let client = FfiMessengerClient::open(FfiMessengerOpenConfig {
+            root_path: root_path.to_string_lossy().into_owned(),
+            database_key: vec![7u8; 32],
+            base_url: "http://127.0.0.1:8080".to_owned(),
+            access_token: None,
+            account_id: Some(Uuid::new_v4().to_string()),
+            device_id: Some(Uuid::new_v4().to_string()),
+            account_sync_chat_id: None,
+            device_display_name: Some("test-device".to_owned()),
+            platform: Some("test".to_owned()),
+            credential_identity: None,
+            account_root_private_key: None,
+            transport_private_key: None,
+        })
+        .unwrap();
+
+        let chat_id = ChatId(Uuid::new_v4());
+        let self_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+
+        let record = client
+            .timeline_item_to_message_record(
+                chat_id,
+                LocalTimelineItem {
+                    server_seq: 8,
+                    message_id: MessageId(Uuid::new_v4()),
+                    sender_account_id: self_account_id,
+                    sender_device_id,
+                    sender_display_name: "Me".to_owned(),
+                    is_outgoing: true,
+                    epoch: 1,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    projection_kind: crate::LocalProjectionKind::ApplicationMessage,
+                    body: Some(MessageBody::Text(crate::TextMessageBody {
+                        text: "hello".to_owned(),
+                    })),
+                    body_parse_error: None,
+                    preview_text: "hello".to_owned(),
+                    receipt_status: Some(crate::ReceiptType::Read),
+                    reactions: vec![crate::LocalMessageReactionSummary {
+                        emoji: "🔥".to_owned(),
+                        reactor_account_ids: vec![self_account_id],
+                        count: 1,
+                        includes_self: true,
+                    }],
+                    is_visible_in_timeline: true,
+                    merged_epoch: None,
+                    created_at_unix: 8,
+                },
+            )
+            .unwrap();
+
+        assert!(matches!(record.receipt_status, Some(FfiReceiptType::Read)));
+        assert!(record.is_visible_in_timeline);
+        assert_eq!(record.reactions.len(), 1);
+        assert_eq!(record.reactions[0].emoji, "🔥");
+        assert_eq!(record.reactions[0].count, 1);
+        assert!(record.reactions[0].includes_self);
+        assert_eq!(
+            record.reactions[0].reactor_account_ids,
+            vec![self_account_id.0.to_string()]
+        );
+
+        fs::remove_dir_all(root_path).ok();
     }
 
     #[test]

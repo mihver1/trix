@@ -598,6 +598,17 @@ pub struct CompleteHistorySyncJobResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestChatBackfillRequest {
+    pub chat_id: ChatId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestChatBackfillResponse {
+    pub job_id: String,
+    pub source_device_id: DeviceId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdminSessionRequest {
     pub username: String,
     pub password: String,

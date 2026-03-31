@@ -29,9 +29,11 @@ import chat.trix.android.core.ffi.FfiLeaseInboxResponse
 import chat.trix.android.core.ffi.FfiLocalTimelineItem
 import chat.trix.android.core.ffi.FfiMessageBody
 import chat.trix.android.core.ffi.FfiMessageBodyKind
+import chat.trix.android.core.ffi.FfiMessageReactionSummary
 import chat.trix.android.core.ffi.FfiModifyChatMembersControlInput
 import chat.trix.android.core.ffi.FfiMlsConversation
 import chat.trix.android.core.ffi.FfiMlsFacade
+import chat.trix.android.core.ffi.FfiReactionAction
 import chat.trix.android.core.ffi.FfiReceiptType
 import chat.trix.android.core.ffi.FfiSendMessageInput
 import chat.trix.android.core.ffi.FfiServerApiClient
@@ -424,6 +426,64 @@ class ChatRepository(
                     fileName = stagedAttachment.fileName,
                     widthPx = stagedAttachment.widthPx?.toUInt(),
                     heightPx = stagedAttachment.heightPx?.toUInt(),
+                ),
+                queuedAtUnix = currentUnixSeconds().toULong(),
+            )
+            flushPendingOutboxNow(chatId)
+
+            buildMutationConversationResult(
+                unavailableMessage = "Conversation $chatId is no longer available",
+                buildOverview = ::buildOverview,
+                buildConversation = { buildConversation(chatId) },
+                createResult = ::ChatSendResult,
+            )
+        }
+    }
+
+    suspend fun sendReaction(
+        chatId: String,
+        targetMessageId: String,
+        emoji: String,
+        removeExisting: Boolean,
+    ): ChatSendResult = withContext(Dispatchers.IO) {
+        val normalizedTargetMessageId = targetMessageId.trim()
+        val normalizedEmoji = emoji.trim()
+        if (normalizedTargetMessageId.isEmpty() || normalizedEmoji.isEmpty()) {
+            throw IOException("Reaction is incomplete")
+        }
+
+        runFfi("Failed to send reaction") {
+            val store = historyStore()
+            store.enqueueOutboxMessage(
+                chatId = chatId,
+                senderAccountId = session.localState.accountId,
+                senderDeviceId = session.localState.deviceId,
+                messageId = UUID.randomUUID().toString(),
+                body = canonicalizeMessageBody(
+                    FfiMessageBody(
+                        kind = FfiMessageBodyKind.REACTION,
+                        text = null,
+                        targetMessageId = normalizedTargetMessageId,
+                        emoji = normalizedEmoji,
+                        reactionAction = if (removeExisting) {
+                            FfiReactionAction.REMOVE
+                        } else {
+                            FfiReactionAction.ADD
+                        },
+                        receiptType = null,
+                        receiptAtUnix = null,
+                        blobId = null,
+                        mimeType = null,
+                        sizeBytes = null,
+                        sha256 = null,
+                        fileName = null,
+                        widthPx = null,
+                        heightPx = null,
+                        fileKey = null,
+                        nonce = null,
+                        eventType = null,
+                        eventJson = null,
+                    ),
                 ),
                 queuedAtUnix = currentUnixSeconds().toULong(),
             )
@@ -1037,8 +1097,7 @@ class ChatRepository(
                 sourcePriority = 0,
                 sourceOrder = index,
                 message = mapTimelineMessage(message),
-                receiptTargetMessageId = receiptTargetMessageId(message),
-                receiptStatus = receiptStatus(message),
+                isVisibleInTimeline = message.isVisibleInTimeline,
             )
         } + pendingOutboxItems.mapIndexed { index, message ->
             TimedChatTimelineMessage(
@@ -1046,8 +1105,7 @@ class ChatRepository(
                 sourcePriority = 1,
                 sourceOrder = index,
                 message = mapOutboxMessage(message),
-                receiptTargetMessageId = receiptTargetMessageId(message),
-                receiptStatus = receiptStatus(message),
+                isVisibleInTimeline = isVisibleOutboxMessage(message),
             )
         }
 
@@ -1112,14 +1170,11 @@ class ChatRepository(
             .asReversed()
             .firstOrNull { item ->
                 !item.isOutgoing &&
+                    item.isVisibleInTimeline &&
                     item.serverSeq.toLong() <= readCursorServerSeq &&
-                    item.contentType != FfiContentType.RECEIPT &&
-                    item.body?.kind != FfiMessageBodyKind.RECEIPT
+                    item.serverSeq.toLong() > (previousReadCursorServerSeq ?: 0L)
             }
             ?: return
-        if (previousReadCursorServerSeq != null && targetMessage.serverSeq.toLong() <= previousReadCursorServerSeq) {
-            return
-        }
 
         val duplicateQueuedReceipt = store.listOutboxMessages(chatId).any { queued ->
             val queuedBody = queued.body ?: return@any false
@@ -1556,6 +1611,8 @@ class ChatRepository(
             note = timelineNote(message),
             contentType = message.contentType,
             attachment = attachment,
+            receiptStatus = message.receiptStatus?.let(::receiptStatusFromFfi),
+            reactions = message.reactions.map(::mapReactionSummary),
         )
     }
 
@@ -1577,6 +1634,8 @@ class ChatRepository(
             note = note,
             contentType = message.body?.let(::ffiContentTypeForBody) ?: FfiContentType.ATTACHMENT,
             attachment = null,
+            receiptStatus = null,
+            reactions = emptyList(),
         )
     }
 
@@ -1676,55 +1735,40 @@ class ChatRepository(
     private fun visibleTimelineItems(
         timelineItems: List<FfiLocalTimelineItem>,
     ): List<FfiLocalTimelineItem> {
-        return timelineItems.filterNot { isReceiptTimelineItem(it) }
+        return timelineItems.filter(FfiLocalTimelineItem::isVisibleInTimeline)
     }
 
     private fun visiblePendingOutboxMessages(
         pendingOutboxMessages: List<FfiLocalOutboxItem>,
     ): List<FfiLocalOutboxItem> {
-        return pendingOutboxMessages.filterNot { isReceiptOutboxItem(it) }
-    }
-
-    private fun receiptTargetMessageId(message: FfiLocalTimelineItem): String? {
-        return receiptTargetMessageId(message.body)
-    }
-
-    private fun receiptTargetMessageId(message: FfiLocalOutboxItem): String? {
-        return receiptTargetMessageId(message.body)
-    }
-
-    private fun receiptTargetMessageId(body: FfiMessageBody?): String? {
-        return body?.takeIf { isReceiptBody(it) }?.targetMessageId
-    }
-
-    private fun receiptStatus(message: FfiLocalTimelineItem): ChatReceiptStatus? {
-        return receiptStatus(message.body)
-    }
-
-    private fun receiptStatus(message: FfiLocalOutboxItem): ChatReceiptStatus? {
-        return receiptStatus(message.body)
-    }
-
-    private fun receiptStatus(body: FfiMessageBody?): ChatReceiptStatus? {
-        if (body?.kind != FfiMessageBodyKind.RECEIPT || body.targetMessageId == null) {
-            return null
-        }
-        return when (body?.receiptType) {
-            FfiReceiptType.READ -> ChatReceiptStatus.READ
-            FfiReceiptType.DELIVERED, null -> ChatReceiptStatus.DELIVERED
-        }
+        return pendingOutboxMessages.filter(::isVisibleOutboxMessage)
     }
 
     private fun isReceiptBody(body: FfiMessageBody?): Boolean {
         return body?.kind == FfiMessageBodyKind.RECEIPT
     }
 
-    private fun isReceiptTimelineItem(message: FfiLocalTimelineItem): Boolean {
-        return message.contentType == FfiContentType.RECEIPT || isReceiptBody(message.body)
+    private fun isVisibleOutboxMessage(message: FfiLocalOutboxItem): Boolean {
+        return when (message.body?.kind) {
+            FfiMessageBodyKind.REACTION, FfiMessageBodyKind.RECEIPT -> false
+            else -> true
+        }
     }
 
-    private fun isReceiptOutboxItem(message: FfiLocalOutboxItem): Boolean {
-        return isReceiptBody(message.body)
+    private fun receiptStatusFromFfi(status: FfiReceiptType): ChatReceiptStatus {
+        return when (status) {
+            FfiReceiptType.READ -> ChatReceiptStatus.READ
+            FfiReceiptType.DELIVERED -> ChatReceiptStatus.DELIVERED
+        }
+    }
+
+    private fun mapReactionSummary(summary: FfiMessageReactionSummary): ChatMessageReaction {
+        return ChatMessageReaction(
+            emoji = summary.emoji,
+            reactorAccountIds = summary.reactorAccountIds,
+            count = summary.count.toInt(),
+            includesSelf = summary.includesSelf,
+        )
     }
 
     private fun ffiContentTypeForBody(body: FfiMessageBody): FfiContentType {
@@ -1968,12 +2012,20 @@ data class ChatTimelineMessage(
     val contentType: FfiContentType,
     val attachment: ChatAttachment? = null,
     val receiptStatus: ChatReceiptStatus? = null,
+    val reactions: List<ChatMessageReaction> = emptyList(),
 )
 
 enum class ChatReceiptStatus {
     DELIVERED,
     READ,
 }
+
+data class ChatMessageReaction(
+    val emoji: String,
+    val reactorAccountIds: List<String>,
+    val count: Int,
+    val includesSelf: Boolean,
+)
 
 private data class PendingOutboxPreview(
     val previewText: String,

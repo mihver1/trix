@@ -909,6 +909,9 @@ struct LocalTimelineItem: Identifiable, Sendable {
     let body: TypedMessageBody?
     let bodyParseError: String?
     let previewText: String
+    let receiptStatus: ReceiptType?
+    let reactions: [MessageReactionSummary]
+    let isVisibleInTimeline: Bool
     let mergedEpoch: UInt64?
     let createdAtUnix: UInt64
 
@@ -930,6 +933,13 @@ struct LocalTimelineItem: Identifiable, Sendable {
 
         return previewText
     }
+}
+
+struct MessageReactionSummary: Hashable, Sendable {
+    let emoji: String
+    let reactorAccountIds: [UUID]
+    let count: UInt64
+    let includesSelf: Bool
 }
 
 enum BlobUploadStatus: String, Sendable {

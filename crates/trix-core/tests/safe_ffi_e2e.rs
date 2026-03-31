@@ -813,7 +813,9 @@ async fn safe_s4b_linked_device_history_sync_backfills_prior_messages() -> Resul
         alice.client.load_snapshot()?;
         bob.client.load_snapshot()?;
 
-        let dm = alice.client.create_conversation(dm_request(&bob.account_id))?;
+        let dm = alice
+            .client
+            .create_conversation(dm_request(&bob.account_id))?;
         bob.client.get_new_events(None)?;
 
         let sent = alice
@@ -825,7 +827,9 @@ async fn safe_s4b_linked_device_history_sync_backfills_prior_messages() -> Resul
         let linked = create_pending_safe_client(&base_url, "alice-linked-history")?;
         let pending =
             linked.complete_link_device(intent.payload, "Alice Linked History".to_owned())?;
-        alice.client.approve_linked_device(pending.device_id.clone())?;
+        alice
+            .client
+            .approve_linked_device(pending.device_id.clone())?;
 
         let linked_snapshot = linked.load_snapshot()?;
         let before_sync = linked.get_messages(dm.conversation_id.clone(), None, None)?;
@@ -845,14 +849,19 @@ async fn safe_s4b_linked_device_history_sync_backfills_prior_messages() -> Resul
                     && message_text(message) == Some("hello before linking")
             })
             .ok_or_else(|| anyhow!("expected history sync message event"))?;
-        assert_eq!(message_text(backfilled_message), Some("hello before linking"));
+        assert_eq!(
+            message_text(backfilled_message),
+            Some("hello before linking")
+        );
         assert!(linked_batch.checkpoint.is_some());
 
         let after_sync = linked.get_messages(dm.conversation_id.clone(), None, None)?;
-        assert!(after_sync
-            .messages
-            .iter()
-            .any(|message| message_text(message) == Some("hello before linking")));
+        assert!(
+            after_sync
+                .messages
+                .iter()
+                .any(|message| message_text(message) == Some("hello before linking"))
+        );
 
         Ok(())
     })

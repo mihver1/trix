@@ -644,6 +644,8 @@ external fun uniffi_trix_core_checksum_func_ffi_build_attachment_message_body(
 ): Short
 external fun uniffi_trix_core_checksum_func_ffi_decrypt_attachment_payload(
 ): Short
+external fun uniffi_trix_core_checksum_func_ffi_default_quick_reaction_emojis(
+): Short
 external fun uniffi_trix_core_checksum_func_ffi_device_revoke_payload(
 ): Short
 external fun uniffi_trix_core_checksum_func_ffi_parse_message_body(
@@ -1452,6 +1454,8 @@ external fun uniffi_trix_core_fn_func_ffi_build_attachment_message_body(`blobId`
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_func_ffi_decrypt_attachment_payload(`body`: RustBuffer.ByValue,`encryptedPayload`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_func_ffi_default_quick_reaction_emojis(uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_func_ffi_device_revoke_payload(`deviceId`: RustBuffer.ByValue,`reason`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_func_ffi_parse_message_body(`contentType`: RustBuffer.ByValue,`payload`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1586,6 +1590,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_func_ffi_decrypt_attachment_payload() != 49747.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_func_ffi_default_quick_reaction_emojis() != 50913.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_func_ffi_device_revoke_payload() != 8012.toShort()) {
@@ -10844,6 +10851,12 @@ data class FfiLocalTimelineItem (
     , 
     var `previewText`: kotlin.String
     , 
+    var `receiptStatus`: FfiReceiptType?
+    , 
+    var `reactions`: List<FfiMessageReactionSummary>
+    , 
+    var `isVisibleInTimeline`: kotlin.Boolean
+    , 
     var `mergedEpoch`: kotlin.ULong?
     , 
     var `createdAtUnix`: kotlin.ULong
@@ -10876,6 +10889,9 @@ public object FfiConverterTypeFfiLocalTimelineItem: FfiConverterRustBuffer<FfiLo
             FfiConverterOptionalTypeFfiMessageBody.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterOptionalTypeFfiReceiptType.read(buf),
+            FfiConverterSequenceTypeFfiMessageReactionSummary.read(buf),
+            FfiConverterBoolean.read(buf),
             FfiConverterOptionalULong.read(buf),
             FfiConverterULong.read(buf),
         )
@@ -10895,6 +10911,9 @@ public object FfiConverterTypeFfiLocalTimelineItem: FfiConverterRustBuffer<FfiLo
             FfiConverterOptionalTypeFfiMessageBody.allocationSize(value.`body`) +
             FfiConverterOptionalString.allocationSize(value.`bodyParseError`) +
             FfiConverterString.allocationSize(value.`previewText`) +
+            FfiConverterOptionalTypeFfiReceiptType.allocationSize(value.`receiptStatus`) +
+            FfiConverterSequenceTypeFfiMessageReactionSummary.allocationSize(value.`reactions`) +
+            FfiConverterBoolean.allocationSize(value.`isVisibleInTimeline`) +
             FfiConverterOptionalULong.allocationSize(value.`mergedEpoch`) +
             FfiConverterULong.allocationSize(value.`createdAtUnix`)
     )
@@ -10913,6 +10932,9 @@ public object FfiConverterTypeFfiLocalTimelineItem: FfiConverterRustBuffer<FfiLo
             FfiConverterOptionalTypeFfiMessageBody.write(value.`body`, buf)
             FfiConverterOptionalString.write(value.`bodyParseError`, buf)
             FfiConverterString.write(value.`previewText`, buf)
+            FfiConverterOptionalTypeFfiReceiptType.write(value.`receiptStatus`, buf)
+            FfiConverterSequenceTypeFfiMessageReactionSummary.write(value.`reactions`, buf)
+            FfiConverterBoolean.write(value.`isVisibleInTimeline`, buf)
             FfiConverterOptionalULong.write(value.`mergedEpoch`, buf)
             FfiConverterULong.write(value.`createdAtUnix`, buf)
     }
@@ -11116,6 +11138,54 @@ public object FfiConverterTypeFfiMessageEnvelope: FfiConverterRustBuffer<FfiMess
             FfiConverterByteArray.write(value.`ciphertext`, buf)
             FfiConverterString.write(value.`aadJson`, buf)
             FfiConverterULong.write(value.`createdAtUnix`, buf)
+    }
+}
+
+
+
+data class FfiMessageReactionSummary (
+    var `emoji`: kotlin.String
+    , 
+    var `reactorAccountIds`: List<kotlin.String>
+    , 
+    var `count`: kotlin.ULong
+    , 
+    var `includesSelf`: kotlin.Boolean
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiMessageReactionSummary: FfiConverterRustBuffer<FfiMessageReactionSummary> {
+    override fun read(buf: ByteBuffer): FfiMessageReactionSummary {
+        return FfiMessageReactionSummary(
+            FfiConverterString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiMessageReactionSummary) = (
+            FfiConverterString.allocationSize(value.`emoji`) +
+            FfiConverterSequenceString.allocationSize(value.`reactorAccountIds`) +
+            FfiConverterULong.allocationSize(value.`count`) +
+            FfiConverterBoolean.allocationSize(value.`includesSelf`)
+    )
+
+    override fun write(value: FfiMessageReactionSummary, buf: ByteBuffer) {
+            FfiConverterString.write(value.`emoji`, buf)
+            FfiConverterSequenceString.write(value.`reactorAccountIds`, buf)
+            FfiConverterULong.write(value.`count`, buf)
+            FfiConverterBoolean.write(value.`includesSelf`, buf)
     }
 }
 
@@ -11989,6 +12059,12 @@ data class FfiMessengerMessageRecord (
     , 
     var `previewText`: kotlin.String
     , 
+    var `receiptStatus`: FfiReceiptType?
+    , 
+    var `reactions`: List<FfiMessageReactionSummary>
+    , 
+    var `isVisibleInTimeline`: kotlin.Boolean
+    , 
     var `createdAtUnix`: kotlin.ULong
     
 ){
@@ -12017,6 +12093,9 @@ public object FfiConverterTypeFfiMessengerMessageRecord: FfiConverterRustBuffer<
             FfiConverterTypeFfiContentType.read(buf),
             FfiConverterOptionalTypeFfiMessengerMessageBody.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterOptionalTypeFfiReceiptType.read(buf),
+            FfiConverterSequenceTypeFfiMessageReactionSummary.read(buf),
+            FfiConverterBoolean.read(buf),
             FfiConverterULong.read(buf),
         )
     }
@@ -12033,6 +12112,9 @@ public object FfiConverterTypeFfiMessengerMessageRecord: FfiConverterRustBuffer<
             FfiConverterTypeFfiContentType.allocationSize(value.`contentType`) +
             FfiConverterOptionalTypeFfiMessengerMessageBody.allocationSize(value.`body`) +
             FfiConverterString.allocationSize(value.`previewText`) +
+            FfiConverterOptionalTypeFfiReceiptType.allocationSize(value.`receiptStatus`) +
+            FfiConverterSequenceTypeFfiMessageReactionSummary.allocationSize(value.`reactions`) +
+            FfiConverterBoolean.allocationSize(value.`isVisibleInTimeline`) +
             FfiConverterULong.allocationSize(value.`createdAtUnix`)
     )
 
@@ -12048,6 +12130,9 @@ public object FfiConverterTypeFfiMessengerMessageRecord: FfiConverterRustBuffer<
             FfiConverterTypeFfiContentType.write(value.`contentType`, buf)
             FfiConverterOptionalTypeFfiMessengerMessageBody.write(value.`body`, buf)
             FfiConverterString.write(value.`previewText`, buf)
+            FfiConverterOptionalTypeFfiReceiptType.write(value.`receiptStatus`, buf)
+            FfiConverterSequenceTypeFfiMessageReactionSummary.write(value.`reactions`, buf)
+            FfiConverterBoolean.write(value.`isVisibleInTimeline`, buf)
             FfiConverterULong.write(value.`createdAtUnix`, buf)
     }
 }
@@ -16602,6 +16687,34 @@ public object FfiConverterSequenceTypeFfiMessageEnvelope: FfiConverterRustBuffer
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeFfiMessageReactionSummary: FfiConverterRustBuffer<List<FfiMessageReactionSummary>> {
+    override fun read(buf: ByteBuffer): List<FfiMessageReactionSummary> {
+        val len = buf.getInt()
+        return List<FfiMessageReactionSummary>(len) {
+            FfiConverterTypeFfiMessageReactionSummary.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiMessageReactionSummary>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiMessageReactionSummary.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiMessageReactionSummary>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiMessageReactionSummary.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeFfiMessengerConversationSummary: FfiConverterRustBuffer<List<FfiMessengerConversationSummary>> {
     override fun read(buf: ByteBuffer): List<FfiMessengerConversationSummary> {
         val len = buf.getInt()
@@ -16902,6 +17015,16 @@ public object FfiConverterSequenceTypeFfiSyncChatCursor: FfiConverterRustBuffer<
     UniffiLib.uniffi_trix_core_fn_func_ffi_decrypt_attachment_payload(
     
         FfiConverterTypeFfiMessageBody.lower(`body`),FfiConverterByteArray.lower(`encryptedPayload`),_status)
+}
+    )
+    }
+    
+ fun `ffiDefaultQuickReactionEmojis`(): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_trix_core_fn_func_ffi_default_quick_reaction_emojis(
+    
+        _status)
 }
     )
     }

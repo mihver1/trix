@@ -150,6 +150,7 @@ final class ConsumerConversationTimelineBuilderTests: XCTestCase {
                     senderDisplayName: "Bob",
                     isOutgoing: false,
                     text: "Hey there",
+                    receiptStatus: .read,
                     serverSeq: 1,
                     createdAtUnix: 1_700_000_000
                 ),
@@ -249,6 +250,75 @@ final class ConsumerConversationTimelineBuilderTests: XCTestCase {
         )
     }
 
+    func testLatestIncomingNonReceiptMessageIDSkipsHiddenIncomingMessages() {
+        let snapshot = makeSnapshot(
+            messages: [
+                makeTextMessage(
+                    id: "visible-incoming",
+                    senderAccountId: "bob",
+                    senderDeviceId: "bob-phone",
+                    senderDisplayName: "Bob",
+                    isOutgoing: false,
+                    text: "Visible incoming",
+                    serverSeq: 1,
+                    createdAtUnix: 1_700_000_000
+                ),
+                makeTextMessage(
+                    id: "hidden-incoming",
+                    senderAccountId: "bob",
+                    senderDeviceId: "bob-phone",
+                    senderDisplayName: "Bob",
+                    isOutgoing: false,
+                    text: "Hidden incoming",
+                    isVisibleInTimeline: false,
+                    serverSeq: 2,
+                    createdAtUnix: 1_700_000_001
+                ),
+            ]
+        )
+
+        XCTAssertEqual(
+            ConsumerConversationTimelineBuilder.latestIncomingNonReceiptMessageID(
+                in: snapshot,
+                currentAccountId: "alice"
+            ),
+            "visible-incoming"
+        )
+    }
+
+    func testBuilderPreservesReactionSummariesForVisibleMessages() {
+        let reactions = [
+            SafeMessengerReactionSummary(
+                emoji: "🔥",
+                reactorAccountIds: ["alice"],
+                count: 1,
+                includesSelf: true
+            ),
+        ]
+        let snapshot = makeSnapshot(
+            messages: [
+                makeTextMessage(
+                    id: "message-1",
+                    senderAccountId: "alice",
+                    senderDeviceId: "alice-phone",
+                    senderDisplayName: "Alice",
+                    isOutgoing: true,
+                    text: "Ship it",
+                    reactions: reactions,
+                    serverSeq: 1,
+                    createdAtUnix: 1_700_000_000
+                ),
+            ]
+        )
+
+        let items = ConsumerConversationTimelineBuilder.makeTimelineItems(for: snapshot)
+
+        guard case let .message(message) = items[1] else {
+            return XCTFail("Expected a rendered message")
+        }
+        XCTAssertEqual(message.reactions, reactions)
+    }
+
     func testTimelineRenderStateEqualityTracksTimelineSpecificInputs() {
         let snapshot = makeSnapshot(
             messages: [
@@ -331,6 +401,9 @@ final class ConsumerConversationTimelineBuilderTests: XCTestCase {
         senderDisplayName: String,
         isOutgoing: Bool,
         text: String,
+        receiptStatus: SafeMessengerReceiptType? = nil,
+        reactions: [SafeMessengerReactionSummary] = [],
+        isVisibleInTimeline: Bool = true,
         serverSeq: UInt64,
         createdAtUnix: UInt64
     ) -> SafeMessengerMessage {
@@ -356,6 +429,9 @@ final class ConsumerConversationTimelineBuilderTests: XCTestCase {
                 eventJSON: nil
             ),
             previewText: text,
+            receiptStatus: receiptStatus,
+            reactions: reactions,
+            isVisibleInTimeline: isVisibleInTimeline,
             createdAtUnix: createdAtUnix
         )
     }
@@ -393,6 +469,7 @@ final class ConsumerConversationTimelineBuilderTests: XCTestCase {
                 eventJSON: nil
             ),
             previewText: "Receipt",
+            isVisibleInTimeline: false,
             createdAtUnix: createdAtUnix
         )
     }

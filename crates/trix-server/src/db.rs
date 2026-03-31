@@ -1739,6 +1739,182 @@ impl Database {
         rows.into_iter().map(history_sync_job_row_from_db).collect()
     }
 
+    pub async fn request_chat_backfill(
+        &self,
+        account_id: Uuid,
+        target_device_id: Uuid,
+        chat_id: Uuid,
+    ) -> Result<Option<HistorySyncJobRow>, AppError> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let is_member = sqlx::query_scalar::<_, bool>(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM chat_account_members
+                WHERE chat_id = $1 AND account_id = $2
+                  AND membership_status = 'active'::membership_status
+            )
+            "#,
+        )
+        .bind(chat_id)
+        .bind(account_id)
+        .fetch_one(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        if !is_member {
+            return Err(AppError::not_found("chat not found"));
+        }
+
+        let source_row = sqlx::query(
+            r#"
+            SELECT d.device_id
+            FROM devices d
+            JOIN chat_device_members cdm
+              ON cdm.device_id = d.device_id
+            WHERE d.account_id = $1
+              AND d.device_id <> $2
+              AND d.device_status = 'active'::device_status
+              AND cdm.chat_id = $3
+              AND cdm.membership_status = 'active'::device_membership_status
+            ORDER BY d.created_at ASC
+            LIMIT 1
+            "#,
+        )
+        .bind(account_id)
+        .bind(target_device_id)
+        .bind(chat_id)
+        .fetch_optional(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(source_row) = source_row else {
+            return Ok(None);
+        };
+        let source_device_id: Uuid = row_uuid(&source_row, "device_id")?;
+
+        // Reuse any existing active backfill job before attempting a new insert.
+        let existing_job_row = sqlx::query(
+            r#"
+            SELECT
+                job_id,
+                job_type::text AS job_type,
+                job_status::text AS job_status,
+                source_device_id,
+                target_device_id,
+                chat_id,
+                cursor_json,
+                extract(epoch from created_at)::bigint AS created_at_unix,
+                extract(epoch from updated_at)::bigint AS updated_at_unix
+            FROM history_sync_jobs
+            WHERE account_id = $1
+              AND target_device_id = $2
+              AND chat_id = $3
+              AND job_type = 'chat_backfill'::history_sync_job_type
+              AND job_status IN ('pending'::history_sync_job_status, 'running'::history_sync_job_status)
+            ORDER BY created_at DESC
+            LIMIT 1
+            FOR UPDATE
+            "#,
+        )
+        .bind(account_id)
+        .bind(target_device_id)
+        .bind(chat_id)
+        .fetch_optional(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        if let Some(existing_row) = existing_job_row {
+            tx.commit().await.map_err(map_db_error)?;
+            return Ok(Some(history_sync_job_row_from_db(existing_row)?));
+        }
+
+        sqlx::query(
+            r#"
+            INSERT INTO history_sync_jobs (
+                account_id,
+                source_device_id,
+                target_device_id,
+                chat_id,
+                job_type,
+                job_status,
+                cursor_json
+            )
+            VALUES (
+                $1,
+                $2,
+                $3,
+                $4,
+                'chat_backfill'::history_sync_job_type,
+                'pending'::history_sync_job_status,
+                $5
+            )
+            ON CONFLICT (
+                account_id,
+                target_device_id,
+                chat_id,
+                job_type
+            )
+            WHERE
+                job_type = 'chat_backfill'::history_sync_job_type
+                AND job_status IN (
+                    'pending'::history_sync_job_status,
+                    'running'::history_sync_job_status
+                )
+            DO NOTHING
+            "#,
+        )
+        .bind(account_id)
+        .bind(source_device_id)
+        .bind(target_device_id)
+        .bind(chat_id)
+        .bind(sqlx::types::Json(serde_json::json!({
+            "kind": "chat_backfill",
+            "chat_id": chat_id,
+            "target_device_id": target_device_id,
+            "requested_by_target": true,
+        })))
+        .execute(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let row = sqlx::query(
+            r#"
+            SELECT
+                job_id,
+                job_type::text AS job_type,
+                job_status::text AS job_status,
+                source_device_id,
+                target_device_id,
+                chat_id,
+                cursor_json,
+                extract(epoch from created_at)::bigint AS created_at_unix,
+                extract(epoch from updated_at)::bigint AS updated_at_unix
+            FROM history_sync_jobs
+            WHERE account_id = $1
+              AND target_device_id = $2
+              AND chat_id = $3
+              AND job_type = 'chat_backfill'::history_sync_job_type
+              AND job_status IN ('pending'::history_sync_job_status, 'running'::history_sync_job_status)
+            ORDER BY created_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(account_id)
+        .bind(target_device_id)
+        .bind(chat_id)
+        .fetch_optional(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
+
+        match row {
+            Some(row) => Ok(Some(history_sync_job_row_from_db(row)?)),
+            None => Ok(None),
+        }
+    }
+
     pub async fn append_history_sync_chunk_for_source_device(
         &self,
         account_id: Uuid,
@@ -6756,6 +6932,334 @@ mod tests {
         .await
         .expect("read consumed key package count");
         assert_eq!(consumed_count, reserved_key_package_ids.len() as i64);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn request_chat_backfill_returns_none_when_only_other_active_device_is_not_chat_member() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [11; 32],
+                [12; 32],
+            ))
+            .await
+            .expect("create alice account");
+        let bob = db
+            .create_account(make_account_input("bob", "Bob Primary", [21; 32], [22; 32]))
+            .await
+            .expect("create bob account");
+
+        db.publish_key_packages(
+            bob.device_id,
+            vec![PublishKeyPackageInput {
+                device_id: bob.device_id,
+                cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                key_package_bytes: b"bob-primary-kp".to_vec(),
+            }],
+        )
+        .await
+        .expect("publish bob key package");
+
+        let bob_reserved = db
+            .reserve_key_packages_for_account(alice.account_id, bob.account_id)
+            .await
+            .expect("reserve bob key package");
+        let dm = db
+            .create_chat(CreateChatInput {
+                creator_account_id: alice.account_id,
+                creator_device_id: alice.device_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                participant_account_ids: vec![bob.account_id],
+                reserved_key_package_ids: bob_reserved
+                    .iter()
+                    .map(|package| package.key_package_id)
+                    .collect(),
+                initial_commit: Some(make_control_message("dm-create-commit")),
+                welcome_message: Some(make_control_message("dm-create-welcome")),
+            })
+            .await
+            .expect("create dm");
+
+        let intent = db
+            .create_link_intent(alice.account_id, alice.device_id)
+            .await
+            .expect("create link intent");
+        let completed = db
+            .complete_link_intent(CompleteLinkIntentInput {
+                link_intent_id: intent.link_intent_id,
+                link_token: intent.link_token,
+                device_display_name: "Alice Secondary".to_owned(),
+                platform: "macos".to_owned(),
+                credential_identity: b"alice-secondary-credential".to_vec(),
+                transport_pubkey: vec![32; 32],
+                key_packages: Vec::new(),
+            })
+            .await
+            .expect("complete link intent");
+
+        db.approve_pending_device(ApprovePendingDeviceInput {
+            actor_account_id: alice.account_id,
+            actor_device_id: alice.device_id,
+            target_device_id: completed.pending_device_id,
+            account_root_signature: vec![99; 64],
+            transfer_bundle_ciphertext: None,
+        })
+        .await
+        .expect("approve secondary device");
+
+        assert!(
+            db.get_chat_detail_for_device(dm.chat_id, completed.pending_device_id)
+                .await
+                .expect("secondary device lookup succeeds")
+                .is_none(),
+            "linked secondary device must not be a member of the existing dm"
+        );
+
+        let backfill = db
+            .request_chat_backfill(alice.account_id, alice.device_id, dm.chat_id)
+            .await
+            .expect("request chat backfill");
+        assert!(
+            backfill.is_none(),
+            "non-member devices must not be selected as chat backfill sources"
+        );
+
+        let job_count: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*)
+            FROM history_sync_jobs
+            WHERE account_id = $1
+              AND target_device_id = $2
+              AND chat_id = $3
+              AND job_type = 'chat_backfill'::history_sync_job_type
+            "#,
+        )
+        .bind(alice.account_id)
+        .bind(alice.device_id)
+        .bind(dm.chat_id)
+        .fetch_one(&db.pool)
+        .await
+        .expect("read chat backfill job count");
+        assert_eq!(job_count, 0);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn active_chat_backfill_jobs_are_unique_per_account_target_and_chat() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [11; 32],
+                [12; 32],
+            ))
+            .await
+            .expect("create alice account");
+        let bob = db
+            .create_account(make_account_input("bob", "Bob Primary", [21; 32], [22; 32]))
+            .await
+            .expect("create bob account");
+
+        let intent = db
+            .create_link_intent(alice.account_id, alice.device_id)
+            .await
+            .expect("create link intent");
+        let completed = db
+            .complete_link_intent(CompleteLinkIntentInput {
+                link_intent_id: intent.link_intent_id,
+                link_token: intent.link_token,
+                device_display_name: "Alice Secondary".to_owned(),
+                platform: "macos".to_owned(),
+                credential_identity: b"alice-secondary-credential".to_vec(),
+                transport_pubkey: vec![32; 32],
+                key_packages: vec![KeyPackageBytesInput {
+                    cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                    key_package_bytes: b"alice-secondary-kp".to_vec(),
+                }],
+            })
+            .await
+            .expect("complete link intent");
+
+        db.approve_pending_device(ApprovePendingDeviceInput {
+            actor_account_id: alice.account_id,
+            actor_device_id: alice.device_id,
+            target_device_id: completed.pending_device_id,
+            account_root_signature: vec![99; 64],
+            transfer_bundle_ciphertext: None,
+        })
+        .await
+        .expect("approve secondary device");
+
+        db.publish_key_packages(
+            bob.device_id,
+            vec![PublishKeyPackageInput {
+                device_id: bob.device_id,
+                cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                key_package_bytes: b"bob-primary-kp".to_vec(),
+            }],
+        )
+        .await
+        .expect("publish bob key package");
+
+        let alice_reserved = db
+            .reserve_key_packages_for_devices(
+                alice.account_id,
+                alice.account_id,
+                vec![completed.pending_device_id],
+            )
+            .await
+            .expect("reserve alice secondary key package");
+        let bob_reserved = db
+            .reserve_key_packages_for_account(alice.account_id, bob.account_id)
+            .await
+            .expect("reserve bob key package");
+
+        let reserved_key_package_ids = alice_reserved
+            .iter()
+            .chain(bob_reserved.iter())
+            .map(|package| package.key_package_id)
+            .collect::<Vec<_>>();
+
+        let dm = db
+            .create_chat(CreateChatInput {
+                creator_account_id: alice.account_id,
+                creator_device_id: alice.device_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                participant_account_ids: vec![bob.account_id],
+                reserved_key_package_ids,
+                initial_commit: Some(make_control_message("dm-create-commit")),
+                welcome_message: Some(make_control_message("dm-create-welcome")),
+            })
+            .await
+            .expect("create dm with creator secondary device");
+
+        sqlx::query(
+            r#"
+            INSERT INTO history_sync_jobs (
+                account_id,
+                source_device_id,
+                target_device_id,
+                chat_id,
+                job_type,
+                job_status,
+                cursor_json
+            )
+            VALUES (
+                $1,
+                $2,
+                $3,
+                $4,
+                'chat_backfill'::history_sync_job_type,
+                'pending'::history_sync_job_status,
+                '{"kind":"chat_backfill"}'::jsonb
+            )
+            "#,
+        )
+        .bind(alice.account_id)
+        .bind(completed.pending_device_id)
+        .bind(alice.device_id)
+        .bind(dm.chat_id)
+        .execute(&db.pool)
+        .await
+        .expect("insert initial active chat backfill job");
+
+        let duplicate_insert = sqlx::query(
+            r#"
+            INSERT INTO history_sync_jobs (
+                account_id,
+                source_device_id,
+                target_device_id,
+                chat_id,
+                job_type,
+                job_status,
+                cursor_json
+            )
+            VALUES (
+                $1,
+                $2,
+                $3,
+                $4,
+                'chat_backfill'::history_sync_job_type,
+                'running'::history_sync_job_status,
+                '{"kind":"chat_backfill"}'::jsonb
+            )
+            "#,
+        )
+        .bind(alice.account_id)
+        .bind(completed.pending_device_id)
+        .bind(alice.device_id)
+        .bind(dm.chat_id)
+        .execute(&db.pool)
+        .await
+        .expect_err("duplicate active chat backfill job must fail");
+        match duplicate_insert {
+            sqlx::Error::Database(db_err) => {
+                assert_eq!(
+                    db_err.constraint(),
+                    Some("history_sync_jobs_active_chat_backfill_unique_idx")
+                );
+            }
+            other => panic!("expected database uniqueness error, got {other:?}"),
+        }
+
+        sqlx::query(
+            r#"
+            UPDATE history_sync_jobs
+            SET job_status = 'completed'::history_sync_job_status
+            WHERE account_id = $1
+              AND target_device_id = $2
+              AND chat_id = $3
+              AND job_type = 'chat_backfill'::history_sync_job_type
+            "#,
+        )
+        .bind(alice.account_id)
+        .bind(alice.device_id)
+        .bind(dm.chat_id)
+        .execute(&db.pool)
+        .await
+        .expect("complete existing backfill job");
+
+        sqlx::query(
+            r#"
+            INSERT INTO history_sync_jobs (
+                account_id,
+                source_device_id,
+                target_device_id,
+                chat_id,
+                job_type,
+                job_status,
+                cursor_json
+            )
+            VALUES (
+                $1,
+                $2,
+                $3,
+                $4,
+                'chat_backfill'::history_sync_job_type,
+                'pending'::history_sync_job_status,
+                '{"kind":"chat_backfill"}'::jsonb
+            )
+            "#,
+        )
+        .bind(alice.account_id)
+        .bind(completed.pending_device_id)
+        .bind(alice.device_id)
+        .bind(dm.chat_id)
+        .execute(&db.pool)
+        .await
+        .expect("completed jobs must not block a new active chat backfill job");
     }
 
     #[tokio::test]

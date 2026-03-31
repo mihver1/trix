@@ -916,6 +916,7 @@ final class AppModel {
         draft: DebugMessageDraft
     ) async -> CreateMessageResponse? {
         guard !isLoading else {
+            errorMessage = "Please wait for the current action to finish."
             return nil
         }
 
@@ -951,6 +952,26 @@ final class AppModel {
             errorMessage = error.localizedDescription
             return nil
         }
+    }
+
+    @discardableResult
+    func postReaction(
+        baseURLString: String,
+        chatId: String,
+        targetMessageId: String,
+        emoji: String,
+        removeExisting: Bool
+    ) async -> CreateMessageResponse? {
+        var draft = DebugMessageDraft()
+        draft.kind = .reaction
+        draft.targetMessageId = targetMessageId
+        draft.emoji = emoji
+        draft.reactionAction = removeExisting ? .remove : .add
+        return await postDebugMessage(
+            baseURLString: baseURLString,
+            chatId: chatId,
+            draft: draft
+        )
     }
 
     @discardableResult

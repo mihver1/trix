@@ -1286,6 +1286,12 @@ RustBuffer uniffi_trix_core_fn_func_ffi_build_attachment_message_body(RustBuffer
 RustBuffer uniffi_trix_core_fn_func_ffi_decrypt_attachment_payload(RustBuffer body, RustBuffer encrypted_payload, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_TRIX_CORE_FN_FUNC_FFI_DEFAULT_QUICK_REACTION_EMOJIS
+#define UNIFFI_FFIDEF_UNIFFI_TRIX_CORE_FN_FUNC_FFI_DEFAULT_QUICK_REACTION_EMOJIS
+RustBuffer uniffi_trix_core_fn_func_ffi_default_quick_reaction_emojis(RustCallStatus *_Nonnull out_status
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_TRIX_CORE_FN_FUNC_FFI_DEVICE_REVOKE_PAYLOAD
 #define UNIFFI_FFIDEF_UNIFFI_TRIX_CORE_FN_FUNC_FFI_DEVICE_REVOKE_PAYLOAD
 RustBuffer uniffi_trix_core_fn_func_ffi_device_revoke_payload(RustBuffer device_id, RustBuffer reason, RustCallStatus *_Nonnull out_status
@@ -1581,6 +1587,12 @@ uint16_t uniffi_trix_core_checksum_func_ffi_build_attachment_message_body(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_TRIX_CORE_CHECKSUM_FUNC_FFI_DECRYPT_ATTACHMENT_PAYLOAD
 #define UNIFFI_FFIDEF_UNIFFI_TRIX_CORE_CHECKSUM_FUNC_FFI_DECRYPT_ATTACHMENT_PAYLOAD
 uint16_t uniffi_trix_core_checksum_func_ffi_decrypt_attachment_payload(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_TRIX_CORE_CHECKSUM_FUNC_FFI_DEFAULT_QUICK_REACTION_EMOJIS
+#define UNIFFI_FFIDEF_UNIFFI_TRIX_CORE_CHECKSUM_FUNC_FFI_DEFAULT_QUICK_REACTION_EMOJIS
+uint16_t uniffi_trix_core_checksum_func_ffi_default_quick_reaction_emojis(void
     
 );
 #endif

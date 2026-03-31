@@ -215,6 +215,34 @@ struct ChatDetailView: View {
 
                         TextField("Emoji", text: $messageDraft.emoji)
 
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(TrixCoreMessageBridge.defaultQuickReactionEmojis, id: \.self) { emoji in
+                                    Button {
+                                        messageDraft.emoji = emoji
+                                    } label: {
+                                        Text(emoji)
+                                            .font(.title3)
+                                            .frame(width: 36, height: 36)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                                    .fill(messageDraft.emoji == emoji ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.12))
+                                            )
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                                    .stroke(
+                                                        messageDraft.emoji == emoji ? Color.accentColor.opacity(0.4) : Color.secondary.opacity(0.15),
+                                                        lineWidth: 1
+                                                    )
+                                            )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("Set reaction \(emoji)")
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+
                         Picker("Action", selection: $messageDraft.reactionAction) {
                             ForEach(DebugReactionAction.allCases) { action in
                                 Text(action.rawValue.capitalized).tag(action)

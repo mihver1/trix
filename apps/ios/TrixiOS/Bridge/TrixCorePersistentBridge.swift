@@ -67,6 +67,9 @@ struct LocalTimelineItemSnapshot: Identifiable {
     let previewText: String
     let bodyPreview: MessageBodyPreview?
     let bodyParseError: String?
+    let receiptStatus: SafeMessengerReceiptType?
+    let reactions: [SafeMessengerReactionSummary]
+    let isVisibleInTimeline: Bool
     let mergedEpoch: UInt64?
     let createdAtUnix: UInt64
 
@@ -2038,6 +2041,9 @@ private extension FfiLocalTimelineItem {
             previewText: previewText,
             bodyPreview: body?.trix_messageBodyPreview,
             bodyParseError: bodyParseError,
+            receiptStatus: receiptStatus?.trix_safeReceiptType,
+            reactions: reactions.map(\.trix_safeMessengerReactionSummary),
+            isVisibleInTimeline: isVisibleInTimeline,
             mergedEpoch: mergedEpoch,
             createdAtUnix: createdAtUnix
         )
@@ -2386,6 +2392,17 @@ private extension FfiMessengerAttachmentDescriptor {
     }
 }
 
+private extension FfiMessageReactionSummary {
+    var trix_safeMessengerReactionSummary: SafeMessengerReactionSummary {
+        SafeMessengerReactionSummary(
+            emoji: emoji,
+            reactorAccountIds: reactorAccountIds,
+            count: count,
+            includesSelf: includesSelf
+        )
+    }
+}
+
 private extension FfiMessengerMessageBody {
     var trix_safeMessengerMessageBody: SafeMessengerMessageBody {
         SafeMessengerMessageBody(
@@ -2416,6 +2433,9 @@ private extension FfiMessengerMessageRecord {
             contentType: contentType.trix_contentType,
             body: body?.trix_safeMessengerMessageBody,
             previewText: previewText,
+            receiptStatus: receiptStatus?.trix_safeReceiptType,
+            reactions: reactions.map(\.trix_safeMessengerReactionSummary),
+            isVisibleInTimeline: isVisibleInTimeline,
             createdAtUnix: createdAtUnix
         )
     }

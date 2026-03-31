@@ -974,6 +974,81 @@ final class AppModel: ObservableObject {
         return false
     }
 
+    func sendReaction(targetMessageID: UUID, emoji: String, removeExisting: Bool) async -> Bool {
+        guard !isSendingMessage else {
+            lastErrorMessage = "Дождись завершения текущей отправки."
+            return false
+        }
+        guard let token = accessToken else {
+            await restoreSession()
+            return false
+        }
+        guard let client = makeClient() else {
+            return false
+        }
+        guard let chatId = selectedChatID else {
+            lastErrorMessage = "Сначала выбери чат."
+            return false
+        }
+
+        let trimmedEmoji = emoji.nonEmptyTrimmed
+        guard let trimmedEmoji else {
+            return false
+        }
+
+        isSendingMessage = true
+        lastErrorMessage = nil
+        defer { isSendingMessage = false }
+
+        do {
+            let messenger = try makeAuthenticatedMessenger(accessToken: token)
+            _ = try await messenger.sendMessage(
+                conversationId: chatId,
+                body: TypedMessageBody(
+                    kind: .reaction,
+                    text: nil,
+                    targetMessageId: targetMessageID,
+                    emoji: trimmedEmoji,
+                    reactionAction: removeExisting ? .remove : .add,
+                    receiptType: nil,
+                    receiptAtUnix: nil,
+                    attachmentRef: nil,
+                    blobId: nil,
+                    mimeType: nil,
+                    sizeBytes: nil,
+                    sha256: nil,
+                    fileName: nil,
+                    widthPx: nil,
+                    heightPx: nil,
+                    fileKey: nil,
+                    nonce: nil,
+                    eventType: nil,
+                    eventJson: nil
+                )
+            )
+
+            try await loadWorkspace(
+                client: client,
+                accessToken: token,
+                selectionPreference: .prefer(chatId)
+            )
+            return true
+        } catch let error as TrixAPIError {
+            logWarn("message", "send_reaction failed chat=\(shortLogID(chatId))", error: error)
+            if error.isCredentialFailure {
+                accessToken = nil
+                await restoreSession()
+            } else {
+                lastErrorMessage = conversationSafeMessage(error.userFacingMessage)
+            }
+        } catch {
+            logWarn("message", "send_reaction failed chat=\(shortLogID(chatId))", error: error)
+            lastErrorMessage = conversationSafeMessage(error.userFacingMessage)
+        }
+
+        return false
+    }
+
     func searchAccounts(query: String?) async -> [DirectoryAccountSummary] {
         guard let token = accessToken else {
             await restoreSession()
@@ -2912,10 +2987,9 @@ final class AppModel: ObservableObject {
             .reversed()
             .first { item in
                 !item.isOutgoing &&
+                    item.isVisibleInTimeline &&
                     item.serverSeq <= throughServerSeq &&
-                    item.serverSeq > previousReadCursorServerSeq &&
-                    item.contentType != .receipt &&
-                    item.body?.kind != .receipt
+                    item.serverSeq > previousReadCursorServerSeq
             }?
             .messageId
     }

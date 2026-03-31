@@ -16,17 +16,18 @@ use crate::{
     CreateChatControlOutcome, DeviceApprovePayloadMaterial, DeviceKeyMaterial,
     DeviceTransferBundleMaterial, DirectoryAccountMaterial, HistorySyncChunkMaterial,
     HistorySyncProcessReport, ImportedDeviceTransferBundle, InboxApplyOutcome, LocalChatListItem,
-    LocalChatReadState, LocalHistoryStore, LocalOutboxAttachmentDraft, LocalOutboxMessage,
-    LocalOutboxPayload, LocalOutboxStatus, LocalProjectedMessage, LocalProjectionApplyReport,
-    LocalProjectionKind, LocalStoreApplyReport, LocalTimelineItem, MessageBody, MlsCommitBundle,
-    MlsFacade, MlsMemberIdentity, MlsProcessResult, ModifyChatDevicesControlInput,
-    ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput, ModifyChatMembersControlOutcome,
-    PreparedAttachmentUpload, PublishKeyPackageMaterial, ReactionAction, RealtimeConfig,
-    RealtimeDriver, RealtimeEvent, RealtimeEventKind, RealtimeMode, ReceiptType,
-    ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient, ServerWebSocketClient,
-    SyncChatCursor, SyncCoordinator, SyncStateSnapshot, UpdateAccountProfileParams,
-    account_bootstrap_message, create_device_transfer_bundle, decrypt_attachment_payload,
-    decrypt_device_transfer_bundle, device_revoke_message, prepare_attachment_upload,
+    LocalChatReadState, LocalHistoryStore, LocalMessageReactionSummary, LocalOutboxAttachmentDraft,
+    LocalOutboxMessage, LocalOutboxPayload, LocalOutboxStatus, LocalProjectedMessage,
+    LocalProjectionApplyReport, LocalProjectionKind, LocalStoreApplyReport, LocalTimelineItem,
+    MessageBody, MlsCommitBundle, MlsFacade, MlsMemberIdentity, MlsProcessResult,
+    ModifyChatDevicesControlInput, ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
+    ModifyChatMembersControlOutcome, PreparedAttachmentUpload, PublishKeyPackageMaterial,
+    ReactionAction, RealtimeConfig, RealtimeDriver, RealtimeEvent, RealtimeEventKind, RealtimeMode,
+    ReceiptType, ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient,
+    ServerWebSocketClient, SyncChatCursor, SyncCoordinator, SyncStateSnapshot,
+    UpdateAccountProfileParams, account_bootstrap_message, create_device_transfer_bundle,
+    decrypt_attachment_payload, decrypt_device_transfer_bundle, device_revoke_message,
+    prepare_attachment_upload,
 };
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -745,6 +746,14 @@ pub struct FfiMessageBody {
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiMessageReactionSummary {
+    pub emoji: String,
+    pub reactor_account_ids: Vec<String>,
+    pub count: u64,
+    pub includes_self: bool,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct FfiLocalProjectedMessage {
     pub server_seq: u64,
     pub message_id: String,
@@ -776,6 +785,9 @@ pub struct FfiLocalTimelineItem {
     pub body: Option<FfiMessageBody>,
     pub body_parse_error: Option<String>,
     pub preview_text: String,
+    pub receipt_status: Option<FfiReceiptType>,
+    pub reactions: Vec<FfiMessageReactionSummary>,
+    pub is_visible_in_timeline: bool,
     pub merged_epoch: Option<u64>,
     pub created_at_unix: u64,
 }
@@ -1104,6 +1116,11 @@ fn ffi_decrypt_attachment_payload(
         ));
     };
     decrypt_attachment_payload(&body, &encrypted_payload).map_err(ffi_error)
+}
+
+#[uniffi::export]
+fn ffi_default_quick_reaction_emojis() -> Vec<String> {
+    crate::default_quick_reaction_emojis()
 }
 
 #[uniffi::export]
@@ -2942,8 +2959,10 @@ impl FfiSyncCoordinator {
         transport_private_key: Vec<u8>,
     ) -> Result<FfiHistorySyncProcessReport, TrixFfiError> {
         let client = clone_server_api_client(&client.inner)?;
-        let device_keys =
-            DeviceKeyMaterial::from_bytes(to_32_bytes(transport_private_key, "transport_private_key")?);
+        let device_keys = DeviceKeyMaterial::from_bytes(to_32_bytes(
+            transport_private_key,
+            "transport_private_key",
+        )?);
         let report = {
             let mut coordinator = lock(&self.inner)?;
             let mut store = lock(&store.inner)?;
@@ -3807,7 +3826,9 @@ fn history_sync_chunk_to_ffi(value: HistorySyncChunkMaterial) -> FfiHistorySyncC
     }
 }
 
-fn history_sync_process_report_to_ffi(value: HistorySyncProcessReport) -> FfiHistorySyncProcessReport {
+fn history_sync_process_report_to_ffi(
+    value: HistorySyncProcessReport,
+) -> FfiHistorySyncProcessReport {
     FfiHistorySyncProcessReport {
         source_jobs_processed: value.source_jobs_processed as u32,
         target_jobs_processed: value.target_jobs_processed as u32,
@@ -4498,8 +4519,30 @@ fn local_timeline_item_to_ffi(value: LocalTimelineItem) -> FfiLocalTimelineItem 
         body: value.body.map(message_body_to_ffi),
         body_parse_error: value.body_parse_error,
         preview_text: value.preview_text,
+        receipt_status: value.receipt_status.map(Into::into),
+        reactions: value
+            .reactions
+            .into_iter()
+            .map(message_reaction_summary_to_ffi)
+            .collect(),
+        is_visible_in_timeline: value.is_visible_in_timeline,
         merged_epoch: value.merged_epoch,
         created_at_unix: value.created_at_unix,
+    }
+}
+
+fn message_reaction_summary_to_ffi(
+    value: LocalMessageReactionSummary,
+) -> FfiMessageReactionSummary {
+    FfiMessageReactionSummary {
+        emoji: value.emoji,
+        reactor_account_ids: value
+            .reactor_account_ids
+            .into_iter()
+            .map(|account_id| account_id.0.to_string())
+            .collect(),
+        count: value.count,
+        includes_self: value.includes_self,
     }
 }
 

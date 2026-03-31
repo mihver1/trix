@@ -1,6 +1,11 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+private let workspaceQuickReactionEmojis: [String] = {
+    let emojis = ffiDefaultQuickReactionEmojis()
+    return emojis.isEmpty ? ["👍", "❤️", "🔥", "👎", "💔", "🤔", "😕", "🤨", "😡", "🤡", "💩", "🗿"] : emojis
+}()
+
 private enum SettingsTab: String, CaseIterable, Identifiable {
     case profile
     case devices
@@ -81,25 +86,14 @@ struct WorkspaceView: View {
     }
 
     private var presentedTimelineMessages: [PresentedTimelineMessage] {
-        var receiptStatusByMessageID: [UUID: WorkspaceMessageReceiptStatus] = [:]
-        let visibleMessages = model.selectedChatTimelineItems.compactMap { message -> LocalTimelineItem? in
-            guard !isReceiptTimelineMessage(message) else {
-                if let targetMessageID = message.body?.targetMessageId {
-                    receiptStatusByMessageID[targetMessageID] = mergeReceiptStatus(
-                        receiptStatusByMessageID[targetMessageID],
-                        with: receiptStatus(for: message) ?? .delivered
-                    )
-                }
-                return nil
-            }
-
-            return message
-        }
-
-        return visibleMessages.map { message in
+        model.selectedChatTimelineItems
+            .filter(\.isVisibleInTimeline)
+            .map { message in
             PresentedTimelineMessage(
                 message: message,
-                receiptStatus: message.isOutgoing ? receiptStatusByMessageID[message.messageId] : nil
+                receiptStatus: message.isOutgoing
+                    ? message.receiptStatus.flatMap(WorkspaceMessageReceiptStatus.init)
+                    : nil
             )
         }
     }
@@ -1430,6 +1424,19 @@ struct WorkspaceView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(presentedTimelineMessages) { entry in
+                    let reactionHandler: ((LocalTimelineItem, String) -> Void)? = model.isSendingMessage ? nil : { message, emoji in
+                        Task {
+                            let removeExisting = message.reactions.contains {
+                                $0.emoji == emoji && $0.includesSelf
+                            }
+                            _ = await model.sendReaction(
+                                targetMessageID: message.messageId,
+                                emoji: emoji,
+                                removeExisting: removeExisting
+                            )
+                        }
+                    }
+
                     LocalTimelineMessageRow(
                         message: entry.message,
                         isOutgoing: entry.message.isOutgoing,
@@ -1440,6 +1447,7 @@ struct WorkspaceView: View {
                                 await model.openAttachment(for: entry.message)
                             }
                         } : nil,
+                        onSelectReaction: reactionHandler,
                         fixtureAccessibilityIdentifier: MacUITestFixtureViewHints.timelineMessageIdentifier(
                             messageId: entry.message.messageId,
                             selectedChatId: model.selectedChatID
@@ -1511,25 +1519,6 @@ struct WorkspaceView: View {
             previewCreatedAtUnix: latestPresentedMessage?.createdAtUnix,
             participantProfiles: summary.participantProfiles
         )
-    }
-
-    private func isReceiptTimelineMessage(_ message: LocalTimelineItem) -> Bool {
-        message.contentType == .receipt || message.body?.kind == .receipt
-    }
-
-    private func receiptStatus(for message: LocalTimelineItem) -> WorkspaceMessageReceiptStatus? {
-        guard isReceiptTimelineMessage(message) else {
-            return nil
-        }
-
-        return message.body?.receiptType == .read ? .read : .delivered
-    }
-
-    private func mergeReceiptStatus(
-        _ current: WorkspaceMessageReceiptStatus?,
-        with next: WorkspaceMessageReceiptStatus
-    ) -> WorkspaceMessageReceiptStatus {
-        current.map { max($0, next) } ?? next
     }
 
     private func shortID(_ uuid: UUID) -> String {
@@ -2686,6 +2675,17 @@ private enum WorkspaceMessageReceiptStatus: Int, Comparable {
     }
 }
 
+private extension WorkspaceMessageReceiptStatus {
+    init?(_ value: ReceiptType) {
+        switch value {
+        case .delivered:
+            self = .delivered
+        case .read:
+            self = .read
+        }
+    }
+}
+
 private struct PresentedTimelineMessage: Identifiable {
     let message: LocalTimelineItem
     let receiptStatus: WorkspaceMessageReceiptStatus?
@@ -2984,6 +2984,7 @@ private struct LocalTimelineMessageRow: View {
     let receiptStatus: WorkspaceMessageReceiptStatus?
     let isDownloadingAttachment: Bool
     let openAttachment: (() -> Void)?
+    let onSelectReaction: ((LocalTimelineItem, String) -> Void)?
     let fixtureAccessibilityIdentifier: String?
 
     init(
@@ -2992,6 +2993,7 @@ private struct LocalTimelineMessageRow: View {
         receiptStatus: WorkspaceMessageReceiptStatus? = nil,
         isDownloadingAttachment: Bool = false,
         openAttachment: (() -> Void)? = nil,
+        onSelectReaction: ((LocalTimelineItem, String) -> Void)? = nil,
         fixtureAccessibilityIdentifier: String? = nil
     ) {
         self.message = message
@@ -2999,6 +3001,7 @@ private struct LocalTimelineMessageRow: View {
         self.receiptStatus = receiptStatus
         self.isDownloadingAttachment = isDownloadingAttachment
         self.openAttachment = openAttachment
+        self.onSelectReaction = onSelectReaction
         self.fixtureAccessibilityIdentifier = fixtureAccessibilityIdentifier
     }
 
@@ -3068,6 +3071,16 @@ private struct LocalTimelineMessageRow: View {
                         }
                     }
                 }
+
+                if !message.reactions.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(message.reactions, id: \.emoji) { reaction in
+                                ReactionMetaChip(reaction: reaction)
+                            }
+                        }
+                    }
+                }
             }
             .padding(16)
             .frame(maxWidth: 620, alignment: .leading)
@@ -3082,6 +3095,18 @@ private struct LocalTimelineMessageRow: View {
             }
         }
         .optionalAccessibilityIdentifier(fixtureAccessibilityIdentifier)
+        .contextMenu {
+            if let onSelectReaction {
+                ForEach(workspaceQuickReactionEmojis, id: \.self) { emoji in
+                    let removeExisting = message.reactions.contains {
+                        $0.emoji == emoji && $0.includesSelf
+                    }
+                    Button(removeExisting ? "\(emoji) Remove" : emoji) {
+                        onSelectReaction(message, emoji)
+                    }
+                }
+            }
+        }
     }
 
     private var senderLabel: String {
@@ -3119,6 +3144,34 @@ private struct LocalTimelineMessageRow: View {
         formatter.unitsStyle = .short
         return formatter
     }()
+}
+
+private struct ReactionMetaChip: View {
+    @Environment(\.trixColors) private var colors
+    let reaction: MessageReactionSummary
+
+    var body: some View {
+        Text(label)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(reaction.includesSelf ? colors.accent : colors.inkMuted)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                reaction.includesSelf ? colors.accent.opacity(0.12) : colors.inputFill,
+                in: Capsule()
+            )
+            .overlay {
+                Capsule()
+                    .stroke(
+                        reaction.includesSelf ? colors.accent.opacity(0.18) : colors.outline,
+                        lineWidth: 1
+                    )
+            }
+    }
+
+    private var label: String {
+        reaction.count > 1 ? "\(reaction.emoji) \(reaction.count)" : reaction.emoji
+    }
 }
 
 private struct InlineMeta: View {

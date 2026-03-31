@@ -19,8 +19,7 @@ use trix_types::{
 use uuid::Uuid;
 
 use crate::{
-    DeviceKeyMaterial,
-    LocalHistoryStore, LocalOutgoingMessageApplyOutcome, LocalProjectedMessage,
+    DeviceKeyMaterial, LocalHistoryStore, LocalOutgoingMessageApplyOutcome, LocalProjectedMessage,
     LocalProjectionKind, LocalStoreApplyReport, MessageBody, MlsConversation, MlsFacade,
     PreparedLocalOutboxSend, ServerApiClient, ServerApiError, SyncStateStore, decode_b64_field,
     encode_b64,
@@ -421,8 +420,8 @@ impl SyncCoordinator {
         if sequence_no < state.last_applied_sequence_no {
             return Ok(false);
         }
-        let changed =
-            sequence_no != state.last_applied_sequence_no || (is_final && !state.applied_final_chunk);
+        let changed = sequence_no != state.last_applied_sequence_no
+            || (is_final && !state.applied_final_chunk);
         if !changed {
             return Ok(false);
         }
@@ -553,7 +552,13 @@ impl SyncCoordinator {
                 continue;
             }
             if self
-                .process_target_history_sync_job(client, store, device_keys, &job, &mut changed_chat_ids)
+                .process_target_history_sync_job(
+                    client,
+                    store,
+                    device_keys,
+                    &job,
+                    &mut changed_chat_ids,
+                )
                 .await?
             {
                 target_jobs_processed += 1;
@@ -640,7 +645,10 @@ impl SyncCoordinator {
                 device_keys,
                 &target_device_key,
             )?;
-            let is_final = chunk_index + 1 == projected_messages.chunks(HISTORY_SYNC_CHUNK_MESSAGE_LIMIT).len();
+            let is_final = chunk_index + 1
+                == projected_messages
+                    .chunks(HISTORY_SYNC_CHUNK_MESSAGE_LIMIT)
+                    .len();
             client
                 .append_history_sync_chunk(
                     &job.job_id,
@@ -671,7 +679,8 @@ impl SyncCoordinator {
             return Ok(false);
         };
         let progress = self.target_history_sync_job_state(&job.job_id);
-        if progress.applied_final_chunk && matches!(job.job_status, HistorySyncJobStatus::Completed) {
+        if progress.applied_final_chunk && matches!(job.job_status, HistorySyncJobStatus::Completed)
+        {
             return Ok(false);
         }
 
@@ -706,7 +715,11 @@ impl SyncCoordinator {
             if report.projected_messages_upserted > 0 || report.advanced_to_server_seq.is_some() {
                 changed_chat_ids.insert(chat_id);
             }
-            self.record_target_history_sync_progress(&job.job_id, chunk.sequence_no, chunk.is_final)?;
+            self.record_target_history_sync_progress(
+                &job.job_id,
+                chunk.sequence_no,
+                chunk.is_final,
+            )?;
             processed_any_chunk = true;
         }
 
@@ -896,7 +909,8 @@ impl SyncCoordinator {
 
         let normalized_aad_json = aad_json.unwrap_or_else(empty_json_object);
         let normalized_aad_string = serde_json::to_string(&normalized_aad_json)?;
-        let prepared_send = if let Some(existing) = store.prepared_outbox_send(message_id) {
+        let mut prepared_send_snapshot = None;
+        let mut prepared_send = if let Some(existing) = store.prepared_outbox_send(message_id) {
             if existing.aad_json_string != normalized_aad_string {
                 let error = anyhow!(
                     "outbox message {} already exists with different AAD",
@@ -936,6 +950,7 @@ impl SyncCoordinator {
                 let _ = store.mark_outbox_failure(message_id, error.to_string());
                 return Err(error);
             }
+            prepared_send_snapshot = Some(snapshot);
             prepared_send
         };
         let ciphertext =
@@ -956,6 +971,124 @@ impl SyncCoordinator {
             .await
         {
             Ok(response) => response,
+            Err(ref error) if is_epoch_mismatch_error(error) => {
+                let current_group_id = conversation.group_id();
+                let _ = store.clear_outbox_prepared_send(message_id);
+                if let Some(snapshot) = prepared_send_snapshot.as_ref() {
+                    facade.restore_snapshot(snapshot).with_context(|| {
+                        format!(
+                            "failed to rollback MLS state after epoch refresh for outbox {}",
+                            message_id.0
+                        )
+                    })?;
+                }
+                let after_server_seq = self.chat_cursor(chat_id);
+
+                let refresh_result: Result<()> = (async {
+                    let detail = client.get_chat(chat_id).await?;
+                    store.apply_chat_detail(&detail)?;
+                    self.refresh_chat_history_tail(
+                        client,
+                        store,
+                        facade,
+                        chat_id,
+                        after_server_seq,
+                        detail.last_server_seq,
+                    )
+                    .await?;
+                    Ok(())
+                })
+                .await;
+                if let Err(error) = refresh_result {
+                    let _ = store.mark_outbox_failure(message_id, error.to_string());
+                    return Err(error);
+                }
+
+                let refreshed_conversation = match facade.load_group(&current_group_id) {
+                    Ok(Some(conv)) => {
+                        let _ = store.set_chat_mls_group_id(chat_id, &current_group_id);
+                        conv
+                    }
+                    Ok(None) => {
+                        match store.load_or_bootstrap_chat_mls_conversation(chat_id, facade) {
+                            Ok(Some(conv)) => conv,
+                            Ok(None) => {
+                                let error = anyhow!(
+                                    "chat {} has no bootstrappable MLS state after epoch refresh",
+                                    chat_id.0
+                                );
+                                let _ = store.mark_outbox_failure(message_id, error.to_string());
+                                return Err(error);
+                            }
+                            Err(error) => {
+                                let _ = store.mark_outbox_failure(message_id, error.to_string());
+                                return Err(error);
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        let _ = store.mark_outbox_failure(message_id, error.to_string());
+                        return Err(error);
+                    }
+                };
+                *conversation = refreshed_conversation;
+
+                let retry_snapshot = facade.snapshot_state()?;
+                let plaintext = body.to_bytes()?;
+                let epoch = conversation.epoch();
+                let retry_ciphertext =
+                    match facade.create_application_message(conversation, &plaintext) {
+                        Ok(ct) => ct,
+                        Err(error) => {
+                            let _ = store.mark_outbox_failure(message_id, error.to_string());
+                            return Err(error);
+                        }
+                    };
+                let retry_prepared = PreparedLocalOutboxSend {
+                    epoch,
+                    ciphertext_b64: encode_b64(&retry_ciphertext),
+                    aad_json_string: normalized_aad_string.clone(),
+                };
+                if let Err(error) =
+                    store.prepare_outbox_message_send(message_id, retry_prepared.clone())
+                {
+                    facade.restore_snapshot(&retry_snapshot).with_context(|| {
+                        format!(
+                            "failed to rollback MLS state after persisting retry outbox {}",
+                            message_id.0
+                        )
+                    })?;
+                    let _ = store.mark_outbox_failure(message_id, error.to_string());
+                    return Err(error);
+                }
+
+                let retry_ct =
+                    decode_b64_field("retry outbox ciphertext", &retry_prepared.ciphertext_b64)
+                        .map_err(|e| anyhow!("failed to decode retry outbox ciphertext: {e}"))?;
+                match client
+                    .create_message(
+                        chat_id,
+                        make_create_message_request(
+                            message_id,
+                            retry_prepared.epoch,
+                            MessageKind::Application,
+                            body.content_type(),
+                            &retry_ct,
+                            Some(normalized_aad_json.clone()),
+                        ),
+                    )
+                    .await
+                {
+                    Ok(response) => {
+                        prepared_send = retry_prepared;
+                        response
+                    }
+                    Err(error) => {
+                        let _ = store.mark_outbox_failure(message_id, error.to_string());
+                        return Err(error.into());
+                    }
+                }
+            }
             Err(error) => {
                 let _ = store.mark_outbox_failure(message_id, error.to_string());
                 return Err(error.into());
@@ -1690,6 +1823,46 @@ impl SyncCoordinator {
         )?;
         Ok((detail, history, report))
     }
+
+    async fn refresh_chat_history_tail(
+        &mut self,
+        client: &ServerApiClient,
+        store: &mut LocalHistoryStore,
+        facade: &MlsFacade,
+        chat_id: ChatId,
+        after_server_seq: Option<u64>,
+        target_server_seq: u64,
+    ) -> Result<()> {
+        let mut next_after_server_seq = after_server_seq;
+        while next_after_server_seq.unwrap_or_default() < target_server_seq {
+            let history = client
+                .get_chat_history(chat_id, next_after_server_seq, None)
+                .await?;
+            if history.messages.is_empty() {
+                break;
+            }
+
+            store.apply_chat_history(&history)?;
+            self.record_chat_server_seqs(
+                chat_id,
+                history.messages.iter().map(|message| message.server_seq),
+            )?;
+            store.project_chat_with_facade(chat_id, facade, None)?;
+            self.record_projected_chat_cursor(store, chat_id)?;
+
+            let last_server_seq = history
+                .messages
+                .last()
+                .map(|message| message.server_seq)
+                .unwrap_or_default();
+            if Some(last_server_seq) == next_after_server_seq {
+                break;
+            }
+            next_after_server_seq = Some(last_server_seq);
+        }
+
+        Ok(())
+    }
 }
 
 async fn reserve_initial_chat_packages(
@@ -1746,6 +1919,10 @@ fn normalize_device_ids(device_ids: Vec<DeviceId>, exclude: DeviceId) -> Vec<Dev
     let mut normalized = unique.into_iter().collect::<Vec<_>>();
     normalized.sort_by_key(|device_id| device_id.0);
     normalized
+}
+
+fn is_epoch_mismatch_error(error: &ServerApiError) -> bool {
+    matches!(error, ServerApiError::Api { status: 409, message, .. } if message.contains("epoch"))
 }
 
 fn is_chat_bootstrap_recovery_candidate(error: &anyhow::Error) -> bool {
@@ -2427,8 +2604,7 @@ fn next_history_sync_sequence_no(metadata: Option<&HistorySyncExportMetadata>) -
     if metadata.projected_message_count == 0 {
         return 1;
     }
-    (metadata.projected_message_count as u64)
-        .div_ceil(metadata.chunk_message_limit.max(1) as u64)
+    (metadata.projected_message_count as u64).div_ceil(metadata.chunk_message_limit.max(1) as u64)
         + 1
 }
 
@@ -2472,6 +2648,8 @@ mod tests {
         MessageBody, MlsFacade, MlsProcessResult, ServerApiClient, TextMessageBody,
         decode_b64_field,
     };
+
+    const MOCK_HISTORY_PAGE_LIMIT: usize = 100;
 
     #[derive(Debug, Clone, Deserialize)]
     struct MockHistoryQuery {
@@ -2572,9 +2750,7 @@ mod tests {
             })
             .cloned()
             .collect::<Vec<_>>();
-        if let Some(limit) = query.limit {
-            messages.truncate(limit);
-        }
+        messages.truncate(query.limit.unwrap_or(MOCK_HISTORY_PAGE_LIMIT));
         Json(trix_types::ChatHistoryResponse {
             chat_id: state.chat_detail.chat_id,
             messages,
@@ -3878,6 +4054,208 @@ mod tests {
         }
 
         server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn epoch_conflict_recovery_refreshes_paginated_tail_history() {
+        let chat_id = ChatId(Uuid::new_v4());
+        let alice_account = AccountId(Uuid::new_v4());
+        let alice_device = DeviceId(Uuid::new_v4());
+        let bob_account = AccountId(Uuid::new_v4());
+        let bob_device = DeviceId(Uuid::new_v4());
+        let alice = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+        let bob_storage_root =
+            env::temp_dir().join(format!("trix-sync-epoch-recovery-bob-{}", Uuid::new_v4()));
+        let bob = MlsFacade::new_persistent(b"bob-device".to_vec(), &bob_storage_root).unwrap();
+        let charlie = MlsFacade::new(b"charlie-device".to_vec()).unwrap();
+
+        let bob_key_package = bob.generate_key_package().unwrap();
+        let charlie_key_package = charlie.generate_key_package().unwrap();
+        let mut alice_group = alice.create_group(chat_id.0.as_bytes()).unwrap();
+        let add_bob_bundle = alice
+            .add_members(&mut alice_group, &[bob_key_package])
+            .unwrap();
+        let bob_group = bob
+            .join_group_from_welcome(
+                add_bob_bundle.welcome_message.as_ref().unwrap(),
+                add_bob_bundle.ratchet_tree.as_deref(),
+            )
+            .unwrap();
+
+        let initial_commit_message_id = MessageId(Uuid::new_v4());
+        let initial_welcome_message_id = MessageId(Uuid::new_v4());
+        let mut full_history = vec![
+            MessageEnvelope {
+                message_id: initial_commit_message_id,
+                chat_id,
+                server_seq: 1,
+                sender_account_id: alice_account,
+                sender_device_id: alice_device,
+                epoch: add_bob_bundle.epoch,
+                message_kind: MessageKind::Commit,
+                content_type: ContentType::ChatEvent,
+                ciphertext_b64: crate::encode_b64(&add_bob_bundle.commit_message),
+                aad_json: json!({}),
+                created_at_unix: 1,
+            },
+            MessageEnvelope {
+                message_id: initial_welcome_message_id,
+                chat_id,
+                server_seq: 2,
+                sender_account_id: alice_account,
+                sender_device_id: alice_device,
+                epoch: add_bob_bundle.epoch,
+                message_kind: MessageKind::WelcomeRef,
+                content_type: ContentType::ChatEvent,
+                ciphertext_b64: crate::encode_b64(add_bob_bundle.welcome_message.as_ref().unwrap()),
+                aad_json: json!({
+                    "_trix": {
+                        "ratchet_tree_b64": crate::encode_b64(
+                            add_bob_bundle.ratchet_tree.as_ref().unwrap()
+                        )
+                    }
+                }),
+                created_at_unix: 2,
+            },
+        ];
+        for server_seq in 3..=120 {
+            let body = text_body(&format!("history message {server_seq}"));
+            let body_bytes = body.to_bytes().unwrap();
+            let ciphertext = alice
+                .create_application_message(&mut alice_group, &body_bytes)
+                .unwrap();
+            let envelope = MessageEnvelope {
+                message_id: MessageId(Uuid::new_v4()),
+                chat_id,
+                server_seq,
+                sender_account_id: alice_account,
+                sender_device_id: alice_device,
+                epoch: add_bob_bundle.epoch,
+                message_kind: MessageKind::Application,
+                content_type: ContentType::Text,
+                ciphertext_b64: crate::encode_b64(&ciphertext),
+                aad_json: json!({}),
+                created_at_unix: server_seq,
+            };
+            full_history.push(envelope);
+        }
+
+        let add_charlie_bundle = alice
+            .add_members(&mut alice_group, &[charlie_key_package])
+            .unwrap();
+        let refresh_commit_message_id = MessageId(Uuid::new_v4());
+        let refresh_welcome_message_id = MessageId(Uuid::new_v4());
+        let refresh_commit = MessageEnvelope {
+            message_id: refresh_commit_message_id,
+            chat_id,
+            server_seq: 121,
+            sender_account_id: alice_account,
+            sender_device_id: alice_device,
+            epoch: add_charlie_bundle.epoch,
+            message_kind: MessageKind::Commit,
+            content_type: ContentType::ChatEvent,
+            ciphertext_b64: crate::encode_b64(&add_charlie_bundle.commit_message),
+            aad_json: json!({}),
+            created_at_unix: 121,
+        };
+        let refresh_welcome = MessageEnvelope {
+            message_id: refresh_welcome_message_id,
+            chat_id,
+            server_seq: 122,
+            sender_account_id: alice_account,
+            sender_device_id: alice_device,
+            epoch: add_charlie_bundle.epoch,
+            message_kind: MessageKind::WelcomeRef,
+            content_type: ContentType::ChatEvent,
+            ciphertext_b64: crate::encode_b64(add_charlie_bundle.welcome_message.as_ref().unwrap()),
+            aad_json: json!({
+                "_trix": {
+                    "ratchet_tree_b64": crate::encode_b64(
+                        add_charlie_bundle.ratchet_tree.as_ref().unwrap()
+                    )
+                }
+            }),
+            created_at_unix: 122,
+        };
+        full_history.push(refresh_commit.clone());
+        full_history.push(refresh_welcome.clone());
+
+        let local_history = full_history.iter().take(20).cloned().collect::<Vec<_>>();
+        let local_last_message = local_history.last().cloned();
+
+        let mut store = LocalHistoryStore::new();
+        store
+            .apply_chat_detail(&empty_chat_detail(
+                chat_id,
+                20,
+                add_bob_bundle.epoch,
+                local_last_message,
+                Some(initial_commit_message_id),
+            ))
+            .unwrap();
+        store
+            .apply_chat_history(&trix_types::ChatHistoryResponse {
+                chat_id,
+                messages: local_history,
+            })
+            .unwrap();
+        let bob_group_id = bob_group.group_id();
+        store.set_chat_mls_group_id(chat_id, &bob_group_id).unwrap();
+        store.project_chat_with_facade(chat_id, &bob, None).unwrap();
+        assert_eq!(store.projected_cursor(chat_id), Some(20));
+        assert!(!store.needs_history_refresh(chat_id));
+
+        let server = MockChatServer::spawn(MockChatServerState {
+            chat_detail: empty_chat_detail(
+                chat_id,
+                122,
+                add_charlie_bundle.epoch,
+                Some(refresh_welcome.clone()),
+                Some(refresh_commit_message_id),
+            ),
+            history: full_history,
+            sender_account_id: bob_account,
+            sender_device_id: bob_device,
+            expected_create_epoch: Some(add_charlie_bundle.epoch),
+            create_requests: Vec::new(),
+            create_responses: BTreeMap::new(),
+            chat_detail_requests: 0,
+            history_requests: 0,
+            history_after_server_seq_requests: Vec::new(),
+            reset_requests: 0,
+            published_key_package_requests: Vec::new(),
+        })
+        .await;
+        let client = server.client();
+
+        let mut coordinator = SyncCoordinator::new();
+        coordinator.record_chat_server_seq(chat_id, 20).unwrap();
+        let detail = client.get_chat(chat_id).await.unwrap();
+        store.apply_chat_detail(&detail).unwrap();
+        coordinator
+            .refresh_chat_history_tail(
+                &client,
+                &mut store,
+                &bob,
+                chat_id,
+                Some(20),
+                detail.last_server_seq,
+            )
+            .await
+            .unwrap();
+        assert_eq!(coordinator.chat_cursor(chat_id), Some(122));
+
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.chat_detail_requests, 1);
+        assert_eq!(state.history_requests, 2);
+        assert_eq!(
+            state.history_after_server_seq_requests,
+            vec![Some(20), Some(120)]
+        );
+        drop(state);
+
+        server.shutdown().await;
+        fs::remove_dir_all(&bob_storage_root).ok();
     }
 
     #[tokio::test]
