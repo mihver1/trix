@@ -2585,8 +2585,8 @@ final class AppModel {
 
             await notificationCoordinator.postMessageNotification(
                 identifier: "chat-\(item.chatId)-\(item.lastServerSeq)",
-                title: item.displayTitle,
-                body: item.previewText ?? "You have a new message."
+                title: "\(item.displayTitle): New message",
+                body: item.previewText ?? ""
             )
         }
     }
