@@ -1008,6 +1008,25 @@ impl LocalHistoryStore {
             .unwrap_or(false)
     }
 
+    pub fn chats_with_unavailable_messages(&self) -> Vec<ChatId> {
+        self.state
+            .chats
+            .iter()
+            .filter_map(|(key, chat)| {
+                let has_unavailable = chat.projected_messages.values().any(|msg| {
+                    msg.projection_kind == LocalProjectionKind::ApplicationMessage
+                        && msg.materialized_body_b64.is_none()
+                        && msg.message_kind == trix_types::MessageKind::Application
+                });
+                if has_unavailable {
+                    uuid::Uuid::parse_str(key).ok().map(ChatId)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     fn prepare_projection_tail_rebuild(
         &mut self,
         chat_id: ChatId,
@@ -1640,6 +1659,20 @@ impl LocalHistoryStore {
         message.status = LocalOutboxStatus::Failed;
         message.failure_message = Some(failure_message);
         self.persist_if_needed(changed)
+    }
+
+    pub fn clear_outbox_prepared_send(&mut self, message_id: MessageId) -> Result<()> {
+        let message = self
+            .state
+            .outbox
+            .get_mut(&message_id.0.to_string())
+            .ok_or_else(|| anyhow!("outbox message {} is missing", message_id.0))?;
+        if message.prepared_send.is_some() {
+            message.prepared_send = None;
+            self.persist_if_needed(true)
+        } else {
+            Ok(())
+        }
     }
 
     pub fn remove_outbox_message(&mut self, message_id: MessageId) -> Result<()> {

@@ -27,9 +27,10 @@ use trix_types::{
     HistorySyncJobStatus, LeaseInboxRequest, LeaseInboxResponse, MessageId,
     ModifyChatDevicesRequest, ModifyChatDevicesResponse, ModifyChatMembersRequest,
     ModifyChatMembersResponse, PublishKeyPackageItem, PublishKeyPackagesRequest,
-    PublishKeyPackagesResponse, ReserveKeyPackagesRequest, ResetKeyPackagesResponse,
-    RevokeDeviceRequest, RevokeDeviceResponse, UpdateAccountProfileRequest, VersionResponse,
-    WebSocketClientFrame, WebSocketServerFrame,
+    PublishKeyPackagesResponse, RequestChatBackfillRequest, RequestChatBackfillResponse,
+    ReserveKeyPackagesRequest, ResetKeyPackagesResponse, RevokeDeviceRequest,
+    RevokeDeviceResponse, UpdateAccountProfileRequest, VersionResponse, WebSocketClientFrame,
+    WebSocketServerFrame,
 };
 
 const CONTROL_AAD_META_KEY: &str = "_trix";
@@ -683,6 +684,17 @@ impl ServerApiClient {
                 &format!("v0/history-sync/jobs/{}/complete", job_id.as_ref()),
             )?
             .json(&CompleteHistorySyncJobRequest { cursor_json }),
+        )
+        .await
+    }
+
+    pub async fn request_chat_backfill(
+        &self,
+        chat_id: ChatId,
+    ) -> Result<RequestChatBackfillResponse, ServerApiError> {
+        self.send_json(
+            self.request(Method::POST, "v0/history-sync/jobs/request")?
+                .json(&RequestChatBackfillRequest { chat_id }),
         )
         .await
     }

@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
@@ -430,6 +430,7 @@ pub struct FfiMessengerClient {
     state_path: String,
     mls_storage_root: String,
     attachment_cache_root: String,
+    backfill_requested_chats: Mutex<HashSet<ChatId>>,
 }
 
 #[uniffi::export]
@@ -516,6 +517,7 @@ impl FfiMessengerClient {
             state_path: state_path.to_string_lossy().into_owned(),
             mls_storage_root: mls_storage_root.to_string_lossy().into_owned(),
             attachment_cache_root: attachment_cache_root.to_string_lossy().into_owned(),
+            backfill_requested_chats: Mutex::new(HashSet::new()),
         }))
     }
 
@@ -1526,8 +1528,31 @@ impl FfiMessengerClient {
             }
         }
         let history_sync_changed_chat_ids = self.process_history_sync_jobs(&client)?;
+        self.request_backfill_for_unavailable_chats_best_effort(&client);
         self.with_mls_facade(|facade| self.ensure_device_key_packages(&client, facade))?;
         Ok(history_sync_changed_chat_ids)
+    }
+
+    fn request_backfill_for_unavailable_chats_best_effort(&self, client: &ServerApiClient) {
+        let chats_needing_backfill = match lock_history_store(&self.history_store) {
+            Ok(store) => store.chats_with_unavailable_messages(),
+            Err(_) => return,
+        };
+        let mut requested = match self.backfill_requested_chats.lock() {
+            Ok(guard) => guard,
+            Err(_) => return,
+        };
+        for chat_id in chats_needing_backfill {
+            if requested.contains(&chat_id) {
+                continue;
+            }
+            match self.runtime.block_on(client.request_chat_backfill(chat_id)) {
+                Ok(_) => {
+                    requested.insert(chat_id);
+                }
+                Err(_) => {}
+            }
+        }
     }
 
     fn maybe_import_transfer_bundle(&self) -> Result<(), FfiMessengerError> {

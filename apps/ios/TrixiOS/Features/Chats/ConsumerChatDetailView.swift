@@ -1,6 +1,9 @@
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
+#if os(iOS)
+import PhotosUI
+#endif
 
 private let consumerChatAccent = TrixTheme.accent
 private let consumerMessageClusterWindow: TimeInterval = 5 * 60
@@ -10,6 +13,17 @@ private struct ConsumerAttachmentDraft {
     let fileURL: URL
     let fileName: String
     let fileSizeLabel: String?
+}
+
+private enum ConsumerAttachmentImportError: LocalizedError {
+    case failedToLoadSelectedMedia
+
+    var errorDescription: String? {
+        switch self {
+        case .failedToLoadSelectedMedia:
+            return "Couldn't load the selected photo or video."
+        }
+    }
 }
 
 enum ConsumerTimelineItem: Identifiable, Equatable {
@@ -88,6 +102,11 @@ struct ConsumerChatDetailView: View {
     @State private var composerText = ""
     @State private var selectedAttachment: ConsumerAttachmentDraft?
     @State private var isImportingAttachment = false
+    #if os(iOS)
+    @State private var isShowingAttachmentOptions = false
+    @State private var isImportingPhotoVideo = false
+    @State private var selectedPhotoVideoItem: PhotosPickerItem?
+    #endif
     @State private var localErrorMessage: String?
     @State private var activityMessage: String?
     @State private var downloadedAttachment: DownloadedAttachmentFile?
@@ -167,6 +186,37 @@ struct ConsumerChatDetailView: View {
         ) { result in
             handleAttachmentImport(result)
         }
+        #if os(iOS)
+        .confirmationDialog(
+            "Choose Attachment",
+            isPresented: $isShowingAttachmentOptions,
+            titleVisibility: .visible
+        ) {
+            Button("Photo or Video") {
+                isImportingPhotoVideo = true
+            }
+
+            Button("File") {
+                isImportingAttachment = true
+            }
+
+            Button("Cancel", role: .cancel) {}
+        }
+        .photosPicker(
+            isPresented: $isImportingPhotoVideo,
+            selection: $selectedPhotoVideoItem,
+            matching: .any(of: [.images, .videos])
+        )
+        .onChange(of: selectedPhotoVideoItem) { _, newValue in
+            guard let newValue else {
+                return
+            }
+
+            Task {
+                await importPhotoVideoAttachment(from: newValue)
+            }
+        }
+        #endif
         .sheet(item: $downloadedAttachment) { downloadedAttachment in
             AttachmentActivitySheet(items: [downloadedAttachment.fileURL])
         }
@@ -217,7 +267,11 @@ struct ConsumerChatDetailView: View {
 
             HStack(alignment: .bottom, spacing: 10) {
                 Button {
+                    #if os(iOS)
+                    isShowingAttachmentOptions = true
+                    #else
                     isImportingAttachment = true
+                    #endif
                 } label: {
                     Image(systemName: "paperclip")
                         .font(.system(size: 18, weight: .semibold))
@@ -434,28 +488,107 @@ struct ConsumerChatDetailView: View {
     private func handleAttachmentImport(_ result: Result<URL, Error>) {
         switch result {
         case let .success(fileURL):
-            let didAccessScopedResource = fileURL.startAccessingSecurityScopedResource()
-            defer {
-                if didAccessScopedResource {
-                    fileURL.stopAccessingSecurityScopedResource()
-                }
+            do {
+                selectedAttachment = try makeAttachmentDraft(fileURL: fileURL)
+                localErrorMessage = nil
+            } catch {
+                localErrorMessage = error.localizedDescription
             }
-
-            let fileName = fileURL.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
-            let fileSizeLabel = try? fileURL
-                .resourceValues(forKeys: [.fileSizeKey])
-                .fileSize
-                .map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) }
-            selectedAttachment = ConsumerAttachmentDraft(
-                fileURL: fileURL,
-                fileName: fileName.isEmpty ? "Attachment" : fileName,
-                fileSizeLabel: fileSizeLabel ?? nil
-            )
-            localErrorMessage = nil
         case let .failure(error):
             localErrorMessage = error.localizedDescription
         }
     }
+
+    private func makeAttachmentDraft(fileURL: URL, preferredFileName: String? = nil) throws -> ConsumerAttachmentDraft {
+        let didAccessScopedResource = fileURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccessScopedResource {
+                fileURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let fallbackName = preferredFileName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawFileName: String
+        if let fallbackName, !fallbackName.isEmpty {
+            rawFileName = fallbackName
+        } else {
+            rawFileName = fileURL.lastPathComponent
+        }
+        let fileName = rawFileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fileSizeLabel = try? fileURL
+            .resourceValues(forKeys: [.fileSizeKey])
+            .fileSize
+            .map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) }
+
+        return ConsumerAttachmentDraft(
+            fileURL: fileURL,
+            fileName: fileName.isEmpty ? "Attachment" : fileName,
+            fileSizeLabel: fileSizeLabel ?? nil
+        )
+    }
+
+    #if os(iOS)
+    @MainActor
+    private func importPhotoVideoAttachment(from item: PhotosPickerItem) async {
+        defer {
+            selectedPhotoVideoItem = nil
+        }
+
+        do {
+            let pickedMedia = try await makeTemporaryPhotoVideoAttachment(from: item)
+            selectedAttachment = try makeAttachmentDraft(
+                fileURL: pickedMedia.fileURL,
+                preferredFileName: pickedMedia.fileName
+            )
+            localErrorMessage = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            localErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func makeTemporaryPhotoVideoAttachment(
+        from item: PhotosPickerItem
+    ) async throws -> (fileURL: URL, fileName: String) {
+        guard let data = try await item.loadTransferable(type: Data.self) else {
+            throw ConsumerAttachmentImportError.failedToLoadSelectedMedia
+        }
+
+        let contentType = item.supportedContentTypes.first(where: {
+            $0.conforms(to: .image) || $0.conforms(to: .movie)
+        }) ?? item.supportedContentTypes.first ?? .data
+        let baseName: String
+        if contentType.conforms(to: .movie) {
+            baseName = "Video"
+        } else if contentType.conforms(to: .image) {
+            baseName = "Photo"
+        } else {
+            baseName = "Attachment"
+        }
+        let fileExtension = contentType.preferredFilenameExtension ?? defaultAttachmentExtension(for: contentType)
+        let tempFileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("consumer-attachment-\(UUID().uuidString)")
+            .appendingPathExtension(fileExtension)
+
+        try data.write(to: tempFileURL, options: [.atomic])
+
+        let displayName = fileExtension.isEmpty ? baseName : "\(baseName).\(fileExtension)"
+        return (tempFileURL, displayName)
+    }
+
+    private func defaultAttachmentExtension(for contentType: UTType) -> String {
+        if contentType.conforms(to: .movie) {
+            return "mov"
+        }
+
+        if contentType.conforms(to: .image) {
+            return "jpg"
+        }
+
+        return "bin"
+    }
+    #endif
 
     private func openAttachment(_ message: ConsumerRenderedMessage) {
         guard let attachmentBody = message.attachmentBody else {
