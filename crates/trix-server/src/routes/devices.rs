@@ -29,7 +29,10 @@ use trix_types::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_devices))
-        .route("/push-token", put(register_apple_push_token).delete(delete_apple_push_token))
+        .route(
+            "/push-token",
+            put(register_apple_push_token).delete(delete_apple_push_token),
+        )
         .route("/link-intents", post(create_link_intent))
         .route(
             "/link-intents/{link_intent_id}/complete",
@@ -129,7 +132,10 @@ async fn delete_apple_push_token(
     headers: HeaderMap,
 ) -> Result<StatusCode, AppError> {
     let principal = state.authenticate_active_headers(&headers).await?;
-    state.db.delete_device_apns_token(principal.device_id).await?;
+    state
+        .db
+        .delete_device_apns_token(principal.device_id)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -443,8 +449,13 @@ fn normalize_apns_token_hex(raw_value: &str) -> Result<String, AppError> {
             "token_hex must contain an even number of hex characters",
         ));
     }
-    if !normalized.chars().all(|character| character.is_ascii_hexdigit()) {
-        return Err(AppError::bad_request("token_hex must be a hex-encoded APNs token"));
+    if !normalized
+        .chars()
+        .all(|character| character.is_ascii_hexdigit())
+    {
+        return Err(AppError::bad_request(
+            "token_hex must be a hex-encoded APNs token",
+        ));
     }
 
     Ok(normalized)

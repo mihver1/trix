@@ -428,7 +428,10 @@ mod tests {
 
         let merged = with_export_metadata(&existing, &metadata);
 
-        assert_eq!(merged.get("kind").and_then(Value::as_str), Some("chat_backfill"));
+        assert_eq!(
+            merged.get("kind").and_then(Value::as_str),
+            Some("chat_backfill")
+        );
         assert_eq!(parse_export_metadata(&merged), Some(metadata));
     }
 }

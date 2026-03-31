@@ -17,11 +17,11 @@ use crate::{
     state::AppState,
 };
 use trix_types::{
-    AccountId, AdminDisableAccountRequest, AdminOverviewResponse, AdminRegistrationSettingsResponse,
-    AdminServerSettingsResponse, AdminSessionRequest, AdminSessionResponse, AdminUserListResponse,
-    AdminUserSummary, CreateAdminUserProvisionRequest, CreateAdminUserProvisionResponse,
-    PatchAdminRegistrationSettingsRequest, PatchAdminServerSettingsRequest, PatchAdminUserRequest,
-    ServiceStatus,
+    AccountId, AdminDisableAccountRequest, AdminOverviewResponse,
+    AdminRegistrationSettingsResponse, AdminServerSettingsResponse, AdminSessionRequest,
+    AdminSessionResponse, AdminUserListResponse, AdminUserSummary, CreateAdminUserProvisionRequest,
+    CreateAdminUserProvisionResponse, PatchAdminRegistrationSettingsRequest,
+    PatchAdminServerSettingsRequest, PatchAdminUserRequest, ServiceStatus,
 };
 
 pub fn router() -> Router<AppState> {
@@ -36,9 +36,15 @@ pub fn router() -> Router<AppState> {
             "/settings/server",
             get(get_server_settings).patch(patch_server_settings),
         )
-        .route("/users", get(list_admin_users).post(create_admin_user_provision))
+        .route(
+            "/users",
+            get(list_admin_users).post(create_admin_user_provision),
+        )
         .route("/users/{account_id}/disable", post(disable_admin_user))
-        .route("/users/{account_id}/reactivate", post(reactivate_admin_user))
+        .route(
+            "/users/{account_id}/reactivate",
+            post(reactivate_admin_user),
+        )
         .route(
             "/users/{account_id}",
             get(get_admin_user).patch(patch_admin_user),
@@ -286,11 +292,9 @@ async fn patch_admin_user(
     let handle = match &body.handle {
         None => None,
         Some(None) => Some(None),
-        Some(Some(h)) => Some(Some(
-            normalize_admin_handle(Some(h.clone()))?.ok_or_else(|| {
-                AppError::bad_request("handle must not be empty when provided")
-            })?,
-        )),
+        Some(Some(h)) => Some(Some(normalize_admin_handle(Some(h.clone()))?.ok_or_else(
+            || AppError::bad_request("handle must not be empty when provided"),
+        )?)),
     };
 
     let profile_name = match &body.profile_name {
@@ -495,8 +499,8 @@ mod tests {
 
         let auth = AuthManager::new(&config.jwt_signing_key);
         let blob_store = LocalBlobStore::new(&config.blob_root).expect("blob store");
-        let state = AppState::new(config, BuildInfo::current(), db, auth, blob_store)
-            .expect("app state");
+        let state =
+            AppState::new(config, BuildInfo::current(), db, auth, blob_store).expect("app state");
         build_router(state).expect("router")
     }
 
@@ -566,8 +570,8 @@ mod tests {
 
         let auth = AuthManager::new(&config.jwt_signing_key);
         let blob_store = LocalBlobStore::new(&config.blob_root).expect("blob store");
-        let state = AppState::new(config, BuildInfo::current(), db, auth, blob_store)
-            .expect("app state");
+        let state =
+            AppState::new(config, BuildInfo::current(), db, auth, blob_store).expect("app state");
         build_router(state).expect("router")
     }
 
@@ -688,8 +692,7 @@ mod tests {
         let _db_guard = POSTGRES_TEST_LOCK.lock().await;
         let app = test_app_with_db().await;
         let admin_token = issue_admin_token_for_tests(&app);
-        let response =
-            admin_empty(&app, Method::GET, "/v0/admin/users", &admin_token).await;
+        let response = admin_empty(&app, Method::GET, "/v0/admin/users", &admin_token).await;
         assert_eq!(response.status(), StatusCode::OK);
         let body: AdminUserListResponse = read_json_body(response).await;
         assert!(body.users.is_empty());
@@ -809,13 +812,7 @@ mod tests {
             assert_eq!(r.status(), StatusCode::OK, "create {handle}");
         }
 
-        let p1 = admin_empty(
-            &app,
-            Method::GET,
-            "/v0/admin/users?limit=2",
-            &admin_token,
-        )
-        .await;
+        let p1 = admin_empty(&app, Method::GET, "/v0/admin/users?limit=2", &admin_token).await;
         assert_eq!(p1.status(), StatusCode::OK);
         let first: AdminUserListResponse = read_json_body(p1).await;
         assert_eq!(first.users.len(), 2);
@@ -894,8 +891,13 @@ mod tests {
         .await;
         assert_eq!(patch_response.status(), StatusCode::OK);
 
-        let get_response =
-            admin_empty(&app, Method::GET, "/v0/admin/settings/registration", &admin_token).await;
+        let get_response = admin_empty(
+            &app,
+            Method::GET,
+            "/v0/admin/settings/registration",
+            &admin_token,
+        )
+        .await;
         assert_eq!(get_response.status(), StatusCode::OK);
 
         let body: AdminRegistrationSettingsResponse = read_json_body(get_response).await;

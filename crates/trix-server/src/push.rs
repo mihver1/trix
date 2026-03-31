@@ -12,7 +12,10 @@ use tokio::sync::Mutex;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::{config::AppConfig, db::{Database, DeviceApnsRegistrationRow}};
+use crate::{
+    config::AppConfig,
+    db::{Database, DeviceApnsRegistrationRow},
+};
 use trix_types::ApplePushEnvironment;
 
 const APNS_AUTH_TOKEN_TTL_SECONDS: u64 = 50 * 60;

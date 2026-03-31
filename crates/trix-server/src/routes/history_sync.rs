@@ -12,12 +12,14 @@ use trix_types::{
     AppendHistorySyncChunkRequest, AppendHistorySyncChunkResponse, CompleteHistorySyncJobRequest,
     CompleteHistorySyncJobResponse, HistorySyncChunkListResponse, HistorySyncChunkSummary,
     HistorySyncJobListResponse, HistorySyncJobRole, HistorySyncJobStatus, HistorySyncJobSummary,
-    RequestChatBackfillRequest, RequestChatBackfillResponse,
+    RequestChatBackfillRequest, RequestChatBackfillResponse, RequestHistorySyncRepairRequest,
+    RequestHistorySyncRepairResponse,
 };
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/jobs", get(list_jobs))
+        .route("/jobs:request-repair", post(request_repair))
         .route("/jobs/request", post(request_backfill))
         .route("/jobs/{job_id}/chunks", get(list_chunks).post(append_chunk))
         .route("/jobs/{job_id}/complete", post(complete_job))
@@ -77,9 +79,7 @@ async fn request_backfill(
         .db
         .request_chat_backfill(principal.account_id, principal.device_id, request.chat_id.0)
         .await?
-        .ok_or_else(|| {
-            AppError::not_found("no active source device available for backfill")
-        })?;
+        .ok_or_else(|| AppError::not_found("no active source device available for backfill"))?;
 
     Ok(Json(RequestChatBackfillResponse {
         job_id: job.job_id.to_string(),
@@ -115,6 +115,29 @@ async fn append_chunk(
         job_id: job_id.to_string(),
         chunk_id: appended.chunk_id,
         job_status: appended.job_status,
+    }))
+}
+
+async fn request_repair(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<RequestHistorySyncRepairRequest>,
+) -> Result<Json<RequestHistorySyncRepairResponse>, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+    let jobs = state
+        .db
+        .request_history_sync_repair(
+            principal.account_id,
+            principal.device_id,
+            request.chat_id.0,
+            request.repair_from_server_seq,
+            request.repair_through_server_seq,
+            &request.reason,
+        )
+        .await?;
+
+    Ok(Json(RequestHistorySyncRepairResponse {
+        jobs: jobs.into_iter().map(job_to_api).collect(),
     }))
 }
 

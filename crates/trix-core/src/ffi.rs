@@ -20,13 +20,14 @@ use crate::{
     LocalOutboxPayload, LocalOutboxStatus, LocalProjectedMessage, LocalProjectionApplyReport,
     LocalProjectionKind, LocalStoreApplyReport, LocalTimelineItem, MessageBody, MlsCommitBundle,
     MlsFacade, MlsMemberIdentity, MlsProcessResult, ModifyChatDevicesControlInput,
-    ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput, ModifyChatMembersControlOutcome,
-    PreparedAttachmentUpload, PublishKeyPackageMaterial, ReactionAction, RealtimeConfig,
-    RealtimeDriver, RealtimeEvent, RealtimeEventKind, RealtimeMode, ReceiptType,
-    ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient, ServerWebSocketClient,
-    SyncChatCursor, SyncCoordinator, SyncStateSnapshot, UpdateAccountProfileParams,
-    account_bootstrap_message, create_device_transfer_bundle, decrypt_attachment_payload,
-    decrypt_device_transfer_bundle, device_revoke_message, prepare_attachment_upload,
+    ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
+    ModifyChatMembersControlOutcome, PreparedAttachmentUpload, PublishKeyPackageMaterial,
+    ReactionAction, RealtimeConfig, RealtimeDriver, RealtimeEvent, RealtimeEventKind, RealtimeMode,
+    ReceiptType, ReservedKeyPackageMaterial, SendMessageOutcome, ServerApiClient,
+    ServerWebSocketClient, SyncChatCursor, SyncCoordinator, SyncStateSnapshot,
+    UpdateAccountProfileParams, account_bootstrap_message, create_device_transfer_bundle,
+    decrypt_attachment_payload, decrypt_device_transfer_bundle, device_revoke_message,
+    prepare_attachment_upload,
 };
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -77,6 +78,7 @@ pub enum FfiHistorySyncJobType {
     InitialSync,
     ChatBackfill,
     DeviceRekey,
+    TimelineRepair,
 }
 
 #[derive(Debug, Clone, Copy, uniffi::Enum)]
@@ -2942,8 +2944,10 @@ impl FfiSyncCoordinator {
         transport_private_key: Vec<u8>,
     ) -> Result<FfiHistorySyncProcessReport, TrixFfiError> {
         let client = clone_server_api_client(&client.inner)?;
-        let device_keys =
-            DeviceKeyMaterial::from_bytes(to_32_bytes(transport_private_key, "transport_private_key")?);
+        let device_keys = DeviceKeyMaterial::from_bytes(to_32_bytes(
+            transport_private_key,
+            "transport_private_key",
+        )?);
         let report = {
             let mut coordinator = lock(&self.inner)?;
             let mut store = lock(&store.inner)?;
@@ -3807,7 +3811,9 @@ fn history_sync_chunk_to_ffi(value: HistorySyncChunkMaterial) -> FfiHistorySyncC
     }
 }
 
-fn history_sync_process_report_to_ffi(value: HistorySyncProcessReport) -> FfiHistorySyncProcessReport {
+fn history_sync_process_report_to_ffi(
+    value: HistorySyncProcessReport,
+) -> FfiHistorySyncProcessReport {
     FfiHistorySyncProcessReport {
         source_jobs_processed: value.source_jobs_processed as u32,
         target_jobs_processed: value.target_jobs_processed as u32,
@@ -4897,6 +4903,7 @@ impl From<trix_types::HistorySyncJobType> for FfiHistorySyncJobType {
             trix_types::HistorySyncJobType::InitialSync => Self::InitialSync,
             trix_types::HistorySyncJobType::ChatBackfill => Self::ChatBackfill,
             trix_types::HistorySyncJobType::DeviceRekey => Self::DeviceRekey,
+            trix_types::HistorySyncJobType::TimelineRepair => Self::TimelineRepair,
         }
     }
 }

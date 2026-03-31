@@ -574,6 +574,19 @@ pub struct HistorySyncJobListResponse {
     pub jobs: Vec<HistorySyncJobSummary>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestHistorySyncRepairRequest {
+    pub chat_id: ChatId,
+    pub repair_from_server_seq: u64,
+    pub repair_through_server_seq: u64,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RequestHistorySyncRepairResponse {
+    pub jobs: Vec<HistorySyncJobSummary>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppendHistorySyncChunkRequest {
     pub sequence_no: u64,

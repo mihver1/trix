@@ -39,17 +39,17 @@ impl AppConfig {
     pub fn from_env() -> Result<Self> {
         let bind_addr = env_or("TRIX_BIND_ADDR", "127.0.0.1:8080")?;
         let apns_private_key_path = env::var("TRIX_APNS_PRIVATE_KEY_PATH").ok();
-        let apns_private_key_pem = match (
-            env::var("TRIX_APNS_PRIVATE_KEY_PEM").ok(),
-            apns_private_key_path.as_deref(),
-        ) {
-            (Some(value), _) => Some(value),
-            (None, Some(path)) => Some(
-                std::fs::read_to_string(path)
-                    .with_context(|| format!("failed to read TRIX_APNS_PRIVATE_KEY_PATH: {path}"))?,
-            ),
-            (None, None) => None,
-        };
+        let apns_private_key_pem =
+            match (
+                env::var("TRIX_APNS_PRIVATE_KEY_PEM").ok(),
+                apns_private_key_path.as_deref(),
+            ) {
+                (Some(value), _) => Some(value),
+                (None, Some(path)) => Some(std::fs::read_to_string(path).with_context(|| {
+                    format!("failed to read TRIX_APNS_PRIVATE_KEY_PATH: {path}")
+                })?),
+                (None, None) => None,
+            };
         let bind_addr = SocketAddr::from_str(&bind_addr)
             .with_context(|| format!("invalid TRIX_BIND_ADDR: {bind_addr}"))?;
         let config = Self {
@@ -124,9 +124,15 @@ impl AppConfig {
             shutdown_grace_period_seconds: env_or("TRIX_SHUTDOWN_GRACE_PERIOD_SECONDS", "15")?
                 .parse()
                 .with_context(|| "invalid TRIX_SHUTDOWN_GRACE_PERIOD_SECONDS")?,
-            apns_team_id: env::var("TRIX_APNS_TEAM_ID").ok().map(normalize_optional_env_value),
-            apns_key_id: env::var("TRIX_APNS_KEY_ID").ok().map(normalize_optional_env_value),
-            apns_topic: env::var("TRIX_APNS_TOPIC").ok().map(normalize_optional_env_value),
+            apns_team_id: env::var("TRIX_APNS_TEAM_ID")
+                .ok()
+                .map(normalize_optional_env_value),
+            apns_key_id: env::var("TRIX_APNS_KEY_ID")
+                .ok()
+                .map(normalize_optional_env_value),
+            apns_topic: env::var("TRIX_APNS_TOPIC")
+                .ok()
+                .map(normalize_optional_env_value),
             apns_private_key_pem: apns_private_key_pem.map(normalize_optional_env_value),
         };
 
@@ -223,7 +229,11 @@ fn normalize_admin_env_value(value: String) -> String {
 
 fn normalize_optional_env_value(value: String) -> String {
     let trimmed = value.trim().to_owned();
-    if trimmed.is_empty() { String::new() } else { trimmed }
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        trimmed
+    }
 }
 
 fn env_csv(key: &str) -> Vec<String> {

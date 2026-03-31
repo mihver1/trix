@@ -104,7 +104,8 @@ impl AppState {
             .list_pending_inbox_device_ids_for_chat(chat_id)
             .await
         {
-            let disconnected_device_ids = self.ws_registry.disconnected_device_ids(&device_ids).await;
+            let disconnected_device_ids =
+                self.ws_registry.disconnected_device_ids(&device_ids).await;
             self.ws_registry.notify_inbox_many(&device_ids).await;
             if !disconnected_device_ids.is_empty() {
                 let db = self.db.clone();

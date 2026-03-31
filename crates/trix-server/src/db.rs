@@ -1754,6 +1754,157 @@ impl Database {
         rows.into_iter().map(history_sync_job_row_from_db).collect()
     }
 
+    pub async fn request_history_sync_repair(
+        &self,
+        account_id: Uuid,
+        target_device_id: Uuid,
+        chat_id: Uuid,
+        repair_from_server_seq: u64,
+        repair_through_server_seq: u64,
+        reason: &str,
+    ) -> Result<Vec<HistorySyncJobRow>, AppError> {
+        if repair_from_server_seq == 0 {
+            return Err(AppError::bad_request(
+                "repair_from_server_seq must be at least 1",
+            ));
+        }
+        if repair_through_server_seq < repair_from_server_seq {
+            return Err(AppError::bad_request(
+                "repair_through_server_seq must be greater than or equal to repair_from_server_seq",
+            ));
+        }
+        let target_membership = sqlx::query(
+            r#"
+            SELECT 1
+            FROM devices d
+            WHERE d.device_id = $1
+              AND d.account_id = $2
+              AND d.device_status = 'active'::device_status
+              AND EXISTS (
+                    SELECT 1
+                    FROM chat_account_members cam
+                    WHERE cam.chat_id = $3
+                      AND cam.account_id = $2
+                      AND cam.membership_status = 'active'::membership_status
+              )
+            "#,
+        )
+        .bind(target_device_id)
+        .bind(account_id)
+        .bind(chat_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        if target_membership.is_none() {
+            return Err(AppError::not_found(
+                "chat was not found for the authenticated device",
+            ));
+        }
+
+        let mut source_device_ids = self.list_active_device_ids_for_account(account_id).await?;
+        source_device_ids.retain(|device_id| *device_id != target_device_id);
+        if source_device_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut jobs = Vec::with_capacity(source_device_ids.len());
+
+        for source_device_id in source_device_ids {
+            let cursor_json = serde_json::json!({
+                "kind": "timeline_repair",
+                "chat_id": chat_id,
+                "repair_from_server_seq": repair_from_server_seq,
+                "repair_through_server_seq": repair_through_server_seq,
+                "reason": reason,
+            });
+            let row = sqlx::query(
+                r#"
+                INSERT INTO history_sync_jobs (
+                    account_id,
+                    source_device_id,
+                    target_device_id,
+                    chat_id,
+                    job_type,
+                    job_status,
+                    cursor_json
+                )
+                VALUES (
+                    $1,
+                    $2,
+                    $3,
+                    $4,
+                    'timeline_repair'::history_sync_job_type,
+                    'pending'::history_sync_job_status,
+                    $5
+                )
+                ON CONFLICT (
+                    account_id,
+                    source_device_id,
+                    target_device_id,
+                    chat_id,
+                    job_type
+                )
+                WHERE job_type = 'timeline_repair'::history_sync_job_type
+                  AND job_status = 'pending'::history_sync_job_status
+                DO UPDATE SET
+                    cursor_json = jsonb_build_object(
+                        'kind', 'timeline_repair',
+                        'chat_id', EXCLUDED.chat_id,
+                        'repair_from_server_seq', LEAST(
+                            COALESCE(
+                                (history_sync_jobs.cursor_json->>'repair_from_server_seq')::bigint,
+                                $6
+                            ),
+                            $6
+                        ),
+                        'repair_through_server_seq', GREATEST(
+                            COALESCE(
+                                (history_sync_jobs.cursor_json->>'repair_through_server_seq')::bigint,
+                                $7
+                            ),
+                            $7
+                        ),
+                        'reason', COALESCE(history_sync_jobs.cursor_json->>'reason', $8)
+                    ),
+                    updated_at = now()
+                RETURNING
+                    job_id,
+                    job_type::text AS job_type,
+                    job_status::text AS job_status,
+                    source_device_id,
+                    target_device_id,
+                    chat_id,
+                    cursor_json,
+                    extract(epoch from created_at)::bigint AS created_at_unix,
+                    extract(epoch from updated_at)::bigint AS updated_at_unix
+                "#,
+            )
+            .bind(account_id)
+            .bind(source_device_id)
+            .bind(target_device_id)
+            .bind(chat_id)
+            .bind(sqlx::types::Json(cursor_json))
+            .bind(u64_to_i64(
+                repair_from_server_seq,
+                "repair_from_server_seq",
+            )?)
+            .bind(u64_to_i64(
+                repair_through_server_seq,
+                "repair_through_server_seq",
+            )?)
+            .bind(reason)
+            .fetch_one(tx.deref_mut())
+            .await
+            .map_err(map_db_error)?;
+            jobs.push(history_sync_job_row_from_db(row)?);
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        jobs.sort_by_key(|job| job.source_device_id);
+        Ok(jobs)
+    }
+
     pub async fn request_chat_backfill(
         &self,
         account_id: Uuid,
@@ -1803,8 +1954,6 @@ impl Database {
         };
         let source_device_id: Uuid = row_uuid(&source_row, "device_id")?;
 
-        // Lock existing pending/running jobs FOR UPDATE to prevent TOCTOU races
-        // between concurrent backfill requests for the same chat.
         let existing_job_row = sqlx::query(
             r#"
             SELECT
@@ -6468,6 +6617,7 @@ fn parse_history_sync_job_type(value: &str) -> Result<HistorySyncJobType, AppErr
         "initial_sync" => Ok(HistorySyncJobType::InitialSync),
         "chat_backfill" => Ok(HistorySyncJobType::ChatBackfill),
         "device_rekey" => Ok(HistorySyncJobType::DeviceRekey),
+        "timeline_repair" => Ok(HistorySyncJobType::TimelineRepair),
         other => Err(AppError::internal(format!(
             "unknown history sync job type from database: {other}"
         ))),
@@ -6532,6 +6682,7 @@ fn history_sync_job_type_db(value: HistorySyncJobType) -> &'static str {
         HistorySyncJobType::InitialSync => "initial_sync",
         HistorySyncJobType::ChatBackfill => "chat_backfill",
         HistorySyncJobType::DeviceRekey => "device_rekey",
+        HistorySyncJobType::TimelineRepair => "timeline_repair",
     }
 }
 
@@ -7530,6 +7681,406 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires local postgres"]
+    async fn request_history_sync_repair_schedules_timeline_repair_for_all_sibling_sources() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [101; 32],
+                [102; 32],
+            ))
+            .await
+            .expect("create alice");
+        let bob = db
+            .create_account(make_account_input(
+                "bob",
+                "Bob Primary",
+                [105; 32],
+                [106; 32],
+            ))
+            .await
+            .expect("create bob");
+        let chat_id = create_test_dm_chat(
+            &db,
+            alice.account_id,
+            alice.device_id,
+            bob.account_id,
+            bob.device_id,
+        )
+        .await;
+        let sibling_device_id = approve_linked_device(
+            &db,
+            alice.account_id,
+            alice.device_id,
+            "Alice Sibling",
+            "alice-sibling",
+            [103; 32],
+        )
+        .await;
+        let target_device_id = approve_linked_device(
+            &db,
+            alice.account_id,
+            alice.device_id,
+            "Alice Target",
+            "alice-target",
+            [104; 32],
+        )
+        .await;
+        let jobs = db
+            .request_history_sync_repair(
+                alice.account_id,
+                target_device_id,
+                chat_id,
+                5,
+                9,
+                "projected_gap",
+            )
+            .await
+            .expect("request repair");
+
+        assert_eq!(jobs.len(), 2);
+        let source_ids = jobs
+            .iter()
+            .map(|job| job.source_device_id)
+            .collect::<Vec<_>>();
+        assert!(source_ids.contains(&alice.device_id));
+        assert!(source_ids.contains(&sibling_device_id));
+        assert!(!source_ids.contains(&target_device_id));
+        assert!(
+            jobs.iter()
+                .all(|job| job.job_type == HistorySyncJobType::TimelineRepair)
+        );
+        assert!(
+            jobs.iter()
+                .all(|job| job.job_status == HistorySyncJobStatus::Pending)
+        );
+        assert!(
+            jobs.iter()
+                .all(|job| job.target_device_id == target_device_id)
+        );
+        assert!(jobs.iter().all(|job| job.chat_id == Some(chat_id)));
+        assert!(jobs.iter().all(|job| {
+            job.cursor_json
+                .get("repair_from_server_seq")
+                .and_then(|value| value.as_u64())
+                == Some(5)
+                && job
+                    .cursor_json
+                    .get("repair_through_server_seq")
+                    .and_then(|value| value.as_u64())
+                    == Some(9)
+                && job
+                    .cursor_json
+                    .get("reason")
+                    .and_then(|value| value.as_str())
+                    == Some("projected_gap")
+        }));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn request_history_sync_repair_merges_overlapping_active_windows() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [111; 32],
+                [112; 32],
+            ))
+            .await
+            .expect("create alice");
+        let bob = db
+            .create_account(make_account_input(
+                "bob",
+                "Bob Primary",
+                [114; 32],
+                [115; 32],
+            ))
+            .await
+            .expect("create bob");
+        let chat_id = create_test_dm_chat(
+            &db,
+            alice.account_id,
+            alice.device_id,
+            bob.account_id,
+            bob.device_id,
+        )
+        .await;
+        let target_device_id = approve_linked_device(
+            &db,
+            alice.account_id,
+            alice.device_id,
+            "Alice Target",
+            "alice-merge-target",
+            [113; 32],
+        )
+        .await;
+        let first = db
+            .request_history_sync_repair(
+                alice.account_id,
+                target_device_id,
+                chat_id,
+                7,
+                9,
+                "projection_gap",
+            )
+            .await
+            .expect("request first repair");
+        assert_eq!(first.len(), 1);
+
+        let second = db
+            .request_history_sync_repair(
+                alice.account_id,
+                target_device_id,
+                chat_id,
+                5,
+                11,
+                "projection_gap",
+            )
+            .await
+            .expect("request widened repair");
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].job_id, first[0].job_id);
+        assert_eq!(
+            second[0]
+                .cursor_json
+                .get("repair_from_server_seq")
+                .and_then(|value| value.as_u64()),
+            Some(5)
+        );
+        assert_eq!(
+            second[0]
+                .cursor_json
+                .get("repair_through_server_seq")
+                .and_then(|value| value.as_u64()),
+            Some(11)
+        );
+
+        let listed = db
+            .list_history_sync_jobs_for_target_device(
+                alice.account_id,
+                target_device_id,
+                None,
+                Some(10),
+            )
+            .await
+            .expect("list target jobs");
+        let repair_jobs = listed
+            .into_iter()
+            .filter(|job| job.job_type == HistorySyncJobType::TimelineRepair)
+            .collect::<Vec<_>>();
+        assert_eq!(repair_jobs.len(), 1);
+        assert_eq!(repair_jobs[0].job_id, first[0].job_id);
+        assert_eq!(
+            repair_jobs[0]
+                .cursor_json
+                .get("repair_from_server_seq")
+                .and_then(|value| value.as_u64()),
+            Some(5)
+        );
+        assert_eq!(
+            repair_jobs[0]
+                .cursor_json
+                .get("repair_through_server_seq")
+                .and_then(|value| value.as_u64()),
+            Some(11)
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn request_history_sync_repair_creates_new_pending_job_when_previous_repair_is_running() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [121; 32],
+                [122; 32],
+            ))
+            .await
+            .expect("create alice");
+        let bob = db
+            .create_account(make_account_input(
+                "bob",
+                "Bob Primary",
+                [124; 32],
+                [125; 32],
+            ))
+            .await
+            .expect("create bob");
+        let chat_id = create_test_dm_chat(
+            &db,
+            alice.account_id,
+            alice.device_id,
+            bob.account_id,
+            bob.device_id,
+        )
+        .await;
+        let target_device_id = approve_linked_device(
+            &db,
+            alice.account_id,
+            alice.device_id,
+            "Alice Target",
+            "alice-running-target",
+            [123; 32],
+        )
+        .await;
+        let first = db
+            .request_history_sync_repair(
+                alice.account_id,
+                target_device_id,
+                chat_id,
+                7,
+                9,
+                "projection_gap",
+            )
+            .await
+            .expect("request first repair");
+        assert_eq!(first.len(), 1);
+
+        sqlx::query(
+            r#"
+            UPDATE history_sync_jobs
+            SET job_status = 'running'::history_sync_job_status
+            WHERE job_id = $1
+            "#,
+        )
+        .bind(first[0].job_id)
+        .execute(&db.pool)
+        .await
+        .expect("mark repair job running");
+
+        let second = db
+            .request_history_sync_repair(
+                alice.account_id,
+                target_device_id,
+                chat_id,
+                5,
+                11,
+                "projection_gap",
+            )
+            .await
+            .expect("request second repair");
+        assert_eq!(second.len(), 1);
+        assert_ne!(second[0].job_id, first[0].job_id);
+        assert_eq!(
+            second[0]
+                .cursor_json
+                .get("repair_from_server_seq")
+                .and_then(|value| value.as_u64()),
+            Some(5)
+        );
+        assert_eq!(
+            second[0]
+                .cursor_json
+                .get("repair_through_server_seq")
+                .and_then(|value| value.as_u64()),
+            Some(11)
+        );
+
+        let listed = db
+            .list_history_sync_jobs_for_target_device(
+                alice.account_id,
+                target_device_id,
+                None,
+                Some(10),
+            )
+            .await
+            .expect("list target jobs");
+        let repair_jobs = listed
+            .into_iter()
+            .filter(|job| job.job_type == HistorySyncJobType::TimelineRepair)
+            .collect::<Vec<_>>();
+        assert_eq!(repair_jobs.len(), 2);
+        assert!(repair_jobs.iter().any(|job| {
+            job.job_id == first[0].job_id && job.job_status == HistorySyncJobStatus::Running
+        }));
+        assert!(repair_jobs.iter().any(|job| {
+            job.job_id == second[0].job_id && job.job_status == HistorySyncJobStatus::Pending
+        }));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn request_history_sync_repair_rejects_chat_not_visible_to_target_device() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [131; 32],
+                [132; 32],
+            ))
+            .await
+            .expect("create alice");
+        let bob = db
+            .create_account(make_account_input(
+                "bob",
+                "Bob Primary",
+                [133; 32],
+                [134; 32],
+            ))
+            .await
+            .expect("create bob");
+        let charlie = db
+            .create_account(make_account_input(
+                "charlie",
+                "Charlie Primary",
+                [135; 32],
+                [136; 32],
+            ))
+            .await
+            .expect("create charlie");
+
+        let foreign_chat_id = create_test_dm_chat(
+            &db,
+            bob.account_id,
+            bob.device_id,
+            charlie.account_id,
+            charlie.device_id,
+        )
+        .await;
+        let target_device_id = approve_linked_device(
+            &db,
+            alice.account_id,
+            alice.device_id,
+            "Alice Target",
+            "alice-foreign-target",
+            [137; 32],
+        )
+        .await;
+
+        let error = db
+            .request_history_sync_repair(
+                alice.account_id,
+                target_device_id,
+                foreign_chat_id,
+                3,
+                5,
+                "projection_gap",
+            )
+            .await
+            .expect_err("repair request should reject foreign chat");
+        assert!(matches!(error, AppError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
     async fn smoke_searches_account_directory() {
         let _db_guard = POSTGRES_TEST_LOCK.lock().await;
         let db = connect_test_db().await;
@@ -8429,6 +8980,84 @@ mod tests {
             account_root_signature: vec![7; 64],
             transport_pubkey: transport_pubkey.to_vec(),
         }
+    }
+
+    async fn approve_linked_device(
+        db: &Database,
+        account_id: Uuid,
+        actor_device_id: Uuid,
+        device_display_name: &str,
+        tag: &str,
+        transport_pubkey: [u8; 32],
+    ) -> Uuid {
+        let intent = db
+            .create_link_intent(account_id, actor_device_id)
+            .await
+            .expect("create link intent");
+        let completed = db
+            .complete_link_intent(CompleteLinkIntentInput {
+                link_intent_id: intent.link_intent_id,
+                link_token: intent.link_token,
+                device_display_name: device_display_name.to_owned(),
+                platform: "macos".to_owned(),
+                credential_identity: format!("{tag}-credential").into_bytes(),
+                transport_pubkey: transport_pubkey.to_vec(),
+                key_packages: Vec::new(),
+            })
+            .await
+            .expect("complete link intent");
+
+        db.approve_pending_device(ApprovePendingDeviceInput {
+            actor_account_id: account_id,
+            actor_device_id,
+            target_device_id: completed.pending_device_id,
+            account_root_signature: vec![99; 64],
+            transfer_bundle_ciphertext: None,
+        })
+        .await
+        .expect("approve linked device");
+
+        completed.pending_device_id
+    }
+
+    async fn create_test_dm_chat(
+        db: &Database,
+        creator_account_id: Uuid,
+        creator_device_id: Uuid,
+        participant_account_id: Uuid,
+        participant_device_id: Uuid,
+    ) -> Uuid {
+        db.publish_key_packages(
+            participant_device_id,
+            vec![PublishKeyPackageInput {
+                device_id: participant_device_id,
+                cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                key_package_bytes: format!("kp-{}", Uuid::new_v4()).into_bytes(),
+            }],
+        )
+        .await
+        .expect("publish participant key package");
+
+        let reserved = db
+            .reserve_key_packages_for_account(creator_account_id, participant_account_id)
+            .await
+            .expect("reserve participant key package");
+        db.create_chat(CreateChatInput {
+            creator_account_id,
+            creator_device_id,
+            chat_type: ChatType::Dm,
+            title: None,
+            participant_account_ids: vec![participant_account_id],
+            reserved_key_package_ids: reserved
+                .into_iter()
+                .map(|package| package.key_package_id)
+                .collect(),
+            initial_commit: Some(make_control_message("repair-create-commit")),
+            welcome_message: Some(make_control_message("repair-create-welcome")),
+        })
+        .await
+        .expect("create repair chat")
+        .chat_id
     }
 
     fn make_control_message(tag: &str) -> PendingControlMessage {

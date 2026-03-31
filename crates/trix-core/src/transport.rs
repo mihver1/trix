@@ -23,14 +23,14 @@ use trix_types::{
     CreateMessageRequest, CreateMessageResponse, DeviceApprovePayloadResponse, DeviceId,
     DeviceListResponse, DeviceStatus, DeviceTransferBundleResponse, DeviceTransportKeyResponse,
     DirectoryAccountSummary, ErrorResponse, HealthResponse, HistorySyncChunkListResponse,
-    HistorySyncChunkSummary, HistorySyncJobListResponse, HistorySyncJobRole,
-    HistorySyncJobStatus, LeaseInboxRequest, LeaseInboxResponse, MessageId,
-    ModifyChatDevicesRequest, ModifyChatDevicesResponse, ModifyChatMembersRequest,
-    ModifyChatMembersResponse, PublishKeyPackageItem, PublishKeyPackagesRequest,
-    PublishKeyPackagesResponse, RequestChatBackfillRequest, RequestChatBackfillResponse,
-    ReserveKeyPackagesRequest, ResetKeyPackagesResponse, RevokeDeviceRequest,
-    RevokeDeviceResponse, UpdateAccountProfileRequest, VersionResponse, WebSocketClientFrame,
-    WebSocketServerFrame,
+    HistorySyncChunkSummary, HistorySyncJobListResponse, HistorySyncJobRole, HistorySyncJobStatus,
+    LeaseInboxRequest, LeaseInboxResponse, MessageId, ModifyChatDevicesRequest,
+    ModifyChatDevicesResponse, ModifyChatMembersRequest, ModifyChatMembersResponse,
+    PublishKeyPackageItem, PublishKeyPackagesRequest, PublishKeyPackagesResponse,
+    RequestChatBackfillRequest, RequestChatBackfillResponse, RequestHistorySyncRepairRequest,
+    RequestHistorySyncRepairResponse, ReserveKeyPackagesRequest, ResetKeyPackagesResponse,
+    RevokeDeviceRequest, RevokeDeviceResponse, UpdateAccountProfileRequest, VersionResponse,
+    WebSocketClientFrame, WebSocketServerFrame,
 };
 
 const CONTROL_AAD_META_KEY: &str = "_trix";
@@ -651,6 +651,17 @@ impl ServerApiClient {
                 cursor_json,
                 is_final,
             }),
+        )
+        .await
+    }
+
+    pub async fn request_history_sync_repair(
+        &self,
+        request: RequestHistorySyncRepairRequest,
+    ) -> Result<RequestHistorySyncRepairResponse, ServerApiError> {
+        self.send_json(
+            self.request(Method::POST, "v0/history-sync/jobs:request-repair")?
+                .json(&request),
         )
         .await
     }
