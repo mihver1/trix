@@ -274,6 +274,7 @@ History sync is no longer only the initial link-device catch-up path. The curren
 Operational behavior:
 
 - `timeline_repair` is intended for targeted replay after projected gaps, unmaterialized application messages, or projection failures, not for whole-account rebootstrap.
+- repeated `chat_backfill` requests for the same `(account_id, target_device_id, chat_id)` reuse the existing active job instead of queuing parallel duplicates.
 - overlapping pending repair requests coalesce server-side to the smallest requested `repair_from_server_seq` and the largest requested `repair_through_server_seq`.
 - if the target device has no sibling active device to source history from, `/v0/history-sync/jobs/request` returns `404` and `/v0/history-sync/jobs:request-repair` returns `{ "jobs": [] }`.
 - `TRIX_HISTORY_SYNC_RETENTION_SECONDS` governs these repair/backfill jobs and their stored encrypted chunks just like initial sync jobs.

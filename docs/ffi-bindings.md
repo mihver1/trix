@@ -122,6 +122,7 @@ See `docs/bot-harness.md` for runtime setup and payload examples.
   - `mark_chat_read()`
   - `set_chat_read_cursor()`
 - Local unread is derived from the projected timeline, excludes MLS control traffic and receipt payloads, and can optionally exclude messages sent by the current account.
+- Projected local message surfaces now also expose derived `receipt_status`, so clients can render outgoing delivered/read tick decorations without manually correlating hidden receipt payloads.
 - `FfiLocalHistoryStore` now also exposes high-level local view-model APIs:
   - `list_local_chat_list_items(self_account_id?)`
   - `get_local_chat_list_item(chat_id, self_account_id?)`
@@ -160,6 +161,7 @@ See `docs/bot-harness.md` for runtime setup and payload examples.
 - `FfiSyncCoordinator` now also exposes `send_message_body()`, which performs `MessageBody -> MLS encrypt -> POST /messages -> local store -> projected timeline` in one core call.
 - `FfiSyncCoordinator.process_history_sync_jobs()` now processes `initial_sync`, `chat_backfill`, `device_rekey`, and `timeline_repair` jobs through the same encrypted chunk pipeline.
 - `FfiLocalHistoryStore` now persists pending per-chat repair windows internally, so repeated resumes do not keep re-requesting the same replay span while a repair job is already in flight.
+- The safe messenger workspace sync path now also issues best-effort per-chat `chat_backfill` requests for conversations whose local history is unavailable, so linked-device/group-send recovery can converge without a manual whole-account reset.
 - `FfiChatDetail` now includes `device_members` with `device_id`, `account_id`, `leaf_index`, and `credential_identity`, so clients can resolve removals against MLS leaf indices without a parallel side channel.
 - `FfiSyncCoordinator` now also exposes high-level control-plane flows:
   - `create_chat_control()`
