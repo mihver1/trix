@@ -88,7 +88,7 @@ This document defines the initial `v0` architecture for a native-first end-to-en
 - `OpenMLS`
 - encrypted local `SQLite`
 - `Keychain` / Android Keystore for device keys, database keys, and account-root material
-- projected local timelines, unread state, attachment round-trips, and device-transfer helpers exposed through `trix-core`
+- projected local timelines, outgoing delivery/read decorations, targeted backfill/repair recovery, attachment round-trips, and device-transfer helpers exposed through `trix-core`
 
 ### Headless Bot Harness
 
@@ -366,6 +366,8 @@ Fields:
 - `updated_at`
 
 `timeline_repair` jobs replay a bounded `server_seq` window for one chat after a client detects a projected gap, an unmaterialized application message, or a projection failure.
+
+Active `chat_backfill` requests are unique per `(account_id, target_device_id, chat_id)` and reuse the existing active job instead of spawning duplicates. Overlapping pending `timeline_repair` requests widen the stored replay window rather than creating parallel jobs for the same target/chat span.
 
 ## PostgreSQL Schema Outline
 
@@ -757,6 +759,8 @@ Rules:
 
 - caller must be an authenticated active device for an account that still has at least one sibling active device
 - the target device must already be an active member of the requested chat
+- repeated requests for the same target/chat reuse the existing active `chat_backfill` job instead of creating duplicates
+- the current shared core may call this path automatically when local conversation state is unavailable after refresh or relink recovery
 - server picks a sibling active device as the source and returns `404` if none are available
 
 ### `POST /v0/history-sync/jobs:request-repair`
@@ -863,7 +867,7 @@ Response includes per-chat:
 - `pending_message_count` for the authenticated device's unacked inbox backlog in that chat
 - optional `last_message` envelope
 - `participant_profiles` with `account_id`, `handle`, `profile_name`, `profile_bio`
-- true user-read/unread state remains client-local in `trix-core` and is derived from the projected timeline, not from server transport acks
+- true user-read/unread state and outgoing delivered/read decorations remain client-local in `trix-core` and are derived from projected timeline state, hidden receipt payloads, and server-seq progression rather than transport ack state
 
 ### `GET /v0/chats/{chat_id}`
 
@@ -878,7 +882,7 @@ Response includes:
 - active device-level members with `device_id`
 - `leaf_index` for each active device
 - `credential_identity_b64` for MLS/member mapping on clients
-- true user-read/unread state remains client-local in `trix-core` and is derived from the projected timeline, not from server transport acks
+- true user-read/unread state and outgoing delivered/read decorations remain client-local in `trix-core` and are derived from projected timeline state, hidden receipt payloads, and server-seq progression rather than transport ack state
 
 ### `POST /v0/chats/{chat_id}/members:add`
 

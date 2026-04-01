@@ -5,16 +5,18 @@
 ## Current Scope
 
 - `SwiftUI` macOS app entrypoint
-- first-device onboarding and linked-device restore
+- task-first first-device onboarding and linked-device restore with explicit server availability checks
 - challenge/session sign-in using `trix-core` UniFFI key material and transport client
 - directory-backed DM/group creation
-- local FFI chat list, timeline and read-state
+- local FFI chat list, timeline, read-state, and outgoing delivery/read tick decoration
 - text and attachment messaging with optimistic local send rows
+- inline previews for common image attachment types with Quick Look full preview on open
 - profile editing, device approval/revoke and notification settings
 - background inbox sync via polling fallback plus APNs wake-up pushes for local notifications
 - local session persistence in `Application Support`
 - secret material persisted in `Keychain`
 - persistent local history store and sync cursor state under `Application Support/com.softgrid.trixapp/workspaces/<account-id>/`
+- stale restore paths now preserve reconnect vs relink-required recovery states instead of silently dropping back into a blank bootstrap form
 - advanced operational tooling under `Settings > Advanced`
 
 ## Layout
@@ -95,6 +97,6 @@ To regenerate them, follow [../../docs/ffi-bindings.md](../../docs/ffi-bindings.
 ## Remaining Gaps
 
 - group rename still needs a server/API contract; member/device admin is already wired
-- attachment preview/open flows are basic and still need more polish
+- non-image attachment preview/open flows still rely on Quick Look or open-in-place behavior and need more polish
 - APNs delivery still depends on `trixd` being configured with valid `TRIX_APNS_*` credentials and matching app entitlements
 - the beta build script packages/signs/notarizes, but distribution and update hosting stay manual

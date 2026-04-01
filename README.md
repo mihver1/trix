@@ -7,7 +7,7 @@ Confirmed components in the repo today:
 - single-binary `Axum` backend with `PostgreSQL`, automatic `sqlx` migrations, local blob storage, rate limiting, cleanup jobs, websocket inbox delivery, a separate `/v0/admin/*` control surface, and optional APNs-backed background inbox wake-up pushes for iOS and macOS devices
 - `v0` API surface for auth, accounts, directory search, device linking and approval, transfer bundles, device revoke, key packages, chats, message history, inbox lease and ack, history sync backfill and repair, blob upload and download, and operator admin/session/settings/users flows
 - shared `trix-core` library with `OpenMLS` group state, encrypted local stores, attachment helpers, device-transfer helpers, safe messenger snapshots/timelines, realtime and sync runtime, and `UniFFI` bindings
-- Android now routes primary messaging flows through the shared messenger core; iOS ships the consumer chat surface with projected timelines plus file/photo/video attachments; macOS ships the beta client and a separate macOS admin app
+- Android, iOS, and macOS consumer clients now share the task-first create/link onboarding model, projected timelines with outgoing delivery/read ticks, attachment send/download, and inline previews for common image types; macOS also ships the beta client and a separate macOS admin app
 - `trix-bot` and `trix-botd` for headless encrypted bot accounts, plus Rust, Python, and Go echo-bot examples
 
 This is still a development prototype, not a production deployment.
@@ -78,6 +78,8 @@ cargo test --workspace
 swift test --package-path apps/macos-admin
 ./scripts/client-smoke-harness.sh --list-suites
 ./scripts/client-smoke-harness.sh --suite macos-admin --no-postgres
+./scripts/client-smoke-harness.sh --suite ios-server --stop-postgres
+./scripts/client-smoke-harness.sh --suite ios-ui --stop-postgres
 cargo run -p trix-botd -- stdio
 ```
 
@@ -96,6 +98,7 @@ cargo run -p trix-botd -- stdio
 - Server config and admin/runtime knobs: [docs/server-config.md](docs/server-config.md)
 - Client smoke harness: [docs/client-smoke-harness.md](docs/client-smoke-harness.md)
 - Manual client QA checklist: [docs/client-test-checklist.md](docs/client-test-checklist.md)
+- Onboarding simplification rationale: [docs/onboarding-simplification-review.md](docs/onboarding-simplification-review.md)
 - Product and architecture spec: [docs/v0-spec.md](docs/v0-spec.md)
 - Server setup, APNs, and device lifecycle: [docs/server-operations.md](docs/server-operations.md)
 - HTTP API contract: [openapi/v0.yaml](openapi/v0.yaml)
