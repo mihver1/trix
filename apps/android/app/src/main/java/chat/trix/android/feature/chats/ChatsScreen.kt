@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -2242,108 +2243,113 @@ private fun ConversationTranscript(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = if (message.isMine) Arrangement.End else Arrangement.Start,
             ) {
-                Surface(
-                    shape = RoundedCornerShape(24.dp),
-                    color = if (message.isMine) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.surfaceContainerHigh
-                    },
-                    tonalElevation = 1.dp,
+                Column(
                     modifier = Modifier
                         .widthIn(max = 420.dp)
-                        .combinedClickable(
-                            onClick = {},
-                            onLongClick = onReactToMessage?.let { callback ->
-                                { callback(message) }
-                            },
+                        .wrapContentWidth(
+                            if (message.isMine) Alignment.End else Alignment.Start,
                         ),
+                    horizontalAlignment = if (message.isMine) Alignment.End else Alignment.Start,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Column(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    Surface(
+                        shape = RoundedCornerShape(24.dp),
+                        color = if (message.isMine) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainerHigh
+                        },
+                        tonalElevation = 1.dp,
+                        modifier = Modifier
+                            .combinedClickable(
+                                onClick = {},
+                                onLongClick = onReactToMessage?.let { callback ->
+                                    { callback(message) }
+                                },
+                            ),
                     ) {
-                        Text(
-                            text = message.author,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            text = message.body,
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        if (message.attachment != null) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                TextButton(
-                                    onClick = { onOpenAttachment(message.attachment) },
-                                    enabled = activeAttachmentMessageId != message.id,
+                        Column(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                text = message.author,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                text = message.body,
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            if (message.attachment != null) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    if (activeAttachmentMessageId == message.id) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(16.dp),
-                                            strokeWidth = 2.dp,
-                                        )
-                                    } else {
+                                    TextButton(
+                                        onClick = { onOpenAttachment(message.attachment) },
+                                        enabled = activeAttachmentMessageId != message.id,
+                                    ) {
+                                        if (activeAttachmentMessageId == message.id) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(16.dp),
+                                                strokeWidth = 2.dp,
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = Icons.Rounded.FolderOpen,
+                                                contentDescription = null,
+                                            )
+                                        }
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("Open")
+                                    }
+                                    OutlinedButton(
+                                        onClick = { onShareAttachment(message.attachment) },
+                                        enabled = activeAttachmentMessageId != message.id,
+                                    ) {
                                         Icon(
-                                            imageVector = Icons.Rounded.FolderOpen,
+                                            imageVector = Icons.Rounded.Share,
                                             contentDescription = null,
                                         )
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("Share")
                                     }
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Open")
-                                }
-                                OutlinedButton(
-                                    onClick = { onShareAttachment(message.attachment) },
-                                    enabled = activeAttachmentMessageId != message.id,
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Share,
-                                        contentDescription = null,
-                                    )
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Share")
                                 }
                             }
-                        }
-                        if (message.note != null) {
-                            Text(
-                                text = message.note,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        if (message.reactions.isNotEmpty()) {
-                            Row(
-                                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                message.reactions.forEach { reaction ->
-                                    MessageReactionBadge(reaction = reaction)
-                                }
-                            }
-                        }
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            if (message.isMine && message.receiptStatus != null) {
-                                Icon(
-                                    imageVector = receiptStatusIcon(message.receiptStatus),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp),
-                                    tint = receiptStatusTint(message.receiptStatus),
+                            if (message.note != null) {
+                                Text(
+                                    text = message.note,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            Text(
-                                text = message.timestampLabel,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (message.isMine && message.receiptStatus != null) {
+                                    Icon(
+                                        imageVector = receiptStatusIcon(message.receiptStatus),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = receiptStatusTint(message.receiptStatus),
+                                    )
+                                }
+                                Text(
+                                    text = message.timestampLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
+                    }
+
+                    if (message.reactions.isNotEmpty()) {
+                        MessageReactionRow(
+                            reactions = message.reactions,
+                            isMine = message.isMine,
+                        )
                     }
                 }
             }
@@ -2422,6 +2428,29 @@ private fun MessageReactionBadge(reaction: ChatMessageReaction) {
             },
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
         )
+    }
+}
+
+@Composable
+private fun MessageReactionRow(
+    reactions: List<ChatMessageReaction>,
+    isMine: Boolean,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = if (isMine) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            reactions.forEach { reaction ->
+                MessageReactionBadge(reaction = reaction)
+            }
+        }
     }
 }
 

@@ -1192,6 +1192,13 @@ private struct ConsumerBubbleRow: View {
                     onOpenAttachment: onOpenAttachment,
                     onSelectReaction: onSelectReaction
                 )
+
+                if !message.reactions.isEmpty {
+                    ConsumerReactionChipRow(
+                        reactions: message.reactions,
+                        isOutgoing: message.isOutgoing
+                    )
+                }
             }
             .frame(maxWidth: .infinity, alignment: message.isOutgoing ? .trailing : .leading)
 
@@ -1242,13 +1249,6 @@ private struct ConsumerMessageBubble: View {
                         .monospacedDigit()
                 }
                 .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
-            }
-
-            if !message.reactions.isEmpty {
-                ConsumerReactionChipRow(
-                    reactions: message.reactions,
-                    isOutgoing: message.isOutgoing
-                )
             }
         }
         .padding(.horizontal, 14)
@@ -1313,15 +1313,22 @@ private struct ConsumerReactionChipRow: View {
                         .foregroundStyle(reaction.includesSelf ? consumerChatAccent : .secondary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
-                        .background(
-                            reaction.includesSelf
-                                ? Color.white.opacity(isOutgoing ? 0.96 : 0.72)
-                                : Color.black.opacity(isOutgoing ? 0.12 : 0.04)
-                        )
-                        .clipShape(Capsule())
+                        .background(TrixTheme.chipSurface, in: Capsule())
+                        .overlay {
+                            Capsule()
+                                .stroke(
+                                    reaction.includesSelf
+                                        ? consumerChatAccent.opacity(0.28)
+                                        : TrixTheme.surfaceStroke,
+                                    lineWidth: 1
+                                )
+                        }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: isOutgoing ? .trailing : .leading)
         }
+        .scrollClipDisabled()
+        .frame(maxWidth: 320, alignment: isOutgoing ? .trailing : .leading)
     }
 
     private func reactionLabel(_ reaction: SafeMessengerReactionSummary) -> String {
