@@ -8,13 +8,13 @@ func credentialFailureOnlyTreatsUnauthorizedAsSessionInvalidation() {
 }
 
 @Test
-func restoreDispositionPreservesActiveSessionWhenServerStateIsMissing() {
+func restoreDispositionRequiresRelinkWhenServerStateIsMissingForActiveDevice() {
     let disposition = sessionRestoreErrorDisposition(
         deviceStatus: .active,
         error: .server(code: "not_found", message: "active device not found", statusCode: 404)
     )
 
-    #expect(disposition == .preserveActiveSession)
+    #expect(disposition == .preserveActiveSessionRequiresRelink)
 }
 
 @Test
@@ -25,4 +25,24 @@ func restoreDispositionRestartsPendingLinkWhenServerDropsPendingDevice() {
     )
 
     #expect(disposition == .restartPendingLink)
+}
+
+@Test
+func restoreDispositionPreservesReconnectForCredentialFailure() {
+    let disposition = sessionRestoreErrorDisposition(
+        deviceStatus: .active,
+        error: .server(code: "unauthorized", message: "invalid access token", statusCode: 401)
+    )
+
+    #expect(disposition == .preserveActiveSession)
+}
+
+@Test
+func relinkRequiredMessageExplainsReconnectWillNotHelp() {
+    let message = relinkRequiredRestoreFailureMessage(
+        for: .server(code: "not_found", message: "active device not found", statusCode: 404)
+    )
+
+    #expect(message.contains("reconnect уже не поможет"))
+    #expect(message.contains("link flow"))
 }

@@ -4,6 +4,7 @@ import SwiftUI
 struct TrixColors {
     let canvasStart: Color
     let canvasEnd: Color
+    let canvasGlow: Color
     let sidebar: Color
     let sidebarElevated: Color
     let ink: Color
@@ -20,6 +21,7 @@ struct TrixColors {
     let warning: Color
     let inputFill: Color
     let tileFill: Color
+    let panelShadow: Color
 
     static func resolve() -> TrixColors {
         let windowBackground = Color(nsColor: .windowBackgroundColor)
@@ -27,26 +29,29 @@ struct TrixColors {
         let controlBackground = Color(nsColor: .controlBackgroundColor)
         let textBackground = Color(nsColor: .textBackgroundColor)
         let separator = Color(nsColor: .separatorColor)
+        let accent = Color(nsColor: .controlAccentColor)
 
         return TrixColors(
             canvasStart: windowBackground,
             canvasEnd: underPageBackground,
+            canvasGlow: accent.opacity(0.10),
             sidebar: controlBackground,
             sidebarElevated: underPageBackground,
             ink: .primary,
             inkMuted: .secondary,
             inverseInk: .primary,
             inverseInkMuted: .secondary,
-            accent: .accentColor,
-            accentSoft: .accentColor,
+            accent: accent,
+            accentSoft: accent,
             rust: .orange,
-            panel: controlBackground,
+            panel: underPageBackground,
             panelStrong: windowBackground,
             outline: separator,
             success: .green,
             warning: .orange,
             inputFill: textBackground,
-            tileFill: controlBackground
+            tileFill: controlBackground,
+            panelShadow: .black.opacity(0.08)
         )
     }
 }
@@ -66,8 +71,91 @@ struct TrixCanvas: View {
     @Environment(\.trixColors) private var colors
 
     var body: some View {
-        colors.canvasStart
+        ZStack {
+            LinearGradient(
+                colors: [colors.canvasStart, colors.canvasEnd],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            Circle()
+                .fill(colors.canvasGlow)
+                .frame(width: 420, height: 420)
+                .blur(radius: 120)
+                .offset(x: 260, y: -180)
+
+            Circle()
+                .fill(colors.canvasGlow.opacity(0.7))
+                .frame(width: 340, height: 340)
+                .blur(radius: 140)
+                .offset(x: -200, y: 260)
+        }
+        .drawingGroup(opaque: false)
+        .compositingGroup()
             .ignoresSafeArea()
+    }
+}
+
+struct TrixSurface<Content: View>: View {
+    @Environment(\.trixColors) private var colors
+
+    var emphasized: Bool = false
+    var cornerRadius: CGFloat = 22
+    @ViewBuilder let content: Content
+
+    init(
+        emphasized: Bool = false,
+        cornerRadius: CGFloat = 22,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.emphasized = emphasized
+        self.cornerRadius = cornerRadius
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .background {
+                surfaceShape
+                    .fill(surfaceGradient)
+                    .overlay {
+                        surfaceShape
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        colors.accent.opacity(emphasized ? 0.14 : 0.06),
+                                        .clear,
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                    }
+            }
+            .overlay {
+                surfaceShape
+                    .stroke(colors.outline.opacity(emphasized ? 0.78 : 0.58), lineWidth: 1)
+            }
+            .shadow(
+                color: colors.panelShadow.opacity(emphasized ? 1 : 0.72),
+                radius: emphasized ? 18 : 10,
+                x: 0,
+                y: emphasized ? 10 : 4
+            )
+    }
+
+    private var surfaceShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+    }
+
+    private var surfaceGradient: LinearGradient {
+        LinearGradient(
+            colors: emphasized
+                ? [colors.panelStrong, colors.panel]
+                : [colors.panel, colors.panelStrong.opacity(0.92)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
     }
 }
 
@@ -89,22 +177,22 @@ struct TrixPanel<Content: View>: View {
     }
 
     var body: some View {
-        GroupBox {
+        TrixSurface {
             VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundStyle(titleColor)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.subheadline)
+                            .foregroundStyle(subtitleColor)
+                    }
+                }
+
                 content
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(titleColor)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(subtitleColor)
-                }
-            }
+            .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -126,10 +214,14 @@ struct TrixToneBadge: View {
     var body: some View {
         Text(label)
             .font(.caption.weight(.medium))
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .foregroundStyle(tint)
-        .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .foregroundStyle(tint)
+            .background(tint.opacity(0.12), in: Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(tint.opacity(0.20), lineWidth: 1)
+            }
     }
 }
 
@@ -160,7 +252,13 @@ struct TrixMetricTile: View {
                     .foregroundStyle(colors.inkMuted)
             }
         }
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(colors.tileFill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(colors.outline.opacity(0.62), lineWidth: 1)
+        }
     }
 }
 

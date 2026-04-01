@@ -557,13 +557,25 @@ private struct OnboardingFeature: View {
     let detail: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Label(title, systemImage: symbol)
-                .font(.headline)
-                .foregroundStyle(colors.ink)
-            Text(detail)
-                .font(.subheadline)
-                .foregroundStyle(colors.inkMuted)
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(colors.accent.opacity(0.12))
+                    .frame(width: 34, height: 34)
+
+                Image(systemName: symbol)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(colors.accent)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(colors.ink)
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(colors.inkMuted)
+            }
         }
     }
 }
@@ -581,6 +593,13 @@ private struct CommandLineChip: View {
             .font(.system(.footnote, design: .monospaced))
             .foregroundStyle(colors.ink)
             .textSelection(.enabled)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(colors.tileFill, in: Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(colors.outline.opacity(0.62), lineWidth: 1)
+            }
     }
 }
 

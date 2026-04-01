@@ -203,7 +203,9 @@ private struct SidebarView: View {
                 }
                 .disabled(model.isRefreshingStatus)
 
-                if model.hasPersistedSession && !model.isAuthenticated {
+                if model.hasPersistedSession &&
+                    !model.isAuthenticated &&
+                    model.storedSessionRecoveryMode == .reconnect {
                     Button {
                         Task {
                             await model.restoreSession()
@@ -286,25 +288,32 @@ private struct SidebarView: View {
 }
 
 private struct WorkspaceSidebarChatRow: View {
+    @Environment(\.trixColors) private var colors
     let chat: LocalChatListItem
     let currentAccountID: UUID?
     let isLoading: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: iconName)
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
+        HStack(alignment: .center, spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(chat.hasUnread ? colors.accent.opacity(0.12) : colors.tileFill)
+                    .frame(width: 34, height: 34)
+
+                Image(systemName: iconName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(chat.hasUnread ? colors.accent : colors.inkMuted)
+            }
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(chat.displayTitle)
-                    .font(.headline)
+                    .font(.headline.weight(.medium))
+                    .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Text(chat.sidebarPreview(for: currentAccountID))
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(colors.inkMuted)
                     .lineLimit(2)
             }
 
@@ -328,7 +337,7 @@ private struct WorkspaceSidebarChatRow: View {
                 }
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
         .contentShape(Rectangle())
     }
 
@@ -374,9 +383,7 @@ private struct ContentHeader: View {
                 Spacer(minLength: 24)
 
                 VStack(alignment: .trailing, spacing: 8) {
-                    Text(connectionBadgeLabel)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(connectionTint)
+                    TrixToneBadge(label: connectionBadgeLabel, tint: connectionTint)
                     if let version = model.version {
                         Text("server \(version.version)")
                             .font(.subheadline)
