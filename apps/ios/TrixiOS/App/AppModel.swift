@@ -1070,18 +1070,22 @@ final class AppModel {
             isLoading = false
         }
 
-        do {
-            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            return try TrixCorePersistentBridge.getAttachment(
-                baseURLString: baseURLString,
-                accessToken: context.session.accessToken,
-                identity: context.identity,
-                attachment: attachment
-            )
-        } catch {
-            errorMessage = error.localizedDescription
-            return nil
-        }
+        return await resolveAttachmentFile(
+            baseURLString: baseURLString,
+            attachment: attachment,
+            reportErrors: true
+        )
+    }
+
+    func inlinePreviewAttachmentFile(
+        baseURLString: String,
+        attachment: SafeMessengerAttachment
+    ) async -> DownloadedAttachmentFile? {
+        await resolveAttachmentFile(
+            baseURLString: baseURLString,
+            attachment: attachment,
+            reportErrors: false
+        )
     }
 
     @discardableResult
@@ -1121,6 +1125,77 @@ final class AppModel {
             errorMessage = error.localizedDescription
             return nil
         }
+    }
+
+    private func resolveAttachmentFile(
+        baseURLString: String,
+        attachment: SafeMessengerAttachment,
+        reportErrors: Bool
+    ) async -> DownloadedAttachmentFile? {
+        if let cachedFile = cachedAttachmentFile(for: attachment.attachmentRef) {
+            return cachedFile
+        }
+
+        if let existingTask = attachmentDownloadTasks[attachment.attachmentRef] {
+            do {
+                let file = try await existingTask.value
+                cacheAttachmentFile(file, for: attachment.attachmentRef)
+                return file
+            } catch {
+                if reportErrors {
+                    errorMessage = error.localizedDescription
+                }
+                return nil
+            }
+        }
+
+        let task = Task<DownloadedAttachmentFile, Error> {
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            return try TrixCorePersistentBridge.getAttachment(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: context.identity,
+                attachment: attachment
+            )
+        }
+        attachmentDownloadTasks[attachment.attachmentRef] = task
+
+        do {
+            let file = try await task.value
+            attachmentDownloadTasks.removeValue(forKey: attachment.attachmentRef)
+            cacheAttachmentFile(file, for: attachment.attachmentRef)
+            return file
+        } catch {
+            attachmentDownloadTasks.removeValue(forKey: attachment.attachmentRef)
+            if reportErrors {
+                errorMessage = error.localizedDescription
+            }
+            return nil
+        }
+    }
+
+    private func cachedAttachmentFile(for attachmentRef: String) -> DownloadedAttachmentFile? {
+        guard let cachedFile = cachedAttachmentFiles[attachmentRef] else {
+            return nil
+        }
+
+        guard FileManager.default.fileExists(atPath: cachedFile.fileURL.path) else {
+            cachedAttachmentFiles.removeValue(forKey: attachmentRef)
+            return nil
+        }
+
+        return cachedFile
+    }
+
+    private func cacheAttachmentFile(
+        _ file: DownloadedAttachmentFile,
+        for attachmentRef: String
+    ) {
+        guard FileManager.default.fileExists(atPath: file.fileURL.path) else {
+            return
+        }
+
+        cachedAttachmentFiles[attachmentRef] = file
     }
 
     @discardableResult

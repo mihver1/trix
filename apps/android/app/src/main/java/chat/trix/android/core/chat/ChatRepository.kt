@@ -402,6 +402,12 @@ class ChatRepository(
         attachmentRepository().shareAttachment(attachment)
     }
 
+    suspend fun loadImagePreviewAttachment(
+        attachment: ChatAttachment,
+    ): LocalImagePreviewAttachment = withContext(Dispatchers.IO) {
+        attachmentRepository().loadImagePreviewAttachment(attachment)
+    }
+
     suspend fun markConversationRead(chatId: String): ChatReadResult = withContext(Dispatchers.IO) {
         runFfi("Failed to update chat read state") {
             val previousUnreadCount = messengerConversationSummary(chatId)?.unreadCount?.toLong()
