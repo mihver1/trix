@@ -338,6 +338,11 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func clearServerStatus() {
+        health = nil
+        version = nil
+    }
+
     func setApplicationActive(_ isActive: Bool) {
         isApplicationActive = isActive
 

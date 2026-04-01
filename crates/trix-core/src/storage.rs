@@ -1924,6 +1924,9 @@ impl LocalHistoryStore {
                     advanced_to_server_seq = Some(chat.projected_cursor_server_seq);
                 }
             }
+            if reconcile_pending_history_repair_in_chat(chat) {
+                changed = true;
+            }
 
             Ok::<_, anyhow::Error>((
                 LocalProjectionApplyReport {
@@ -3041,11 +3044,9 @@ fn pending_history_repair_window_from(
 }
 
 fn reconcile_pending_history_repair_in_chat(chat: &mut PersistedChatState) -> bool {
-    let Some(current_window) = pending_history_repair_window_from(chat) else {
-        return false;
-    };
     let next_window = next_pending_history_repair_window(chat);
-    if next_window == Some(current_window) {
+    let current_window = pending_history_repair_window_from(chat);
+    if next_window == current_window {
         return false;
     }
     if let Some(next_window) = next_window {
@@ -8233,6 +8234,13 @@ mod tests {
         assert_eq!(projected[2].payload, None);
         assert_eq!(projected[3].payload.as_deref(), Some(b"second".as_slice()));
         assert_eq!(projected[4].payload.as_deref(), Some(b"third".as_slice()));
+        assert_eq!(
+            store.pending_history_repair_window(chat_id),
+            Some(LocalHistoryRepairWindow {
+                from_server_seq: 3,
+                through_server_seq: 5,
+            })
+        );
 
         fs::remove_dir_all(&bob_storage_root).ok();
     }

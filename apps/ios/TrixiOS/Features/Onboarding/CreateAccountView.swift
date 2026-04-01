@@ -10,30 +10,30 @@ struct CreateAccountView: View {
 
         var id: String { rawValue }
 
-        var title: String {
+        var sectionTitle: String {
             switch self {
             case .createAccount:
-                return "Start Your Private Inbox"
+                return "Create User"
             case .linkExisting:
-                return "Bring Your Account Here"
+                return "Link Device"
             }
         }
 
-        var subtitle: String {
+        var helperText: String? {
             switch self {
             case .createAccount:
-                return "Create a new Trix profile and land directly in encrypted chats."
+                return nil
             case .linkExisting:
-                return "Paste a secure link code from a phone or desktop that is already signed in."
+                return "Approve this device from another trusted device after linking."
             }
         }
 
         var buttonTitle: String {
             switch self {
             case .createAccount:
-                return "Create Account"
+                return "Create User"
             case .linkExisting:
-                return "Continue"
+                return "Link Device"
             }
         }
     }
@@ -46,7 +46,6 @@ struct CreateAccountView: View {
     @State private var form = CreateAccountForm()
     @State private var linkForm = LinkExistingAccountForm()
     @State private var onboardingErrorMessage: String?
-    @State private var isShowingServerDetails = false
 
     var body: some View {
         ZStack {
@@ -62,8 +61,9 @@ struct CreateAccountView: View {
             .ignoresSafeArea()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    hero
+                VStack(alignment: .leading, spacing: 20) {
+                    header
+                    connectionCard
                     modePicker
 
                     if let bannerText {
@@ -75,7 +75,6 @@ struct CreateAccountView: View {
                     }
 
                     setupCard
-                    connectionCard
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 24)
@@ -88,28 +87,32 @@ struct CreateAccountView: View {
             bottomActionBar
         }
         .toolbar(.hidden, for: .navigationBar)
+        .onChange(of: serverBaseURL) { _, _ in
+            model.clearServerStatus()
+            onboardingErrorMessage = nil
+        }
+        .onChange(of: setupMode) { _, _ in
+            model.clearServerStatus()
+            onboardingErrorMessage = nil
+        }
+        .onChange(of: linkForm.linkPayload) { _, _ in
+            guard setupMode == .linkExisting else {
+                return
+            }
+
+            model.clearServerStatus()
+            onboardingErrorMessage = nil
+        }
     }
 
-    private var hero: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            ZStack {
-                Circle()
-                    .fill(onboardingAccent.opacity(0.12))
-                    .frame(width: 78, height: 78)
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Set Up Trix")
+                .font(.system(size: 30, weight: .bold, design: .rounded))
 
-                Image(systemName: setupMode == .createAccount ? "bubble.left.and.bubble.right.fill" : "iphone.gen3.badge.plus")
-                    .font(.system(size: 30, weight: .semibold))
-                    .foregroundStyle(onboardingAccent)
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text(setupMode.title)
-                    .font(.system(size: 34, weight: .bold, design: .rounded))
-
-                Text(setupMode.subtitle)
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-            }
+            Text("Choose a server, then create a user or link this device.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -118,9 +121,8 @@ struct CreateAccountView: View {
             ForEach(SetupMode.allCases) { mode in
                 Button {
                     setupMode = mode
-                    onboardingErrorMessage = nil
                 } label: {
-                    Text(mode == .createAccount ? "Get Started" : "Use Existing")
+                    Text(mode.sectionTitle)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(setupMode == mode ? .white : .primary)
                         .frame(maxWidth: .infinity)
@@ -145,7 +147,7 @@ struct CreateAccountView: View {
     @ViewBuilder
     private var setupCard: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text(setupMode == .createAccount ? "Profile" : "Link Code")
+            Text(setupMode.sectionTitle)
                 .font(.headline)
 
             switch setupMode {
@@ -158,19 +160,12 @@ struct CreateAccountView: View {
                         accessibilityIdentifier: TrixAccessibilityID.Onboarding.profileNameField
                     )
                     OnboardingField(
-                        label: "Handle",
+                        label: "Handle (public, optional)",
                         text: $form.handle,
                         icon: "at",
                         autocapitalization: .never,
                         disableAutocorrection: true,
                         accessibilityIdentifier: TrixAccessibilityID.Onboarding.handleField
-                    )
-                    OnboardingField(
-                        label: "Bio",
-                        text: $form.profileBio,
-                        icon: "text.alignleft",
-                        axis: .vertical,
-                        accessibilityIdentifier: TrixAccessibilityID.Onboarding.bioField
                     )
                     OnboardingField(
                         label: "Device Name",
@@ -201,11 +196,11 @@ struct CreateAccountView: View {
                 }
             }
 
-            Text(setupMode == .createAccount
-                 ? "A new account is created on the server and this iPhone becomes the first trusted device."
-                 : "This iPhone will wait for approval from one of your already trusted devices before it unlocks.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            if let helperText = setupMode.helperText {
+                Text(helperText)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(20)
         .background(onboardingSurface)
@@ -221,7 +216,7 @@ struct CreateAccountView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Connection")
+                    Text("Server")
                         .font(.headline)
 
                     Text(connectionSummary)
@@ -235,51 +230,39 @@ struct CreateAccountView: View {
                 ConnectionStatusPill(snapshot: model.systemSnapshot)
             }
 
+            if let serverSourceText {
+                Text(serverSourceText)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            OnboardingField(
+                label: "Server URL",
+                text: $serverBaseURL,
+                icon: "network",
+                autocapitalization: .never,
+                disableAutocorrection: true,
+                keyboardType: .URL,
+                accessibilityIdentifier: TrixAccessibilityID.Onboarding.serverURLField
+            )
+
+            Button(action: reload) {
+                if model.isLoading {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                } else {
+                    Text("Check Server")
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .buttonStyle(.bordered)
+            .disabled(model.isLoading)
+            .accessibilityIdentifier(TrixAccessibilityID.Onboarding.testConnectionButton)
+
             if let lastUpdatedAt = model.lastUpdatedAt {
                 Text("Last checked \(lastUpdatedAt.formatted(date: .omitted, time: .shortened))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-
-            Button(isShowingServerDetails ? "Hide Server Details" : "Show Server Details") {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isShowingServerDetails.toggle()
-                }
-            }
-            .font(.subheadline.weight(.semibold))
-            .accessibilityIdentifier(TrixAccessibilityID.Onboarding.serverDetailsToggle)
-
-            if isShowingServerDetails {
-                VStack(spacing: 12) {
-                    Text(serverBaseURL)
-                        .font(.footnote.monospaced())
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    OnboardingField(
-                        label: "Server URL",
-                        text: $serverBaseURL,
-                        icon: "network",
-                        autocapitalization: .never,
-                        disableAutocorrection: true,
-                        keyboardType: .URL,
-                        accessibilityIdentifier: TrixAccessibilityID.Onboarding.serverURLField
-                    )
-
-                    Button(action: reload) {
-                        if model.isLoading {
-                            ProgressView()
-                                .frame(maxWidth: .infinity)
-                        } else {
-                            Text("Test Connection")
-                                .frame(maxWidth: .infinity)
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(model.isLoading)
-                    .accessibilityIdentifier(TrixAccessibilityID.Onboarding.testConnectionButton)
-                }
-                .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
         .padding(18)
@@ -311,9 +294,11 @@ struct CreateAccountView: View {
             .disabled(model.isLoading || !canSubmit)
             .accessibilityIdentifier(TrixAccessibilityID.Onboarding.primaryActionButton)
 
-            Text(setupMode == .createAccount ? "You can link more devices later from Settings." : "Approval usually completes after an existing device confirms this phone.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if setupMode == .linkExisting {
+                Text("This may switch to a pending approval state before the device is fully trusted.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.horizontal, 20)
         .padding(.top, 12)
@@ -325,9 +310,33 @@ struct CreateAccountView: View {
         onboardingErrorMessage ?? model.errorMessage
     }
 
+    private var parsedLinkPayload: LinkIntentPayload? {
+        try? LinkIntentPayload.parse(linkForm.linkPayload)
+    }
+
+    private var effectiveServerBaseURL: String {
+        if setupMode == .linkExisting, let payload = parsedLinkPayload {
+            return payload.baseURL
+        }
+
+        return serverBaseURL
+    }
+
+    private var serverSourceText: String? {
+        guard setupMode == .linkExisting else {
+            return nil
+        }
+
+        if let payload = parsedLinkPayload {
+            return "Using server from link code: \(payload.baseURL)"
+        }
+
+        return "If the link code contains a server URL, it overrides the field above."
+    }
+
     private var connectionSummary: String {
-        if let host = URL(string: serverBaseURL)?.host {
-            return "Secure connection to \(host)"
+        if let host = URL(string: effectiveServerBaseURL)?.host {
+            return "Current target: \(host)"
         }
 
         return "Custom server connection"
@@ -352,8 +361,15 @@ struct CreateAccountView: View {
     }
 
     private func reload() {
+        let targetBaseURL = effectiveServerBaseURL
+        onboardingErrorMessage = nil
+
+        if setupMode == .linkExisting, targetBaseURL != serverBaseURL {
+            serverBaseURL = targetBaseURL
+        }
+
         Task {
-            await model.refresh(baseURLString: serverBaseURL)
+            await model.refresh(baseURLString: targetBaseURL)
         }
     }
 

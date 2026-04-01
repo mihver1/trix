@@ -1001,7 +1001,6 @@ impl SyncCoordinator {
         aad_json: Option<Value>,
         existing_outbox: Option<crate::storage::LocalOutboxMessage>,
     ) -> Result<SendMessageOutcome> {
-
         let queued_at_unix = current_unix_seconds()?;
         let message_id = message_id.unwrap_or_default();
         store.ensure_outbox_message(

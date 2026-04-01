@@ -148,6 +148,8 @@ struct ConsumerChatDetailView: View {
                 ConsumerConversationTimelineView(
                     renderState: timelineRenderState,
                     canReact: canReact,
+                    model: model,
+                    serverBaseURLString: serverBaseURL,
                     onOpenAttachment: openAttachment,
                     onSelectReaction: sendReaction
                 )
@@ -906,6 +908,8 @@ private extension ConsumerReceiptStatus {
 private struct ConsumerConversationTimelineView: View, Equatable {
     let renderState: ConsumerConversationTimelineRenderState
     let canReact: Bool
+    let model: AppModel
+    let serverBaseURLString: String
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
     let onSelectReaction: (ConsumerRenderedMessage, String) -> Void
 
@@ -963,6 +967,8 @@ private struct ConsumerConversationTimelineView: View, Equatable {
                     latestSentText: renderState.latestSentText,
                     downloadingAttachmentMessageId: renderState.downloadingAttachmentMessageId,
                     canReact: canReact,
+                    model: model,
+                    serverBaseURLString: serverBaseURLString,
                     onOpenAttachment: onOpenAttachment,
                     onSelectReaction: onSelectReaction
                 )
@@ -1047,6 +1053,8 @@ private struct ConsumerTimelineRow: View {
     let latestSentText: String?
     let downloadingAttachmentMessageId: String?
     let canReact: Bool
+    let model: AppModel
+    let serverBaseURLString: String
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
     let onSelectReaction: (ConsumerRenderedMessage, String) -> Void
 
@@ -1075,6 +1083,8 @@ private struct ConsumerTimelineRow: View {
                     message: message,
                     isDownloadingAttachment: downloadingAttachmentMessageId == message.id,
                     canReact: canReact,
+                    model: model,
+                    serverBaseURLString: serverBaseURLString,
                     onOpenAttachment: onOpenAttachment,
                     onSelectReaction: onSelectReaction
                 )
@@ -1124,6 +1134,8 @@ private struct ConsumerBubbleRow: View {
     let message: ConsumerRenderedMessage
     let isDownloadingAttachment: Bool
     let canReact: Bool
+    let model: AppModel
+    let serverBaseURLString: String
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
     let onSelectReaction: (ConsumerRenderedMessage, String) -> Void
 
@@ -1145,6 +1157,8 @@ private struct ConsumerBubbleRow: View {
                     message: message,
                     isDownloadingAttachment: isDownloadingAttachment,
                     canReact: canReact,
+                    model: model,
+                    serverBaseURLString: serverBaseURLString,
                     onOpenAttachment: onOpenAttachment,
                     onSelectReaction: onSelectReaction
                 )
@@ -1170,6 +1184,8 @@ private struct ConsumerMessageBubble: View {
     let message: ConsumerRenderedMessage
     let isDownloadingAttachment: Bool
     let canReact: Bool
+    let model: AppModel
+    let serverBaseURLString: String
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
     let onSelectReaction: (ConsumerRenderedMessage, String) -> Void
     @State private var isReactionPickerPresented = false
@@ -1186,6 +1202,8 @@ private struct ConsumerMessageBubble: View {
                 ConsumerAttachmentBubbleContent(
                     message: message,
                     isDownloading: isDownloadingAttachment,
+                    model: model,
+                    serverBaseURLString: serverBaseURLString,
                     onOpenAttachment: onOpenAttachment
                 )
             case .reaction, .receipt, .chatEvent:
@@ -1295,43 +1313,75 @@ private struct ConsumerReactionChipRow: View {
 private struct ConsumerAttachmentBubbleContent: View {
     let message: ConsumerRenderedMessage
     let isDownloading: Bool
+    let model: AppModel
+    let serverBaseURLString: String
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
 
     var body: some View {
         Button {
             onOpenAttachment(message)
         } label: {
-            HStack(alignment: .top, spacing: 12) {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(message.isOutgoing ? Color.white.opacity(0.18) : consumerChatAccent.opacity(0.12))
-                    .frame(width: 42, height: 42)
-                    .overlay {
-                        if isDownloading {
-                            ProgressView()
-                                .tint(message.isOutgoing ? .white : consumerChatAccent)
-                        } else {
-                            Image(systemName: attachmentIconName)
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(message.isOutgoing ? .white : consumerChatAccent)
+            Group {
+                if let attachment = message.attachmentBody,
+                   ConsumerInlineAttachmentPreviewSupport.supports(attachment) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ConsumerInlineAttachmentPreview(
+                            model: model,
+                            serverBaseURLString: serverBaseURLString,
+                            attachment: attachment,
+                            isOutgoing: message.isOutgoing
+                        )
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(message.primaryText)
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(message.isOutgoing ? .white : .primary)
+                                .lineLimit(2)
+
+                            Text(detailLabel)
+                                .font(.caption)
+                                .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
+                                .lineLimit(2)
                         }
                     }
+                } else {
+                    HStack(alignment: .top, spacing: 12) {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(message.isOutgoing ? Color.white.opacity(0.18) : consumerChatAccent.opacity(0.12))
+                            .frame(width: 42, height: 42)
+                            .overlay {
+                                if isDownloading {
+                                    ProgressView()
+                                        .tint(message.isOutgoing ? .white : consumerChatAccent)
+                                } else {
+                                    Image(systemName: attachmentIconName)
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .foregroundStyle(message.isOutgoing ? .white : consumerChatAccent)
+                                }
+                            }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(message.primaryText)
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(message.isOutgoing ? .white : .primary)
-                        .lineLimit(2)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(message.primaryText)
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(message.isOutgoing ? .white : .primary)
+                                .lineLimit(2)
 
-                    Text(isDownloading ? "Decrypting secure attachment..." : (message.secondaryText ?? "Tap to open"))
-                        .font(.caption)
-                        .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
-                        .lineLimit(2)
+                            Text(detailLabel)
+                                .font(.caption)
+                                .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
+                                .lineLimit(2)
+                        }
+                    }
                 }
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(message.attachmentBody == nil || isDownloading)
+    }
+
+    private var detailLabel: String {
+        isDownloading ? "Decrypting secure attachment..." : (message.secondaryText ?? "Tap to open")
     }
 
     private var attachmentIconName: String {
