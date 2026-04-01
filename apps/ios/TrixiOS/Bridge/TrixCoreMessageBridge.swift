@@ -1,7 +1,7 @@
 import Foundation
 import UniformTypeIdentifiers
 
-enum DebugMessageDraftKind: String, CaseIterable, Identifiable {
+enum DebugMessageDraftKind: String, CaseIterable, Identifiable, Sendable {
     case text
     case attachment
     case reaction
@@ -41,21 +41,21 @@ enum DebugMessageDraftKind: String, CaseIterable, Identifiable {
     }
 }
 
-enum DebugReactionAction: String, CaseIterable, Identifiable {
+enum DebugReactionAction: String, CaseIterable, Identifiable, Sendable {
     case add
     case remove
 
     var id: String { rawValue }
 }
 
-enum DebugReceiptKind: String, CaseIterable, Identifiable {
+enum DebugReceiptKind: String, CaseIterable, Identifiable, Sendable {
     case delivered
     case read
 
     var id: String { rawValue }
 }
 
-struct DebugMessageDraft {
+struct DebugMessageDraft: Sendable {
     var kind: DebugMessageDraftKind = .text
     var text = ""
     var targetMessageId = ""

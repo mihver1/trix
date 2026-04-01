@@ -41,6 +41,8 @@ Android uses `AuthBootstrapCoordinator.createAccount()`.
 | 6 | List devices | Both devices visible, active | · | ✓ | ✓ | · |
 | 7 | Revoke linked device | Device status → revoked | ✓ | ✓ | ✓ | · |
 
+**Note**: Native onboarding is now task-first across iOS, macOS, and Android: server URL + health check, create/link mode switch, and a separate pending-approval state instead of folding approval back into the blank bootstrap form.
+
 ---
 
 ## S3 — Chat Creation
@@ -71,11 +73,10 @@ Android uses `AuthBootstrapCoordinator.createAccount()`.
 | 1 | Send text message | server_seq assigned, local store updated | ✓ | ✓ | ✓ | ✓ |
 | 2 | Receiver syncs + projects | Decrypted text appears in timeline | ✓ | ✓ | ✓ | ✓ |
 | 3 | Send reaction (emoji + target) | Reaction round-trips correctly | · | ✓ | · | · |
-| 4 | Send receipt (read/delivered) | Receipt round-trips correctly | · | ✓ | · | · |
+| 4 | Advance the receiver read cursor and let sender converge delivery/read ticks | Sender shows delivered then read decoration on the outgoing message | ✓ | ✓ | ✓ | · |
 | 5 | Send chat event | Event type + JSON round-trips | · | ✓ | · | · |
 
-**Gap**: iOS and Android use `send_message_body()` through `FfiSyncCoordinator` only for text;
-reaction/receipt/event types are not exercised in their bridge code.
+**Gap**: Raw reaction and chat-event composition are still exercised only through macOS or debug surfaces. The primary iOS, macOS, and Android chat UIs now send best-effort read receipts automatically when their read cursor advances and render delivery/read ticks on outgoing messages.
 
 ---
 
@@ -90,6 +91,7 @@ reaction/receipt/event types are not exercised in their bridge code.
 | 3 | Upload encrypted blob | Upload succeeds | · | · | · | · |
 | 4 | Send attachment message body | Message with blob_id delivered | ✓ | ✓ | ✓ | ✓ |
 | 5 | Receiver downloads + decrypts | Plaintext matches original | ✓ | ✓ | ✓ | ✓ |
+| 6 | Render inline image preview for supported image attachments | Timeline shows preview before full open/share flow | ✓ | ✓ | ✓ | · |
 
 **Note**: All platforms use `upload_attachment()` (combined prepare+upload) rather than
 separate `ffi_prepare_attachment_upload()` + `create_blob_upload()` + `upload_blob()`.
@@ -172,8 +174,7 @@ iOS uses `poll_once()` only.
 | 3 | Get history sync chunks | Chunks retrievable | · | · | · | · |
 | 4 | Complete history sync job | Job status → completed | · | ✓ | · | · |
 
-**Gap**: Only macOS currently implements history sync job listing/completion in a native client. The backend and shared core also support `POST /v0/history-sync/jobs/request` and `POST /v0/history-sync/jobs:request-repair`, and the shared `safe_ffi` e2e suite now covers same-pool repair recovery, but no native client exposes a first-class manual repair trigger yet.
-Append/get chunks are not used by any client.
+**Gap**: Only macOS currently implements history sync job listing/completion in a native client. The backend and shared core also support `POST /v0/history-sync/jobs/request` and `POST /v0/history-sync/jobs:request-repair`. `trix-core` now auto-requests per-chat `chat_backfill` for unavailable conversations and keeps bounded `timeline_repair` windows coalesced while repair is in flight, but no native client exposes a first-class manual repair trigger or repair-status UI yet. Append/get chunks are not used by any client.
 
 ---
 

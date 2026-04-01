@@ -46,12 +46,22 @@ The better tradeoff for this PoC is still:
 
 ## Next Android Tasks
 
-- expand Compose and instrumented coverage around attachment failure/retry, lifecycle resume, and linked-device recovery paths
-- surface richer messenger-core events more explicitly in the UI instead of collapsing some states into generic labels
+- expand Compose and instrumented coverage around attachment failure/retry, inline preview/open flows, lifecycle resume, and stored-device recovery states
+- surface richer messenger-core recovery events more explicitly in the UI instead of collapsing some states into generic labels
 - keep converging remaining debug-only or legacy repository paths on the shared messenger-core runtime
 
 ## Current Live Flow
 
+- use the shared task-first onboarding flow:
+  - set or override the server URL
+  - run an explicit server availability check
+  - create an account with `profile name`, public optional `handle`, and `device name`
+  - or link a device with `link payload/code` plus `device name`
+- keep pending approval separate from the main form, so an already-linked device can return and use `Check Approval` instead of re-entering bootstrap data
+- surface stored local device state explicitly on launch:
+  - active / unknown sessions offer `Reconnect`
+  - pending sessions offer `Check Approval`
+  - revoked sessions require forgetting local state before relinking
 - create a new account from Android
 - scan a QR code or paste/share a raw device-link payload from another trusted client and register a pending Android device
 - generate local `account root` and `transport` Ed25519 key material through `trix-core` FFI
@@ -69,7 +79,8 @@ The better tradeoff for this PoC is still:
 - keep a foreground realtime websocket active while the app is in the foreground, with `WorkManager` catch-up as a background fallback
 - list conversations, participant labels, unread counts, and previews from the shared messenger core
 - send text and attachment messages through the shared messenger core, with local projection applied immediately after server accept
-- mark conversations read and apply receipt state from shared messenger events
+- mark conversations read, queue best-effort read receipts, and render outgoing delivered/read ticks from shared messenger receipt decorations
+- render inline previews for common image attachment types (`jpeg`, `png`, `gif`, `webp`, `heif`, `heic`) and tap through to the normal open/share attachment flow
 - manage group members and device membership through the shared messenger-core mutation APIs
 - render trusted-device link intents as QR codes and share/copy them from Android
 - list linked devices, create link intents, and approve/revoke devices when this Android client has local account-root material

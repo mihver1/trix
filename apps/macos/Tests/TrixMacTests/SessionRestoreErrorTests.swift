@@ -96,11 +96,3 @@ func keychainDeletionFailureIgnoresInvalidOwnerEdit() {
     #expect(shouldIgnoreKeychainDeletionFailure(KeychainStoreError.unhandledStatus(errSecInvalidOwnerEdit)))
     #expect(!shouldIgnoreKeychainDeletionFailure(KeychainStoreError.unhandledStatus(errSecInteractionNotAllowed)))
 }
-
-private func shouldIgnoreKeychainDeletionFailure(_ error: Error) -> Bool {
-    if case let KeychainStoreError.unhandledStatus(status) = error {
-        return status == errSecInvalidOwnerEdit
-    }
-
-    return false
-}
