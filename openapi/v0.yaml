@@ -304,6 +304,23 @@ paths:
                 $ref: '#/components/schemas/DeviceTransferBundleResponse'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v0/devices/{device_id}/transport-key:
+    get:
+      operationId: getDeviceTransportKey
+      tags: [devices]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '200':
+          description: Device transport key visible to authenticated account members
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceTransportKeyResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v0/devices/{device_id}/approve:
     post:
       operationId: approveDevice
@@ -1623,6 +1640,16 @@ components:
         transport_pubkey_b64:
           type: string
         bootstrap_payload_b64:
+          type: string
+    DeviceTransportKeyResponse:
+      type: object
+      required: [device_id, device_status, transport_pubkey_b64]
+      properties:
+        device_id:
+          $ref: '#/components/schemas/Uuid'
+        device_status:
+          $ref: '#/components/schemas/DeviceStatus'
+        transport_pubkey_b64:
           type: string
     ApproveDeviceRequest:
       type: object

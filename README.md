@@ -71,6 +71,7 @@ For APNs key placement and device lifecycle operations, see [docs/server-operati
 
 ```bash
 make check
+make contract-check
 make run-server
 make ffi-bindings
 make ffi-parity-audit
@@ -96,6 +97,7 @@ cargo run -p trix-botd -- stdio
 ## Additional Docs
 
 - Server config and admin/runtime knobs: [docs/server-config.md](docs/server-config.md)
+- Release/pilot contract gates: [docs/contracts.md](docs/contracts.md)
 - Client smoke harness: [docs/client-smoke-harness.md](docs/client-smoke-harness.md)
 - Manual client QA checklist: [docs/client-test-checklist.md](docs/client-test-checklist.md)
 - Onboarding simplification rationale: [docs/onboarding-simplification-review.md](docs/onboarding-simplification-review.md)
