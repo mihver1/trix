@@ -2177,7 +2177,7 @@ final class AppModel: ObservableObject {
         if let accountRootSeed = storedIdentity.accountRootSeed {
             try keychainStore.save(accountRootSeed, for: .accountRootSeed)
         } else {
-            try keychainStore.removeValue(for: .accountRootSeed)
+            try removeVaultKeyIgnoringInvalidOwnerEdit(.accountRootSeed)
         }
         try keychainStore.save(storedIdentity.transportSeed, for: .transportSeed)
         try keychainStore.save(storedIdentity.credentialIdentity, for: .credentialIdentity)
@@ -2186,7 +2186,7 @@ final class AppModel: ObservableObject {
             try keychainStore.save(Data(authSession.accessToken.utf8), for: .accessToken)
             accessToken = authSession.accessToken
         } else {
-            try keychainStore.removeValue(for: .accessToken)
+            try removeVaultKeyIgnoringInvalidOwnerEdit(.accessToken)
             accessToken = nil
         }
 
@@ -2214,10 +2214,20 @@ final class AppModel: ObservableObject {
     }
 
     private func loadStoredIdentity(requireAccountRoot: Bool = false) throws -> DeviceIdentityMaterial {
-        guard
-            let transportSeed = try keychainStore.loadData(for: .transportSeed),
-            let credentialIdentity = try keychainStore.loadData(for: .credentialIdentity)
-        else {
+        let transportSeed = try keychainStore.loadData(for: .transportSeed)
+        let credentialIdentity = try keychainStore.loadData(for: .credentialIdentity)
+        guard let transportSeed, let credentialIdentity else {
+            if let plan = missingStoredIdentityRecoveryPlan(hasPersistedSession: persistedSession != nil) {
+                logWarn("auth", "stored identity material missing for persisted session; forcing local recovery mode")
+                disconnectRealtimeConnection()
+                accessToken = nil
+                outgoingLinkIntent = nil
+                clearWorkspaceData()
+                storedSessionRecoveryMode = plan.mode
+                refreshLocalIdentityState(reportErrors: false)
+                throw TrixAPIError.invalidPayload(plan.message)
+            }
+
             throw TrixAPIError.invalidPayload("Не удалось загрузить ключи устройства из Keychain.")
         }
 
@@ -2246,10 +2256,9 @@ final class AppModel: ObservableObject {
         disconnectRealtimeConnection()
         stopLinkIntentRefreshLoop()
         try sessionStore.clear()
-        try keychainStore.removeValue(for: .accountRootSeed)
-        try keychainStore.removeValue(for: .transportSeed)
-        try keychainStore.removeValue(for: .credentialIdentity)
-        try keychainStore.removeValue(for: .accessToken)
+        for key in VaultKey.allCases {
+            try removeVaultKeyIgnoringInvalidOwnerEdit(key)
+        }
 
         persistedSession = nil
         accessToken = nil
@@ -2259,8 +2268,20 @@ final class AppModel: ObservableObject {
         keyPackagePublishDraft = KeyPackagePublishDraft()
         keyPackageReserveDraft = KeyPackageReserveDraft()
         hasAccountRootKey = false
+        storedSessionRecoveryMode = .reconnect
         onboardingMode = .createAccount
         linkDraft = LinkDeviceDraft(deviceDisplayName: defaultDeviceName)
+    }
+
+    private func removeVaultKeyIgnoringInvalidOwnerEdit(_ key: VaultKey) throws {
+        do {
+            try keychainStore.removeValue(for: key)
+        } catch {
+            guard shouldIgnoreKeychainDeletionFailure(error) else {
+                throw error
+            }
+            logWarn("auth", "ignoring keychain owner mismatch while removing \(key.rawValue)", error: error)
+        }
     }
 
     private func clearWorkspaceData() {
@@ -3596,6 +3617,30 @@ enum SessionRestoreErrorDisposition: Equatable {
 enum StoredSessionRecoveryMode: Equatable {
     case reconnect
     case relinkRequired
+    case localKeysMissing
+}
+
+struct MissingStoredIdentityRecoveryPlan: Equatable {
+    let mode: StoredSessionRecoveryMode
+    let message: String
+}
+
+func shouldIgnoreKeychainDeletionFailure(_ error: Error) -> Bool {
+    guard case let KeychainStoreError.unhandledStatus(status) = error else {
+        return false
+    }
+    return status == errSecInvalidOwnerEdit
+}
+
+func missingStoredIdentityRecoveryPlan(hasPersistedSession: Bool) -> MissingStoredIdentityRecoveryPlan? {
+    guard hasPersistedSession else {
+        return nil
+    }
+
+    return MissingStoredIdentityRecoveryPlan(
+        mode: .localKeysMissing,
+        message: "На этом Mac больше нет локальных device keys для сохранённой сессии. Reconnect уже не поможет. Забудь это устройство и пройди link flow заново."
+    )
 }
 
 func sessionRestoreErrorDisposition(

@@ -183,14 +183,12 @@ struct WorkspaceView: View {
             }
         } else {
             TrixPanel(
-                title: model.storedSessionRecoveryMode == .relinkRequired ? "Relink This Mac" : "Restore Session",
-                subtitle: model.storedSessionRecoveryMode == .relinkRequired
-                    ? "The local device profile is still on this Mac, but the server no longer recognizes it as an active device."
-                    : "A local device profile exists, but the app still needs to re-authenticate against the server."
+                title: restoreSessionPanelTitle,
+                subtitle: restoreSessionPanelSubtitle
             ) {
                 VStack(alignment: .leading, spacing: 14) {
-                    if model.storedSessionRecoveryMode == .relinkRequired {
-                        Text("Reconnect cannot succeed anymore. Forget this broken device session, then link this Mac again from another trusted device.")
+                    if model.storedSessionRecoveryMode != .reconnect {
+                        Text(restoreSessionPanelDescription)
                             .foregroundStyle(colors.inkMuted)
 
                         Button(role: .destructive) {
@@ -201,7 +199,7 @@ struct WorkspaceView: View {
                         .buttonStyle(.borderedProminent)
                         .frame(maxWidth: 220)
                     } else {
-                        Text("Reconnect to reload account metadata, device state and encrypted chat history.")
+                        Text(restoreSessionPanelDescription)
                             .foregroundStyle(colors.inkMuted)
 
                         Button {
@@ -346,6 +344,37 @@ struct WorkspaceView: View {
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var restoreSessionPanelTitle: String {
+        switch model.storedSessionRecoveryMode {
+        case .reconnect:
+            "Restore Session"
+        case .relinkRequired, .localKeysMissing:
+            "Relink This Mac"
+        }
+    }
+
+    private var restoreSessionPanelSubtitle: String {
+        switch model.storedSessionRecoveryMode {
+        case .reconnect:
+            "A local device profile exists, but the app still needs to re-authenticate against the server."
+        case .relinkRequired:
+            "The local device profile is still on this Mac, but the server no longer recognizes it as an active device."
+        case .localKeysMissing:
+            "The saved session is still present, but this Mac no longer has the device keys required to decrypt history or re-authenticate."
+        }
+    }
+
+    private var restoreSessionPanelDescription: String {
+        switch model.storedSessionRecoveryMode {
+        case .reconnect:
+            "Reconnect to reload account metadata, device state and encrypted chat history."
+        case .relinkRequired:
+            "Reconnect cannot succeed anymore. Forget this broken device session, then link this Mac again from another trusted device."
+        case .localKeysMissing:
+            "Reconnect cannot succeed because the local device keys are missing. Forget this broken device session, then link this Mac again from another trusted device."
+        }
     }
 
     private var settingsSheet: some View {

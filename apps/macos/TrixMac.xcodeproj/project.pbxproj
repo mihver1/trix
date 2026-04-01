@@ -31,6 +31,7 @@
 		902FE0A288A07CFC7908BE16 /* TrixCoreFFIConversions.swift in Sources */ = {isa = PBXBuildFile; fileRef = B23C86C8509965588B5B6C9F /* TrixCoreFFIConversions.swift */; };
 		94194CD5F1C1A25BD4870921 /* ImportedAttachmentStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 860409886427C328A4CCB791 /* ImportedAttachmentStoreTests.swift */; };
 		98ADE511A362ADA7AFAA1AF0 /* TrixMessengerClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED0CF18F6A6B6288A8455FA9 /* TrixMessengerClient.swift */; };
+		A4D195C5E111A65A591D37AB /* InlineAttachmentPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D5EF008AB2855EF5383803D /* InlineAttachmentPreview.swift */; };
 		A7EA5B8CB38E55739C1B93E7 /* SessionRestoreErrorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44EE6F646D2111D046C49025 /* SessionRestoreErrorTests.swift */; };
 		AFA8BDF95FFD3D16FBB4EDD0 /* MacUITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B13124D1505CA449E0D0AECA /* MacUITestSupport.swift */; };
 		B0D6A2556020BCCAEB2445B0 /* TrixMacInteropSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1575427B96432954EC184FEF /* TrixMacInteropSupport.swift */; };
@@ -77,6 +78,7 @@
 		0A64CBD1808913F7F29312DA /* NativePresentationHelpersTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePresentationHelpersTests.swift; sourceTree = "<group>"; };
 		0A758602C129BAFB1A29D62E /* TrixMacInteropActionBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMacInteropActionBridge.swift; sourceTree = "<group>"; };
 		0B094F46233034DE544886BD /* MacUITestAppBootstrapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacUITestAppBootstrapTests.swift; sourceTree = "<group>"; };
+		0D5EF008AB2855EF5383803D /* InlineAttachmentPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineAttachmentPreview.swift; sourceTree = "<group>"; };
 		0E294D6B5626B1D095D94E1E /* trix_core.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = trix_core.swift; sourceTree = "<group>"; };
 		1575427B96432954EC184FEF /* TrixMacInteropSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMacInteropSupport.swift; sourceTree = "<group>"; };
 		15FECC0F1B5145ED4E40EAFF /* LinkIntentPayloadParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkIntentPayloadParsingTests.swift; sourceTree = "<group>"; };
@@ -209,6 +211,7 @@
 			isa = PBXGroup;
 			children = (
 				6F3E9F4D645B6CCBD53E40BF /* AttachmentPreviewSheet.swift */,
+				0D5EF008AB2855EF5383803D /* InlineAttachmentPreview.swift */,
 				5BCE39CDE1353EA8F59981D0 /* WorkspaceView.swift */,
 			);
 			path = Workspace;
@@ -468,6 +471,7 @@
 				E27AD64FEA1BF6FF3EC86271 /* AttachmentPreviewSheet.swift in Sources */,
 				C381CDD42782CCBC2EBC2059 /* DeviceIdentity.swift in Sources */,
 				BC0437EBB52100727B4A27E8 /* ImportedAttachmentStore.swift in Sources */,
+				A4D195C5E111A65A591D37AB /* InlineAttachmentPreview.swift in Sources */,
 				7E93F7B01158ECE8D534AEFC /* KeychainStore.swift in Sources */,
 				FD4E8CC52E29BCB49729263D /* MacUITestAppBootstrap.swift in Sources */,
 				E3CD9232F12043D0AF937AD9 /* MacUITestFixtureSeeder.swift in Sources */,

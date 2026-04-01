@@ -1,3 +1,4 @@
+import Security
 import Testing
 @testable import TrixMac
 
@@ -45,4 +46,24 @@ func relinkRequiredMessageExplainsReconnectWillNotHelp() {
 
     #expect(message.contains("reconnect уже не поможет"))
     #expect(message.contains("link flow"))
+}
+
+@Test
+func missingStoredIdentityRecoveryPlanRequiresRelinkWhenSessionExists() {
+    let plan = missingStoredIdentityRecoveryPlan(hasPersistedSession: true)
+
+    #expect(plan?.mode == .localKeysMissing)
+    #expect(plan?.message.contains("device keys") == true)
+    #expect(plan?.message.contains("не поможет") == true)
+}
+
+@Test
+func missingStoredIdentityRecoveryPlanIsNilWithoutPersistedSession() {
+    #expect(missingStoredIdentityRecoveryPlan(hasPersistedSession: false) == nil)
+}
+
+@Test
+func keychainDeletionFailureIgnoresInvalidOwnerEdit() {
+    #expect(shouldIgnoreKeychainDeletionFailure(KeychainStoreError.unhandledStatus(errSecInvalidOwnerEdit)))
+    #expect(!shouldIgnoreKeychainDeletionFailure(KeychainStoreError.unhandledStatus(errSecInteractionNotAllowed)))
 }
