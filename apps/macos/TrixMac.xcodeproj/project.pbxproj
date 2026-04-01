@@ -310,7 +310,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 6CD79AFB2D85577145021AA9 /* Build configuration list for PBXNativeTarget "TrixMac" */;
 			buildPhases = (
-				0371496D5504A20B8FE8005E /* Build trix-core universal archive */,
+				517C28DC0D3A63D9C43BA553 /* Generate trix-core macOS bridge */,
 				B41E9D7FA8E3A0B8B5780327 /* Sources */,
 				14EDCD5598B0A83F4A40E472 /* Resources */,
 			);
@@ -401,7 +401,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		0371496D5504A20B8FE8005E /* Build trix-core universal archive */ = {
+		517C28DC0D3A63D9C43BA553 /* Generate trix-core macOS bridge */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -411,15 +411,18 @@
 			);
 			inputPaths = (
 			);
-			name = "Build trix-core universal archive";
+			name = "Generate trix-core macOS bridge";
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(SRCROOT)/Sources/TrixMac/Generated/trix_core.swift",
+				"$(SRCROOT)/Sources/trix_coreFFI/trix_coreFFI.h",
+				"$(SRCROOT)/Sources/trix_coreFFI/module.modulemap",
 				"$(SRCROOT)/../../target/macos-universal/$(CONFIGURATION)/libtrix_core.a",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "bash \"$SRCROOT/scripts/build-trix-core-universal.sh\"\n";
+			shellScript = "bash \"$SRCROOT/scripts/generate-trix-core-bridge.sh\"\nbash \"$SRCROOT/scripts/build-trix-core-universal.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */

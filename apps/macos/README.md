@@ -71,6 +71,17 @@ TRIX_BUILD_VERSION=$(git rev-parse --short HEAD) \
 ./scripts/build-beta.sh
 ```
 
+## TestFlight Archive
+
+Archive and export for App Store Connect / TestFlight:
+
+```bash
+cd apps/macos
+./scripts/archive-testflight.sh
+```
+
+That script now refreshes the checked-in Swift bridge and rebuilds the fresh universal `trix-core` archive before running `xcodebuild archive`, so TestFlight exports do not reuse stale FFI artifacts.
+
 ## Bindings
 
 Swift bindings are checked into `apps/macos`:

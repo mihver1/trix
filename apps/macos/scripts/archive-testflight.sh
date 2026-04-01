@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+BRIDGE_SCRIPT="${TRIX_MACOS_BRIDGE_SCRIPT:-$APP_ROOT/scripts/generate-trix-core-bridge.sh}"
+CORE_BUILD_SCRIPT="${TRIX_MACOS_CORE_BUILD_SCRIPT:-$APP_ROOT/scripts/build-trix-core-universal.sh}"
 
 SCHEME="${TRIX_SCHEME:-TrixMac}"
 CONFIGURATION="${TRIX_CONFIGURATION:-Release}"
@@ -49,6 +51,12 @@ if [[ "$INTERNAL_ONLY" == "1" || "$INTERNAL_ONLY" == "true" ]]; then
     /usr/libexec/PlistBuddy -c "Add :testFlightInternalTestingOnly bool true" "$TMP_EXPORT_OPTIONS_PLIST" >/dev/null
   fi
 fi
+
+echo "==> Regenerating macOS UniFFI bridge"
+bash "$BRIDGE_SCRIPT"
+
+echo "==> Building fresh macOS trix-core archive ($CONFIGURATION)"
+CONFIGURATION="$CONFIGURATION" bash "$CORE_BUILD_SCRIPT"
 
 echo "Using CURRENT_PROJECT_VERSION=$BUILD_NUMBER"
 echo "==> Archiving macOS app for App Store Connect"

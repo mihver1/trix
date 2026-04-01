@@ -325,6 +325,7 @@ enum HistorySyncJobType: String, Codable {
     case initialSync = "initial_sync"
     case chatBackfill = "chat_backfill"
     case deviceRekey = "device_rekey"
+    case timelineRepair = "timeline_repair"
 
     var label: String {
         switch self {
@@ -334,6 +335,8 @@ enum HistorySyncJobType: String, Codable {
             return "Chat Backfill"
         case .deviceRekey:
             return "Device Rekey"
+        case .timelineRepair:
+            return "Timeline Repair"
         }
     }
 }

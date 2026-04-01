@@ -223,6 +223,8 @@ extension HistorySyncJobType {
             self = .chatBackfill
         case .deviceRekey:
             self = .deviceRekey
+        case .timelineRepair:
+            self = .timelineRepair
         }
     }
 }

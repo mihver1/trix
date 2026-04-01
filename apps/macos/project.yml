@@ -20,10 +20,14 @@ targets:
     deploymentTarget: "14.0"
     preBuildScripts:
       - script: |
+          bash "$SRCROOT/scripts/generate-trix-core-bridge.sh"
           bash "$SRCROOT/scripts/build-trix-core-universal.sh"
-        name: Build trix-core universal archive
+        name: Generate trix-core macOS bridge
         basedOnDependencyAnalysis: false
         outputFiles:
+          - $(SRCROOT)/Sources/TrixMac/Generated/trix_core.swift
+          - $(SRCROOT)/Sources/trix_coreFFI/trix_coreFFI.h
+          - $(SRCROOT)/Sources/trix_coreFFI/module.modulemap
           - $(SRCROOT)/../../target/macos-universal/$(CONFIGURATION)/libtrix_core.a
         showEnvVars: false
     sources:
