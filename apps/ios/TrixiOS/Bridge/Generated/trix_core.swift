@@ -8323,9 +8323,9 @@ public struct FfiConverterTypeFfiMessengerConversationSummary: FfiConverterRustB
                 previewIsOutgoing: FfiConverterOptionBool.read(from: &buf), 
                 previewServerSeq: FfiConverterOptionUInt64.read(from: &buf), 
                 previewCreatedAtUnix: FfiConverterOptionUInt64.read(from: &buf), 
-                participantProfiles: FfiConverterSequenceTypeFfiMessengerParticipantProfile.read(from: &buf),
-                historyRecoveryPending: FfiConverterBool.read(from: &buf),
-                historyRecoveryFromServerSeq: FfiConverterOptionUInt64.read(from: &buf),
+                participantProfiles: FfiConverterSequenceTypeFfiMessengerParticipantProfile.read(from: &buf), 
+                historyRecoveryPending: FfiConverterBool.read(from: &buf), 
+                historyRecoveryFromServerSeq: FfiConverterOptionUInt64.read(from: &buf), 
                 historyRecoveryThroughServerSeq: FfiConverterOptionUInt64.read(from: &buf)
         )
     }
@@ -8961,7 +8961,7 @@ public struct FfiConverterTypeFfiMessengerMessageRecord: FfiConverterRustBuffer 
                 epoch: FfiConverterUInt64.read(from: &buf), 
                 contentType: FfiConverterTypeFfiContentType.read(from: &buf), 
                 body: FfiConverterOptionTypeFfiMessengerMessageBody.read(from: &buf), 
-                recoveryState: FfiConverterOptionTypeFfiMessageRecoveryState.read(from: &buf),
+                recoveryState: FfiConverterOptionTypeFfiMessageRecoveryState.read(from: &buf), 
                 previewText: FfiConverterString.read(from: &buf), 
                 receiptStatus: FfiConverterOptionTypeFfiReceiptType.read(from: &buf), 
                 reactions: FfiConverterSequenceTypeFfiMessageReactionSummary.read(from: &buf), 
@@ -12124,9 +12124,9 @@ public struct FfiConverterTypeFfiHistorySyncJobType: FfiConverterRustBuffer {
         case 2: return .chatBackfill
         
         case 3: return .deviceRekey
-
+        
         case 4: return .timelineRepair
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -12145,11 +12145,11 @@ public struct FfiConverterTypeFfiHistorySyncJobType: FfiConverterRustBuffer {
         
         case .deviceRekey:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .timelineRepair:
             writeInt(&buf, Int32(4))
-
+        
         }
     }
 }
@@ -12498,7 +12498,7 @@ public func FfiConverterTypeFfiMessageKind_lower(_ value: FfiMessageKind) -> Rus
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum FfiMessageRecoveryState: Equatable, Hashable {
-
+    
     case pendingSiblingHistory
 
 
@@ -12520,20 +12520,20 @@ public struct FfiConverterTypeFfiMessageRecoveryState: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiMessageRecoveryState {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .pendingSiblingHistory
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: FfiMessageRecoveryState, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .pendingSiblingHistory:
             writeInt(&buf, Int32(1))
-
+        
         }
     }
 }
