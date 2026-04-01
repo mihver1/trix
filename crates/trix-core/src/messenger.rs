@@ -2200,6 +2200,7 @@ impl FfiMessengerClient {
             body,
             Some(MessageBody::Reaction(_) | MessageBody::Receipt(_))
         );
+        let is_outgoing = Some(message.sender_account_id) == self.state_account_id().transpose()?;
         let safe_body = body
             .map(|body| self.safe_message_body_from(chat_id, message.message_id, body))
             .transpose()?;
@@ -2210,13 +2211,17 @@ impl FfiMessengerClient {
             sender_account_id: message.sender_account_id.0.to_string(),
             sender_device_id: message.sender_device_id.0.to_string(),
             sender_display_name: None,
-            is_outgoing: Some(message.sender_account_id) == self.state_account_id().transpose()?,
+            is_outgoing,
             epoch: message.epoch,
             content_type: message.content_type.into(),
             body: safe_body,
             recovery_state: None,
             preview_text,
-            receipt_status: None,
+            receipt_status: if is_outgoing && is_visible_in_timeline {
+                Some(FfiReceiptType::Delivered)
+            } else {
+                None
+            },
             reactions: Vec::new(),
             is_visible_in_timeline,
             created_at_unix: message.created_at_unix,
@@ -3761,6 +3766,59 @@ mod tests {
             record.reactions[0].reactor_account_ids,
             vec![self_account_id.0.to_string()]
         );
+
+        fs::remove_dir_all(root_path).ok();
+    }
+
+    #[test]
+    fn projected_message_to_record_marks_confirmed_outgoing_messages_delivered() {
+        let root_path = env::temp_dir().join(format!(
+            "trix-messenger-projected-message-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let account_id = Uuid::new_v4().to_string();
+        let client = FfiMessengerClient::open(FfiMessengerOpenConfig {
+            root_path: root_path.to_string_lossy().into_owned(),
+            database_key: vec![7u8; 32],
+            base_url: "http://127.0.0.1:8080".to_owned(),
+            access_token: None,
+            account_id: Some(account_id.clone()),
+            device_id: Some(Uuid::new_v4().to_string()),
+            account_sync_chat_id: None,
+            device_display_name: Some("test-device".to_owned()),
+            platform: Some("test".to_owned()),
+            credential_identity: None,
+            account_root_private_key: None,
+            transport_private_key: None,
+        })
+        .unwrap();
+
+        let message = crate::LocalProjectedMessage {
+            server_seq: 11,
+            message_id: MessageId(Uuid::new_v4()),
+            sender_account_id: AccountId(Uuid::parse_str(&account_id).unwrap()),
+            sender_device_id: DeviceId(Uuid::new_v4()),
+            epoch: 1,
+            message_kind: MessageKind::Application,
+            content_type: ContentType::Text,
+            projection_kind: crate::LocalProjectionKind::ApplicationMessage,
+            payload: Some(b"hello".to_vec()),
+            merged_epoch: None,
+            created_at_unix: 11,
+        };
+
+        let record = client
+            .projected_message_to_record(ChatId(Uuid::new_v4()), message)
+            .unwrap();
+
+        assert!(record.is_outgoing);
+        assert!(matches!(
+            record.receipt_status,
+            Some(FfiReceiptType::Delivered)
+        ));
+        assert!(record.is_visible_in_timeline);
 
         fs::remove_dir_all(root_path).ok();
     }

@@ -11539,6 +11539,12 @@ data class FfiMessengerConversationSummary (
     var `previewCreatedAtUnix`: kotlin.ULong?
     , 
     var `participantProfiles`: List<FfiMessengerParticipantProfile>
+    , 
+    var `historyRecoveryPending`: kotlin.Boolean
+    , 
+    var `historyRecoveryFromServerSeq`: kotlin.ULong?
+    , 
+    var `historyRecoveryThroughServerSeq`: kotlin.ULong?
     
 ){
     
@@ -11570,6 +11576,9 @@ public object FfiConverterTypeFfiMessengerConversationSummary: FfiConverterRustB
             FfiConverterOptionalULong.read(buf),
             FfiConverterOptionalULong.read(buf),
             FfiConverterSequenceTypeFfiMessengerParticipantProfile.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterOptionalULong.read(buf),
         )
     }
 
@@ -11588,7 +11597,10 @@ public object FfiConverterTypeFfiMessengerConversationSummary: FfiConverterRustB
             FfiConverterOptionalBoolean.allocationSize(value.`previewIsOutgoing`) +
             FfiConverterOptionalULong.allocationSize(value.`previewServerSeq`) +
             FfiConverterOptionalULong.allocationSize(value.`previewCreatedAtUnix`) +
-            FfiConverterSequenceTypeFfiMessengerParticipantProfile.allocationSize(value.`participantProfiles`)
+            FfiConverterSequenceTypeFfiMessengerParticipantProfile.allocationSize(value.`participantProfiles`) +
+            FfiConverterBoolean.allocationSize(value.`historyRecoveryPending`) +
+            FfiConverterOptionalULong.allocationSize(value.`historyRecoveryFromServerSeq`) +
+            FfiConverterOptionalULong.allocationSize(value.`historyRecoveryThroughServerSeq`)
     )
 
     override fun write(value: FfiMessengerConversationSummary, buf: ByteBuffer) {
@@ -11607,6 +11619,9 @@ public object FfiConverterTypeFfiMessengerConversationSummary: FfiConverterRustB
             FfiConverterOptionalULong.write(value.`previewServerSeq`, buf)
             FfiConverterOptionalULong.write(value.`previewCreatedAtUnix`, buf)
             FfiConverterSequenceTypeFfiMessengerParticipantProfile.write(value.`participantProfiles`, buf)
+            FfiConverterBoolean.write(value.`historyRecoveryPending`, buf)
+            FfiConverterOptionalULong.write(value.`historyRecoveryFromServerSeq`, buf)
+            FfiConverterOptionalULong.write(value.`historyRecoveryThroughServerSeq`, buf)
     }
 }
 
@@ -12057,6 +12072,8 @@ data class FfiMessengerMessageRecord (
     , 
     var `body`: FfiMessengerMessageBody?
     , 
+    var `recoveryState`: FfiMessageRecoveryState?
+    , 
     var `previewText`: kotlin.String
     , 
     var `receiptStatus`: FfiReceiptType?
@@ -12092,6 +12109,7 @@ public object FfiConverterTypeFfiMessengerMessageRecord: FfiConverterRustBuffer<
             FfiConverterULong.read(buf),
             FfiConverterTypeFfiContentType.read(buf),
             FfiConverterOptionalTypeFfiMessengerMessageBody.read(buf),
+            FfiConverterOptionalTypeFfiMessageRecoveryState.read(buf),
             FfiConverterString.read(buf),
             FfiConverterOptionalTypeFfiReceiptType.read(buf),
             FfiConverterSequenceTypeFfiMessageReactionSummary.read(buf),
@@ -12111,6 +12129,7 @@ public object FfiConverterTypeFfiMessengerMessageRecord: FfiConverterRustBuffer<
             FfiConverterULong.allocationSize(value.`epoch`) +
             FfiConverterTypeFfiContentType.allocationSize(value.`contentType`) +
             FfiConverterOptionalTypeFfiMessengerMessageBody.allocationSize(value.`body`) +
+            FfiConverterOptionalTypeFfiMessageRecoveryState.allocationSize(value.`recoveryState`) +
             FfiConverterString.allocationSize(value.`previewText`) +
             FfiConverterOptionalTypeFfiReceiptType.allocationSize(value.`receiptStatus`) +
             FfiConverterSequenceTypeFfiMessageReactionSummary.allocationSize(value.`reactions`) +
@@ -12129,6 +12148,7 @@ public object FfiConverterTypeFfiMessengerMessageRecord: FfiConverterRustBuffer<
             FfiConverterULong.write(value.`epoch`, buf)
             FfiConverterTypeFfiContentType.write(value.`contentType`, buf)
             FfiConverterOptionalTypeFfiMessengerMessageBody.write(value.`body`, buf)
+            FfiConverterOptionalTypeFfiMessageRecoveryState.write(value.`recoveryState`, buf)
             FfiConverterString.write(value.`previewText`, buf)
             FfiConverterOptionalTypeFfiReceiptType.write(value.`receiptStatus`, buf)
             FfiConverterSequenceTypeFfiMessageReactionSummary.write(value.`reactions`, buf)
@@ -14429,7 +14449,8 @@ enum class FfiHistorySyncJobType {
     
     INITIAL_SYNC,
     CHAT_BACKFILL,
-    DEVICE_REKEY;
+    DEVICE_REKEY,
+    TIMELINE_REPAIR;
 
     
 
@@ -14595,6 +14616,39 @@ public object FfiConverterTypeFfiMessageKind: FfiConverterRustBuffer<FfiMessageK
     override fun allocationSize(value: FfiMessageKind) = 4UL
 
     override fun write(value: FfiMessageKind, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
+enum class FfiMessageRecoveryState {
+    
+    PENDING_SIBLING_HISTORY;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiMessageRecoveryState: FfiConverterRustBuffer<FfiMessageRecoveryState> {
+    override fun read(buf: ByteBuffer) = try {
+        FfiMessageRecoveryState.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: FfiMessageRecoveryState) = 4UL
+
+    override fun write(value: FfiMessageRecoveryState, buf: ByteBuffer) {
         buf.putInt(value.ordinal + 1)
     }
 }
@@ -16081,6 +16135,38 @@ public object FfiConverterOptionalTypeFfiHistorySyncJobStatus: FfiConverterRustB
         } else {
             buf.put(1)
             FfiConverterTypeFfiHistorySyncJobStatus.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeFfiMessageRecoveryState: FfiConverterRustBuffer<FfiMessageRecoveryState?> {
+    override fun read(buf: ByteBuffer): FfiMessageRecoveryState? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeFfiMessageRecoveryState.read(buf)
+    }
+
+    override fun allocationSize(value: FfiMessageRecoveryState?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeFfiMessageRecoveryState.allocationSize(value)
+        }
+    }
+
+    override fun write(value: FfiMessageRecoveryState?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeFfiMessageRecoveryState.write(value, buf)
         }
     }
 }
