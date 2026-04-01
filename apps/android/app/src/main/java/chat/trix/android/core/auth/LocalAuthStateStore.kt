@@ -133,6 +133,23 @@ data class LocalAuthState(
         )
     }
 
+    fun toOfflineAuthenticatedSession(baseUrl: String): AuthenticatedSession {
+        return AuthenticatedSession(
+            localState = this,
+            accountProfile = AccountProfile(
+                accountId = accountId,
+                handle = handle,
+                profileName = profileName,
+                profileBio = profileBio,
+                deviceId = deviceId,
+                deviceStatus = deviceStatus ?: "active",
+            ),
+            accessToken = accessToken.orEmpty(),
+            accessTokenExpiresAtUnix = accessTokenExpiresAtUnix ?: 0L,
+            baseUrl = baseUrl,
+        )
+    }
+
     fun toJson(): JSONObject {
         return JSONObject().apply {
             put("account_id", accountId)

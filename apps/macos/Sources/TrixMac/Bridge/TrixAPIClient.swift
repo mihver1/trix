@@ -37,6 +37,13 @@ enum TrixAPIError: LocalizedError {
             return false
         }
     }
+
+    var isTransportFailure: Bool {
+        if case .transport = self {
+            return true
+        }
+        return false
+    }
 }
 
 enum ServerEndpoint {

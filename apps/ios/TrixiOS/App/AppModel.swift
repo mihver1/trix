@@ -231,6 +231,14 @@ final class AppModel {
                 lastUpdatedAt = Date()
             }
         } catch {
+            if let localIdentity,
+               await restoreOfflineDashboardIfPossible(
+                   baseURLString: baseURLString,
+                   identity: localIdentity,
+                   sourceError: error
+               ) {
+                return
+            }
             if !shouldSuppressProtectedDataError(error) {
                 errorMessage = error.localizedDescription
             }
@@ -1839,6 +1847,73 @@ final class AppModel {
         }
     }
 
+    private func restoreOfflineDashboardIfPossible(
+        baseURLString: String,
+        identity: LocalDeviceIdentity,
+        sourceError: Error
+    ) async -> Bool {
+        guard identity.trustState == .active else {
+            return false
+        }
+
+        do {
+            let normalizedBaseURL = normalizedBaseURLString(baseURLString)
+            let snapshot = try TrixCorePersistentBridge.loadMessengerSnapshot(
+                baseURLString: normalizedBaseURL,
+                accessToken: "",
+                identity: identity
+            )
+            let profile = offlineAccountProfile(identity: identity, snapshot: snapshot)
+            let session =
+                authSessionResolutionGate.currentUsableSession(
+                    for: identity,
+                    baseURLString: normalizedBaseURL,
+                    leewaySeconds: 0
+                ) ??
+                AuthSessionResponse(
+                    accessToken: "",
+                    expiresAtUnix: UInt64(Date().timeIntervalSince1970),
+                    accountId: profile.accountId,
+                    deviceStatus: profile.deviceStatus
+                )
+
+            await stopRealtimeConnection()
+            messengerSnapshot = snapshot
+            messengerCheckpoint = snapshot.checkpoint
+            syncLocalIdentityWithMessengerSnapshot(snapshot, currentIdentity: identity)
+            updateLocalCoreStateSnapshot(identity: localIdentity ?? identity)
+            systemSnapshot = nil
+            let dashboard = DashboardData(
+                session: session,
+                profile: profile,
+                devices: sortedDevicesForDisplay(
+                    snapshot.devices,
+                    currentDeviceId: profile.deviceId
+                ),
+                historySyncJobs: [],
+                chats: snapshot.chats,
+                inboxItems: []
+            )
+            directoryAccountCache[dashboard.profile.accountId] = DirectoryAccountSummary(
+                accountId: dashboard.profile.accountId,
+                handle: dashboard.profile.handle,
+                profileName: dashboard.profile.profileName,
+                profileBio: dashboard.profile.profileBio
+            )
+            dashboard.chats.forEach { chat in
+                seedDirectoryAccountCache(with: chat.participantProfiles)
+            }
+            updateDashboardState(dashboard)
+            lastUpdatedAt = Date()
+            if !shouldSuppressProtectedDataError(sourceError) {
+                errorMessage = sourceError.localizedDescription
+            }
+            return true
+        } catch {
+            return false
+        }
+    }
+
     private func refreshLinkedDevices(baseURLString: String, suppressErrors: Bool) async {
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
@@ -1861,6 +1936,25 @@ final class AppModel {
     private func updateDashboardState(_ newDashboard: DashboardData?) {
         dashboard = newDashboard
         dashboardConversationRefreshTokens = Self.makeDashboardConversationRefreshTokens(newDashboard)
+    }
+
+    private func offlineAccountProfile(
+        identity: LocalDeviceIdentity,
+        snapshot: SafeMessengerSnapshot
+    ) -> AccountProfileResponse {
+        let cachedProfile = snapshot.chats
+            .lazy
+            .flatMap(\.participantProfiles)
+            .first { $0.accountId == identity.accountId }
+
+        return AccountProfileResponse(
+            accountId: identity.accountId,
+            handle: cachedProfile?.handle,
+            profileName: cachedProfile?.profileName ?? "Offline Account",
+            profileBio: cachedProfile?.profileBio,
+            deviceId: snapshot.deviceId ?? identity.deviceId,
+            deviceStatus: identity.trustState == .pendingApproval ? .pending : .active
+        )
     }
 
     private static func makeDashboardConversationRefreshTokens(_ dashboard: DashboardData?) -> [String: String] {

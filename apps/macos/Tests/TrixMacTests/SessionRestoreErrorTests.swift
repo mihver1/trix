@@ -1,3 +1,4 @@
+import Foundation
 import Security
 import Testing
 @testable import TrixMac
@@ -6,6 +7,12 @@ import Testing
 func credentialFailureOnlyTreatsUnauthorizedAsSessionInvalidation() {
     #expect(TrixAPIError.server(code: "unauthorized", message: "invalid access token", statusCode: 401).isCredentialFailure)
     #expect(!TrixAPIError.server(code: "not_found", message: "account not found", statusCode: 404).isCredentialFailure)
+}
+
+@Test
+func transportFailureIsReportedSeparately() {
+    #expect(TrixAPIError.transport(URLError(.notConnectedToInternet)).isTransportFailure)
+    #expect(!TrixAPIError.server(code: "unauthorized", message: "invalid access token", statusCode: 401).isTransportFailure)
 }
 
 @Test
@@ -60,6 +67,28 @@ func missingStoredIdentityRecoveryPlanRequiresRelinkWhenSessionExists() {
 @Test
 func missingStoredIdentityRecoveryPlanIsNilWithoutPersistedSession() {
     #expect(missingStoredIdentityRecoveryPlan(hasPersistedSession: false) == nil)
+}
+
+@Test
+func offlineCachedAccountProfileUsesPersistedSessionShape() {
+    let session = PersistedSession(
+        baseURLString: "https://example.test",
+        accountId: UUID(),
+        deviceId: UUID(),
+        accountSyncChatId: nil,
+        profileName: "Offline User",
+        handle: "offline",
+        deviceDisplayName: "Offline Mac",
+        deviceStatus: .active
+    )
+
+    let profile = offlineCachedAccountProfile(for: session)
+
+    #expect(profile.accountId == session.accountId)
+    #expect(profile.deviceId == session.deviceId)
+    #expect(profile.profileName == "Offline User")
+    #expect(profile.handle == "offline")
+    #expect(profile.deviceStatus == DeviceStatus.active)
 }
 
 @Test

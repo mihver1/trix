@@ -966,7 +966,11 @@ external fun uniffi_trix_core_checksum_method_ffimessengerclient_list_conversati
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_list_devices(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_load_cached_snapshot(
+): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_load_snapshot(
+): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_load_snapshot_with_remote_sync(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_mark_read(
 ): Short
@@ -1426,7 +1430,11 @@ external fun uniffi_trix_core_fn_method_ffimessengerclient_list_conversations(`p
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_list_devices(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_load_cached_snapshot(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_load_snapshot(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_load_snapshot_with_remote_sync(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_mark_read(`ptr`: Long,`conversationId`: RustBuffer.ByValue,`throughMessageId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -2079,7 +2087,13 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_list_devices() != 41983.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_load_cached_snapshot() != 34929.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_load_snapshot() != 36763.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_load_snapshot_with_remote_sync() != 40209.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_mark_read() != 17060.toShort()) {
@@ -4378,7 +4392,11 @@ public interface FfiMessengerClientInterface {
     
     fun `listDevices`(): List<FfiMessengerDeviceRecord>
     
+    fun `loadCachedSnapshot`(): FfiMessengerSnapshot
+    
     fun `loadSnapshot`(): FfiMessengerSnapshot
+    
+    fun `loadSnapshotWithRemoteSync`(): FfiMessengerSnapshot
     
     fun `markRead`(`conversationId`: kotlin.String, `throughMessageId`: kotlin.String?): FfiMessengerReadStateResult
     
@@ -4630,11 +4648,39 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
     
 
     
+    @Throws(FfiMessengerException::class)override fun `loadCachedSnapshot`(): FfiMessengerSnapshot {
+            return FfiConverterTypeFfiMessengerSnapshot.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_load_cached_snapshot(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(FfiMessengerException::class)override fun `loadSnapshot`(): FfiMessengerSnapshot {
             return FfiConverterTypeFfiMessengerSnapshot.lift(
     callWithHandle {
     uniffiRustCallWithError(FfiMessengerException) { _status ->
     UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_load_snapshot(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiMessengerException::class)override fun `loadSnapshotWithRemoteSync`(): FfiMessengerSnapshot {
+            return FfiConverterTypeFfiMessengerSnapshot.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_load_snapshot_with_remote_sync(
         it,
         _status)
 }

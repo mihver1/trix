@@ -548,6 +548,16 @@ impl FfiMessengerClient {
     }
 
     pub fn load_snapshot(&self) -> Result<FfiMessengerSnapshot, FfiMessengerError> {
+        match self.load_snapshot_with_remote_sync() {
+            Ok(snapshot) => Ok(snapshot),
+            Err(remote_error) => match self.load_cached_snapshot() {
+                Ok(snapshot) => Ok(snapshot),
+                Err(_) => Err(remote_error),
+            },
+        }
+    }
+
+    fn load_snapshot_with_remote_sync(&self) -> Result<FfiMessengerSnapshot, FfiMessengerError> {
         let _ = self.sync_workspace()?;
         self.maybe_import_transfer_bundle()?;
         let client = self.authenticated_client()?;
@@ -562,6 +572,47 @@ impl FfiMessengerClient {
             account_sync_chat_id: state.account_sync_chat_id.clone(),
             conversations,
             devices,
+            capabilities: capability_flags(),
+            checkpoint: checkpoint_from_event_id(state.last_event_id),
+        })
+    }
+
+    fn load_cached_snapshot(&self) -> Result<FfiMessengerSnapshot, FfiMessengerError> {
+        let conversations = self.list_conversations()?;
+        let state = lock_state(&self.state)?;
+        let current_device_state = state
+            .device_id
+            .as_ref()
+            .and_then(|device_id| state.device_statuses.get(device_id));
+        let current_device = state.device_id.clone().and_then(|device_id| {
+            let account_id = state
+                .account_id
+                .clone()
+                .or_else(|| current_device_state.map(|device| device.account_id.clone()))?;
+            Some(FfiMessengerDeviceRecord {
+                account_id,
+                device_id,
+                display_name: state
+                    .device_display_name
+                    .clone()
+                    .unwrap_or_else(|| "Current device".to_owned()),
+                platform: state.platform.clone().unwrap_or_else(|| "unknown".to_owned()),
+                device_status: device_status_to_ffi(
+                    current_device_state
+                        .map(|device| device.device_status)
+                        .unwrap_or(DeviceStatus::Active),
+                ),
+                available_key_package_count: 0,
+                is_current_device: true,
+            })
+        });
+
+        Ok(FfiMessengerSnapshot {
+            account_id: state.account_id.clone(),
+            device_id: state.device_id.clone(),
+            account_sync_chat_id: state.account_sync_chat_id.clone(),
+            conversations,
+            devices: current_device.into_iter().collect(),
             capabilities: capability_flags(),
             checkpoint: checkpoint_from_event_id(state.last_event_id),
         })
@@ -3977,6 +4028,92 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+
+        fs::remove_dir_all(root_path).ok();
+    }
+
+    #[test]
+    fn load_snapshot_falls_back_to_cached_state_when_remote_sync_fails() {
+        let root_path =
+            env::temp_dir().join(format!("trix-messenger-offline-snapshot-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let account_id = AccountId(Uuid::new_v4());
+        let device_id = DeviceId(Uuid::new_v4());
+        let chat_id = ChatId(Uuid::new_v4());
+        let other_account_id = AccountId(Uuid::new_v4());
+        let client = FfiMessengerClient::open(FfiMessengerOpenConfig {
+            root_path: root_path.to_string_lossy().into_owned(),
+            database_key: vec![17u8; 32],
+            base_url: "http://127.0.0.1:9".to_owned(),
+            access_token: Some("stale-access-token".to_owned()),
+            account_id: Some(account_id.0.to_string()),
+            device_id: Some(device_id.0.to_string()),
+            account_sync_chat_id: None,
+            device_display_name: Some("Offline Device".to_owned()),
+            platform: Some("ios".to_owned()),
+            credential_identity: Some(b"offline-device".to_vec()),
+            account_root_private_key: None,
+            transport_private_key: Some(vec![9u8; 32]),
+        })
+        .unwrap();
+
+        {
+            let mut store = lock_history_store(&client.history_store).unwrap();
+            store
+                .apply_chat_list(&trix_types::ChatListResponse {
+                    chats: vec![trix_types::ChatSummary {
+                        chat_id,
+                        chat_type: ChatType::Dm,
+                        title: None,
+                        last_server_seq: 3,
+                        epoch: 1,
+                        pending_message_count: 0,
+                        last_message: None,
+                        participant_profiles: vec![
+                            ChatParticipantProfileSummary {
+                                account_id,
+                                handle: Some("offline-self".to_owned()),
+                                profile_name: "Offline Self".to_owned(),
+                                profile_bio: None,
+                            },
+                            ChatParticipantProfileSummary {
+                                account_id: other_account_id,
+                                handle: Some("offline-peer".to_owned()),
+                                profile_name: "Offline Peer".to_owned(),
+                                profile_bio: None,
+                            },
+                        ],
+                    }],
+                })
+                .unwrap();
+        }
+        {
+            let mut state = lock_state(&client.state).unwrap();
+            state.last_event_id = 7;
+            state.device_statuses.insert(
+                device_id.0.to_string(),
+                StoredDeviceState {
+                    account_id: account_id.0.to_string(),
+                    device_status: DeviceStatus::Active,
+                },
+            );
+            client.save_state_locked(&state).unwrap();
+        }
+
+        let snapshot = client.load_snapshot().unwrap();
+        let account_id_string = account_id.0.to_string();
+        let device_id_string = device_id.0.to_string();
+        let chat_id_string = chat_id.0.to_string();
+
+        assert_eq!(snapshot.account_id.as_deref(), Some(account_id_string.as_str()));
+        assert_eq!(snapshot.device_id.as_deref(), Some(device_id_string.as_str()));
+        assert_eq!(snapshot.conversations.len(), 1);
+        assert_eq!(snapshot.conversations[0].conversation_id, chat_id_string);
+        assert_eq!(snapshot.devices.len(), 1);
+        assert_eq!(snapshot.devices[0].device_id, device_id_string);
+        assert!(snapshot.devices[0].is_current_device);
+        assert_eq!(snapshot.checkpoint, checkpoint_from_event_id(7));
 
         fs::remove_dir_all(root_path).ok();
     }

@@ -58,6 +58,7 @@ import chat.trix.android.core.auth.AccountProfile
 import chat.trix.android.core.auth.LinkDeviceInput
 import chat.trix.android.core.auth.LinkExistingAccountInput
 import chat.trix.android.core.auth.LocalAuthStateStore
+import chat.trix.android.core.auth.isActionableSessionError
 import chat.trix.android.core.auth.parseLinkIntentPayload
 import chat.trix.android.core.auth.StoredDeviceSummary
 import chat.trix.android.core.auth.restoreSessionErrorMessage
@@ -500,6 +501,14 @@ private suspend fun restoreSessionState(
     return try {
         TrixAuthState.SignedIn(authCoordinator.restoreSession())
     } catch (error: IOException) {
+        if (!isActionableSessionError(storedDevice.deviceStatus, error)) {
+            val offlineSession = runCatching {
+                authCoordinator.restoreOfflineSession()
+            }.getOrNull()
+            if (offlineSession != null) {
+                return TrixAuthState.SignedIn(offlineSession)
+            }
+        }
         TrixAuthState.SignedOut(
             storedDevice = storedDevice,
             errorMessage = restoreSessionErrorMessage(storedDevice, error),
