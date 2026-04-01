@@ -984,6 +984,8 @@ external fun uniffi_trix_core_checksum_method_ffimessengerclient_send_message(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_set_typing(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_sync_pending_history_repairs(
+): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_unlink_device(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_update_conversation_devices(
@@ -1442,6 +1444,8 @@ external fun uniffi_trix_core_fn_method_ffimessengerclient_send_message(`ptr`: L
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_set_typing(`ptr`: Long,`conversationId`: RustBuffer.ByValue,`isTyping`: Byte,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
+external fun uniffi_trix_core_fn_method_ffimessengerclient_sync_pending_history_repairs(`ptr`: Long,`conversationIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_unlink_device(`ptr`: Long,`deviceId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_update_conversation_devices(`ptr`: Long,`request`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -2100,6 +2104,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_set_typing() != 22040.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_sync_pending_history_repairs() != 59649.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_unlink_device() != 41188.toShort()) {
@@ -4389,6 +4396,8 @@ public interface FfiMessengerClientInterface {
     
     fun `setTyping`(`conversationId`: kotlin.String, `isTyping`: kotlin.Boolean)
     
+    fun `syncPendingHistoryRepairs`(`conversationIds`: List<kotlin.String>?): List<kotlin.String>
+    
     fun `unlinkDevice`(`deviceId`: kotlin.String): FfiMessengerDeviceMutationResult
     
     fun `updateConversationDevices`(`request`: FfiMessengerUpdateConversationDevicesRequest): FfiMessengerConversationMutationResult
@@ -4742,6 +4751,20 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
 }
     }
     
+    
+
+    
+    @Throws(FfiMessengerException::class)override fun `syncPendingHistoryRepairs`(`conversationIds`: List<kotlin.String>?): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_sync_pending_history_repairs(
+        it,
+        FfiConverterOptionalSequenceString.lower(`conversationIds`),_status)
+}
+    }
+    )
+    }
     
 
     
@@ -16231,6 +16254,38 @@ public object FfiConverterOptionalTypeFfiReceiptType: FfiConverterRustBuffer<Ffi
         } else {
             buf.put(1)
             FfiConverterTypeFfiReceiptType.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalSequenceString: FfiConverterRustBuffer<List<kotlin.String>?> {
+    override fun read(buf: ByteBuffer): List<kotlin.String>? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterSequenceString.read(buf)
+    }
+
+    override fun allocationSize(value: List<kotlin.String>?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterSequenceString.allocationSize(value)
+        }
+    }
+
+    override fun write(value: List<kotlin.String>?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterSequenceString.write(value, buf)
         }
     }
 }

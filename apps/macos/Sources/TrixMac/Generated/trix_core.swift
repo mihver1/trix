@@ -1625,6 +1625,8 @@ public protocol FfiMessengerClientProtocol: AnyObject, Sendable {
     
     func setTyping(conversationId: String, isTyping: Bool) throws 
     
+    func syncPendingHistoryRepairs(conversationIds: [String]?) throws  -> [String]
+    
     func unlinkDevice(deviceId: String) throws  -> FfiMessengerDeviceMutationResult
     
     func updateConversationDevices(request: FfiMessengerUpdateConversationDevicesRequest) throws  -> FfiMessengerConversationMutationResult
@@ -1854,6 +1856,15 @@ open func setTyping(conversationId: String, isTyping: Bool)throws   {try rustCal
         FfiConverterBool.lower(isTyping),$0
     )
 }
+}
+    
+open func syncPendingHistoryRepairs(conversationIds: [String]?)throws  -> [String]  {
+    return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
+    uniffi_trix_core_fn_method_ffimessengerclient_sync_pending_history_repairs(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionSequenceString.lower(conversationIds),$0
+    )
+})
 }
     
 open func unlinkDevice(deviceId: String)throws  -> FfiMessengerDeviceMutationResult  {
@@ -14273,6 +14284,30 @@ fileprivate struct FfiConverterOptionTypeFfiReceiptType: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionSequenceString: FfiConverterRustBuffer {
+    typealias SwiftType = [String]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceString.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceUInt32: FfiConverterRustBuffer {
     typealias SwiftType = [UInt32]
 
@@ -15613,6 +15648,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_set_typing() != 22040) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffimessengerclient_sync_pending_history_repairs() != 59649) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_unlink_device() != 41188) {
