@@ -39,6 +39,20 @@ const SERVER_RESTORE_KEY_PACKAGE_COUNT: usize = 12;
 const HISTORY_SYNC_JOB_FETCH_LIMIT: usize = 200;
 const HISTORY_SYNC_CHUNK_MESSAGE_LIMIT: usize = 200;
 
+fn is_history_sync_projected_message_safe(message: &LocalProjectedMessage) -> bool {
+    !(message.projection_kind == LocalProjectionKind::ApplicationMessage
+        && message.payload.is_none())
+}
+
+fn sanitize_history_sync_projected_messages(
+    projected_messages: Vec<LocalProjectedMessage>,
+) -> Vec<LocalProjectedMessage> {
+    projected_messages
+        .into_iter()
+        .filter(is_history_sync_projected_message_safe)
+        .collect()
+}
+
 #[derive(Debug, Clone)]
 pub enum CoreEvent {
     Started,
@@ -636,6 +650,7 @@ impl SyncCoordinator {
                     && message.server_seq <= repair_window.through_server_seq
             });
         }
+        let projected_messages = sanitize_history_sync_projected_messages(projected_messages);
         let mut next_sequence_no = next_history_sync_sequence_no(export_metadata.as_ref());
         let mut exported_message_count = export_metadata
             .as_ref()
@@ -729,17 +744,18 @@ impl SyncCoordinator {
             }
             self.bootstrap_history_sync_chat_if_needed(client, store, job, chat_id)
                 .await?;
-            let report = store.apply_projected_messages(chat_id, &decrypted.projected_messages)?;
-            let pending_repair_window = store
-                .refresh_pending_history_repair_window(chat_id)?
-                .is_some();
-            if let Some(server_seq) = decrypted
+            let max_projected_server_seq = decrypted
                 .projected_messages
                 .iter()
                 .map(|message| message.server_seq)
-                .max()
-                .or(report.advanced_to_server_seq)
-            {
+                .max();
+            let sanitized_projected_messages =
+                sanitize_history_sync_projected_messages(decrypted.projected_messages);
+            let report = store.apply_projected_messages(chat_id, &sanitized_projected_messages)?;
+            let pending_repair_window = store
+                .refresh_pending_history_repair_window(chat_id)?
+                .is_some();
+            if let Some(server_seq) = max_projected_server_seq.or(report.advanced_to_server_seq) {
                 self.record_chat_server_seq(chat_id, server_seq)?;
             }
             if report.projected_messages_upserted > 0
@@ -2897,7 +2913,7 @@ mod tests {
 
     use super::{
         PersistedSyncState, PersistedTargetHistorySyncJobState, SyncCoordinator,
-        is_sqlite_database, merge_projection_report,
+        is_sqlite_database, merge_projection_report, sanitize_history_sync_projected_messages,
     };
     use crate::{
         DeviceKeyMaterial, LocalHistoryRepairWindow, LocalHistoryStore, LocalOutboxStatus,
@@ -5204,9 +5220,188 @@ mod tests {
         server.shutdown().await;
     }
 
+    #[test]
+    fn history_sync_sanitization_skips_unmaterialized_tail_and_marks_pending_repair() {
+        let chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+
+        let sanitized = sanitize_history_sync_projected_messages(vec![
+            LocalProjectedMessage {
+                server_seq: 1,
+                message_id: MessageId(Uuid::new_v4()),
+                sender_account_id,
+                sender_device_id,
+                epoch: 1,
+                message_kind: MessageKind::Application,
+                content_type: ContentType::Text,
+                projection_kind: LocalProjectionKind::ApplicationMessage,
+                payload: Some(b"first".to_vec()),
+                merged_epoch: None,
+                created_at_unix: 10,
+            },
+            LocalProjectedMessage {
+                server_seq: 2,
+                message_id: MessageId(Uuid::new_v4()),
+                sender_account_id,
+                sender_device_id,
+                epoch: 1,
+                message_kind: MessageKind::Application,
+                content_type: ContentType::Text,
+                projection_kind: LocalProjectionKind::ApplicationMessage,
+                payload: None,
+                merged_epoch: None,
+                created_at_unix: 11,
+            },
+        ]);
+
+        assert_eq!(sanitized.len(), 1);
+        assert_eq!(sanitized[0].server_seq, 1);
+
+        let mut store = LocalHistoryStore::new();
+        store
+            .apply_chat_list(&ChatHistorySyncTestFixtures::chat_list(
+                chat_id,
+                2,
+                sender_account_id,
+            ))
+            .unwrap();
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![
+                    ChatHistorySyncTestFixtures::message(
+                        chat_id,
+                        1,
+                        sender_account_id,
+                        sender_device_id,
+                    ),
+                    ChatHistorySyncTestFixtures::message(
+                        chat_id,
+                        2,
+                        sender_account_id,
+                        sender_device_id,
+                    ),
+                ],
+            })
+            .unwrap();
+
+        let report = store.apply_projected_messages(chat_id, &sanitized).unwrap();
+        assert_eq!(report.advanced_to_server_seq, Some(1));
+        assert_eq!(
+            store.pending_history_repair_window(chat_id),
+            Some(LocalHistoryRepairWindow {
+                from_server_seq: 2,
+                through_server_seq: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn history_sync_sanitization_of_fully_invalid_chunk_still_records_repair_window() {
+        let chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+
+        let sanitized = sanitize_history_sync_projected_messages(vec![LocalProjectedMessage {
+            server_seq: 1,
+            message_id: MessageId(Uuid::new_v4()),
+            sender_account_id,
+            sender_device_id,
+            epoch: 1,
+            message_kind: MessageKind::Application,
+            content_type: ContentType::Text,
+            projection_kind: LocalProjectionKind::ApplicationMessage,
+            payload: None,
+            merged_epoch: None,
+            created_at_unix: 10,
+        }]);
+
+        assert!(sanitized.is_empty());
+
+        let mut store = LocalHistoryStore::new();
+        store
+            .apply_chat_list(&ChatHistorySyncTestFixtures::chat_list(
+                chat_id,
+                1,
+                sender_account_id,
+            ))
+            .unwrap();
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![ChatHistorySyncTestFixtures::message(
+                    chat_id,
+                    1,
+                    sender_account_id,
+                    sender_device_id,
+                )],
+            })
+            .unwrap();
+
+        let report = store.apply_projected_messages(chat_id, &sanitized).unwrap();
+        assert_eq!(report.advanced_to_server_seq, None);
+        assert_eq!(
+            store.pending_history_repair_window(chat_id),
+            Some(LocalHistoryRepairWindow {
+                from_server_seq: 1,
+                through_server_seq: 1,
+            })
+        );
+    }
+
     fn cleanup_sqlite_test_path(path: &std::path::Path) {
         fs::remove_file(path).ok();
         fs::remove_file(format!("{}-wal", path.display())).ok();
         fs::remove_file(format!("{}-shm", path.display())).ok();
+    }
+
+    struct ChatHistorySyncTestFixtures;
+
+    impl ChatHistorySyncTestFixtures {
+        fn chat_list(
+            chat_id: ChatId,
+            last_server_seq: u64,
+            sender_account_id: AccountId,
+        ) -> trix_types::ChatListResponse {
+            trix_types::ChatListResponse {
+                chats: vec![ChatSummary {
+                    chat_id,
+                    chat_type: ChatType::Dm,
+                    title: Some("History Sync".to_owned()),
+                    last_server_seq,
+                    epoch: 1,
+                    pending_message_count: 0,
+                    last_message: None,
+                    participant_profiles: vec![ChatParticipantProfileSummary {
+                        account_id: sender_account_id,
+                        handle: Some("alice".to_owned()),
+                        profile_name: "Alice".to_owned(),
+                        profile_bio: None,
+                    }],
+                }],
+            }
+        }
+
+        fn message(
+            chat_id: ChatId,
+            server_seq: u64,
+            sender_account_id: AccountId,
+            sender_device_id: DeviceId,
+        ) -> MessageEnvelope {
+            MessageEnvelope {
+                message_id: MessageId(Uuid::new_v4()),
+                chat_id,
+                server_seq,
+                sender_account_id,
+                sender_device_id,
+                epoch: 1,
+                message_kind: MessageKind::Application,
+                content_type: ContentType::Text,
+                ciphertext_b64: crate::encode_b64(format!("cipher-{server_seq}").as_bytes()),
+                aad_json: json!({}),
+                created_at_unix: 1_700_000_000 + server_seq,
+            }
+        }
     }
 }

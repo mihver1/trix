@@ -133,6 +133,11 @@ class AuthBootstrapCoordinator(
         return session
     }
 
+    suspend fun restoreOfflineSession(): AuthenticatedSession {
+        val localState = stateStore.read() ?: throw IllegalStateException("No stored device state")
+        return localState.toOfflineAuthenticatedSession(baseUrl = authApiClient.baseUrl)
+    }
+
     private suspend fun signIn(localState: LocalAuthState): AuthenticatedSession {
         val transportKey = try {
             Ed25519KeyMaterial.fromDevicePrivateSeed(privateSeed = localState.transportPrivateSeed)

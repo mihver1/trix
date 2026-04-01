@@ -701,6 +701,20 @@ final class AppModel: ObservableObject {
             )
         } catch let error as TrixAPIError {
             logWarn("auth", "restore_session failed device=\(shortLogID(session.deviceId))", error: error)
+            if error.isTransportFailure,
+               session.deviceStatus == .active,
+               await restoreWorkspaceFromLocalCacheIfPossible(session: session) {
+                disconnectRealtimeConnection()
+                accessToken = nil
+                serverBaseURLString = session.baseURLString
+                draft.profileName = session.profileName
+                draft.handle = session.handle ?? ""
+                draft.deviceDisplayName = session.deviceDisplayName
+                linkDraft.deviceDisplayName = session.deviceDisplayName
+                refreshLocalIdentityState(reportErrors: false)
+                lastErrorMessage = preservedRestoreFailureMessage(for: error)
+                return
+            }
             switch sessionRestoreErrorDisposition(deviceStatus: session.deviceStatus, error: error) {
             case .restartPendingLink:
                 disconnectRealtimeConnection()
@@ -2129,6 +2143,33 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func restoreWorkspaceFromLocalCacheIfPossible(session: PersistedSession) async -> Bool {
+        do {
+            let identity = try loadStoredIdentity()
+            let messenger = try makeMessengerClient(
+                baseURLString: session.baseURLString,
+                accessToken: nil,
+                accountId: session.accountId,
+                deviceId: session.deviceId,
+                accountSyncChatId: session.accountSyncChatId,
+                deviceDisplayName: session.deviceDisplayName,
+                identity: identity
+            )
+            let snapshot = try await messenger.loadSnapshot()
+            currentAccount = offlineCachedAccountProfile(for: session)
+            historySyncJobs = []
+            try applyMessengerSnapshot(snapshot)
+            return true
+        } catch {
+            logWarn(
+                "auth",
+                "restore_session local cache fallback failed device=\(shortLogID(session.deviceId))",
+                error: error
+            )
+            return false
+        }
+    }
+
     private func loadSelectedChat(
         client: TrixAPIClient,
         accessToken: String,
@@ -2214,10 +2255,20 @@ final class AppModel: ObservableObject {
     }
 
     private func loadStoredIdentity(requireAccountRoot: Bool = false) throws -> DeviceIdentityMaterial {
-        guard
-            let transportSeed = try keychainStore.loadData(for: .transportSeed),
-            let credentialIdentity = try keychainStore.loadData(for: .credentialIdentity)
-        else {
+        let transportSeed = try keychainStore.loadData(for: .transportSeed)
+        let credentialIdentity = try keychainStore.loadData(for: .credentialIdentity)
+        guard let transportSeed, let credentialIdentity else {
+            if let plan = missingStoredIdentityRecoveryPlan(hasPersistedSession: persistedSession != nil) {
+                logWarn("auth", "stored identity material missing for persisted session; forcing local recovery mode")
+                disconnectRealtimeConnection()
+                accessToken = nil
+                outgoingLinkIntent = nil
+                clearWorkspaceData()
+                storedSessionRecoveryMode = plan.mode
+                refreshLocalIdentityState(reportErrors: false)
+                throw TrixAPIError.invalidPayload(plan.message)
+            }
+
             throw TrixAPIError.invalidPayload("Не удалось загрузить ключи устройства из Keychain.")
         }
 
@@ -2259,6 +2310,7 @@ final class AppModel: ObservableObject {
         keyPackagePublishDraft = KeyPackagePublishDraft()
         keyPackageReserveDraft = KeyPackageReserveDraft()
         hasAccountRootKey = false
+        storedSessionRecoveryMode = .reconnect
         onboardingMode = .createAccount
         linkDraft = LinkDeviceDraft(deviceDisplayName: defaultDeviceName)
     }
@@ -3596,6 +3648,34 @@ enum SessionRestoreErrorDisposition: Equatable {
 enum StoredSessionRecoveryMode: Equatable {
     case reconnect
     case relinkRequired
+    case localKeysMissing
+}
+
+struct MissingStoredIdentityRecoveryPlan: Equatable {
+    let mode: StoredSessionRecoveryMode
+    let message: String
+}
+
+func missingStoredIdentityRecoveryPlan(hasPersistedSession: Bool) -> MissingStoredIdentityRecoveryPlan? {
+    guard hasPersistedSession else {
+        return nil
+    }
+
+    return MissingStoredIdentityRecoveryPlan(
+        mode: .localKeysMissing,
+        message: "На этом Mac больше нет локальных device keys для сохранённой сессии. Reconnect уже не поможет. Забудь это устройство и пройди link flow заново."
+    )
+}
+
+func offlineCachedAccountProfile(for session: PersistedSession) -> AccountProfileResponse {
+    AccountProfileResponse(
+        accountId: session.accountId,
+        handle: session.handle,
+        profileName: session.profileName,
+        profileBio: nil,
+        deviceId: session.deviceId,
+        deviceStatus: session.deviceStatus
+    )
 }
 
 func sessionRestoreErrorDisposition(

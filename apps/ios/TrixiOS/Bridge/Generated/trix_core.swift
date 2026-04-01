@@ -1607,7 +1607,11 @@ public protocol FfiMessengerClientProtocol: AnyObject, Sendable {
     
     func listDevices() throws  -> [FfiMessengerDeviceRecord]
     
+    func loadCachedSnapshot() throws  -> FfiMessengerSnapshot
+    
     func loadSnapshot() throws  -> FfiMessengerSnapshot
+    
+    func loadSnapshotWithRemoteSync() throws  -> FfiMessengerSnapshot
     
     func markRead(conversationId: String, throughMessageId: String?) throws  -> FfiMessengerReadStateResult
     
@@ -1776,9 +1780,25 @@ open func listDevices()throws  -> [FfiMessengerDeviceRecord]  {
 })
 }
     
+open func loadCachedSnapshot()throws  -> FfiMessengerSnapshot  {
+    return try  FfiConverterTypeFfiMessengerSnapshot_lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
+    uniffi_trix_core_fn_method_ffimessengerclient_load_cached_snapshot(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
 open func loadSnapshot()throws  -> FfiMessengerSnapshot  {
     return try  FfiConverterTypeFfiMessengerSnapshot_lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
     uniffi_trix_core_fn_method_ffimessengerclient_load_snapshot(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+open func loadSnapshotWithRemoteSync()throws  -> FfiMessengerSnapshot  {
+    return try  FfiConverterTypeFfiMessengerSnapshot_lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
+    uniffi_trix_core_fn_method_ffimessengerclient_load_snapshot_with_remote_sync(
             self.uniffiCloneHandle(),$0
     )
 })
@@ -15623,7 +15643,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffimessengerclient_list_devices() != 41983) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffimessengerclient_load_cached_snapshot() != 34929) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_load_snapshot() != 36763) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffimessengerclient_load_snapshot_with_remote_sync() != 40209) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_mark_read() != 17060) {
