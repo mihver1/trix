@@ -148,6 +148,8 @@ struct ConsumerChatDetailView: View {
                 ConsumerConversationTimelineView(
                     renderState: timelineRenderState,
                     canReact: canReact,
+                    model: model,
+                    serverBaseURLString: serverBaseURL,
                     onOpenAttachment: openAttachment,
                     onSelectReaction: sendReaction
                 )
@@ -692,29 +694,14 @@ enum ConsumerConversationTimelineBuilder {
         // `loadConversationSnapshot()` already returns ascending server order, so keep typing cheap.
         let messages = snapshot.messages
         var items: [ConsumerTimelineItem] = []
-        var receiptStatusByMessageID: [String: ConsumerReceiptStatus] = [:]
         let participantDisplayNamesByAccountId = snapshot.detail.participantProfiles.reduce(into: [String: String]()) { partialResult, profile in
             partialResult[profile.accountId] = profile.primaryDisplayName
         }
         let fixtureKindsByMessageId = fixtureManifest?.messages.reduce(into: [String: UITestFixtureMessageKind]()) { partialResult, record in
             partialResult[record.messageId] = record.kind
         } ?? [:]
-        let presentationMessages = messages.compactMap { message -> SafeMessengerMessage? in
-            guard !isReceiptMessage(message) else {
-                if let targetMessageID = receiptTargetMessageID(for: message) {
-                    receiptStatusByMessageID[targetMessageID] = mergedReceiptStatus(
-                        receiptStatusByMessageID[targetMessageID],
-                        with: receiptStatus(for: message) ?? .delivered
-                    )
-                }
-                return nil
-            }
-
-            guard message.isVisibleInTimeline else {
-                return nil
-            }
-
-            return message
+        let presentationMessages = messages.filter { message in
+            !isReceiptMessage(message) && message.isVisibleInTimeline
         }
         var previousMessage: SafeMessengerMessage?
 
@@ -767,8 +754,7 @@ enum ConsumerConversationTimelineBuilder {
                         clusterPosition: clusterPosition,
                         topSpacing: topSpacing,
                         usesCenteredEventStyle: messageUsesCenteredEventStyle(message),
-                        receiptStatus: receiptStatusByMessageID[message.id]
-                            ?? message.receiptStatus.map(ConsumerReceiptStatus.init),
+                        receiptStatus: message.receiptStatus.map(ConsumerReceiptStatus.init),
                         reactions: message.reactions
                     )
                 )
@@ -906,34 +892,6 @@ enum ConsumerConversationTimelineBuilder {
     private static func isReceiptMessage(_ message: SafeMessengerMessage) -> Bool {
         effectiveBodyKind(for: message) == .receipt
     }
-
-    private static func receiptTargetMessageID(for message: SafeMessengerMessage) -> String? {
-        guard isReceiptMessage(message) else {
-            return nil
-        }
-
-        return message.body?.targetMessageId?.trix_trimmedOrNil()
-    }
-
-    private static func receiptStatus(for message: SafeMessengerMessage) -> ConsumerReceiptStatus? {
-        guard isReceiptMessage(message) else {
-            return nil
-        }
-
-        return message.body?.receiptType.map(ConsumerReceiptStatus.init)
-            ?? message.receiptStatus.map(ConsumerReceiptStatus.init)
-    }
-
-    private static func mergedReceiptStatus(
-        _ current: ConsumerReceiptStatus?,
-        with incoming: ConsumerReceiptStatus
-    ) -> ConsumerReceiptStatus {
-        guard let current else {
-            return incoming
-        }
-
-        return max(current, incoming)
-    }
 }
 
 private extension ConsumerReceiptStatus {
@@ -950,6 +908,8 @@ private extension ConsumerReceiptStatus {
 private struct ConsumerConversationTimelineView: View, Equatable {
     let renderState: ConsumerConversationTimelineRenderState
     let canReact: Bool
+    let model: AppModel
+    let serverBaseURLString: String
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
     let onSelectReaction: (ConsumerRenderedMessage, String) -> Void
 
@@ -1007,6 +967,8 @@ private struct ConsumerConversationTimelineView: View, Equatable {
                     latestSentText: renderState.latestSentText,
                     downloadingAttachmentMessageId: renderState.downloadingAttachmentMessageId,
                     canReact: canReact,
+                    model: model,
+                    serverBaseURLString: serverBaseURLString,
                     onOpenAttachment: onOpenAttachment,
                     onSelectReaction: onSelectReaction
                 )
@@ -1091,6 +1053,8 @@ private struct ConsumerTimelineRow: View {
     let latestSentText: String?
     let downloadingAttachmentMessageId: String?
     let canReact: Bool
+    let model: AppModel
+    let serverBaseURLString: String
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
     let onSelectReaction: (ConsumerRenderedMessage, String) -> Void
 
@@ -1119,6 +1083,8 @@ private struct ConsumerTimelineRow: View {
                     message: message,
                     isDownloadingAttachment: downloadingAttachmentMessageId == message.id,
                     canReact: canReact,
+                    model: model,
+                    serverBaseURLString: serverBaseURLString,
                     onOpenAttachment: onOpenAttachment,
                     onSelectReaction: onSelectReaction
                 )
@@ -1168,6 +1134,8 @@ private struct ConsumerBubbleRow: View {
     let message: ConsumerRenderedMessage
     let isDownloadingAttachment: Bool
     let canReact: Bool
+    let model: AppModel
+    let serverBaseURLString: String
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
     let onSelectReaction: (ConsumerRenderedMessage, String) -> Void
 
@@ -1189,9 +1157,18 @@ private struct ConsumerBubbleRow: View {
                     message: message,
                     isDownloadingAttachment: isDownloadingAttachment,
                     canReact: canReact,
+                    model: model,
+                    serverBaseURLString: serverBaseURLString,
                     onOpenAttachment: onOpenAttachment,
                     onSelectReaction: onSelectReaction
                 )
+
+                if !message.reactions.isEmpty {
+                    ConsumerReactionChipRow(
+                        reactions: message.reactions,
+                        isOutgoing: message.isOutgoing
+                    )
+                }
             }
             .frame(maxWidth: .infinity, alignment: message.isOutgoing ? .trailing : .leading)
 
@@ -1207,6 +1184,8 @@ private struct ConsumerMessageBubble: View {
     let message: ConsumerRenderedMessage
     let isDownloadingAttachment: Bool
     let canReact: Bool
+    let model: AppModel
+    let serverBaseURLString: String
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
     let onSelectReaction: (ConsumerRenderedMessage, String) -> Void
     @State private var isReactionPickerPresented = false
@@ -1223,6 +1202,8 @@ private struct ConsumerMessageBubble: View {
                 ConsumerAttachmentBubbleContent(
                     message: message,
                     isDownloading: isDownloadingAttachment,
+                    model: model,
+                    serverBaseURLString: serverBaseURLString,
                     onOpenAttachment: onOpenAttachment
                 )
             case .reaction, .receipt, .chatEvent:
@@ -1242,13 +1223,6 @@ private struct ConsumerMessageBubble: View {
                         .monospacedDigit()
                 }
                 .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
-            }
-
-            if !message.reactions.isEmpty {
-                ConsumerReactionChipRow(
-                    reactions: message.reactions,
-                    isOutgoing: message.isOutgoing
-                )
             }
         }
         .padding(.horizontal, 14)
@@ -1313,15 +1287,22 @@ private struct ConsumerReactionChipRow: View {
                         .foregroundStyle(reaction.includesSelf ? consumerChatAccent : .secondary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
-                        .background(
-                            reaction.includesSelf
-                                ? Color.white.opacity(isOutgoing ? 0.96 : 0.72)
-                                : Color.black.opacity(isOutgoing ? 0.12 : 0.04)
-                        )
-                        .clipShape(Capsule())
+                        .background(TrixTheme.chipSurface, in: Capsule())
+                        .overlay {
+                            Capsule()
+                                .stroke(
+                                    reaction.includesSelf
+                                        ? consumerChatAccent.opacity(0.28)
+                                        : TrixTheme.surfaceStroke,
+                                    lineWidth: 1
+                                )
+                        }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: isOutgoing ? .trailing : .leading)
         }
+        .scrollClipDisabled()
+        .frame(maxWidth: 320, alignment: isOutgoing ? .trailing : .leading)
     }
 
     private func reactionLabel(_ reaction: SafeMessengerReactionSummary) -> String {
@@ -1332,43 +1313,75 @@ private struct ConsumerReactionChipRow: View {
 private struct ConsumerAttachmentBubbleContent: View {
     let message: ConsumerRenderedMessage
     let isDownloading: Bool
+    let model: AppModel
+    let serverBaseURLString: String
     let onOpenAttachment: (ConsumerRenderedMessage) -> Void
 
     var body: some View {
         Button {
             onOpenAttachment(message)
         } label: {
-            HStack(alignment: .top, spacing: 12) {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(message.isOutgoing ? Color.white.opacity(0.18) : consumerChatAccent.opacity(0.12))
-                    .frame(width: 42, height: 42)
-                    .overlay {
-                        if isDownloading {
-                            ProgressView()
-                                .tint(message.isOutgoing ? .white : consumerChatAccent)
-                        } else {
-                            Image(systemName: attachmentIconName)
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(message.isOutgoing ? .white : consumerChatAccent)
+            Group {
+                if let attachment = message.attachmentBody,
+                   ConsumerInlineAttachmentPreviewSupport.supports(attachment) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ConsumerInlineAttachmentPreview(
+                            model: model,
+                            serverBaseURLString: serverBaseURLString,
+                            attachment: attachment,
+                            isOutgoing: message.isOutgoing
+                        )
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(message.primaryText)
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(message.isOutgoing ? .white : .primary)
+                                .lineLimit(2)
+
+                            Text(detailLabel)
+                                .font(.caption)
+                                .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
+                                .lineLimit(2)
                         }
                     }
+                } else {
+                    HStack(alignment: .top, spacing: 12) {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(message.isOutgoing ? Color.white.opacity(0.18) : consumerChatAccent.opacity(0.12))
+                            .frame(width: 42, height: 42)
+                            .overlay {
+                                if isDownloading {
+                                    ProgressView()
+                                        .tint(message.isOutgoing ? .white : consumerChatAccent)
+                                } else {
+                                    Image(systemName: attachmentIconName)
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .foregroundStyle(message.isOutgoing ? .white : consumerChatAccent)
+                                }
+                            }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(message.primaryText)
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(message.isOutgoing ? .white : .primary)
-                        .lineLimit(2)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(message.primaryText)
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(message.isOutgoing ? .white : .primary)
+                                .lineLimit(2)
 
-                    Text(isDownloading ? "Decrypting secure attachment..." : (message.secondaryText ?? "Tap to open"))
-                        .font(.caption)
-                        .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
-                        .lineLimit(2)
+                            Text(detailLabel)
+                                .font(.caption)
+                                .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : .secondary)
+                                .lineLimit(2)
+                        }
+                    }
                 }
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(message.attachmentBody == nil || isDownloading)
+    }
+
+    private var detailLabel: String {
+        isDownloading ? "Decrypting secure attachment..." : (message.secondaryText ?? "Tap to open")
     }
 
     private var attachmentIconName: String {

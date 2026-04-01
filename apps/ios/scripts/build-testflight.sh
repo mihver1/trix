@@ -16,6 +16,7 @@ ARCHIVE_PATH="${TRIX_IOS_ARCHIVE_PATH:-$BUILD_ROOT/TrixiOS.xcarchive}"
 RESULT_BUNDLE_PATH="${TRIX_IOS_RESULT_BUNDLE_PATH:-$BUILD_ROOT/TrixiOS-archive.xcresult}"
 EXPORT_PATH="${TRIX_IOS_EXPORT_PATH:-$BUILD_ROOT/export}"
 EXPORT_OPTIONS_PLIST="${TRIX_IOS_EXPORT_OPTIONS_PLIST:-$SCRIPT_DIR/testflight-export-options.plist}"
+BRIDGE_SCRIPT="${TRIX_IOS_BRIDGE_SCRIPT:-$SCRIPT_DIR/generate-trix-core-bridge.sh}"
 
 ARCHIVE_LOG_PATH="${TRIX_IOS_ARCHIVE_LOG_PATH:-$BUILD_ROOT/archive.log}"
 EXPORT_LOG_PATH="${TRIX_IOS_EXPORT_LOG_PATH:-$BUILD_ROOT/export.log}"
@@ -25,7 +26,6 @@ UPLOAD_LOG_PATH="${TRIX_IOS_UPLOAD_LOG_PATH:-$BUILD_ROOT/upload.log}"
 RUN_PRECHECKS=1
 RUN_VALIDATE=0
 RUN_UPLOAD=0
-SKIP_BRIDGE=0
 SKIP_XCODEGEN=0
 IPA_PATH="${TRIX_IOS_IPA_PATH:-}"
 ALLOW_PROVISIONING_UPDATES="${TRIX_IOS_ALLOW_PROVISIONING_UPDATES:-1}"
@@ -52,7 +52,6 @@ Options:
                        account by default, or App Store Connect key auth if set.
   --ipa PATH           Skip archive/export and validate/upload an existing IPA.
   --skip-prechecks     Skip ios-unit simulator prechecks.
-  --skip-bridge        Skip ./scripts/generate-trix-core-bridge.sh.
   --skip-xcodegen      Skip xcodegen generate.
   --help               Show this help.
 
@@ -213,9 +212,6 @@ parse_args() {
       --skip-prechecks)
         RUN_PRECHECKS=0
         ;;
-      --skip-bridge)
-        SKIP_BRIDGE=1
-        ;;
       --skip-xcodegen)
         SKIP_XCODEGEN=1
         ;;
@@ -269,10 +265,8 @@ prepare_artifact_root() {
 }
 
 prepare_project() {
-  if ((SKIP_BRIDGE == 0)); then
-    log "Regenerating iOS UniFFI bridge and xcframework"
-    bash "$SCRIPT_DIR/generate-trix-core-bridge.sh"
-  fi
+  log "Regenerating iOS UniFFI bridge and fresh trix-core artifacts"
+  bash "$BRIDGE_SCRIPT"
 
   if ((SKIP_XCODEGEN == 0)); then
     log "Regenerating Xcode project with XcodeGen"

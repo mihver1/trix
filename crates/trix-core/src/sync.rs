@@ -936,11 +936,71 @@ impl SyncCoordinator {
         aad_json: Option<Value>,
     ) -> Result<SendMessageOutcome> {
         let existing_outbox = message_id.and_then(|message_id| store.outbox_message(message_id));
-        let prepared_conversation = self
+        *conversation = self
             .prepare_chat_mutation_conversation(client, store, facade, chat_id)
             .await?;
-        *conversation = prepared_conversation;
+        self.send_message_body_with_prepared_conversation(
+            client,
+            store,
+            facade,
+            conversation,
+            sender_account_id,
+            sender_device_id,
+            chat_id,
+            message_id,
+            body,
+            aad_json,
+            existing_outbox,
+        )
+        .await
+    }
 
+    pub(crate) async fn send_message_body_for_chat(
+        &mut self,
+        client: &ServerApiClient,
+        store: &mut LocalHistoryStore,
+        facade: &mut MlsFacade,
+        sender_account_id: trix_types::AccountId,
+        sender_device_id: trix_types::DeviceId,
+        chat_id: ChatId,
+        message_id: Option<MessageId>,
+        body: &MessageBody,
+        aad_json: Option<Value>,
+    ) -> Result<SendMessageOutcome> {
+        let existing_outbox = message_id.and_then(|message_id| store.outbox_message(message_id));
+        let mut conversation = self
+            .prepare_chat_mutation_conversation(client, store, facade, chat_id)
+            .await?;
+        self.send_message_body_with_prepared_conversation(
+            client,
+            store,
+            facade,
+            &mut conversation,
+            sender_account_id,
+            sender_device_id,
+            chat_id,
+            message_id,
+            body,
+            aad_json,
+            existing_outbox,
+        )
+        .await
+    }
+
+    async fn send_message_body_with_prepared_conversation(
+        &mut self,
+        client: &ServerApiClient,
+        store: &mut LocalHistoryStore,
+        facade: &mut MlsFacade,
+        conversation: &mut MlsConversation,
+        sender_account_id: trix_types::AccountId,
+        sender_device_id: trix_types::DeviceId,
+        chat_id: ChatId,
+        message_id: Option<MessageId>,
+        body: &MessageBody,
+        aad_json: Option<Value>,
+        existing_outbox: Option<crate::storage::LocalOutboxMessage>,
+    ) -> Result<SendMessageOutcome> {
         let queued_at_unix = current_unix_seconds()?;
         let message_id = message_id.unwrap_or_default();
         store.ensure_outbox_message(

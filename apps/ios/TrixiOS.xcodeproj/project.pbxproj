@@ -56,6 +56,7 @@
 		E4F971691AB2F86D7BACBBB2 /* ServerConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E8E57CCC8925A9519C5EB59 /* ServerConfiguration.swift */; };
 		E8A8146DB08E4255B1963135 /* TrixUITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B94177496704FC2F285C6E07 /* TrixUITestSupport.swift */; };
 		EB0EBC7EE7D84252AF9CCBBA /* TrixThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3122D826CD1149DA9B2735F3 /* TrixThemeTests.swift */; };
+		F886C4F56E569E8E1A629ACA /* ConsumerInlineAttachmentPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 458D1438006A290DF807173D /* ConsumerInlineAttachmentPreview.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -93,6 +94,7 @@
 		3DB067EA4F79D6FAD3ECE1F0 /* DiagnosticsLogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsLogView.swift; sourceTree = "<group>"; };
 		3E8E57CCC8925A9519C5EB59 /* ServerConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConfiguration.swift; sourceTree = "<group>"; };
 		4535E64D76739244C2930888 /* TrixUITestApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixUITestApp.swift; sourceTree = "<group>"; };
+		458D1438006A290DF807173D /* ConsumerInlineAttachmentPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConsumerInlineAttachmentPreview.swift; sourceTree = "<group>"; };
 		48115076F282C6F00F84200E /* trix_core.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = trix_core.swift; sourceTree = "<group>"; };
 		4947F3F335746A3BEADF9960 /* TrixiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TrixiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4EE27BEB5EF834A79EF67EA6 /* UITestConversationSeedStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestConversationSeedStateTests.swift; sourceTree = "<group>"; };
@@ -214,6 +216,7 @@
 			children = (
 				9E6C5B8826FF255BAF650A38 /* ChatDetailView.swift */,
 				CD242B589907CC8D81728515 /* ConsumerChatDetailView.swift */,
+				458D1438006A290DF807173D /* ConsumerInlineAttachmentPreview.swift */,
 				F16E8D46A5E1F90D5FA589FB /* MessagingLabView.swift */,
 			);
 			path = Chats;
@@ -504,6 +507,7 @@
 				299255BB4FA97D30B09AE774 /* AppModel.swift in Sources */,
 				A98F44A4D5CD8F14237D279A /* ChatDetailView.swift in Sources */,
 				9B277FA389EBFDE5478C996D /* ConsumerChatDetailView.swift in Sources */,
+				F886C4F56E569E8E1A629ACA /* ConsumerInlineAttachmentPreview.swift in Sources */,
 				7DA8A99622CCCA79A97EE7BF /* CreateAccountView.swift in Sources */,
 				9B911226C1B996C30814B35F /* DashboardView.swift in Sources */,
 				E12020C5E8DE49261BED6B3D /* DiagnosticsLogView.swift in Sources */,

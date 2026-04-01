@@ -1720,7 +1720,7 @@ impl LocalHistoryStore {
             .chats
             .get(&chat_id.0.to_string())
             .map(|state| {
-                let decorations = local_timeline_decorations(state);
+                let decorations = local_timeline_decorations(state, self_account_id);
                 state
                     .projected_messages
                     .values()
@@ -3154,6 +3154,12 @@ fn local_timeline_item_from(
             })
             .map(|_| LocalMessageRecoveryState::PendingSiblingHistory)
     });
+    let is_visible_in_timeline = !decorations.hidden_message_ids.contains(&message.message_id);
+    let receipt_status = decorations
+        .receipt_status_by_message_id
+        .get(&message.message_id)
+        .copied()
+        .or_else(|| default_outgoing_receipt_status(is_outgoing, &message, is_visible_in_timeline));
     LocalTimelineItem {
         server_seq: message.server_seq,
         message_id: message.message_id,
@@ -3168,16 +3174,13 @@ fn local_timeline_item_from(
         body,
         body_parse_error,
         preview_text,
-        receipt_status: decorations
-            .receipt_status_by_message_id
-            .get(&message.message_id)
-            .copied(),
+        receipt_status,
         reactions: local_message_reaction_summaries(
             decorations,
             message.message_id,
             self_account_id,
         ),
-        is_visible_in_timeline: !decorations.hidden_message_ids.contains(&message.message_id),
+        is_visible_in_timeline,
         merged_epoch: message.merged_epoch,
         created_at_unix: message.created_at_unix,
         recovery_state,
@@ -3192,7 +3195,10 @@ struct LocalTimelineDecorations {
     hidden_message_ids: HashSet<MessageId>,
 }
 
-fn local_timeline_decorations(state: &PersistedChatState) -> LocalTimelineDecorations {
+fn local_timeline_decorations(
+    state: &PersistedChatState,
+    self_account_id: Option<trix_types::AccountId>,
+) -> LocalTimelineDecorations {
     let mut decorations = LocalTimelineDecorations::default();
 
     for message in state.projected_messages.values() {
@@ -3202,14 +3208,20 @@ fn local_timeline_decorations(state: &PersistedChatState) -> LocalTimelineDecora
 
         match body {
             MessageBody::Receipt(receipt) => {
-                let current = decorations
-                    .receipt_status_by_message_id
-                    .get(&receipt.target_message_id)
-                    .copied();
-                decorations.receipt_status_by_message_id.insert(
-                    receipt.target_message_id,
-                    merge_receipt_status(current, receipt.receipt_type),
-                );
+                if let Some(receipt_status) = receipt_status_from_hidden_receipt(
+                    self_account_id,
+                    message.sender_account_id,
+                    receipt.receipt_type,
+                ) {
+                    let current = decorations
+                        .receipt_status_by_message_id
+                        .get(&receipt.target_message_id)
+                        .copied();
+                    decorations.receipt_status_by_message_id.insert(
+                        receipt.target_message_id,
+                        merge_receipt_status(current, receipt_status),
+                    );
+                }
                 decorations.hidden_message_ids.insert(message.message_id);
             }
             MessageBody::Reaction(reaction) => {
@@ -3242,6 +3254,36 @@ fn local_timeline_decorations(state: &PersistedChatState) -> LocalTimelineDecora
     }
 
     decorations
+}
+
+fn default_outgoing_receipt_status(
+    is_outgoing: bool,
+    message: &LocalProjectedMessage,
+    is_visible_in_timeline: bool,
+) -> Option<crate::ReceiptType> {
+    if is_outgoing
+        && is_visible_in_timeline
+        && !matches!(
+            message.content_type,
+            trix_types::ContentType::Reaction | trix_types::ContentType::Receipt
+        )
+    {
+        Some(crate::ReceiptType::Delivered)
+    } else {
+        None
+    }
+}
+
+fn receipt_status_from_hidden_receipt(
+    self_account_id: Option<trix_types::AccountId>,
+    sender_account_id: trix_types::AccountId,
+    receipt_type: crate::ReceiptType,
+) -> Option<crate::ReceiptType> {
+    if self_account_id == Some(sender_account_id) {
+        None
+    } else {
+        Some(receipt_type)
+    }
 }
 
 fn merge_receipt_status(
@@ -6307,6 +6349,221 @@ mod tests {
             }))
         );
         assert_eq!(item.body_parse_error, None);
+    }
+
+    #[test]
+    fn local_timeline_items_mark_confirmed_outgoing_messages_delivered() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let self_account_id = AccountId(Uuid::new_v4());
+        let other_account_id = AccountId(Uuid::new_v4());
+        let self_device_id = DeviceId(Uuid::new_v4());
+        let other_device_id = DeviceId(Uuid::new_v4());
+        let outgoing_message_id = MessageId(Uuid::new_v4());
+        let incoming_message_id = MessageId(Uuid::new_v4());
+
+        store
+            .apply_chat_list(&ChatListResponse {
+                chats: vec![ChatSummary {
+                    chat_id,
+                    chat_type: ChatType::Dm,
+                    title: None,
+                    last_server_seq: 2,
+                    epoch: 1,
+                    pending_message_count: 0,
+                    last_message: None,
+                    participant_profiles: vec![
+                        ChatParticipantProfileSummary {
+                            account_id: self_account_id,
+                            handle: Some("me".to_owned()),
+                            profile_name: "Me".to_owned(),
+                            profile_bio: None,
+                        },
+                        ChatParticipantProfileSummary {
+                            account_id: other_account_id,
+                            handle: Some("alice".to_owned()),
+                            profile_name: "Alice".to_owned(),
+                            profile_bio: None,
+                        },
+                    ],
+                }],
+            })
+            .unwrap();
+
+        store
+            .apply_projected_messages(
+                chat_id,
+                &[
+                    LocalProjectedMessage {
+                        server_seq: 1,
+                        message_id: outgoing_message_id,
+                        sender_account_id: self_account_id,
+                        sender_device_id: self_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        projection_kind: LocalProjectionKind::ApplicationMessage,
+                        payload: Some(b"hello".to_vec()),
+                        merged_epoch: None,
+                        created_at_unix: 1,
+                    },
+                    LocalProjectedMessage {
+                        server_seq: 2,
+                        message_id: incoming_message_id,
+                        sender_account_id: other_account_id,
+                        sender_device_id: other_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        projection_kind: LocalProjectionKind::ApplicationMessage,
+                        payload: Some(b"hi".to_vec()),
+                        merged_epoch: None,
+                        created_at_unix: 2,
+                    },
+                ],
+            )
+            .unwrap();
+
+        let timeline = store.get_local_timeline_items(chat_id, Some(self_account_id), None, None);
+        let outgoing = timeline
+            .iter()
+            .find(|item| item.message_id == outgoing_message_id)
+            .unwrap();
+        let incoming = timeline
+            .iter()
+            .find(|item| item.message_id == incoming_message_id)
+            .unwrap();
+
+        assert_eq!(outgoing.receipt_status, Some(crate::ReceiptType::Delivered));
+        assert_eq!(incoming.receipt_status, None);
+    }
+
+    #[test]
+    fn local_timeline_items_ignore_self_receipts_for_read_status() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let self_account_id = AccountId(Uuid::new_v4());
+        let other_account_id = AccountId(Uuid::new_v4());
+        let self_device_id = DeviceId(Uuid::new_v4());
+        let other_device_id = DeviceId(Uuid::new_v4());
+        let target_message_id = MessageId(Uuid::new_v4());
+        let self_read_receipt_id = MessageId(Uuid::new_v4());
+        let other_read_receipt_id = MessageId(Uuid::new_v4());
+
+        store
+            .apply_chat_list(&ChatListResponse {
+                chats: vec![ChatSummary {
+                    chat_id,
+                    chat_type: ChatType::Group,
+                    title: Some("Receipts".to_owned()),
+                    last_server_seq: 3,
+                    epoch: 1,
+                    pending_message_count: 0,
+                    last_message: None,
+                    participant_profiles: vec![
+                        ChatParticipantProfileSummary {
+                            account_id: self_account_id,
+                            handle: Some("me".to_owned()),
+                            profile_name: "Me".to_owned(),
+                            profile_bio: None,
+                        },
+                        ChatParticipantProfileSummary {
+                            account_id: other_account_id,
+                            handle: Some("alice".to_owned()),
+                            profile_name: "Alice".to_owned(),
+                            profile_bio: None,
+                        },
+                    ],
+                }],
+            })
+            .unwrap();
+
+        store
+            .apply_projected_messages(
+                chat_id,
+                &[
+                    LocalProjectedMessage {
+                        server_seq: 1,
+                        message_id: target_message_id,
+                        sender_account_id: self_account_id,
+                        sender_device_id: self_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        projection_kind: LocalProjectionKind::ApplicationMessage,
+                        payload: Some(b"hello".to_vec()),
+                        merged_epoch: None,
+                        created_at_unix: 1,
+                    },
+                    LocalProjectedMessage {
+                        server_seq: 2,
+                        message_id: self_read_receipt_id,
+                        sender_account_id: self_account_id,
+                        sender_device_id: other_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Receipt,
+                        projection_kind: LocalProjectionKind::ApplicationMessage,
+                        payload: Some(
+                            MessageBody::Receipt(crate::ReceiptMessageBody {
+                                target_message_id,
+                                receipt_type: crate::ReceiptType::Read,
+                                at_unix: Some(2),
+                            })
+                            .to_bytes()
+                            .unwrap(),
+                        ),
+                        merged_epoch: None,
+                        created_at_unix: 2,
+                    },
+                ],
+            )
+            .unwrap();
+
+        let timeline = store.get_local_timeline_items(chat_id, Some(self_account_id), None, None);
+        let target = timeline
+            .iter()
+            .find(|item| item.message_id == target_message_id)
+            .unwrap();
+        assert_eq!(target.receipt_status, Some(crate::ReceiptType::Delivered));
+
+        store
+            .apply_projected_messages(
+                chat_id,
+                &[LocalProjectedMessage {
+                    server_seq: 3,
+                    message_id: other_read_receipt_id,
+                    sender_account_id: other_account_id,
+                    sender_device_id: other_device_id,
+                    epoch: 1,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Receipt,
+                    projection_kind: LocalProjectionKind::ApplicationMessage,
+                    payload: Some(
+                        MessageBody::Receipt(crate::ReceiptMessageBody {
+                            target_message_id,
+                            receipt_type: crate::ReceiptType::Read,
+                            at_unix: Some(3),
+                        })
+                        .to_bytes()
+                        .unwrap(),
+                    ),
+                    merged_epoch: None,
+                    created_at_unix: 3,
+                }],
+            )
+            .unwrap();
+
+        let timeline_with_other_reader =
+            store.get_local_timeline_items(chat_id, Some(self_account_id), None, None);
+        let upgraded_target = timeline_with_other_reader
+            .iter()
+            .find(|item| item.message_id == target_message_id)
+            .unwrap();
+        assert_eq!(
+            upgraded_target.receipt_status,
+            Some(crate::ReceiptType::Read)
+        );
     }
 
     #[test]

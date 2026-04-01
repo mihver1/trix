@@ -1442,6 +1442,7 @@ struct WorkspaceView: View {
                     }
 
                     LocalTimelineMessageRow(
+                        model: model,
                         message: entry.message,
                         isOutgoing: entry.message.isOutgoing,
                         receiptStatus: entry.receiptStatus,
@@ -3321,6 +3322,7 @@ private struct PendingOutgoingMessageRow: View {
 
 private struct LocalTimelineMessageRow: View {
     @Environment(\.trixColors) private var colors
+    @ObservedObject var model: AppModel
     let message: LocalTimelineItem
     let isOutgoing: Bool
     let receiptStatus: WorkspaceMessageReceiptStatus?
@@ -3330,6 +3332,7 @@ private struct LocalTimelineMessageRow: View {
     let fixtureAccessibilityIdentifier: String?
 
     init(
+        model: AppModel,
         message: LocalTimelineItem,
         isOutgoing: Bool = false,
         receiptStatus: WorkspaceMessageReceiptStatus? = nil,
@@ -3338,6 +3341,7 @@ private struct LocalTimelineMessageRow: View {
         onSelectReaction: ((LocalTimelineItem, String) -> Void)? = nil,
         fixtureAccessibilityIdentifier: String? = nil
     ) {
+        self.model = model
         self.message = message
         self.isOutgoing = isOutgoing
         self.receiptStatus = receiptStatus
@@ -3353,83 +3357,101 @@ private struct LocalTimelineMessageRow: View {
                 Spacer(minLength: 64)
             }
 
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(senderLabel)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(colors.ink)
+            VStack(alignment: isOutgoing ? .trailing : .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(senderLabel)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(colors.ink)
 
-                    Spacer()
+                        Spacer()
 
-                    HStack(spacing: 6) {
-                        if isOutgoing, let receiptStatus {
-                            Image(systemName: receiptStatus.systemImageName)
+                        HStack(spacing: 6) {
+                            if isOutgoing, let receiptStatus {
+                                Image(systemName: receiptStatus.systemImageName)
+                                    .font(.caption.weight(.semibold))
+                            }
+
+                            Text(Self.relativeFormatter.localizedString(for: message.createdAt, relativeTo: .now))
                                 .font(.caption.weight(.semibold))
                         }
-
-                        Text(Self.relativeFormatter.localizedString(for: message.createdAt, relativeTo: .now))
-                            .font(.caption.weight(.semibold))
+                        .foregroundStyle(colors.inkMuted)
                     }
-                    .foregroundStyle(colors.inkMuted)
-                }
 
-                if let body = message.body, body.kind == .attachment {
-                    HStack(alignment: .center, spacing: 12) {
-                        Image(systemName: body.mimeType?.hasPrefix("image/") == true ? "photo" : "paperclip")
-                            .font(.headline)
-                            .foregroundStyle(colors.accent)
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(body.fileName ?? "Attachment")
-                                .font(.body.weight(.semibold))
-                                .foregroundStyle(colors.ink)
-                            Text(attachmentMeta(body))
-                                .font(.footnote)
-                                .foregroundStyle(colors.inkMuted)
-                        }
-
-                        Spacer(minLength: 12)
-
-                        if let openAttachment {
-                            Button(action: openAttachment) {
-                                Label(isDownloadingAttachment ? "Opening…" : "Open", systemImage: "arrow.down.circle")
+                    if let body = message.body, body.kind == .attachment {
+                        VStack(alignment: .leading, spacing: 12) {
+                            if LocalImageAttachmentSupport.supports(
+                                mimeType: body.mimeType,
+                                fileName: body.fileName
+                            ) {
+                                WorkspaceInlineAttachmentPreview(
+                                    model: model,
+                                    message: message,
+                                    attachmentBody: body,
+                                    openAttachment: openAttachment
+                                )
                             }
-                            .buttonStyle(TrixActionButtonStyle(tone: .ghost))
-                            .disabled(isDownloadingAttachment)
-                        }
-                    }
-                } else {
-                    Text(message.bodySummary)
-                        .font(.body)
-                        .foregroundStyle(message.bodyParseError == nil ? colors.ink : colors.warning)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
 
-                if message.contentType != .text || message.bodyParseError != nil {
-                    HStack(spacing: 10) {
-                        InlineMeta(label: message.contentType.label)
-                        if let body = message.body {
-                            InlineMeta(label: body.kind.label)
+                            HStack(alignment: .center, spacing: 12) {
+                                if !LocalImageAttachmentSupport.supports(
+                                    mimeType: body.mimeType,
+                                    fileName: body.fileName
+                                ) {
+                                    Image(systemName: body.mimeType?.hasPrefix("image/") == true ? "photo" : "paperclip")
+                                        .font(.headline)
+                                        .foregroundStyle(colors.accent)
+                                }
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(body.fileName ?? "Attachment")
+                                        .font(.body.weight(.semibold))
+                                        .foregroundStyle(colors.ink)
+                                    Text(attachmentMeta(body))
+                                        .font(.footnote)
+                                        .foregroundStyle(colors.inkMuted)
+                                }
+
+                                Spacer(minLength: 12)
+
+                                if let openAttachment {
+                                    Button(action: openAttachment) {
+                                        Label(isDownloadingAttachment ? "Opening…" : "Open", systemImage: "arrow.down.circle")
+                                    }
+                                    .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+                                    .disabled(isDownloadingAttachment)
+                                }
+                            }
+                        }
+                    } else {
+                        Text(message.bodySummary)
+                            .font(.body)
+                            .foregroundStyle(message.bodyParseError == nil ? colors.ink : colors.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if message.contentType != .text || message.bodyParseError != nil {
+                        HStack(spacing: 10) {
+                            InlineMeta(label: message.contentType.label)
+                            if let body = message.body {
+                                InlineMeta(label: body.kind.label)
+                            }
                         }
                     }
+                }
+                .padding(16)
+                .frame(maxWidth: 620, alignment: .leading)
+                .background(bubbleFill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(bubbleBorder, lineWidth: 1)
                 }
 
                 if !message.reactions.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(message.reactions, id: \.emoji) { reaction in
-                                ReactionMetaChip(reaction: reaction)
-                            }
-                        }
-                    }
+                    ReactionMetaChipRow(
+                        reactions: message.reactions,
+                        isOutgoing: isOutgoing
+                    )
                 }
-            }
-            .padding(16)
-            .frame(maxWidth: 620, alignment: .leading)
-            .background(bubbleFill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(bubbleBorder, lineWidth: 1)
             }
 
             if !isOutgoing {
@@ -3486,6 +3508,23 @@ private struct LocalTimelineMessageRow: View {
         formatter.unitsStyle = .short
         return formatter
     }()
+}
+
+private struct ReactionMetaChipRow: View {
+    let reactions: [MessageReactionSummary]
+    let isOutgoing: Bool
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(reactions, id: \.emoji) { reaction in
+                    ReactionMetaChip(reaction: reaction)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: isOutgoing ? .trailing : .leading)
+        }
+        .frame(maxWidth: 620, alignment: isOutgoing ? .trailing : .leading)
+    }
 }
 
 private struct ReactionMetaChip: View {

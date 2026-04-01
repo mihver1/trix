@@ -109,7 +109,8 @@ The TestFlight driver writes release artifacts under `build/testflight/`:
 
 The script also:
 
-- regenerates the `UniFFI` bridge and the Xcode project before archiving unless `--skip-bridge` or `--skip-xcodegen` is passed
+- always regenerates the `UniFFI` bridge and fresh Rust iOS artifacts before archiving
+- regenerates the Xcode project before archiving unless `--skip-xcodegen` is passed
 - runs `ios-unit` prechecks by default unless `--skip-prechecks` is passed
 - uses `-allowProvisioningUpdates` by default unless `TRIX_IOS_ALLOW_PROVISIONING_UPDATES=0`
 - supports `TRIX_TESTFLIGHT_INTERNAL_ONLY=1` to mark the upload for internal TestFlight testing only
@@ -154,7 +155,7 @@ TRIX_ALTOOL_KEYCHAIN_ITEM=TRIX_APPSTORE_PASSWORD \
 - `App Transport Security` is relaxed for this PoC so the client can talk to a local `http://` backend. Tighten this before shipping.
 - The app now defaults to `https://trix.artelproject.tech`. For local simulator work, override the server URL in-app or via the UI-test launch environment with `http://127.0.0.1:8080`.
 - `xcodebuild` requires an installed `iOS Simulator` runtime or device platform in the local `Xcode` setup.
-- `./scripts/generate-trix-core-bridge.sh` installs missing Rust iOS targets automatically, regenerates `UniFFI` Swift sources under `TrixiOS/Bridge/Generated`, and rebuilds the local `xcframework` under `Vendor/TrixCoreFFI.xcframework`. The app and TestFlight build paths invoke it automatically unless skipped.
+- `./scripts/generate-trix-core-bridge.sh` installs missing Rust iOS targets automatically, regenerates `UniFFI` Swift sources under `TrixiOS/Bridge/Generated`, and rebuilds the local `xcframework` under `Vendor/TrixCoreFFI.xcframework`. The app and TestFlight archive path invoke it automatically.
 - APNs wake-up pushes require matching Apple entitlements plus `trixd` APNs config; the server sends only safe background payloads, and message/body text is produced on-device after inbox sync.
 - Device approval accepts an optional `transfer_bundle_b64`, and the server exposes `GET /v0/devices/{device_id}/transfer-bundle`.
 - Linked devices that receive a transfer bundle automatically import shared account-root material on the next authenticated refresh. If no bundle is available, the device still becomes active for messaging but remains in the local `requiresRootUpgrade` capability state for account-management operations.
