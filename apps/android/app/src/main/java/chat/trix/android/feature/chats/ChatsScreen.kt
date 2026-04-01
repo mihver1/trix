@@ -101,6 +101,7 @@ import chat.trix.android.core.chat.ChatRefreshResult
 import chat.trix.android.core.chat.ChatRepository
 import chat.trix.android.core.chat.ChatReceiptStatus
 import chat.trix.android.core.chat.ChatTimelineMessage
+import chat.trix.android.core.chat.supportsLocalImagePreview
 import chat.trix.android.core.ffi.FfiChatType
 import chat.trix.android.core.ffi.ffiDefaultQuickReactionEmojis
 import chat.trix.android.core.runtime.RealtimeForegroundService
@@ -949,6 +950,7 @@ fun ChatsScreen(
 
             windowInfo.foldPosture == TrixFoldPosture.Tabletop && selectedConversationId != null -> {
                 TabletopConversationLayout(
+                    repository = repository,
                     conversation = selectedConversation,
                     isLoading = detailState.isLoading,
                     errorMessage = detailState.errorMessage,
@@ -1018,6 +1020,7 @@ fun ChatsScreen(
 
             selectedConversationId != null -> {
                 ConversationDetailPane(
+                    repository = repository,
                     conversation = selectedConversation,
                     isLoading = detailState.isLoading,
                     errorMessage = detailState.errorMessage,
@@ -1739,6 +1742,7 @@ private fun WideConversationLayout(
 
 @Composable
 private fun TabletopConversationLayout(
+    repository: ChatRepository,
     conversation: ChatConversation?,
     isLoading: Boolean,
     errorMessage: String?,
@@ -1760,6 +1764,7 @@ private fun TabletopConversationLayout(
         modifier = modifier.fillMaxSize(),
     ) {
         ConversationDetailContent(
+            repository = repository,
             conversation = conversation,
             isLoading = isLoading,
             errorMessage = errorMessage,
@@ -2052,6 +2057,7 @@ private fun EmptyConversationPane(
 
 @Composable
 private fun ConversationDetailPane(
+    repository: ChatRepository? = null,
     conversation: ChatConversation?,
     isLoading: Boolean,
     errorMessage: String?,
@@ -2070,6 +2076,7 @@ private fun ConversationDetailPane(
     modifier: Modifier = Modifier,
 ) {
     ConversationDetailContent(
+        repository = repository,
         conversation = conversation,
         isLoading = isLoading,
         errorMessage = errorMessage,
@@ -2093,6 +2100,7 @@ private fun ConversationDetailPane(
 
 @Composable
 private fun ConversationDetailContent(
+    repository: ChatRepository? = null,
     conversation: ChatConversation?,
     isLoading: Boolean,
     errorMessage: String?,
@@ -2172,7 +2180,20 @@ private fun ConversationDetailContent(
             }
 
             else -> {
+                val activeRepository = repository
+                if (activeRepository == null) {
+                    EmptyConversationPane(
+                        title = "Conversation unavailable",
+                        body = "Attachment preview isn't available in this preview configuration.",
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                    )
+                    return@Column
+                }
+
                 ConversationTranscript(
+                    repository = activeRepository,
                     conversation = conversation,
                     activeAttachmentMessageId = activeAttachmentMessageId,
                     onOpenAttachment = onOpenAttachment,
@@ -2208,6 +2229,7 @@ private fun ConversationDetailContent(
 
 @Composable
 private fun ConversationTranscript(
+    repository: ChatRepository,
     conversation: ChatConversation,
     activeAttachmentMessageId: String?,
     onOpenAttachment: (ChatAttachment) -> Unit,
@@ -2282,38 +2304,51 @@ private fun ConversationTranscript(
                                 style = MaterialTheme.typography.bodyLarge,
                             )
                             if (message.attachment != null) {
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(10.dp),
                                 ) {
-                                    TextButton(
-                                        onClick = { onOpenAttachment(message.attachment) },
-                                        enabled = activeAttachmentMessageId != message.id,
+                                    if (message.attachment.supportsLocalImagePreview()) {
+                                        InlineAttachmentPreview(
+                                            attachment = message.attachment,
+                                            repository = repository,
+                                            enabled = activeAttachmentMessageId != message.id,
+                                            onOpenAttachment = onOpenAttachment,
+                                        )
+                                    }
+
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        if (activeAttachmentMessageId == message.id) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(16.dp),
-                                                strokeWidth = 2.dp,
-                                            )
-                                        } else {
+                                        TextButton(
+                                            onClick = { onOpenAttachment(message.attachment) },
+                                            enabled = activeAttachmentMessageId != message.id,
+                                        ) {
+                                            if (activeAttachmentMessageId == message.id) {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(16.dp),
+                                                    strokeWidth = 2.dp,
+                                                )
+                                            } else {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.FolderOpen,
+                                                    contentDescription = null,
+                                                )
+                                            }
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("Open")
+                                        }
+                                        OutlinedButton(
+                                            onClick = { onShareAttachment(message.attachment) },
+                                            enabled = activeAttachmentMessageId != message.id,
+                                        ) {
                                             Icon(
-                                                imageVector = Icons.Rounded.FolderOpen,
+                                                imageVector = Icons.Rounded.Share,
                                                 contentDescription = null,
                                             )
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("Share")
                                         }
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("Open")
-                                    }
-                                    OutlinedButton(
-                                        onClick = { onShareAttachment(message.attachment) },
-                                        enabled = activeAttachmentMessageId != message.id,
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.Share,
-                                            contentDescription = null,
-                                        )
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("Share")
                                     }
                                 }
                             }
@@ -2323,7 +2358,7 @@ private fun ConversationTranscript(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
-                            }
+                                }
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 verticalAlignment = Alignment.CenterVertically,

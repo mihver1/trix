@@ -1442,6 +1442,7 @@ struct WorkspaceView: View {
                     }
 
                     LocalTimelineMessageRow(
+                        model: model,
                         message: entry.message,
                         isOutgoing: entry.message.isOutgoing,
                         receiptStatus: entry.receiptStatus,
@@ -3321,6 +3322,7 @@ private struct PendingOutgoingMessageRow: View {
 
 private struct LocalTimelineMessageRow: View {
     @Environment(\.trixColors) private var colors
+    @ObservedObject var model: AppModel
     let message: LocalTimelineItem
     let isOutgoing: Bool
     let receiptStatus: WorkspaceMessageReceiptStatus?
@@ -3330,6 +3332,7 @@ private struct LocalTimelineMessageRow: View {
     let fixtureAccessibilityIdentifier: String?
 
     init(
+        model: AppModel,
         message: LocalTimelineItem,
         isOutgoing: Bool = false,
         receiptStatus: WorkspaceMessageReceiptStatus? = nil,
@@ -3338,6 +3341,7 @@ private struct LocalTimelineMessageRow: View {
         onSelectReaction: ((LocalTimelineItem, String) -> Void)? = nil,
         fixtureAccessibilityIdentifier: String? = nil
     ) {
+        self.model = model
         self.message = message
         self.isOutgoing = isOutgoing
         self.receiptStatus = receiptStatus
@@ -3375,28 +3379,47 @@ private struct LocalTimelineMessageRow: View {
                     }
 
                     if let body = message.body, body.kind == .attachment {
-                        HStack(alignment: .center, spacing: 12) {
-                            Image(systemName: body.mimeType?.hasPrefix("image/") == true ? "photo" : "paperclip")
-                                .font(.headline)
-                                .foregroundStyle(colors.accent)
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(body.fileName ?? "Attachment")
-                                    .font(.body.weight(.semibold))
-                                    .foregroundStyle(colors.ink)
-                                Text(attachmentMeta(body))
-                                    .font(.footnote)
-                                    .foregroundStyle(colors.inkMuted)
+                        VStack(alignment: .leading, spacing: 12) {
+                            if LocalImageAttachmentSupport.supports(
+                                mimeType: body.mimeType,
+                                fileName: body.fileName
+                            ) {
+                                WorkspaceInlineAttachmentPreview(
+                                    model: model,
+                                    message: message,
+                                    attachmentBody: body,
+                                    openAttachment: openAttachment
+                                )
                             }
 
-                            Spacer(minLength: 12)
-
-                            if let openAttachment {
-                                Button(action: openAttachment) {
-                                    Label(isDownloadingAttachment ? "Opening…" : "Open", systemImage: "arrow.down.circle")
+                            HStack(alignment: .center, spacing: 12) {
+                                if !LocalImageAttachmentSupport.supports(
+                                    mimeType: body.mimeType,
+                                    fileName: body.fileName
+                                ) {
+                                    Image(systemName: body.mimeType?.hasPrefix("image/") == true ? "photo" : "paperclip")
+                                        .font(.headline)
+                                        .foregroundStyle(colors.accent)
                                 }
-                                .buttonStyle(TrixActionButtonStyle(tone: .ghost))
-                                .disabled(isDownloadingAttachment)
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(body.fileName ?? "Attachment")
+                                        .font(.body.weight(.semibold))
+                                        .foregroundStyle(colors.ink)
+                                    Text(attachmentMeta(body))
+                                        .font(.footnote)
+                                        .foregroundStyle(colors.inkMuted)
+                                }
+
+                                Spacer(minLength: 12)
+
+                                if let openAttachment {
+                                    Button(action: openAttachment) {
+                                        Label(isDownloadingAttachment ? "Opening…" : "Open", systemImage: "arrow.down.circle")
+                                    }
+                                    .buttonStyle(TrixActionButtonStyle(tone: .ghost))
+                                    .disabled(isDownloadingAttachment)
+                                }
                             }
                         }
                     } else {
