@@ -8266,10 +8266,13 @@ public struct FfiMessengerConversationSummary: Equatable, Hashable {
     public var previewServerSeq: UInt64?
     public var previewCreatedAtUnix: UInt64?
     public var participantProfiles: [FfiMessengerParticipantProfile]
+    public var historyRecoveryPending: Bool
+    public var historyRecoveryFromServerSeq: UInt64?
+    public var historyRecoveryThroughServerSeq: UInt64?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(conversationId: String, conversationType: FfiChatType, title: String?, displayTitle: String, lastServerSeq: UInt64, epoch: UInt64, unreadCount: UInt64, pendingMessageCount: UInt64, previewText: String?, previewSenderAccountId: String?, previewSenderDisplayName: String?, previewIsOutgoing: Bool?, previewServerSeq: UInt64?, previewCreatedAtUnix: UInt64?, participantProfiles: [FfiMessengerParticipantProfile]) {
+    public init(conversationId: String, conversationType: FfiChatType, title: String?, displayTitle: String, lastServerSeq: UInt64, epoch: UInt64, unreadCount: UInt64, pendingMessageCount: UInt64, previewText: String?, previewSenderAccountId: String?, previewSenderDisplayName: String?, previewIsOutgoing: Bool?, previewServerSeq: UInt64?, previewCreatedAtUnix: UInt64?, participantProfiles: [FfiMessengerParticipantProfile], historyRecoveryPending: Bool, historyRecoveryFromServerSeq: UInt64?, historyRecoveryThroughServerSeq: UInt64?) {
         self.conversationId = conversationId
         self.conversationType = conversationType
         self.title = title
@@ -8285,6 +8288,9 @@ public struct FfiMessengerConversationSummary: Equatable, Hashable {
         self.previewServerSeq = previewServerSeq
         self.previewCreatedAtUnix = previewCreatedAtUnix
         self.participantProfiles = participantProfiles
+        self.historyRecoveryPending = historyRecoveryPending
+        self.historyRecoveryFromServerSeq = historyRecoveryFromServerSeq
+        self.historyRecoveryThroughServerSeq = historyRecoveryThroughServerSeq
     }
 
     
@@ -8317,7 +8323,10 @@ public struct FfiConverterTypeFfiMessengerConversationSummary: FfiConverterRustB
                 previewIsOutgoing: FfiConverterOptionBool.read(from: &buf), 
                 previewServerSeq: FfiConverterOptionUInt64.read(from: &buf), 
                 previewCreatedAtUnix: FfiConverterOptionUInt64.read(from: &buf), 
-                participantProfiles: FfiConverterSequenceTypeFfiMessengerParticipantProfile.read(from: &buf)
+                participantProfiles: FfiConverterSequenceTypeFfiMessengerParticipantProfile.read(from: &buf), 
+                historyRecoveryPending: FfiConverterBool.read(from: &buf), 
+                historyRecoveryFromServerSeq: FfiConverterOptionUInt64.read(from: &buf), 
+                historyRecoveryThroughServerSeq: FfiConverterOptionUInt64.read(from: &buf)
         )
     }
 
@@ -8337,6 +8346,9 @@ public struct FfiConverterTypeFfiMessengerConversationSummary: FfiConverterRustB
         FfiConverterOptionUInt64.write(value.previewServerSeq, into: &buf)
         FfiConverterOptionUInt64.write(value.previewCreatedAtUnix, into: &buf)
         FfiConverterSequenceTypeFfiMessengerParticipantProfile.write(value.participantProfiles, into: &buf)
+        FfiConverterBool.write(value.historyRecoveryPending, into: &buf)
+        FfiConverterOptionUInt64.write(value.historyRecoveryFromServerSeq, into: &buf)
+        FfiConverterOptionUInt64.write(value.historyRecoveryThroughServerSeq, into: &buf)
     }
 }
 
@@ -8895,6 +8907,7 @@ public struct FfiMessengerMessageRecord: Equatable, Hashable {
     public var epoch: UInt64
     public var contentType: FfiContentType
     public var body: FfiMessengerMessageBody?
+    public var recoveryState: FfiMessageRecoveryState?
     public var previewText: String
     public var receiptStatus: FfiReceiptType?
     public var reactions: [FfiMessageReactionSummary]
@@ -8903,7 +8916,7 @@ public struct FfiMessengerMessageRecord: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(conversationId: String, serverSeq: UInt64, messageId: String, senderAccountId: String, senderDeviceId: String, senderDisplayName: String?, isOutgoing: Bool, epoch: UInt64, contentType: FfiContentType, body: FfiMessengerMessageBody?, previewText: String, receiptStatus: FfiReceiptType?, reactions: [FfiMessageReactionSummary], isVisibleInTimeline: Bool, createdAtUnix: UInt64) {
+    public init(conversationId: String, serverSeq: UInt64, messageId: String, senderAccountId: String, senderDeviceId: String, senderDisplayName: String?, isOutgoing: Bool, epoch: UInt64, contentType: FfiContentType, body: FfiMessengerMessageBody?, recoveryState: FfiMessageRecoveryState?, previewText: String, receiptStatus: FfiReceiptType?, reactions: [FfiMessageReactionSummary], isVisibleInTimeline: Bool, createdAtUnix: UInt64) {
         self.conversationId = conversationId
         self.serverSeq = serverSeq
         self.messageId = messageId
@@ -8914,6 +8927,7 @@ public struct FfiMessengerMessageRecord: Equatable, Hashable {
         self.epoch = epoch
         self.contentType = contentType
         self.body = body
+        self.recoveryState = recoveryState
         self.previewText = previewText
         self.receiptStatus = receiptStatus
         self.reactions = reactions
@@ -8947,6 +8961,7 @@ public struct FfiConverterTypeFfiMessengerMessageRecord: FfiConverterRustBuffer 
                 epoch: FfiConverterUInt64.read(from: &buf), 
                 contentType: FfiConverterTypeFfiContentType.read(from: &buf), 
                 body: FfiConverterOptionTypeFfiMessengerMessageBody.read(from: &buf), 
+                recoveryState: FfiConverterOptionTypeFfiMessageRecoveryState.read(from: &buf), 
                 previewText: FfiConverterString.read(from: &buf), 
                 receiptStatus: FfiConverterOptionTypeFfiReceiptType.read(from: &buf), 
                 reactions: FfiConverterSequenceTypeFfiMessageReactionSummary.read(from: &buf), 
@@ -8966,6 +8981,7 @@ public struct FfiConverterTypeFfiMessengerMessageRecord: FfiConverterRustBuffer 
         FfiConverterUInt64.write(value.epoch, into: &buf)
         FfiConverterTypeFfiContentType.write(value.contentType, into: &buf)
         FfiConverterOptionTypeFfiMessengerMessageBody.write(value.body, into: &buf)
+        FfiConverterOptionTypeFfiMessageRecoveryState.write(value.recoveryState, into: &buf)
         FfiConverterString.write(value.previewText, into: &buf)
         FfiConverterOptionTypeFfiReceiptType.write(value.receiptStatus, into: &buf)
         FfiConverterSequenceTypeFfiMessageReactionSummary.write(value.reactions, into: &buf)
@@ -12081,6 +12097,7 @@ public enum FfiHistorySyncJobType: Equatable, Hashable {
     case initialSync
     case chatBackfill
     case deviceRekey
+    case timelineRepair
 
 
 
@@ -12108,6 +12125,8 @@ public struct FfiConverterTypeFfiHistorySyncJobType: FfiConverterRustBuffer {
         
         case 3: return .deviceRekey
         
+        case 4: return .timelineRepair
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -12126,6 +12145,10 @@ public struct FfiConverterTypeFfiHistorySyncJobType: FfiConverterRustBuffer {
         
         case .deviceRekey:
             writeInt(&buf, Int32(3))
+        
+        
+        case .timelineRepair:
+            writeInt(&buf, Int32(4))
         
         }
     }
@@ -12468,6 +12491,66 @@ public func FfiConverterTypeFfiMessageKind_lift(_ buf: RustBuffer) throws -> Ffi
 #endif
 public func FfiConverterTypeFfiMessageKind_lower(_ value: FfiMessageKind) -> RustBuffer {
     return FfiConverterTypeFfiMessageKind.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum FfiMessageRecoveryState: Equatable, Hashable {
+    
+    case pendingSiblingHistory
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiMessageRecoveryState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiMessageRecoveryState: FfiConverterRustBuffer {
+    typealias SwiftType = FfiMessageRecoveryState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiMessageRecoveryState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .pendingSiblingHistory
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiMessageRecoveryState, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .pendingSiblingHistory:
+            writeInt(&buf, Int32(1))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiMessageRecoveryState_lift(_ buf: RustBuffer) throws -> FfiMessageRecoveryState {
+    return try FfiConverterTypeFfiMessageRecoveryState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiMessageRecoveryState_lower(_ value: FfiMessageRecoveryState) -> RustBuffer {
+    return FfiConverterTypeFfiMessageRecoveryState.lower(value)
 }
 
 
@@ -14110,6 +14193,30 @@ fileprivate struct FfiConverterOptionTypeFfiHistorySyncJobStatus: FfiConverterRu
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeFfiHistorySyncJobStatus.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiMessageRecoveryState: FfiConverterRustBuffer {
+    typealias SwiftType = FfiMessageRecoveryState?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiMessageRecoveryState.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiMessageRecoveryState.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

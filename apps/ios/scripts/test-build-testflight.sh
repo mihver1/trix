@@ -120,24 +120,36 @@ run_test() {
   fi
 }
 
+write_fake_bridge_script() {
+  local path="$1"
+
+  write_fake_tool "$path" '
+log_dir="${TEST_LOG_DIR:?}"
+printf "bridge\n" >> "$log_dir/bridge.log"
+'
+}
+
 test_upload_with_asc_auth_uses_xcodebuild() {
   local temp_root
   temp_root="$(mktemp -d)"
 
   setup_fake_toolchain "$temp_root"
+  write_fake_bridge_script "$temp_root/fake-generate-bridge.sh"
   mkdir -p "$temp_root/logs"
   : > "$temp_root/AuthKey_TESTKEY.p8"
 
   PATH="$temp_root/bin:$PATH" \
     TEST_LOG_DIR="$temp_root/logs" \
+    TRIX_IOS_BRIDGE_SCRIPT="$temp_root/fake-generate-bridge.sh" \
     TRIX_IOS_BUILD_ROOT="$temp_root/build" \
     TRIX_IOS_ALLOW_PROVISIONING_UPDATES=0 \
     TRIX_ASC_AUTH_KEY_PATH="$temp_root/AuthKey_TESTKEY.p8" \
     TRIX_ASC_AUTH_KEY_ID="TESTKEY" \
     TRIX_ASC_AUTH_ISSUER_ID="TESTISSUER" \
     TRIX_TESTFLIGHT_INTERNAL_ONLY=1 \
-    "$TARGET_SCRIPT" --upload --skip-prechecks --skip-bridge --skip-xcodegen >/dev/null
+    "$TARGET_SCRIPT" --upload --skip-prechecks --skip-xcodegen >/dev/null
 
+  assert_contains "bridge" "$temp_root/logs/bridge.log" "bridge refresh not invoked"
   assert_contains "-authenticationKeyPath $temp_root/AuthKey_TESTKEY.p8" "$temp_root/logs/xcodebuild.log" "xcodebuild upload auth path missing"
   assert_contains "-authenticationKeyID TESTKEY" "$temp_root/logs/xcodebuild.log" "xcodebuild upload auth key id missing"
   assert_contains "-authenticationKeyIssuerID TESTISSUER" "$temp_root/logs/xcodebuild.log" "xcodebuild upload auth issuer missing"
@@ -153,14 +165,17 @@ test_upload_with_xcode_account_uses_xcodebuild() {
   temp_root="$(mktemp -d)"
 
   setup_fake_toolchain "$temp_root"
+  write_fake_bridge_script "$temp_root/fake-generate-bridge.sh"
   mkdir -p "$temp_root/logs"
 
   PATH="$temp_root/bin:$PATH" \
     TEST_LOG_DIR="$temp_root/logs" \
+    TRIX_IOS_BRIDGE_SCRIPT="$temp_root/fake-generate-bridge.sh" \
     TRIX_IOS_BUILD_ROOT="$temp_root/build" \
     TRIX_IOS_ALLOW_PROVISIONING_UPDATES=0 \
-    "$TARGET_SCRIPT" --upload --skip-prechecks --skip-bridge --skip-xcodegen >/dev/null
+    "$TARGET_SCRIPT" --upload --skip-prechecks --skip-xcodegen >/dev/null
 
+  assert_contains "bridge" "$temp_root/logs/bridge.log" "bridge refresh not invoked"
   assert_contains "-exportArchive" "$temp_root/logs/xcodebuild.log" "xcodebuild exportArchive not invoked for Xcode-account upload"
   assert_contains "<string>upload</string>" "$temp_root/logs/export-options.plist" "upload destination not written for Xcode-account upload"
   assert_not_contains "altool" "$temp_root/logs/xcrun.log" "xcrun altool should not be used for Xcode-account upload path"
@@ -172,16 +187,19 @@ test_archive_upload_with_apple_id_uses_altool() {
   temp_root="$(mktemp -d)"
 
   setup_fake_toolchain "$temp_root"
+  write_fake_bridge_script "$temp_root/fake-generate-bridge.sh"
   mkdir -p "$temp_root/logs"
 
   PATH="$temp_root/bin:$PATH" \
     TEST_LOG_DIR="$temp_root/logs" \
+    TRIX_IOS_BRIDGE_SCRIPT="$temp_root/fake-generate-bridge.sh" \
     TRIX_IOS_BUILD_ROOT="$temp_root/build" \
     TRIX_IOS_ALLOW_PROVISIONING_UPDATES=0 \
     TRIX_APPLE_ID="user@example.com" \
     TRIX_APP_SPECIFIC_PASSWORD="secret" \
-    "$TARGET_SCRIPT" --upload --skip-prechecks --skip-bridge --skip-xcodegen >/dev/null
+    "$TARGET_SCRIPT" --upload --skip-prechecks --skip-xcodegen >/dev/null
 
+  assert_contains "bridge" "$temp_root/logs/bridge.log" "bridge refresh not invoked"
   assert_contains "<string>export</string>" "$temp_root/logs/export-options.plist" "archive upload with Apple ID should export an IPA"
   assert_contains "altool" "$temp_root/logs/xcrun.log" "archive upload with Apple ID should use altool"
   assert_contains "--upload-app" "$temp_root/logs/xcrun.log" "archive upload with Apple ID should call altool upload"
