@@ -1,18 +1,18 @@
 import Foundation
 import Security
 
-enum LocalDeviceTrustState: String, Codable {
+enum LocalDeviceTrustState: String, Codable, Sendable {
     case active
     case pendingApproval
 }
 
-enum LocalDeviceCapabilityState: String, Codable {
+enum LocalDeviceCapabilityState: String, Codable, Sendable {
     case fullAccountAccess
     case transportOnly
     case requiresRootUpgrade
 }
 
-struct LocalDeviceIdentity: Codable, Equatable {
+struct LocalDeviceIdentity: Codable, Equatable, Sendable {
     static let currentSchemaVersion = 2
 
     let schemaVersion: Int

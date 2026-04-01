@@ -1377,6 +1377,16 @@ final class AppModel {
                         limit: 500
                     )
                 }
+                do {
+                    _ = try await TrixCorePersistentBridge.syncPendingHistoryRepairs(
+                        baseURLString: baseURLString,
+                        accessToken: context.session.accessToken,
+                        identity: context.identity,
+                        chatIds: [chatId]
+                    )
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
 
                 localTimelineItems = try TrixCorePersistentBridge.loadLocalTimeline(
                     identity: context.identity,
@@ -1412,6 +1422,16 @@ final class AppModel {
                 startAfterServerSeq: needsProjectionBootstrap ? 0 : localServerSeq,
                 bootstrapProjection: needsProjectionBootstrap
             )
+            do {
+                _ = try await TrixCorePersistentBridge.syncPendingHistoryRepairs(
+                    baseURLString: baseURLString,
+                    accessToken: context.session.accessToken,
+                    identity: context.identity,
+                    chatIds: [chatId]
+                )
+            } catch {
+                errorMessage = error.localizedDescription
+            }
 
             localTimelineItems = try TrixCorePersistentBridge.loadLocalTimeline(
                 identity: context.identity,
@@ -1585,6 +1605,16 @@ final class AppModel {
                 identity: context.identity,
                 limitPerChat: limitPerChat
             )
+            do {
+                _ = try await TrixCorePersistentBridge.syncPendingHistoryRepairs(
+                    baseURLString: baseURLString,
+                    accessToken: context.session.accessToken,
+                    identity: context.identity,
+                    chatIds: result.changedChatIds.isEmpty ? nil : result.changedChatIds
+                )
+            } catch {
+                errorMessage = error.localizedDescription
+            }
             updateLocalCoreStateSnapshot(identity: context.identity)
             return result
         } catch {
@@ -1624,6 +1654,16 @@ final class AppModel {
                 limit: limit,
                 leaseTtlSeconds: leaseTtlSeconds
             )
+            do {
+                _ = try await TrixCorePersistentBridge.syncPendingHistoryRepairs(
+                    baseURLString: baseURLString,
+                    accessToken: context.session.accessToken,
+                    identity: context.identity,
+                    chatIds: result.report.changedChatIds.isEmpty ? nil : result.report.changedChatIds
+                )
+            } catch {
+                errorMessage = error.localizedDescription
+            }
             updateLocalCoreStateSnapshot(identity: context.identity)
             try await refreshAuthenticatedState(client: context.client, identity: context.identity)
             return result
