@@ -183,27 +183,42 @@ struct WorkspaceView: View {
             }
         } else {
             TrixPanel(
-                title: "Restore Session",
-                subtitle: "A local device profile exists, but the app still needs to re-authenticate against the server."
+                title: model.storedSessionRecoveryMode == .relinkRequired ? "Relink This Mac" : "Restore Session",
+                subtitle: model.storedSessionRecoveryMode == .relinkRequired
+                    ? "The local device profile is still on this Mac, but the server no longer recognizes it as an active device."
+                    : "A local device profile exists, but the app still needs to re-authenticate against the server."
             ) {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("Reconnect to reload account metadata, device state and encrypted chat history.")
-                        .foregroundStyle(colors.inkMuted)
+                    if model.storedSessionRecoveryMode == .relinkRequired {
+                        Text("Reconnect cannot succeed anymore. Forget this broken device session, then link this Mac again from another trusted device.")
+                            .foregroundStyle(colors.inkMuted)
 
-                    Button {
-                        Task {
-                            await model.restoreSession()
+                        Button(role: .destructive) {
+                            model.signOut()
+                        } label: {
+                            Label("Forget This Device", systemImage: "trash")
                         }
-                    } label: {
-                        Label(
-                            model.isRestoringSession ? "Reconnecting…" : "Reconnect",
-                            systemImage: "arrow.clockwise.circle.fill"
-                        )
+                        .buttonStyle(.borderedProminent)
+                        .frame(maxWidth: 220)
+                    } else {
+                        Text("Reconnect to reload account metadata, device state and encrypted chat history.")
+                            .foregroundStyle(colors.inkMuted)
+
+                        Button {
+                            Task {
+                                await model.restoreSession()
+                            }
+                        } label: {
+                            Label(
+                                model.isRestoringSession ? "Reconnecting…" : "Reconnect",
+                                systemImage: "arrow.clockwise.circle.fill"
+                            )
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .frame(maxWidth: 220)
+                        .disabled(model.isRestoringSession)
+                        .accessibilityIdentifier(TrixMacAccessibilityID.Restore.reconnectButton)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .frame(maxWidth: 220)
-                    .disabled(model.isRestoringSession)
-                    .accessibilityIdentifier(TrixMacAccessibilityID.Restore.reconnectButton)
                 }
             }
         }
@@ -228,26 +243,52 @@ struct WorkspaceView: View {
     }
 
     private var conversationHeader: some View {
-        HStack(alignment: .center, spacing: 16) {
-            ConversationAvatar(
-                title: selectedChatTitle,
-                chatType: selectedChatType
-            )
+        TrixSurface(emphasized: true, cornerRadius: 26) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .center, spacing: 16) {
+                    ConversationAvatar(
+                        title: selectedChatTitle,
+                        chatType: selectedChatType
+                    )
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(selectedChatTitle)
-                    .font(availableSize.height < 760 ? .title3.weight(.semibold) : .title2.weight(.semibold))
-                    .foregroundStyle(colors.ink)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(selectedChatTitle)
+                            .font(availableSize.height < 760 ? .title3.weight(.semibold) : .title2.weight(.semibold))
+                            .foregroundStyle(colors.ink)
 
-                Text(toolbarSubtitle)
-                    .font(.callout)
-                    .foregroundStyle(colors.inkMuted)
-                    .fixedSize(horizontal: false, vertical: true)
+                        Text(toolbarSubtitle)
+                            .font(.callout)
+                            .foregroundStyle(colors.inkMuted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 20)
+
+                    if model.isLoadingSelectedChat {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+
+                HStack(spacing: 10) {
+                    if let selectedChatTypeLabel {
+                        InlineMeta(label: selectedChatTypeLabel)
+                    }
+
+                    if let detail = model.selectedChatDetail {
+                        InlineMeta(label: "\(detail.members.count) people")
+                        InlineMeta(label: "\(detail.deviceMembers.count) devices")
+                    } else if timelineUsesEncryptedFallback {
+                        InlineMeta(label: "Encrypted history")
+                    }
+
+                    if model.isRefreshingWorkspace {
+                        InlineMeta(label: "Syncing workspace")
+                    }
+                }
             }
-
-            Spacer(minLength: 20)
+            .padding(20)
         }
-        .padding(.horizontal, 4)
     }
 
     private var selectedChatTitle: String {
@@ -260,6 +301,19 @@ struct WorkspaceView: View {
         }
 
         return "Messages"
+    }
+
+    private var selectedChatTypeLabel: String? {
+        switch selectedChatType {
+        case .dm:
+            return "Direct Message"
+        case .group:
+            return "Group Chat"
+        case .accountSync:
+            return "Account Sync"
+        case .none:
+            return nil
+        }
     }
 
     private var toolbarSubtitle: String {
@@ -275,19 +329,22 @@ struct WorkspaceView: View {
     }
 
     private var emptyConversationState: some View {
-        ContentUnavailableView {
-            Label("Choose a Conversation", systemImage: "bubble.left.and.bubble.right")
-        } description: {
-            Text("Pick a chat from the sidebar or start a new one from the toolbar.")
-        } actions: {
-            Button {
-                model.resetCreateChatComposer()
-                isPresentingCreateChat = true
-            } label: {
-                Label("New Chat", systemImage: "square.and.pencil")
+        TrixSurface(emphasized: true, cornerRadius: 28) {
+            ContentUnavailableView {
+                Label("Choose a Conversation", systemImage: "bubble.left.and.bubble.right")
+            } description: {
+                Text("Pick a chat from the sidebar or start a new one from the toolbar.")
+            } actions: {
+                Button {
+                    model.resetCreateChatComposer()
+                    isPresentingCreateChat = true
+                } label: {
+                    Label("New Chat", systemImage: "square.and.pencil")
+                }
+                .buttonStyle(.borderedProminent)
             }
-            .buttonStyle(.borderedProminent)
         }
+        .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -615,41 +672,59 @@ struct WorkspaceView: View {
         if let detail = model.selectedChatDetail {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(detail.displayTitle(for: currentAccount.accountId))
-                            .font(.system(size: 28, weight: .bold, design: .serif))
-                            .foregroundStyle(colors.ink)
+                    inspectorHeroCard(detail: detail, currentAccount: currentAccount)
 
-                        Text(detail.subtitle(for: currentAccount.accountId))
-                            .font(.subheadline)
-                            .foregroundStyle(colors.inkMuted)
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        HStack(spacing: 10) {
-                            InlineMeta(label: "\(detail.members.count) people")
-                            InlineMeta(label: "\(detail.deviceMembers.count) devices")
-                        }
+                    TrixSurface {
+                        chatMembersInspector(detail: detail, currentAccount: currentAccount)
+                            .padding(20)
                     }
 
-                    Divider()
-                        .overlay(colors.outline)
-
-                    chatMembersInspector(detail: detail, currentAccount: currentAccount)
-
-                    Divider()
-                        .overlay(colors.outline)
-
-                    chatDevicesInspector(detail: detail, currentAccount: currentAccount)
+                    TrixSurface {
+                        chatDevicesInspector(detail: detail, currentAccount: currentAccount)
+                            .padding(20)
+                    }
                 }
-                .padding(20)
+                .padding(.vertical, 2)
             }
         } else {
-            ContentUnavailableView(
-                "No Conversation Selected",
-                systemImage: "person.2.slash",
-                description: Text("Choose a conversation to inspect members and devices.")
-            )
+            TrixSurface(cornerRadius: 26) {
+                ContentUnavailableView(
+                    "No Conversation Selected",
+                    systemImage: "person.2.slash",
+                    description: Text("Choose a conversation to inspect members and devices.")
+                )
+                .padding(28)
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func inspectorHeroCard(
+        detail: ChatDetailResponse,
+        currentAccount: AccountProfileResponse
+    ) -> some View {
+        TrixSurface(emphasized: true, cornerRadius: 26) {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(detail.displayTitle(for: currentAccount.accountId))
+                        .font(.system(size: 28, weight: .bold, design: .serif))
+                        .foregroundStyle(colors.ink)
+
+                    Text(detail.subtitle(for: currentAccount.accountId))
+                        .font(.subheadline)
+                        .foregroundStyle(colors.inkMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    HStack(spacing: 10) {
+                        InlineMeta(label: "\(detail.members.count) people")
+                        InlineMeta(label: "\(detail.deviceMembers.count) devices")
+                        InlineMeta(label: chatTypeSummary(detail.chatType))
+                    }
+                }
+
+                conversationMetadata(detail)
+            }
+            .padding(20)
         }
     }
 
@@ -786,6 +861,17 @@ struct WorkspaceView: View {
 
     private func detailsSectionHeader(title: String, subtitle: String) -> some View {
         DetailsSectionHeader(title: title, subtitle: subtitle)
+    }
+
+    private func chatTypeSummary(_ chatType: ChatType) -> String {
+        switch chatType {
+        case .dm:
+            return "Direct"
+        case .group:
+            return "Group"
+        case .accountSync:
+            return "Sync"
+        }
     }
 
     private var notificationPermissionTint: Color {
@@ -1352,76 +1438,78 @@ struct WorkspaceView: View {
     }
 
     private func composerPanel(chatTitle: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let attachmentDraft = model.composerAttachmentDraft {
-                ComposerAttachmentRow(
-                    attachment: attachmentDraft,
-                    clear: {
-                        model.clearComposerAttachment()
-                    }
-                )
-            }
-
-            ZStack(alignment: .topLeading) {
-                if composerDraft.isEmpty {
-                    Text("Write a reply to \(chatTitle)…")
-                        .font(.body)
-                        .foregroundStyle(colors.inkMuted)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 14)
-                }
-
-                TextEditor(text: $composerDraft)
-                    .frame(minHeight: 88, maxHeight: 140)
-                    .font(.body)
-                    .padding(6)
-                    .background(colors.inputFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
-
-            HStack(spacing: 12) {
-                Button {
-                    isImportingAttachment = true
-                } label: {
-                    Label(model.composerAttachmentDraft == nil ? "Attach" : "Replace", systemImage: "paperclip")
-                }
-                .buttonStyle(.bordered)
-                .disabled(model.isSendingMessage)
-
-                Button {
-                    composerDraft = ""
-                } label: {
-                    Label("Clear Draft", systemImage: "xmark.circle")
-                }
-                .buttonStyle(.borderless)
-                .disabled(
-                    composerDraft.isEmpty &&
-                        model.composerAttachmentDraft == nil
-                )
-
-                Spacer()
-
-                Button {
-                    Task {
-                        let sent = await model.sendMessage(draftText: composerDraft)
-                        if sent {
-                            composerDraft = ""
+        TrixSurface(cornerRadius: 22) {
+            VStack(alignment: .leading, spacing: 12) {
+                if let attachmentDraft = model.composerAttachmentDraft {
+                    ComposerAttachmentRow(
+                        attachment: attachmentDraft,
+                        clear: {
+                            model.clearComposerAttachment()
                         }
-                    }
-                } label: {
-                    Label(model.isSendingMessage ? "Sending…" : "Send", systemImage: "paperplane.fill")
+                    )
                 }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.return, modifiers: .command)
-                .disabled(
-                    (
-                        composerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+
+                ZStack(alignment: .topLeading) {
+                    if composerDraft.isEmpty {
+                        Text("Write a reply to \(chatTitle)…")
+                            .font(.body)
+                            .foregroundStyle(colors.inkMuted)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 14)
+                    }
+
+                    TextEditor(text: $composerDraft)
+                        .frame(minHeight: 88, maxHeight: 140)
+                        .font(.body)
+                        .padding(6)
+                        .background(colors.inputFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+
+                HStack(spacing: 12) {
+                    Button {
+                        isImportingAttachment = true
+                    } label: {
+                        Label(model.composerAttachmentDraft == nil ? "Attach" : "Replace", systemImage: "paperclip")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isSendingMessage)
+
+                    Button {
+                        composerDraft = ""
+                    } label: {
+                        Label("Clear Draft", systemImage: "xmark.circle")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(
+                        composerDraft.isEmpty &&
                             model.composerAttachmentDraft == nil
-                    ) ||
-                        model.isSendingMessage
-                )
+                    )
+
+                    Spacer()
+
+                    Button {
+                        Task {
+                            let sent = await model.sendMessage(draftText: composerDraft)
+                            if sent {
+                                composerDraft = ""
+                            }
+                        }
+                    } label: {
+                        Label(model.isSendingMessage ? "Sending…" : "Send", systemImage: "paperplane.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .disabled(
+                        (
+                            composerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                                model.composerAttachmentDraft == nil
+                        ) ||
+                            model.isSendingMessage
+                    )
+                }
             }
+            .padding(16)
         }
-        .padding(16)
     }
 
     private var timelineScrollContent: some View {
@@ -1915,8 +2003,14 @@ private struct ConversationAvatar: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(colors.panel)
-                .frame(width: 48, height: 48)
+                .fill(
+                    LinearGradient(
+                        colors: [colors.accent.opacity(0.16), colors.panelStrong],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: 54, height: 54)
 
             Image(systemName: iconName)
                 .font(.headline.weight(.semibold))

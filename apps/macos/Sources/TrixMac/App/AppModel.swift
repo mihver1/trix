@@ -61,6 +61,7 @@ final class AppModel: ObservableObject {
     @Published var isPublishingKeyPackages = false
     @Published var isReservingKeyPackages = false
     @Published var isRestoringSession = false
+    @Published private(set) var storedSessionRecoveryMode: StoredSessionRecoveryMode = .reconnect
     @Published var isRefreshingWorkspace = false
     @Published var isRefreshingDevices = false
     @Published var isCreatingChat = false
@@ -657,6 +658,7 @@ final class AppModel: ObservableObject {
 
         logInfo("auth", "restore_session start device=\(shortLogID(session.deviceId))")
         isRestoringSession = true
+        storedSessionRecoveryMode = .reconnect
         lastErrorMessage = nil
         defer { isRestoringSession = false }
 
@@ -723,6 +725,17 @@ final class AppModel: ObservableObject {
                 linkDraft.deviceDisplayName = session.deviceDisplayName
                 refreshLocalIdentityState(reportErrors: false)
                 lastErrorMessage = preservedRestoreFailureMessage(for: error)
+            case .preserveActiveSessionRequiresRelink:
+                disconnectRealtimeConnection()
+                accessToken = nil
+                serverBaseURLString = session.baseURLString
+                draft.profileName = session.profileName
+                draft.handle = session.handle ?? ""
+                draft.deviceDisplayName = session.deviceDisplayName
+                linkDraft.deviceDisplayName = session.deviceDisplayName
+                refreshLocalIdentityState(reportErrors: false)
+                storedSessionRecoveryMode = .relinkRequired
+                lastErrorMessage = relinkRequiredRestoreFailureMessage(for: error)
             case .surface:
                 lastErrorMessage = error.userFacingMessage
             }
@@ -2134,48 +2147,23 @@ final class AppModel: ObservableObject {
         selectedChatDetail = loadedDetail
 
         do {
-            let messenger = try makeAuthenticatedMessenger(accessToken: accessToken)
-            let timelineItems = try await messenger.getAllMessages(conversationId: chatId)
-            let localChatListItem = localChatListItems.first { $0.chatId == chatId }
-            let unreadCount = localChatListItem?.unreadCount ?? 0
-            let inferredReadCursor: UInt64 = {
-                if unreadCount == 0 {
-                    return timelineItems.last?.serverSeq ?? localChatListItem?.lastServerSeq ?? 0
-                }
-                return selectedChatReadState?.readCursorServerSeq ?? 0
-            }()
-            let readState = LocalChatReadState(
-                chatId: chatId,
-                readCursorServerSeq: inferredReadCursor,
-                unreadCount: unreadCount
+            try await populateSelectedChatTimeline(
+                accessToken: accessToken,
+                chatId: chatId
             )
-
-            if let localChatListItem {
-                upsertLocalChatListItem(localChatListItem)
+        } catch let initialError {
+            let didRecover = await recoverSelectedChatTimelineIfNeeded(
+                client: client,
+                accessToken: accessToken,
+                chatId: chatId,
+                detail: loadedDetail,
+                error: initialError
+            )
+            guard !didRecover else {
+                return
             }
-            selectedChatTimelineItems = timelineItems
-            applySelectedChatReadState(readState)
-            selectedChatSyncCursor = nil
-            selectedChatProjectedCursor = nil
-            selectedChatProjectedMessages = []
-            selectedChatHistory = []
-            selectedChatMlsDiagnostics = nil
 
-            try await markSelectedChatReadIfNeeded(
-                messenger: messenger,
-                chatId: chatId,
-                timelineItems: timelineItems
-            )
-        } catch {
-            selectedChatTimelineItems = []
-            selectedChatReadState = nil
-            selectedChatReadCursor = nil
-            selectedChatUnreadCount = nil
-            selectedChatSyncCursor = nil
-            selectedChatProjectedCursor = nil
-            selectedChatProjectedMessages = []
-            selectedChatHistory = []
-            selectedChatMlsDiagnostics = nil
+            clearSelectedChatTimelineState()
         }
     }
 
@@ -2380,19 +2368,117 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func refreshLocalWorkspaceCache(
+    private func populateSelectedChatTimeline(
+        accessToken: String,
+        chatId: UUID
+    ) async throws {
+        let messenger = try makeAuthenticatedMessenger(accessToken: accessToken)
+        let timelineItems = try await messenger.getAllMessages(conversationId: chatId)
+        let localChatListItem = localChatListItems.first { $0.chatId == chatId }
+        let unreadCount = localChatListItem?.unreadCount ?? 0
+        let inferredReadCursor: UInt64 = {
+            if unreadCount == 0 {
+                return timelineItems.last?.serverSeq ?? localChatListItem?.lastServerSeq ?? 0
+            }
+            return selectedChatReadState?.readCursorServerSeq ?? 0
+        }()
+        let readState = LocalChatReadState(
+            chatId: chatId,
+            readCursorServerSeq: inferredReadCursor,
+            unreadCount: unreadCount
+        )
+
+        if let localChatListItem {
+            upsertLocalChatListItem(localChatListItem)
+        }
+        selectedChatTimelineItems = timelineItems
+        applySelectedChatReadState(readState)
+        selectedChatSyncCursor = nil
+        selectedChatProjectedCursor = nil
+        selectedChatProjectedMessages = []
+        selectedChatHistory = []
+        selectedChatMlsDiagnostics = nil
+
+        try await markSelectedChatReadIfNeeded(
+            messenger: messenger,
+            chatId: chatId,
+            timelineItems: timelineItems
+        )
+    }
+
+    private func recoverSelectedChatTimelineIfNeeded(
         client: TrixAPIClient,
         accessToken: String,
-        accountId: UUID
-    ) async {
-        _ = client
-        _ = accountId
-        do {
-            let messenger = try makeAuthenticatedMessenger(accessToken: accessToken)
-            try applyMessengerSnapshot(try await messenger.loadSnapshot())
-        } catch {
-            lastErrorMessage = error.userFacingMessage
+        chatId: UUID,
+        detail: ChatDetailResponse,
+        error: Error
+    ) async -> Bool {
+        guard detail.lastServerSeq > 0 else {
+            return false
         }
+
+        logWarn(
+            "workspace.selected-chat",
+            "Local timeline load failed for chat \(shortLogID(chatId)); refreshing messenger snapshot before retry.",
+            error: error
+        )
+
+        do {
+            try await refreshLocalWorkspaceCache(accessToken: accessToken)
+        } catch {
+            logWarn(
+                "workspace.selected-chat",
+                "Messenger snapshot refresh failed while recovering chat \(shortLogID(chatId)).",
+                error: error
+            )
+            return false
+        }
+
+        do {
+            try await loadHistorySyncJobs(client: client, accessToken: accessToken)
+        } catch {
+            logWarn(
+                "workspace.selected-chat",
+                "History sync job refresh failed while recovering chat \(shortLogID(chatId)).",
+                error: error
+            )
+        }
+
+        do {
+            try await populateSelectedChatTimeline(
+                accessToken: accessToken,
+                chatId: chatId
+            )
+            logInfo(
+                "workspace.selected-chat",
+                "Recovered chat \(shortLogID(chatId)) after refreshing the messenger snapshot."
+            )
+            return true
+        } catch {
+            logWarn(
+                "workspace.selected-chat",
+                "Retry after messenger snapshot refresh still failed for chat \(shortLogID(chatId)).",
+                error: error
+            )
+            return false
+        }
+    }
+
+    private func clearSelectedChatTimelineState() {
+        selectedChatTimelineItems = []
+        selectedChatReadState = nil
+        selectedChatReadCursor = nil
+        selectedChatUnreadCount = nil
+        selectedChatSyncCursor = nil
+        selectedChatProjectedCursor = nil
+        selectedChatProjectedMessages = []
+        selectedChatHistory = []
+        selectedChatMlsDiagnostics = nil
+    }
+
+    private func refreshLocalWorkspaceCache(accessToken: String) async throws {
+        let messenger = try makeAuthenticatedMessenger(accessToken: accessToken)
+        try applyMessengerSnapshot(try await messenger.loadSnapshot())
     }
 
     private func workspaceStorePaths(for accountId: UUID? = nil) throws -> WorkspaceStorePaths {
@@ -3503,7 +3589,13 @@ enum SessionRestoreErrorDisposition: Equatable {
     case restartPendingLink
     case preservePendingSession
     case preserveActiveSession
+    case preserveActiveSessionRequiresRelink
     case surface
+}
+
+enum StoredSessionRecoveryMode: Equatable {
+    case reconnect
+    case relinkRequired
 }
 
 func sessionRestoreErrorDisposition(
@@ -3519,7 +3611,10 @@ func sessionRestoreErrorDisposition(
             return .preservePendingSession
         }
     case .active, .revoked:
-        if error.isCredentialFailure || error.isMissingServerState {
+        if error.isMissingServerState {
+            return .preserveActiveSessionRequiresRelink
+        }
+        if error.isCredentialFailure {
             return .preserveActiveSession
         }
     }
@@ -3534,4 +3629,13 @@ func preservedRestoreFailureMessage(for error: TrixAPIError) -> String {
     }
 
     return "Не удалось восстановить сессию на сервере (\(reason)). Локальные ключи и история сохранены на этом Mac. Проверь подключение и состояние устройства на сервере, затем попробуй reconnect."
+}
+
+func relinkRequiredRestoreFailureMessage(for error: TrixAPIError) -> String {
+    let reason = error.userFacingMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+    if reason.isEmpty {
+        return "Сервер больше не хранит запись об этом Mac. Локальные ключи и история пока сохранены на этом Mac, но reconnect уже не поможет. Забудь текущее устройство и пройди link flow заново."
+    }
+
+    return "Сервер больше не хранит запись об этом Mac (\(reason)). Локальные ключи и история пока сохранены на этом Mac, но reconnect уже не поможет. Забудь текущее устройство и пройди link flow заново."
 }

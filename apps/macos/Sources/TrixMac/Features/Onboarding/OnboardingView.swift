@@ -387,6 +387,60 @@ struct OnboardingView: View {
         }
         return colors.warning
     }
+
+}
+
+private struct OnboardingFeature: View {
+    @Environment(\.trixColors) private var colors
+    let symbol: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(colors.accent.opacity(0.12))
+                    .frame(width: 34, height: 34)
+
+                Image(systemName: symbol)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(colors.accent)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(colors.ink)
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(colors.inkMuted)
+            }
+        }
+    }
+}
+
+private struct CommandLineChip: View {
+    @Environment(\.trixColors) private var colors
+    let command: String
+
+    init(_ command: String) {
+        self.command = command
+    }
+
+    var body: some View {
+        Text(command)
+            .font(.system(.footnote, design: .monospaced))
+            .foregroundStyle(colors.ink)
+            .textSelection(.enabled)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(colors.tileFill, in: Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(colors.outline.opacity(0.62), lineWidth: 1)
+            }
+    }
 }
 
 private struct EmptyWorkspaceLabel: View {
