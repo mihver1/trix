@@ -2555,7 +2555,16 @@ impl FfiMessengerClient {
         chat_id: ChatId,
         message_id: MessageId,
     ) -> Result<u64, FfiMessengerError> {
+        let self_account_id = self.state_account_id().transpose()?;
         let store = lock_history_store(&self.history_store)?;
+        if let Some(server_seq) = store
+            .get_local_timeline_items(chat_id, self_account_id, None, None)
+            .into_iter()
+            .find(|message| message.message_id == message_id)
+            .map(|message| message.server_seq)
+        {
+            return Ok(server_seq);
+        }
         let history = store.get_chat_history(chat_id, None, None);
         history
             .messages
@@ -3433,6 +3442,103 @@ mod tests {
             paginate_server_seq_window(&server_seqs, Some(2), 2, |value| *value);
         assert_eq!(&server_seqs[oldest_start..oldest_end], &[1]);
         assert_eq!(oldest_cursor, None);
+    }
+
+    #[test]
+    fn mark_read_accepts_message_ids_that_exist_only_in_local_timeline() {
+        let root_path = env::temp_dir().join(format!(
+            "trix-messenger-mark-read-local-timeline-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let database_key = vec![23_u8; 32];
+        let account_id = AccountId(Uuid::new_v4());
+        let device_id = DeviceId(Uuid::new_v4());
+        let other_account_id = AccountId(Uuid::new_v4());
+        let other_device_id = DeviceId(Uuid::new_v4());
+        let chat_id = ChatId(Uuid::new_v4());
+        let message_id = MessageId(Uuid::new_v4());
+
+        let client = FfiMessengerClient::open(FfiMessengerOpenConfig {
+            root_path: root_path.to_string_lossy().into_owned(),
+            database_key,
+            base_url: "http://127.0.0.1:9".to_owned(),
+            access_token: None,
+            account_id: Some(account_id.0.to_string()),
+            device_id: Some(device_id.0.to_string()),
+            account_sync_chat_id: None,
+            device_display_name: Some("test-device".to_owned()),
+            platform: Some("test".to_owned()),
+            credential_identity: None,
+            account_root_private_key: None,
+            transport_private_key: None,
+        })
+        .unwrap();
+
+        {
+            let mut store = lock_history_store(&client.history_store).unwrap();
+            store
+                .apply_chat_list(&trix_types::ChatListResponse {
+                    chats: vec![trix_types::ChatSummary {
+                        chat_id,
+                        chat_type: ChatType::Dm,
+                        title: Some("Projection Only".to_owned()),
+                        last_server_seq: 1,
+                        epoch: 1,
+                        pending_message_count: 0,
+                        last_message: None,
+                        participant_profiles: vec![
+                            ChatParticipantProfileSummary {
+                                account_id,
+                                handle: None,
+                                profile_name: "Self".to_owned(),
+                                profile_bio: None,
+                            },
+                            ChatParticipantProfileSummary {
+                                account_id: other_account_id,
+                                handle: None,
+                                profile_name: "Other".to_owned(),
+                                profile_bio: None,
+                            },
+                        ],
+                    }],
+                })
+                .unwrap();
+            store
+                .apply_projected_messages(
+                    chat_id,
+                    &[crate::LocalProjectedMessage {
+                        server_seq: 1,
+                        message_id,
+                        sender_account_id: other_account_id,
+                        sender_device_id: other_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        projection_kind: crate::LocalProjectionKind::ApplicationMessage,
+                        payload: Some(b"hello from timeline".to_vec()),
+                        merged_epoch: None,
+                        created_at_unix: 1,
+                    }],
+                )
+                .unwrap();
+        }
+
+        let timeline = {
+            let store = lock_history_store(&client.history_store).unwrap();
+            store.get_local_timeline_items(chat_id, Some(account_id), None, None)
+        };
+        assert_eq!(timeline.len(), 1);
+        assert_eq!(timeline[0].message_id, message_id);
+
+        let read_state = client
+            .mark_read(chat_id.0.to_string(), Some(message_id.0.to_string()))
+            .unwrap();
+        assert_eq!(read_state.read_cursor_server_seq, 1);
+        assert_eq!(read_state.unread_count, 0);
+
+        fs::remove_dir_all(root_path).ok();
     }
 
     #[test]
