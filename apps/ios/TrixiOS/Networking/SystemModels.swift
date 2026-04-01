@@ -504,7 +504,7 @@ struct CreateMessageRequest: Encodable {
     let aadJson: JSONValue?
 }
 
-struct CreateMessageResponse: Decodable {
+struct CreateMessageResponse: Decodable, Sendable {
     let messageId: String
     let serverSeq: UInt64
 }
@@ -552,7 +552,7 @@ enum SafeMessengerMessageBodyKind: String, Hashable {
     case chatEvent
 }
 
-struct SafeMessengerAttachment: Identifiable, Hashable {
+struct SafeMessengerAttachment: Identifiable, Hashable, Sendable {
     let attachmentRef: String
     let mimeType: String
     let sizeBytes: UInt64

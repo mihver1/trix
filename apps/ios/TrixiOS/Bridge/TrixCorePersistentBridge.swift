@@ -306,6 +306,25 @@ enum TrixCorePersistentBridge {
         identity: LocalDeviceIdentity,
         chatId: String,
         draft: DebugMessageDraft
+    ) async throws -> CreateMessageResponse {
+        try await withMessengerClientAsync(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        ) { client in
+            let response = try client.sendMessage(
+                request: try draft.trix_safeSendMessageRequest(chatId: chatId)
+            )
+            return response.trix_createMessageResponse
+        }
+    }
+
+    static func sendMessage(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        draft: DebugMessageDraft
     ) throws -> CreateMessageResponse {
         try withMessengerClient(
             baseURLString: baseURLString,
@@ -316,6 +335,55 @@ enum TrixCorePersistentBridge {
                 request: try draft.trix_safeSendMessageRequest(chatId: chatId)
             )
             return response.trix_createMessageResponse
+        }
+    }
+
+    static func sendAttachment(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        fileURL: URL
+    ) async throws -> DebugAttachmentSendOutcome {
+        try await withMessengerClientAsync(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        ) { client in
+            let attachmentUpload = try TrixCoreMessageBridge.readAttachmentUploadMaterial(fileURL: fileURL)
+            let token = try client.sendAttachment(
+                conversationId: chatId,
+                payload: attachmentUpload.payload,
+                metadata: FfiMessengerAttachmentMetadata(
+                    mimeType: attachmentUpload.params.mimeType,
+                    fileName: attachmentUpload.params.fileName,
+                    widthPx: attachmentUpload.params.widthPx,
+                    heightPx: attachmentUpload.params.heightPx
+                )
+            )
+            let messageId = UUID().uuidString.lowercased()
+            let response = try client.sendMessage(
+                request: FfiMessengerSendMessageRequest(
+                    conversationId: chatId,
+                    messageId: messageId,
+                    kind: .attachment,
+                    text: nil,
+                    targetMessageId: nil,
+                    emoji: nil,
+                    reactionAction: nil,
+                    receiptType: nil,
+                    receiptAtUnix: nil,
+                    eventType: nil,
+                    eventJson: nil,
+                    attachmentTokens: [token.token]
+                )
+            )
+
+            return DebugAttachmentSendOutcome(
+                createMessage: response.trix_createMessageResponse,
+                attachmentRef: response.message.body?.attachment?.attachmentRef,
+                fileName: response.message.body?.attachment?.fileName ?? attachmentUpload.params.fileName
+            )
         }
     }
 
@@ -364,6 +432,27 @@ enum TrixCorePersistentBridge {
                 createMessage: response.trix_createMessageResponse,
                 attachmentRef: response.message.body?.attachment?.attachmentRef,
                 fileName: response.message.body?.attachment?.fileName ?? attachmentUpload.params.fileName
+            )
+        }
+    }
+
+    static func getAttachment(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        attachment: SafeMessengerAttachment
+    ) async throws -> DownloadedAttachmentFile {
+        try await withMessengerClientAsync(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        ) { client in
+            let file = try client.getAttachment(attachmentRef: attachment.attachmentRef)
+            let fileURL = URL(fileURLWithPath: file.localPath)
+            return DownloadedAttachmentFile(
+                fileURL: fileURL,
+                fileName: file.fileName ?? fileURL.lastPathComponent,
+                mimeType: file.mimeType
             )
         }
     }
@@ -1602,6 +1691,30 @@ enum TrixCorePersistentBridge {
             identity: identity
         )
         return try operation(client)
+    }
+
+    private static func withMessengerClientAsync<Response: Sendable>(
+        baseURLString: String,
+        accessToken: String?,
+        identity: LocalDeviceIdentity,
+        _ operation: @escaping @Sendable (FfiMessengerClient) throws -> Response
+    ) async throws -> Response {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    continuation.resume(
+                        returning: try withMessengerClient(
+                            baseURLString: baseURLString,
+                            accessToken: accessToken,
+                            identity: identity,
+                            operation
+                        )
+                    )
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 
     private static func openMessengerClient(

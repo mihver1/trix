@@ -77,13 +77,13 @@ struct ChatSnapshot {
     }
 }
 
-struct DebugAttachmentSendOutcome {
+struct DebugAttachmentSendOutcome: Sendable {
     let createMessage: CreateMessageResponse
     let attachmentRef: String?
     let fileName: String?
 }
 
-struct DownloadedAttachmentFile: Identifiable {
+struct DownloadedAttachmentFile: Identifiable, Sendable {
     let fileURL: URL
     let fileName: String
     let mimeType: String?
@@ -980,7 +980,7 @@ final class AppModel {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try TrixCorePersistentBridge.sendMessage(
+            let response = try await TrixCorePersistentBridge.sendMessage(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
@@ -1039,7 +1039,7 @@ final class AppModel {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try TrixCorePersistentBridge.sendAttachment(
+            let response = try await TrixCorePersistentBridge.sendAttachment(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
@@ -1156,7 +1156,7 @@ final class AppModel {
 
         let task = Task<DownloadedAttachmentFile, Error> {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            return try TrixCorePersistentBridge.getAttachment(
+            return try await TrixCorePersistentBridge.getAttachment(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
@@ -3075,7 +3075,7 @@ final class AppModel {
             receiptDraft.receiptKind = .read
             receiptDraft.receiptAtUnix = String(UInt64(Date().timeIntervalSince1970))
 
-            _ = try TrixCorePersistentBridge.sendMessage(
+            _ = try await TrixCorePersistentBridge.sendMessage(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
