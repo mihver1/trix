@@ -257,59 +257,64 @@ fun TrixApp(
                     busyMessage = null,
                     errorMessage = state.errorMessage,
                     backendErrorMessage = backendConfigError,
-                    onUpdateBaseUrl = { candidateBaseUrl ->
+                    onCreateAccount = { candidateBaseUrl, input ->
                         coroutineScope.launch {
                             try {
                                 val normalizedBaseUrl = normalizeBaseUrl(candidateBaseUrl)
-                                if (normalizedBaseUrl == configuredBaseUrl) {
-                                    return@launch
-                                }
                                 backendConfigStore.writeBaseUrl(normalizedBaseUrl)
-                                backendConfigError = null
-                                authState = TrixAuthState.Loading("Switching backend")
                                 configuredBaseUrl = normalizedBaseUrl
+                                backendConfigError = null
+                                authState = TrixAuthState.Loading("Creating user")
+                                authState = createAccountState(
+                                    context = context,
+                                    baseUrl = normalizedBaseUrl,
+                                    input = input,
+                                )
                             } catch (error: IOException) {
                                 backendConfigError = error.message ?: "Failed to update backend URL"
                             }
                         }
                     },
-                    onResetBaseUrl = {
+                    onCompleteLinkIntent = { candidateBaseUrl, input ->
                         coroutineScope.launch {
-                            backendConfigStore.writeBaseUrl(defaultBaseUrl)
-                            backendConfigError = null
-                            authState = TrixAuthState.Loading("Switching backend")
-                            configuredBaseUrl = defaultBaseUrl
-                        }
-                    },
-                    onCreateAccount = { input ->
-                        coroutineScope.launch {
-                            backendConfigError = null
-                            authState = TrixAuthState.Loading("Creating account")
-                            authState = createAccountState(authCoordinator, input)
-                        }
-                    },
-                    onCompleteLinkIntent = { input ->
-                        coroutineScope.launch {
-                            backendConfigError = null
-                            authState = TrixAuthState.Loading("Linking device")
-                            val outcome = completeLinkState(
-                                context = context,
-                                fallbackBaseUrl = configuredBaseUrl,
-                                backendConfigStore = backendConfigStore,
-                                input = input,
-                            )
-                            if (outcome.configuredBaseUrl != null) {
-                                configuredBaseUrl = outcome.configuredBaseUrl
+                            try {
+                                val normalizedBaseUrl = normalizeBaseUrl(candidateBaseUrl)
+                                backendConfigError = null
+                                authState = TrixAuthState.Loading("Linking device")
+                                val outcome = completeLinkState(
+                                    context = context,
+                                    fallbackBaseUrl = normalizedBaseUrl,
+                                    backendConfigStore = backendConfigStore,
+                                    input = input,
+                                )
+                                if (outcome.configuredBaseUrl != null) {
+                                    configuredBaseUrl = outcome.configuredBaseUrl
+                                }
+                                authState = outcome.authState
+                            } catch (error: IOException) {
+                                backendConfigError = error.message ?: "Failed to update backend URL"
                             }
-                            authState = outcome.authState
                         }
                     },
                     onReconnectStoredDevice = if (state.storedDevice != null) {
-                        {
+                        { candidateBaseUrl ->
                             coroutineScope.launch {
-                                backendConfigError = null
-                                authState = TrixAuthState.Loading("Restoring device session")
-                                authState = restoreSessionState(authCoordinator, state.storedDevice)
+                                try {
+                                    val normalizedBaseUrl = normalizeBaseUrl(candidateBaseUrl)
+                                    backendConfigStore.writeBaseUrl(normalizedBaseUrl)
+                                    configuredBaseUrl = normalizedBaseUrl
+                                    backendConfigError = null
+                                    authState = TrixAuthState.Loading("Restoring device session")
+                                    authState = restoreSessionState(
+                                        AuthBootstrapCoordinator(
+                                            context = context,
+                                            baseUrl = normalizedBaseUrl,
+                                        ),
+                                        state.storedDevice,
+                                    )
+                                } catch (error: IOException) {
+                                    backendConfigError = error.message ?: "Failed to update backend URL"
+                                }
                             }
                         }
                     } else {
@@ -470,9 +475,14 @@ fun TrixApp(
 }
 
 private suspend fun createAccountState(
-    authCoordinator: AuthBootstrapCoordinator,
+    context: Context,
+    baseUrl: String,
     input: BootstrapInput,
 ): TrixAuthState {
+    val authCoordinator = AuthBootstrapCoordinator(
+        context = context,
+        baseUrl = baseUrl,
+    )
     return try {
         TrixAuthState.SignedIn(authCoordinator.createAccount(input))
     } catch (error: IOException) {

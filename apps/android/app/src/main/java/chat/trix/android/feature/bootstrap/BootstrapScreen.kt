@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedAssistChip
@@ -25,8 +26,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -38,15 +40,21 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import chat.trix.android.core.auth.BootstrapInput
 import chat.trix.android.core.auth.LinkExistingAccountInput
-import chat.trix.android.core.auth.parseStoredDeviceStatus
-import chat.trix.android.core.auth.StoredDeviceSummary
 import chat.trix.android.core.auth.StoredDeviceStatus
+import chat.trix.android.core.auth.StoredDeviceSummary
+import chat.trix.android.core.auth.parseLinkIntentPayload
+import chat.trix.android.core.auth.parseStoredDeviceStatus
 import chat.trix.android.core.auth.storedDevicePresentation
+import chat.trix.android.core.system.ServiceStatus
+import chat.trix.android.core.system.SystemApiClient
+import chat.trix.android.core.system.SystemSnapshot
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.common.api.CommonStatusCodes
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import java.io.IOException
+import kotlinx.coroutines.launch
 
 @Composable
 fun BootstrapScreen(
@@ -56,26 +64,41 @@ fun BootstrapScreen(
     busyMessage: String?,
     errorMessage: String?,
     backendErrorMessage: String?,
-    onUpdateBaseUrl: (String) -> Unit,
-    onResetBaseUrl: () -> Unit,
-    onCreateAccount: (BootstrapInput) -> Unit,
-    onCompleteLinkIntent: (LinkExistingAccountInput) -> Unit,
-    onReconnectStoredDevice: (() -> Unit)?,
+    onCreateAccount: (String, BootstrapInput) -> Unit,
+    onCompleteLinkIntent: (String, LinkExistingAccountInput) -> Unit,
+    onReconnectStoredDevice: ((String) -> Unit)?,
     onForgetStoredDevice: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    val coroutineScope = rememberCoroutineScope()
+
+    var mode by rememberSaveable { mutableStateOf(BootstrapMode.Create) }
     var profileName by rememberSaveable { mutableStateOf("") }
     var handle by rememberSaveable { mutableStateOf("") }
-    var profileBio by rememberSaveable { mutableStateOf("") }
     var deviceDisplayName by rememberSaveable { mutableStateOf(defaultDeviceName()) }
     var linkPayload by rememberSaveable { mutableStateOf("") }
     var linkDeviceDisplayName by rememberSaveable { mutableStateOf(defaultDeviceName()) }
     var editableBaseUrl by rememberSaveable(baseUrl) { mutableStateOf(baseUrl) }
     var linkImportStatusMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var linkImportHasError by rememberSaveable { mutableStateOf(false) }
+    var serverProbeState by remember { mutableStateOf<BootstrapBackendProbeState>(BootstrapBackendProbeState.Idle) }
+
     val isBusy = busyMessage != null
+    val parsedLinkBaseUrl = remember(linkPayload, editableBaseUrl) {
+        runCatching {
+            parseLinkIntentPayload(
+                rawPayload = linkPayload,
+                fallbackBaseUrl = editableBaseUrl,
+            ).baseUrl
+        }.getOrNull()
+    }
+    val effectiveBaseUrl = if (mode == BootstrapMode.Link && parsedLinkBaseUrl != null) {
+        parsedLinkBaseUrl
+    } else {
+        editableBaseUrl
+    }
     val qrScanner = remember(context) {
         GmsBarcodeScanning.getClient(
             context,
@@ -86,16 +109,23 @@ fun BootstrapScreen(
         )
     }
 
+    fun clearServerProbe() {
+        serverProbeState = BootstrapBackendProbeState.Idle
+    }
+
     fun importLinkPayload(rawValue: String, sourceLabel: String) {
         val normalizedPayload = rawValue.trim()
         if (normalizedPayload.isBlank()) {
             linkImportStatusMessage = "$sourceLabel did not provide a link payload."
             linkImportHasError = true
+            clearServerProbe()
             return
         }
+
         linkPayload = normalizedPayload
-        linkImportStatusMessage = "Link payload imported from $sourceLabel."
+        linkImportStatusMessage = "Link code imported from $sourceLabel."
         linkImportHasError = false
+        clearServerProbe()
     }
 
     fun importLinkPayloadFromClipboard() {
@@ -107,6 +137,7 @@ fun BootstrapScreen(
         if (isBusy) {
             return
         }
+
         linkImportStatusMessage = null
         qrScanner.startScan()
             .addOnSuccessListener { barcode ->
@@ -119,6 +150,26 @@ fun BootstrapScreen(
                 linkImportStatusMessage = error.message ?: "QR scan failed"
                 linkImportHasError = true
             }
+    }
+
+    fun checkServer() {
+        if (isBusy) {
+            return
+        }
+
+        coroutineScope.launch {
+            serverProbeState = BootstrapBackendProbeState.Loading
+            serverProbeState = try {
+                val normalizedBaseUrl = normalizeBaseUrl(effectiveBaseUrl)
+                BootstrapBackendProbeState.Ready(
+                    SystemApiClient(normalizedBaseUrl).fetchSnapshot(),
+                )
+            } catch (error: IOException) {
+                BootstrapBackendProbeState.Failed(
+                    error.message ?: "Failed to check backend",
+                )
+            }
+        }
     }
 
     Box(
@@ -146,12 +197,12 @@ fun BootstrapScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     Text(
-                        text = "Welcome to Trix",
+                        text = "Set up Trix",
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "Create a new account or link this device to an existing one. Your messages are end-to-end encrypted and stay private.",
+                        text = "Choose a server, then create a user or link this device.",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                     )
@@ -159,14 +210,22 @@ fun BootstrapScreen(
             }
 
             BackendServerCard(
-                baseUrl = baseUrl,
-                defaultBaseUrl = defaultBaseUrl,
                 editableBaseUrl = editableBaseUrl,
-                onEditableBaseUrlChange = { editableBaseUrl = it },
-                errorMessage = backendErrorMessage,
+                defaultBaseUrl = defaultBaseUrl,
+                effectiveBaseUrl = effectiveBaseUrl,
+                linkOverrideBaseUrl = if (mode == BootstrapMode.Link) parsedLinkBaseUrl else null,
+                probeState = serverProbeState,
+                backendErrorMessage = backendErrorMessage,
                 isBusy = isBusy,
-                onApplyBaseUrl = { onUpdateBaseUrl(editableBaseUrl) },
-                onResetBaseUrl = onResetBaseUrl,
+                onEditableBaseUrlChange = {
+                    editableBaseUrl = it
+                    clearServerProbe()
+                },
+                onResetBaseUrl = {
+                    editableBaseUrl = defaultBaseUrl
+                    clearServerProbe()
+                },
+                onCheckServer = ::checkServer,
             )
 
             if (storedDevice != null) {
@@ -175,57 +234,76 @@ fun BootstrapScreen(
                     isBusy = isBusy,
                     busyMessage = busyMessage,
                     errorMessage = errorMessage,
-                    onReconnectStoredDevice = onReconnectStoredDevice,
+                    onReconnectStoredDevice = if (onReconnectStoredDevice != null) {
+                        { onReconnectStoredDevice.invoke(editableBaseUrl) }
+                    } else {
+                        null
+                    },
                     onForgetStoredDevice = onForgetStoredDevice,
                 )
             } else {
-                CreateAccountCard(
-                    profileName = profileName,
-                    onProfileNameChange = { profileName = it },
-                    handle = handle,
-                    onHandleChange = { handle = it },
-                    profileBio = profileBio,
-                    onProfileBioChange = { profileBio = it },
-                    deviceDisplayName = deviceDisplayName,
-                    onDeviceDisplayNameChange = { deviceDisplayName = it },
-                    isBusy = isBusy,
-                    busyMessage = busyMessage,
-                    onCreateAccount = {
-                        onCreateAccount(
-                            BootstrapInput(
-                                profileName = profileName,
-                                handle = handle,
-                                profileBio = profileBio,
-                                deviceDisplayName = deviceDisplayName,
-                            ),
-                        )
+                ModePicker(
+                    mode = mode,
+                    onModeSelected = {
+                        mode = it
+                        clearServerProbe()
                     },
                 )
 
-                LinkExistingAccountCard(
-                    linkPayload = linkPayload,
-                    onLinkPayloadChange = {
-                        linkPayload = it
-                        linkImportStatusMessage = null
-                        linkImportHasError = false
-                    },
-                    deviceDisplayName = linkDeviceDisplayName,
-                    onDeviceDisplayNameChange = { linkDeviceDisplayName = it },
-                    isBusy = isBusy,
-                    busyMessage = busyMessage,
-                    importStatusMessage = linkImportStatusMessage,
-                    importStatusIsError = linkImportHasError,
-                    onScanQr = ::startQrScan,
-                    onPasteFromClipboard = ::importLinkPayloadFromClipboard,
-                    onCompleteLinkIntent = {
-                        onCompleteLinkIntent(
-                            LinkExistingAccountInput(
-                                rawPayload = linkPayload,
-                                deviceDisplayName = linkDeviceDisplayName,
-                            ),
+                when (mode) {
+                    BootstrapMode.Create -> {
+                        CreateAccountCard(
+                            profileName = profileName,
+                            onProfileNameChange = { profileName = it },
+                            handle = handle,
+                            onHandleChange = { handle = it },
+                            deviceDisplayName = deviceDisplayName,
+                            onDeviceDisplayNameChange = { deviceDisplayName = it },
+                            isBusy = isBusy,
+                            busyMessage = busyMessage,
+                            onCreateAccount = {
+                                onCreateAccount(
+                                    editableBaseUrl,
+                                    BootstrapInput(
+                                        profileName = profileName,
+                                        handle = handle,
+                                        profileBio = "",
+                                        deviceDisplayName = deviceDisplayName,
+                                    ),
+                                )
+                            },
                         )
-                    },
-                )
+                    }
+
+                    BootstrapMode.Link -> {
+                        LinkExistingAccountCard(
+                            linkPayload = linkPayload,
+                            onLinkPayloadChange = {
+                                linkPayload = it
+                                linkImportStatusMessage = null
+                                linkImportHasError = false
+                                clearServerProbe()
+                            },
+                            deviceDisplayName = linkDeviceDisplayName,
+                            onDeviceDisplayNameChange = { linkDeviceDisplayName = it },
+                            isBusy = isBusy,
+                            busyMessage = busyMessage,
+                            importStatusMessage = linkImportStatusMessage,
+                            importStatusIsError = linkImportHasError,
+                            onScanQr = ::startQrScan,
+                            onPasteFromClipboard = ::importLinkPayloadFromClipboard,
+                            onCompleteLinkIntent = {
+                                onCompleteLinkIntent(
+                                    editableBaseUrl,
+                                    LinkExistingAccountInput(
+                                        rawPayload = linkPayload,
+                                        deviceDisplayName = linkDeviceDisplayName,
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                }
 
                 if (!errorMessage.isNullOrBlank()) {
                     Surface(
@@ -242,46 +320,76 @@ fun BootstrapScreen(
                     }
                 }
             }
+        }
+    }
+}
 
-            Surface(
-                shape = RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "Current scope",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = "Create a fresh account, import a raw device-link payload from another client, persist local bootstrap state, and reconnect once the trusted device approves the link.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
+private enum class BootstrapMode {
+    Create,
+    Link,
+}
+
+@Composable
+private fun ModePicker(
+    mode: BootstrapMode,
+    onModeSelected: (BootstrapMode) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        ModeButton(
+            label = "Create user",
+            selected = mode == BootstrapMode.Create,
+            onClick = { onModeSelected(BootstrapMode.Create) },
+            modifier = Modifier.weight(1f),
+        )
+        ModeButton(
+            label = "Link device",
+            selected = mode == BootstrapMode.Link,
+            onClick = { onModeSelected(BootstrapMode.Link) },
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun ModeButton(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (selected) {
+        Button(
+            onClick = onClick,
+            modifier = modifier,
+        ) {
+            Text(label)
+        }
+    } else {
+        OutlinedButton(
+            onClick = onClick,
+            modifier = modifier,
+        ) {
+            Text(label)
         }
     }
 }
 
 @Composable
 private fun BackendServerCard(
-    baseUrl: String,
-    defaultBaseUrl: String,
     editableBaseUrl: String,
-    onEditableBaseUrlChange: (String) -> Unit,
-    errorMessage: String?,
+    defaultBaseUrl: String,
+    effectiveBaseUrl: String,
+    linkOverrideBaseUrl: String?,
+    probeState: BootstrapBackendProbeState,
+    backendErrorMessage: String?,
     isBusy: Boolean,
-    onApplyBaseUrl: () -> Unit,
+    onEditableBaseUrlChange: (String) -> Unit,
     onResetBaseUrl: () -> Unit,
+    onCheckServer: () -> Unit,
 ) {
-    val hasPendingChange = editableBaseUrl.trim().trimEnd('/') != baseUrl.trim().trimEnd('/')
-    val canReset = baseUrl.trim().trimEnd('/') != defaultBaseUrl.trim().trimEnd('/')
-
     Surface(
         shape = RoundedCornerShape(28.dp),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -292,54 +400,80 @@ private fun BackendServerCard(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = "Backend server",
+                text = "Server",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
+
             Text(
-                text = "New installs default to `https://trix.artelproject.tech`. In the emulator, you can still switch to `http://10.0.2.2:8080` for local development.",
+                text = "Current target: ${describeBaseUrl(effectiveBaseUrl)}",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            ElevatedAssistChip(
-                onClick = {},
-                label = { Text("Active endpoint: ${describeBaseUrl(baseUrl)}") },
-            )
+
+            if (linkOverrideBaseUrl != null) {
+                Text(
+                    text = "The link code overrides the server URL: ${describeBaseUrl(linkOverrideBaseUrl)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
             OutlinedTextField(
                 value = editableBaseUrl,
                 onValueChange = onEditableBaseUrlChange,
-                label = { Text("Base URL") },
+                label = { Text("Server URL") },
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("bootstrap:base-url-field"),
                 singleLine = true,
                 enabled = !isBusy,
             )
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                OutlinedButton(
+                    onClick = onResetBaseUrl,
+                    enabled = !isBusy && editableBaseUrl.trim().trimEnd('/') != defaultBaseUrl.trim().trimEnd('/'),
                 ) {
-                    OutlinedButton(
-                        onClick = onResetBaseUrl,
-                        enabled = !isBusy && canReset,
-                    ) {
-                        Text("Reset")
-                    }
-                    Button(
-                        onClick = onApplyBaseUrl,
-                        enabled = !isBusy && hasPendingChange && editableBaseUrl.isNotBlank(),
-                    ) {
-                        Text("Apply")
-                    }
+                    Text("Reset")
+                }
+                Button(
+                    onClick = onCheckServer,
+                    enabled = !isBusy,
+                    modifier = Modifier.testTag("bootstrap:check-server-button"),
+                ) {
+                    Text("Check server")
                 }
             }
-            if (!errorMessage.isNullOrBlank()) {
+
+            when (probeState) {
+                BootstrapBackendProbeState.Idle -> Unit
+                BootstrapBackendProbeState.Loading -> {
+                    ElevatedAssistChip(
+                        onClick = {},
+                        label = { Text("Checking backend") },
+                    )
+                }
+
+                is BootstrapBackendProbeState.Failed -> {
+                    Text(
+                        text = probeState.message,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+
+                is BootstrapBackendProbeState.Ready -> {
+                    BackendSnapshotSummary(snapshot = probeState.snapshot)
+                }
+            }
+
+            if (!backendErrorMessage.isNullOrBlank()) {
                 Text(
-                    text = errorMessage,
+                    text = backendErrorMessage,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error,
                 )
@@ -353,6 +487,46 @@ private fun describeBaseUrl(value: String): String {
     val withoutScheme = normalized.substringAfter("://", missingDelimiterValue = normalized)
     val scheme = normalized.substringBefore("://", missingDelimiterValue = "http")
     return "$scheme://$withoutScheme"
+}
+
+@Composable
+private fun BackendSnapshotSummary(snapshot: SystemSnapshot) {
+    val statusColor = when (snapshot.health.status) {
+        ServiceStatus.Ok -> MaterialTheme.colorScheme.primaryContainer
+        ServiceStatus.Degraded -> MaterialTheme.colorScheme.errorContainer
+    }
+    val onStatusColor = when (snapshot.health.status) {
+        ServiceStatus.Ok -> MaterialTheme.colorScheme.onPrimaryContainer
+        ServiceStatus.Degraded -> MaterialTheme.colorScheme.onErrorContainer
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        ElevatedAssistChip(
+            onClick = {},
+            label = {
+                Text(
+                    text = when (snapshot.health.status) {
+                        ServiceStatus.Ok -> "Connected"
+                        ServiceStatus.Degraded -> "Degraded"
+                    },
+                    color = onStatusColor,
+                )
+            },
+            colors = AssistChipDefaults.elevatedAssistChipColors(
+                containerColor = statusColor,
+                labelColor = onStatusColor,
+            ),
+        )
+        Text(
+            text = "Service ${snapshot.health.service} responded. Version ${snapshot.version.version}${snapshot.version.gitSha?.let { " ($it)" }.orEmpty()}",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Text(
+            text = "Base URL: ${snapshot.baseUrl}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 @Composable
@@ -450,8 +624,6 @@ private fun CreateAccountCard(
     onProfileNameChange: (String) -> Unit,
     handle: String,
     onHandleChange: (String) -> Unit,
-    profileBio: String,
-    onProfileBioChange: (String) -> Unit,
     deviceDisplayName: String,
     onDeviceDisplayNameChange: (String) -> Unit,
     isBusy: Boolean,
@@ -468,7 +640,7 @@ private fun CreateAccountCard(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text(
-                text = "Create account",
+                text = "Create user",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -476,32 +648,29 @@ private fun CreateAccountCard(
                 value = profileName,
                 onValueChange = onProfileNameChange,
                 label = { Text("Profile name") },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("bootstrap:profile-name-field"),
                 singleLine = true,
                 enabled = !isBusy,
             )
             OutlinedTextField(
                 value = handle,
                 onValueChange = onHandleChange,
-                label = { Text("Handle (optional)") },
-                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Handle (public, optional)") },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("bootstrap:handle-field"),
                 singleLine = true,
-                enabled = !isBusy,
-            )
-            OutlinedTextField(
-                value = profileBio,
-                onValueChange = onProfileBioChange,
-                label = { Text("Bio (optional)") },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 2,
-                maxLines = 4,
                 enabled = !isBusy,
             )
             OutlinedTextField(
                 value = deviceDisplayName,
                 onValueChange = onDeviceDisplayNameChange,
                 label = { Text("Device name") },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("bootstrap:create-device-name-field"),
                 singleLine = true,
                 enabled = !isBusy,
             )
@@ -518,7 +687,7 @@ private fun CreateAccountCard(
                         Text(busyMessage ?: "Creating")
                     }
                 } else {
-                    Text("Create Account")
+                    Text("Create user")
                 }
             }
         }
@@ -549,12 +718,12 @@ private fun LinkExistingAccountCard(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text(
-                text = "Link existing account",
+                text = "Link device",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = "Scan the QR code from a trusted device first. Raw JSON paste stays available as a fallback, and Android will adopt the payload's backend URL after a successful import.",
+                text = "After linking, approve this device from another trusted device.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -569,7 +738,7 @@ private fun LinkExistingAccountCard(
                     onClick = onPasteFromClipboard,
                     enabled = !isBusy,
                 ) {
-                    Text("Paste Clipboard")
+                    Text("Paste")
                 }
             }
             if (!importStatusMessage.isNullOrBlank()) {
@@ -586,8 +755,10 @@ private fun LinkExistingAccountCard(
             OutlinedTextField(
                 value = linkPayload,
                 onValueChange = onLinkPayloadChange,
-                label = { Text("Raw link payload JSON") },
-                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Link code") },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("bootstrap:link-code-field"),
                 minLines = 4,
                 maxLines = 8,
                 enabled = !isBusy,
@@ -596,7 +767,9 @@ private fun LinkExistingAccountCard(
                 value = deviceDisplayName,
                 onValueChange = onDeviceDisplayNameChange,
                 label = { Text("Device name") },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("bootstrap:link-device-name-field"),
                 singleLine = true,
                 enabled = !isBusy,
             )
@@ -613,7 +786,7 @@ private fun LinkExistingAccountCard(
                         Text(busyMessage ?: "Linking")
                     }
                 } else {
-                    Text("Link Existing Account")
+                    Text("Link device")
                 }
             }
         }
@@ -629,6 +802,18 @@ private fun defaultDeviceName(): String {
         .ifBlank { "Android device" }
 }
 
+private fun normalizeBaseUrl(value: String): String {
+    val normalized = value.trim().trimEnd('/')
+    if (normalized.isEmpty()) {
+        throw IOException("Backend URL cannot be empty")
+    }
+    if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
+        throw IOException("Backend URL must start with http:// or https://")
+    }
+
+    return normalized
+}
+
 private fun String.labelForBootstrap(): String {
     return when (this.lowercase()) {
         "pending" -> "Pending approval"
@@ -636,4 +821,14 @@ private fun String.labelForBootstrap(): String {
         "revoked" -> "Revoked"
         else -> this
     }
+}
+
+private sealed interface BootstrapBackendProbeState {
+    data object Idle : BootstrapBackendProbeState
+
+    data object Loading : BootstrapBackendProbeState
+
+    data class Ready(val snapshot: SystemSnapshot) : BootstrapBackendProbeState
+
+    data class Failed(val message: String) : BootstrapBackendProbeState
 }

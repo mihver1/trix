@@ -237,6 +237,11 @@ final class AppModel {
         }
     }
 
+    func clearServerStatus() {
+        systemSnapshot = nil
+        lastUpdatedAt = nil
+    }
+
     func handleAppDidBecomeActive(baseURLString: String) async {
         currentServerBaseURLString = normalizedBaseURLString(baseURLString)
         endBackgroundRealtimeTask()
