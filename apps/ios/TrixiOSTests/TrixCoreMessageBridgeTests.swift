@@ -140,7 +140,7 @@ final class TrixCoreMessageBridgeTests: XCTestCase {
 }
 
 final class ConsumerConversationTimelineBuilderTests: XCTestCase {
-    func testBuilderFoldsReceiptsIntoMessageStatusAndPreservesClusters() {
+    func testBuilderUsesMessageReceiptStatusAndPreservesClusters() {
         let snapshot = makeSnapshot(
             messages: [
                 makeTextMessage(
@@ -154,17 +154,6 @@ final class ConsumerConversationTimelineBuilderTests: XCTestCase {
                     serverSeq: 1,
                     createdAtUnix: 1_700_000_000
                 ),
-                makeReceiptMessage(
-                    id: "receipt-1",
-                    senderAccountId: "alice",
-                    senderDeviceId: "alice-phone",
-                    senderDisplayName: "Alice",
-                    isOutgoing: true,
-                    targetMessageId: "message-1",
-                    receiptType: .read,
-                    serverSeq: 2,
-                    createdAtUnix: 1_700_000_001
-                ),
                 makeTextMessage(
                     id: "message-2",
                     senderAccountId: "bob",
@@ -172,7 +161,7 @@ final class ConsumerConversationTimelineBuilderTests: XCTestCase {
                     senderDisplayName: "Bob",
                     isOutgoing: false,
                     text: "You there?",
-                    serverSeq: 3,
+                    serverSeq: 2,
                     createdAtUnix: 1_700_000_002
                 ),
             ]

@@ -876,23 +876,12 @@ class ChatRepository(
     private fun mapMessengerTimelineMessages(
         messages: List<FfiMessengerMessageRecord>,
     ): List<ChatTimelineMessage> {
-        val latestReceiptByTarget = mutableMapOf<String, ChatReceiptStatus>()
-        messages.forEach { message ->
-            val targetMessageId = messengerReceiptTargetMessageId(message) ?: return@forEach
-            val nextStatus = messengerReceiptStatus(message) ?: return@forEach
-            val previousStatus = latestReceiptByTarget[targetMessageId]
-            latestReceiptByTarget[targetMessageId] = when {
-                previousStatus == ChatReceiptStatus.READ || nextStatus == ChatReceiptStatus.READ -> ChatReceiptStatus.READ
-                else -> ChatReceiptStatus.DELIVERED
-            }
-        }
-
         return messages
             .filterNot(::isMessengerReceiptMessage)
             .map { message ->
                 mapMessengerTimelineMessage(
                     message = message,
-                    receiptStatus = latestReceiptByTarget[message.messageId],
+                    receiptStatus = message.receiptStatus?.let(::receiptStatusFromFfi),
                 )
             }
     }
@@ -957,32 +946,6 @@ class ChatRepository(
 
             FfiMessengerMessageBodyKind.CHAT_EVENT ->
                 body.eventType?.trim()?.takeIf(String::isNotEmpty) ?: "Chat event"
-        }
-    }
-
-    private fun messengerReceiptTargetMessageId(
-        message: FfiMessengerMessageRecord,
-    ): String? {
-        val body = message.body ?: return null
-        return if (body.kind == FfiMessengerMessageBodyKind.RECEIPT) {
-            body.targetMessageId
-        } else {
-            null
-        }
-    }
-
-    private fun messengerReceiptStatus(
-        message: FfiMessengerMessageRecord,
-    ): ChatReceiptStatus? {
-        val body = message.body ?: return null
-        if (body.kind != FfiMessengerMessageBodyKind.RECEIPT || body.targetMessageId == null) {
-            return null
-        }
-        return when (body.receiptType) {
-            FfiReceiptType.READ -> ChatReceiptStatus.READ
-            FfiReceiptType.DELIVERED,
-            null,
-            -> ChatReceiptStatus.DELIVERED
         }
     }
 
@@ -1845,40 +1808,6 @@ class ChatRepository(
         pendingOutboxMessages: List<FfiLocalOutboxItem>,
     ): List<FfiLocalOutboxItem> {
         return pendingOutboxMessages.filter(::isVisibleOutboxMessage)
-    }
-
-    private fun receiptTargetMessageId(message: FfiLocalTimelineItem): String? {
-        return receiptTargetMessageId(message.body)
-    }
-
-    private fun receiptTargetMessageId(message: FfiLocalOutboxItem): String? {
-        return receiptTargetMessageId(message.body)
-    }
-
-    private fun receiptTargetMessageId(body: FfiMessageBody?): String? {
-        return body?.takeIf { isReceiptBody(it) }?.targetMessageId
-    }
-
-    private fun receiptStatus(message: FfiLocalTimelineItem): ChatReceiptStatus? {
-        return receiptStatus(message.body)
-    }
-
-    private fun receiptStatus(message: FfiLocalOutboxItem): ChatReceiptStatus? {
-        return receiptStatus(message.body)
-    }
-
-    private fun receiptStatus(body: FfiMessageBody?): ChatReceiptStatus? {
-        if (body?.kind != FfiMessageBodyKind.RECEIPT || body.targetMessageId == null) {
-            return null
-        }
-        return when (body.receiptType) {
-            FfiReceiptType.READ -> ChatReceiptStatus.READ
-            FfiReceiptType.DELIVERED, null -> ChatReceiptStatus.DELIVERED
-        }
-    }
-
-    private fun isReceiptBody(body: FfiMessageBody?): Boolean {
-        return body?.kind == FfiMessageBodyKind.RECEIPT
     }
 
     private fun isVisibleOutboxMessage(message: FfiLocalOutboxItem): Boolean {
