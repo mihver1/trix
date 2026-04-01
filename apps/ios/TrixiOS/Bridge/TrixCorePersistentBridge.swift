@@ -190,6 +190,26 @@ enum TrixCorePersistentBridge {
         }
     }
 
+    static func syncPendingHistoryRepairs(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        chatIds: [String]?
+    ) async throws -> [String] {
+        let uniqueChatIds = chatIds
+            .map { Array(Set($0)).sorted() }
+            .flatMap { $0.isEmpty ? nil : $0 }
+
+        return try await Task.detached(priority: .utility) {
+            let client = try openMessengerClient(
+                baseURLString: baseURLString,
+                accessToken: accessToken,
+                identity: identity
+            )
+            return try client.syncPendingHistoryRepairs(conversationIds: uniqueChatIds)
+        }.value
+    }
+
     static func loadConversationSnapshot(
         baseURLString: String,
         accessToken: String,

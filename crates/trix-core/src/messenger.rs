@@ -567,6 +567,51 @@ impl FfiMessengerClient {
         })
     }
 
+    pub fn sync_pending_history_repairs(
+        &self,
+        conversation_ids: Option<Vec<String>>,
+    ) -> Result<Vec<String>, FfiMessengerError> {
+        let client = self.authenticated_client()?;
+        self.maybe_import_transfer_bundle()?;
+        self.flush_pending_inbox_acks_best_effort(&client);
+
+        let candidate_chat_ids = conversation_ids
+            .map(|conversation_ids| {
+                conversation_ids
+                    .into_iter()
+                    .map(|conversation_id| parse_chat_id(&conversation_id))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?
+            .map(|mut chat_ids| {
+                chat_ids.sort_by_key(|chat_id| chat_id.0);
+                chat_ids.dedup();
+                chat_ids
+            });
+
+        let mut changed_chat_ids = self.process_history_sync_jobs(&client)?;
+        let repair_scope_chat_ids = candidate_chat_ids.as_ref().map(|candidate_chat_ids| {
+            let mut repair_scope_chat_ids = candidate_chat_ids.clone();
+            repair_scope_chat_ids.extend(changed_chat_ids.iter().copied());
+            repair_scope_chat_ids.sort_by_key(|chat_id| chat_id.0);
+            repair_scope_chat_ids.dedup();
+            repair_scope_chat_ids
+        });
+        let repair_changed_chat_ids =
+            self.request_history_repairs_if_needed(&client, repair_scope_chat_ids.as_deref())?;
+        if !repair_changed_chat_ids.is_empty() {
+            changed_chat_ids.extend(self.process_history_sync_jobs(&client)?);
+        }
+        self.request_backfill_for_unavailable_chats_best_effort(&client);
+        changed_chat_ids.extend(repair_changed_chat_ids);
+        changed_chat_ids.sort_by_key(|chat_id| chat_id.0);
+        changed_chat_ids.dedup();
+        Ok(changed_chat_ids
+            .into_iter()
+            .map(|chat_id| chat_id.0.to_string())
+            .collect())
+    }
+
     pub fn list_conversations(
         &self,
     ) -> Result<Vec<FfiMessengerConversationSummary>, FfiMessengerError> {
@@ -3291,6 +3336,7 @@ mod tests {
     use super::*;
     use std::{
         env, fs,
+        path::Path,
         sync::{Arc, Mutex},
     };
 
@@ -3301,6 +3347,7 @@ mod tests {
         response::IntoResponse,
         routing::{get, post},
     };
+    use serde::Deserialize;
     use tokio::{
         net::TcpListener,
         runtime::{Builder, Runtime},
@@ -3309,9 +3356,9 @@ mod tests {
     use trix_types::{
         ChatDetailResponse, ChatHistoryResponse, ChatParticipantProfileSummary, ChatType,
         ContentType, CreateMessageRequest, CreateMessageResponse, ErrorResponse,
+        HistorySyncChunkListResponse, HistorySyncJobListResponse, HistorySyncJobRole,
         HistorySyncJobStatus, HistorySyncJobSummary, HistorySyncJobType, MessageEnvelope,
-        MessageKind, RequestHistorySyncRepairRequest,
-        RequestHistorySyncRepairResponse,
+        MessageKind, RequestHistorySyncRepairRequest, RequestHistorySyncRepairResponse,
     };
 
     #[test]
@@ -4069,6 +4116,8 @@ mod tests {
     struct MockRepairServerState {
         unavailable_chat_id: ChatId,
         requested_chat_ids: Vec<ChatId>,
+        source_jobs: Vec<HistorySyncJobSummary>,
+        target_jobs: Vec<HistorySyncJobSummary>,
     }
 
     struct MockRepairServer {
@@ -4080,6 +4129,14 @@ mod tests {
 
     impl MockRepairServer {
         fn spawn(unavailable_chat_id: ChatId) -> Self {
+            Self::spawn_with_history_sync_jobs(unavailable_chat_id, Vec::new(), Vec::new())
+        }
+
+        fn spawn_with_history_sync_jobs(
+            unavailable_chat_id: ChatId,
+            source_jobs: Vec<HistorySyncJobSummary>,
+            target_jobs: Vec<HistorySyncJobSummary>,
+        ) -> Self {
             let runtime = Builder::new_multi_thread()
                 .worker_threads(1)
                 .enable_all()
@@ -4089,8 +4146,15 @@ mod tests {
                 let state = Arc::new(Mutex::new(MockRepairServerState {
                     unavailable_chat_id,
                     requested_chat_ids: Vec::new(),
+                    source_jobs,
+                    target_jobs,
                 }));
                 let app = Router::new()
+                    .route("/v0/history-sync/jobs", get(mock_list_history_sync_jobs))
+                    .route(
+                        "/v0/history-sync/jobs/{job_id}/chunks",
+                        get(mock_get_history_sync_chunks),
+                    )
                     .route(
                         "/v0/history-sync/jobs:request-repair",
                         post(mock_request_history_sync_repair),
@@ -4121,6 +4185,35 @@ mod tests {
                 let _ = self.task.await;
             });
         }
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct MockHistorySyncJobsQuery {
+        role: Option<HistorySyncJobRole>,
+    }
+
+    async fn mock_list_history_sync_jobs(
+        Query(query): Query<MockHistorySyncJobsQuery>,
+        State(state): State<Arc<Mutex<MockRepairServerState>>>,
+    ) -> impl IntoResponse {
+        let state = state.lock().unwrap();
+        let jobs = match query.role.unwrap_or(HistorySyncJobRole::Source) {
+            HistorySyncJobRole::Source => state.source_jobs.clone(),
+            HistorySyncJobRole::Target => state.target_jobs.clone(),
+        };
+        Json(HistorySyncJobListResponse { jobs }).into_response()
+    }
+
+    async fn mock_get_history_sync_chunks(
+        AxumPath(job_id): AxumPath<String>,
+        State(_state): State<Arc<Mutex<MockRepairServerState>>>,
+    ) -> impl IntoResponse {
+        Json(HistorySyncChunkListResponse {
+            job_id,
+            role: HistorySyncJobRole::Target,
+            chunks: Vec::new(),
+        })
+        .into_response()
     }
 
     #[derive(Debug, Clone, Deserialize)]
@@ -4160,8 +4253,14 @@ mod tests {
                 let state = Arc::new(Mutex::new(state));
                 let app = Router::new()
                     .route("/v0/chats/{chat_id}", get(mock_send_get_chat))
-                    .route("/v0/chats/{chat_id}/history", get(mock_send_get_chat_history))
-                    .route("/v0/chats/{chat_id}/messages", post(mock_send_create_message))
+                    .route(
+                        "/v0/chats/{chat_id}/history",
+                        get(mock_send_get_chat_history),
+                    )
+                    .route(
+                        "/v0/chats/{chat_id}/messages",
+                        post(mock_send_create_message),
+                    )
                     .with_state(state.clone());
                 let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
                 let base_url = format!("http://{}", listener.local_addr().unwrap());
@@ -4199,7 +4298,7 @@ mod tests {
         let jobs = if request.chat_id == state.unavailable_chat_id {
             Vec::new()
         } else {
-            vec![HistorySyncJobSummary {
+            let job = HistorySyncJobSummary {
                 job_id: Uuid::new_v4().to_string(),
                 job_type: HistorySyncJobType::TimelineRepair,
                 job_status: HistorySyncJobStatus::Pending,
@@ -4215,9 +4314,103 @@ mod tests {
                 }),
                 created_at_unix: 1,
                 updated_at_unix: 1,
-            }]
+            };
+            state.target_jobs.push(job.clone());
+            vec![job]
         };
         Json(RequestHistorySyncRepairResponse { jobs }).into_response()
+    }
+
+    fn open_authenticated_test_client(root_path: &Path, base_url: &str) -> Arc<FfiMessengerClient> {
+        FfiMessengerClient::open(FfiMessengerOpenConfig {
+            root_path: root_path.to_string_lossy().into_owned(),
+            database_key: vec![23u8; 32],
+            base_url: base_url.to_owned(),
+            access_token: Some("test-access-token".to_owned()),
+            account_id: Some(Uuid::new_v4().to_string()),
+            device_id: Some(Uuid::new_v4().to_string()),
+            account_sync_chat_id: None,
+            device_display_name: Some("test-device".to_owned()),
+            platform: Some("test".to_owned()),
+            credential_identity: None,
+            account_root_private_key: Some(vec![31u8; 32]),
+            transport_private_key: Some(vec![29u8; 32]),
+        })
+        .unwrap()
+    }
+
+    fn seed_projection_gap_candidate(
+        store: &mut crate::LocalHistoryStore,
+        chat_id: ChatId,
+        sender_account_id: AccountId,
+        sender_device_id: DeviceId,
+    ) {
+        store
+            .apply_chat_detail(&ChatDetailResponse {
+                chat_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                last_server_seq: 12,
+                pending_message_count: 0,
+                epoch: 4,
+                last_commit_message_id: None,
+                last_message: None,
+                participant_profiles: vec![ChatParticipantProfileSummary {
+                    account_id: sender_account_id,
+                    handle: None,
+                    profile_name: "Sender".to_owned(),
+                    profile_bio: None,
+                }],
+                members: Vec::new(),
+                device_members: Vec::new(),
+            })
+            .unwrap();
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: (1..=12)
+                    .map(|server_seq| MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq,
+                        sender_account_id,
+                        sender_device_id,
+                        epoch: 4,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        ciphertext_b64: encode_b64(format!("cipher-{server_seq}").as_bytes()),
+                        aad_json: serde_json::json!({}),
+                        created_at_unix: 1_700_000_000 + server_seq,
+                    })
+                    .collect(),
+            })
+            .unwrap();
+        let projected_messages = (1..=9)
+            .chain(std::iter::once(12))
+            .map(|server_seq| crate::LocalProjectedMessage {
+                server_seq,
+                message_id: MessageId(Uuid::new_v4()),
+                sender_account_id,
+                sender_device_id,
+                epoch: 4,
+                message_kind: MessageKind::Application,
+                content_type: ContentType::Text,
+                projection_kind: crate::LocalProjectionKind::ApplicationMessage,
+                payload: Some(
+                    if server_seq == 12 {
+                        b"tail after gap".as_slice()
+                    } else {
+                        b"before gap".as_slice()
+                    }
+                    .to_vec(),
+                ),
+                merged_epoch: None,
+                created_at_unix: 1_700_000_000 + server_seq,
+            })
+            .collect::<Vec<_>>();
+        store
+            .apply_projected_messages(chat_id, &projected_messages)
+            .unwrap();
     }
 
     async fn mock_send_get_chat(
@@ -4303,7 +4496,10 @@ mod tests {
             message_kind: request.message_kind,
             content_type: request.content_type,
             ciphertext_b64: request.ciphertext_b64.clone(),
-            aad_json: request.aad_json.clone().unwrap_or_else(|| serde_json::json!({})),
+            aad_json: request
+                .aad_json
+                .clone()
+                .unwrap_or_else(|| serde_json::json!({})),
             created_at_unix: 1_700_000_000 + server_seq,
         };
         state.history.push(envelope.clone());
@@ -4416,6 +4612,121 @@ mod tests {
         assert!(!repair_available);
         let state = server.state.lock().unwrap();
         assert_eq!(state.requested_chat_ids, vec![unavailable_chat_id]);
+        drop(state);
+
+        server.shutdown();
+        fs::remove_dir_all(root_path).ok();
+    }
+
+    #[test]
+    fn sync_pending_history_repairs_none_scans_all_local_chats() {
+        let root_path = env::temp_dir().join(format!(
+            "trix-messenger-sync-pending-history-repairs-none-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+
+        let server = MockRepairServer::spawn(ChatId(Uuid::new_v4()));
+        let client = open_authenticated_test_client(&root_path, &server.base_url);
+
+        {
+            let mut store = lock_history_store(&client.history_store).unwrap();
+            seed_projection_gap_candidate(&mut store, chat_id, sender_account_id, sender_device_id);
+            store.clear_pending_history_repair_window(chat_id).unwrap();
+            assert_eq!(
+                store
+                    .history_repair_candidate(chat_id)
+                    .map(|candidate| candidate.window),
+                Some(LocalHistoryRepairWindow {
+                    from_server_seq: 10,
+                    through_server_seq: 11,
+                })
+            );
+            assert_eq!(store.pending_history_repair_window(chat_id), None);
+        }
+
+        let changed_chat_ids = client.sync_pending_history_repairs(None).unwrap();
+
+        assert_eq!(changed_chat_ids, vec![chat_id.0.to_string()]);
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.requested_chat_ids, vec![chat_id]);
+        drop(state);
+
+        server.shutdown();
+        fs::remove_dir_all(root_path).ok();
+    }
+
+    #[test]
+    fn sync_pending_history_repairs_expands_requested_scope_with_preprocessed_chats() {
+        let root_path = env::temp_dir().join(format!(
+            "trix-messenger-sync-pending-history-repairs-expanded-scope-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+        let completed_repair_job = HistorySyncJobSummary {
+            job_id: Uuid::new_v4().to_string(),
+            job_type: HistorySyncJobType::TimelineRepair,
+            job_status: HistorySyncJobStatus::Completed,
+            source_device_id: sender_device_id,
+            target_device_id: DeviceId(Uuid::new_v4()),
+            chat_id: Some(chat_id),
+            cursor_json: serde_json::json!({
+                "kind": "timeline_repair",
+                "chat_id": chat_id.0,
+                "repair_from_server_seq": 10,
+                "repair_through_server_seq": 11,
+                "reason": "projection_gap",
+            }),
+            created_at_unix: 1,
+            updated_at_unix: 2,
+        };
+
+        let server = MockRepairServer::spawn_with_history_sync_jobs(
+            ChatId(Uuid::new_v4()),
+            Vec::new(),
+            vec![completed_repair_job],
+        );
+        let client = open_authenticated_test_client(&root_path, &server.base_url);
+
+        {
+            let mut store = lock_history_store(&client.history_store).unwrap();
+            seed_projection_gap_candidate(&mut store, chat_id, sender_account_id, sender_device_id);
+            store
+                .set_pending_history_repair_window(
+                    chat_id,
+                    LocalHistoryRepairWindow {
+                        from_server_seq: 10,
+                        through_server_seq: 11,
+                    },
+                )
+                .unwrap();
+        }
+
+        let changed_chat_ids = client
+            .sync_pending_history_repairs(Some(vec![Uuid::new_v4().to_string()]))
+            .unwrap();
+
+        assert_eq!(changed_chat_ids, vec![chat_id.0.to_string()]);
+        {
+            let store = lock_history_store(&client.history_store).unwrap();
+            assert_eq!(
+                store.pending_history_repair_window(chat_id),
+                Some(LocalHistoryRepairWindow {
+                    from_server_seq: 10,
+                    through_server_seq: 11,
+                })
+            );
+        }
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.requested_chat_ids, vec![chat_id]);
         drop(state);
 
         server.shutdown();
