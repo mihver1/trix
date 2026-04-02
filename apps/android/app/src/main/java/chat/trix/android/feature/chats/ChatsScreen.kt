@@ -2180,20 +2180,8 @@ private fun ConversationDetailContent(
             }
 
             else -> {
-                val activeRepository = repository
-                if (activeRepository == null) {
-                    EmptyConversationPane(
-                        title = "Conversation unavailable",
-                        body = "Attachment preview isn't available in this preview configuration.",
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth(),
-                    )
-                    return@Column
-                }
-
                 ConversationTranscript(
-                    repository = activeRepository,
+                    repository = repository,
                     conversation = conversation,
                     activeAttachmentMessageId = activeAttachmentMessageId,
                     onOpenAttachment = onOpenAttachment,
@@ -2229,7 +2217,7 @@ private fun ConversationDetailContent(
 
 @Composable
 private fun ConversationTranscript(
-    repository: ChatRepository,
+    repository: ChatRepository?,
     conversation: ChatConversation,
     activeAttachmentMessageId: String?,
     onOpenAttachment: (ChatAttachment) -> Unit,
@@ -2307,7 +2295,10 @@ private fun ConversationTranscript(
                                 Column(
                                     verticalArrangement = Arrangement.spacedBy(10.dp),
                                 ) {
-                                    if (message.attachment.supportsLocalImagePreview()) {
+                                    if (
+                                        repository != null &&
+                                        message.attachment.supportsLocalImagePreview()
+                                    ) {
                                         InlineAttachmentPreview(
                                             attachment = message.attachment,
                                             repository = repository,

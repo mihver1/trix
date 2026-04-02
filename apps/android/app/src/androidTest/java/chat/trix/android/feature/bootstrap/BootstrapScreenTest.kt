@@ -1,14 +1,17 @@
 package chat.trix.android.feature.bootstrap
 
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import chat.trix.android.core.auth.StoredDeviceSummary
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -19,7 +22,7 @@ class BootstrapScreenTest {
 
     @Test
     fun createUserUsesEditedBaseUrl() {
-        var usedBaseUrl: String? = null
+        val usedBaseUrl = AtomicReference<String?>(null)
         composeRule.setContent {
             BootstrapScreen(
                 baseUrl = "http://10.0.2.2:8080",
@@ -28,7 +31,7 @@ class BootstrapScreenTest {
                 busyMessage = null,
                 errorMessage = null,
                 backendErrorMessage = null,
-                onCreateAccount = { baseUrl, _ -> usedBaseUrl = baseUrl },
+                onCreateAccount = { baseUrl, _ -> usedBaseUrl.set(baseUrl) },
                 onCompleteLinkIntent = { _, _ -> },
                 onReconnectStoredDevice = null,
                 onForgetStoredDevice = null,
@@ -38,9 +41,17 @@ class BootstrapScreenTest {
         composeRule.onNodeWithTag("bootstrap:base-url-field").performTextReplacement("http://10.0.2.2:9000")
         composeRule.onNodeWithTag("bootstrap:profile-name-field").performTextReplacement("UI Smoke Android")
         composeRule.onNodeWithTag("bootstrap:create-device-name-field").performTextReplacement("Pixel 9")
-        composeRule.onNodeWithText("Create user").performClick()
+        composeRule.waitForIdle()
+        composeRule
+            .onNodeWithTag("bootstrap:create-user-button")
+            .performScrollTo()
+            .assertIsDisplayed()
+            .assertIsEnabled()
+            .performClick()
 
-        assertEquals("http://10.0.2.2:9000", usedBaseUrl)
+        composeRule.runOnIdle {
+            assertEquals("http://10.0.2.2:9000", usedBaseUrl.get())
+        }
     }
 
     @Test

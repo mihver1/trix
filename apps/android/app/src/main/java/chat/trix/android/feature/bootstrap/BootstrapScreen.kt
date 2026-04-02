@@ -574,7 +574,7 @@ private fun StoredDeviceCard(
             storedDevice.deviceStatus?.let { deviceStatus ->
                 ElevatedAssistChip(
                     onClick = {},
-                    label = { Text("Status ${deviceStatus.labelForBootstrap()}") },
+                    label = { Text(deviceStatus.labelForBootstrap()) },
                 )
             }
             Text(
@@ -677,6 +677,7 @@ private fun CreateAccountCard(
             Button(
                 onClick = onCreateAccount,
                 enabled = !isBusy && profileName.isNotBlank() && deviceDisplayName.isNotBlank(),
+                modifier = Modifier.testTag("bootstrap:create-user-button"),
             ) {
                 if (isBusy) {
                     Row(

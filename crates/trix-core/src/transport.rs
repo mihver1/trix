@@ -15,22 +15,23 @@ use tokio_tungstenite::{
 use trix_types::{
     AccountDirectoryResponse, AccountId, AccountKeyPackagesResponse, AccountProfileResponse,
     AckInboxRequest, AckInboxResponse, AppendHistorySyncChunkRequest,
-    AppendHistorySyncChunkResponse, BlobMetadataResponse, BlobUploadStatus, ChatDetailResponse,
-    ChatHistoryResponse, ChatId, ChatListResponse, CompleteHistorySyncJobRequest,
-    CompleteHistorySyncJobResponse, CompleteLinkIntentRequest, CompleteLinkIntentResponse,
-    ControlMessageInput, CreateAccountRequest, CreateAccountResponse, CreateBlobUploadRequest,
-    CreateBlobUploadResponse, CreateChatRequest, CreateChatResponse, CreateLinkIntentResponse,
-    CreateMessageRequest, CreateMessageResponse, DeviceApprovePayloadResponse, DeviceId,
-    DeviceListResponse, DeviceStatus, DeviceTransferBundleResponse, DeviceTransportKeyResponse,
-    DirectoryAccountSummary, ErrorResponse, HealthResponse, HistorySyncChunkListResponse,
-    HistorySyncChunkSummary, HistorySyncJobListResponse, HistorySyncJobRole, HistorySyncJobStatus,
-    LeaseInboxRequest, LeaseInboxResponse, MessageId, ModifyChatDevicesRequest,
-    ModifyChatDevicesResponse, ModifyChatMembersRequest, ModifyChatMembersResponse,
-    PublishKeyPackageItem, PublishKeyPackagesRequest, PublishKeyPackagesResponse,
-    RequestChatBackfillRequest, RequestChatBackfillResponse, RequestHistorySyncRepairRequest,
-    RequestHistorySyncRepairResponse, ReserveKeyPackagesRequest, ResetKeyPackagesResponse,
-    RevokeDeviceRequest, RevokeDeviceResponse, UpdateAccountProfileRequest, VersionResponse,
-    WebSocketClientFrame, WebSocketServerFrame,
+    AppendHistorySyncChunkResponse, ApplePushEnvironment, BlobMetadataResponse, BlobUploadStatus,
+    ChatDetailResponse, ChatHistoryResponse, ChatId, ChatListResponse,
+    CompleteHistorySyncJobRequest, CompleteHistorySyncJobResponse, CompleteLinkIntentRequest,
+    CompleteLinkIntentResponse, ControlMessageInput, CreateAccountRequest, CreateAccountResponse,
+    CreateBlobUploadRequest, CreateBlobUploadResponse, CreateChatRequest, CreateChatResponse,
+    CreateLinkIntentResponse, CreateMessageRequest, CreateMessageResponse,
+    DeviceApprovePayloadResponse, DeviceId, DeviceListResponse, DeviceStatus,
+    DeviceTransferBundleResponse, DeviceTransportKeyResponse, DirectoryAccountSummary,
+    ErrorResponse, HealthResponse, HistorySyncChunkListResponse, HistorySyncChunkSummary,
+    HistorySyncJobListResponse, HistorySyncJobRole, HistorySyncJobStatus, LeaseInboxRequest,
+    LeaseInboxResponse, MessageId, ModifyChatDevicesRequest, ModifyChatDevicesResponse,
+    ModifyChatMembersRequest, ModifyChatMembersResponse, PublishKeyPackageItem,
+    PublishKeyPackagesRequest, PublishKeyPackagesResponse, RegisterApplePushTokenRequest,
+    RegisterApplePushTokenResponse, RequestChatBackfillRequest, RequestChatBackfillResponse,
+    RequestHistorySyncRepairRequest, RequestHistorySyncRepairResponse, ReserveKeyPackagesRequest,
+    ResetKeyPackagesResponse, RevokeDeviceRequest, RevokeDeviceResponse,
+    UpdateAccountProfileRequest, VersionResponse, WebSocketClientFrame, WebSocketServerFrame,
 };
 
 const CONTROL_AAD_META_KEY: &str = "_trix";
@@ -381,6 +382,25 @@ impl ServerApiClient {
 
     pub async fn list_devices(&self) -> Result<DeviceListResponse, ServerApiError> {
         self.send_json(self.request(Method::GET, "v0/devices")?)
+            .await
+    }
+
+    pub async fn register_apple_push_token(
+        &self,
+        token_hex: impl Into<String>,
+        environment: ApplePushEnvironment,
+    ) -> Result<RegisterApplePushTokenResponse, ServerApiError> {
+        self.send_json(self.request(Method::PUT, "v0/devices/push-token")?.json(
+            &RegisterApplePushTokenRequest {
+                token_hex: token_hex.into(),
+                environment,
+            },
+        ))
+        .await
+    }
+
+    pub async fn delete_apple_push_token(&self) -> Result<(), ServerApiError> {
+        self.send_empty(self.request(Method::DELETE, "v0/devices/push-token")?)
             .await
     }
 
@@ -1001,12 +1021,37 @@ impl ServerApiClient {
             Err(ServerApiError::Api {
                 status: status.as_u16(),
                 code: api_error.code,
+                message: format!("{} {}: {}", request_method, request_url, api_error.message),
+            })
+        } else {
+            Err(ServerApiError::Api {
+                status: status.as_u16(),
+                code: "http_error".to_owned(),
                 message: format!(
                     "{} {}: {}",
                     request_method,
                     request_url,
-                    api_error.message
+                    String::from_utf8_lossy(&body).trim()
                 ),
+            })
+        }
+    }
+
+    async fn send_empty(&self, request: reqwest::RequestBuilder) -> Result<(), ServerApiError> {
+        let request = request.build()?;
+        let request_method = request.method().clone();
+        let request_url = request.url().clone();
+        let response = self.http.execute(request).await?;
+        let status = response.status();
+        let body = response.bytes().await?;
+
+        if status.is_success() {
+            Ok(())
+        } else if let Ok(api_error) = serde_json::from_slice::<ErrorResponse>(&body) {
+            Err(ServerApiError::Api {
+                status: status.as_u16(),
+                code: api_error.code,
+                message: format!("{} {}: {}", request_method, request_url, api_error.message),
             })
         } else {
             Err(ServerApiError::Api {

@@ -21,6 +21,7 @@ import chat.trix.android.core.ffi.FfiMessengerSendMessageResult
 import chat.trix.android.core.ffi.FfiMessengerSnapshot
 import chat.trix.android.core.ffi.FfiMessengerUpdateConversationDevicesRequest
 import chat.trix.android.core.ffi.FfiMessengerUpdateConversationMembersRequest
+import chat.trix.android.core.ffi.FfiReactionAction
 import chat.trix.android.core.system.deviceStorageLayout
 import java.util.UUID
 import kotlinx.coroutines.runBlocking
@@ -150,6 +151,34 @@ internal class AndroidMessengerClient(
                 eventType = null,
                 eventJson = null,
                 attachmentTokens = listOf(token.token),
+            ),
+        )
+    }
+
+    fun sendReaction(
+        conversationId: String,
+        targetMessageId: String,
+        emoji: String,
+        removeExisting: Boolean,
+    ): FfiMessengerSendMessageResult {
+        return client().sendMessage(
+            FfiMessengerSendMessageRequest(
+                conversationId = conversationId,
+                messageId = UUID.randomUUID().toString(),
+                kind = FfiMessengerMessageBodyKind.REACTION,
+                text = null,
+                targetMessageId = targetMessageId,
+                emoji = emoji,
+                reactionAction = if (removeExisting) {
+                    FfiReactionAction.REMOVE
+                } else {
+                    FfiReactionAction.ADD
+                },
+                receiptType = null,
+                receiptAtUnix = null,
+                eventType = null,
+                eventJson = null,
+                attachmentTokens = emptyList(),
             ),
         )
     }

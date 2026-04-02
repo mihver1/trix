@@ -19,10 +19,6 @@ private struct HistorySyncChunkDebugDraft {
     var isFinal = false
 }
 
-private struct LocalConversationDebugDraft {
-    var chatId = ""
-}
-
 struct MessagingLabView: View {
     @Binding var serverBaseURL: String
     var model: AppModel
@@ -31,13 +27,9 @@ struct MessagingLabView: View {
     @State private var keyPackageDebugDraft = KeyPackageDebugDraft()
     @State private var activityMessage: String?
     @State private var leasedInboxBatch: LeaseInboxResponse?
-    @State private var localInboxSync: LocalInboxSyncResult?
     @State private var inspectedKeyPackages: AccountKeyPackagesResponse?
     @State private var historySyncChunkDraft = HistorySyncChunkDebugDraft()
     @State private var loadedHistorySyncChunks: [HistorySyncChunkSummary] = []
-    @State private var localConversationDraft = LocalConversationDebugDraft()
-    @State private var localConversationDiagnostics: LocalConversationDiagnostics?
-    @State private var signaturePublicKeyFingerprint: String?
 
     var body: some View {
         List {
@@ -169,82 +161,6 @@ struct MessagingLabView: View {
                 }
 
                 Section {
-                    Button(action: syncChatHistoriesIntoLocalStore) {
-                        if model.isLoading {
-                            ProgressView()
-                                .frame(maxWidth: .infinity)
-                        } else {
-                            Text("Sync Histories Into Local Store")
-                                .frame(maxWidth: .infinity)
-                        }
-                    }
-                    .disabled(model.isLoading)
-
-                    Button(action: leaseInboxIntoLocalStore) {
-                        if model.isLoading {
-                            ProgressView()
-                                .frame(maxWidth: .infinity)
-                        } else {
-                            Text("Lease Inbox Into Local Store")
-                                .frame(maxWidth: .infinity)
-                        }
-                    }
-                    .disabled(model.isLoading)
-
-                    if let localCoreState = model.localCoreState {
-                        LabeledContent("Cipher Suite") {
-                            Text(localCoreState.ciphersuiteLabel)
-                                .font(.system(.footnote, design: .monospaced))
-                                .multilineTextAlignment(.trailing)
-                        }
-
-                        LabeledContent("Local Chats") {
-                            Text(String(localCoreState.localChats.count))
-                        }
-
-                        LabeledContent("Lease Owner") {
-                            Text(localCoreState.leaseOwner)
-                                .font(.system(.footnote, design: .monospaced))
-                                .multilineTextAlignment(.trailing)
-                        }
-
-                        LabeledContent("Inbox Cursor") {
-                            Text(localCoreState.lastAckedInboxId.map(String.init) ?? "None")
-                        }
-
-                        if let localInboxSync {
-                            LabeledContent("Last Lease Acked") {
-                                Text(String(localInboxSync.ackedInboxIds.count))
-                            }
-
-                            LabeledContent("Lease Expires") {
-                                Text(localInboxSync.leaseExpiresAtDate.formatted(date: .abbreviated, time: .standard))
-                            }
-                        }
-
-                        if !localCoreState.chatCursors.isEmpty {
-                            ForEach(localCoreState.chatCursors.prefix(5)) { cursor in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(cursor.chatId)
-                                        .font(.system(.footnote, design: .monospaced))
-                                    Text("Cursor \(cursor.lastServerSeq)")
-                                        .font(.footnote)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .padding(.vertical, 2)
-                            }
-                        }
-                    } else {
-                        Text("Persistent `trix-core` state will be created on first MLS publish or sync.")
-                            .foregroundStyle(.secondary)
-                    }
-                } header: {
-                    Text("Local Core Store")
-                } footer: {
-                    Text("This is the on-device `trix-core` cache for MLS state, chat history, and inbox sync cursors. Chat detail prefers local history after you sync it here.")
-                }
-
-                Section {
                     TextField(
                         "History Sync Job ID",
                         text: $historySyncChunkDraft.jobId
@@ -335,56 +251,6 @@ struct MessagingLabView: View {
                     Text("History Sync Chunks")
                 } footer: {
                     Text("Use this to inspect target-side chunk batches, append source-side chunks, and publish websocket progress for the active job.")
-                }
-
-                Section {
-                    TextField(
-                        "Chat ID",
-                        text: Binding(
-                            get: {
-                                if localConversationDraft.chatId.isEmpty {
-                                    return dashboard.chats.first?.chatId ?? ""
-                                }
-                                return localConversationDraft.chatId
-                            },
-                            set: { localConversationDraft.chatId = $0 }
-                        )
-                    )
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .font(.system(.footnote, design: .monospaced))
-
-                    Button(action: inspectLocalConversationState) {
-                        Text("Inspect Local Conversation State")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .disabled(model.localIdentity == nil || trimmedValue(localConversationDraft.chatId) == nil)
-
-                    if let signaturePublicKeyFingerprint {
-                        LabeledContent("Signing Key") {
-                            Text(signaturePublicKeyFingerprint)
-                                .font(.system(.footnote, design: .monospaced))
-                                .multilineTextAlignment(.trailing)
-                        }
-                    }
-
-                    if let localConversationDiagnostics {
-                        LabeledContent("Persisted Cursor") {
-                            Text(localConversationDiagnostics.chatCursor.map(String.init) ?? "None")
-                        }
-
-                        LabeledContent("Local Members") {
-                            Text(String(localConversationDiagnostics.memberCount))
-                        }
-
-                        LabeledContent("State Bytes") {
-                            Text(String(localConversationDiagnostics.ratchetTreeBytes))
-                        }
-                    }
-                } header: {
-                    Text("Local Conversation State")
-                } footer: {
-                    Text("This reads the on-device conversation cursor, signing key, and persisted conversation state for a specific chat.")
                 }
 
                 Section {
@@ -494,19 +360,6 @@ struct MessagingLabView: View {
                         }
                     }
 
-                    if !dashboard.inboxItems.isEmpty {
-                        Button(action: acknowledgeAllInbox) {
-                            if model.isLoading {
-                                ProgressView()
-                                    .frame(maxWidth: .infinity)
-                            } else {
-                                Text("Acknowledge All Inbox Items")
-                                    .frame(maxWidth: .infinity)
-                            }
-                        }
-                        .disabled(model.isLoading)
-                    }
-
                     if dashboard.inboxItems.isEmpty {
                         Text("No pending inbox items for this device.")
                             .foregroundStyle(.secondary)
@@ -540,11 +393,6 @@ struct MessagingLabView: View {
                                 HStack {
                                     Text(item.message.createdAtDate.formatted(date: .abbreviated, time: .shortened))
                                         .foregroundStyle(.secondary)
-                                    Spacer()
-                                    Button("Ack") {
-                                        acknowledgeInbox(ids: [item.inboxId])
-                                    }
-                                    .disabled(model.isLoading)
                                 }
                                 .font(.footnote)
                             }
@@ -554,7 +402,7 @@ struct MessagingLabView: View {
                 } header: {
                     Text("Inbox")
                 } footer: {
-                    Text("Inbox rows are fan-out records for this device. Incremental polling uses `after_inbox_id`. Leasing is a debug worker-style path that claims temporary delivery ownership until the lease expires or the items are acknowledged.")
+                    Text("Inbox rows are fan-out records for this device. Incremental polling uses `after_inbox_id`. Leasing is a debug worker-style path that claims temporary delivery ownership until the lease expires.")
                 }
             } else {
                 Section {
@@ -590,28 +438,6 @@ struct MessagingLabView: View {
         Task {
             if let response = await model.publishKeyPackages(baseURLString: serverBaseURL) {
                 activityMessage = "Published \(response.packages.count) MLS key packages for device \(response.deviceId)."
-            }
-        }
-    }
-
-    private func syncChatHistoriesIntoLocalStore() {
-        activityMessage = nil
-
-        Task {
-            if let result = await model.syncChatHistoriesIntoLocalStore(baseURLString: serverBaseURL) {
-                activityMessage = "Local history sync upserted \(result.chatsUpserted) chats and \(result.messagesUpserted) messages."
-            }
-        }
-    }
-
-    private func leaseInboxIntoLocalStore() {
-        activityMessage = nil
-        localInboxSync = nil
-
-        Task {
-            if let result = await model.leaseInboxIntoLocalStore(baseURLString: serverBaseURL) {
-                localInboxSync = result
-                activityMessage = "Leased, applied, and acknowledged \(result.ackedInboxIds.count) inbox items into the local store."
             }
         }
     }
@@ -780,35 +606,6 @@ struct MessagingLabView: View {
         }
     }
 
-    private func inspectLocalConversationState() {
-        activityMessage = nil
-        localConversationDiagnostics = nil
-        signaturePublicKeyFingerprint = nil
-        guard
-            let identity = model.localIdentity,
-            let chatId = trimmedValue(localConversationDraft.chatId)
-        else {
-            return
-        }
-
-        Task {
-            do {
-                let diagnostics = try TrixCorePersistentBridge.localConversationDiagnostics(
-                    identity: identity,
-                    chatId: chatId
-                )
-                let signaturePublicKey = try TrixCorePersistentBridge.signaturePublicKey(identity: identity)
-                localConversationDiagnostics = diagnostics
-                signaturePublicKeyFingerprint = shortFingerprint(signaturePublicKey)
-                activityMessage = diagnostics == nil
-                    ? "No local conversation state is ready for chat \(chatId)."
-                    : "Loaded local conversation state for chat \(chatId)."
-            } catch {
-                activityMessage = error.localizedDescription
-            }
-        }
-    }
-
     private func effectiveKeyPackageAccountId() -> String {
         let trimmed = keyPackageDebugDraft.accountId.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
@@ -817,34 +614,9 @@ struct MessagingLabView: View {
         return model.dashboard?.profile.accountId ?? ""
     }
 
-    private func acknowledgeAllInbox() {
-        guard let dashboard = model.dashboard else {
-            return
-        }
-
-        acknowledgeInbox(ids: dashboard.inboxItems.map(\.inboxId))
-    }
-
-    private func acknowledgeInbox(ids: [UInt64]) {
-        activityMessage = nil
-
-        Task {
-            if let response = await model.acknowledgeInbox(
-                baseURLString: serverBaseURL,
-                inboxIds: ids
-            ) {
-                activityMessage = "Acknowledged \(response.ackedInboxIds.count) inbox items."
-            }
-        }
-    }
-
     private func trimmedValue(_ value: String) -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
-    }
-
-    private func shortFingerprint(_ data: Data, prefixBytes: Int = 8) -> String {
-        data.prefix(prefixBytes).map { String(format: "%02x", $0) }.joined()
     }
 }
 

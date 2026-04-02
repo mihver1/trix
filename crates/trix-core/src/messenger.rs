@@ -2188,12 +2188,6 @@ impl FfiMessengerClient {
             let store = lock_history_store(&self.history_store)?;
             store.pending_history_repair_window(candidate.chat_id)
         };
-        if existing_window
-            .map(|existing| history_repair_window_covers(existing, candidate.window))
-            .unwrap_or(false)
-        {
-            return Ok(HistoryRepairRequestStatus::PendingUnchanged);
-        }
 
         let response = self
             .runtime
@@ -2211,9 +2205,16 @@ impl FfiMessengerClient {
         }
 
         let mut store = lock_history_store(&self.history_store)?;
-        store
+        let changed = store
             .set_pending_history_repair_window(candidate.chat_id, candidate.window)
             .map_err(map_domain_error)?;
+        if !changed
+            && existing_window
+                .map(|existing| history_repair_window_covers(existing, candidate.window))
+                .unwrap_or(false)
+        {
+            return Ok(HistoryRepairRequestStatus::PendingUnchanged);
+        }
         Ok(HistoryRepairRequestStatus::Updated)
     }
 

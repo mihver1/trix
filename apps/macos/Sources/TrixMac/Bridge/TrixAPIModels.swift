@@ -312,15 +312,6 @@ struct CreateChatResponse: Codable {
     let epoch: UInt64
 }
 
-struct CreateChatControlOutcome: Sendable {
-    let chatId: UUID
-    let chatType: ChatType
-    let epoch: UInt64
-    let mlsGroupId: Data
-    let report: LocalStoreApplyReport
-    let projectedMessages: [LocalProjectedMessage]
-}
-
 enum HistorySyncJobType: String, Codable {
     case initialSync = "initial_sync"
     case chatBackfill = "chat_backfill"
@@ -383,12 +374,6 @@ struct SyncStateSnapshot: Sendable {
     let leaseOwner: String
     let lastAckedInboxId: UInt64?
     let chatCursors: [SyncChatCursor]
-}
-
-struct LocalHistorySyncResult: Sendable {
-    let report: LocalStoreApplyReport
-    let syncState: SyncStateSnapshot
-    let chats: [ChatSummary]
 }
 
 struct LocalChatReadState: Identifiable, Sendable {
@@ -990,30 +975,6 @@ struct UploadedAttachment: Sendable {
 struct DownloadedAttachment: Sendable {
     let body: TypedMessageBody
     let plaintext: Data
-}
-
-struct ModifyChatMembersControlOutcome: Sendable {
-    let chatId: UUID
-    let epoch: UInt64
-    let changedParticipantAccountIDs: [UUID]
-    let report: LocalStoreApplyReport
-    let projectedMessages: [LocalProjectedMessage]
-}
-
-struct ModifyChatDevicesControlOutcome: Sendable {
-    let chatId: UUID
-    let epoch: UInt64
-    let changedDeviceIDs: [UUID]
-    let report: LocalStoreApplyReport
-    let projectedMessages: [LocalProjectedMessage]
-}
-
-struct SendMessageOutcome: Sendable {
-    let chatId: UUID
-    let messageId: UUID
-    let serverSeq: UInt64
-    let report: LocalStoreApplyReport
-    let projectedMessage: LocalProjectedMessage
 }
 
 struct AttachmentDraft: Identifiable, Equatable, Sendable {

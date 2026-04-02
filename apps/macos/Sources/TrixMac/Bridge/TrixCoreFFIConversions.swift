@@ -272,6 +272,26 @@ extension HistorySyncJobRole {
     }
 }
 
+extension ApplePushEnvironment {
+    init(_ ffiValue: FfiApplePushEnvironment) {
+        switch ffiValue {
+        case .sandbox:
+            self = .sandbox
+        case .production:
+            self = .production
+        }
+    }
+
+    var ffiValue: FfiApplePushEnvironment {
+        switch self {
+        case .sandbox:
+            return .sandbox
+        case .production:
+            return .production
+        }
+    }
+}
+
 extension CreateAccountRequest {
     func ffiParams() throws -> FfiCreateAccountParams {
         FfiCreateAccountParams(
@@ -549,6 +569,16 @@ extension DeviceListResponse {
     }
 }
 
+extension RegisterApplePushTokenResponse {
+    init(ffiValue: FfiRegisterApplePushTokenResponse) throws {
+        self.init(
+            deviceId: try TrixCoreCodec.uuid(ffiValue.deviceId, label: "device_id"),
+            environment: ApplePushEnvironment(ffiValue.environment),
+            pushDeliveryEnabled: ffiValue.pushDeliveryEnabled
+        )
+    }
+}
+
 extension CreateLinkIntentResponse {
     init(ffiValue: FfiCreateLinkIntentResponse) throws {
         self.init(
@@ -747,19 +777,6 @@ extension CreateChatResponse {
             chatId: try TrixCoreCodec.uuid(ffiValue.chatId, label: "chat_id"),
             chatType: ChatType(ffiValue.chatType),
             epoch: ffiValue.epoch
-        )
-    }
-}
-
-extension CreateChatControlOutcome {
-    init(ffiValue: FfiCreateChatControlOutcome) throws {
-        self.init(
-            chatId: try TrixCoreCodec.uuid(ffiValue.chatId, label: "chat_id"),
-            chatType: ChatType(ffiValue.chatType),
-            epoch: ffiValue.epoch,
-            mlsGroupId: ffiValue.mlsGroupId,
-            report: try LocalStoreApplyReport(ffiValue: ffiValue.report),
-            projectedMessages: try ffiValue.projectedMessages.map { try LocalProjectedMessage(ffiValue: $0) }
         )
     }
 }
@@ -1010,46 +1027,6 @@ extension DownloadedAttachment {
         self.init(
             body: try TypedMessageBody(ffiValue: ffiValue.body),
             plaintext: ffiValue.plaintext
-        )
-    }
-}
-
-extension SendMessageOutcome {
-    init(ffiValue: FfiSendMessageOutcome) throws {
-        self.init(
-            chatId: try TrixCoreCodec.uuid(ffiValue.chatId, label: "chat_id"),
-            messageId: try TrixCoreCodec.uuid(ffiValue.messageId, label: "message_id"),
-            serverSeq: ffiValue.serverSeq,
-            report: try LocalStoreApplyReport(ffiValue: ffiValue.report),
-            projectedMessage: try LocalProjectedMessage(ffiValue: ffiValue.projectedMessage)
-        )
-    }
-}
-
-extension ModifyChatMembersControlOutcome {
-    init(ffiValue: FfiModifyChatMembersControlOutcome) throws {
-        self.init(
-            chatId: try TrixCoreCodec.uuid(ffiValue.chatId, label: "chat_id"),
-            epoch: ffiValue.epoch,
-            changedParticipantAccountIDs: try ffiValue.changedAccountIds.map {
-                try TrixCoreCodec.uuid($0, label: "changed_participant_account_id")
-            },
-            report: try LocalStoreApplyReport(ffiValue: ffiValue.report),
-            projectedMessages: try ffiValue.projectedMessages.map { try LocalProjectedMessage(ffiValue: $0) }
-        )
-    }
-}
-
-extension ModifyChatDevicesControlOutcome {
-    init(ffiValue: FfiModifyChatDevicesControlOutcome) throws {
-        self.init(
-            chatId: try TrixCoreCodec.uuid(ffiValue.chatId, label: "chat_id"),
-            epoch: ffiValue.epoch,
-            changedDeviceIDs: try ffiValue.changedDeviceIds.map {
-                try TrixCoreCodec.uuid($0, label: "changed_device_id")
-            },
-            report: try LocalStoreApplyReport(ffiValue: ffiValue.report),
-            projectedMessages: try ffiValue.projectedMessages.map { try LocalProjectedMessage(ffiValue: $0) }
         )
     }
 }

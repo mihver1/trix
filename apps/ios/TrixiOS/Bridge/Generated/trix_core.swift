@@ -2642,6 +2642,8 @@ public protocol FfiServerApiClientProtocol: AnyObject, Sendable {
     
     func createMessage(chatId: String, params: FfiCreateMessageParams) throws  -> FfiCreateMessageResponse
     
+    func deleteApplePushToken() throws 
+    
     func downloadAttachment(body: FfiMessageBody) throws  -> FfiDownloadedAttachment
     
     func downloadBlob(blobId: String) throws  -> Data
@@ -2681,6 +2683,8 @@ public protocol FfiServerApiClientProtocol: AnyObject, Sendable {
     func listHistorySyncJobs(role: FfiHistorySyncJobRole?, status: FfiHistorySyncJobStatus?, limit: UInt32?) throws  -> [FfiHistorySyncJob]
     
     func publishKeyPackages(packages: [FfiPublishKeyPackage]) throws  -> FfiPublishKeyPackagesResponse
+    
+    func registerApplePushToken(tokenHex: String, environment: FfiApplePushEnvironment) throws  -> FfiRegisterApplePushTokenResponse
     
     func removeChatDevices(chatId: String, params: FfiModifyChatDevicesParams) throws  -> FfiModifyChatDevicesResponse
     
@@ -2964,6 +2968,13 @@ open func createMessage(chatId: String, params: FfiCreateMessageParams)throws  -
 })
 }
     
+open func deleteApplePushToken()throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverapiclient_delete_apple_push_token(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+    
 open func downloadAttachment(body: FfiMessageBody)throws  -> FfiDownloadedAttachment  {
     return try  FfiConverterTypeFfiDownloadedAttachment_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_download_attachment(
@@ -3143,6 +3154,16 @@ open func publishKeyPackages(packages: [FfiPublishKeyPackage])throws  -> FfiPubl
     uniffi_trix_core_fn_method_ffiserverapiclient_publish_key_packages(
             self.uniffiCloneHandle(),
         FfiConverterSequenceTypeFfiPublishKeyPackage.lower(packages),$0
+    )
+})
+}
+    
+open func registerApplePushToken(tokenHex: String, environment: FfiApplePushEnvironment)throws  -> FfiRegisterApplePushTokenResponse  {
+    return try  FfiConverterTypeFfiRegisterApplePushTokenResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverapiclient_register_apple_push_token(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(tokenHex),
+        FfiConverterTypeFfiApplePushEnvironment_lower(environment),$0
     )
 })
 }
@@ -10845,6 +10866,64 @@ public func FfiConverterTypeFfiRealtimeEvent_lower(_ value: FfiRealtimeEvent) ->
 }
 
 
+public struct FfiRegisterApplePushTokenResponse: Equatable, Hashable {
+    public var deviceId: String
+    public var environment: FfiApplePushEnvironment
+    public var pushDeliveryEnabled: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(deviceId: String, environment: FfiApplePushEnvironment, pushDeliveryEnabled: Bool) {
+        self.deviceId = deviceId
+        self.environment = environment
+        self.pushDeliveryEnabled = pushDeliveryEnabled
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiRegisterApplePushTokenResponse: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRegisterApplePushTokenResponse: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRegisterApplePushTokenResponse {
+        return
+            try FfiRegisterApplePushTokenResponse(
+                deviceId: FfiConverterString.read(from: &buf), 
+                environment: FfiConverterTypeFfiApplePushEnvironment.read(from: &buf), 
+                pushDeliveryEnabled: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiRegisterApplePushTokenResponse, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.deviceId, into: &buf)
+        FfiConverterTypeFfiApplePushEnvironment.write(value.environment, into: &buf)
+        FfiConverterBool.write(value.pushDeliveryEnabled, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRegisterApplePushTokenResponse_lift(_ buf: RustBuffer) throws -> FfiRegisterApplePushTokenResponse {
+    return try FfiConverterTypeFfiRegisterApplePushTokenResponse.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRegisterApplePushTokenResponse_lower(_ value: FfiRegisterApplePushTokenResponse) -> RustBuffer {
+    return FfiConverterTypeFfiRegisterApplePushTokenResponse.lower(value)
+}
+
+
 public struct FfiReservedKeyPackage: Equatable, Hashable {
     public var keyPackageId: String
     public var deviceId: String
@@ -11703,6 +11782,73 @@ public func FfiConverterTypeFfiWebSocketServerFrame_lift(_ buf: RustBuffer) thro
 public func FfiConverterTypeFfiWebSocketServerFrame_lower(_ value: FfiWebSocketServerFrame) -> RustBuffer {
     return FfiConverterTypeFfiWebSocketServerFrame.lower(value)
 }
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum FfiApplePushEnvironment: Equatable, Hashable {
+    
+    case sandbox
+    case production
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiApplePushEnvironment: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiApplePushEnvironment: FfiConverterRustBuffer {
+    typealias SwiftType = FfiApplePushEnvironment
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiApplePushEnvironment {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .sandbox
+        
+        case 2: return .production
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiApplePushEnvironment, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .sandbox:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .production:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiApplePushEnvironment_lift(_ buf: RustBuffer) throws -> FfiApplePushEnvironment {
+    return try FfiConverterTypeFfiApplePushEnvironment.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiApplePushEnvironment_lower(_ value: FfiApplePushEnvironment) -> RustBuffer {
+    return FfiConverterTypeFfiApplePushEnvironment.lower(value)
+}
+
 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
@@ -15493,6 +15639,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_create_message() != 38461) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffiserverapiclient_delete_apple_push_token() != 21843) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_download_attachment() != 65126) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -15551,6 +15700,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_publish_key_packages() != 7992) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffiserverapiclient_register_apple_push_token() != 54319) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_remove_chat_devices() != 29544) {

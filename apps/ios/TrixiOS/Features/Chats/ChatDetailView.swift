@@ -12,7 +12,7 @@ struct ChatDetailView: View {
     @Binding var serverBaseURL: String
     var model: AppModel
 
-    @State private var snapshot: ChatSnapshot?
+    @State private var snapshot: SafeConversationSnapshot?
     @State private var isLoadingSnapshot = false
     @State private var localErrorMessage: String?
     @State private var activityMessage: String?
@@ -361,14 +361,14 @@ struct ChatDetailView: View {
                 }
 
                 Section {
-                    if snapshot.history.isEmpty {
-                        Text("No \(snapshot.historySource.label.lowercased()) history for this chat yet.")
+                    if snapshot.messages.isEmpty {
+                        Text("No cached messenger-core messages for this chat yet.")
                             .foregroundStyle(.secondary)
                     } else {
-                        ForEach(snapshot.history) { message in
+                        ForEach(snapshot.messages) { message in
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack(alignment: .firstTextBaseline) {
-                                    Text(message.messageKind.label)
+                                    Text(message.debugKindLabel)
                                         .font(.headline)
 
                                     Spacer()
@@ -407,9 +407,9 @@ struct ChatDetailView: View {
                         }
                     }
                 } header: {
-                    Text("History (\(snapshot.historySource.label))")
+                    Text("Messages")
                 } footer: {
-                    Text(snapshot.historySource.description)
+                    Text("This view reads the persisted messenger-core snapshot and timeline directly.")
                 }
             } else {
                 Section {
@@ -492,17 +492,17 @@ struct ChatDetailView: View {
         }
 
         do {
-            let loadedSnapshot = try await model.fetchChatSnapshot(
+            let loadedSnapshot = try await model.fetchConversationSnapshot(
                 baseURLString: serverBaseURL,
                 chatId: chatSummary.chatId
             )
             snapshot = loadedSnapshot
 
-            if loadedSnapshot.detail.lastServerSeq > 0 {
-                _ = await model.acknowledgeChatRead(
+            if loadedSnapshot.latestMessageId != nil {
+                _ = await model.acknowledgeConversationRead(
                     baseURLString: serverBaseURL,
                     chatId: loadedSnapshot.detail.chatId,
-                    throughServerSeq: loadedSnapshot.detail.lastServerSeq,
+                    throughMessageId: loadedSnapshot.latestMessageId,
                     receiptTargetMessageId: readReceiptTargetMessageId(for: loadedSnapshot)
                 )
             }
@@ -511,20 +511,15 @@ struct ChatDetailView: View {
         }
     }
 
-    private func readReceiptTargetMessageId(for snapshot: ChatSnapshot) -> String? {
+    private func readReceiptTargetMessageId(for snapshot: SafeConversationSnapshot) -> String? {
         guard let currentAccountId = model.localIdentity?.accountId else {
             return nil
         }
 
-        let orderedHistory = snapshot.history.sorted {
-            if $0.serverSeq == $1.serverSeq {
-                return $0.createdAtUnix < $1.createdAtUnix
-            }
-            return $0.serverSeq < $1.serverSeq
-        }
-
-        return orderedHistory.reversed().first { message in
-            message.senderAccountId != currentAccountId && message.contentType != .receipt
+        return snapshot.messages.reversed().first { message in
+            message.isVisibleInTimeline &&
+                message.senderAccountId != currentAccountId &&
+                message.contentType != .receipt
         }?.id
     }
 
@@ -723,7 +718,7 @@ struct ChatDetailView: View {
     }
 
     private func historySenderLabel(
-        for message: MessageEnvelope,
+        for message: SafeMessengerMessage,
         in detail: ChatDetailResponse
     ) -> String {
         let senderName: String
@@ -752,29 +747,56 @@ struct ChatDetailView: View {
     }
 }
 
-private extension ChatHistorySource {
-    var label: String {
-        switch self {
-        case .server:
-            return "Server"
-        case .localStore:
-            return "Local Store"
-        }
-    }
-
-    var description: String {
-        switch self {
-        case .server:
-            return "This chat is currently showing the latest server history payload."
-        case .localStore:
-            return "This chat is showing history cached in the persistent `trix-core` local store."
-        }
-    }
-}
-
 private func chatDetailParsedIdentifiers(_ rawValue: String) -> [String] {
     rawValue
         .components(separatedBy: CharacterSet(charactersIn: ", \n\t"))
         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         .filter { !$0.isEmpty }
+}
+
+private extension SafeMessengerMessage {
+    var debugKindLabel: String {
+        switch body?.kind {
+        case .text:
+            return "Text"
+        case .reaction:
+            return "Reaction"
+        case .receipt:
+            return "Receipt"
+        case .attachment:
+            return "Attachment"
+        case .chatEvent:
+            return "Chat Event"
+        case .none:
+            return contentType.label
+        }
+    }
+
+    var debugPreview: String {
+        previewText
+    }
+
+    var debugDetail: String? {
+        guard let body else {
+            return nil
+        }
+
+        switch body.kind {
+        case .text:
+            return body.text
+        case .reaction:
+            let action = body.reactionAction?.rawValue ?? "react"
+            let target = body.targetMessageId ?? "unknown"
+            let emoji = body.emoji ?? "?"
+            return "\(action.capitalized) \(emoji) on \(target)"
+        case .receipt:
+            let target = body.targetMessageId ?? "unknown"
+            let receipt = body.receiptType?.rawValue.capitalized ?? "Receipt"
+            return "\(receipt) for \(target)"
+        case .attachment:
+            return body.attachment?.fileName ?? body.attachment?.attachmentRef
+        case .chatEvent:
+            return body.eventType ?? body.eventJSON
+        }
+    }
 }

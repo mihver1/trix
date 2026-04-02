@@ -756,7 +756,11 @@ impl SyncCoordinator {
                 .refresh_pending_history_repair_window(chat_id)?
                 .is_some();
             if let Some(server_seq) = max_projected_server_seq.or(report.advanced_to_server_seq) {
-                self.record_observed_chat_server_seqs([(chat_id, server_seq)])?;
+                if job.job_type == HistorySyncJobType::DeviceRekey {
+                    self.record_chat_server_seq(chat_id, server_seq)?;
+                } else {
+                    self.record_observed_chat_server_seqs([(chat_id, server_seq)])?;
+                }
             }
             if report.projected_messages_upserted > 0
                 || report.advanced_to_server_seq.is_some()
