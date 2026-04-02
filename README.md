@@ -7,7 +7,7 @@ Confirmed components in the repo today:
 - single-binary `Axum` backend with `PostgreSQL`, automatic `sqlx` migrations, local blob storage, rate limiting, cleanup jobs, websocket inbox delivery, a separate `/v0/admin/*` control surface, and optional APNs-backed background inbox wake-up pushes for iOS and macOS devices
 - `v0` API surface for auth, accounts, directory search, device linking and approval, transfer bundles, device revoke, key packages, chats, message history, inbox lease and ack, history sync backfill and repair, blob upload and download, and operator admin/session/settings/users flows
 - shared `trix-core` library with `OpenMLS` group state, encrypted local stores, attachment helpers, device-transfer helpers, safe messenger snapshots/timelines, realtime and sync runtime, and `UniFFI` bindings
-- Android, iOS, and macOS consumer clients now share the task-first create/link onboarding model, projected timelines with outgoing delivery/read ticks, attachment send/download, and inline previews for common image types; macOS also ships the beta client and a separate macOS admin app
+- Android, iOS, and macOS consumer clients now share the task-first create/link onboarding model, stored-session recovery that keeps reconnect vs approval/relink states explicit, projected timelines with outgoing delivery/read ticks, attachment send/download, and inline previews for common image types; macOS also ships the beta client and a separate macOS admin app
 - `trix-bot` and `trix-botd` for headless encrypted bot accounts, plus Rust, Python, and Go echo-bot examples
 
 This is still a development prototype, not a production deployment.
@@ -73,15 +73,24 @@ For APNs key placement and device lifecycle operations, see [docs/server-operati
 make check
 make contract-check
 make run-server
+cargo check -p trix-core
+cargo test -p trix-core
 make ffi-bindings
+make ffi-bindings-swift
+make ffi-bindings-kotlin
 make ffi-parity-audit
 cargo test --workspace
+swift test --package-path apps/macos
+swift build --package-path apps/macos-admin
+swift run --package-path apps/macos-admin
 swift test --package-path apps/macos-admin
 ./scripts/client-smoke-harness.sh --list-suites
+./scripts/client-smoke-harness.sh --suite macos --no-postgres
 ./scripts/client-smoke-harness.sh --suite macos-admin --no-postgres
+./scripts/client-smoke-harness.sh --suite ios-unit --no-postgres
 ./scripts/client-smoke-harness.sh --suite ios-server --stop-postgres
 ./scripts/client-smoke-harness.sh --suite ios-ui --stop-postgres
-cargo run -p trix-botd -- stdio
+cargo run -q -p trix-botd -- stdio
 ```
 
 ## Clients And Bots

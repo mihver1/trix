@@ -197,5 +197,6 @@ See `docs/bot-harness.md` for runtime setup and payload examples.
 - `scripts/ffi_parity_audit.py` audits the exported `ffi.rs` surface against non-generated iOS, macOS, and Android client code. It reports orphaned exports plus platform gaps, and supports `--strict` for fail-on-gap / fail-on-orphan enforcement once the clients are fully aligned.
 - `scripts/ffi_parity_audit.py --strict` is now contract-aware: the enforced exception list lives in `contracts/ffi-usage-contract.json`, and stale exception labels fail the audit.
 - `scripts/verify-uniffi-bindings.sh` verifies that the checked-in iOS, macOS, and Android UniFFI bridge files still match fresh generated output from the current `ffi.rs`.
+- checked-in generated outputs under `apps/ios/TrixiOS/Bridge/Generated/`, `apps/macos/Sources/TrixMac/Generated/`, `apps/macos/Sources/trix_coreFFI/`, `bindings/`, and `bindings/chat/trix/android/core/ffi/` are build artifacts; regenerate them from the documented workflow instead of hand-editing them.
 - Kotlin generation works without `ktlint`, but UniFFI will print a non-fatal formatting warning if `ktlint` is not installed.
 - Kotlin sources are generated under `bindings/uniffi/trix_core/`.

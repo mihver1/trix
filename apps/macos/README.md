@@ -35,17 +35,22 @@ apps/macos/
 ## Run
 
 ```bash
-MACOSX_DEPLOYMENT_TARGET=14.0 cargo build -p trix-core --lib
 cd apps/macos
+./scripts/build-trix-core-universal.sh
 swift build
+swift test
 swift run TrixMac
 ```
 
 You can also open `Package.swift` in `Xcode` and run the `TrixMac` target as a regular macOS app.
 
-By default `TrixMac` links against `../../target/debug/libtrix_core.a`. Override that with `TRIX_CORE_ARTIFACTS_PATH=/abs/path/to/target/release` when you want a release Rust artifact instead.
+`Package.swift` resolves `libtrix_core.a` from `../../target/macos-universal/<Configuration>/` by default. `./scripts/build-trix-core-universal.sh` prepares that archive for the active Swift build configuration. Override that lookup with `TRIX_CORE_ARTIFACTS_PATH=/abs/path/containing/libtrix_core.a` when you want to pin a specific Rust artifact directory instead.
 
-Keep the Rust build on `MACOSX_DEPLOYMENT_TARGET=14.0` to match the app target and avoid linker version warnings.
+Keep the Rust build on `MACOSX_DEPLOYMENT_TARGET=14.0` to match the app target and avoid linker version warnings. The repo-standard smoke entrypoint for this package is:
+
+```bash
+./scripts/client-smoke-harness.sh --suite macos --no-postgres
+```
 
 ## Closed Beta Build
 
