@@ -238,6 +238,27 @@ internal class AndroidMessengerClient(
         return batch.toSummary()
     }
 
+    fun getNewEventsRealtime(checkpoint: String?): MessengerEventBatchSummary {
+        val batch = client().getNewEventsRealtime(checkpoint)
+        return batch.toSummary()
+    }
+
+    fun sendPresencePing(nonce: String? = null) {
+        client().sendPresencePing(nonce)
+    }
+
+    fun sendHistorySyncProgress(
+        jobId: String,
+        cursorJson: String? = null,
+        completedChunks: ULong? = null,
+    ) {
+        client().sendHistorySyncProgress(jobId, cursorJson, completedChunks)
+    }
+
+    fun closeRealtime() {
+        client().closeRealtime()
+    }
+
     override fun close() {
         if (clientDelegate.isInitialized()) {
             clientDelegate.value.close()

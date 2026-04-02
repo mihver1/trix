@@ -3,7 +3,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result, anyhow};
@@ -13,7 +13,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::runtime::{Builder, Runtime};
-use trix_types::{AccountId, ChatId, DeviceId, DeviceStatus, MessageId};
+use trix_types::{
+    AccountId, ChatId, DeviceId, DeviceStatus, InboxItem, MessageId, WebSocketServerFrame,
+};
 use uuid::Uuid;
 
 use crate::{
@@ -356,6 +358,25 @@ struct PendingMessengerEvent {
     attachment_ref: Option<String>,
 }
 
+enum MessengerEventSource {
+    Poll,
+    InjectedInbox(Vec<InboxItem>),
+}
+
+struct MessengerRealtimeState {
+    driver: crate::RealtimeDriver,
+    websocket: Option<crate::ServerWebSocketClient>,
+}
+
+impl Default for MessengerRealtimeState {
+    fn default() -> Self {
+        Self {
+            driver: crate::RealtimeDriver::new(),
+            websocket: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct MessengerClientState {
     version: u32,
@@ -445,6 +466,7 @@ pub struct FfiMessengerClient {
     client: Mutex<ServerApiClient>,
     history_store: Mutex<LocalHistoryStore>,
     sync_coordinator: Mutex<SyncCoordinator>,
+    realtime: Mutex<MessengerRealtimeState>,
     mls_operation: Mutex<()>,
     state: Mutex<MessengerClientState>,
     root_path: String,
@@ -532,6 +554,7 @@ impl FfiMessengerClient {
             client: Mutex::new(client),
             history_store: Mutex::new(history_store),
             sync_coordinator: Mutex::new(sync_coordinator),
+            realtime: Mutex::new(MessengerRealtimeState::default()),
             mls_operation: Mutex::new(()),
             state: Mutex::new(state),
             root_path: root_path.to_string_lossy().into_owned(),
@@ -715,163 +738,46 @@ impl FfiMessengerClient {
         &self,
         checkpoint: Option<String>,
     ) -> Result<FfiMessengerEventBatch, FfiMessengerError> {
-        let requested_checkpoint = checkpoint.as_deref().map(parse_checkpoint).transpose()?;
-        self.validate_requested_checkpoint(requested_checkpoint)?;
-        let client = self.authenticated_client()?;
-        self.maybe_import_transfer_bundle()?;
-        self.flush_pending_inbox_acks_best_effort(&client);
-        let self_account_id = self.state_account_id().transpose()?;
-        let mut mutated_checkpointed_state = false;
+        self.get_new_events_with_source(checkpoint, MessengerEventSource::Poll)
+    }
 
-        let result = (|| -> Result<FfiMessengerEventBatch, FfiMessengerError> {
-            let mut previous_cursors = BTreeMap::new();
-            {
-                let store = lock_history_store(&self.history_store)?;
-                for chat in store.list_chats() {
-                    previous_cursors.insert(
-                        chat.chat_id.0.to_string(),
-                        store.projected_cursor(chat.chat_id).unwrap_or(0),
+    pub fn get_new_events_realtime(
+        &self,
+        checkpoint: Option<String>,
+    ) -> Result<FfiMessengerEventBatch, FfiMessengerError> {
+        let client = self.authenticated_client()?;
+        let deadline = Instant::now() + self.realtime_poll_interval()?;
+
+        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+            if remaining.is_zero() {
+                break;
+            }
+            let Some(frame) = self.wait_for_realtime_frame(&client, remaining)? else {
+                break;
+            };
+            match frame {
+                WebSocketServerFrame::InboxItems { items, .. } => {
+                    return self.get_new_events_with_source(
+                        checkpoint,
+                        MessengerEventSource::InjectedInbox(items),
                     );
                 }
-            }
-
-            let mut changed_chat_ids = {
-                let chats = self
-                    .runtime
-                    .block_on(client.list_chats())
-                    .map_err(messenger_error)?;
-                let mut store = lock_history_store(&self.history_store)?;
-                let report = store.apply_chat_list(&chats).map_err(map_domain_error)?;
-                if !report.changed_chat_ids.is_empty() {
-                    mutated_checkpointed_state = true;
+                WebSocketServerFrame::Acked { acked_inbox_ids } => {
+                    let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
+                    coordinator
+                        .record_acked_inbox_ids(&acked_inbox_ids)
+                        .map_err(map_domain_error)?;
                 }
-                report.changed_chat_ids
-            };
-            let lease = {
-                let coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
-                self.runtime
-                    .block_on(coordinator.lease_inbox(&client, Some(100), Some(30)))
-                    .map_err(map_domain_error)?
-            };
-            let report = {
-                let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
-                let mut store = lock_history_store(&self.history_store)?;
-                coordinator
-                    .apply_inbox_items_into_store(&mut store, &lease.items)
-                    .map_err(map_domain_error)?
-            };
-            if report.messages_upserted > 0 || !report.changed_chat_ids.is_empty() {
-                mutated_checkpointed_state = true;
-            }
-
-            let inbox_changed_chat_ids = report.changed_chat_ids;
-            changed_chat_ids.extend(inbox_changed_chat_ids.iter().copied());
-            changed_chat_ids.sort_by_key(|chat_id| chat_id.0);
-            changed_chat_ids.dedup();
-
-            if !inbox_changed_chat_ids.is_empty() {
-                let active_inbox_changed_chat_ids =
-                    self.filter_active_chat_ids(&inbox_changed_chat_ids)?;
-                if !active_inbox_changed_chat_ids.is_empty() {
-                    self.refresh_chat_details(&client, &active_inbox_changed_chat_ids)?;
-                    {
-                        let mut store = lock_history_store(&self.history_store)?;
-                        store
-                            .apply_inbox_items(&lease.items)
-                            .map_err(map_domain_error)?;
-                    }
-                    if let Err(error) = self.project_changed_chats(&active_inbox_changed_chat_ids) {
-                        let (repaired_chat_ids, repair_available) = self
-                            .request_history_repairs_after_projection_failure_resolution(
-                                &client,
-                                &active_inbox_changed_chat_ids,
-                            )?;
-                        if !repair_available {
-                            return Err(error);
-                        }
-                        mutated_checkpointed_state = true;
-                        changed_chat_ids.extend(repaired_chat_ids);
-                    }
+                WebSocketServerFrame::Hello { .. } | WebSocketServerFrame::Pong { .. } => {}
+                WebSocketServerFrame::SessionReplaced { .. }
+                | WebSocketServerFrame::Error { .. } => {
+                    self.close_realtime_socket_best_effort();
+                    break;
                 }
-            }
-            let history_sync_changed_chat_ids = self.process_history_sync_jobs(&client)?;
-            if !history_sync_changed_chat_ids.is_empty() {
-                mutated_checkpointed_state = true;
-            }
-            changed_chat_ids.extend(history_sync_changed_chat_ids);
-            let repair_changed_chat_ids = self.request_history_repairs_if_needed(&client, None)?;
-            if !repair_changed_chat_ids.is_empty() {
-                mutated_checkpointed_state = true;
-            }
-            changed_chat_ids.extend(repair_changed_chat_ids);
-            changed_chat_ids.sort_by_key(|chat_id| chat_id.0);
-            changed_chat_ids.dedup();
-            let inbox_ids = lease
-                .items
-                .iter()
-                .map(|item| item.inbox_id)
-                .collect::<Vec<_>>();
-
-            let mut events = Vec::new();
-            for chat_id in changed_chat_ids {
-                let after_server_seq = previous_cursors
-                    .get(&chat_id.0.to_string())
-                    .copied()
-                    .unwrap_or_default();
-                let new_messages = {
-                    let store = lock_history_store(&self.history_store)?;
-                    store.get_local_timeline_items(
-                        chat_id,
-                        self_account_id,
-                        Some(after_server_seq),
-                        None,
-                    )
-                };
-                for message in new_messages {
-                    let message = self.timeline_item_to_message_record(chat_id, message)?;
-                    events.push(PendingMessengerEvent {
-                        kind: FfiMessengerEventKind::MessageCreated,
-                        conversation_id: Some(chat_id.0.to_string()),
-                        message: Some(message),
-                        conversation: None,
-                        device: None,
-                        read_state: None,
-                        attachment_ref: None,
-                    });
-                }
-                let conversation = {
-                    let store = lock_history_store(&self.history_store)?;
-                    store
-                        .get_local_chat_list_item(chat_id, self_account_id)
-                        .map(conversation_summary_to_ffi)
-                };
-                events.push(PendingMessengerEvent {
-                    kind: FfiMessengerEventKind::ConversationUpdated,
-                    conversation_id: Some(chat_id.0.to_string()),
-                    message: None,
-                    conversation,
-                    device: None,
-                    read_state: None,
-                    attachment_ref: None,
-                });
-            }
-
-            let devices = self.fetch_devices(&client)?;
-            let device_state_changed = self.sync_device_statuses(&devices, false)?;
-            let batch = self.finalize_event_batch(events, &inbox_ids, device_state_changed)?;
-            self.flush_pending_inbox_acks_best_effort(&client);
-            Ok(batch)
-        })();
-
-        if let Err(error) = &result {
-            if mutated_checkpointed_state {
-                let _ = self.mark_requires_resync(format!(
-                    "local state advanced without a delivered event batch; reload snapshot ({error})"
-                ));
             }
         }
 
-        result
+        self.get_new_events_with_source(checkpoint, MessengerEventSource::Poll)
     }
 
     pub fn send_message(
@@ -1272,14 +1178,35 @@ impl FfiMessengerClient {
         is_typing: bool,
     ) -> Result<(), FfiMessengerError> {
         let chat_id = parse_chat_id(&conversation_id)?;
-        let client = self.authenticated_client()?;
-        let mut websocket = self
-            .runtime
-            .block_on(client.connect_websocket())
-            .map_err(messenger_error)?;
-        self.runtime
-            .block_on(websocket.send_typing_update(chat_id, is_typing))
-            .map_err(messenger_error)
+        self.send_over_existing_or_transient_websocket(move |runtime, websocket| {
+            runtime.block_on(websocket.send_typing_update(chat_id.clone(), is_typing))
+        })
+    }
+
+    pub fn send_presence_ping(&self, nonce: Option<String>) -> Result<(), FfiMessengerError> {
+        self.send_over_existing_or_transient_websocket(move |runtime, websocket| {
+            runtime.block_on(websocket.send_presence_ping(nonce.clone()))
+        })
+    }
+
+    pub fn send_history_sync_progress(
+        &self,
+        job_id: String,
+        cursor_json: Option<String>,
+        completed_chunks: Option<u64>,
+    ) -> Result<(), FfiMessengerError> {
+        let cursor_json = parse_optional_json_string(cursor_json)?;
+        self.send_over_existing_or_transient_websocket(move |runtime, websocket| {
+            runtime.block_on(websocket.send_history_sync_progress(
+                job_id.clone(),
+                cursor_json.clone(),
+                completed_chunks,
+            ))
+        })
+    }
+
+    pub fn close_realtime(&self) -> Result<(), FfiMessengerError> {
+        self.close_realtime_socket()
     }
 
     pub fn list_devices(&self) -> Result<Vec<FfiMessengerDeviceRecord>, FfiMessengerError> {
@@ -1477,6 +1404,7 @@ impl FfiMessengerClient {
     }
 
     fn rebuild_client_base_url(&self, base_url: &str) -> Result<(), FfiMessengerError> {
+        self.close_realtime_socket_best_effort();
         let mut client = lock_client(&self.client)?;
         *client = ServerApiClient::new(base_url).map_err(messenger_error)?;
         if let Some(access_token) = lock_state(&self.state)?.access_token.clone() {
@@ -1609,6 +1537,318 @@ impl FfiMessengerClient {
         }
     }
 
+    fn realtime_poll_interval(&self) -> Result<Duration, FfiMessengerError> {
+        Ok(lock_realtime(&self.realtime)?.driver.config().poll_interval)
+    }
+
+    fn get_new_events_with_source(
+        &self,
+        checkpoint: Option<String>,
+        source: MessengerEventSource,
+    ) -> Result<FfiMessengerEventBatch, FfiMessengerError> {
+        let requested_checkpoint = checkpoint.as_deref().map(parse_checkpoint).transpose()?;
+        contextualize_messenger_error(
+            self.validate_requested_checkpoint(requested_checkpoint),
+            "validate_requested_checkpoint",
+        )?;
+        let client =
+            contextualize_messenger_error(self.authenticated_client(), "authenticated_client")?;
+        contextualize_messenger_error(
+            self.maybe_import_transfer_bundle(),
+            "maybe_import_transfer_bundle",
+        )?;
+        self.flush_pending_inbox_acks_best_effort(&client);
+        let self_account_id = self.state_account_id().transpose()?;
+        let mut mutated_checkpointed_state = false;
+
+        let result = (|| -> Result<FfiMessengerEventBatch, FfiMessengerError> {
+            let previous_cursors = self.capture_projected_cursors()?;
+            let mut changed_chat_ids = contextualize_messenger_error(
+                self.apply_remote_chat_list(&client, &mut mutated_checkpointed_state),
+                "apply_remote_chat_list",
+            )?;
+            let (inbox_items, inbox_changed_chat_ids) = contextualize_messenger_error(
+                self.apply_event_source(source, &client, &mut mutated_checkpointed_state),
+                "apply_event_source",
+            )?;
+
+            changed_chat_ids.extend(inbox_changed_chat_ids.iter().copied());
+            changed_chat_ids.sort_by_key(|chat_id| chat_id.0);
+            changed_chat_ids.dedup();
+
+            if !inbox_changed_chat_ids.is_empty() {
+                let active_inbox_changed_chat_ids =
+                    self.filter_active_chat_ids(&inbox_changed_chat_ids)?;
+                if !active_inbox_changed_chat_ids.is_empty() {
+                    contextualize_messenger_error(
+                        self.refresh_chat_details(&client, &active_inbox_changed_chat_ids),
+                        "refresh_chat_details",
+                    )?;
+                    {
+                        let mut store = lock_history_store(&self.history_store)?;
+                        store
+                            .apply_inbox_items(&inbox_items)
+                            .map_err(map_domain_error)?;
+                    }
+                    if let Err(error) = self.project_changed_chats(&active_inbox_changed_chat_ids) {
+                        let (repaired_chat_ids, repair_available) = self
+                            .request_history_repairs_after_projection_failure_resolution(
+                                &client,
+                                &active_inbox_changed_chat_ids,
+                            )?;
+                        if !repair_available {
+                            return Err(error);
+                        }
+                        mutated_checkpointed_state = true;
+                        changed_chat_ids.extend(repaired_chat_ids);
+                    }
+                }
+            }
+
+            let history_sync_changed_chat_ids = contextualize_messenger_error(
+                self.process_history_sync_jobs(&client),
+                "process_history_sync_jobs",
+            )?;
+            if !history_sync_changed_chat_ids.is_empty() {
+                mutated_checkpointed_state = true;
+            }
+            changed_chat_ids.extend(history_sync_changed_chat_ids);
+
+            let repair_changed_chat_ids = contextualize_messenger_error(
+                self.request_history_repairs_if_needed(&client, None),
+                "request_history_repairs_if_needed",
+            )?;
+            if !repair_changed_chat_ids.is_empty() {
+                mutated_checkpointed_state = true;
+            }
+            changed_chat_ids.extend(repair_changed_chat_ids);
+            changed_chat_ids.sort_by_key(|chat_id| chat_id.0);
+            changed_chat_ids.dedup();
+
+            let events = self.build_pending_events_for_changed_chats(
+                &changed_chat_ids,
+                &previous_cursors,
+                self_account_id,
+            )?;
+            let devices = contextualize_messenger_error(self.fetch_devices(&client), "fetch_devices")?;
+            let device_state_changed = contextualize_messenger_error(
+                self.sync_device_statuses(&devices, false),
+                "sync_device_statuses",
+            )?;
+            let inbox_ids = inbox_items
+                .iter()
+                .map(|item| item.inbox_id)
+                .collect::<Vec<_>>();
+            let batch = self.finalize_event_batch(events, &inbox_ids, device_state_changed)?;
+            self.flush_pending_inbox_acks_best_effort(&client);
+            Ok(batch)
+        })();
+
+        if let Err(error) = &result {
+            if mutated_checkpointed_state {
+                let _ = self.mark_requires_resync(format!(
+                    "local state advanced without a delivered event batch; reload snapshot ({error})"
+                ));
+            }
+        }
+
+        result
+    }
+
+    fn capture_projected_cursors(&self) -> Result<BTreeMap<String, u64>, FfiMessengerError> {
+        let mut previous_cursors = BTreeMap::new();
+        let store = lock_history_store(&self.history_store)?;
+        for chat in store.list_chats() {
+            previous_cursors.insert(
+                chat.chat_id.0.to_string(),
+                store.projected_cursor(chat.chat_id).unwrap_or(0),
+            );
+        }
+        Ok(previous_cursors)
+    }
+
+    fn apply_remote_chat_list(
+        &self,
+        client: &ServerApiClient,
+        mutated_checkpointed_state: &mut bool,
+    ) -> Result<Vec<ChatId>, FfiMessengerError> {
+        let chats = self
+            .runtime
+            .block_on(client.list_chats())
+            .map_err(messenger_error)?;
+        let mut store = lock_history_store(&self.history_store)?;
+        let report = store.apply_chat_list(&chats).map_err(map_domain_error)?;
+        if !report.changed_chat_ids.is_empty() {
+            *mutated_checkpointed_state = true;
+        }
+        Ok(report.changed_chat_ids)
+    }
+
+    fn apply_event_source(
+        &self,
+        source: MessengerEventSource,
+        client: &ServerApiClient,
+        mutated_checkpointed_state: &mut bool,
+    ) -> Result<(Vec<InboxItem>, Vec<ChatId>), FfiMessengerError> {
+        match source {
+            MessengerEventSource::Poll => {
+                let lease = {
+                    let coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
+                    self.runtime
+                        .block_on(coordinator.lease_inbox(client, Some(100), Some(30)))
+                        .map_err(map_domain_error)?
+                };
+                let report = {
+                    let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
+                    let mut store = lock_history_store(&self.history_store)?;
+                    coordinator
+                        .apply_inbox_items_into_store(&mut store, &lease.items)
+                        .map_err(map_domain_error)?
+                };
+                if report.messages_upserted > 0 || !report.changed_chat_ids.is_empty() {
+                    *mutated_checkpointed_state = true;
+                }
+                Ok((lease.items, report.changed_chat_ids))
+            }
+            MessengerEventSource::InjectedInbox(inbox_items) => {
+                let report = {
+                    let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
+                    let mut store = lock_history_store(&self.history_store)?;
+                    coordinator
+                        .apply_inbox_items_into_store(&mut store, &inbox_items)
+                        .map_err(map_domain_error)?
+                };
+                if report.messages_upserted > 0 || !report.changed_chat_ids.is_empty() {
+                    *mutated_checkpointed_state = true;
+                }
+                Ok((inbox_items, report.changed_chat_ids))
+            }
+        }
+    }
+
+    fn build_pending_events_for_changed_chats(
+        &self,
+        changed_chat_ids: &[ChatId],
+        previous_cursors: &BTreeMap<String, u64>,
+        self_account_id: Option<AccountId>,
+    ) -> Result<Vec<PendingMessengerEvent>, FfiMessengerError> {
+        let mut events = Vec::new();
+        for chat_id in changed_chat_ids {
+            let after_server_seq = previous_cursors
+                .get(&chat_id.0.to_string())
+                .copied()
+                .unwrap_or_default();
+            let new_messages = {
+                let store = lock_history_store(&self.history_store)?;
+                store.get_local_timeline_items(
+                    *chat_id,
+                    self_account_id.clone(),
+                    Some(after_server_seq),
+                    None,
+                )
+            };
+            for message in new_messages {
+                let message = self.timeline_item_to_message_record(*chat_id, message)?;
+                events.push(PendingMessengerEvent {
+                    kind: FfiMessengerEventKind::MessageCreated,
+                    conversation_id: Some(chat_id.0.to_string()),
+                    message: Some(message),
+                    conversation: None,
+                    device: None,
+                    read_state: None,
+                    attachment_ref: None,
+                });
+            }
+            let conversation = {
+                let store = lock_history_store(&self.history_store)?;
+                store
+                    .get_local_chat_list_item(*chat_id, self_account_id.clone())
+                    .map(conversation_summary_to_ffi)
+            };
+            events.push(PendingMessengerEvent {
+                kind: FfiMessengerEventKind::ConversationUpdated,
+                conversation_id: Some(chat_id.0.to_string()),
+                message: None,
+                conversation,
+                device: None,
+                read_state: None,
+                attachment_ref: None,
+            });
+        }
+        Ok(events)
+    }
+
+    fn wait_for_realtime_frame(
+        &self,
+        client: &ServerApiClient,
+        timeout: Duration,
+    ) -> Result<Option<WebSocketServerFrame>, FfiMessengerError> {
+        let mut realtime = lock_realtime(&self.realtime)?;
+        if realtime.websocket.is_none() {
+            match self.runtime.block_on(client.connect_websocket()) {
+                Ok(websocket) => realtime.websocket = Some(websocket),
+                Err(_) => return Ok(None),
+            }
+        }
+
+        let Some(websocket) = realtime.websocket.as_mut() else {
+            return Ok(None);
+        };
+
+        let frame_result = self.runtime.block_on(async {
+            tokio::time::timeout(timeout, websocket.next_frame()).await
+        });
+        let clear_socket = matches!(frame_result, Ok(Ok(None)) | Ok(Err(_)));
+        if clear_socket {
+            realtime.websocket = None;
+        }
+
+        match frame_result {
+            Ok(Ok(Some(frame))) => Ok(Some(frame)),
+            Ok(Ok(None)) | Ok(Err(_)) | Err(_) => Ok(None),
+        }
+    }
+
+    fn send_over_existing_or_transient_websocket<T, F>(&self, op: F) -> Result<T, FfiMessengerError>
+    where
+        F: Fn(&Runtime, &mut crate::ServerWebSocketClient) -> Result<T, ServerApiError>,
+    {
+        if let Ok(mut realtime) = lock_realtime(&self.realtime) {
+            if let Some(websocket) = realtime.websocket.as_mut() {
+                let result = op(&self.runtime, websocket);
+                if result.is_err() {
+                    realtime.websocket = None;
+                }
+                if let Ok(value) = result {
+                    return Ok(value);
+                }
+            }
+        }
+
+        let client = self.authenticated_client()?;
+        let mut websocket = self
+            .runtime
+            .block_on(client.connect_websocket())
+            .map_err(messenger_error)?;
+        let result = op(&self.runtime, &mut websocket).map_err(messenger_error);
+        let _ = self.runtime.block_on(websocket.close());
+        result
+    }
+
+    fn close_realtime_socket(&self) -> Result<(), FfiMessengerError> {
+        let mut realtime = lock_realtime(&self.realtime)?;
+        if let Some(mut websocket) = realtime.websocket.take() {
+            self.runtime
+                .block_on(websocket.close())
+                .map_err(messenger_error)?;
+        }
+        Ok(())
+    }
+
+    fn close_realtime_socket_best_effort(&self) {
+        let _ = self.close_realtime_socket();
+    }
+
     fn open_or_load_mls_facade(&self) -> Result<MlsFacade, FfiMessengerError> {
         let state = lock_state(&self.state)?;
         let credential_identity = state.credential_identity.clone().ok_or_else(|| {
@@ -1677,6 +1917,10 @@ impl FfiMessengerClient {
     }
 
     fn request_backfill_for_unavailable_chats_best_effort(&self, client: &ServerApiClient) {
+        let account_sync_chat_id = match self.account_sync_chat_id() {
+            Ok(value) => value,
+            Err(_) => return,
+        };
         let chats_needing_backfill = match lock_history_store(&self.history_store) {
             Ok(store) => store.chats_with_unavailable_messages(),
             Err(_) => return,
@@ -1686,6 +1930,9 @@ impl FfiMessengerClient {
             Err(_) => return,
         };
         for chat_id in chats_needing_backfill {
+            if Some(chat_id) == account_sync_chat_id {
+                continue;
+            }
             if requested.contains(&chat_id) {
                 continue;
             }
@@ -1813,7 +2060,8 @@ impl FfiMessengerClient {
         client: &ServerApiClient,
         chat_ids: Option<&[ChatId]>,
     ) -> Result<Vec<ChatId>, FfiMessengerError> {
-        let candidate_chat_ids = chat_ids
+        let account_sync_chat_id = self.account_sync_chat_id()?;
+        let mut candidate_chat_ids = chat_ids
             .map(|chat_ids| chat_ids.to_vec())
             .unwrap_or_else(|| {
                 let store = lock_history_store(&self.history_store).ok();
@@ -1827,6 +2075,7 @@ impl FfiMessengerClient {
                     })
                     .unwrap_or_default()
             });
+        candidate_chat_ids.retain(|chat_id| Some(*chat_id) != account_sync_chat_id);
         let mut changed_chat_ids = Vec::new();
         for chat_id in candidate_chat_ids {
             if matches!(
@@ -1988,12 +2237,25 @@ impl FfiMessengerClient {
         &self,
         chat_ids: &[ChatId],
     ) -> Result<Vec<ChatId>, FfiMessengerError> {
+        let account_sync_chat_id = self.account_sync_chat_id()?;
         let store = lock_history_store(&self.history_store)?;
         Ok(chat_ids
             .iter()
             .copied()
-            .filter(|chat_id| store.get_local_chat_list_item(*chat_id, None).is_some())
+            .filter(|chat_id| {
+                Some(*chat_id) != account_sync_chat_id
+                    && store.get_local_chat_list_item(*chat_id, None).is_some()
+            })
             .collect())
+    }
+
+    fn account_sync_chat_id(&self) -> Result<Option<ChatId>, FfiMessengerError> {
+        let state = lock_state(&self.state)?;
+        state
+            .account_sync_chat_id
+            .as_deref()
+            .map(parse_chat_id)
+            .transpose()
     }
 
     fn bootstrap_chat_if_needed(
@@ -3016,6 +3278,12 @@ fn parse_json_string(value: Option<String>) -> Result<Value, FfiMessengerError> 
         .map_err(|err| FfiMessengerError::Message(format!("invalid json payload: {err}")))
 }
 
+fn parse_optional_json_string(value: Option<String>) -> Result<Option<Value>, FfiMessengerError> {
+    value
+        .map(|payload| parse_json_string(Some(payload)))
+        .transpose()
+}
+
 fn to_32_bytes(bytes: Vec<u8>, field: &str) -> Result<[u8; 32], FfiMessengerError> {
     bytes
         .as_slice()
@@ -3196,6 +3464,14 @@ fn lock_sync_coordinator(
     value
         .lock()
         .map_err(|_| FfiMessengerError::Message("sync coordinator mutex poisoned".to_owned()))
+}
+
+fn lock_realtime(
+    value: &Mutex<MessengerRealtimeState>,
+) -> Result<MutexGuard<'_, MessengerRealtimeState>, FfiMessengerError> {
+    value
+        .lock()
+        .map_err(|_| FfiMessengerError::Message("realtime mutex poisoned".to_owned()))
 }
 
 fn lock_mls_operation(value: &Mutex<()>) -> Result<MutexGuard<'_, ()>, FfiMessengerError> {
@@ -3380,6 +3656,32 @@ fn map_domain_error(error: impl std::fmt::Display) -> FfiMessengerError {
 
 fn messenger_error(error: impl std::fmt::Display) -> FfiMessengerError {
     FfiMessengerError::Message(error.to_string())
+}
+
+fn contextualize_messenger_error<T>(
+    result: Result<T, FfiMessengerError>,
+    context: &str,
+) -> Result<T, FfiMessengerError> {
+    result.map_err(|error| match error {
+        FfiMessengerError::Message(message) => {
+            FfiMessengerError::Message(format!("{context}: {message}"))
+        }
+        FfiMessengerError::RequiresResync(message) => {
+            FfiMessengerError::RequiresResync(format!("{context}: {message}"))
+        }
+        FfiMessengerError::AttachmentExpired(message) => {
+            FfiMessengerError::AttachmentExpired(format!("{context}: {message}"))
+        }
+        FfiMessengerError::AttachmentInvalid(message) => {
+            FfiMessengerError::AttachmentInvalid(format!("{context}: {message}"))
+        }
+        FfiMessengerError::DeviceNotApprovable(message) => {
+            FfiMessengerError::DeviceNotApprovable(format!("{context}: {message}"))
+        }
+        FfiMessengerError::NotConfigured(message) => {
+            FfiMessengerError::NotConfigured(format!("{context}: {message}"))
+        }
+    })
 }
 
 #[cfg(test)]
@@ -3677,6 +3979,157 @@ mod tests {
         let error =
             map_domain_error("requires resync: local state repair is required after control op");
         assert!(matches!(error, FfiMessengerError::RequiresResync(_)));
+    }
+
+    #[test]
+    fn filter_active_chat_ids_excludes_account_sync_chat() {
+        let root_path = env::temp_dir().join(format!(
+            "trix-messenger-filter-active-chat-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let account_id = AccountId(Uuid::new_v4());
+        let device_id = DeviceId(Uuid::new_v4());
+        let sync_chat_id = ChatId(Uuid::new_v4());
+        let dm_chat_id = ChatId(Uuid::new_v4());
+        let other_account_id = AccountId(Uuid::new_v4());
+
+        let client = FfiMessengerClient::open(FfiMessengerOpenConfig {
+            root_path: root_path.to_string_lossy().into_owned(),
+            database_key: vec![31_u8; 32],
+            base_url: "http://127.0.0.1:9".to_owned(),
+            access_token: None,
+            account_id: Some(account_id.0.to_string()),
+            device_id: Some(device_id.0.to_string()),
+            account_sync_chat_id: Some(sync_chat_id.0.to_string()),
+            device_display_name: Some("test-device".to_owned()),
+            platform: Some("test".to_owned()),
+            credential_identity: None,
+            account_root_private_key: None,
+            transport_private_key: None,
+        })
+        .unwrap();
+
+        {
+            let mut store = lock_history_store(&client.history_store).unwrap();
+            store
+                .apply_chat_list(&trix_types::ChatListResponse {
+                    chats: vec![
+                        trix_types::ChatSummary {
+                            chat_id: sync_chat_id,
+                            chat_type: ChatType::Dm,
+                            title: Some("Account Sync".to_owned()),
+                            last_server_seq: 1,
+                            epoch: 1,
+                            pending_message_count: 0,
+                            last_message: None,
+                            participant_profiles: vec![ChatParticipantProfileSummary {
+                                account_id,
+                                handle: None,
+                                profile_name: "Self".to_owned(),
+                                profile_bio: None,
+                            }],
+                        },
+                        trix_types::ChatSummary {
+                            chat_id: dm_chat_id,
+                            chat_type: ChatType::Dm,
+                            title: Some("Visible DM".to_owned()),
+                            last_server_seq: 1,
+                            epoch: 1,
+                            pending_message_count: 0,
+                            last_message: None,
+                            participant_profiles: vec![
+                                ChatParticipantProfileSummary {
+                                    account_id,
+                                    handle: None,
+                                    profile_name: "Self".to_owned(),
+                                    profile_bio: None,
+                                },
+                                ChatParticipantProfileSummary {
+                                    account_id: other_account_id,
+                                    handle: None,
+                                    profile_name: "Other".to_owned(),
+                                    profile_bio: None,
+                                },
+                            ],
+                        },
+                    ],
+                })
+                .unwrap();
+        }
+
+        let filtered = client
+            .filter_active_chat_ids(&[sync_chat_id, dm_chat_id])
+            .unwrap();
+        assert_eq!(filtered, vec![dm_chat_id]);
+
+        fs::remove_dir_all(root_path).ok();
+    }
+
+    #[test]
+    fn request_history_repairs_scan_excludes_account_sync_chat() {
+        let root_path = env::temp_dir().join(format!(
+            "trix-messenger-history-repair-scan-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let account_id = AccountId(Uuid::new_v4());
+        let device_id = DeviceId(Uuid::new_v4());
+        let sync_chat_id = ChatId(Uuid::new_v4());
+        let dm_chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+
+        let server = MockRepairServer::spawn(ChatId(Uuid::new_v4()));
+        let client = FfiMessengerClient::open(FfiMessengerOpenConfig {
+            root_path: root_path.to_string_lossy().into_owned(),
+            database_key: vec![37u8; 32],
+            base_url: server.base_url.clone(),
+            access_token: Some("test-access-token".to_owned()),
+            account_id: Some(account_id.0.to_string()),
+            device_id: Some(device_id.0.to_string()),
+            account_sync_chat_id: Some(sync_chat_id.0.to_string()),
+            device_display_name: Some("test-device".to_owned()),
+            platform: Some("test".to_owned()),
+            credential_identity: None,
+            account_root_private_key: Some(vec![41u8; 32]),
+            transport_private_key: Some(vec![43u8; 32]),
+        })
+        .unwrap();
+
+        {
+            let mut store = lock_history_store(&client.history_store).unwrap();
+            seed_projection_gap_candidate(
+                &mut store,
+                sync_chat_id,
+                sender_account_id,
+                sender_device_id,
+            );
+            seed_projection_gap_candidate(
+                &mut store,
+                dm_chat_id,
+                sender_account_id,
+                sender_device_id,
+            );
+            store.clear_pending_history_repair_window(sync_chat_id).unwrap();
+            store.clear_pending_history_repair_window(dm_chat_id).unwrap();
+        }
+
+        let mut repair_client = ServerApiClient::new(&server.base_url).unwrap();
+        repair_client.set_access_token("test-access-token".to_owned());
+        let changed_chat_ids = client
+            .request_history_repairs_if_needed(&repair_client, None)
+            .unwrap();
+
+        assert_eq!(changed_chat_ids, vec![dm_chat_id]);
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.requested_chat_ids, vec![dm_chat_id]);
+        drop(state);
+
+        server.shutdown();
+        fs::remove_dir_all(root_path).ok();
     }
 
     #[test]

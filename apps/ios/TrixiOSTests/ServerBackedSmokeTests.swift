@@ -45,6 +45,7 @@ final class ServerBackedSmokeTests: XCTestCase {
                 accessToken: try authenticate(forceRefresh: forceRefreshSession).accessToken,
                 identity: identity
             )
+            eventCheckpoint = snapshot.checkpoint
             mergeIdentity(from: snapshot)
             return snapshot
         }
@@ -63,14 +64,29 @@ final class ServerBackedSmokeTests: XCTestCase {
         }
 
         func pollEvents() throws -> SafeMessengerEventBatch {
-            let batch = try TrixCorePersistentBridge.getNewMessengerEvents(
-                baseURLString: baseURL,
-                accessToken: try authenticate().accessToken,
-                identity: identity,
-                checkpoint: eventCheckpoint
-            )
-            eventCheckpoint = batch.checkpoint ?? eventCheckpoint
-            return batch
+            do {
+                let batch = try RealtimeWebSocketClient.pollNewEvents(
+                    baseURLString: baseURL,
+                    accessToken: try authenticate().accessToken,
+                    identity: identity,
+                    checkpoint: eventCheckpoint
+                )
+                eventCheckpoint = batch.checkpoint ?? eventCheckpoint
+                return batch
+            } catch let error as FfiMessengerError {
+                guard case .RequiresResync = error else {
+                    throw error
+                }
+                _ = try loadSnapshot()
+                let batch = try RealtimeWebSocketClient.pollNewEvents(
+                    baseURLString: baseURL,
+                    accessToken: try authenticate().accessToken,
+                    identity: identity,
+                    checkpoint: eventCheckpoint
+                )
+                eventCheckpoint = batch.checkpoint ?? eventCheckpoint
+                return batch
+            }
         }
 
         func createConversation(
@@ -359,11 +375,43 @@ final class ServerBackedSmokeTests: XCTestCase {
         try await waitForCondition(
             description: "Message '\(text)' on \(device.label)"
         ) {
-            let batch = try device.pollEvents()
-            if !batch.events.isEmpty {
-                _ = try device.loadSnapshot()
+            let batch: SafeMessengerEventBatch
+            do {
+                batch = try device.pollEvents()
+            } catch {
+                throw NSError(
+                    domain: "ServerBackedSmokeTests",
+                    code: 2,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "pollEvents failed on \(device.label): \(error.localizedDescription)"
+                    ]
+                )
             }
-            let snapshot = try device.loadConversation(chatId: chatId)
+            if !batch.events.isEmpty {
+                do {
+                    _ = try device.loadSnapshot()
+                } catch {
+                    throw NSError(
+                        domain: "ServerBackedSmokeTests",
+                        code: 3,
+                        userInfo: [
+                            NSLocalizedDescriptionKey: "loadSnapshot failed on \(device.label): \(error.localizedDescription)"
+                        ]
+                    )
+                }
+            }
+            let snapshot: SafeConversationSnapshot
+            do {
+                snapshot = try device.loadConversation(chatId: chatId)
+            } catch {
+                throw NSError(
+                    domain: "ServerBackedSmokeTests",
+                    code: 4,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "loadConversation(\(chatId)) failed on \(device.label): \(error.localizedDescription)"
+                    ]
+                )
+            }
             return snapshot.messages.first { $0.body?.text == text }
         }
     }

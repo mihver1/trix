@@ -644,6 +644,8 @@ external fun uniffi_trix_core_checksum_func_ffi_build_attachment_message_body(
 ): Short
 external fun uniffi_trix_core_checksum_func_ffi_decrypt_attachment_payload(
 ): Short
+external fun uniffi_trix_core_checksum_func_ffi_default_quick_reaction_emojis(
+): Short
 external fun uniffi_trix_core_checksum_func_ffi_device_revoke_payload(
 ): Short
 external fun uniffi_trix_core_checksum_func_ffi_parse_message_body(
@@ -948,6 +950,8 @@ external fun uniffi_trix_core_checksum_method_ffisynccoordinator_sync_chat_histo
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_approve_linked_device(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_close_realtime(
+): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_complete_link_device(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_create_conversation(
@@ -959,6 +963,8 @@ external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_attachment(
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_messages(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events(
+): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events_realtime(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_list_conversations(
 ): Short
@@ -978,9 +984,15 @@ external fun uniffi_trix_core_checksum_method_ffimessengerclient_root_path(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_send_attachment(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_send_history_sync_progress(
+): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_send_message(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_send_presence_ping(
+): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_set_typing(
+): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_sync_pending_history_repairs(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_unlink_device(
 ): Short
@@ -1406,6 +1418,8 @@ external fun uniffi_trix_core_fn_constructor_ffimessengerclient_open(`config`: R
 ): Long
 external fun uniffi_trix_core_fn_method_ffimessengerclient_approve_linked_device(`ptr`: Long,`deviceId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_close_realtime(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 external fun uniffi_trix_core_fn_method_ffimessengerclient_complete_link_device(`ptr`: Long,`linkPayload`: RustBuffer.ByValue,`deviceDisplayName`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_create_conversation(`ptr`: Long,`request`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1417,6 +1431,8 @@ external fun uniffi_trix_core_fn_method_ffimessengerclient_get_attachment(`ptr`:
 external fun uniffi_trix_core_fn_method_ffimessengerclient_get_messages(`ptr`: Long,`conversationId`: RustBuffer.ByValue,`pageCursor`: RustBuffer.ByValue,`limit`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_get_new_events(`ptr`: Long,`checkpoint`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_get_new_events_realtime(`ptr`: Long,`checkpoint`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_list_conversations(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1436,10 +1452,16 @@ external fun uniffi_trix_core_fn_method_ffimessengerclient_root_path(`ptr`: Long
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_send_attachment(`ptr`: Long,`conversationId`: RustBuffer.ByValue,`payload`: RustBuffer.ByValue,`metadata`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_send_history_sync_progress(`ptr`: Long,`jobId`: RustBuffer.ByValue,`cursorJson`: RustBuffer.ByValue,`completedChunks`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 external fun uniffi_trix_core_fn_method_ffimessengerclient_send_message(`ptr`: Long,`request`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_send_presence_ping(`ptr`: Long,`nonce`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 external fun uniffi_trix_core_fn_method_ffimessengerclient_set_typing(`ptr`: Long,`conversationId`: RustBuffer.ByValue,`isTyping`: Byte,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
+external fun uniffi_trix_core_fn_method_ffimessengerclient_sync_pending_history_repairs(`ptr`: Long,`conversationIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_unlink_device(`ptr`: Long,`deviceId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_update_conversation_devices(`ptr`: Long,`request`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1451,6 +1473,8 @@ external fun uniffi_trix_core_fn_func_ffi_account_bootstrap_payload(`transportPu
 external fun uniffi_trix_core_fn_func_ffi_build_attachment_message_body(`blobId`: RustBuffer.ByValue,`prepared`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_func_ffi_decrypt_attachment_payload(`body`: RustBuffer.ByValue,`encryptedPayload`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_func_ffi_default_quick_reaction_emojis(uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_func_ffi_device_revoke_payload(`deviceId`: RustBuffer.ByValue,`reason`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1586,6 +1610,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_func_ffi_decrypt_attachment_payload() != 49747.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_func_ffi_default_quick_reaction_emojis() != 50913.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_func_ffi_device_revoke_payload() != 8012.toShort()) {
@@ -2044,6 +2071,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_approve_linked_device() != 893.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_close_realtime() != 11095.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_complete_link_device() != 36044.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -2060,6 +2090,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events() != 4509.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events_realtime() != 51892.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_list_conversations() != 14380.toShort()) {
@@ -2089,10 +2122,19 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_send_attachment() != 17407.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_send_history_sync_progress() != 41842.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_send_message() != 61743.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_send_presence_ping() != 19683.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_set_typing() != 22040.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_sync_pending_history_repairs() != 59649.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_unlink_device() != 41188.toShort()) {
@@ -4348,6 +4390,8 @@ public interface FfiMessengerClientInterface {
     
     fun `approveLinkedDevice`(`deviceId`: kotlin.String): FfiMessengerDeviceMutationResult
     
+    fun `closeRealtime`()
+    
     fun `completeLinkDevice`(`linkPayload`: kotlin.String, `deviceDisplayName`: kotlin.String): FfiMessengerPendingDeviceRecord
     
     fun `createConversation`(`request`: FfiMessengerCreateConversationRequest): FfiMessengerConversationMutationResult
@@ -4359,6 +4403,8 @@ public interface FfiMessengerClientInterface {
     fun `getMessages`(`conversationId`: kotlin.String, `pageCursor`: kotlin.String?, `limit`: kotlin.UInt?): FfiMessengerMessagePage
     
     fun `getNewEvents`(`checkpoint`: kotlin.String?): FfiMessengerEventBatch
+    
+    fun `getNewEventsRealtime`(`checkpoint`: kotlin.String?): FfiMessengerEventBatch
     
     fun `listConversations`(): List<FfiMessengerConversationSummary>
     
@@ -4378,9 +4424,15 @@ public interface FfiMessengerClientInterface {
     
     fun `sendAttachment`(`conversationId`: kotlin.String, `payload`: kotlin.ByteArray, `metadata`: FfiMessengerAttachmentMetadata): FfiMessengerAttachmentToken
     
+    fun `sendHistorySyncProgress`(`jobId`: kotlin.String, `cursorJson`: kotlin.String?, `completedChunks`: kotlin.ULong?)
+    
     fun `sendMessage`(`request`: FfiMessengerSendMessageRequest): FfiMessengerSendMessageResult
     
+    fun `sendPresencePing`(`nonce`: kotlin.String?)
+    
     fun `setTyping`(`conversationId`: kotlin.String, `isTyping`: kotlin.Boolean)
+    
+    fun `syncPendingHistoryRepairs`(`conversationIds`: List<kotlin.String>?): List<kotlin.String>
     
     fun `unlinkDevice`(`deviceId`: kotlin.String): FfiMessengerDeviceMutationResult
     
@@ -4502,6 +4554,19 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
     
 
     
+    @Throws(FfiMessengerException::class)override fun `closeRealtime`()
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_close_realtime(
+        it,
+        _status)
+}
+    }
+    
+    
+
+    
     @Throws(FfiMessengerException::class)override fun `completeLinkDevice`(`linkPayload`: kotlin.String, `deviceDisplayName`: kotlin.String): FfiMessengerPendingDeviceRecord {
             return FfiConverterTypeFfiMessengerPendingDeviceRecord.lift(
     callWithHandle {
@@ -4577,6 +4642,20 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
     callWithHandle {
     uniffiRustCallWithError(FfiMessengerException) { _status ->
     UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_get_new_events(
+        it,
+        FfiConverterOptionalString.lower(`checkpoint`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiMessengerException::class)override fun `getNewEventsRealtime`(`checkpoint`: kotlin.String?): FfiMessengerEventBatch {
+            return FfiConverterTypeFfiMessengerEventBatch.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_get_new_events_realtime(
         it,
         FfiConverterOptionalString.lower(`checkpoint`),_status)
 }
@@ -4711,6 +4790,19 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
     
 
     
+    @Throws(FfiMessengerException::class)override fun `sendHistorySyncProgress`(`jobId`: kotlin.String, `cursorJson`: kotlin.String?, `completedChunks`: kotlin.ULong?)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_send_history_sync_progress(
+        it,
+        FfiConverterString.lower(`jobId`),FfiConverterOptionalString.lower(`cursorJson`),FfiConverterOptionalULong.lower(`completedChunks`),_status)
+}
+    }
+    
+    
+
+    
     @Throws(FfiMessengerException::class)override fun `sendMessage`(`request`: FfiMessengerSendMessageRequest): FfiMessengerSendMessageResult {
             return FfiConverterTypeFfiMessengerSendMessageResult.lift(
     callWithHandle {
@@ -4725,6 +4817,19 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
     
 
     
+    @Throws(FfiMessengerException::class)override fun `sendPresencePing`(`nonce`: kotlin.String?)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_send_presence_ping(
+        it,
+        FfiConverterOptionalString.lower(`nonce`),_status)
+}
+    }
+    
+    
+
+    
     @Throws(FfiMessengerException::class)override fun `setTyping`(`conversationId`: kotlin.String, `isTyping`: kotlin.Boolean)
         = 
     callWithHandle {
@@ -4735,6 +4840,20 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
 }
     }
     
+    
+
+    
+    @Throws(FfiMessengerException::class)override fun `syncPendingHistoryRepairs`(`conversationIds`: List<kotlin.String>?): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_sync_pending_history_repairs(
+        it,
+        FfiConverterOptionalSequenceString.lower(`conversationIds`),_status)
+}
+    }
+    )
+    }
     
 
     
@@ -10844,6 +10963,12 @@ data class FfiLocalTimelineItem (
     , 
     var `previewText`: kotlin.String
     , 
+    var `receiptStatus`: FfiReceiptType?
+    , 
+    var `reactions`: List<FfiMessageReactionSummary>
+    , 
+    var `isVisibleInTimeline`: kotlin.Boolean
+    , 
     var `mergedEpoch`: kotlin.ULong?
     , 
     var `createdAtUnix`: kotlin.ULong
@@ -10876,6 +11001,9 @@ public object FfiConverterTypeFfiLocalTimelineItem: FfiConverterRustBuffer<FfiLo
             FfiConverterOptionalTypeFfiMessageBody.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterOptionalTypeFfiReceiptType.read(buf),
+            FfiConverterSequenceTypeFfiMessageReactionSummary.read(buf),
+            FfiConverterBoolean.read(buf),
             FfiConverterOptionalULong.read(buf),
             FfiConverterULong.read(buf),
         )
@@ -10895,6 +11023,9 @@ public object FfiConverterTypeFfiLocalTimelineItem: FfiConverterRustBuffer<FfiLo
             FfiConverterOptionalTypeFfiMessageBody.allocationSize(value.`body`) +
             FfiConverterOptionalString.allocationSize(value.`bodyParseError`) +
             FfiConverterString.allocationSize(value.`previewText`) +
+            FfiConverterOptionalTypeFfiReceiptType.allocationSize(value.`receiptStatus`) +
+            FfiConverterSequenceTypeFfiMessageReactionSummary.allocationSize(value.`reactions`) +
+            FfiConverterBoolean.allocationSize(value.`isVisibleInTimeline`) +
             FfiConverterOptionalULong.allocationSize(value.`mergedEpoch`) +
             FfiConverterULong.allocationSize(value.`createdAtUnix`)
     )
@@ -10913,6 +11044,9 @@ public object FfiConverterTypeFfiLocalTimelineItem: FfiConverterRustBuffer<FfiLo
             FfiConverterOptionalTypeFfiMessageBody.write(value.`body`, buf)
             FfiConverterOptionalString.write(value.`bodyParseError`, buf)
             FfiConverterString.write(value.`previewText`, buf)
+            FfiConverterOptionalTypeFfiReceiptType.write(value.`receiptStatus`, buf)
+            FfiConverterSequenceTypeFfiMessageReactionSummary.write(value.`reactions`, buf)
+            FfiConverterBoolean.write(value.`isVisibleInTimeline`, buf)
             FfiConverterOptionalULong.write(value.`mergedEpoch`, buf)
             FfiConverterULong.write(value.`createdAtUnix`, buf)
     }
@@ -11116,6 +11250,54 @@ public object FfiConverterTypeFfiMessageEnvelope: FfiConverterRustBuffer<FfiMess
             FfiConverterByteArray.write(value.`ciphertext`, buf)
             FfiConverterString.write(value.`aadJson`, buf)
             FfiConverterULong.write(value.`createdAtUnix`, buf)
+    }
+}
+
+
+
+data class FfiMessageReactionSummary (
+    var `emoji`: kotlin.String
+    , 
+    var `reactorAccountIds`: List<kotlin.String>
+    , 
+    var `count`: kotlin.ULong
+    , 
+    var `includesSelf`: kotlin.Boolean
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiMessageReactionSummary: FfiConverterRustBuffer<FfiMessageReactionSummary> {
+    override fun read(buf: ByteBuffer): FfiMessageReactionSummary {
+        return FfiMessageReactionSummary(
+            FfiConverterString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiMessageReactionSummary) = (
+            FfiConverterString.allocationSize(value.`emoji`) +
+            FfiConverterSequenceString.allocationSize(value.`reactorAccountIds`) +
+            FfiConverterULong.allocationSize(value.`count`) +
+            FfiConverterBoolean.allocationSize(value.`includesSelf`)
+    )
+
+    override fun write(value: FfiMessageReactionSummary, buf: ByteBuffer) {
+            FfiConverterString.write(value.`emoji`, buf)
+            FfiConverterSequenceString.write(value.`reactorAccountIds`, buf)
+            FfiConverterULong.write(value.`count`, buf)
+            FfiConverterBoolean.write(value.`includesSelf`, buf)
     }
 }
 
@@ -11469,6 +11651,12 @@ data class FfiMessengerConversationSummary (
     var `previewCreatedAtUnix`: kotlin.ULong?
     , 
     var `participantProfiles`: List<FfiMessengerParticipantProfile>
+    , 
+    var `historyRecoveryPending`: kotlin.Boolean
+    , 
+    var `historyRecoveryFromServerSeq`: kotlin.ULong?
+    , 
+    var `historyRecoveryThroughServerSeq`: kotlin.ULong?
     
 ){
     
@@ -11500,6 +11688,9 @@ public object FfiConverterTypeFfiMessengerConversationSummary: FfiConverterRustB
             FfiConverterOptionalULong.read(buf),
             FfiConverterOptionalULong.read(buf),
             FfiConverterSequenceTypeFfiMessengerParticipantProfile.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterOptionalULong.read(buf),
         )
     }
 
@@ -11518,7 +11709,10 @@ public object FfiConverterTypeFfiMessengerConversationSummary: FfiConverterRustB
             FfiConverterOptionalBoolean.allocationSize(value.`previewIsOutgoing`) +
             FfiConverterOptionalULong.allocationSize(value.`previewServerSeq`) +
             FfiConverterOptionalULong.allocationSize(value.`previewCreatedAtUnix`) +
-            FfiConverterSequenceTypeFfiMessengerParticipantProfile.allocationSize(value.`participantProfiles`)
+            FfiConverterSequenceTypeFfiMessengerParticipantProfile.allocationSize(value.`participantProfiles`) +
+            FfiConverterBoolean.allocationSize(value.`historyRecoveryPending`) +
+            FfiConverterOptionalULong.allocationSize(value.`historyRecoveryFromServerSeq`) +
+            FfiConverterOptionalULong.allocationSize(value.`historyRecoveryThroughServerSeq`)
     )
 
     override fun write(value: FfiMessengerConversationSummary, buf: ByteBuffer) {
@@ -11537,6 +11731,9 @@ public object FfiConverterTypeFfiMessengerConversationSummary: FfiConverterRustB
             FfiConverterOptionalULong.write(value.`previewServerSeq`, buf)
             FfiConverterOptionalULong.write(value.`previewCreatedAtUnix`, buf)
             FfiConverterSequenceTypeFfiMessengerParticipantProfile.write(value.`participantProfiles`, buf)
+            FfiConverterBoolean.write(value.`historyRecoveryPending`, buf)
+            FfiConverterOptionalULong.write(value.`historyRecoveryFromServerSeq`, buf)
+            FfiConverterOptionalULong.write(value.`historyRecoveryThroughServerSeq`, buf)
     }
 }
 
@@ -11987,7 +12184,15 @@ data class FfiMessengerMessageRecord (
     , 
     var `body`: FfiMessengerMessageBody?
     , 
+    var `recoveryState`: FfiMessageRecoveryState?
+    , 
     var `previewText`: kotlin.String
+    , 
+    var `receiptStatus`: FfiReceiptType?
+    , 
+    var `reactions`: List<FfiMessageReactionSummary>
+    , 
+    var `isVisibleInTimeline`: kotlin.Boolean
     , 
     var `createdAtUnix`: kotlin.ULong
     
@@ -12016,7 +12221,11 @@ public object FfiConverterTypeFfiMessengerMessageRecord: FfiConverterRustBuffer<
             FfiConverterULong.read(buf),
             FfiConverterTypeFfiContentType.read(buf),
             FfiConverterOptionalTypeFfiMessengerMessageBody.read(buf),
+            FfiConverterOptionalTypeFfiMessageRecoveryState.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterOptionalTypeFfiReceiptType.read(buf),
+            FfiConverterSequenceTypeFfiMessageReactionSummary.read(buf),
+            FfiConverterBoolean.read(buf),
             FfiConverterULong.read(buf),
         )
     }
@@ -12032,7 +12241,11 @@ public object FfiConverterTypeFfiMessengerMessageRecord: FfiConverterRustBuffer<
             FfiConverterULong.allocationSize(value.`epoch`) +
             FfiConverterTypeFfiContentType.allocationSize(value.`contentType`) +
             FfiConverterOptionalTypeFfiMessengerMessageBody.allocationSize(value.`body`) +
+            FfiConverterOptionalTypeFfiMessageRecoveryState.allocationSize(value.`recoveryState`) +
             FfiConverterString.allocationSize(value.`previewText`) +
+            FfiConverterOptionalTypeFfiReceiptType.allocationSize(value.`receiptStatus`) +
+            FfiConverterSequenceTypeFfiMessageReactionSummary.allocationSize(value.`reactions`) +
+            FfiConverterBoolean.allocationSize(value.`isVisibleInTimeline`) +
             FfiConverterULong.allocationSize(value.`createdAtUnix`)
     )
 
@@ -12047,7 +12260,11 @@ public object FfiConverterTypeFfiMessengerMessageRecord: FfiConverterRustBuffer<
             FfiConverterULong.write(value.`epoch`, buf)
             FfiConverterTypeFfiContentType.write(value.`contentType`, buf)
             FfiConverterOptionalTypeFfiMessengerMessageBody.write(value.`body`, buf)
+            FfiConverterOptionalTypeFfiMessageRecoveryState.write(value.`recoveryState`, buf)
             FfiConverterString.write(value.`previewText`, buf)
+            FfiConverterOptionalTypeFfiReceiptType.write(value.`receiptStatus`, buf)
+            FfiConverterSequenceTypeFfiMessageReactionSummary.write(value.`reactions`, buf)
+            FfiConverterBoolean.write(value.`isVisibleInTimeline`, buf)
             FfiConverterULong.write(value.`createdAtUnix`, buf)
     }
 }
@@ -14344,7 +14561,8 @@ enum class FfiHistorySyncJobType {
     
     INITIAL_SYNC,
     CHAT_BACKFILL,
-    DEVICE_REKEY;
+    DEVICE_REKEY,
+    TIMELINE_REPAIR;
 
     
 
@@ -14510,6 +14728,39 @@ public object FfiConverterTypeFfiMessageKind: FfiConverterRustBuffer<FfiMessageK
     override fun allocationSize(value: FfiMessageKind) = 4UL
 
     override fun write(value: FfiMessageKind, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
+enum class FfiMessageRecoveryState {
+    
+    PENDING_SIBLING_HISTORY;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiMessageRecoveryState: FfiConverterRustBuffer<FfiMessageRecoveryState> {
+    override fun read(buf: ByteBuffer) = try {
+        FfiMessageRecoveryState.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: FfiMessageRecoveryState) = 4UL
+
+    override fun write(value: FfiMessageRecoveryState, buf: ByteBuffer) {
         buf.putInt(value.ordinal + 1)
     }
 }
@@ -16006,6 +16257,38 @@ public object FfiConverterOptionalTypeFfiHistorySyncJobStatus: FfiConverterRustB
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeFfiMessageRecoveryState: FfiConverterRustBuffer<FfiMessageRecoveryState?> {
+    override fun read(buf: ByteBuffer): FfiMessageRecoveryState? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeFfiMessageRecoveryState.read(buf)
+    }
+
+    override fun allocationSize(value: FfiMessageRecoveryState?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeFfiMessageRecoveryState.allocationSize(value)
+        }
+    }
+
+    override fun write(value: FfiMessageRecoveryState?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeFfiMessageRecoveryState.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeFfiReactionAction: FfiConverterRustBuffer<FfiReactionAction?> {
     override fun read(buf: ByteBuffer): FfiReactionAction? {
         if (buf.get().toInt() == 0) {
@@ -16060,6 +16343,38 @@ public object FfiConverterOptionalTypeFfiReceiptType: FfiConverterRustBuffer<Ffi
         } else {
             buf.put(1)
             FfiConverterTypeFfiReceiptType.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalSequenceString: FfiConverterRustBuffer<List<kotlin.String>?> {
+    override fun read(buf: ByteBuffer): List<kotlin.String>? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterSequenceString.read(buf)
+    }
+
+    override fun allocationSize(value: List<kotlin.String>?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterSequenceString.allocationSize(value)
+        }
+    }
+
+    override fun write(value: List<kotlin.String>?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterSequenceString.write(value, buf)
         }
     }
 }
@@ -16602,6 +16917,34 @@ public object FfiConverterSequenceTypeFfiMessageEnvelope: FfiConverterRustBuffer
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeFfiMessageReactionSummary: FfiConverterRustBuffer<List<FfiMessageReactionSummary>> {
+    override fun read(buf: ByteBuffer): List<FfiMessageReactionSummary> {
+        val len = buf.getInt()
+        return List<FfiMessageReactionSummary>(len) {
+            FfiConverterTypeFfiMessageReactionSummary.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiMessageReactionSummary>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiMessageReactionSummary.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiMessageReactionSummary>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiMessageReactionSummary.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeFfiMessengerConversationSummary: FfiConverterRustBuffer<List<FfiMessengerConversationSummary>> {
     override fun read(buf: ByteBuffer): List<FfiMessengerConversationSummary> {
         val len = buf.getInt()
@@ -16902,6 +17245,16 @@ public object FfiConverterSequenceTypeFfiSyncChatCursor: FfiConverterRustBuffer<
     UniffiLib.uniffi_trix_core_fn_func_ffi_decrypt_attachment_payload(
     
         FfiConverterTypeFfiMessageBody.lower(`body`),FfiConverterByteArray.lower(`encryptedPayload`),_status)
+}
+    )
+    }
+    
+ fun `ffiDefaultQuickReactionEmojis`(): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_trix_core_fn_func_ffi_default_quick_reaction_emojis(
+    
+        _status)
 }
     )
     }

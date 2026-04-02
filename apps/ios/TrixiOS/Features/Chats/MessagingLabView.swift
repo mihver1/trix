@@ -769,12 +769,14 @@ struct MessagingLabView: View {
 
         Task {
             let completedChunks = UInt64(loadedHistorySyncChunks.count)
-            await model.sendHistorySyncProgress(
+            let published = await model.sendHistorySyncProgress(
                 jobId: jobId,
                 cursorJson: trimmedValue(historySyncChunkDraft.cursorJson),
                 completedChunks: completedChunks > 0 ? completedChunks : nil
             )
-            activityMessage = "Published realtime progress for history sync job \(jobId)."
+            activityMessage = published
+                ? "Published realtime progress for history sync job \(jobId)."
+                : (model.errorMessage ?? "Failed to publish realtime progress for history sync job \(jobId).")
         }
     }
 

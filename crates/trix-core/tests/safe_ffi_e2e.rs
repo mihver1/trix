@@ -789,6 +789,55 @@ async fn safe_s2_attachment_contracts_and_download() -> Result<()> {
 
 #[tokio::test]
 #[ignore = "requires local postgres"]
+async fn safe_s1b_realtime_facade_delivers_batches() -> Result<()> {
+    let server = spawn_test_server().await?;
+    let base_url = server.base_url.clone();
+
+    ffi(move || {
+        let alice = create_safe_client(&base_url, "alice", true)?;
+        let bob = create_safe_client(&base_url, "bob", true)?;
+
+        bob.client.load_snapshot()?;
+
+        let created = alice
+            .client
+            .create_conversation(dm_request(&bob.account_id))?;
+        let conversation_id = created.conversation_id.clone();
+
+        let conversation_batch = bob.client.get_new_events_realtime(None)?;
+        assert!(conversation_batch.events.iter().any(|event| {
+            matches!(event.kind, FfiMessengerEventKind::ConversationUpdated)
+                && event.conversation_id.as_deref() == Some(conversation_id.as_str())
+        }));
+
+        bob.client
+            .send_presence_ping(Some("safe-ffi-ping".to_owned()))?;
+
+        alice
+            .client
+            .send_message(text_request(&conversation_id, "hello from realtime facade"))?;
+
+        let message_batch = bob
+            .client
+            .get_new_events_realtime(conversation_batch.checkpoint.clone())?;
+        let delivered_texts = message_batch
+            .events
+            .iter()
+            .filter_map(|event| event.message.as_ref())
+            .filter_map(message_text)
+            .collect::<Vec<_>>();
+        assert!(delivered_texts.contains(&"hello from realtime facade"));
+
+        bob.client.close_realtime()?;
+        Ok(())
+    })
+    .await?;
+
+    server.shutdown().await
+}
+
+#[tokio::test]
+#[ignore = "requires local postgres"]
 async fn safe_s3_attachment_tokens_are_chat_scoped() -> Result<()> {
     let server = spawn_test_server().await?;
     let base_url = server.base_url.clone();

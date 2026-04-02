@@ -101,13 +101,6 @@ struct LocalInboxAckResult {
     let ackedInboxIds: [UInt64]
 }
 
-struct PersistentRealtimeBindings {
-    let websocket: FfiServerWebSocketClient
-    let realtimeDriver: FfiRealtimeDriver
-    let historyStore: FfiLocalHistoryStore
-    let syncCoordinator: FfiSyncCoordinator
-}
-
 struct PreparedLinkedDeviceState {
     let provisionalIdentity: LocalDeviceIdentity
     let keyPackages: [FfiPublishKeyPackage]
@@ -165,12 +158,6 @@ private struct DeviceDatabaseKeyStore {
 }
 
 enum TrixCorePersistentBridge {
-    private static let realtimeConfig = FfiRealtimeConfig(
-        inboxLimit: 100,
-        inboxLeaseTtlSeconds: 30,
-        pollIntervalMs: 750,
-        websocketRetryDelayMs: 3_000
-    )
     // FfiMessengerClient opens independent runtimes/coordinators over the same persisted state.
     // Serialize access so snapshot refresh, realtime polling, and device mutations cannot race
     // each other while draining history sync jobs.
@@ -282,21 +269,6 @@ enum TrixCorePersistentBridge {
                 messages: allMessages.map(\.trix_safeMessengerMessage),
                 nextCursor: nil
             )
-        }
-    }
-
-    static func getNewMessengerEvents(
-        baseURLString: String,
-        accessToken: String,
-        identity: LocalDeviceIdentity,
-        checkpoint: String?
-    ) throws -> SafeMessengerEventBatch {
-        try withMessengerClient(
-            baseURLString: baseURLString,
-            accessToken: accessToken,
-            identity: identity
-        ) { client in
-            try client.getNewEvents(checkpoint: checkpoint).trix_safeMessengerEventBatch
         }
     }
 
@@ -645,6 +617,18 @@ enum TrixCorePersistentBridge {
         }
     }
 
+    static func openRealtimeMessengerClient(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity
+    ) throws -> FfiMessengerClient {
+        try openMessengerClient(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        )
+    }
+
     static func createLinkDeviceIntent(
         baseURLString: String,
         accessToken: String,
@@ -944,33 +928,6 @@ enum TrixCorePersistentBridge {
         return outcome.trix_localInboxSyncResult
     }
 
-    static func pollRealtimeOnce(
-        baseURLString: String,
-        accessToken: String,
-        identity: LocalDeviceIdentity
-    ) throws -> LocalInboxSyncResult {
-        let context = try loadOrCreateContext(identity: identity)
-        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
-        let driver: FfiRealtimeDriver
-        do {
-            driver = try FfiRealtimeDriver.withConfig(config: realtimeConfig)
-        } catch {
-            driver = try FfiRealtimeDriver()
-        }
-        let outcome = try driver.pollOnce(
-            client: client,
-            coordinator: context.syncCoordinator,
-            store: context.historyStore
-        )
-        _ = try projectChatsIfPossible(
-            context: context,
-            chatIds: outcome.report.changedChatIds,
-            limit: 500
-        )
-        try saveContextState(context)
-        return outcome.trix_localInboxSyncResult
-    }
-
     static func ackInboxIntoSyncState(
         baseURLString: String,
         accessToken: String,
@@ -987,28 +944,6 @@ enum TrixCorePersistentBridge {
         let response = try context.syncCoordinator.ackInbox(client: client, inboxIds: dedupedInboxIds)
         try saveContextState(context)
         return LocalInboxAckResult(ackedInboxIds: response.ackedInboxIds.sorted())
-    }
-
-    static func makeRealtimeBindings(
-        baseURLString: String,
-        accessToken: String,
-        identity: LocalDeviceIdentity
-    ) throws -> PersistentRealtimeBindings {
-        let context = try loadOrCreateContext(identity: identity)
-        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
-        let realtimeDriver: FfiRealtimeDriver
-        do {
-            realtimeDriver = try FfiRealtimeDriver.withConfig(config: realtimeConfig)
-        } catch {
-            realtimeDriver = try FfiRealtimeDriver()
-        }
-
-        return PersistentRealtimeBindings(
-            websocket: try client.connectWebsocket(),
-            realtimeDriver: realtimeDriver,
-            historyStore: context.historyStore,
-            syncCoordinator: context.syncCoordinator
-        )
     }
 
     static func localStateSnapshot(identity: LocalDeviceIdentity) throws -> LocalCoreStateSnapshot {
@@ -2662,7 +2597,7 @@ private extension FfiMessengerEvent {
     }
 }
 
-private extension FfiMessengerEventBatch {
+extension FfiMessengerEventBatch {
     var trix_safeMessengerEventBatch: SafeMessengerEventBatch {
         SafeMessengerEventBatch(
             checkpoint: checkpoint,
