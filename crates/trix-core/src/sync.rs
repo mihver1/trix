@@ -756,7 +756,7 @@ impl SyncCoordinator {
                 .refresh_pending_history_repair_window(chat_id)?
                 .is_some();
             if let Some(server_seq) = max_projected_server_seq.or(report.advanced_to_server_seq) {
-                self.record_chat_server_seq(chat_id, server_seq)?;
+                self.record_observed_chat_server_seqs([(chat_id, server_seq)])?;
             }
             if report.projected_messages_upserted > 0
                 || report.advanced_to_server_seq.is_some()
@@ -1255,7 +1255,8 @@ impl SyncCoordinator {
                 return Err(error);
             }
         };
-        if let Err(error) = self.record_chat_server_seq(chat_id, response.server_seq) {
+        if let Err(error) = self.record_observed_chat_server_seqs([(chat_id, response.server_seq)])
+        {
             restore_failed_outbox_send(
                 store,
                 chat_id,
@@ -3611,6 +3612,38 @@ mod tests {
         let leading_prefix = (1..=9).collect::<Vec<_>>();
         coordinator.record_acked_inbox_ids(&leading_prefix).unwrap();
         assert_eq!(coordinator.last_acked_inbox_id(), Some(11));
+    }
+
+    #[test]
+    fn observed_chat_server_seqs_only_advance_after_gap_closes() {
+        let chat_id = ChatId(Uuid::new_v4());
+        let mut coordinator = SyncCoordinator::new();
+
+        coordinator.record_chat_server_seq(chat_id, 5).unwrap();
+        coordinator
+            .record_observed_chat_server_seqs([(chat_id, 7)])
+            .unwrap();
+        assert_eq!(coordinator.chat_cursor(chat_id), Some(5));
+        assert_eq!(
+            coordinator
+                .state
+                .pending_chat_server_seqs
+                .get(&chat_id.0.to_string())
+                .cloned(),
+            Some(BTreeSet::from([7]))
+        );
+
+        coordinator
+            .record_observed_chat_server_seqs([(chat_id, 6)])
+            .unwrap();
+        assert_eq!(coordinator.chat_cursor(chat_id), Some(7));
+        assert!(
+            coordinator
+                .state
+                .pending_chat_server_seqs
+                .get(&chat_id.0.to_string())
+                .is_none()
+        );
     }
 
     #[test]

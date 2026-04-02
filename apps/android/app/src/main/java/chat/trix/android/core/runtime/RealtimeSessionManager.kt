@@ -10,8 +10,6 @@ import chat.trix.android.core.chat.AndroidMessengerClient
 import chat.trix.android.core.chat.ChatRepository
 import chat.trix.android.core.ffi.FfiMessengerException
 import chat.trix.android.core.ffi.FfiRealtimeEventKind
-import chat.trix.android.core.ffi.FfiServerApiClient
-import chat.trix.android.core.ffi.FfiServerWebSocketClient
 import chat.trix.android.core.ffi.TrixFfiException
 import chat.trix.android.core.notifications.TrixNotificationRouter
 import chat.trix.android.core.system.AppTelemetry
@@ -42,14 +40,8 @@ class RealtimeSessionManager(
     private val lifecycle = ProcessLifecycleOwner.get().lifecycle
     private var loopJob: kotlinx.coroutines.Job? = null
     private var stopJob: kotlinx.coroutines.Job? = null
-    private var websocket: FfiServerWebSocketClient? = null
     private var checkpoint: String? = null
 
-    private val clientDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        FfiServerApiClient(session.baseUrl).apply {
-            setAccessToken(session.accessToken)
-        }
-    }
     private val messengerDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         AndroidMessengerClient(appContext, session)
     }
@@ -88,7 +80,7 @@ class RealtimeSessionManager(
     }
 
     suspend fun sendPresencePing(nonce: String? = null) = withContext(Dispatchers.IO) {
-        ensureWebSocket().sendPresencePing(nonce)
+        messenger().sendPresencePing(nonce)
     }
 
     suspend fun sendTypingUpdate(chatId: String, isTyping: Boolean) = withContext(Dispatchers.IO) {
@@ -100,7 +92,7 @@ class RealtimeSessionManager(
         cursorJson: String? = null,
         completedChunks: ULong? = null,
     ) = withContext(Dispatchers.IO) {
-        ensureWebSocket().sendHistorySyncProgress(jobId, cursorJson, completedChunks)
+        messenger().sendHistorySyncProgress(jobId, cursorJson, completedChunks)
     }
 
     override fun close() {
@@ -112,9 +104,6 @@ class RealtimeSessionManager(
         }
         if (messengerDelegate.isInitialized()) {
             messengerDelegate.value.close()
-        }
-        if (clientDelegate.isInitialized()) {
-            clientDelegate.value.close()
         }
         scope.cancel()
     }
@@ -130,22 +119,24 @@ class RealtimeSessionManager(
     }
 
     private suspend fun shutdownRealtimeLoop() {
-        closeSocketQuietly()
         loopJob?.cancelAndJoin()
         loopJob = null
+        if (messengerDelegate.isInitialized()) {
+            messenger().closeRealtime()
+        }
     }
 
     private suspend fun runRealtimeLoop() {
         while (scope.isActive) {
             try {
                 initializeCheckpoint()
-                val batch = messenger().getNewEvents(checkpoint)
+                val batch = messenger().getNewEventsRealtime(checkpoint)
                 checkpoint = batch.checkpoint
 
                 if (batch.changedChatIds.isNotEmpty() || batch.hasDeviceChanges) {
                     telemetry.info(
                         TAG,
-                        "messenger poll changed=${batch.changedChatIds.size} deviceChanges=${batch.hasDeviceChanges}",
+                        "messenger realtime changed=${batch.changedChatIds.size} deviceChanges=${batch.hasDeviceChanges}",
                     )
                     publishUnreadSummary()
                 }
@@ -154,12 +145,10 @@ class RealtimeSessionManager(
                         onChatsChanged(batch.changedChatIds)
                     }
                 }
-                delay(POLL_INTERVAL_MS)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: IOException) {
                 telemetry.warn(TAG, "foreground realtime loop failed", error)
-                closeSocketQuietly()
                 delay(WEBSOCKET_RETRY_DELAY_MS)
             }
         }
@@ -188,31 +177,10 @@ class RealtimeSessionManager(
         }
     }
 
-    private fun ensureWebSocket(): FfiServerWebSocketClient {
-        val existing = websocket
-        if (existing != null) {
-            return existing
-        }
-        val created = client().connectWebsocket()
-        websocket = created
-        telemetry.info(TAG, "websocket connected")
-        return created
-    }
-
-    private fun closeSocketQuietly() {
-        websocket?.let { current ->
-            runCatching { current.closeSocket() }
-        }
-        websocket = null
-    }
-
-    private fun client(): FfiServerApiClient = clientDelegate.value
-
     private fun messenger(): AndroidMessengerClient = messengerDelegate.value
 
     companion object {
         private const val TAG = "TrixRealtime"
-        private const val POLL_INTERVAL_MS = 750L
         private const val WEBSOCKET_RETRY_DELAY_MS = 3_000L
         private const val STOP_GRACE_PERIOD_MS = 2_500L
     }

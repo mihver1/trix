@@ -64,6 +64,18 @@
       </Testables>
       <CommandLineArguments>
       </CommandLineArguments>
+      <EnvironmentVariables>
+         <EnvironmentVariable
+            key = "TRIX_IOS_SERVER_SMOKE_BASE_URL"
+            value = "$(TRIX_IOS_SERVER_SMOKE_BASE_URL)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "TRIX_IOS_UI_TEST_BASE_URL"
+            value = "$(TRIX_IOS_UI_TEST_BASE_URL)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+      </EnvironmentVariables>
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"
@@ -87,6 +99,18 @@
       </BuildableProductRunnable>
       <CommandLineArguments>
       </CommandLineArguments>
+      <EnvironmentVariables>
+         <EnvironmentVariable
+            key = "TRIX_IOS_SERVER_SMOKE_BASE_URL"
+            value = "$(TRIX_IOS_SERVER_SMOKE_BASE_URL)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "TRIX_IOS_UI_TEST_BASE_URL"
+            value = "$(TRIX_IOS_UI_TEST_BASE_URL)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+      </EnvironmentVariables>
    </LaunchAction>
    <ProfileAction
       buildConfiguration = "Release"

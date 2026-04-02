@@ -26,6 +26,14 @@ When `podman compose` is available, the harness uses it to start local services 
 
 The compose file intentionally uses relaxed dev-only auth challenge/session limits so server-backed native smoke flows can reseed multiple simulator/device identities in one pass without tripping local rate limiting.
 
+For local `ios-server` / `ios-ui` runs that auto-start compose services, the harness also:
+
+- removes conflicting legacy `trix-postgres-1` / `trix-app-1` containers when they occupy the compose service names without compose labels
+- rebuilds the local `app` service before the smoke pass so newly added server routes are exercised
+- normalizes the DB-backed admin registration setting back to `allow_public_account_registration=true` via the local admin API, so a previously toggled dev database does not break account-bootstrap smoke flows
+
+Those server-backed auto-start flows now require `jq` in addition to `curl` and the chosen compose runtime.
+
 If you already have Postgres running locally, skip compose startup:
 
 ```bash

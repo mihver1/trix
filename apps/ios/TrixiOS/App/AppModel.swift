@@ -113,6 +113,7 @@ final class AppModel {
     @ObservationIgnored private var hasStarted = false
     @ObservationIgnored private var directoryAccountCache: [String: DirectoryAccountSummary] = [:]
     @ObservationIgnored private var realtimeClient: RealtimeWebSocketClient?
+    @ObservationIgnored private var realtimeLoopTask: Task<Void, Never>?
     @ObservationIgnored private var realtimeConnectionID = UUID()
     @ObservationIgnored private var currentServerBaseURLString: String?
     @ObservationIgnored private var hasScheduledBackgroundRefresh = false
@@ -254,7 +255,7 @@ final class AppModel {
             return
         }
 
-        if realtimeClient != nil {
+        if realtimeLoopTask != nil {
             return
         }
 
@@ -1117,7 +1118,7 @@ final class AppModel {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try await TrixCorePersistentBridge.ackInboxIntoSyncState(
+            let response = try TrixCorePersistentBridge.ackInboxIntoSyncState(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
@@ -2390,26 +2391,35 @@ final class AppModel {
     }
 
     func sendTypingUpdate(chatId: String, isTyping: Bool) async {
+        guard let realtimeClient else {
+            return
+        }
         do {
-            try await realtimeClient?.sendTypingUpdate(chatId: chatId, isTyping: isTyping)
+            try await realtimeClient.sendTypingUpdate(chatId: chatId, isTyping: isTyping)
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
+    @discardableResult
     func sendHistorySyncProgress(
         jobId: String,
         cursorJson: String?,
         completedChunks: UInt64?
-    ) async {
+    ) async -> Bool {
+        guard let realtimeClient else {
+            return false
+        }
         do {
-            try await realtimeClient?.sendHistorySyncProgress(
+            try await realtimeClient.sendHistorySyncProgress(
                 jobId: jobId,
                 cursorJson: cursorJson,
                 completedChunks: completedChunks
             )
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -2428,7 +2438,7 @@ final class AppModel {
         identity: LocalDeviceIdentity
     ) async {
         let normalizedBaseURL = normalizedBaseURLString(baseURLString)
-        if realtimeClient != nil,
+        if realtimeLoopTask != nil,
            realtimeAccessToken == accessToken,
            normalizedBaseURLString(currentServerBaseURLString ?? "") == normalizedBaseURL,
            localIdentity?.deviceId == identity.deviceId {
@@ -2443,53 +2453,89 @@ final class AppModel {
         let client = RealtimeWebSocketClient(
             baseURLString: baseURLString,
             accessToken: accessToken,
-            identity: identity,
-            checkpoint: messengerCheckpoint,
-            onEvent: { [weak self] update in
-                await self?.handleRealtimeUpdate(update, connectionID: connectionID)
-            },
-            onDisconnect: { [weak self] reason in
-                await self?.handleRealtimeDisconnect(reason, connectionID: connectionID)
-            }
+            identity: identity
         )
         realtimeClient = client
         realtimeAccessToken = accessToken
-        await client.start()
+        realtimeLoopTask = Task { [weak self] in
+            await self?.runRealtimeConnectionLoop(client: client, connectionID: connectionID)
+        }
     }
 
     private func stopRealtimeConnection() async {
         let client = realtimeClient
+        let loopTask = realtimeLoopTask
         realtimeClient = nil
+        realtimeLoopTask = nil
         realtimeAccessToken = nil
         realtimeConnectionID = UUID()
-        await client?.stop()
+
+        loopTask?.cancel()
+        if let client {
+            await client.stop()
+        }
+        if let loopTask {
+            await loopTask.value
+        }
     }
 
     private func disconnectRealtimeConnection() {
         let client = realtimeClient
+        let loopTask = realtimeLoopTask
         realtimeClient = nil
+        realtimeLoopTask = nil
         realtimeAccessToken = nil
         realtimeConnectionID = UUID()
 
-        if let client {
+        loopTask?.cancel()
+
+        if client != nil || loopTask != nil {
             Task {
-                await client.stop()
+                if let client {
+                    await client.stop()
+                }
+                if let loopTask {
+                    await loopTask.value
+                }
+            }
+        }
+    }
+
+    private func runRealtimeConnectionLoop(
+        client: RealtimeWebSocketClient,
+        connectionID: UUID
+    ) async {
+        while !Task.isCancelled {
+            do {
+                let batch = try await client.getNewEventsRealtime(checkpoint: messengerCheckpoint)
+                guard !Task.isCancelled else {
+                    return
+                }
+                await handleRealtimeUpdate(batch, connectionID: connectionID)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else {
+                    return
+                }
+                await handleRealtimeDisconnect(error.localizedDescription, connectionID: connectionID)
+                return
             }
         }
     }
 
     private func handleRealtimeUpdate(
-        _ update: RealtimeConnectionUpdate,
+        _ batch: SafeMessengerEventBatch,
         connectionID: UUID
     ) async {
         guard realtimeConnectionID == connectionID else {
             return
         }
 
-        messengerCheckpoint = update.batch.checkpoint ?? messengerCheckpoint
-        mergeSafeMessengerReadStates(from: update.batch)
+        messengerCheckpoint = batch.checkpoint ?? messengerCheckpoint
+        mergeSafeMessengerReadStates(from: batch)
 
-        guard !update.batch.events.isEmpty,
+        guard !batch.events.isEmpty,
               let baseURLString = currentServerBaseURLString
         else {
             return
@@ -2520,11 +2566,17 @@ final class AppModel {
             return
         }
 
+        let client = realtimeClient
         realtimeClient = nil
+        realtimeLoopTask = nil
+        realtimeAccessToken = nil
         if let reason,
            !reason.trix_trimmed().isEmpty,
            dashboard == nil {
             errorMessage = reason
+        }
+        if let client {
+            await client.stop()
         }
         scheduleBackgroundRefresh(delayNanoseconds: 1_500_000_000)
     }
@@ -2649,12 +2701,12 @@ final class AppModel {
                 accessToken: context.session.accessToken,
                 identity: context.identity
             )
-            let batch = try TrixCorePersistentBridge.getNewMessengerEvents(
+            let recoveryClient = RealtimeWebSocketClient(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: effectiveIdentity,
-                checkpoint: messengerCheckpoint
             )
+            let batch = try await recoveryClient.getNewEvents(checkpoint: messengerCheckpoint)
             messengerCheckpoint = batch.checkpoint ?? messengerCheckpoint
             mergeSafeMessengerReadStates(from: batch)
 

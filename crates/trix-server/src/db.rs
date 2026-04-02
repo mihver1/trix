@@ -5551,6 +5551,31 @@ impl Database {
         Ok(acked)
     }
 
+    pub async fn release_inbox_lease_owner(
+        &self,
+        device_id: Uuid,
+        lease_owner: &str,
+    ) -> Result<u64, AppError> {
+        let result = sqlx::query(
+            r#"
+            UPDATE device_inbox
+            SET delivery_state = 'pending'::delivery_state,
+                lease_owner = NULL,
+                lease_expires_at = NULL
+            WHERE device_id = $1
+              AND delivery_state = 'leased'::delivery_state
+              AND lease_owner = $2
+            "#,
+        )
+        .bind(device_id)
+        .bind(lease_owner)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(result.rows_affected())
+    }
+
     pub async fn list_pending_inbox_device_ids_for_chat(
         &self,
         chat_id: Uuid,
@@ -7764,6 +7789,133 @@ mod tests {
             .await
             .expect("list remaining inbox items");
         assert!(remaining.is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn smoke_released_inbox_leases_are_immediately_reclaimable() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [51; 32],
+                [52; 32],
+            ))
+            .await
+            .expect("create alice account");
+        let bob = db
+            .create_account(make_account_input("bob", "Bob Primary", [61; 32], [62; 32]))
+            .await
+            .expect("create bob account");
+
+        db.publish_key_packages(
+            bob.device_id,
+            vec![PublishKeyPackageInput {
+                device_id: bob.device_id,
+                cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                key_package_bytes: b"bob-primary-kp".to_vec(),
+            }],
+        )
+        .await
+        .expect("publish bob key package");
+
+        let bob_reserved = db
+            .reserve_key_packages_for_account(alice.account_id, bob.account_id)
+            .await
+            .expect("reserve bob key package");
+        let dm = db
+            .create_chat(CreateChatInput {
+                creator_account_id: alice.account_id,
+                creator_device_id: alice.device_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                participant_account_ids: vec![bob.account_id],
+                reserved_key_package_ids: bob_reserved
+                    .iter()
+                    .map(|package| package.key_package_id)
+                    .collect(),
+                initial_commit: Some(make_control_message("dm-create-commit")),
+                welcome_message: Some(make_control_message("dm-create-welcome")),
+            })
+            .await
+            .expect("create dm");
+
+        let bootstrap_inbox = db
+            .get_inbox_for_device(bob.device_id, None, Some(10))
+            .await
+            .expect("list bootstrap inbox items");
+        db.ack_inbox_items(
+            bob.device_id,
+            bootstrap_inbox
+                .iter()
+                .map(|item| i64::try_from(item.inbox_id).expect("inbox id fits in i64"))
+                .collect(),
+        )
+        .await
+        .expect("ack bootstrap inbox items");
+
+        let sent = db
+            .append_message(CreateMessageInput {
+                chat_id: dm.chat_id,
+                sender_account_id: alice.account_id,
+                sender_device_id: alice.device_id,
+                message_id: Uuid::new_v4(),
+                epoch: dm.epoch,
+                message_kind: MessageKind::Application,
+                content_type: ContentType::Text,
+                ciphertext: b"hello after disconnect".to_vec(),
+                aad_json: json!({ "kind": "text" }),
+            })
+            .await
+            .expect("append message");
+
+        let leased = db
+            .lease_inbox_for_device(
+                bob.device_id,
+                "ws:disconnected-session",
+                None,
+                Some(10),
+                Some(30),
+            )
+            .await
+            .expect("lease pending inbox item");
+        assert_eq!(leased.len(), 1);
+        assert_eq!(leased[0].message.message_id, sent.message_id);
+
+        let blocked = db
+            .lease_inbox_for_device(
+                bob.device_id,
+                "ws:replacement-session",
+                None,
+                Some(10),
+                Some(30),
+            )
+            .await
+            .expect("replacement session should be blocked before release");
+        assert!(blocked.is_empty());
+
+        let released = db
+            .release_inbox_lease_owner(bob.device_id, "ws:disconnected-session")
+            .await
+            .expect("release disconnected lease");
+        assert_eq!(released, 1);
+
+        let reclaimed = db
+            .lease_inbox_for_device(
+                bob.device_id,
+                "ws:replacement-session",
+                None,
+                Some(10),
+                Some(30),
+            )
+            .await
+            .expect("replacement session should reclaim released lease");
+        assert_eq!(reclaimed.len(), 1);
+        assert_eq!(reclaimed[0].inbox_id, leased[0].inbox_id);
     }
 
     #[tokio::test]

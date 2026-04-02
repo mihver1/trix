@@ -950,6 +950,8 @@ external fun uniffi_trix_core_checksum_method_ffisynccoordinator_sync_chat_histo
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_approve_linked_device(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_close_realtime(
+): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_complete_link_device(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_create_conversation(
@@ -961,6 +963,8 @@ external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_attachment(
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_messages(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events(
+): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events_realtime(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_list_conversations(
 ): Short
@@ -980,7 +984,11 @@ external fun uniffi_trix_core_checksum_method_ffimessengerclient_root_path(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_send_attachment(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_send_history_sync_progress(
+): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_send_message(
+): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_send_presence_ping(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_set_typing(
 ): Short
@@ -1410,6 +1418,8 @@ external fun uniffi_trix_core_fn_constructor_ffimessengerclient_open(`config`: R
 ): Long
 external fun uniffi_trix_core_fn_method_ffimessengerclient_approve_linked_device(`ptr`: Long,`deviceId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_close_realtime(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 external fun uniffi_trix_core_fn_method_ffimessengerclient_complete_link_device(`ptr`: Long,`linkPayload`: RustBuffer.ByValue,`deviceDisplayName`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_create_conversation(`ptr`: Long,`request`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1421,6 +1431,8 @@ external fun uniffi_trix_core_fn_method_ffimessengerclient_get_attachment(`ptr`:
 external fun uniffi_trix_core_fn_method_ffimessengerclient_get_messages(`ptr`: Long,`conversationId`: RustBuffer.ByValue,`pageCursor`: RustBuffer.ByValue,`limit`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_get_new_events(`ptr`: Long,`checkpoint`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_get_new_events_realtime(`ptr`: Long,`checkpoint`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_list_conversations(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1440,8 +1452,12 @@ external fun uniffi_trix_core_fn_method_ffimessengerclient_root_path(`ptr`: Long
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_send_attachment(`ptr`: Long,`conversationId`: RustBuffer.ByValue,`payload`: RustBuffer.ByValue,`metadata`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_send_history_sync_progress(`ptr`: Long,`jobId`: RustBuffer.ByValue,`cursorJson`: RustBuffer.ByValue,`completedChunks`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 external fun uniffi_trix_core_fn_method_ffimessengerclient_send_message(`ptr`: Long,`request`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_send_presence_ping(`ptr`: Long,`nonce`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 external fun uniffi_trix_core_fn_method_ffimessengerclient_set_typing(`ptr`: Long,`conversationId`: RustBuffer.ByValue,`isTyping`: Byte,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 external fun uniffi_trix_core_fn_method_ffimessengerclient_sync_pending_history_repairs(`ptr`: Long,`conversationIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -2055,6 +2071,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_approve_linked_device() != 893.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_close_realtime() != 11095.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_complete_link_device() != 36044.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -2071,6 +2090,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events() != 4509.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events_realtime() != 51892.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_list_conversations() != 14380.toShort()) {
@@ -2100,7 +2122,13 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_send_attachment() != 17407.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_send_history_sync_progress() != 41842.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_send_message() != 61743.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_send_presence_ping() != 19683.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_set_typing() != 22040.toShort()) {
@@ -4362,6 +4390,8 @@ public interface FfiMessengerClientInterface {
     
     fun `approveLinkedDevice`(`deviceId`: kotlin.String): FfiMessengerDeviceMutationResult
     
+    fun `closeRealtime`()
+    
     fun `completeLinkDevice`(`linkPayload`: kotlin.String, `deviceDisplayName`: kotlin.String): FfiMessengerPendingDeviceRecord
     
     fun `createConversation`(`request`: FfiMessengerCreateConversationRequest): FfiMessengerConversationMutationResult
@@ -4373,6 +4403,8 @@ public interface FfiMessengerClientInterface {
     fun `getMessages`(`conversationId`: kotlin.String, `pageCursor`: kotlin.String?, `limit`: kotlin.UInt?): FfiMessengerMessagePage
     
     fun `getNewEvents`(`checkpoint`: kotlin.String?): FfiMessengerEventBatch
+    
+    fun `getNewEventsRealtime`(`checkpoint`: kotlin.String?): FfiMessengerEventBatch
     
     fun `listConversations`(): List<FfiMessengerConversationSummary>
     
@@ -4392,7 +4424,11 @@ public interface FfiMessengerClientInterface {
     
     fun `sendAttachment`(`conversationId`: kotlin.String, `payload`: kotlin.ByteArray, `metadata`: FfiMessengerAttachmentMetadata): FfiMessengerAttachmentToken
     
+    fun `sendHistorySyncProgress`(`jobId`: kotlin.String, `cursorJson`: kotlin.String?, `completedChunks`: kotlin.ULong?)
+    
     fun `sendMessage`(`request`: FfiMessengerSendMessageRequest): FfiMessengerSendMessageResult
+    
+    fun `sendPresencePing`(`nonce`: kotlin.String?)
     
     fun `setTyping`(`conversationId`: kotlin.String, `isTyping`: kotlin.Boolean)
     
@@ -4518,6 +4554,19 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
     
 
     
+    @Throws(FfiMessengerException::class)override fun `closeRealtime`()
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_close_realtime(
+        it,
+        _status)
+}
+    }
+    
+    
+
+    
     @Throws(FfiMessengerException::class)override fun `completeLinkDevice`(`linkPayload`: kotlin.String, `deviceDisplayName`: kotlin.String): FfiMessengerPendingDeviceRecord {
             return FfiConverterTypeFfiMessengerPendingDeviceRecord.lift(
     callWithHandle {
@@ -4593,6 +4642,20 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
     callWithHandle {
     uniffiRustCallWithError(FfiMessengerException) { _status ->
     UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_get_new_events(
+        it,
+        FfiConverterOptionalString.lower(`checkpoint`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiMessengerException::class)override fun `getNewEventsRealtime`(`checkpoint`: kotlin.String?): FfiMessengerEventBatch {
+            return FfiConverterTypeFfiMessengerEventBatch.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_get_new_events_realtime(
         it,
         FfiConverterOptionalString.lower(`checkpoint`),_status)
 }
@@ -4727,6 +4790,19 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
     
 
     
+    @Throws(FfiMessengerException::class)override fun `sendHistorySyncProgress`(`jobId`: kotlin.String, `cursorJson`: kotlin.String?, `completedChunks`: kotlin.ULong?)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_send_history_sync_progress(
+        it,
+        FfiConverterString.lower(`jobId`),FfiConverterOptionalString.lower(`cursorJson`),FfiConverterOptionalULong.lower(`completedChunks`),_status)
+}
+    }
+    
+    
+
+    
     @Throws(FfiMessengerException::class)override fun `sendMessage`(`request`: FfiMessengerSendMessageRequest): FfiMessengerSendMessageResult {
             return FfiConverterTypeFfiMessengerSendMessageResult.lift(
     callWithHandle {
@@ -4738,6 +4814,19 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
     }
     )
     }
+    
+
+    
+    @Throws(FfiMessengerException::class)override fun `sendPresencePing`(`nonce`: kotlin.String?)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_send_presence_ping(
+        it,
+        FfiConverterOptionalString.lower(`nonce`),_status)
+}
+    }
+    
     
 
     

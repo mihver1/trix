@@ -136,6 +136,7 @@ final class UITestScenarioDevice {
             accessToken: try authenticate(forceRefresh: forceRefreshSession).accessToken,
             identity: identity
         )
+        eventCheckpoint = snapshot.checkpoint
         mergeIdentity(from: snapshot)
         return snapshot
     }
@@ -154,14 +155,29 @@ final class UITestScenarioDevice {
     }
 
     func pollEvents() throws -> SafeMessengerEventBatch {
-        let batch = try TrixCorePersistentBridge.getNewMessengerEvents(
-            baseURLString: baseURL,
-            accessToken: try authenticate().accessToken,
-            identity: identity,
-            checkpoint: eventCheckpoint
-        )
-        eventCheckpoint = batch.checkpoint ?? eventCheckpoint
-        return batch
+        do {
+            let batch = try RealtimeWebSocketClient.pollNewEvents(
+                baseURLString: baseURL,
+                accessToken: try authenticate().accessToken,
+                identity: identity,
+                checkpoint: eventCheckpoint
+            )
+            eventCheckpoint = batch.checkpoint ?? eventCheckpoint
+            return batch
+        } catch let error as FfiMessengerError {
+            guard case .RequiresResync = error else {
+                throw error
+            }
+            _ = try loadSnapshot()
+            let batch = try RealtimeWebSocketClient.pollNewEvents(
+                baseURLString: baseURL,
+                accessToken: try authenticate().accessToken,
+                identity: identity,
+                checkpoint: eventCheckpoint
+            )
+            eventCheckpoint = batch.checkpoint ?? eventCheckpoint
+            return batch
+        }
     }
 
     func createConversation(

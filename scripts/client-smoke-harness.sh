@@ -190,6 +190,60 @@ compose_cmd() {
   die "compose tool is not configured"
 }
 
+container_runtime_cmd() {
+  if [[ "$COMPOSE_TOOL" == "podman-compose" || "$COMPOSE_TOOL" == "podman compose" ]]; then
+    printf '%s\n' "${PODMAN_BIN:-podman}"
+    return
+  fi
+
+  if [[ "$COMPOSE_TOOL" == "docker compose" ]]; then
+    printf '%s\n' "docker"
+    return
+  fi
+
+  die "container runtime is not configured"
+}
+
+runtime_container_exists() {
+  local runtime
+  runtime="$(container_runtime_cmd)"
+  "$runtime" container exists "$1"
+}
+
+runtime_compose_service_label() {
+  local runtime
+  runtime="$(container_runtime_cmd)"
+  "$runtime" inspect "$1" \
+    --format '{{ index .Config.Labels "com.docker.compose.service" }}{{ index .Config.Labels "io.podman.compose.service" }}' \
+    2>/dev/null || true
+}
+
+runtime_remove_container() {
+  local runtime
+  runtime="$(container_runtime_cmd)"
+  "$runtime" rm -f "$1" >/dev/null
+}
+
+release_conflicting_compose_names() {
+  local project_name="${COMPOSE_PROJECT_NAME:-$(basename "$ROOT_DIR")}"
+  local service name label
+
+  for service in "$@"; do
+    name="${project_name}-${service}-1"
+    if ! runtime_container_exists "$name"; then
+      continue
+    fi
+
+    label="$(runtime_compose_service_label "$name")"
+    if [[ "$label" == "$service" ]]; then
+      continue
+    fi
+
+    log "Removing existing non-compose container $name so compose can start $service"
+    runtime_remove_container "$name"
+  done
+}
+
 wait_for_postgres() {
   local deadline=$((SECONDS + 90))
 
@@ -225,8 +279,56 @@ wait_for_http_health() {
   die "server health on $health_url did not become ready in time"
 }
 
+ensure_public_account_registration_enabled() {
+  local base_url="$1"
+  local admin_username="${TRIX_ADMIN_USERNAME:-ops}"
+  local admin_password="${TRIX_ADMIN_PASSWORD:-dev-admin-secret-change-me}"
+  local admin_root="${base_url%/}"
+  local session_body access_token current_setting
+
+  command -v jq >/dev/null 2>&1 || die "jq is required to normalize admin runtime settings"
+
+  session_body="$(
+    jq -cn --arg username "$admin_username" --arg password "$admin_password" \
+      '{username: $username, password: $password}' \
+      | curl -fsS \
+          -X POST \
+          "$admin_root/v0/admin/session" \
+          -H 'Content-Type: application/json' \
+          --data-binary @-
+  )" || die "failed to create admin session for local smoke backend"
+
+  access_token="$(printf '%s' "$session_body" | jq -r '.access_token // empty')"
+  [[ -n "$access_token" ]] || die "admin session response did not include access_token"
+
+  current_setting="$(
+    curl -fsS \
+      "$admin_root/v0/admin/settings/registration" \
+      -H "Authorization: Bearer $access_token" \
+      | jq -r '.allow_public_account_registration'
+  )" || die "failed to fetch admin registration settings"
+
+  if [[ "$current_setting" != "true" ]]; then
+    log "Enabling public account registration for local smoke backend"
+    curl -fsS \
+      -X PATCH \
+      "$admin_root/v0/admin/settings/registration" \
+      -H "Authorization: Bearer $access_token" \
+      -H 'Content-Type: application/json' \
+      --data '{"allow_public_account_registration":true}' \
+      >/dev/null || die "failed to enable public account registration"
+  fi
+
+  curl -fsS \
+    -X DELETE \
+    "$admin_root/v0/admin/session" \
+    -H "Authorization: Bearer $access_token" \
+    >/dev/null || true
+}
+
 start_postgres() {
   detect_compose_tool || die "podman compose or docker compose is required to auto-start postgres"
+  release_conflicting_compose_names postgres
   log "Starting postgres with $COMPOSE_TOOL"
   compose_cmd up -d postgres
   wait_for_postgres
@@ -235,10 +337,12 @@ start_postgres() {
 start_local_server() {
   local base_url="${TRIX_IOS_SERVER_SMOKE_BASE_URL:-$DEFAULT_IOS_SERVER_SMOKE_BASE_URL}"
   detect_compose_tool || die "podman compose or docker compose is required to auto-start the local server"
-  log "Starting postgres + app with $COMPOSE_TOOL"
-  compose_cmd up -d postgres app
+  release_conflicting_compose_names postgres app
+  log "Starting postgres + app with $COMPOSE_TOOL (forcing app rebuild)"
+  compose_cmd up -d --build postgres app
   wait_for_postgres
   wait_for_http_health "$base_url"
+  ensure_public_account_registration_enabled "$base_url"
 }
 
 stop_postgres() {
@@ -325,14 +429,13 @@ run_suite() {
       destination="$(resolve_ios_destination)"
       base_url="${TRIX_IOS_SERVER_SMOKE_BASE_URL:-$DEFAULT_IOS_SERVER_SMOKE_BASE_URL}"
       log "Running ios-server on $destination against $base_url"
-      run_root_command env \
-        TRIX_IOS_SERVER_SMOKE_BASE_URL="$base_url" \
-        xcodebuild \
+      run_root_command xcodebuild \
         -project apps/ios/TrixiOS.xcodeproj \
         -scheme TrixiOS \
         -destination "$destination" \
         -derivedDataPath apps/ios/build/ios-tests-deriveddata \
         CODE_SIGNING_ALLOWED=NO \
+        TRIX_IOS_SERVER_SMOKE_BASE_URL="$base_url" \
         -only-testing:TrixiOSTests/ServerBackedSmokeTests \
         -only-testing:TrixiOSTests/UITestConversationSeedStateTests \
         test
@@ -343,14 +446,13 @@ run_suite() {
       destination="$(resolve_ios_destination)"
       base_url="${TRIX_IOS_UI_TEST_BASE_URL:-$DEFAULT_IOS_UI_TEST_BASE_URL}"
       log "Running ios-ui on $destination against $base_url"
-      run_root_command env \
-        TRIX_IOS_UI_TEST_BASE_URL="$base_url" \
-        xcodebuild \
+      run_root_command xcodebuild \
         -project apps/ios/TrixiOS.xcodeproj \
         -scheme TrixiOS \
         -destination "$destination" \
         -derivedDataPath apps/ios/build/ios-tests-deriveddata \
         CODE_SIGNING_ALLOWED=NO \
+        TRIX_IOS_UI_TEST_BASE_URL="$base_url" \
         -only-testing:TrixiOSUITests/TrixiOSSmokeUITests \
         test
       ;;

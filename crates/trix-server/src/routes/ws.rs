@@ -59,10 +59,7 @@ async fn websocket_session(state: AppState, principal: SessionPrincipal, mut soc
     };
 
     if send_server_frame(&mut socket, &hello).await.is_err() {
-        state
-            .ws_registry
-            .unregister(principal.device_id, session_id)
-            .await;
+        cleanup_websocket_session(&state, principal.device_id, session_id, &lease_owner).await;
         return;
     }
 
@@ -70,10 +67,7 @@ async fn websocket_session(state: AppState, principal: SessionPrincipal, mut soc
         .await
         .is_err()
     {
-        state
-            .ws_registry
-            .unregister(principal.device_id, session_id)
-            .await;
+        cleanup_websocket_session(&state, principal.device_id, session_id, &lease_owner).await;
         let _ = socket.close().await;
         return;
     }
@@ -125,10 +119,7 @@ async fn websocket_session(state: AppState, principal: SessionPrincipal, mut soc
         }
     }
 
-    state
-        .ws_registry
-        .unregister(principal.device_id, session_id)
-        .await;
+    cleanup_websocket_session(&state, principal.device_id, session_id, &lease_owner).await;
     let _ = socket.close().await;
 }
 
@@ -251,6 +242,20 @@ async fn ensure_session_active(
         .db
         .ensure_active_device_session(principal.account_id, principal.device_id)
         .await
+}
+
+async fn cleanup_websocket_session(
+    state: &AppState,
+    device_id: uuid::Uuid,
+    session_id: uuid::Uuid,
+    lease_owner: &str,
+) {
+    state.ws_registry.unregister(device_id, session_id).await;
+    let _ = state
+        .db
+        .release_inbox_lease_owner(device_id, lease_owner)
+        .await;
+    let _ = state.ws_registry.notify_inbox(device_id).await;
 }
 
 async fn send_server_frame(

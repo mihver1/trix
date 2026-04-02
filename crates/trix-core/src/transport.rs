@@ -986,7 +986,10 @@ impl ServerApiClient {
     where
         T: DeserializeOwned,
     {
-        let response = request.send().await?;
+        let request = request.build()?;
+        let request_method = request.method().clone();
+        let request_url = request.url().clone();
+        let response = self.http.execute(request).await?;
         let status = response.status();
         let body = response.bytes().await?;
 
@@ -998,13 +1001,23 @@ impl ServerApiClient {
             Err(ServerApiError::Api {
                 status: status.as_u16(),
                 code: api_error.code,
-                message: api_error.message,
+                message: format!(
+                    "{} {}: {}",
+                    request_method,
+                    request_url,
+                    api_error.message
+                ),
             })
         } else {
             Err(ServerApiError::Api {
                 status: status.as_u16(),
                 code: "http_error".to_owned(),
-                message: String::from_utf8_lossy(&body).trim().to_owned(),
+                message: format!(
+                    "{} {}: {}",
+                    request_method,
+                    request_url,
+                    String::from_utf8_lossy(&body).trim()
+                ),
             })
         }
     }

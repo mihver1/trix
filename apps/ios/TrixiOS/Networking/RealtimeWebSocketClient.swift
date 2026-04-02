@@ -1,124 +1,132 @@
 import Foundation
 
-struct RealtimeConnectionUpdate {
-    let batch: SafeMessengerEventBatch
-}
-
-enum RealtimeWebSocketClientError: LocalizedError {
-    case historySyncProgressUnavailable
-
-    var errorDescription: String? {
-        switch self {
-        case .historySyncProgressUnavailable:
-            return "History sync progress updates are only available in the legacy diagnostics path."
-        }
-    }
-}
-
-actor RealtimeWebSocketClient {
-    typealias EventHandler = @Sendable (RealtimeConnectionUpdate) async -> Void
-    typealias DisconnectHandler = @Sendable (String?) async -> Void
-
+final class RealtimeWebSocketClient: @unchecked Sendable {
     private let baseURLString: String
     private let accessToken: String
     private let identity: LocalDeviceIdentity
-    private let onEvent: EventHandler
-    private let onDisconnect: DisconnectHandler
-
-    private var pollLoopTask: Task<Void, Never>?
-    private var isRunning = false
-    private var checkpoint: String?
-
-    private static let pollIntervalNanoseconds: UInt64 = 1_500_000_000
+    private let clientLock = NSLock()
+    private var cachedClient: FfiMessengerClient?
 
     init(
         baseURLString: String,
         accessToken: String,
-        identity: LocalDeviceIdentity,
-        checkpoint: String?,
-        onEvent: @escaping EventHandler,
-        onDisconnect: @escaping DisconnectHandler
+        identity: LocalDeviceIdentity
     ) {
         self.baseURLString = baseURLString
         self.accessToken = accessToken
         self.identity = identity
-        self.checkpoint = checkpoint
-        self.onEvent = onEvent
-        self.onDisconnect = onDisconnect
     }
 
-    func start() {
-        guard !isRunning else {
-            return
-        }
+    static func pollNewEvents(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        checkpoint: String?
+    ) throws -> SafeMessengerEventBatch {
+        try RealtimeWebSocketClient(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        )
+        .getNewEventsSync(checkpoint: checkpoint)
+    }
 
-        isRunning = true
-        pollLoopTask = Task {
-            await pollLoop()
+    func getNewEventsRealtime(checkpoint: String?) async throws -> SafeMessengerEventBatch {
+        try await callFFI { client in
+            try client.getNewEventsRealtime(checkpoint: checkpoint).trix_safeMessengerEventBatch
         }
+    }
+
+    func getNewEvents(checkpoint: String?) async throws -> SafeMessengerEventBatch {
+        try await callFFI { client in
+            try client.getNewEvents(checkpoint: checkpoint).trix_safeMessengerEventBatch
+        }
+    }
+
+    func getNewEventsSync(checkpoint: String?) throws -> SafeMessengerEventBatch {
+        try client().getNewEvents(checkpoint: checkpoint).trix_safeMessengerEventBatch
     }
 
     func stop() async {
-        await shutdown(notifyDisconnect: false, reason: nil)
+        guard let client = takeCachedClient() else {
+            return
+        }
+        try? await callFFI(using: client) { client in
+            try client.closeRealtime()
+        }
     }
 
-    func sendTypingUpdate(chatId: String, isTyping: Bool) throws {
-        try TrixCorePersistentBridge.setTyping(
-            baseURLString: baseURLString,
-            accessToken: accessToken,
-            identity: identity,
-            chatId: chatId,
-            isTyping: isTyping
-        )
+    func sendTypingUpdate(chatId: String, isTyping: Bool) async throws {
+        try await callFFI { client in
+            try client.setTyping(conversationId: chatId, isTyping: isTyping)
+        }
+    }
+
+    func sendPresencePing(nonce: String? = nil) async throws {
+        try await callFFI { client in
+            try client.sendPresencePing(nonce: nonce)
+        }
     }
 
     func sendHistorySyncProgress(
         jobId: String,
         cursorJson: String?,
         completedChunks: UInt64?
-    ) throws {
-        _ = jobId
-        _ = cursorJson
-        _ = completedChunks
-        throw RealtimeWebSocketClientError.historySyncProgressUnavailable
+    ) async throws {
+        try await callFFI { client in
+            try client.sendHistorySyncProgress(
+                jobId: jobId,
+                cursorJson: cursorJson,
+                completedChunks: completedChunks
+            )
+        }
     }
 
-    private func pollLoop() async {
-        while isRunning, !Task.isCancelled {
-            do {
-                let batch = try TrixCorePersistentBridge.getNewMessengerEvents(
-                    baseURLString: baseURLString,
-                    accessToken: accessToken,
-                    identity: identity,
-                    checkpoint: checkpoint
-                )
-                checkpoint = batch.checkpoint ?? checkpoint
+    private func client() throws -> FfiMessengerClient {
+        clientLock.lock()
+        defer { clientLock.unlock() }
 
-                if !batch.events.isEmpty {
-                    await onEvent(RealtimeConnectionUpdate(batch: batch))
+        if let cachedClient {
+            return cachedClient
+        }
+
+        let client = try TrixCorePersistentBridge.openRealtimeMessengerClient(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        )
+        cachedClient = client
+        return client
+    }
+
+    private func takeCachedClient() -> FfiMessengerClient? {
+        clientLock.lock()
+        defer { clientLock.unlock() }
+
+        let client = cachedClient
+        cachedClient = nil
+        return client
+    }
+
+    private func callFFI<Response: Sendable>(
+        _ operation: @escaping @Sendable (FfiMessengerClient) throws -> Response
+    ) async throws -> Response {
+        let client = try client()
+        return try await callFFI(using: client, operation)
+    }
+
+    private func callFFI<Response: Sendable>(
+        using client: FfiMessengerClient,
+        _ operation: @escaping @Sendable (FfiMessengerClient) throws -> Response
+    ) async throws -> Response {
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    continuation.resume(returning: try operation(client))
+                } catch {
+                    continuation.resume(throwing: error)
                 }
-            } catch {
-                await shutdown(notifyDisconnect: isRunning, reason: error.localizedDescription)
-                return
             }
-
-            try? await Task.sleep(nanoseconds: Self.pollIntervalNanoseconds)
         }
     }
-
-    private func shutdown(notifyDisconnect: Bool, reason: String?) async {
-        let shouldNotify = notifyDisconnect && isRunning
-        isRunning = false
-        pollLoopTask?.cancel()
-        pollLoopTask = nil
-
-        if shouldNotify {
-            await onDisconnect(reason)
-        }
-    }
-}
-
-func isRecoverableRealtimeSessionReplacement(_ reason: String?) -> Bool {
-    _ = reason
-    return false
 }
