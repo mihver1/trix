@@ -14,6 +14,7 @@ The current slice covers:
 - link-intent completion against `/v0/devices/link-intents/{link_intent_id}/complete`
 - pending-device waiting state plus trusted-device approval via `/v0/devices/{device_id}/approve-payload` and `/v0/devices/{device_id}/approve`
 - task-first onboarding with an explicit server availability check, public optional `handle`, no onboarding `bio`, and link-mode server override from the payload `base_url` when present
+- stored-device recovery that keeps active reconnect, pending approval, and capability-upgrade states distinct instead of dropping back to a blank bootstrap form
 - single-consume transfer-bundle fetch/import via `/v0/devices/{device_id}/transfer-bundle` so newly approved devices can upgrade into full account-management capability when the source device supplied shared account-root material
 - device revoke flow against `/v0/devices/{device_id}/revoke`
 - history sync job visibility and completion against `/v0/history-sync/jobs`
@@ -26,12 +27,14 @@ The current slice covers:
 - `trix-core`-backed account bootstrap, link-intent completion, auth challenge/session, device approval, and revoke flows via generated Swift bindings
 - persistent `trix-core` local state under app storage for MLS signer state, local chat history, and inbox sync cursors
 - consumer chat detail backed by the safe messenger snapshot/timeline APIs, including unread badges, read-state reconciliation, outgoing delivery/read ticks, and projected local transcripts
+- foreground realtime delivery through the shared messenger client event stream, with incremental polling recovery after disconnect/background handoff
 - file importer plus iOS `PhotosPicker` attachment send flow for files, photos, and videos
 - inline previews for common image attachments (`gif`, `heic`, `heif`, `jpeg`, `jpg`, `png`, `webp`) before the existing open/share flow
 - attachment download/share flow from the consumer timeline
 - semantic `TrixTheme` surfaces for onboarding and consumer chat in both light and dark mode
 - serialized `trix-core` persistent-bridge access so refresh, reload, and sync work do not race the shared local store
 - protected-data-aware startup and refresh paths that suppress lock-screen-only keychain errors until the device is unlocked
+- offline-safe dashboard restore for previously active devices when the backend is temporarily unreachable
 
 ## Layout
 
@@ -67,6 +70,16 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO \
   build
 ```
+
+Run the repo-standard iOS smoke packs:
+
+```bash
+./scripts/client-smoke-harness.sh --suite ios-unit --no-postgres
+./scripts/client-smoke-harness.sh --suite ios-server --stop-postgres
+./scripts/client-smoke-harness.sh --suite ios-ui --stop-postgres
+```
+
+The shared `TrixiOS` scheme forwards `TRIX_IOS_SERVER_SMOKE_BASE_URL` and `TRIX_IOS_UI_TEST_BASE_URL` into both test and launch actions, so the same scheme works for local laptop runs and server-backed smoke.
 
 Archive, export, validate, and upload for TestFlight from the terminal:
 
@@ -167,10 +180,12 @@ TRIX_ALTOOL_KEYCHAIN_ITEM=TRIX_APPSTORE_PASSWORD \
 - Existing installs that still point at legacy `history-store.json` / `sync-state.json` paths are migrated in place by `trix-core` on first load.
 - Inbox leasing is exposed both as a raw debug worker-style path and as a `trix-core` local-store sync path in the iOS PoC.
 - The consumer chat surface now uses the projected messenger snapshot/timeline APIs for day separators, delivery/read tick badges, unread counts, inline image previews, attachment labels, and download actions. The older Messaging Lab remains useful for lower-level history-sync and message-body debugging.
+- If a previously active device starts without network reachability, the app restores the cached local messenger snapshot and keeps the workspace available while reconnect work is rescheduled in the background.
+- Foreground realtime now prefers the shared messenger client's realtime event stream and uses incremental `getNewEvents()` recovery after disconnects, background handoff, or APNs wake-up delivery.
 - During refresh, the shared core can now request per-chat `chat_backfill` or bounded `timeline_repair` automatically when local projection detects unavailable history or a bounded replay gap. The iOS UI still has no manual repair button.
 
 ## Next App Tasks
 
 - expand consumer UI coverage around attachment failure/retry, inline preview loading, lifecycle resume, and reconnect/relink recovery
 - keep collapsing older debug-only messaging-lab paths into the consumer chat surface
-- decide how far iOS should move toward websocket-first realtime versus the current poll-first safety path
+- keep widening server-backed and UI coverage around realtime disconnect recovery, lifecycle resume, and reconnect/relink flows
