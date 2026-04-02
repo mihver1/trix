@@ -838,6 +838,8 @@ external fun uniffi_trix_core_checksum_method_ffiserverapiclient_create_link_int
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_create_message(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffiserverapiclient_delete_apple_push_token(
+): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_download_attachment(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_download_blob(
@@ -877,6 +879,8 @@ external fun uniffi_trix_core_checksum_method_ffiserverapiclient_list_devices(
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_list_history_sync_jobs(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_publish_key_packages(
+): Short
+external fun uniffi_trix_core_checksum_method_ffiserverapiclient_register_apple_push_token(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_remove_chat_devices(
 ): Short
@@ -1292,6 +1296,8 @@ external fun uniffi_trix_core_fn_method_ffiserverapiclient_create_link_intent(`p
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_create_message(`ptr`: Long,`chatId`: RustBuffer.ByValue,`params`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffiserverapiclient_delete_apple_push_token(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_download_attachment(`ptr`: Long,`body`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_download_blob(`ptr`: Long,`blobId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1331,6 +1337,8 @@ external fun uniffi_trix_core_fn_method_ffiserverapiclient_list_devices(`ptr`: L
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_list_history_sync_jobs(`ptr`: Long,`role`: RustBuffer.ByValue,`status`: RustBuffer.ByValue,`limit`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_publish_key_packages(`ptr`: Long,`packages`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffiserverapiclient_register_apple_push_token(`ptr`: Long,`tokenHex`: RustBuffer.ByValue,`environment`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_remove_chat_devices(`ptr`: Long,`chatId`: RustBuffer.ByValue,`params`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1911,6 +1919,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_create_message() != 38461.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_delete_apple_push_token() != 21843.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_download_attachment() != 65126.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1969,6 +1980,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_publish_key_packages() != 7992.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_register_apple_push_token() != 54319.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_remove_chat_devices() != 29544.toShort()) {
@@ -6226,6 +6240,8 @@ public interface FfiServerApiClientInterface {
     
     fun `createMessage`(`chatId`: kotlin.String, `params`: FfiCreateMessageParams): FfiCreateMessageResponse
     
+    fun `deleteApplePushToken`()
+    
     fun `downloadAttachment`(`body`: FfiMessageBody): FfiDownloadedAttachment
     
     fun `downloadBlob`(`blobId`: kotlin.String): kotlin.ByteArray
@@ -6265,6 +6281,8 @@ public interface FfiServerApiClientInterface {
     fun `listHistorySyncJobs`(`role`: FfiHistorySyncJobRole?, `status`: FfiHistorySyncJobStatus?, `limit`: kotlin.UInt?): List<FfiHistorySyncJob>
     
     fun `publishKeyPackages`(`packages`: List<FfiPublishKeyPackage>): FfiPublishKeyPackagesResponse
+    
+    fun `registerApplePushToken`(`tokenHex`: kotlin.String, `environment`: FfiApplePushEnvironment): FfiRegisterApplePushTokenResponse
     
     fun `removeChatDevices`(`chatId`: kotlin.String, `params`: FfiModifyChatDevicesParams): FfiModifyChatDevicesResponse
     
@@ -6673,6 +6691,19 @@ open class FfiServerApiClient: Disposable, AutoCloseable, FfiServerApiClientInte
     
 
     
+    @Throws(TrixFfiException::class)override fun `deleteApplePushToken`()
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_delete_apple_push_token(
+        it,
+        _status)
+}
+    }
+    
+    
+
+    
     @Throws(TrixFfiException::class)override fun `downloadAttachment`(`body`: FfiMessageBody): FfiDownloadedAttachment {
             return FfiConverterTypeFfiDownloadedAttachment.lift(
     callWithHandle {
@@ -6946,6 +6977,20 @@ open class FfiServerApiClient: Disposable, AutoCloseable, FfiServerApiClientInte
     UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_publish_key_packages(
         it,
         FfiConverterSequenceTypeFfiPublishKeyPackage.lower(`packages`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `registerApplePushToken`(`tokenHex`: kotlin.String, `environment`: FfiApplePushEnvironment): FfiRegisterApplePushTokenResponse {
+            return FfiConverterTypeFfiRegisterApplePushTokenResponse.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_register_apple_push_token(
+        it,
+        FfiConverterString.lower(`tokenHex`),FfiConverterTypeFfiApplePushEnvironment.lower(`environment`),_status)
 }
     }
     )
@@ -13728,6 +13773,49 @@ public object FfiConverterTypeFfiRealtimeEvent: FfiConverterRustBuffer<FfiRealti
 
 
 
+data class FfiRegisterApplePushTokenResponse (
+    var `deviceId`: kotlin.String
+    , 
+    var `environment`: FfiApplePushEnvironment
+    , 
+    var `pushDeliveryEnabled`: kotlin.Boolean
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiRegisterApplePushTokenResponse: FfiConverterRustBuffer<FfiRegisterApplePushTokenResponse> {
+    override fun read(buf: ByteBuffer): FfiRegisterApplePushTokenResponse {
+        return FfiRegisterApplePushTokenResponse(
+            FfiConverterString.read(buf),
+            FfiConverterTypeFfiApplePushEnvironment.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiRegisterApplePushTokenResponse) = (
+            FfiConverterString.allocationSize(value.`deviceId`) +
+            FfiConverterTypeFfiApplePushEnvironment.allocationSize(value.`environment`) +
+            FfiConverterBoolean.allocationSize(value.`pushDeliveryEnabled`)
+    )
+
+    override fun write(value: FfiRegisterApplePushTokenResponse, buf: ByteBuffer) {
+            FfiConverterString.write(value.`deviceId`, buf)
+            FfiConverterTypeFfiApplePushEnvironment.write(value.`environment`, buf)
+            FfiConverterBoolean.write(value.`pushDeliveryEnabled`, buf)
+    }
+}
+
+
+
 data class FfiReservedKeyPackage (
     var `keyPackageId`: kotlin.String
     , 
@@ -14387,6 +14475,40 @@ public object FfiConverterTypeFfiWebSocketServerFrame: FfiConverterRustBuffer<Ff
             FfiConverterOptionalTypeFfiWebSocketErrorFrame.write(value.`error`, buf)
     }
 }
+
+
+
+
+enum class FfiApplePushEnvironment {
+    
+    SANDBOX,
+    PRODUCTION;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiApplePushEnvironment: FfiConverterRustBuffer<FfiApplePushEnvironment> {
+    override fun read(buf: ByteBuffer) = try {
+        FfiApplePushEnvironment.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: FfiApplePushEnvironment) = 4UL
+
+    override fun write(value: FfiApplePushEnvironment, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
 
 
 

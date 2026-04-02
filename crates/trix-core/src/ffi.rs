@@ -7,7 +7,9 @@ use std::{
 use serde_json::Value;
 use thiserror::Error;
 use tokio::runtime::{Builder, Runtime};
-use trix_types::{AccountId, ChatId, DeviceId, MessageId, WebSocketServerFrame};
+use trix_types::{
+    AccountId, ApplePushEnvironment, ChatId, DeviceId, MessageId, WebSocketServerFrame,
+};
 use uuid::Uuid;
 
 use crate::{
@@ -115,6 +117,12 @@ pub enum FfiServiceStatus {
 }
 
 #[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum FfiApplePushEnvironment {
+    Sandbox,
+    Production,
+}
+
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
 pub enum FfiWebSocketServerFrameKind {
     Hello,
     InboxItems,
@@ -192,6 +200,13 @@ pub struct FfiVersionResponse {
     pub service: String,
     pub version: String,
     pub git_sha: Option<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiRegisterApplePushTokenResponse {
+    pub device_id: String,
+    pub environment: FfiApplePushEnvironment,
+    pub push_delivery_enabled: bool,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -1343,6 +1358,28 @@ impl FfiServerApiClient {
                 .map(device_summary_to_ffi)
                 .collect(),
         })
+    }
+
+    pub fn register_apple_push_token(
+        &self,
+        token_hex: String,
+        environment: FfiApplePushEnvironment,
+    ) -> Result<FfiRegisterApplePushTokenResponse, TrixFfiError> {
+        let client = clone_server_api_client(&self.inner)?;
+        let response = self
+            .runtime
+            .block_on(client.register_apple_push_token(token_hex, environment.into()))?;
+        Ok(FfiRegisterApplePushTokenResponse {
+            device_id: response.device_id.0.to_string(),
+            environment: response.environment.into(),
+            push_delivery_enabled: response.push_delivery_enabled,
+        })
+    }
+
+    pub fn delete_apple_push_token(&self) -> Result<(), TrixFfiError> {
+        let client = clone_server_api_client(&self.inner)?;
+        self.runtime.block_on(client.delete_apple_push_token())?;
+        Ok(())
     }
 
     pub fn ensure_device_key_packages(
@@ -4856,6 +4893,24 @@ impl From<trix_types::DeviceStatus> for FfiDeviceStatus {
             trix_types::DeviceStatus::Pending => Self::Pending,
             trix_types::DeviceStatus::Active => Self::Active,
             trix_types::DeviceStatus::Revoked => Self::Revoked,
+        }
+    }
+}
+
+impl From<FfiApplePushEnvironment> for ApplePushEnvironment {
+    fn from(value: FfiApplePushEnvironment) -> Self {
+        match value {
+            FfiApplePushEnvironment::Sandbox => Self::Sandbox,
+            FfiApplePushEnvironment::Production => Self::Production,
+        }
+    }
+}
+
+impl From<ApplePushEnvironment> for FfiApplePushEnvironment {
+    fn from(value: ApplePushEnvironment) -> Self {
+        match value {
+            ApplePushEnvironment::Sandbox => Self::Sandbox,
+            ApplePushEnvironment::Production => Self::Production,
         }
     }
 }

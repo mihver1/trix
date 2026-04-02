@@ -72,11 +72,9 @@ struct TrixAPIClient {
     let baseURL: URL
 
     private let ffiClient: FfiServerApiClient
-    private let session: URLSession
 
     init(baseURL: URL) throws {
         self.baseURL = baseURL
-        self.session = .shared
 
         do {
             self.ffiClient = try FfiServerApiClient(baseUrl: baseURL.absoluteString)
@@ -215,21 +213,20 @@ struct TrixAPIClient {
         accessToken: String,
         request: RegisterApplePushTokenRequest
     ) async throws -> RegisterApplePushTokenResponse {
-        try await performJSONRequest(
-            path: "/v0/devices/push-token",
-            method: "PUT",
-            accessToken: accessToken,
-            body: request,
-            responseType: RegisterApplePushTokenResponse.self
-        )
+        try await callFFI(accessToken: accessToken) { client in
+            try RegisterApplePushTokenResponse(
+                ffiValue: client.registerApplePushToken(
+                    tokenHex: request.tokenHex,
+                    environment: request.environment.ffiValue
+                )
+            )
+        }
     }
 
     func deleteApplePushToken(accessToken: String) async throws {
-        try await performEmptyRequest(
-            path: "/v0/devices/push-token",
-            method: "DELETE",
-            accessToken: accessToken
-        )
+        _ = try await callFFI(accessToken: accessToken) { client in
+            try client.deleteApplePushToken()
+        }
     }
 
     func fetchAccountKeyPackages(
@@ -531,116 +528,6 @@ struct TrixAPIClient {
         }
     }
 
-    func createChatControl(
-        accessToken: String,
-        databasePath: URL,
-        statePath: URL,
-        mlsStorageRoot: URL,
-        credentialIdentity: Data,
-        creatorAccountId: UUID,
-        creatorDeviceId: UUID,
-        chatType: ChatType,
-        title: String?,
-        participantAccountIds: [UUID]
-    ) async throws -> CreateChatControlOutcome {
-        try await callFFI(accessToken: accessToken) { client in
-            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
-            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
-            let facade = try Self.makePersistentMlsFacade(
-                storageRoot: mlsStorageRoot,
-                credentialIdentity: credentialIdentity
-            )
-            let outcome = try coordinator.createChatControl(
-                client: client,
-                store: store,
-                facade: facade,
-                input: FfiCreateChatControlInput(
-                    creatorAccountId: creatorAccountId.uuidString,
-                    creatorDeviceId: creatorDeviceId.uuidString,
-                    chatType: chatType.ffiValue,
-                    title: title,
-                    participantAccountIds: participantAccountIds.map(\.uuidString),
-                    groupId: nil,
-                    commitAadJson: nil,
-                    welcomeAadJson: nil
-                )
-            )
-            try store.saveState()
-            try facade.saveState()
-            try coordinator.saveState()
-            return try CreateChatControlOutcome(ffiValue: outcome)
-        }
-    }
-
-    func sendTextMessage(
-        accessToken: String,
-        databasePath: URL,
-        statePath: URL,
-        mlsStorageRoot: URL,
-        credentialIdentity: Data,
-        senderAccountId: UUID,
-        senderDeviceId: UUID,
-        chatId: UUID,
-        text: String
-    ) async throws -> SendMessageOutcome {
-        try await sendMessageBody(
-            accessToken: accessToken,
-            databasePath: databasePath,
-            statePath: statePath,
-            mlsStorageRoot: mlsStorageRoot,
-            credentialIdentity: credentialIdentity,
-            senderAccountId: senderAccountId,
-            senderDeviceId: senderDeviceId,
-            chatId: chatId,
-            body: .text(text)
-        )
-    }
-
-    func sendMessageBody(
-        accessToken: String,
-        databasePath: URL,
-        statePath: URL,
-        mlsStorageRoot: URL,
-        credentialIdentity: Data,
-        senderAccountId: UUID,
-        senderDeviceId: UUID,
-        chatId: UUID,
-        body: TypedMessageBody
-    ) async throws -> SendMessageOutcome {
-        try await callFFI(accessToken: accessToken) { client in
-            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
-            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
-            let facade = try Self.makePersistentMlsFacade(
-                storageRoot: mlsStorageRoot,
-                credentialIdentity: credentialIdentity
-            )
-            let conversation = try Self.prepareConversationIfNeeded(
-                store: store,
-                facade: facade,
-                chatId: chatId
-            )
-
-            let outcome = try coordinator.sendMessageBody(
-                client: client,
-                store: store,
-                facade: facade,
-                conversation: conversation,
-                input: FfiSendMessageInput(
-                    senderAccountId: senderAccountId.uuidString,
-                    senderDeviceId: senderDeviceId.uuidString,
-                    chatId: chatId.uuidString,
-                    messageId: nil,
-                    body: body.ffiValue(),
-                    aadJson: nil
-                )
-            )
-            try store.saveState()
-            try facade.saveState()
-            try coordinator.saveState()
-            return try SendMessageOutcome(ffiValue: outcome)
-        }
-    }
-
     func uploadAttachment(
         accessToken: String,
         chatId: UUID,
@@ -677,178 +564,6 @@ struct TrixAPIClient {
         }
     }
 
-    func addChatMembersControl(
-        accessToken: String,
-        databasePath: URL,
-        statePath: URL,
-        mlsStorageRoot: URL,
-        credentialIdentity: Data,
-        actorAccountId: UUID,
-        actorDeviceId: UUID,
-        chatId: UUID,
-        participantAccountIds: [UUID]
-    ) async throws -> ModifyChatMembersControlOutcome {
-        try await callFFI(accessToken: accessToken) { client in
-            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
-            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
-            let facade = try Self.makePersistentMlsFacade(
-                storageRoot: mlsStorageRoot,
-                credentialIdentity: credentialIdentity
-            )
-            _ = try Self.prepareConversationIfNeeded(
-                store: store,
-                facade: facade,
-                chatId: chatId
-            )
-            let outcome = try coordinator.addChatMembersControl(
-                client: client,
-                store: store,
-                facade: facade,
-                input: FfiModifyChatMembersControlInput(
-                    actorAccountId: actorAccountId.uuidString,
-                    actorDeviceId: actorDeviceId.uuidString,
-                    chatId: chatId.uuidString,
-                    participantAccountIds: participantAccountIds.map(\.uuidString),
-                    commitAadJson: nil,
-                    welcomeAadJson: nil
-                )
-            )
-            try store.saveState()
-            try facade.saveState()
-            try coordinator.saveState()
-            return try ModifyChatMembersControlOutcome(ffiValue: outcome)
-        }
-    }
-
-    func removeChatMembersControl(
-        accessToken: String,
-        databasePath: URL,
-        statePath: URL,
-        mlsStorageRoot: URL,
-        credentialIdentity: Data,
-        actorAccountId: UUID,
-        actorDeviceId: UUID,
-        chatId: UUID,
-        participantAccountIds: [UUID]
-    ) async throws -> ModifyChatMembersControlOutcome {
-        try await callFFI(accessToken: accessToken) { client in
-            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
-            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
-            let facade = try Self.makePersistentMlsFacade(
-                storageRoot: mlsStorageRoot,
-                credentialIdentity: credentialIdentity
-            )
-            _ = try Self.prepareConversationIfNeeded(
-                store: store,
-                facade: facade,
-                chatId: chatId
-            )
-            let outcome = try coordinator.removeChatMembersControl(
-                client: client,
-                store: store,
-                facade: facade,
-                input: FfiModifyChatMembersControlInput(
-                    actorAccountId: actorAccountId.uuidString,
-                    actorDeviceId: actorDeviceId.uuidString,
-                    chatId: chatId.uuidString,
-                    participantAccountIds: participantAccountIds.map(\.uuidString),
-                    commitAadJson: nil,
-                    welcomeAadJson: nil
-                )
-            )
-            try store.saveState()
-            try facade.saveState()
-            try coordinator.saveState()
-            return try ModifyChatMembersControlOutcome(ffiValue: outcome)
-        }
-    }
-
-    func addChatDevicesControl(
-        accessToken: String,
-        databasePath: URL,
-        statePath: URL,
-        mlsStorageRoot: URL,
-        credentialIdentity: Data,
-        actorAccountId: UUID,
-        actorDeviceId: UUID,
-        chatId: UUID,
-        deviceIds: [UUID]
-    ) async throws -> ModifyChatDevicesControlOutcome {
-        try await callFFI(accessToken: accessToken) { client in
-            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
-            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
-            let facade = try Self.makePersistentMlsFacade(
-                storageRoot: mlsStorageRoot,
-                credentialIdentity: credentialIdentity
-            )
-            _ = try Self.prepareConversationIfNeeded(
-                store: store,
-                facade: facade,
-                chatId: chatId
-            )
-            let outcome = try coordinator.addChatDevicesControl(
-                client: client,
-                store: store,
-                facade: facade,
-                input: FfiModifyChatDevicesControlInput(
-                    actorAccountId: actorAccountId.uuidString,
-                    actorDeviceId: actorDeviceId.uuidString,
-                    chatId: chatId.uuidString,
-                    deviceIds: deviceIds.map(\.uuidString),
-                    commitAadJson: nil,
-                    welcomeAadJson: nil
-                )
-            )
-            try store.saveState()
-            try facade.saveState()
-            try coordinator.saveState()
-            return try ModifyChatDevicesControlOutcome(ffiValue: outcome)
-        }
-    }
-
-    func removeChatDevicesControl(
-        accessToken: String,
-        databasePath: URL,
-        statePath: URL,
-        mlsStorageRoot: URL,
-        credentialIdentity: Data,
-        actorAccountId: UUID,
-        actorDeviceId: UUID,
-        chatId: UUID,
-        deviceIds: [UUID]
-    ) async throws -> ModifyChatDevicesControlOutcome {
-        try await callFFI(accessToken: accessToken) { client in
-            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
-            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
-            let facade = try Self.makePersistentMlsFacade(
-                storageRoot: mlsStorageRoot,
-                credentialIdentity: credentialIdentity
-            )
-            _ = try Self.prepareConversationIfNeeded(
-                store: store,
-                facade: facade,
-                chatId: chatId
-            )
-            let outcome = try coordinator.removeChatDevicesControl(
-                client: client,
-                store: store,
-                facade: facade,
-                input: FfiModifyChatDevicesControlInput(
-                    actorAccountId: actorAccountId.uuidString,
-                    actorDeviceId: actorDeviceId.uuidString,
-                    chatId: chatId.uuidString,
-                    deviceIds: deviceIds.map(\.uuidString),
-                    commitAadJson: nil,
-                    welcomeAadJson: nil
-                )
-            )
-            try store.saveState()
-            try facade.saveState()
-            try coordinator.saveState()
-            return try ModifyChatDevicesControlOutcome(ffiValue: outcome)
-        }
-    }
-
     func fetchChatDetail(accessToken: String, chatId: UUID) async throws -> ChatDetailResponse {
         try await callFFI(accessToken: accessToken) { client in
             try ChatDetailResponse(ffiValue: client.getChat(chatId: chatId.uuidString))
@@ -867,33 +582,6 @@ struct TrixAPIClient {
                     afterServerSeq: nil,
                     limit: try TrixCoreCodec.uint32(limit, label: "chat history limit")
                 )
-            )
-        }
-    }
-
-    func syncChatHistoriesIntoLocalStore(
-        accessToken: String,
-        databasePath: URL,
-        statePath: URL,
-        limitPerChat: Int = 200
-    ) async throws -> LocalHistorySyncResult {
-        try await callFFI(accessToken: accessToken) { client in
-            let store = try Self.makeLocalHistoryStore(databasePath: databasePath)
-            let coordinator = try Self.makeSyncCoordinator(statePath: statePath)
-            let report = try LocalStoreApplyReport(
-                ffiValue: coordinator.syncChatHistoriesIntoStore(
-                    client: client,
-                    store: store,
-                    limitPerChat: try TrixCoreCodec.uint32(limitPerChat, label: "local history sync limit")
-                )
-            )
-            let syncState = try SyncStateSnapshot(ffiValue: coordinator.stateSnapshot())
-            let chats = try ChatListResponse(ffiValues: store.listChats()).chats
-
-            return LocalHistorySyncResult(
-                report: report,
-                syncState: syncState,
-                chats: chats
             )
         }
     }
@@ -1457,115 +1145,6 @@ struct TrixAPIClient {
         }
     }
 
-    private func performJSONRequest<Request: Encodable, Response: Decodable>(
-        path: String,
-        method: String,
-        accessToken: String,
-        body: Request,
-        responseType: Response.Type
-    ) async throws -> Response {
-        let url = absoluteURL(for: path)
-
-        let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        let payload: Data
-        do {
-            payload = try encoder.encode(body)
-        } catch {
-            throw TrixAPIError.invalidPayload(error.localizedDescription)
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        request.httpBody = payload
-
-        do {
-            let (data, response) = try await session.data(for: request)
-            return try decodeJSONResponse(response: response, data: data, as: responseType)
-        } catch let error as TrixAPIError {
-            throw error
-        } catch {
-            throw TrixAPIError.transport(error)
-        }
-    }
-
-    private func performEmptyRequest(
-        path: String,
-        method: String,
-        accessToken: String
-    ) async throws {
-        let url = absoluteURL(for: path)
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-
-        do {
-            let (data, response) = try await session.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw TrixAPIError.invalidResponse
-            }
-
-            guard (200 ..< 300).contains(httpResponse.statusCode) else {
-                throw decodeServerError(statusCode: httpResponse.statusCode, data: data)
-            }
-        } catch let error as TrixAPIError {
-            throw error
-        } catch {
-            throw TrixAPIError.transport(error)
-        }
-    }
-
-    private func absoluteURL(for path: String) -> URL {
-        if let url = URL(string: path, relativeTo: baseURL)?.absoluteURL {
-            return url
-        }
-        return baseURL
-    }
-
-    private func decodeJSONResponse<Response: Decodable>(
-        response: URLResponse,
-        data: Data,
-        as responseType: Response.Type
-    ) throws -> Response {
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw TrixAPIError.invalidResponse
-        }
-
-        guard (200 ..< 300).contains(httpResponse.statusCode) else {
-            throw decodeServerError(statusCode: httpResponse.statusCode, data: data)
-        }
-
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        do {
-            return try decoder.decode(responseType, from: data)
-        } catch {
-            throw TrixAPIError.invalidPayload(error.localizedDescription)
-        }
-    }
-
-    private func decodeServerError(statusCode: Int, data: Data) -> TrixAPIError {
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        if let envelope = try? decoder.decode(ServerErrorEnvelope.self, from: data) {
-            return .server(
-                code: envelope.code,
-                message: envelope.message,
-                statusCode: statusCode
-            )
-        }
-
-        return .server(
-            code: "server_error",
-            message: HTTPURLResponse.localizedString(forStatusCode: statusCode),
-            statusCode: statusCode
-        )
-    }
-
     private static func makeLocalHistoryStore(databasePath: URL) throws -> FfiLocalHistoryStore {
         if let clientStore = try makeWorkspaceClientStore(
             workspaceRoot: databasePath.deletingLastPathComponent()
@@ -1882,11 +1461,6 @@ struct TrixAPIClient {
             statusCode: statusCode
         )
     }
-}
-
-private struct ServerErrorEnvelope: Decodable {
-    let code: String
-    let message: String
 }
 
 private struct LegacyWorkspaceState {

@@ -6,34 +6,18 @@ import org.junit.Test
 
 class MutationConversationResultTest {
     @Test
-    fun sendResultStillBuildsWhenConversationRecoveryFallsBackBestEffort() {
+    fun sendResultBuildsFromMessengerOverviewAndConversation() {
         val overview = sampleOverview()
         val conversation = sampleConversation()
-        var refreshAttempts = 0
 
         val result = buildMutationConversationResult(
             unavailableMessage = "Conversation chat-1 is no longer available",
             buildOverview = { overview },
-            buildConversation = {
-                recoverConversationProjectionBestEffort(
-                    projectLocally = {
-                        throw IllegalStateException("missing local projection")
-                    },
-                    repairHistoryLocally = {
-                        throw AssertionError("local repair should not run after the first projection failure")
-                    },
-                    refreshFromServer = {
-                        refreshAttempts += 1
-                        throw IllegalStateException("network offline")
-                    },
-                )
-                conversation
-            },
+            buildConversation = { conversation },
             createResult = ::ChatSendResult,
         )
 
         assertEquals(ChatSendResult(overview, conversation), result)
-        assertEquals(1, refreshAttempts)
     }
 
     private fun sampleOverview(): ChatOverview {

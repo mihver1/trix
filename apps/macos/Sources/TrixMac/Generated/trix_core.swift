@@ -1591,6 +1591,8 @@ public protocol FfiMessengerClientProtocol: AnyObject, Sendable {
     
     func approveLinkedDevice(deviceId: String) throws  -> FfiMessengerDeviceMutationResult
     
+    func closeRealtime() throws 
+    
     func completeLinkDevice(linkPayload: String, deviceDisplayName: String) throws  -> FfiMessengerPendingDeviceRecord
     
     func createConversation(request: FfiMessengerCreateConversationRequest) throws  -> FfiMessengerConversationMutationResult
@@ -1603,11 +1605,17 @@ public protocol FfiMessengerClientProtocol: AnyObject, Sendable {
     
     func getNewEvents(checkpoint: String?) throws  -> FfiMessengerEventBatch
     
+    func getNewEventsRealtime(checkpoint: String?) throws  -> FfiMessengerEventBatch
+    
     func listConversations() throws  -> [FfiMessengerConversationSummary]
     
     func listDevices() throws  -> [FfiMessengerDeviceRecord]
     
+    func loadCachedSnapshot() throws  -> FfiMessengerSnapshot
+    
     func loadSnapshot() throws  -> FfiMessengerSnapshot
+    
+    func loadSnapshotWithRemoteSync() throws  -> FfiMessengerSnapshot
     
     func markRead(conversationId: String, throughMessageId: String?) throws  -> FfiMessengerReadStateResult
     
@@ -1621,7 +1629,11 @@ public protocol FfiMessengerClientProtocol: AnyObject, Sendable {
     
     func sendAttachment(conversationId: String, payload: Data, metadata: FfiMessengerAttachmentMetadata) throws  -> FfiMessengerAttachmentToken
     
+    func sendHistorySyncProgress(jobId: String, cursorJson: String?, completedChunks: UInt64?) throws 
+    
     func sendMessage(request: FfiMessengerSendMessageRequest) throws  -> FfiMessengerSendMessageResult
+    
+    func sendPresencePing(nonce: String?) throws 
     
     func setTyping(conversationId: String, isTyping: Bool) throws 
     
@@ -1704,6 +1716,13 @@ open func approveLinkedDevice(deviceId: String)throws  -> FfiMessengerDeviceMuta
 })
 }
     
+open func closeRealtime()throws   {try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
+    uniffi_trix_core_fn_method_ffimessengerclient_close_realtime(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+    
 open func completeLinkDevice(linkPayload: String, deviceDisplayName: String)throws  -> FfiMessengerPendingDeviceRecord  {
     return try  FfiConverterTypeFfiMessengerPendingDeviceRecord_lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
     uniffi_trix_core_fn_method_ffimessengerclient_complete_link_device(
@@ -1760,6 +1779,15 @@ open func getNewEvents(checkpoint: String?)throws  -> FfiMessengerEventBatch  {
 })
 }
     
+open func getNewEventsRealtime(checkpoint: String?)throws  -> FfiMessengerEventBatch  {
+    return try  FfiConverterTypeFfiMessengerEventBatch_lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
+    uniffi_trix_core_fn_method_ffimessengerclient_get_new_events_realtime(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionString.lower(checkpoint),$0
+    )
+})
+}
+    
 open func listConversations()throws  -> [FfiMessengerConversationSummary]  {
     return try  FfiConverterSequenceTypeFfiMessengerConversationSummary.lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
     uniffi_trix_core_fn_method_ffimessengerclient_list_conversations(
@@ -1776,9 +1804,25 @@ open func listDevices()throws  -> [FfiMessengerDeviceRecord]  {
 })
 }
     
+open func loadCachedSnapshot()throws  -> FfiMessengerSnapshot  {
+    return try  FfiConverterTypeFfiMessengerSnapshot_lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
+    uniffi_trix_core_fn_method_ffimessengerclient_load_cached_snapshot(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
 open func loadSnapshot()throws  -> FfiMessengerSnapshot  {
     return try  FfiConverterTypeFfiMessengerSnapshot_lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
     uniffi_trix_core_fn_method_ffimessengerclient_load_snapshot(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+open func loadSnapshotWithRemoteSync()throws  -> FfiMessengerSnapshot  {
+    return try  FfiConverterTypeFfiMessengerSnapshot_lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
+    uniffi_trix_core_fn_method_ffimessengerclient_load_snapshot_with_remote_sync(
             self.uniffiCloneHandle(),$0
     )
 })
@@ -1840,6 +1884,16 @@ open func sendAttachment(conversationId: String, payload: Data, metadata: FfiMes
 })
 }
     
+open func sendHistorySyncProgress(jobId: String, cursorJson: String?, completedChunks: UInt64?)throws   {try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
+    uniffi_trix_core_fn_method_ffimessengerclient_send_history_sync_progress(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(jobId),
+        FfiConverterOptionString.lower(cursorJson),
+        FfiConverterOptionUInt64.lower(completedChunks),$0
+    )
+}
+}
+    
 open func sendMessage(request: FfiMessengerSendMessageRequest)throws  -> FfiMessengerSendMessageResult  {
     return try  FfiConverterTypeFfiMessengerSendMessageResult_lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
     uniffi_trix_core_fn_method_ffimessengerclient_send_message(
@@ -1847,6 +1901,14 @@ open func sendMessage(request: FfiMessengerSendMessageRequest)throws  -> FfiMess
         FfiConverterTypeFfiMessengerSendMessageRequest_lower(request),$0
     )
 })
+}
+    
+open func sendPresencePing(nonce: String?)throws   {try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
+    uniffi_trix_core_fn_method_ffimessengerclient_send_presence_ping(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionString.lower(nonce),$0
+    )
+}
 }
     
 open func setTyping(conversationId: String, isTyping: Bool)throws   {try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
@@ -2580,6 +2642,8 @@ public protocol FfiServerApiClientProtocol: AnyObject, Sendable {
     
     func createMessage(chatId: String, params: FfiCreateMessageParams) throws  -> FfiCreateMessageResponse
     
+    func deleteApplePushToken() throws 
+    
     func downloadAttachment(body: FfiMessageBody) throws  -> FfiDownloadedAttachment
     
     func downloadBlob(blobId: String) throws  -> Data
@@ -2619,6 +2683,8 @@ public protocol FfiServerApiClientProtocol: AnyObject, Sendable {
     func listHistorySyncJobs(role: FfiHistorySyncJobRole?, status: FfiHistorySyncJobStatus?, limit: UInt32?) throws  -> [FfiHistorySyncJob]
     
     func publishKeyPackages(packages: [FfiPublishKeyPackage]) throws  -> FfiPublishKeyPackagesResponse
+    
+    func registerApplePushToken(tokenHex: String, environment: FfiApplePushEnvironment) throws  -> FfiRegisterApplePushTokenResponse
     
     func removeChatDevices(chatId: String, params: FfiModifyChatDevicesParams) throws  -> FfiModifyChatDevicesResponse
     
@@ -2902,6 +2968,13 @@ open func createMessage(chatId: String, params: FfiCreateMessageParams)throws  -
 })
 }
     
+open func deleteApplePushToken()throws   {try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverapiclient_delete_apple_push_token(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+    
 open func downloadAttachment(body: FfiMessageBody)throws  -> FfiDownloadedAttachment  {
     return try  FfiConverterTypeFfiDownloadedAttachment_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_download_attachment(
@@ -3081,6 +3154,16 @@ open func publishKeyPackages(packages: [FfiPublishKeyPackage])throws  -> FfiPubl
     uniffi_trix_core_fn_method_ffiserverapiclient_publish_key_packages(
             self.uniffiCloneHandle(),
         FfiConverterSequenceTypeFfiPublishKeyPackage.lower(packages),$0
+    )
+})
+}
+    
+open func registerApplePushToken(tokenHex: String, environment: FfiApplePushEnvironment)throws  -> FfiRegisterApplePushTokenResponse  {
+    return try  FfiConverterTypeFfiRegisterApplePushTokenResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverapiclient_register_apple_push_token(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(tokenHex),
+        FfiConverterTypeFfiApplePushEnvironment_lower(environment),$0
     )
 })
 }
@@ -10783,6 +10866,64 @@ public func FfiConverterTypeFfiRealtimeEvent_lower(_ value: FfiRealtimeEvent) ->
 }
 
 
+public struct FfiRegisterApplePushTokenResponse: Equatable, Hashable {
+    public var deviceId: String
+    public var environment: FfiApplePushEnvironment
+    public var pushDeliveryEnabled: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(deviceId: String, environment: FfiApplePushEnvironment, pushDeliveryEnabled: Bool) {
+        self.deviceId = deviceId
+        self.environment = environment
+        self.pushDeliveryEnabled = pushDeliveryEnabled
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiRegisterApplePushTokenResponse: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRegisterApplePushTokenResponse: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRegisterApplePushTokenResponse {
+        return
+            try FfiRegisterApplePushTokenResponse(
+                deviceId: FfiConverterString.read(from: &buf), 
+                environment: FfiConverterTypeFfiApplePushEnvironment.read(from: &buf), 
+                pushDeliveryEnabled: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiRegisterApplePushTokenResponse, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.deviceId, into: &buf)
+        FfiConverterTypeFfiApplePushEnvironment.write(value.environment, into: &buf)
+        FfiConverterBool.write(value.pushDeliveryEnabled, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRegisterApplePushTokenResponse_lift(_ buf: RustBuffer) throws -> FfiRegisterApplePushTokenResponse {
+    return try FfiConverterTypeFfiRegisterApplePushTokenResponse.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRegisterApplePushTokenResponse_lower(_ value: FfiRegisterApplePushTokenResponse) -> RustBuffer {
+    return FfiConverterTypeFfiRegisterApplePushTokenResponse.lower(value)
+}
+
+
 public struct FfiReservedKeyPackage: Equatable, Hashable {
     public var keyPackageId: String
     public var deviceId: String
@@ -11641,6 +11782,73 @@ public func FfiConverterTypeFfiWebSocketServerFrame_lift(_ buf: RustBuffer) thro
 public func FfiConverterTypeFfiWebSocketServerFrame_lower(_ value: FfiWebSocketServerFrame) -> RustBuffer {
     return FfiConverterTypeFfiWebSocketServerFrame.lower(value)
 }
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum FfiApplePushEnvironment: Equatable, Hashable {
+    
+    case sandbox
+    case production
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiApplePushEnvironment: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiApplePushEnvironment: FfiConverterRustBuffer {
+    typealias SwiftType = FfiApplePushEnvironment
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiApplePushEnvironment {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .sandbox
+        
+        case 2: return .production
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiApplePushEnvironment, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .sandbox:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .production:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiApplePushEnvironment_lift(_ buf: RustBuffer) throws -> FfiApplePushEnvironment {
+    return try FfiConverterTypeFfiApplePushEnvironment.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiApplePushEnvironment_lower(_ value: FfiApplePushEnvironment) -> RustBuffer {
+    return FfiConverterTypeFfiApplePushEnvironment.lower(value)
+}
+
 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
@@ -15431,6 +15639,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_create_message() != 38461) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffiserverapiclient_delete_apple_push_token() != 21843) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_download_attachment() != 65126) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -15489,6 +15700,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_publish_key_packages() != 7992) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffiserverapiclient_register_apple_push_token() != 54319) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_remove_chat_devices() != 29544) {
@@ -15599,6 +15813,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffimessengerclient_approve_linked_device() != 893) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffimessengerclient_close_realtime() != 11095) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_complete_link_device() != 36044) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -15617,13 +15834,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events() != 4509) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events_realtime() != 51892) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_list_conversations() != 14380) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_list_devices() != 41983) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffimessengerclient_load_cached_snapshot() != 34929) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_load_snapshot() != 36763) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffimessengerclient_load_snapshot_with_remote_sync() != 40209) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_mark_read() != 17060) {
@@ -15644,7 +15870,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffimessengerclient_send_attachment() != 17407) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffimessengerclient_send_history_sync_progress() != 41842) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_send_message() != 61743) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffimessengerclient_send_presence_ping() != 19683) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_set_typing() != 22040) {

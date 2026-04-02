@@ -1,6 +1,15 @@
 import Foundation
 
 struct TrixCoreServerBridge {
+    static func validatedBaseURLString(_ baseURLString: String) throws -> String {
+        let trimmed = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let baseURL = URL(string: trimmed), baseURL.scheme != nil, baseURL.host != nil else {
+            throw APIError.invalidBaseURL(trimmed)
+        }
+
+        return baseURL.absoluteString.removingPercentEncoding ?? baseURL.absoluteString
+    }
+
     static func fetchSystemSnapshot(
         baseURLString: String
     ) async throws -> ServerSnapshot {
@@ -214,6 +223,20 @@ struct TrixCoreServerBridge {
     ) async throws -> DeviceListResponse {
         let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
         return try client.listDevices().trix_serverDeviceListResponse
+    }
+
+    static func registerApplePushToken(
+        baseURLString: String,
+        accessToken: String,
+        tokenHex: String,
+        environment: ApplePushEnvironment
+    ) async throws -> RegisterApplePushTokenResponse {
+        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+        return try client.registerApplePushToken(
+            tokenHex: tokenHex,
+            environment: environment.trix_ffiApplePushEnvironment
+        )
+        .trix_serverRegisterApplePushTokenResponse
     }
 
     static func reserveKeyPackages(
@@ -534,6 +557,28 @@ private extension FfiServiceStatus {
     }
 }
 
+private extension ApplePushEnvironment {
+    var trix_ffiApplePushEnvironment: FfiApplePushEnvironment {
+        switch self {
+        case .sandbox:
+            return .sandbox
+        case .production:
+            return .production
+        }
+    }
+}
+
+private extension FfiApplePushEnvironment {
+    var trix_serverApplePushEnvironment: ApplePushEnvironment {
+        switch self {
+        case .sandbox:
+            return .sandbox
+        case .production:
+            return .production
+        }
+    }
+}
+
 private extension FfiHealthResponse {
     var trix_serverHealthResponse: HealthResponse {
         HealthResponse(
@@ -551,6 +596,16 @@ private extension FfiVersionResponse {
             service: service,
             version: version,
             gitSha: gitSha
+        )
+    }
+}
+
+private extension FfiRegisterApplePushTokenResponse {
+    var trix_serverRegisterApplePushTokenResponse: RegisterApplePushTokenResponse {
+        RegisterApplePushTokenResponse(
+            deviceId: deviceId,
+            environment: environment.trix_serverApplePushEnvironment,
+            pushDeliveryEnabled: pushDeliveryEnabled
         )
     }
 }

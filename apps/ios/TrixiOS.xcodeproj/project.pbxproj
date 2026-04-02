@@ -13,10 +13,10 @@
 		1DE64D3ACC3B34A7341113CB /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 26D97D3BE9113B5609B948F5 /* Assets.xcassets */; };
 		216D9FC855FED05182FD63E8 /* TrixiOSInteropDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04353F1F4F70E3DFA332FEC3 /* TrixiOSInteropDriver.swift */; };
 		299255BB4FA97D30B09AE774 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22C33A945CFEA9105871D033 /* AppModel.swift */; };
+		2A1F6A0A58FA4D8192A1B7E1 /* AuthenticatedSessionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C784E2307E04868B5059CDA /* AuthenticatedSessionCoordinator.swift */; };
 		2A4D048B3AE35BA823611D63 /* APIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D76E826883729659D5B0DF4 /* APIError.swift */; };
 		2E71C4248DCC0FBAEACD2550 /* FormAndPayloadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC373B8F990B456994383982 /* FormAndPayloadTests.swift */; };
 		2F7D3413498393667AF7D47C /* UITestLaunchConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFBAFE33FD857EED36B6B54D /* UITestLaunchConfigurationTests.swift */; };
-		32DD1CD4D3EDDE9B08297EEF /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD786FA5598DD8B41A0444FE /* APIClient.swift */; };
 		34290FD5C5D6893807F2ED59 /* TrixiOSSmokeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77AFAFDD2946D1C49895D188 /* TrixiOSSmokeUITests.swift */; };
 		3CFB6C6EEB3BF0694F8C2338 /* UITestFixtureSeeder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F9754F6512B52355BDF9422 /* UITestFixtureSeeder.swift */; };
 		44F1ABEC4D9100A89C6C4CA5 /* TrixTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = D57BB0CF361A1E7900DD676C /* TrixTheme.swift */; };
@@ -27,6 +27,7 @@
 		6D9D86587DA600429E137BFA /* TrixInteropSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00F9C01FC1A898BC753D579 /* TrixInteropSupport.swift */; };
 		6E3A6D003E1B1071F3141280 /* TrixCoreMessageBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 277AE7DC5FFE2238CFF5B555 /* TrixCoreMessageBridgeTests.swift */; };
 		6FEC0B6CA6C8DD295B34506C /* TrixCorePersistentBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E53DB9EB4BE8475A31F2189A /* TrixCorePersistentBridge.swift */; };
+		7042D128A88D3F6D6EF9C6A6 /* RealtimeSessionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 962B11E152BB57C8DEEB0C14 /* RealtimeSessionCoordinator.swift */; };
 		7DA8A99622CCCA79A97EE7BF /* CreateAccountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB561F04E1C44D1888D73336 /* CreateAccountView.swift */; };
 		7EDED62A58B17E6F48430C05 /* UITestLaunchConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B51840115EF40A8C585C795 /* UITestLaunchConfiguration.swift */; };
 		8010E114AB48C5DB7FC15A51 /* MessagingLabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F16E8D46A5E1F90D5FA589FB /* MessagingLabView.swift */; };
@@ -83,6 +84,7 @@
 		0BE73C1B13A52D7BFF9426BC /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		184D72DBD37F99C0A5067184 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
 		229E4FE51C86DFFFFBEDA5BF /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		1C784E2307E04868B5059CDA /* AuthenticatedSessionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthenticatedSessionCoordinator.swift; sourceTree = "<group>"; };
 		22C33A945CFEA9105871D033 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		26D97D3BE9113B5609B948F5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		2746CAF75EE97A4BDBA763BB /* SystemStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemStatusView.swift; sourceTree = "<group>"; };
@@ -112,6 +114,7 @@
 		8A0A1D526D790F8A15875A65 /* UITestServerHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestServerHarness.swift; sourceTree = "<group>"; };
 		8D3909D39ECB2BC8113138AB /* TrixiOSInteropDriverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixiOSInteropDriverTests.swift; sourceTree = "<group>"; };
 		93AB452AEAC561406820AB33 /* module.modulemap */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.module-map"; path = module.modulemap; sourceTree = "<group>"; };
+		962B11E152BB57C8DEEB0C14 /* RealtimeSessionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeSessionCoordinator.swift; sourceTree = "<group>"; };
 		9D76E826883729659D5B0DF4 /* APIError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIError.swift; sourceTree = "<group>"; };
 		9E0262CCF48A32A9EBE5341D /* RealtimeWebSocketClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeWebSocketClient.swift; sourceTree = "<group>"; };
 		9E6C5B8826FF255BAF650A38 /* ChatDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatDetailView.swift; sourceTree = "<group>"; };
@@ -120,7 +123,6 @@
 		B2512DCDBA23CAA2DD01D887 /* KeychainStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStoreTests.swift; sourceTree = "<group>"; };
 		B94177496704FC2F285C6E07 /* TrixUITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixUITestSupport.swift; sourceTree = "<group>"; };
 		BC373B8F990B456994383982 /* FormAndPayloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FormAndPayloadTests.swift; sourceTree = "<group>"; };
-		BD786FA5598DD8B41A0444FE /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		BDA8D72E1FD0CB91B3148597 /* TrixiOSTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = TrixiOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C76457452D572429031461CC /* PendingApprovalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingApprovalView.swift; sourceTree = "<group>"; };
 		C81238E1EC57CFBB2B333A7A /* LocalDeviceIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDeviceIdentity.swift; sourceTree = "<group>"; };
@@ -141,8 +143,9 @@
 		291D9E665D29513C2BC7CA74 /* Networking */ = {
 			isa = PBXGroup;
 			children = (
-				BD786FA5598DD8B41A0444FE /* APIClient.swift */,
+				1C784E2307E04868B5059CDA /* AuthenticatedSessionCoordinator.swift */,
 				9D76E826883729659D5B0DF4 /* APIError.swift */,
+				962B11E152BB57C8DEEB0C14 /* RealtimeSessionCoordinator.swift */,
 				9E0262CCF48A32A9EBE5341D /* RealtimeWebSocketClient.swift */,
 				7B39C56B87A0D7373CCAF305 /* SystemModels.swift */,
 			);
@@ -502,8 +505,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				32DD1CD4D3EDDE9B08297EEF /* APIClient.swift in Sources */,
 				2A4D048B3AE35BA823611D63 /* APIError.swift in Sources */,
+				2A1F6A0A58FA4D8192A1B7E1 /* AuthenticatedSessionCoordinator.swift in Sources */,
 				299255BB4FA97D30B09AE774 /* AppModel.swift in Sources */,
 				A98F44A4D5CD8F14237D279A /* ChatDetailView.swift in Sources */,
 				9B277FA389EBFDE5478C996D /* ConsumerChatDetailView.swift in Sources */,
@@ -516,6 +519,7 @@
 				8010E114AB48C5DB7FC15A51 /* MessagingLabView.swift in Sources */,
 				4E5328738A4BBEEE44B65458 /* NotificationSupport.swift in Sources */,
 				B44143903FCFD7AC94B12123 /* PendingApprovalView.swift in Sources */,
+				7042D128A88D3F6D6EF9C6A6 /* RealtimeSessionCoordinator.swift in Sources */,
 				9A12FED66BED4B7F021152E5 /* RealtimeWebSocketClient.swift in Sources */,
 				D8728BF5E7629A0B84E4CAB4 /* RootView.swift in Sources */,
 				8EDD2998AAEDAF40215AEC6D /* SafeDiagnosticLogStore.swift in Sources */,
