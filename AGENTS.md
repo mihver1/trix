@@ -16,15 +16,20 @@ Co-Authored-By: <agent name> <agent email>
 - Rust crate checks: `cargo check -p trix-core`, `cargo test -p trix-core`
 - macOS package tests: `swift test --package-path apps/macos`
 - macOS admin tests: `swift test --package-path apps/macos-admin`
+- macOS admin Xcode build/test: `xcodebuild -project "apps/macos-admin/TrixMacAdmin.xcodeproj" -scheme "TrixMacAdmin" -destination "platform=macOS" build CODE_SIGNING_ALLOWED=NO`, `xcodebuild -project "apps/macos-admin/TrixMacAdmin.xcodeproj" -scheme "TrixMacAdmin" -destination "platform=macOS" test`
 - macOS admin build/run: `swift build --package-path apps/macos-admin`, `swift run --package-path apps/macos-admin`
 - Smoke suites: `./scripts/client-smoke-harness.sh --list-suites`
+- macOS smoke: `./scripts/client-smoke-harness.sh --suite macos --no-postgres`
 - Targeted smoke: `./scripts/client-smoke-harness.sh --suite macos-admin --no-postgres`
+- iOS unit smoke: `./scripts/client-smoke-harness.sh --suite ios-unit --no-postgres`
 - iOS server smoke: `./scripts/client-smoke-harness.sh --suite ios-server --stop-postgres`
 - iOS UI smoke: `./scripts/client-smoke-harness.sh --suite ios-ui --stop-postgres`
+- Android smoke: `./scripts/client-smoke-harness.sh --suite android-unit --suite android-ui`
 
 ## Common Commands
 - Start local Postgres: `docker compose up -d postgres`
 - Run backend: `cargo run -p trixd` or `make run-server`
+- Contract gates: `make contract-check`
 - Workspace check: `cargo check --workspace` or `make check`
 - Workspace tests: `cargo test --workspace`
 - Generate Swift bindings: `make ffi-bindings-swift`
@@ -34,7 +39,7 @@ Co-Authored-By: <agent name> <agent email>
 - Run bot daemon over stdio: `cargo run -q -p trix-botd -- stdio`
 
 ## Workflows
-- Local backend: copy `.env.example` to `.env`, export it with `set -a; source .env; set +a`, then verify `curl http://127.0.0.1:8080/v0/system/health`
+- Local backend: copy `.env.example` to `.env`, export it with `set -a; source .env; set +a`; the example file carries the admin auth env required by the current `trixd` startup path. Then verify `curl http://127.0.0.1:8080/v0/system/health`
 - Physical-device backend: set a reachable `TRIX_PUBLIC_BASE_URL` and usually `TRIX_BIND_ADDR=0.0.0.0:8080` before generating link QR payloads. See `docs/server-operations.md`
 - Client smoke harness: default pack runs `client-scenarios`, `safe-ffi`, `bot-runtime`, `macos`, `android-unit`; use `--no-postgres` or `--stop-postgres` when needed. See `docs/client-smoke-harness.md`
 - Bot harness: `trix-botd` supports `init`, `run`, `publish-key-packages`, `stdio`; export `TRIX_BOT_MASTER_SECRET` before `init`. See `docs/bot-harness.md`
@@ -42,5 +47,5 @@ Co-Authored-By: <agent name> <agent email>
 - Platform-specific iOS, macOS, and Android build/archive flows live in the app READMEs; keep those docs authoritative.
 
 ## Key Conventions
-- Root commands should stay grounded in `README.md`, `Makefile`, `docs/client-smoke-harness.md`, `docs/ffi-bindings.md`, `docs/server-operations.md`, `apps/macos-admin/README.md`, and `examples/bots/README.md`
+- Root commands should stay grounded in `README.md`, `Makefile`, `docs/client-smoke-harness.md`, `docs/contracts.md`, `docs/ffi-bindings.md`, `docs/server-config.md`, `docs/server-operations.md`, `apps/macos-admin/README.md`, and `examples/bots/README.md`
 - Do not hand-edit generated UniFFI outputs without rerunning the documented binding workflow
