@@ -13,7 +13,6 @@
 		1DE64D3ACC3B34A7341113CB /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 26D97D3BE9113B5609B948F5 /* Assets.xcassets */; };
 		216D9FC855FED05182FD63E8 /* TrixiOSInteropDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04353F1F4F70E3DFA332FEC3 /* TrixiOSInteropDriver.swift */; };
 		299255BB4FA97D30B09AE774 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22C33A945CFEA9105871D033 /* AppModel.swift */; };
-		2A1F6A0A58FA4D8192A1B7E1 /* AuthenticatedSessionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C784E2307E04868B5059CDA /* AuthenticatedSessionCoordinator.swift */; };
 		2A4D048B3AE35BA823611D63 /* APIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D76E826883729659D5B0DF4 /* APIError.swift */; };
 		2E71C4248DCC0FBAEACD2550 /* FormAndPayloadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC373B8F990B456994383982 /* FormAndPayloadTests.swift */; };
 		2F7D3413498393667AF7D47C /* UITestLaunchConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFBAFE33FD857EED36B6B54D /* UITestLaunchConfigurationTests.swift */; };
@@ -49,6 +48,7 @@
 		BA618D8F998D732D83C222E6 /* trix_core.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48115076F282C6F00F84200E /* trix_core.swift */; };
 		BD87D15AEFAF56495250E94C /* TrixiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E99B20CD4D5A31B630CCE43 /* TrixiOSApp.swift */; };
 		C00A36BBFC7D79391F25814C /* TrixInteropActionBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83EC0F77E907EEF7FE19C1C3 /* TrixInteropActionBridgeTests.swift */; };
+		D0A9F09E713868A17252E254 /* AuthenticatedSessionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0464CDDDD58DC94B6651B900 /* AuthenticatedSessionCoordinator.swift */; };
 		D5B3D522018E2EDCC239D6B3 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 229E4FE51C86DFFFFBEDA5BF /* KeychainStore.swift */; };
 		D7A634A74EF8AFA641149594 /* TrixCoreMessageBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39DC437F679BF827B2ECC4D1 /* TrixCoreMessageBridge.swift */; };
 		D8728BF5E7629A0B84E4CAB4 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B9EE7D8E7C908B372176F97 /* RootView.swift */; };
@@ -79,12 +79,12 @@
 
 /* Begin PBXFileReference section */
 		04353F1F4F70E3DFA332FEC3 /* TrixiOSInteropDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixiOSInteropDriver.swift; sourceTree = "<group>"; };
+		0464CDDDD58DC94B6651B900 /* AuthenticatedSessionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthenticatedSessionCoordinator.swift; sourceTree = "<group>"; };
 		08AA5221B78BFACBC4672FF9 /* PendingApprovalStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingApprovalStateTests.swift; sourceTree = "<group>"; };
 		0B4F5BB41B01FD4D022964E0 /* SafeDiagnosticLogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafeDiagnosticLogStore.swift; sourceTree = "<group>"; };
 		0BE73C1B13A52D7BFF9426BC /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		184D72DBD37F99C0A5067184 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
 		229E4FE51C86DFFFFBEDA5BF /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
-		1C784E2307E04868B5059CDA /* AuthenticatedSessionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthenticatedSessionCoordinator.swift; sourceTree = "<group>"; };
 		22C33A945CFEA9105871D033 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		26D97D3BE9113B5609B948F5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		2746CAF75EE97A4BDBA763BB /* SystemStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemStatusView.swift; sourceTree = "<group>"; };
@@ -143,8 +143,8 @@
 		291D9E665D29513C2BC7CA74 /* Networking */ = {
 			isa = PBXGroup;
 			children = (
-				1C784E2307E04868B5059CDA /* AuthenticatedSessionCoordinator.swift */,
 				9D76E826883729659D5B0DF4 /* APIError.swift */,
+				0464CDDDD58DC94B6651B900 /* AuthenticatedSessionCoordinator.swift */,
 				962B11E152BB57C8DEEB0C14 /* RealtimeSessionCoordinator.swift */,
 				9E0262CCF48A32A9EBE5341D /* RealtimeWebSocketClient.swift */,
 				7B39C56B87A0D7373CCAF305 /* SystemModels.swift */,
@@ -506,8 +506,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				2A4D048B3AE35BA823611D63 /* APIError.swift in Sources */,
-				2A1F6A0A58FA4D8192A1B7E1 /* AuthenticatedSessionCoordinator.swift in Sources */,
 				299255BB4FA97D30B09AE774 /* AppModel.swift in Sources */,
+				D0A9F09E713868A17252E254 /* AuthenticatedSessionCoordinator.swift in Sources */,
 				A98F44A4D5CD8F14237D279A /* ChatDetailView.swift in Sources */,
 				9B277FA389EBFDE5478C996D /* ConsumerChatDetailView.swift in Sources */,
 				F886C4F56E569E8E1A629ACA /* ConsumerInlineAttachmentPreview.swift in Sources */,
@@ -689,8 +689,6 @@
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 6.0;
-				TRIX_IOS_SERVER_SMOKE_BASE_URL = "";
-				TRIX_IOS_UI_TEST_BASE_URL = "";
 			};
 			name = Debug;
 		};
@@ -857,8 +855,6 @@
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 6.0;
-				TRIX_IOS_SERVER_SMOKE_BASE_URL = "";
-				TRIX_IOS_UI_TEST_BASE_URL = "";
 			};
 			name = Release;
 		};

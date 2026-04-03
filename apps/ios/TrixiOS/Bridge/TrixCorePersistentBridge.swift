@@ -204,8 +204,15 @@ enum TrixCorePersistentBridge {
             accessToken: accessToken,
             identity: identity
         ) { client in
-            let snapshot = try client.loadSnapshot()
-            let conversation = snapshot.conversations.first { $0.conversationId == chatId }
+            var snapshot = try client.loadSnapshot()
+            var conversation = snapshot.conversations.first { $0.conversationId == chatId }
+
+            if conversation?.historyRecoveryPending == true {
+                _ = try? client.syncPendingHistoryRepairs(conversationIds: [chatId])
+                snapshot = try client.loadSnapshot()
+                conversation = snapshot.conversations.first { $0.conversationId == chatId }
+            }
+
             let detail = conversation?.trix_chatDetailResponse
                 ?? ChatDetailResponse(
                     chatId: chatId,
@@ -823,11 +830,15 @@ enum TrixCorePersistentBridge {
 
     @discardableResult
     static func repairLinkedDevicePersistentStateIfNeeded(
-        identity: LocalDeviceIdentity
+        identity: LocalDeviceIdentity,
+        replaceExistingTargetRoot: Bool = false
     ) throws -> Bool {
         let fileManager = FileManager.default
         let targetPaths = try PersistentCorePaths(identity: identity)
-        if fileManager.fileExists(atPath: targetPaths.mlsStorageRoot.path) {
+        if !replaceExistingTargetRoot && !targetPersistentStateNeedsRepair(
+            identity: identity,
+            paths: targetPaths
+        ) {
             return false
         }
         guard fileManager.fileExists(atPath: targetPaths.accountDirectory.path) else {
@@ -870,6 +881,10 @@ enum TrixCorePersistentBridge {
                 trustState: identity.trustState,
                 capabilityState: identity.capabilityState
             )
+            if replaceExistingTargetRoot,
+               fileManager.fileExists(atPath: targetPaths.rootDirectory.path) {
+                try fileManager.removeItem(at: targetPaths.rootDirectory)
+            }
             try relocatePersistentState(from: provisionalIdentity, to: identity)
             return true
         }
@@ -1052,6 +1067,7 @@ enum TrixCorePersistentBridge {
     }
 
     private static func loadOrCreateContext(identity: LocalDeviceIdentity) throws -> PersistentCoreContext {
+        try repairPersistentStateIfNeeded(identity: identity)
         let paths = try PersistentCorePaths(identity: identity)
         try paths.prepareRootDirectory()
         do {
@@ -1137,7 +1153,25 @@ enum TrixCorePersistentBridge {
             accessToken: accessToken,
             identity: identity
         )
-        return try operation(client)
+
+        do {
+            return try operation(client)
+        } catch {
+            guard shouldRetryMessengerOperationAfterRepair(error),
+                  try repairLinkedDevicePersistentStateIfNeeded(
+                      identity: identity,
+                      replaceExistingTargetRoot: true
+                  ) else {
+                throw error
+            }
+
+            let repairedClient = try openMessengerClient(
+                baseURLString: baseURLString,
+                accessToken: accessToken,
+                identity: identity
+            )
+            return try operation(repairedClient)
+        }
     }
 
     private static func withMessengerClientAsync<Response: Sendable>(
@@ -1169,6 +1203,7 @@ enum TrixCorePersistentBridge {
         accessToken: String?,
         identity: LocalDeviceIdentity
     ) throws -> FfiMessengerClient {
+        try repairPersistentStateIfNeeded(identity: identity)
         let paths = try PersistentCorePaths(identity: identity)
         try paths.prepareRootDirectory()
         let databaseKey = try DeviceDatabaseKeyStore().getOrCreate(account: paths.databaseKeyAccount)
@@ -1188,6 +1223,38 @@ enum TrixCorePersistentBridge {
                 transportPrivateKey: identity.transportPrivateKeyRaw
             )
         )
+    }
+
+    private static func repairPersistentStateIfNeeded(
+        identity: LocalDeviceIdentity
+    ) throws {
+        _ = try repairLinkedDevicePersistentStateIfNeeded(identity: identity)
+    }
+
+    private static func targetPersistentStateNeedsRepair(
+        identity: LocalDeviceIdentity,
+        paths: PersistentCorePaths
+    ) -> Bool {
+        guard FileManager.default.fileExists(atPath: paths.mlsStorageRoot.path) else {
+            return true
+        }
+
+        guard let facade = try? FfiMlsFacade.loadPersistent(storageRoot: paths.mlsStorageRoot.path),
+              let persistedCredentialIdentity = try? facade.credentialIdentity()
+        else {
+            return true
+        }
+
+        return persistedCredentialIdentity != identity.credentialIdentity
+    }
+
+    private static func shouldRetryMessengerOperationAfterRepair(_ error: Error) -> Bool {
+        let normalizedMessage = error.localizedDescription.lowercased()
+        return normalizedMessage.contains("bootstrap keys were lost")
+            || normalizedMessage.contains("no bootstrappable mls state")
+            || normalizedMessage.contains("no matching key package was found in the key store")
+            || normalizedMessage.contains("local mls conversation state is missing")
+            || normalizedMessage.contains("epoch is out of date")
     }
 }
 

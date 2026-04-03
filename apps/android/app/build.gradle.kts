@@ -156,6 +156,7 @@ val generateTrixCoreKotlinBindings by tasks.registering(Exec::class) {
     dependsOn(buildTrixCoreHostLib)
     workingDir = workspaceRoot
     val outDir = generatedUniffiDir.get().asFile
+    inputs.file(hostRustLibrary)
     inputs.file(trixCoreUniffiConfig)
     outputs.dir(outDir)
     doFirst {

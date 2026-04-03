@@ -646,6 +646,77 @@ final class ServerBackedSmokeTests: XCTestCase {
         XCTAssertEqual(aliceLinkedSawBob.senderDeviceId, bob.identity.deviceId)
     }
 
+    func testLinkedDeviceRecoversOrphanedPersistentStateForExistingDM() async throws {
+        let baseURL = configuredBaseURL()
+        try await skipUnlessServerReachable(at: baseURL)
+
+        var devicesToCleanup: [ScenarioDevice] = []
+        defer { cleanupPersistentState(for: devicesToCleanup) }
+
+        let alicePrimary = try createScenarioDevice(baseURL: baseURL, label: "Alice Recovery Primary")
+        devicesToCleanup.append(alicePrimary)
+        let bob = try createScenarioDevice(baseURL: baseURL, label: "Bob Recovery Primary")
+        devicesToCleanup.append(bob)
+        let aliceLinked = try createApprovedLinkedDevice(
+            trustedOwner: alicePrimary,
+            label: "Alice Recovery Linked"
+        )
+        devicesToCleanup.append(aliceLinked)
+
+        let created = try alicePrimary.createDM(peerAccountId: bob.identity.accountId)
+        _ = try await waitForConversation(on: aliceLinked, chatId: created.chatId)
+
+        let bootstrapText = "recovery-bootstrap-\(uniqueSuffix(length: 6))"
+        _ = try alicePrimary.sendText(chatId: created.chatId, text: bootstrapText)
+        _ = try await waitForTextMessage(
+            bootstrapText,
+            on: aliceLinked,
+            chatId: created.chatId
+        )
+
+        let fileManager = FileManager.default
+        let linkedPaths = try PersistentCorePaths(identity: aliceLinked.identity)
+        let orphanRoot = linkedPaths.accountDirectory
+            .appendingPathComponent("\(aliceLinked.identity.deviceId)-orphaned-state", isDirectory: true)
+
+        defer {
+            if fileManager.fileExists(atPath: orphanRoot.path) {
+                try? fileManager.removeItem(at: orphanRoot)
+            }
+        }
+
+        if fileManager.fileExists(atPath: orphanRoot.path) {
+            try fileManager.removeItem(at: orphanRoot)
+        }
+        try fileManager.moveItem(at: linkedPaths.rootDirectory, to: orphanRoot)
+        try fileManager.createDirectory(at: linkedPaths.mlsStorageRoot, withIntermediateDirectories: true)
+
+        XCTAssertTrue(fileManager.fileExists(atPath: orphanRoot.path))
+        XCTAssertTrue(fileManager.fileExists(atPath: linkedPaths.mlsStorageRoot.path))
+
+        let bobText = "recovery-bob-\(uniqueSuffix(length: 6))"
+        _ = try bob.sendText(chatId: created.chatId, text: bobText)
+
+        let linkedSawBob = try await waitForTextMessage(
+            bobText,
+            on: aliceLinked,
+            chatId: created.chatId
+        )
+        XCTAssertEqual(linkedSawBob.senderDeviceId, bob.identity.deviceId)
+        XCTAssertFalse(fileManager.fileExists(atPath: orphanRoot.path))
+        XCTAssertTrue(fileManager.fileExists(atPath: linkedPaths.rootDirectory.path))
+
+        let linkedReplyText = "recovery-linked-\(uniqueSuffix(length: 6))"
+        _ = try aliceLinked.sendText(chatId: created.chatId, text: linkedReplyText)
+
+        let primarySawLinked = try await waitForTextMessage(
+            linkedReplyText,
+            on: alicePrimary,
+            chatId: created.chatId
+        )
+        XCTAssertEqual(primarySawLinked.senderDeviceId, aliceLinked.identity.deviceId)
+    }
+
     func testThreeUsersCanCreateGroupAndExchangeMessagesAgainstServer() async throws {
         let baseURL = configuredBaseURL()
         try await skipUnlessServerReachable(at: baseURL)
