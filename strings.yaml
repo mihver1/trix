@@ -1,0 +1,430 @@
+strings:
+  app_name:
+    en: "Trix"
+    ru: "Trix"
+  nav_chats:
+    en: "Chats"
+    ru: "Чаты"
+  nav_devices:
+    en: "Devices"
+    ru: "Устройства"
+  nav_settings:
+    en: "Settings"
+    ru: "Настройки"
+  screen_chats:
+    en: "Messages"
+    ru: "Сообщения"
+  screen_devices:
+    en: "Devices"
+    ru: "Устройства"
+  screen_settings:
+    en: "Settings"
+    ru: "Настройки"
+  action_back:
+    en: "Back"
+    ru: "Назад"
+  action_send:
+    en: "Send"
+    ru: "Отправить"
+  action_cancel:
+    en: "Cancel"
+    ru: "Отмена"
+  chat_error_read_local_cache:
+    en: "Couldn't load the local chat cache."
+    ru: "Не удалось загрузить локальный кэш чатов."
+  chat_error_read_conversation:
+    en: "Couldn't load this conversation yet."
+    ru: "Пока не удалось загрузить этот чат."
+  chat_error_sync_chats:
+    en: "Couldn't refresh chats right now."
+    ru: "Сейчас не удалось обновить чаты."
+  chat_error_hydrate_changed_chats:
+    en: "Couldn't refresh changed chats right now."
+    ru: "Сейчас не удалось обновить изменившиеся чаты."
+  chat_error_flush_local_outbox:
+    en: "Couldn't flush the local outbox right now."
+    ru: "Сейчас не удалось обработать локальный outbox."
+  chat_error_search_account_directory:
+    en: "Couldn't search the account directory right now."
+    ru: "Сейчас не удалось выполнить поиск по каталогу аккаунтов."
+  chat_error_invalid_dm_account:
+    en: "Choose a valid account to start a direct message."
+    ru: "Выберите корректный аккаунт для личного чата."
+  chat_error_create_direct_message:
+    en: "Couldn't create the direct message right now."
+    ru: "Сейчас не удалось создать личный чат."
+  chat_error_conversation_no_longer_available:
+    en: "Conversation %{chat_id} is no longer available."
+    ru: "Чат %{chat_id} сейчас недоступен."
+  chat_error_group_minimum_participants:
+    en: "Select at least %{minimum} people for a group chat."
+    ru: "Выберите как минимум %{minimum} участников для группового чата."
+  chat_error_create_group_chat:
+    en: "Couldn't create the group chat right now."
+    ru: "Сейчас не удалось создать групповой чат."
+  chat_error_select_member_to_add:
+    en: "Select at least one person to add."
+    ru: "Выберите хотя бы одного участника для добавления."
+  chat_error_add_group_members:
+    en: "Couldn't add members right now."
+    ru: "Сейчас не удалось добавить участников."
+  chat_error_invalid_remove_member:
+    en: "Choose a valid member to remove."
+    ru: "Выберите корректного участника для удаления."
+  chat_error_remove_group_member:
+    en: "Couldn't remove that member right now."
+    ru: "Сейчас не удалось удалить этого участника."
+  chat_error_message_empty:
+    en: "Message is empty."
+    ru: "Сообщение пустое."
+  chat_error_send_message:
+    en: "Couldn't send the message right now."
+    ru: "Сейчас не удалось отправить сообщение."
+  chat_error_send_attachment:
+    en: "Couldn't send the attachment right now."
+    ru: "Сейчас не удалось отправить вложение."
+  chat_error_reaction_incomplete:
+    en: "Reaction is incomplete."
+    ru: "Реакция заполнена не полностью."
+  chat_error_send_reaction:
+    en: "Couldn't send the reaction right now."
+    ru: "Сейчас не удалось отправить реакцию."
+  chat_error_update_read_state:
+    en: "Couldn't update the read state right now."
+    ru: "Сейчас не удалось обновить статус прочтения."
+  chat_error_lookup_account:
+    en: "Couldn't look up that account right now."
+    ru: "Сейчас не удалось найти этот аккаунт."
+  chat_error_load_chat_history:
+    en: "Couldn't load chat history right now."
+    ru: "Сейчас не удалось загрузить историю чата."
+  chat_error_clear_session_token:
+    en: "Couldn't clear the session token right now."
+    ru: "Сейчас не удалось очистить токен сессии."
+  chat_error_add_chat_devices:
+    en: "Couldn't add devices to the chat right now."
+    ru: "Сейчас не удалось добавить устройства в чат."
+  chat_error_remove_chat_devices:
+    en: "Couldn't remove devices from the chat right now."
+    ru: "Сейчас не удалось удалить устройства из чата."
+  chat_error_read_mls_storage_root:
+    en: "Couldn't read the MLS storage root right now."
+    ru: "Сейчас не удалось прочитать корень MLS-хранилища."
+  chat_error_read_mls_credential_identity:
+    en: "Couldn't read the MLS credential identity right now."
+    ru: "Сейчас не удалось прочитать MLS credential identity."
+  chat_error_fetch_inbox:
+    en: "Couldn't fetch inbox items right now."
+    ru: "Сейчас не удалось получить элементы inbox."
+  chat_error_rust_ffi_unavailable:
+    en: "The secure messaging engine is unavailable in this app build."
+    ru: "В этой сборке недоступен движок защищенных сообщений."
+  chat_error_generic_try_again:
+    en: "Couldn't complete that right now. Try again in a moment."
+    ru: "Сейчас не получилось выполнить действие. Повторите через пару секунд."
+  chat_error_send_retry:
+    en: "Couldn't send this message right now. Try again in a moment."
+    ru: "Сейчас не удалось отправить сообщение. Повторите через пару секунд."
+  chat_label_no_messages_yet:
+    en: "No messages yet"
+    ru: "Сообщений пока нет"
+  chat_label_synced_by_core:
+    en: "Synced by messenger core"
+    ru: "Синхронизировано через messenger core"
+  chat_hint_account_sync_managed:
+    en: "This private account sync thread is fully handled by the shared messenger core."
+    ru: "Этот приватный тред синхронизации аккаунта полностью обслуживается общим messenger core."
+  chat_hint_group_managed:
+    en: "Messages, attachments, receipts, and membership changes are handled by the shared messenger core."
+    ru: "Сообщения, вложения, квитанции и изменения состава участников обрабатываются общим messenger core."
+  chat_hint_dm_managed:
+    en: "Messages, attachments, and receipts are handled by the shared messenger core."
+    ru: "Сообщения, вложения и квитанции обрабатываются общим messenger core."
+  chat_participants_private_sync:
+    en: "Private cross-device sync channel"
+    ru: "Приватный канал синхронизации между устройствами"
+  chat_participants_pending_members:
+    en: "Member metadata pending"
+    ru: "Метаданные участников еще загружаются"
+  chat_participants_direct_conversation:
+    en: "Direct conversation"
+    ru: "Личный чат"
+  chat_role_self:
+    en: "you"
+    ru: "вы"
+  chat_role_participant:
+    en: "member"
+    ru: "участник"
+  chat_membership_active:
+    en: "active"
+    ru: "активен"
+  chat_you:
+    en: "You"
+    ru: "Вы"
+  chat_preview_encrypted_payload:
+    en: "Encrypted application payload"
+    ru: "Зашифрованный payload приложения"
+  chat_preview_loading_on_device:
+    en: "This content is still loading on this device."
+    ru: "Этот контент еще загружается на этом устройстве."
+  chat_preview_backfill_queued:
+    en: "Backfill queued. This content should appear in a moment."
+    ru: "Backfill поставлен в очередь. Контент должен появиться через минуту."
+  chat_preview_reacted_to_message:
+    en: "Reacted %{emoji} to %{target}"
+    ru: "Реакция %{emoji} на %{target}"
+  chat_preview_default_message_target:
+    en: "message"
+    ru: "сообщение"
+  chat_preview_receipt:
+    en: "%{receipt_type} receipt"
+    ru: "Инфо: %{receipt_type}"
+  chat_preview_receipt_delivery:
+    en: "Delivery"
+    ru: "Доставка"
+  chat_preview_receipt_read:
+    en: "Read"
+    ru: "Прочитано"
+  chat_preview_attachment:
+    en: "Attachment"
+    ru: "Вложение"
+  chat_preview_chat_event:
+    en: "Chat event"
+    ru: "Событие чата"
+  chat_reaction_send_blocked:
+    en: "Finish the current send before adding a reaction."
+    ru: "Сначала дождитесь завершения текущей отправки, потом добавьте реакцию."
+  chat_screen_sync_failed:
+    en: "Chat sync failed"
+    ru: "Не удалось синхронизировать чаты"
+  chat_screen_send_message_failed:
+    en: "Failed to send message"
+    ru: "Не удалось отправить сообщение"
+  chat_screen_send_attachment_failed:
+    en: "Failed to send attachment"
+    ru: "Не удалось отправить вложение"
+  chat_screen_send_reaction_failed:
+    en: "Failed to send reaction"
+    ru: "Не удалось отправить реакцию"
+  chat_screen_directory_search_failed:
+    en: "Directory search failed"
+    ru: "Не удалось выполнить поиск по каталогу"
+  chat_screen_create_dm_failed:
+    en: "Failed to create direct message"
+    ru: "Не удалось создать личный чат"
+  chat_screen_create_group_failed:
+    en: "Failed to create group chat"
+    ru: "Не удалось создать групповой чат"
+  chat_screen_add_members_failed:
+    en: "Failed to add members"
+    ru: "Не удалось добавить участников"
+  chat_screen_remove_member_failed:
+    en: "Failed to remove member"
+    ru: "Не удалось удалить участника"
+  chat_screen_open_attachment_failed:
+    en: "Failed to open attachment"
+    ru: "Не удалось открыть вложение"
+  chat_screen_share_attachment_failed:
+    en: "Failed to share attachment"
+    ru: "Не удалось поделиться вложением"
+  chat_screen_load_conversation_failed:
+    en: "Failed to load conversation"
+    ru: "Не удалось загрузить чат"
+  chat_action_start_direct_message:
+    en: "Start direct message"
+    ru: "Начать личный чат"
+  chat_action_create_group_chat:
+    en: "Create group chat"
+    ru: "Создать групповой чат"
+  chat_directory_mode_message:
+    en: "Message"
+    ru: "Сообщение"
+  chat_directory_mode_create_group:
+    en: "Create group"
+    ru: "Создать группу"
+  chat_directory_mode_add_members:
+    en: "Add members"
+    ru: "Добавить участников"
+  chat_directory_title_new_direct_message:
+    en: "New direct message"
+    ru: "Новый личный чат"
+  chat_directory_title_create_group_chat:
+    en: "Create group chat"
+    ru: "Создать групповой чат"
+  chat_directory_title_add_members:
+    en: "Add members"
+    ru: "Добавить участников"
+  chat_directory_description_new_direct_message:
+    en: "Search the account directory and open a DM without leaving the chats surface."
+    ru: "Найдите аккаунт в каталоге и откройте личный чат, не уходя с экрана чатов."
+  chat_directory_description_create_group_chat:
+    en: "Search the account directory, choose at least two people, and create a new group thread."
+    ru: "Найдите людей в каталоге, выберите минимум двоих и создайте новую групповую ветку."
+  chat_directory_description_add_members:
+    en: "Search the account directory and add more people to the current group thread."
+    ru: "Найдите людей в каталоге и добавьте их в текущую групповую ветку."
+  chat_directory_group_title_optional:
+    en: "Group title (optional)"
+    ru: "Название группы (необязательно)"
+  chat_directory_search_placeholder:
+    en: "Search by name or @handle"
+    ru: "Поиск по имени или @handle"
+  chat_directory_selected_minimum:
+    en: "%{selected} selected, minimum %{minimum}"
+    ru: "Выбрано %{selected}, минимум %{minimum}"
+  chat_directory_selected_count:
+    en: "%{selected} selected"
+    ru: "Выбрано %{selected}"
+  chat_directory_empty_title:
+    en: "No accounts found"
+    ru: "Аккаунты не найдены"
+  chat_directory_empty_body:
+    en: "Try a broader name fragment or handle."
+    ru: "Попробуйте более широкий фрагмент имени или handle."
+  chat_manage_members:
+    en: "Manage members"
+    ru: "Участники"
+  chat_group_members_title:
+    en: "Group members"
+    ru: "Участники группы"
+  chat_group_members_count:
+    en: "%{count} members in %{title}"
+    ru: "%{count} участников в %{title}"
+  chat_group_members_badge:
+    en: "%{count} members"
+    ru: "%{count} участников"
+  chat_group_add_members:
+    en: "Add members"
+    ru: "Добавить участников"
+  chat_member_badge_in_group:
+    en: "In group"
+    ru: "В группе"
+  chat_member_selected:
+    en: "Selected"
+    ru: "Выбрано"
+  chat_member_select:
+    en: "Select"
+    ru: "Выбрать"
+  chat_member_remove:
+    en: "Remove"
+    ru: "Удалить"
+  chat_refresh_chats:
+    en: "Refresh chats"
+    ru: "Обновить чаты"
+  chat_restoring_local_cache:
+    en: "Restoring local chat cache"
+    ru: "Восстанавливаем локальный кэш чатов"
+  chat_empty_title:
+    en: "No chats yet"
+    ru: "Чатов пока нет"
+  chat_empty_body:
+    en: "Start a conversation and it will appear here."
+    ru: "Начните диалог, и он появится здесь."
+  chat_refreshing:
+    en: "Refreshing"
+    ru: "Обновляем"
+  chat_refresh:
+    en: "Refresh"
+    ru: "Обновить"
+  chat_select_conversation_title:
+    en: "Select a conversation"
+    ru: "Выберите чат"
+  chat_select_conversation_body:
+    en: "Choose a chat to view messages."
+    ru: "Выберите чат, чтобы посмотреть сообщения."
+  chat_conversation_unavailable_title:
+    en: "Conversation unavailable"
+    ru: "Чат недоступен"
+  chat_conversation_unavailable_body:
+    en: "The local cache could not load this conversation."
+    ru: "Локальный кэш пока не смог загрузить этот чат."
+  chat_no_messages_title:
+    en: "No messages yet"
+    ru: "Сообщений пока нет"
+  chat_no_messages_body:
+    en: "Send a message to start the conversation."
+    ru: "Отправьте сообщение, чтобы начать диалог."
+  chat_attachment_open:
+    en: "Open"
+    ru: "Открыть"
+  chat_attachment_share:
+    en: "Share"
+    ru: "Поделиться"
+  chat_choose_reaction:
+    en: "Choose reaction"
+    ru: "Выберите реакцию"
+  chat_attach_file:
+    en: "Attach file"
+    ru: "Прикрепить файл"
+  chat_send_unavailable:
+    en: "Sending unavailable"
+    ru: "Отправка недоступна"
+  chat_consumer_attachment_import_failed:
+    en: "Couldn't load the selected photo or video."
+    ru: "Не удалось загрузить выбранное фото или видео."
+  chat_loading_conversation:
+    en: "Loading Conversation"
+    ru: "Загружаем чат"
+  chat_snapshot_unavailable_body:
+    en: "The chat snapshot could not be loaded."
+    ru: "Не удалось загрузить снимок чата."
+  chat_choose_attachment:
+    en: "Choose Attachment"
+    ru: "Выберите вложение"
+  chat_choose_photo_or_video:
+    en: "Photo or Video"
+    ru: "Фото или видео"
+  chat_choose_file:
+    en: "File"
+    ru: "Файл"
+  chat_attachment_ready_to_send:
+    en: "Ready to send"
+    ru: "Готово к отправке"
+  chat_message_placeholder:
+    en: "Message"
+    ru: "Сообщение"
+  chat_attachment_caption_hint:
+    en: "Attachments send as secure files. Captions come next."
+    ru: "Вложения отправляются как защищенные файлы. Подпись можно добавить следующим сообщением."
+  chat_message_sent:
+    en: "Message sent"
+    ru: "Сообщение отправлено"
+  chat_attachment_sent:
+    en: "Sent %{file_name}"
+    ru: "Отправлено: %{file_name}"
+  chat_attachment_default_name:
+    en: "Attachment"
+    ru: "Вложение"
+  chat_photo_default_name:
+    en: "Photo"
+    ru: "Фото"
+  chat_video_default_name:
+    en: "Video"
+    ru: "Видео"
+  chat_reaction_unavailable:
+    en: "Reaction is unavailable right now."
+    ru: "Сейчас реакция недоступна."
+  chat_reaction_removed:
+    en: "Reaction removed"
+    ru: "Реакция удалена"
+  chat_reaction_added:
+    en: "Reaction added"
+    ru: "Реакция добавлена"
+  chat_downloading_attachment:
+    en: "Downloading %{title}"
+    ru: "Скачиваем %{title}"
+  chat_attachment_ready_to_share:
+    en: "Ready to share %{title}"
+    ru: "Готово к передаче: %{title}"
+  chat_no_messages_consumer_title:
+    en: "No Messages Yet"
+    ru: "Сообщений пока нет"
+  chat_no_messages_consumer_body:
+    en: "Start the conversation. New messages will appear here in a normal chat timeline."
+    ru: "Начните диалог. Новые сообщения появятся здесь в обычной ленте чата."
+  chat_attachment_decrypting:
+    en: "Decrypting secure attachment..."
+    ru: "Расшифровываем защищенное вложение..."
+  chat_attachment_tap_to_open:
+    en: "Tap to open"
+    ru: "Нажмите, чтобы открыть"

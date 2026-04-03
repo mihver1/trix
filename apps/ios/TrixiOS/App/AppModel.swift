@@ -168,7 +168,7 @@ final class AppModel {
             localIdentity = try identityStore.load()
         } catch {
             if !shouldSuppressProtectedDataError(error) {
-                errorMessage = error.localizedDescription
+                errorMessage = error.trixUserFacingMessage
             }
         }
 
@@ -234,7 +234,7 @@ final class AppModel {
                 return
             }
             if !shouldSuppressProtectedDataError(error) {
-                errorMessage = error.localizedDescription
+                errorMessage = error.trixUserFacingMessage
             }
         }
     }
@@ -291,7 +291,7 @@ final class AppModel {
         if UITestLaunchConfiguration.current.isEnabled {
             return
         }
-        errorMessage = error.localizedDescription
+        errorMessage = error.trixUserFacingMessage
     }
 
     func handleRemoteNotification(userInfo: [AnyHashable: Any]) async -> UIBackgroundFetchResult {
@@ -367,7 +367,7 @@ final class AppModel {
                 identity: localIdentity
             )
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
         }
     }
 
@@ -415,7 +415,7 @@ final class AppModel {
             systemSnapshot = try await fetchSystemSnapshot(baseURLString: resolvedBaseURLString)
             lastUpdatedAt = Date()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
         }
     }
 
@@ -438,7 +438,7 @@ final class AppModel {
             directoryAccountCache = [:]
             errorMessage = nil
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
         }
     }
 
@@ -474,7 +474,7 @@ final class AppModel {
             activeLinkIntent = response
             startLinkIntentRefreshLoop(baseURLString: baseURLString)
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
         }
     }
 
@@ -514,7 +514,7 @@ final class AppModel {
             )
             return response
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
             return nil
         }
     }
@@ -558,7 +558,7 @@ final class AppModel {
             )
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
             return false
         }
     }
@@ -592,7 +592,7 @@ final class AppModel {
                 identity: context.identity
             )
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
         }
     }
 
@@ -633,7 +633,7 @@ final class AppModel {
             )
             return response
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
             return nil
         }
     }
@@ -668,7 +668,7 @@ final class AppModel {
                 accountId: normalizedAccountId
             )
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
             return nil
         }
     }
@@ -710,7 +710,7 @@ final class AppModel {
                 deviceIds: normalizedDeviceIds
             )
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
             return nil
         }
     }
@@ -744,7 +744,7 @@ final class AppModel {
                 reservedPackages: reservedPackages
             )
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
             return nil
         }
     }
@@ -799,7 +799,7 @@ final class AppModel {
             )
             return response
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
             return nil
         }
     }
@@ -844,7 +844,7 @@ final class AppModel {
             )
             return response
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
             return nil
         }
     }
@@ -889,7 +889,7 @@ final class AppModel {
             )
             return response
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
             return nil
         }
     }
@@ -941,7 +941,7 @@ final class AppModel {
             )
             return response
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
             return nil
         }
     }
@@ -986,7 +986,7 @@ final class AppModel {
             )
             return response
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
             return nil
         }
     }
@@ -1031,7 +1031,7 @@ final class AppModel {
             )
             return response
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
             return nil
         }
     }
@@ -1090,7 +1090,7 @@ final class AppModel {
             )
             return response
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
             return nil
         }
     }
@@ -1145,7 +1145,7 @@ final class AppModel {
                 return file
             } catch {
                 if reportErrors {
-                    errorMessage = error.localizedDescription
+                    errorMessage = error.trixUserFacingMessage
                 }
                 return nil
             }
@@ -1170,7 +1170,7 @@ final class AppModel {
         } catch {
             attachmentDownloadTasks.removeValue(forKey: attachment.attachmentRef)
             if reportErrors {
-                errorMessage = error.localizedDescription
+                errorMessage = error.trixUserFacingMessage
             }
             return nil
         }
@@ -1231,7 +1231,7 @@ final class AppModel {
             lastUpdatedAt = Date()
             return response
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
             return nil
         }
     }
@@ -1269,7 +1269,7 @@ final class AppModel {
             lastUpdatedAt = Date()
             return response
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
             return nil
         }
     }
@@ -1403,7 +1403,7 @@ final class AppModel {
             )
             return updated
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
             return nil
         }
     }
@@ -1561,7 +1561,7 @@ final class AppModel {
             updateDashboardState(dashboard)
             lastUpdatedAt = Date()
             if !shouldSuppressProtectedDataError(sourceError) {
-                errorMessage = sourceError.localizedDescription
+                errorMessage = sourceError.trixUserFacingMessage
             }
             return true
         } catch {
@@ -1583,7 +1583,7 @@ final class AppModel {
             applyLoadedDevicesToDashboard(snapshot.devices)
         } catch {
             if !suppressErrors {
-                errorMessage = error.localizedDescription
+                errorMessage = error.trixUserFacingMessage
             }
         }
     }
@@ -1676,7 +1676,7 @@ final class AppModel {
         do {
             try await notificationCoordinator.requestAuthorizationIfNeeded()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
         }
     }
 
@@ -1960,7 +1960,7 @@ final class AppModel {
         do {
             _ = try await realtimeSession.sendTypingUpdate(chatId: chatId, isTyping: isTyping)
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
         }
     }
 
@@ -1977,7 +1977,7 @@ final class AppModel {
                 completedChunks: completedChunks
             )
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
             return false
         }
     }
@@ -2564,7 +2564,7 @@ final class AppModel {
                 )
             } catch {
                 localCoreState = nil
-                errorMessage = error.localizedDescription
+                errorMessage = error.trixUserFacingMessage
             }
             return
         }
@@ -2573,7 +2573,7 @@ final class AppModel {
             localCoreState = try TrixCorePersistentBridge.localStateSnapshot(identity: identity)
         } catch {
             localCoreState = nil
-            errorMessage = error.localizedDescription
+            errorMessage = error.trixUserFacingMessage
         }
     }
 

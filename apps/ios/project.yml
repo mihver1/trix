@@ -19,10 +19,12 @@ targets:
     deploymentTarget: "17.0"
     preBuildScripts:
       - script: |
+          ruby "$SRCROOT/../../scripts/generate_strings.rb"
           bash "$SRCROOT/scripts/generate-trix-core-bridge.sh"
-        name: Generate trix-core iOS bridge
+        name: Generate iOS strings and trix-core bridge
         basedOnDependencyAnalysis: false
         outputFiles:
+          - $(SRCROOT)/TrixiOS/Generated/TrixStrings.generated.swift
           - $(SRCROOT)/TrixiOS/Bridge/Generated/trix_core.swift
           - $(SRCROOT)/../../target/aarch64-apple-ios/release/libtrix_core.a
           - $(SRCROOT)/../../target/ios-simulator-universal/release/libtrix_core.a
