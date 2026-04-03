@@ -10,6 +10,7 @@
 		07C1B5AA070A11634214CFA9 /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BCE39CDE1353EA8F59981D0 /* WorkspaceView.swift */; };
 		18E0D4414BEEDD52CAE7735F /* SafeDiagnosticLogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BA327D85EBC3ECA78574724 /* SafeDiagnosticLogStore.swift */; };
 		1C1C3A912795772D0F8F5578 /* GroupChatPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2B7388A4D817DC522225FBC /* GroupChatPresentationTests.swift */; };
+		22298AA77EDDF66C7065243F /* TrixUserFacingText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8020EF6A2868129128FCD5E7 /* TrixUserFacingText.swift */; };
 		2658AEB933EE026700BAC845 /* TrixMacInteropSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1575427B96432954EC184FEF /* TrixMacInteropSupport.swift */; };
 		2C7693CEC34B3A80406B069D /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0F7D92E85043126564D9441 /* OnboardingView.swift */; };
 		2E24E38EDFCD05F58D74C527 /* LinkIntentPayloadParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15FECC0F1B5145ED4E40EAFF /* LinkIntentPayloadParsingTests.swift */; };
@@ -19,6 +20,7 @@
 		459EC67CD117256DF95826FA /* TrixMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C949F8B829089ED93F68174 /* TrixMacApp.swift */; };
 		4D029DA0BA32A0C8ED0C29C0 /* CrossPlatformStabilizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACD09428B63A34435686262F /* CrossPlatformStabilizationTests.swift */; };
 		518B35E60FD543175C137CD7 /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C6BFE4790D60B43AE929D75 /* SessionStore.swift */; };
+		5E352EFD611E96F6AA47C23B /* TrixStrings.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E662C19FCAC36B7D7F6C1DF /* TrixStrings.generated.swift */; };
 		67DE8CF0A0E02CD90B298573 /* MacUITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B13124D1505CA449E0D0AECA /* MacUITestSupport.swift */; };
 		706178ECC8E1EE15DC6EE4E7 /* NotificationSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB8B65020EA850F8ECE018C1 /* NotificationSupport.swift */; };
 		7CC474A10DB62B83F498DBB7 /* MacUITestLaunchConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99D3A143E466D3ED9CE6DA8B /* MacUITestLaunchConfigurationTests.swift */; };
@@ -31,6 +33,7 @@
 		902FE0A288A07CFC7908BE16 /* TrixCoreFFIConversions.swift in Sources */ = {isa = PBXBuildFile; fileRef = B23C86C8509965588B5B6C9F /* TrixCoreFFIConversions.swift */; };
 		94194CD5F1C1A25BD4870921 /* ImportedAttachmentStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 860409886427C328A4CCB791 /* ImportedAttachmentStoreTests.swift */; };
 		98ADE511A362ADA7AFAA1AF0 /* TrixMessengerClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED0CF18F6A6B6288A8455FA9 /* TrixMessengerClient.swift */; };
+		A08047253F8292E82BCD6AB0 /* InlineAttachmentPreviewLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 581FF8825ADF573B013A36E3 /* InlineAttachmentPreviewLayoutTests.swift */; };
 		A4D195C5E111A65A591D37AB /* InlineAttachmentPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D5EF008AB2855EF5383803D /* InlineAttachmentPreview.swift */; };
 		A7EA5B8CB38E55739C1B93E7 /* SessionRestoreErrorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44EE6F646D2111D046C49025 /* SessionRestoreErrorTests.swift */; };
 		AFA8BDF95FFD3D16FBB4EDD0 /* MacUITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B13124D1505CA449E0D0AECA /* MacUITestSupport.swift */; };
@@ -95,12 +98,14 @@
 		448219DEF0BA572AAA5E0C73 /* TrixMacInteropDriverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMacInteropDriverTests.swift; sourceTree = "<group>"; };
 		44EE6F646D2111D046C49025 /* SessionRestoreErrorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRestoreErrorTests.swift; sourceTree = "<group>"; };
 		4632E941F51B28ACFAC316E2 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
+		581FF8825ADF573B013A36E3 /* InlineAttachmentPreviewLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineAttachmentPreviewLayoutTests.swift; sourceTree = "<group>"; };
 		58D27BC6E7B9A18E1FF81E13 /* TrixMacUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TrixMacUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5BCE39CDE1353EA8F59981D0 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
 		627F1777C49C1241F0E44A8F /* MacUITestAppBootstrap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacUITestAppBootstrap.swift; sourceTree = "<group>"; };
 		6783D0499D89DC1C138D9884 /* AppIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIdentity.swift; sourceTree = "<group>"; };
 		6F3E9F4D645B6CCBD53E40BF /* AttachmentPreviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentPreviewSheet.swift; sourceTree = "<group>"; };
 		77CA5691815BF735E8B50336 /* ImportedAttachmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportedAttachmentStore.swift; sourceTree = "<group>"; };
+		8020EF6A2868129128FCD5E7 /* TrixUserFacingText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixUserFacingText.swift; sourceTree = "<group>"; };
 		860409886427C328A4CCB791 /* ImportedAttachmentStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportedAttachmentStoreTests.swift; sourceTree = "<group>"; };
 		9068443F554CD6F8424422A0 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		91B9FDE42BCCD4DCD14CBF7C /* TrixMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TrixMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -108,6 +113,7 @@
 		93B9EC54629077A2F819A1C4 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		99D3A143E466D3ED9CE6DA8B /* MacUITestLaunchConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacUITestLaunchConfigurationTests.swift; sourceTree = "<group>"; };
 		9C6BFE4790D60B43AE929D75 /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
+		9E662C19FCAC36B7D7F6C1DF /* TrixStrings.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixStrings.generated.swift; sourceTree = "<group>"; };
 		A53052CEB6A4EE3434B72084 /* NativePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePresentation.swift; sourceTree = "<group>"; };
 		ACD09428B63A34435686262F /* CrossPlatformStabilizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossPlatformStabilizationTests.swift; sourceTree = "<group>"; };
 		B13124D1505CA449E0D0AECA /* MacUITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacUITestSupport.swift; sourceTree = "<group>"; };
@@ -170,6 +176,7 @@
 				3BA327D85EBC3ECA78574724 /* SafeDiagnosticLogStore.swift */,
 				9C6BFE4790D60B43AE929D75 /* SessionStore.swift */,
 				1575427B96432954EC184FEF /* TrixMacInteropSupport.swift */,
+				8020EF6A2868129128FCD5E7 /* TrixUserFacingText.swift */,
 				C1AEBFE31E96635AC131C69B /* WorkspaceStorePaths.swift */,
 			);
 			path = Support;
@@ -235,6 +242,7 @@
 				ACD09428B63A34435686262F /* CrossPlatformStabilizationTests.swift */,
 				F2B7388A4D817DC522225FBC /* GroupChatPresentationTests.swift */,
 				860409886427C328A4CCB791 /* ImportedAttachmentStoreTests.swift */,
+				581FF8825ADF573B013A36E3 /* InlineAttachmentPreviewLayoutTests.swift */,
 				15FECC0F1B5145ED4E40EAFF /* LinkIntentPayloadParsingTests.swift */,
 				0B094F46233034DE544886BD /* MacUITestAppBootstrapTests.swift */,
 				99D3A143E466D3ED9CE6DA8B /* MacUITestLaunchConfigurationTests.swift */,
@@ -250,6 +258,7 @@
 			isa = PBXGroup;
 			children = (
 				0E294D6B5626B1D095D94E1E /* trix_core.swift */,
+				9E662C19FCAC36B7D7F6C1DF /* TrixStrings.generated.swift */,
 			);
 			path = Generated;
 			sourceTree = "<group>";
@@ -313,7 +322,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 6CD79AFB2D85577145021AA9 /* Build configuration list for PBXNativeTarget "TrixMac" */;
 			buildPhases = (
-				517C28DC0D3A63D9C43BA553 /* Generate trix-core macOS bridge */,
+				F8FE3786DDFC602D5FA1993C /* Generate macOS strings and trix-core bridge */,
 				B41E9D7FA8E3A0B8B5780327 /* Sources */,
 				14EDCD5598B0A83F4A40E472 /* Resources */,
 			);
@@ -404,7 +413,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		517C28DC0D3A63D9C43BA553 /* Generate trix-core macOS bridge */ = {
+		F8FE3786DDFC602D5FA1993C /* Generate macOS strings and trix-core bridge */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -414,10 +423,11 @@
 			);
 			inputPaths = (
 			);
-			name = "Generate trix-core macOS bridge";
+			name = "Generate macOS strings and trix-core bridge";
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(SRCROOT)/Sources/TrixMac/Generated/TrixStrings.generated.swift",
 				"$(SRCROOT)/Sources/TrixMac/Generated/trix_core.swift",
 				"$(SRCROOT)/Sources/trix_coreFFI/trix_coreFFI.h",
 				"$(SRCROOT)/Sources/trix_coreFFI/module.modulemap",
@@ -425,7 +435,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "bash \"$SRCROOT/scripts/generate-trix-core-bridge.sh\"\nbash \"$SRCROOT/scripts/build-trix-core-universal.sh\"\n";
+			shellScript = "ruby \"$SRCROOT/../../scripts/generate_strings.rb\"\nbash \"$SRCROOT/scripts/generate-trix-core-bridge.sh\"\nbash \"$SRCROOT/scripts/build-trix-core-universal.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
@@ -453,6 +463,7 @@
 				4D029DA0BA32A0C8ED0C29C0 /* CrossPlatformStabilizationTests.swift in Sources */,
 				1C1C3A912795772D0F8F5578 /* GroupChatPresentationTests.swift in Sources */,
 				94194CD5F1C1A25BD4870921 /* ImportedAttachmentStoreTests.swift in Sources */,
+				A08047253F8292E82BCD6AB0 /* InlineAttachmentPreviewLayoutTests.swift in Sources */,
 				2E24E38EDFCD05F58D74C527 /* LinkIntentPayloadParsingTests.swift in Sources */,
 				88132E40AAAA1841462225C1 /* MacUITestAppBootstrapTests.swift in Sources */,
 				7CC474A10DB62B83F498DBB7 /* MacUITestLaunchConfigurationTests.swift in Sources */,
@@ -491,6 +502,8 @@
 				D8F37F6168058B301642E878 /* TrixMacInteropActionBridge.swift in Sources */,
 				B0D6A2556020BCCAEB2445B0 /* TrixMacInteropSupport.swift in Sources */,
 				98ADE511A362ADA7AFAA1AF0 /* TrixMessengerClient.swift in Sources */,
+				5E352EFD611E96F6AA47C23B /* TrixStrings.generated.swift in Sources */,
+				22298AA77EDDF66C7065243F /* TrixUserFacingText.swift in Sources */,
 				D1E6A31EF3E81A8FE7290E0A /* WindowViewportConfigurator.swift in Sources */,
 				E5B39E3D73A6952ADF53D8E1 /* WorkspaceStorePaths.swift in Sources */,
 				07C1B5AA070A11634214CFA9 /* WorkspaceView.swift in Sources */,

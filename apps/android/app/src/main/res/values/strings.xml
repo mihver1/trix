@@ -49,8 +49,8 @@
     <string name="chat_participants_private_sync">Private cross-device sync channel</string>
     <string name="chat_participants_pending_members">Member metadata pending</string>
     <string name="chat_participants_direct_conversation">Direct conversation</string>
-    <string name="chat_role_self">self</string>
-    <string name="chat_role_participant">participant</string>
+    <string name="chat_role_self">you</string>
+    <string name="chat_role_participant">member</string>
     <string name="chat_membership_active">active</string>
     <string name="chat_you">You</string>
     <string name="chat_preview_encrypted_payload">Encrypted application payload</string>

@@ -20,6 +20,17 @@ assert_contains() {
   [[ "$content" == *"$needle"* ]] || fail "$description"
 }
 
+assert_not_contains() {
+  local needle="$1"
+  local haystack="$2"
+  local description="$3"
+  local content=""
+
+  [[ -f "$haystack" ]] || fail "$description"
+  content="$(<"$haystack")"
+  [[ "$content" != *"$needle"* ]] || fail "$description"
+}
+
 assert_order() {
   local haystack="$1"
   shift
@@ -93,7 +104,33 @@ fi
 
 if [[ -n "$export_path" ]]; then
   mkdir -p "$export_path"
+  mkdir -p "$export_path/TrixMac.app/Contents"
+  cat > "$export_path/TrixMac.app/Contents/embedded.provisionprofile" <<'\''EOF'\''
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Name</key>
+  <string>Mac Team Store Provisioning Profile: com.softgrid.trixapp</string>
+  <key>Entitlements</key>
+  <dict>
+    <key>com.apple.developer.aps-environment</key>
+    <string>production</string>
+  </dict>
+</dict>
+</plist>
+EOF
 fi
+'
+
+  write_fake_tool "$bin_dir/security" '
+if [[ "${1:-}" == "cms" && "${2:-}" == "-D" && "${3:-}" == "-i" ]]; then
+  cat "$4"
+  exit 0
+fi
+
+echo "unexpected security invocation: $*" >&2
+exit 1
 '
 }
 
@@ -128,6 +165,35 @@ run_test() {
 
 test_archive_refreshes_bridge_and_core_before_xcodebuild() {
   local temp_root
+  local output_log
+  temp_root="$(mktemp -d)"
+  output_log="$temp_root/output.log"
+
+  setup_fake_toolchain "$temp_root"
+  write_fake_bridge_script "$temp_root/fake-generate-bridge.sh"
+  write_fake_core_build_script "$temp_root/fake-build-core.sh"
+  mkdir -p "$temp_root/logs"
+
+  PATH="$temp_root/bin:$PATH" \
+    TEST_LOG_DIR="$temp_root/logs" \
+    TRIX_MACOS_BRIDGE_SCRIPT="$temp_root/fake-generate-bridge.sh" \
+    TRIX_MACOS_CORE_BUILD_SCRIPT="$temp_root/fake-build-core.sh" \
+    TRIX_DIST_ROOT="$temp_root/dist" \
+    TRIX_MACOS_BUILD_NUMBER=42 \
+    TRIX_CONFIGURATION=Release \
+    "$TARGET_SCRIPT" >"$output_log"
+
+  assert_contains "-archivePath $temp_root/dist/TrixMac.xcarchive" "$temp_root/logs/xcodebuild.log" "archive path missing from xcodebuild invocation"
+  assert_contains "-exportArchive" "$temp_root/logs/xcodebuild.log" "exportArchive invocation missing"
+  assert_contains "<string>export</string>" "$temp_root/logs/export-options.plist" "export destination missing from export options"
+  assert_order "$temp_root/logs/timeline.log" "bridge" "core:Release" "xcodebuild:-project"
+  assert_contains "Validated exported signing profile: Mac Team Store Provisioning Profile: com.softgrid.trixapp" "$output_log" "exported signing validation missing"
+  assert_contains "Validated APNs entitlement environment: production" "$output_log" "exported APNs validation missing"
+  rm -rf "$temp_root"
+}
+
+test_archive_keeps_automatic_signing() {
+  local temp_root
   temp_root="$(mktemp -d)"
 
   setup_fake_toolchain "$temp_root"
@@ -144,15 +210,15 @@ test_archive_refreshes_bridge_and_core_before_xcodebuild() {
     TRIX_CONFIGURATION=Release \
     "$TARGET_SCRIPT" >/dev/null
 
-  assert_contains "-archivePath $temp_root/dist/TrixMac.xcarchive" "$temp_root/logs/xcodebuild.log" "archive path missing from xcodebuild invocation"
-  assert_contains "-exportArchive" "$temp_root/logs/xcodebuild.log" "exportArchive invocation missing"
-  assert_contains "<string>export</string>" "$temp_root/logs/export-options.plist" "export destination missing from export options"
-  assert_order "$temp_root/logs/timeline.log" "bridge" "core:Release" "xcodebuild:-project"
+  assert_not_contains "CODE_SIGN_STYLE=Manual" "$temp_root/logs/xcodebuild.log" "archive invocation unexpectedly forced manual signing"
+  assert_not_contains "CODE_SIGN_IDENTITY=Apple Distribution" "$temp_root/logs/xcodebuild.log" "archive invocation unexpectedly forced distribution identity"
+  assert_not_contains "PROVISIONING_PROFILE_SPECIFIER=Mac Team Store Provisioning Profile: com.softgrid.trixapp" "$temp_root/logs/xcodebuild.log" "archive invocation unexpectedly forced provisioning profile"
   rm -rf "$temp_root"
 }
 
 main() {
   run_test "archive refreshes bridge and core before xcodebuild" test_archive_refreshes_bridge_and_core_before_xcodebuild
+  run_test "archive keeps automatic signing" test_archive_keeps_automatic_signing
 }
 
 main "$@"

@@ -55,10 +55,10 @@
     <string name="chat_you">Вы</string>
     <string name="chat_preview_encrypted_payload">Зашифрованный payload приложения</string>
     <string name="chat_preview_loading_on_device">Этот контент еще загружается на этом устройстве.</string>
-    <string name="chat_preview_backfill_queued">Backfill поставлен в очередь. Контент должен появиться через пару секунд.</string>
+    <string name="chat_preview_backfill_queued">Backfill поставлен в очередь. Контент должен появиться через минуту.</string>
     <string name="chat_preview_reacted_to_message">Реакция %1$s на %2$s</string>
     <string name="chat_preview_default_message_target">сообщение</string>
-    <string name="chat_preview_receipt">Квитанция: %1$s</string>
+    <string name="chat_preview_receipt">Инфо: %1$s</string>
     <string name="chat_preview_receipt_delivery">Доставка</string>
     <string name="chat_preview_receipt_read">Прочитано</string>
     <string name="chat_preview_attachment">Вложение</string>
@@ -93,7 +93,7 @@
     <string name="chat_directory_selected_count">Выбрано %1$s</string>
     <string name="chat_directory_empty_title">Аккаунты не найдены</string>
     <string name="chat_directory_empty_body">Попробуйте более широкий фрагмент имени или handle.</string>
-    <string name="chat_manage_members">Управлять участниками</string>
+    <string name="chat_manage_members">Участники</string>
     <string name="chat_group_members_title">Участники группы</string>
     <string name="chat_group_members_count">%1$s участников в %2$s</string>
     <string name="chat_group_members_badge">%1$s участников</string>
