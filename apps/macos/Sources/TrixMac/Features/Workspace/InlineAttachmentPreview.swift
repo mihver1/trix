@@ -139,16 +139,33 @@ struct WorkspaceInlineAttachmentPreview: View {
 private struct WorkspaceAnimatedImageView: NSViewRepresentable {
     let fileURL: URL
 
-    func makeNSView(context: Context) -> NSImageView {
-        let imageView = NSImageView()
-        imageView.animates = true
-        imageView.imageScaling = .scaleProportionallyUpOrDown
-        imageView.imageAlignment = .alignCenter
+    func makeNSView(context: Context) -> WorkspacePreviewImageView {
+        let imageView = WorkspacePreviewImageView()
         return imageView
     }
 
-    func updateNSView(_ nsView: NSImageView, context: Context) {
+    func updateNSView(_ nsView: WorkspacePreviewImageView, context: Context) {
         nsView.image = NSImage(contentsOf: fileURL)
         nsView.animates = true
+    }
+}
+
+final class WorkspacePreviewImageView: NSImageView {
+    override var intrinsicContentSize: NSSize { .zero }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        animates = true
+        imageScaling = .scaleProportionallyUpOrDown
+        imageAlignment = .alignCenter
+        setContentHuggingPriority(.defaultLow, for: .horizontal)
+        setContentHuggingPriority(.defaultLow, for: .vertical)
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 }

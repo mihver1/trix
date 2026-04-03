@@ -1,4 +1,5 @@
 import CoreGraphics
+import AppKit
 import Testing
 @testable import TrixMac
 
@@ -36,4 +37,24 @@ func inlineAttachmentPreviewFallsBackToDefaultAspectRatioWhenMetadataIsMissing()
 
     #expect(size.width == 280)
     #expect(size.height == 210)
+}
+
+@MainActor
+@Test
+func inlineAttachmentPreviewImageViewDoesNotExposeImageIntrinsicSize() {
+    let imageView = WorkspacePreviewImageView()
+    let image = NSImage(size: NSSize(width: 1_200, height: 900))
+
+    image.lockFocus()
+    NSColor.systemBlue.setFill()
+    NSRect(origin: .zero, size: image.size).fill()
+    image.unlockFocus()
+
+    imageView.image = image
+
+    #expect(imageView.intrinsicContentSize == .zero)
+    #expect(imageView.contentHuggingPriority(for: .horizontal) == .defaultLow)
+    #expect(imageView.contentHuggingPriority(for: .vertical) == .defaultLow)
+    #expect(imageView.contentCompressionResistancePriority(for: .horizontal) == .defaultLow)
+    #expect(imageView.contentCompressionResistancePriority(for: .vertical) == .defaultLow)
 }
