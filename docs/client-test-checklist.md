@@ -71,12 +71,13 @@ Android uses `AuthBootstrapCoordinator.createAccount()`.
 | # | Step | Expected | iOS | macOS | Android | Bot |
 |---|------|----------|-----|-------|---------|-----|
 | 1 | Send text message | server_seq assigned, local store updated | ✓ | ✓ | ✓ | ✓ |
-| 2 | Receiver syncs + projects | Decrypted text appears in timeline | ✓ | ✓ | ✓ | ✓ |
-| 3 | Send reaction (emoji + target) | Reaction round-trips correctly | · | ✓ | · | · |
-| 4 | Advance the receiver read cursor and let sender converge delivery/read ticks | Sender shows delivered then read decoration on the outgoing message | ✓ | ✓ | ✓ | · |
-| 5 | Send chat event | Event type + JSON round-trips | · | ✓ | · | · |
+| 2 | Sender refreshes, reopens, or reprojects after the send completes | The sender still sees the sent body in the projected timeline instead of an unavailable/loading placeholder | ✓ | ✓ | ✓ | · |
+| 3 | Receiver syncs + projects | Decrypted text appears in timeline | ✓ | ✓ | ✓ | ✓ |
+| 4 | Send reaction (emoji + target) | Reaction round-trips correctly | · | ✓ | · | · |
+| 5 | Advance the receiver read cursor and let sender converge delivery/read ticks | Sender shows delivered then read decoration on the outgoing message | ✓ | ✓ | ✓ | · |
+| 6 | Send chat event | Event type + JSON round-trips | · | ✓ | · | · |
 
-**Gap**: Raw reaction and chat-event composition are still exercised only through macOS or debug surfaces. The primary iOS, macOS, and Android chat UIs now send best-effort read receipts automatically when their read cursor advances and render delivery/read ticks on outgoing messages.
+**Gap**: Raw reaction and chat-event composition are still exercised only through macOS or debug surfaces. The primary iOS, macOS, and Android chat UIs now send best-effort read receipts automatically when their read cursor advances and render delivery/read ticks on outgoing messages. If a just-sent local text falls back to a "still loading on this device" style placeholder after refresh or repair, treat that as a regression in projected self-message durability.
 
 ---
 
