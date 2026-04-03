@@ -3179,16 +3179,7 @@ final class AppModel: ObservableObject {
     }
 
     private func conversationSafeMessage(_ rawMessage: String) -> String {
-        let lowercased = rawMessage.lowercased()
-        if lowercased.contains("epoch") ||
-            lowercased.contains("mls") ||
-            lowercased.contains("projected") ||
-            lowercased.contains("group state") ||
-            lowercased.contains("conversation material") {
-            return "Couldn't send this message right now. Try again in a moment."
-        }
-
-        return rawMessage
+        TrixUserFacingText.sanitize(rawMessage: rawMessage)
     }
 
     private func logInfo(_ category: String, _ message: String) {
@@ -3628,11 +3619,7 @@ private extension String {
 
 private extension Error {
     var userFacingMessage: String {
-        if let localizedError = self as? LocalizedError,
-           let description = localizedError.errorDescription {
-            return description
-        }
-        return localizedDescription
+        trixUserFacingMessage
     }
 }
 

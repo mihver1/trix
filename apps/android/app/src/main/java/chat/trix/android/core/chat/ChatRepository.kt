@@ -2,6 +2,7 @@ package chat.trix.android.core.chat
 
 import android.content.Context
 import android.net.Uri
+import chat.trix.android.R
 import chat.trix.android.core.ffi.FfiChatParticipantProfile
 import chat.trix.android.core.auth.AuthenticatedSession
 import chat.trix.android.core.auth.DeviceDatabaseKeyStore
@@ -12,6 +13,8 @@ import chat.trix.android.core.ffi.FfiClientStore
 import chat.trix.android.core.ffi.FfiClientStoreConfig
 import chat.trix.android.core.ffi.FfiCreateChatControlInput
 import chat.trix.android.core.ffi.FfiDirectoryAccount
+import chat.trix.android.core.ffi.FfiHistorySyncJobStatus
+import chat.trix.android.core.ffi.FfiHistorySyncJobType
 import chat.trix.android.core.ffi.FfiInboxItem
 import chat.trix.android.core.ffi.FfiLocalChatListItem
 import chat.trix.android.core.ffi.FfiLocalHistoryStore
@@ -100,7 +103,7 @@ class ChatRepository(
     }
 
     suspend fun loadOverview(): ChatOverview = withContext(Dispatchers.IO) {
-        runFfi("Failed to read local chat cache") {
+        runFfi(text(R.string.chat_error_read_local_cache)) {
             buildMessengerOverview(
                 conversations = messenger().listConversations(),
                 rootPath = messenger().rootPath(),
@@ -109,13 +112,13 @@ class ChatRepository(
     }
 
     suspend fun loadConversation(chatId: String): ChatConversation? = withContext(Dispatchers.IO) {
-        runFfi("Failed to read conversation") {
+        runFfi(text(R.string.chat_error_read_conversation)) {
             buildMessengerConversation(chatId)
         }
     }
 
     suspend fun refresh(): ChatRefreshResult = withContext(Dispatchers.IO) {
-        runFfi("Failed to sync chats") {
+        runFfi(text(R.string.chat_error_sync_chats)) {
             val snapshot = messenger().loadSnapshot()
 
             ChatRefreshResult(
@@ -134,19 +137,19 @@ class ChatRepository(
     }
 
     suspend fun hydrateChangedChats(chatIds: Set<String>): Int = withContext(Dispatchers.IO) {
-        runFfi("Failed to hydrate changed chats") {
+        runFfi(text(R.string.chat_error_hydrate_changed_chats)) {
             chatIds.count { chatId -> buildMessengerConversation(chatId) != null }
         }
     }
 
     suspend fun flushPendingOutbox(): Int = withContext(Dispatchers.IO) {
-        runFfi("Failed to flush local outbox") {
+        runFfi(text(R.string.chat_error_flush_local_outbox)) {
             0
         }
     }
 
     suspend fun searchAccountDirectory(query: String): List<ChatDirectoryAccount> = withContext(Dispatchers.IO) {
-        runFfi("Failed to search account directory") {
+        runFfi(text(R.string.chat_error_search_account_directory)) {
             val client = client()
             client.setAccessToken(session.accessToken)
             client.searchAccountDirectory(
@@ -162,10 +165,10 @@ class ChatRepository(
     suspend fun createDirectMessage(targetAccountId: String): ChatCreateResult = withContext(Dispatchers.IO) {
         val normalizedParticipants = normalizeParticipantAccountIds(listOf(targetAccountId))
         if (normalizedParticipants.isEmpty()) {
-            throw IOException("Choose a valid account to start a direct message")
+            throw IOException(text(R.string.chat_error_invalid_dm_account))
         }
 
-        runFfi("Failed to create direct message") {
+        runFfi(text(R.string.chat_error_create_direct_message)) {
             val outcome = messenger().createConversation(
                 chatType = FfiChatType.DM,
                 title = null,
@@ -173,7 +176,10 @@ class ChatRepository(
             )
 
             buildMutationConversationResult(
-                unavailableMessage = "Conversation ${outcome.conversationId} is no longer available",
+                unavailableMessage = text(
+                    R.string.chat_error_conversation_no_longer_available,
+                    outcome.conversationId,
+                ),
                 buildOverview = {
                     buildMessengerOverview(
                         conversations = messenger().listConversations(),
@@ -192,10 +198,10 @@ class ChatRepository(
     ): ChatCreateResult = withContext(Dispatchers.IO) {
         val normalizedParticipants = normalizeParticipantAccountIds(participantAccountIds)
         if (normalizedParticipants.size < MIN_GROUP_PARTICIPANTS) {
-            throw IOException("Select at least $MIN_GROUP_PARTICIPANTS people for a group chat")
+            throw IOException(text(R.string.chat_error_group_minimum_participants, MIN_GROUP_PARTICIPANTS))
         }
 
-        runFfi("Failed to create group chat") {
+        runFfi(text(R.string.chat_error_create_group_chat)) {
             val outcome = messenger().createConversation(
                 chatType = FfiChatType.GROUP,
                 title = title,
@@ -203,7 +209,10 @@ class ChatRepository(
             )
 
             buildMutationConversationResult(
-                unavailableMessage = "Conversation ${outcome.conversationId} is no longer available",
+                unavailableMessage = text(
+                    R.string.chat_error_conversation_no_longer_available,
+                    outcome.conversationId,
+                ),
                 buildOverview = {
                     buildMessengerOverview(
                         conversations = messenger().listConversations(),
@@ -222,17 +231,20 @@ class ChatRepository(
     ): ChatMembershipUpdateResult = withContext(Dispatchers.IO) {
         val normalizedParticipants = normalizeParticipantAccountIds(participantAccountIds)
         if (normalizedParticipants.isEmpty()) {
-            throw IOException("Select at least one person to add")
+            throw IOException(text(R.string.chat_error_select_member_to_add))
         }
 
-        runFfi("Failed to add group members") {
+        runFfi(text(R.string.chat_error_add_group_members)) {
             messenger().updateConversationMembers(
                 conversationId = chatId,
                 participantAccountIds = normalizedParticipants,
             )
 
             buildMutationConversationResult(
-                unavailableMessage = "Conversation $chatId is no longer available",
+                unavailableMessage = text(
+                    R.string.chat_error_conversation_no_longer_available,
+                    chatId,
+                ),
                 buildOverview = {
                     buildMessengerOverview(
                         conversations = messenger().listConversations(),
@@ -251,17 +263,20 @@ class ChatRepository(
     ): ChatMembershipUpdateResult = withContext(Dispatchers.IO) {
         val normalizedParticipants = normalizeParticipantAccountIds(listOf(accountId))
         if (normalizedParticipants.isEmpty()) {
-            throw IOException("Choose a valid member to remove")
+            throw IOException(text(R.string.chat_error_invalid_remove_member))
         }
 
-        runFfi("Failed to remove group member") {
+        runFfi(text(R.string.chat_error_remove_group_member)) {
             messenger().removeConversationMembers(
                 conversationId = chatId,
                 participantAccountIds = normalizedParticipants,
             )
 
             buildMutationConversationResult(
-                unavailableMessage = "Conversation $chatId is no longer available",
+                unavailableMessage = text(
+                    R.string.chat_error_conversation_no_longer_available,
+                    chatId,
+                ),
                 buildOverview = {
                     buildMessengerOverview(
                         conversations = messenger().listConversations(),
@@ -277,14 +292,17 @@ class ChatRepository(
     suspend fun sendTextMessage(chatId: String, draft: String): ChatSendResult = withContext(Dispatchers.IO) {
         val normalizedDraft = draft.trim()
         if (normalizedDraft.isEmpty()) {
-            throw IOException("Message is empty")
+            throw IOException(text(R.string.chat_error_message_empty))
         }
 
-        runFfi("Failed to send message") {
+        runFfi(text(R.string.chat_error_send_message)) {
             messenger().sendTextMessage(chatId, normalizedDraft)
 
             buildMutationConversationResult(
-                unavailableMessage = "Conversation $chatId is no longer available",
+                unavailableMessage = text(
+                    R.string.chat_error_conversation_no_longer_available,
+                    chatId,
+                ),
                 buildOverview = {
                     buildMessengerOverview(
                         conversations = messenger().listConversations(),
@@ -301,7 +319,7 @@ class ChatRepository(
         chatId: String,
         contentUri: Uri,
     ): ChatSendResult = withContext(Dispatchers.IO) {
-        runFfi("Failed to send attachment") {
+        runFfi(text(R.string.chat_error_send_attachment)) {
             val attachment = attachmentRepository().prepareMessengerAttachment(contentUri)
             messenger().sendAttachmentMessage(
                 conversationId = chatId,
@@ -310,7 +328,10 @@ class ChatRepository(
             )
 
             buildMutationConversationResult(
-                unavailableMessage = "Conversation $chatId is no longer available",
+                unavailableMessage = text(
+                    R.string.chat_error_conversation_no_longer_available,
+                    chatId,
+                ),
                 buildOverview = {
                     buildMessengerOverview(
                         conversations = messenger().listConversations(),
@@ -332,10 +353,10 @@ class ChatRepository(
         val normalizedTargetMessageId = targetMessageId.trim()
         val normalizedEmoji = emoji.trim()
         if (normalizedTargetMessageId.isEmpty() || normalizedEmoji.isEmpty()) {
-            throw IOException("Reaction is incomplete")
+            throw IOException(text(R.string.chat_error_reaction_incomplete))
         }
 
-        runFfi("Failed to send reaction") {
+        runFfi(text(R.string.chat_error_send_reaction)) {
             messenger().sendReaction(
                 conversationId = chatId,
                 targetMessageId = normalizedTargetMessageId,
@@ -344,7 +365,10 @@ class ChatRepository(
             )
 
             buildMutationConversationResult(
-                unavailableMessage = "Conversation $chatId is no longer available",
+                unavailableMessage = text(
+                    R.string.chat_error_conversation_no_longer_available,
+                    chatId,
+                ),
                 buildOverview = {
                     buildMessengerOverview(
                         conversations = messenger().listConversations(),
@@ -372,7 +396,7 @@ class ChatRepository(
     }
 
     suspend fun markConversationRead(chatId: String): ChatReadResult = withContext(Dispatchers.IO) {
-        runFfi("Failed to update chat read state") {
+        runFfi(text(R.string.chat_error_update_read_state)) {
             val previousUnreadCount = messengerConversationSummary(chatId)?.unreadCount?.toLong()
             messenger().markRead(chatId)
             val updatedUnreadCount = messengerConversationSummary(chatId)?.unreadCount?.toLong()
@@ -390,7 +414,7 @@ class ChatRepository(
     // region FFI parity — methods aligned with iOS/macOS bridge surfaces
 
     suspend fun getAccount(accountId: String): ChatDirectoryAccount = withContext(Dispatchers.IO) {
-        runFfi("Failed to look up account") {
+        runFfi(text(R.string.chat_error_lookup_account)) {
             val client = client()
             client.setAccessToken(session.accessToken)
             mapDirectoryAccount(client.getAccount(accountId))
@@ -402,7 +426,7 @@ class ChatRepository(
         afterServerSeq: ULong? = null,
         limit: UInt = HISTORY_SYNC_LIMIT,
     ): List<ChatTimelineMessage> = withContext(Dispatchers.IO) {
-        runFfi("Failed to load chat history") {
+        runFfi(text(R.string.chat_error_load_chat_history)) {
             val client = client()
             client.setAccessToken(session.accessToken)
             val history = client.getChatHistory(chatId, afterServerSeq, limit)
@@ -421,7 +445,7 @@ class ChatRepository(
     }
 
     suspend fun clearSessionToken() = withContext(Dispatchers.IO) {
-        runFfi("Failed to clear session token") {
+        runFfi(text(R.string.chat_error_clear_session_token)) {
             client().clearAccessToken()
         }
     }
@@ -430,14 +454,17 @@ class ChatRepository(
         chatId: String,
         deviceIds: List<String>,
     ): ChatMembershipUpdateResult = withContext(Dispatchers.IO) {
-        runFfi("Failed to add chat devices") {
+        runFfi(text(R.string.chat_error_add_chat_devices)) {
             messenger().updateConversationDevices(
                 conversationId = chatId,
                 deviceIds = deviceIds,
             )
 
             buildMutationConversationResult(
-                unavailableMessage = "Conversation $chatId is no longer available",
+                unavailableMessage = text(
+                    R.string.chat_error_conversation_no_longer_available,
+                    chatId,
+                ),
                 buildOverview = {
                     buildMessengerOverview(
                         conversations = messenger().listConversations(),
@@ -454,14 +481,17 @@ class ChatRepository(
         chatId: String,
         deviceIds: List<String>,
     ): ChatMembershipUpdateResult = withContext(Dispatchers.IO) {
-        runFfi("Failed to remove chat devices") {
+        runFfi(text(R.string.chat_error_remove_chat_devices)) {
             messenger().removeConversationDevices(
                 conversationId = chatId,
                 deviceIds = deviceIds,
             )
 
             buildMutationConversationResult(
-                unavailableMessage = "Conversation $chatId is no longer available",
+                unavailableMessage = text(
+                    R.string.chat_error_conversation_no_longer_available,
+                    chatId,
+                ),
                 buildOverview = {
                     buildMessengerOverview(
                         conversations = messenger().listConversations(),
@@ -475,13 +505,13 @@ class ChatRepository(
     }
 
     suspend fun mlsStorageRoot(): String? = withContext(Dispatchers.IO) {
-        runFfi("Failed to read MLS storage root") {
+        runFfi(text(R.string.chat_error_read_mls_storage_root)) {
             clientStore().mlsStorageRoot()
         }
     }
 
     suspend fun mlsCredentialIdentity(): ByteArray = withContext(Dispatchers.IO) {
-        runFfi("Failed to read MLS credential identity") {
+        runFfi(text(R.string.chat_error_read_mls_credential_identity)) {
             mlsFacade().credentialIdentity()
         }
     }
@@ -490,7 +520,7 @@ class ChatRepository(
         afterInboxId: ULong? = null,
         limit: UInt = INBOX_SYNC_LIMIT,
     ): List<FfiInboxItem> = withContext(Dispatchers.IO) {
-        runFfi("Failed to fetch inbox") {
+        runFfi(text(R.string.chat_error_fetch_inbox)) {
             val client = client()
             client.setAccessToken(session.accessToken)
             client.getInbox(afterInboxId, limit).items
@@ -524,7 +554,13 @@ class ChatRepository(
         conversations: List<FfiMessengerConversationSummary>,
         rootPath: String,
     ): ChatOverview {
-        val summaries = conversations.map(::mapMessengerConversationSummary)
+        val activeBackfillChats = activeBackfillChatIds()
+        val summaries = conversations.map { conversation ->
+            mapMessengerConversationSummary(
+                conversation = conversation,
+                hasActiveBackfill = activeBackfillChats.contains(conversation.conversationId),
+            )
+        }
         val cachedMessageCount = conversations.sumOf { conversation ->
             conversation.lastServerSeq.toLong().coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         }
@@ -546,41 +582,48 @@ class ChatRepository(
 
     private fun buildMessengerConversation(chatId: String): ChatConversation? {
         val conversation = messengerConversationSummary(chatId) ?: return null
+        val hasActiveBackfill = activeBackfillChatIds().contains(chatId)
         val messages = messenger().getAllMessages(chatId)
         return ChatConversation(
             chatId = conversation.conversationId,
             chatType = conversation.conversationType,
             title = conversation.displayTitle,
             participantsLabel = messengerParticipantsLabel(conversation),
-            timelineLabel = if (messages.isEmpty()) "No messages yet" else "Synced by messenger core",
+            timelineLabel = if (messages.isEmpty()) {
+                text(R.string.chat_label_no_messages_yet)
+            } else {
+                text(R.string.chat_label_synced_by_core)
+            },
             isAccountSyncChat = conversation.conversationId == session.localState.accountSyncChatId,
             canSend = session.localState.deviceStatus.equals("active", ignoreCase = true),
             canManageMembers = conversation.conversationType == FfiChatType.GROUP,
             composerHint = when (conversation.conversationType) {
                 FfiChatType.ACCOUNT_SYNC ->
-                    "This private account sync thread is fully handled by the shared messenger core."
+                    text(R.string.chat_hint_account_sync_managed)
 
                 FfiChatType.GROUP ->
-                    "Messages, attachments, receipts, and membership changes are handled by the shared messenger core."
+                    text(R.string.chat_hint_group_managed)
 
                 FfiChatType.DM ->
-                    "Messages, attachments, and receipts are handled by the shared messenger core."
+                    text(R.string.chat_hint_dm_managed)
             },
             members = messengerConversationMembers(conversation),
-            messages = mapMessengerTimelineMessages(messages),
+            messages = mapMessengerTimelineMessages(messages, hasActiveBackfill),
         )
     }
 
     private fun mapMessengerConversationSummary(
         conversation: FfiMessengerConversationSummary,
+        hasActiveBackfill: Boolean,
     ): ChatConversationSummary {
         return ChatConversationSummary(
             chatId = conversation.conversationId,
             chatType = conversation.conversationType,
             title = conversation.displayTitle,
             participantsLabel = messengerParticipantsLabel(conversation),
-            lastMessagePreview = messengerPreviewLabel(conversation),
-            timestampLabel = conversation.previewCreatedAtUnix?.toLong()?.formatChatTimestamp() ?: "No messages yet",
+            lastMessagePreview = messengerPreviewLabel(conversation, hasActiveBackfill),
+            timestampLabel = conversation.previewCreatedAtUnix?.toLong()?.formatChatTimestamp()
+                ?: text(R.string.chat_label_no_messages_yet),
             messageCount = conversation.lastServerSeq.toIntClamped(),
             unreadCount = conversation.unreadCount.toIntClamped(),
             hasProjectedTimeline = true,
@@ -603,9 +646,9 @@ class ChatRepository(
 
         if (participants.isEmpty()) {
             return when (conversation.conversationType) {
-                FfiChatType.ACCOUNT_SYNC -> "Private cross-device sync channel"
-                FfiChatType.GROUP -> "Member metadata pending"
-                FfiChatType.DM -> "Direct conversation"
+                FfiChatType.ACCOUNT_SYNC -> text(R.string.chat_participants_private_sync)
+                FfiChatType.GROUP -> text(R.string.chat_participants_pending_members)
+                FfiChatType.DM -> text(R.string.chat_participants_direct_conversation)
             }
         }
 
@@ -627,8 +670,12 @@ class ChatRepository(
             ChatConversationMember(
                 accountId = profile.accountId,
                 displayName = messengerParticipantDisplayName(profile),
-                role = if (profile.accountId == session.localState.accountId) "self" else "participant",
-                membershipStatus = "active",
+                role = if (profile.accountId == session.localState.accountId) {
+                    text(R.string.chat_role_self)
+                } else {
+                    text(R.string.chat_role_participant)
+                },
+                membershipStatus = text(R.string.chat_membership_active),
                 isSelf = profile.accountId == session.localState.accountId,
             )
         }
@@ -636,17 +683,24 @@ class ChatRepository(
 
     private fun messengerParticipantDisplayName(profile: FfiMessengerParticipantProfile): String {
         if (profile.accountId == session.localState.accountId) {
-            return "You"
+            return text(R.string.chat_you)
         }
         return profile.profileName.takeIf(String::isNotBlank)
             ?: profile.handle?.takeIf(String::isNotBlank)?.let { "@$it" }
             ?: shortAccountId(profile.accountId)
     }
 
-    private fun messengerPreviewLabel(conversation: FfiMessengerConversationSummary): String {
-        val previewText = conversation.previewText?.trim()?.takeIf(String::isNotEmpty) ?: return "No messages yet"
+    private fun messengerPreviewLabel(
+        conversation: FfiMessengerConversationSummary,
+        hasActiveBackfill: Boolean,
+    ): String {
+        val previewText = conversation.previewText
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?.let { sanitizeUnavailableContentMessage(it, hasActiveBackfill) }
+            ?: return text(R.string.chat_label_no_messages_yet)
         val senderLabel = when {
-            conversation.previewIsOutgoing == true -> "You"
+            conversation.previewIsOutgoing == true -> text(R.string.chat_you)
             !conversation.previewSenderDisplayName.isNullOrBlank() -> conversation.previewSenderDisplayName
             !conversation.previewSenderAccountId.isNullOrBlank() -> shortAccountId(conversation.previewSenderAccountId!!)
             else -> null
@@ -660,12 +714,14 @@ class ChatRepository(
 
     private fun mapMessengerTimelineMessages(
         messages: List<FfiMessengerMessageRecord>,
+        hasActiveBackfill: Boolean,
     ): List<ChatTimelineMessage> {
         return messages
             .filterNot(::isMessengerReceiptMessage)
             .map { message ->
                 mapMessengerTimelineMessage(
                     message = message,
+                    hasActiveBackfill = hasActiveBackfill,
                     receiptStatus = message.receiptStatus?.let(::receiptStatusFromFfi),
                 )
             }
@@ -673,17 +729,18 @@ class ChatRepository(
 
     private fun mapMessengerTimelineMessage(
         message: FfiMessengerMessageRecord,
+        hasActiveBackfill: Boolean,
         receiptStatus: ChatReceiptStatus?,
     ): ChatTimelineMessage {
         return ChatTimelineMessage(
             id = message.messageId,
             author = if (message.isOutgoing) {
-                "You"
+                text(R.string.chat_you)
             } else {
                 message.senderDisplayName?.takeIf(String::isNotBlank)
                     ?: shortAccountId(message.senderAccountId)
             },
-            body = messengerTimelineBody(message),
+            body = messengerTimelineBody(message, hasActiveBackfill),
             timestampLabel = message.createdAtUnix.toLong().formatChatTimestamp(),
             isMine = message.isOutgoing,
             note = null,
@@ -710,27 +767,48 @@ class ChatRepository(
         )
     }
 
-    private fun messengerTimelineBody(message: FfiMessengerMessageRecord): String {
-        val body = message.body ?: return message.previewText.trim().takeIf(String::isNotEmpty)
-            ?: "Encrypted application payload"
+    private fun messengerTimelineBody(
+        message: FfiMessengerMessageRecord,
+        hasActiveBackfill: Boolean,
+    ): String {
+        val body = message.body ?: return message.previewText
+            .trim()
+            .takeIf(String::isNotEmpty)
+            ?.let { sanitizeUnavailableContentMessage(it, hasActiveBackfill) }
+            ?: text(R.string.chat_preview_encrypted_payload)
         return when (body.kind) {
             FfiMessengerMessageBodyKind.TEXT -> body.text
                 ?.trim()
                 ?.takeIf(String::isNotEmpty)
-                ?: message.previewText.trim().takeIf(String::isNotEmpty)
-                ?: "Message content is unavailable on this device."
+                ?: message.previewText.trim().takeIf(String::isNotEmpty)?.let {
+                    sanitizeUnavailableContentMessage(it, hasActiveBackfill)
+                }
+                ?: if (hasActiveBackfill) {
+                    text(R.string.chat_preview_backfill_queued)
+                } else {
+                    text(R.string.chat_preview_loading_on_device)
+                }
 
-            FfiMessengerMessageBodyKind.REACTION ->
-                "Reacted ${body.emoji.orEmpty()} to ${body.targetMessageId?.let(::shortMessageId) ?: "message"}"
+            FfiMessengerMessageBodyKind.REACTION -> text(
+                R.string.chat_preview_reacted_to_message,
+                body.emoji.orEmpty(),
+                body.targetMessageId?.let(::shortMessageId)
+                    ?: text(R.string.chat_preview_default_message_target),
+            )
 
-            FfiMessengerMessageBodyKind.RECEIPT ->
-                "${body.receiptType?.name?.lowercase()?.replaceFirstChar(Char::uppercase) ?: "Delivery"} receipt"
+            FfiMessengerMessageBodyKind.RECEIPT -> text(
+                R.string.chat_preview_receipt,
+                when (body.receiptType) {
+                    FfiReceiptType.READ -> text(R.string.chat_preview_receipt_read)
+                    FfiReceiptType.DELIVERED, null -> text(R.string.chat_preview_receipt_delivery)
+                },
+            )
 
             FfiMessengerMessageBodyKind.ATTACHMENT ->
-                body.attachment?.fileName ?: body.attachment?.mimeType ?: "Attachment"
+                body.attachment?.fileName ?: body.attachment?.mimeType ?: text(R.string.chat_preview_attachment)
 
             FfiMessengerMessageBodyKind.CHAT_EVENT ->
-                body.eventType?.trim()?.takeIf(String::isNotEmpty) ?: "Chat event"
+                body.eventType?.trim()?.takeIf(String::isNotEmpty) ?: text(R.string.chat_preview_chat_event)
         }
     }
 
@@ -763,11 +841,23 @@ class ChatRepository(
             } catch (error: CancellationException) {
                 throw error
             } catch (error: FfiMessengerException) {
-                throw IOException(ffiMessengerMessage(error), error)
+                throw IOException(
+                    sanitizedUserFacingErrorMessage(
+                        rawMessage = ffiMessengerMessage(error),
+                        fallbackMessage = fallbackMessage,
+                    ),
+                    error,
+                )
             } catch (error: TrixFfiException) {
-                throw IOException(error.message ?: fallbackMessage, error)
+                throw IOException(
+                    sanitizedUserFacingErrorMessage(
+                        rawMessage = error.message,
+                        fallbackMessage = fallbackMessage,
+                    ),
+                    error,
+                )
             } catch (error: UnsatisfiedLinkError) {
-                throw IOException("Rust FFI library is not available in the Android app bundle", error)
+                throw IOException(text(R.string.chat_error_rust_ffi_unavailable), error)
             } catch (error: RuntimeException) {
                 throw IOException(fallbackMessage, error)
             }
@@ -824,10 +914,76 @@ class ChatRepository(
 
     private fun accountDisplayName(accountId: String): String {
         return if (accountId == session.localState.accountId) {
-            "You"
+            text(R.string.chat_you)
         } else {
             shortAccountId(accountId)
         }
+    }
+
+    private fun text(resourceId: Int, vararg args: Any): String {
+        return appContext.getString(resourceId, *args)
+    }
+
+    private fun activeBackfillChatIds(): Set<String> {
+        return runCatching {
+            val apiClient = client()
+            apiClient.setAccessToken(session.accessToken)
+            apiClient.listHistorySyncJobs(null, null, HISTORY_SYNC_LIMIT)
+                .asSequence()
+                .filter { job ->
+                    job.jobType == FfiHistorySyncJobType.CHAT_BACKFILL &&
+                        (job.jobStatus == FfiHistorySyncJobStatus.PENDING ||
+                            job.jobStatus == FfiHistorySyncJobStatus.RUNNING)
+                }
+                .mapNotNull { job -> job.chatId?.trim()?.takeIf(String::isNotEmpty) }
+                .toSet()
+        }.getOrDefault(emptySet())
+    }
+
+    private fun sanitizeUnavailableContentMessage(
+        rawValue: String,
+        hasActiveBackfill: Boolean,
+    ): String {
+        val trimmed = rawValue.trim()
+        return if (isUnavailableContentMessage(trimmed.lowercase())) {
+            if (hasActiveBackfill) {
+                text(R.string.chat_preview_backfill_queued)
+            } else {
+                text(R.string.chat_preview_loading_on_device)
+            }
+        } else {
+            trimmed
+        }
+    }
+
+    private fun sanitizedUserFacingErrorMessage(
+        rawMessage: String?,
+        fallbackMessage: String,
+    ): String {
+        val trimmed = rawMessage?.trim().orEmpty()
+        if (trimmed.isEmpty()) {
+            return fallbackMessage
+        }
+
+        val normalized = trimmed.lowercase()
+        return when {
+            isUnavailableContentMessage(normalized) -> text(R.string.chat_preview_loading_on_device)
+            normalized.contains("epoch") ||
+                normalized.contains("mls") ||
+                normalized.contains("projected") ||
+                normalized.contains("group state") ||
+                normalized.contains("conversation material") -> text(R.string.chat_error_send_retry)
+            normalized.contains("ffimessengererror") ||
+                normalized.contains("trixffierror") ||
+                normalized.contains("panic") -> text(R.string.chat_error_generic_try_again)
+            else -> trimmed
+        }
+    }
+
+    private fun isUnavailableContentMessage(normalized: String): Boolean {
+        return normalized.contains("unavailable on this device") ||
+            normalized.contains("content is unavailable") ||
+            normalized.contains("backfill queued")
     }
 
     private fun normalizeParticipantAccountIds(accountIds: List<String>): List<String> {

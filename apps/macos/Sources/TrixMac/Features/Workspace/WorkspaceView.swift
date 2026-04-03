@@ -163,7 +163,7 @@ struct WorkspaceView: View {
                         model.importComposerAttachment(from: fileURL)
                     }
                 case let .failure(error):
-                    model.lastErrorMessage = error.localizedDescription
+                    model.lastErrorMessage = error.trixUserFacingMessage
                 }
             }
             .onChange(of: model.selectedChatID, initial: false) { _, _ in

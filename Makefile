@@ -18,6 +18,9 @@ contract-check:
 run-server:
 	cargo run -p trixd
 
+strings-generate:
+	ruby scripts/generate_strings.rb
+
 build-trix-core-lib:
 	cargo build -p trix-core --lib
 
