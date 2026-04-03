@@ -1326,6 +1326,16 @@ impl LocalHistoryStore {
         facade: &MlsFacade,
         limit: Option<usize>,
     ) -> Result<LocalProjectionApplyReport> {
+        self.project_chat_with_facade_for_device(chat_id, facade, limit, None)
+    }
+
+    pub(crate) fn project_chat_with_facade_for_device(
+        &mut self,
+        chat_id: ChatId,
+        facade: &MlsFacade,
+        limit: Option<usize>,
+        current_device_id: Option<trix_types::DeviceId>,
+    ) -> Result<LocalProjectionApplyReport> {
         let chat_key = chat_id.0.to_string();
         let previous_chat = self.state.chats.get(&chat_key).cloned();
         let result = (|| {
@@ -1335,8 +1345,13 @@ impl LocalHistoryStore {
             let mut conversation = self
                 .load_or_bootstrap_chat_mls_conversation(chat_id, facade)?
                 .ok_or_else(|| anyhow!("chat {} has no bootstrappable MLS state", chat_id.0))?;
-            let report = match self.project_chat_messages(chat_id, facade, &mut conversation, limit)
-            {
+            let report = match self.project_chat_messages_for_device(
+                chat_id,
+                facade,
+                &mut conversation,
+                limit,
+                current_device_id.clone(),
+            ) {
                 Ok(mut report) => {
                     if let Some(backup) = repair_backup.as_ref() {
                         self.restore_materialized_projection_tail(backup)?;
@@ -1368,11 +1383,12 @@ impl LocalHistoryStore {
                     else {
                         return Err(error);
                     };
-                    match self.project_chat_messages(
+                    match self.project_chat_messages_for_device(
                         chat_id,
                         facade,
                         &mut recovered_conversation,
                         limit,
+                        current_device_id.clone(),
                     ) {
                         Ok(report) => {
                             if let Some(backup) = repair_backup.as_ref() {
@@ -1399,8 +1415,12 @@ impl LocalHistoryStore {
             if had_legacy_unmaterialized
                 && self.chat_has_unmaterialized_application_messages(chat_id)
             {
-                let _ =
-                    self.best_effort_recover_legacy_materialized_messages(chat_id, facade, limit);
+                let _ = self.best_effort_recover_legacy_materialized_messages(
+                    chat_id,
+                    facade,
+                    limit,
+                    current_device_id.clone(),
+                );
             }
 
             Ok(report)
@@ -1426,6 +1446,7 @@ impl LocalHistoryStore {
         chat_id: ChatId,
         facade: &MlsFacade,
         limit: Option<usize>,
+        current_device_id: Option<trix_types::DeviceId>,
     ) -> Result<()> {
         let chat_key = chat_id.0.to_string();
         let previous_chat = self.state.chats.get(&chat_key).cloned();
@@ -1439,8 +1460,13 @@ impl LocalHistoryStore {
                 self.restore_projection_gap_repair(backup)?;
                 return Ok(());
             };
-            let result = match self.project_chat_messages(chat_id, facade, &mut conversation, limit)
-            {
+            let result = match self.project_chat_messages_for_device(
+                chat_id,
+                facade,
+                &mut conversation,
+                limit,
+                current_device_id.clone(),
+            ) {
                 Ok(_) => Ok(()),
                 Err(error) if is_group_id_mismatch_projection_error(&error) => {
                     let mut attempted_group_ids = vec![conversation.group_id()];
@@ -1464,8 +1490,14 @@ impl LocalHistoryStore {
                     else {
                         return Err(error);
                     };
-                    self.project_chat_messages(chat_id, facade, &mut recovered_conversation, limit)
-                        .map(|_| ())
+                    self.project_chat_messages_for_device(
+                        chat_id,
+                        facade,
+                        &mut recovered_conversation,
+                        limit,
+                        current_device_id.clone(),
+                    )
+                    .map(|_| ())
                 }
                 Err(error) => Err(error),
             };
@@ -1878,6 +1910,17 @@ impl LocalHistoryStore {
         conversation: &mut MlsConversation,
         limit: Option<usize>,
     ) -> Result<LocalProjectionApplyReport> {
+        self.project_chat_messages_for_device(chat_id, facade, conversation, limit, None)
+    }
+
+    fn project_chat_messages_for_device(
+        &mut self,
+        chat_id: ChatId,
+        facade: &MlsFacade,
+        conversation: &mut MlsConversation,
+        limit: Option<usize>,
+        current_device_id: Option<trix_types::DeviceId>,
+    ) -> Result<LocalProjectionApplyReport> {
         let chat_key = chat_id.0.to_string();
         let previous_chat = self.state.chats.get(&chat_key).cloned();
         let result = (|| {
@@ -1907,6 +1950,17 @@ impl LocalHistoryStore {
             let mut advanced_to_server_seq = None;
             for envelope in envelopes {
                 let projected = project_envelope(facade, conversation, &envelope)?;
+                if current_device_replay_would_drop_body(
+                    &envelope,
+                    &projected,
+                    current_device_id.as_ref(),
+                ) {
+                    return Err(anyhow!(
+                        "current device replay for message {} in chat {} would discard its durable body",
+                        envelope.message_id.0,
+                        chat_id.0
+                    ));
+                }
                 let persisted = persisted_projected_message_from(projected);
                 let entry_changed = match chat.projected_messages.get(&envelope.server_seq) {
                     Some(existing) => existing != &persisted,
@@ -2926,6 +2980,19 @@ fn ensure_application_message_is_materialized(message: &LocalProjectedMessage) -
         ));
     }
     Ok(())
+}
+
+fn current_device_replay_would_drop_body(
+    envelope: &MessageEnvelope,
+    projected: &LocalProjectedMessage,
+    current_device_id: Option<&trix_types::DeviceId>,
+) -> bool {
+    current_device_id
+        .map(|device_id| *device_id == envelope.sender_device_id)
+        .unwrap_or(false)
+        && envelope.message_kind == trix_types::MessageKind::Application
+        && projected.projection_kind == LocalProjectionKind::ApplicationMessage
+        && projected.payload.is_none()
 }
 
 fn advance_projected_cursor(chat: &mut PersistedChatState) -> bool {
@@ -7571,6 +7638,110 @@ mod tests {
         assert_eq!(projected[2].payload, None);
         assert_eq!(projected[3].server_seq, 4);
         assert_eq!(projected[3].payload, None);
+
+        fs::remove_dir_all(&bob_storage_root).ok();
+    }
+
+    #[test]
+    fn project_chat_with_facade_for_device_rejects_unreadable_current_device_replay() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let alice_account = AccountId(Uuid::new_v4());
+        let alice_device = DeviceId(Uuid::new_v4());
+        let bob_account = AccountId(Uuid::new_v4());
+        let bob_device = DeviceId(Uuid::new_v4());
+        let alice = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+        let bob_storage_root = env::temp_dir().join(format!(
+            "trix-storage-own-replay-current-{}",
+            Uuid::new_v4()
+        ));
+        let bob = MlsFacade::new_persistent(b"bob-device".to_vec(), &bob_storage_root).unwrap();
+
+        let bob_key_package = bob.generate_key_package().unwrap();
+        let mut alice_group = alice.create_group(b"server-generated-group-id").unwrap();
+        let add_bundle = alice
+            .add_members(&mut alice_group, &[bob_key_package])
+            .unwrap();
+        let mut bob_group = bob
+            .join_group_from_welcome(
+                add_bundle.welcome_message.as_ref().unwrap(),
+                add_bundle.ratchet_tree.as_deref(),
+            )
+            .unwrap();
+
+        let first_bob_ciphertext = bob
+            .create_application_message(&mut bob_group, b"hello from bob")
+            .unwrap();
+
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 1,
+                        sender_account_id: alice_account,
+                        sender_device_id: alice_device,
+                        epoch: add_bundle.epoch,
+                        message_kind: MessageKind::Commit,
+                        content_type: ContentType::ChatEvent,
+                        ciphertext_b64: crate::encode_b64(&add_bundle.commit_message),
+                        aad_json: json!({}),
+                        created_at_unix: 1,
+                    },
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 2,
+                        sender_account_id: alice_account,
+                        sender_device_id: alice_device,
+                        epoch: add_bundle.epoch,
+                        message_kind: MessageKind::WelcomeRef,
+                        content_type: ContentType::ChatEvent,
+                        ciphertext_b64: crate::encode_b64(
+                            add_bundle.welcome_message.as_ref().unwrap(),
+                        ),
+                        aad_json: json!({
+                            "_trix": {
+                                "ratchet_tree_b64": crate::encode_b64(
+                                    add_bundle.ratchet_tree.as_ref().unwrap()
+                                )
+                            }
+                        }),
+                        created_at_unix: 2,
+                    },
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 3,
+                        sender_account_id: bob_account,
+                        sender_device_id: bob_device,
+                        epoch: add_bundle.epoch,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        ciphertext_b64: crate::encode_b64(&first_bob_ciphertext),
+                        aad_json: json!({}),
+                        created_at_unix: 3,
+                    },
+                ],
+            })
+            .unwrap();
+        store
+            .set_chat_mls_group_id(chat_id, &bob_group.group_id())
+            .unwrap();
+
+        let error = store
+            .project_chat_with_facade_for_device(chat_id, &bob, None, Some(bob_device))
+            .unwrap_err();
+        assert!(error.to_string().contains("would discard its durable body"));
+        assert_eq!(store.projected_cursor(chat_id), Some(0));
+        assert!(
+            store
+                .get_projected_messages(chat_id, None, Some(10))
+                .is_empty()
+        );
+        assert!(!store.chats_with_unavailable_messages().contains(&chat_id));
 
         fs::remove_dir_all(&bob_storage_root).ok();
     }
