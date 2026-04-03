@@ -2284,12 +2284,18 @@ impl FfiMessengerClient {
     }
 
     fn project_changed_chats(&self, chat_ids: &[ChatId]) -> Result<(), FfiMessengerError> {
+        let current_device_id = self.require_device_id()?;
         let projected_cursors = self.with_mls_facade(|facade| {
             let mut store = lock_history_store(&self.history_store)?;
             let mut projected_cursors = Vec::new();
             for chat_id in chat_ids {
                 store
-                    .project_chat_with_facade(*chat_id, facade, None)
+                    .project_chat_with_facade_for_device(
+                        *chat_id,
+                        facade,
+                        None,
+                        Some(current_device_id),
+                    )
                     .map_err(map_domain_error)?;
                 if let Some(projected_cursor) = store.projected_cursor(*chat_id) {
                     projected_cursors.push((*chat_id, projected_cursor));
