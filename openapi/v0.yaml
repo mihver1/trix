@@ -823,6 +823,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/LeaveChatResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
   /v0/chats/{chat_id}/dm-global-delete:
@@ -846,6 +848,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DmGlobalDeleteResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
   /v0/inbox:

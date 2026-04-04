@@ -5417,6 +5417,15 @@ impl Database {
             .map(|row| row_uuid(&row, "device_id"))
             .collect::<Result<Vec<_>, _>>()?;
 
+        let recipients_for_commit = if input.commit_message.is_some() {
+            Some(
+                active_chat_device_ids_tx(&mut tx, input.chat_id, input.actor_device_id, None)
+                    .await?,
+            )
+        } else {
+            None
+        };
+
         let next_epoch = current_epoch + 1;
 
         sqlx::query(
@@ -5477,9 +5486,9 @@ impl Database {
 
         if let Some(commit) = input.commit_message {
             let commit_message_id = commit.message_id;
-            let recipients =
-                active_chat_device_ids_tx(&mut tx, input.chat_id, input.actor_device_id, None)
-                    .await?;
+            let recipients = recipients_for_commit.as_ref().ok_or_else(|| {
+                AppError::internal("dm global delete: commit present but recipients not prefetched")
+            })?;
             insert_control_message_tx(
                 &mut tx,
                 input.chat_id,
@@ -5488,7 +5497,7 @@ impl Database {
                 next_epoch,
                 MessageKind::Commit,
                 commit,
-                &recipients,
+                recipients,
             )
             .await?;
             set_last_commit_message_id_tx(&mut tx, input.chat_id, commit_message_id).await?;
