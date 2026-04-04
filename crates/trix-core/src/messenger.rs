@@ -14,14 +14,16 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::runtime::{Builder, Runtime};
 use trix_types::{
-    AccountId, ChatId, DeviceId, DeviceStatus, InboxItem, MessageId, WebSocketServerFrame,
+    AccountId, ChatId, DeviceId, DeviceStatus, InboxItem, LeaveChatScope, MessageId,
+    WebSocketServerFrame,
 };
 use uuid::Uuid;
 
 use crate::{
     AttachmentMessageBody, AuthChallengeMaterial, CompleteLinkIntentParams, CreateChatControlInput,
-    DeviceKeyMaterial, FfiChatType, FfiContentType, FfiDeviceStatus, FfiMessageReactionSummary,
-    FfiReactionAction, FfiReceiptType, LocalChatListItem, LocalHistoryRepairCandidate,
+    DeviceKeyMaterial, DmGlobalDeleteControlInput, DmGlobalDeleteControlOutcome, FfiChatType,
+    FfiContentType, FfiDeviceStatus, FfiLeaveChatScope, FfiMessageReactionSummary, FfiReactionAction,
+    FfiReceiptType, LeaveChatControlInput, LocalChatListItem, LocalHistoryRepairCandidate,
     LocalHistoryRepairReason, LocalHistoryRepairWindow, LocalHistoryStore,
     LocalMessageRecoveryState, LocalTimelineItem, MessageBody, MlsFacade,
     ModifyChatDevicesControlInput, ModifyChatMembersControlInput, PublishKeyPackageMaterial,
@@ -271,6 +273,12 @@ pub struct FfiMessengerUpdateConversationMembersRequest {
 pub struct FfiMessengerUpdateConversationDevicesRequest {
     pub conversation_id: String,
     pub device_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiMessengerLeaveConversationRequest {
+    pub conversation_id: String,
+    pub scope: FfiLeaveChatScope,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -619,7 +627,10 @@ impl FfiMessengerClient {
                     .device_display_name
                     .clone()
                     .unwrap_or_else(|| "Current device".to_owned()),
-                platform: state.platform.clone().unwrap_or_else(|| "unknown".to_owned()),
+                platform: state
+                    .platform
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_owned()),
                 device_status: device_status_to_ffi(
                     current_device_state
                         .map(|device| device.device_status)
@@ -1142,6 +1153,71 @@ impl FfiMessengerClient {
         self.conversation_mutation_from_device_outcome(outcome)
     }
 
+    pub fn leave_conversation(
+        &self,
+        request: FfiMessengerLeaveConversationRequest,
+    ) -> Result<FfiMessengerConversationMutationResult, FfiMessengerError> {
+        let chat_id = parse_chat_id(&request.conversation_id)?;
+        let client = self.authenticated_client()?;
+        let (self_account_id, self_device_id) = self.require_self_identity()?;
+        let scope = match request.scope {
+            FfiLeaveChatScope::ThisDevice => LeaveChatScope::ThisDevice,
+            FfiLeaveChatScope::AllMyDevices => LeaveChatScope::AllMyDevices,
+        };
+        let outcome = self.with_mls_facade(|facade| {
+            let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
+            let mut store = lock_history_store(&self.history_store)?;
+            self.bootstrap_chat_if_needed(&client, &mut store, chat_id)?;
+            self.runtime
+                .block_on(
+                    coordinator.leave_chat_control(
+                        &client,
+                        &mut store,
+                        facade,
+                        LeaveChatControlInput {
+                            actor_account_id: self_account_id,
+                            actor_device_id: self_device_id,
+                            chat_id,
+                            scope,
+                            commit_aad_json: None,
+                        },
+                    ),
+                )
+                .map_err(map_domain_error)
+        })?;
+        self.conversation_mutation_from_device_outcome(outcome)
+    }
+
+    pub fn dm_global_delete_conversation(
+        &self,
+        conversation_id: String,
+    ) -> Result<FfiMessengerConversationMutationResult, FfiMessengerError> {
+        let chat_id = parse_chat_id(&conversation_id)?;
+        let client = self.authenticated_client()?;
+        let (self_account_id, self_device_id) = self.require_self_identity()?;
+        let outcome = self.with_mls_facade(|facade| {
+            let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
+            let mut store = lock_history_store(&self.history_store)?;
+            self.bootstrap_chat_if_needed(&client, &mut store, chat_id)?;
+            self.runtime
+                .block_on(
+                    coordinator.dm_global_delete_control(
+                        &client,
+                        &mut store,
+                        facade,
+                        DmGlobalDeleteControlInput {
+                            actor_account_id: self_account_id,
+                            actor_device_id: self_device_id,
+                            chat_id,
+                            commit_aad_json: None,
+                        },
+                    ),
+                )
+                .map_err(map_domain_error)
+        })?;
+        self.conversation_mutation_from_dm_global_delete_outcome(outcome)
+    }
+
     pub fn mark_read(
         &self,
         conversation_id: String,
@@ -1630,7 +1706,8 @@ impl FfiMessengerClient {
                 &previous_cursors,
                 self_account_id,
             )?;
-            let devices = contextualize_messenger_error(self.fetch_devices(&client), "fetch_devices")?;
+            let devices =
+                contextualize_messenger_error(self.fetch_devices(&client), "fetch_devices")?;
             let device_state_changed = contextualize_messenger_error(
                 self.sync_device_statuses(&devices, false),
                 "sync_device_statuses",
@@ -1795,9 +1872,9 @@ impl FfiMessengerClient {
             return Ok(None);
         };
 
-        let frame_result = self.runtime.block_on(async {
-            tokio::time::timeout(timeout, websocket.next_frame()).await
-        });
+        let frame_result = self
+            .runtime
+            .block_on(async { tokio::time::timeout(timeout, websocket.next_frame()).await });
         let clear_socket = matches!(frame_result, Ok(Ok(None)) | Ok(Err(_)));
         if clear_socket {
             realtime.websocket = None;
@@ -2061,20 +2138,21 @@ impl FfiMessengerClient {
         chat_ids: Option<&[ChatId]>,
     ) -> Result<Vec<ChatId>, FfiMessengerError> {
         let account_sync_chat_id = self.account_sync_chat_id()?;
-        let mut candidate_chat_ids = chat_ids
-            .map(|chat_ids| chat_ids.to_vec())
-            .unwrap_or_else(|| {
-                let store = lock_history_store(&self.history_store).ok();
-                store
-                    .map(|store| {
-                        store
-                            .list_local_chat_list_items(None)
-                            .into_iter()
-                            .map(|chat| chat.chat_id)
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default()
-            });
+        let mut candidate_chat_ids =
+            chat_ids
+                .map(|chat_ids| chat_ids.to_vec())
+                .unwrap_or_else(|| {
+                    let store = lock_history_store(&self.history_store).ok();
+                    store
+                        .map(|store| {
+                            store
+                                .list_local_chat_list_items(None)
+                                .into_iter()
+                                .map(|chat| chat.chat_id)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default()
+                });
         candidate_chat_ids.retain(|chat_id| Some(*chat_id) != account_sync_chat_id);
         let mut changed_chat_ids = Vec::new();
         for chat_id in candidate_chat_ids {
@@ -2826,6 +2904,35 @@ impl FfiMessengerClient {
                 .map(|message| self.timeline_item_to_message_record(outcome.chat_id, message))
                 .collect::<Result<Vec<_>, _>>()?,
             changed_account_ids: Vec::new(),
+            changed_device_ids: outcome
+                .changed_device_ids
+                .into_iter()
+                .map(|device_id| device_id.0.to_string())
+                .collect(),
+        })
+    }
+
+    fn conversation_mutation_from_dm_global_delete_outcome(
+        &self,
+        outcome: DmGlobalDeleteControlOutcome,
+    ) -> Result<FfiMessengerConversationMutationResult, FfiMessengerError> {
+        let messages = {
+            let self_account_id = self.state_account_id().transpose()?;
+            let store = lock_history_store(&self.history_store)?;
+            store.get_local_timeline_items(outcome.chat_id, self_account_id, None, None)
+        };
+        Ok(FfiMessengerConversationMutationResult {
+            conversation_id: outcome.chat_id.0.to_string(),
+            conversation: self.get_conversation_summary(outcome.chat_id)?,
+            messages: messages
+                .into_iter()
+                .map(|message| self.timeline_item_to_message_record(outcome.chat_id, message))
+                .collect::<Result<Vec<_>, _>>()?,
+            changed_account_ids: outcome
+                .changed_account_ids
+                .into_iter()
+                .map(|account_id| account_id.0.to_string())
+                .collect(),
             changed_device_ids: outcome
                 .changed_device_ids
                 .into_iter()
@@ -4114,8 +4221,12 @@ mod tests {
                 sender_account_id,
                 sender_device_id,
             );
-            store.clear_pending_history_repair_window(sync_chat_id).unwrap();
-            store.clear_pending_history_repair_window(dm_chat_id).unwrap();
+            store
+                .clear_pending_history_repair_window(sync_chat_id)
+                .unwrap();
+            store
+                .clear_pending_history_repair_window(dm_chat_id)
+                .unwrap();
         }
 
         let mut repair_client = ServerApiClient::new(&server.base_url).unwrap();
@@ -4488,8 +4599,10 @@ mod tests {
 
     #[test]
     fn load_snapshot_falls_back_to_cached_state_when_remote_sync_fails() {
-        let root_path =
-            env::temp_dir().join(format!("trix-messenger-offline-snapshot-{}", Uuid::new_v4()));
+        let root_path = env::temp_dir().join(format!(
+            "trix-messenger-offline-snapshot-{}",
+            Uuid::new_v4()
+        ));
         fs::create_dir_all(&root_path).unwrap();
 
         let account_id = AccountId(Uuid::new_v4());
@@ -4560,8 +4673,14 @@ mod tests {
         let device_id_string = device_id.0.to_string();
         let chat_id_string = chat_id.0.to_string();
 
-        assert_eq!(snapshot.account_id.as_deref(), Some(account_id_string.as_str()));
-        assert_eq!(snapshot.device_id.as_deref(), Some(device_id_string.as_str()));
+        assert_eq!(
+            snapshot.account_id.as_deref(),
+            Some(account_id_string.as_str())
+        );
+        assert_eq!(
+            snapshot.device_id.as_deref(),
+            Some(device_id_string.as_str())
+        );
         assert_eq!(snapshot.conversations.len(), 1);
         assert_eq!(snapshot.conversations[0].conversation_id, chat_id_string);
         assert_eq!(snapshot.devices.len(), 1);

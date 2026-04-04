@@ -647,6 +647,10 @@ fn ffi_enums_cover_all_variants() {
     let _ = FfiChatType::Group;
     let _ = FfiChatType::AccountSync;
 
+    // Leave chat scope
+    let _ = FfiLeaveChatScope::ThisDevice;
+    let _ = FfiLeaveChatScope::AllMyDevices;
+
     // Message kind
     let _ = FfiMessageKind::Application;
     let _ = FfiMessageKind::Commit;

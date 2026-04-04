@@ -3,8 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 fn openapi_path_methods() -> BTreeMap<String, BTreeSet<String>> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../openapi/v0.yaml");
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../openapi/v0.yaml");
     let yaml = fs::read_to_string(&path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
 
@@ -183,7 +182,10 @@ fn source_route_path_methods(module: &str, prefix: &str) -> BTreeMap<String, BTr
         );
         let nested_module = module_name(args.get(1).map(String::as_str).unwrap_or_default())
             .unwrap_or_else(|| panic!("nest invocation missing module router(): {nest}"));
-        merge_path_methods(&mut out, source_route_path_methods(&nested_module, &nested_prefix));
+        merge_path_methods(
+            &mut out,
+            source_route_path_methods(&nested_module, &nested_prefix),
+        );
     }
 
     for merge in collect_invocations(&source, ".merge(") {
@@ -207,8 +209,7 @@ fn documented_v0_paths_and_methods_match_contract_catalog() {
 
 #[test]
 fn documented_v0_operation_ids_are_unique() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../openapi/v0.yaml");
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../openapi/v0.yaml");
     let yaml = fs::read_to_string(&path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
 

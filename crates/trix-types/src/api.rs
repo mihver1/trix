@@ -405,6 +405,41 @@ pub struct ModifyChatDevicesResponse {
     pub changed_device_ids: Vec<DeviceId>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LeaveChatScope {
+    ThisDevice,
+    AllMyDevices,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LeaveChatRequest {
+    pub scope: LeaveChatScope,
+    pub epoch: u64,
+    pub commit_message: Option<ControlMessageInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeaveChatResponse {
+    pub chat_id: ChatId,
+    pub epoch: u64,
+    pub changed_device_ids: Vec<DeviceId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DmGlobalDeleteRequest {
+    pub epoch: u64,
+    pub commit_message: Option<ControlMessageInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DmGlobalDeleteResponse {
+    pub chat_id: ChatId,
+    pub epoch: u64,
+    pub changed_account_ids: Vec<AccountId>,
+    pub changed_device_ids: Vec<DeviceId>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CreateMessageRequest {
     pub message_id: MessageId,

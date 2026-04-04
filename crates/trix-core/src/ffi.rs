@@ -16,8 +16,9 @@ use crate::{
     AccountRootMaterial, AuthChallengeMaterial, CompleteLinkIntentParams,
     CompletedLinkIntentMaterial, CreateAccountParams, CreateChatControlInput,
     CreateChatControlOutcome, DeviceApprovePayloadMaterial, DeviceKeyMaterial,
-    DeviceTransferBundleMaterial, DirectoryAccountMaterial, HistorySyncChunkMaterial,
-    HistorySyncProcessReport, ImportedDeviceTransferBundle, InboxApplyOutcome, LocalChatListItem,
+    DeviceTransferBundleMaterial, DirectoryAccountMaterial, DmGlobalDeleteControlInput,
+    DmGlobalDeleteControlOutcome, HistorySyncChunkMaterial, HistorySyncProcessReport,
+    ImportedDeviceTransferBundle, InboxApplyOutcome, LeaveChatControlInput, LocalChatListItem,
     LocalChatReadState, LocalHistoryStore, LocalMessageReactionSummary, LocalOutboxAttachmentDraft,
     LocalOutboxMessage, LocalOutboxPayload, LocalOutboxStatus, LocalProjectedMessage,
     LocalProjectionApplyReport, LocalProjectionKind, LocalStoreApplyReport, LocalTimelineItem,
@@ -56,6 +57,12 @@ pub enum FfiChatType {
     Dm,
     Group,
     AccountSync,
+}
+
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum FfiLeaveChatScope {
+    ThisDevice,
+    AllMyDevices,
 }
 
 #[derive(Debug, Clone, Copy, uniffi::Enum)]
@@ -533,6 +540,27 @@ pub struct FfiModifyChatDevicesResponse {
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiLeaveChatParams {
+    pub scope: FfiLeaveChatScope,
+    pub epoch: u64,
+    pub commit_message: Option<FfiControlMessage>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiDmGlobalDeleteParams {
+    pub epoch: u64,
+    pub commit_message: Option<FfiControlMessage>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiDmGlobalDeleteResponse {
+    pub chat_id: String,
+    pub epoch: u64,
+    pub changed_account_ids: Vec<String>,
+    pub changed_device_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct FfiCreateMessageParams {
     pub message_id: String,
     pub epoch: u64,
@@ -898,6 +926,33 @@ pub struct FfiModifyChatDevicesControlInput {
 pub struct FfiModifyChatDevicesControlOutcome {
     pub chat_id: String,
     pub epoch: u64,
+    pub changed_device_ids: Vec<String>,
+    pub report: FfiLocalStoreApplyReport,
+    pub projected_messages: Vec<FfiLocalProjectedMessage>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiLeaveChatControlInput {
+    pub actor_account_id: String,
+    pub actor_device_id: String,
+    pub chat_id: String,
+    pub scope: FfiLeaveChatScope,
+    pub commit_aad_json: Option<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiDmGlobalDeleteControlInput {
+    pub actor_account_id: String,
+    pub actor_device_id: String,
+    pub chat_id: String,
+    pub commit_aad_json: Option<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiDmGlobalDeleteControlOutcome {
+    pub chat_id: String,
+    pub epoch: u64,
+    pub changed_account_ids: Vec<String>,
     pub changed_device_ids: Vec<String>,
     pub report: FfiLocalStoreApplyReport,
     pub projected_messages: Vec<FfiLocalProjectedMessage>,
@@ -1912,6 +1967,61 @@ impl FfiServerApiClient {
             ),
         )?;
         Ok(modify_chat_devices_response_to_ffi(response))
+    }
+
+    pub fn leave_chat(
+        &self,
+        chat_id: String,
+        params: FfiLeaveChatParams,
+    ) -> Result<FfiModifyChatDevicesResponse, TrixFfiError> {
+        let client = clone_server_api_client(&self.inner)?;
+        let scope = match params.scope {
+            FfiLeaveChatScope::ThisDevice => trix_types::LeaveChatScope::ThisDevice,
+            FfiLeaveChatScope::AllMyDevices => trix_types::LeaveChatScope::AllMyDevices,
+        };
+        let response = self.runtime.block_on(
+            client.leave_chat(
+                parse_chat_id(&chat_id)?,
+                trix_types::LeaveChatRequest {
+                    scope,
+                    epoch: params.epoch,
+                    commit_message: params
+                        .commit_message
+                        .map(control_message_from_ffi)
+                        .transpose()?,
+                },
+            ),
+        )?;
+        Ok(FfiModifyChatDevicesResponse {
+            chat_id: response.chat_id.0.to_string(),
+            epoch: response.epoch,
+            changed_device_ids: response
+                .changed_device_ids
+                .into_iter()
+                .map(|device_id| device_id.0.to_string())
+                .collect(),
+        })
+    }
+
+    pub fn dm_global_delete(
+        &self,
+        chat_id: String,
+        params: FfiDmGlobalDeleteParams,
+    ) -> Result<FfiDmGlobalDeleteResponse, TrixFfiError> {
+        let client = clone_server_api_client(&self.inner)?;
+        let response = self.runtime.block_on(
+            client.dm_global_delete(
+                parse_chat_id(&chat_id)?,
+                trix_types::DmGlobalDeleteRequest {
+                    epoch: params.epoch,
+                    commit_message: params
+                        .commit_message
+                        .map(control_message_from_ffi)
+                        .transpose()?,
+                },
+            ),
+        )?;
+        Ok(dm_global_delete_response_to_ffi(response))
     }
 
     pub fn get_chat_history(
@@ -3326,6 +3436,69 @@ impl FfiSyncCoordinator {
         };
         Ok(modify_chat_devices_control_outcome_to_ffi(outcome))
     }
+
+    pub fn leave_chat_control(
+        &self,
+        client: Arc<FfiServerApiClient>,
+        store: Arc<FfiLocalHistoryStore>,
+        facade: Arc<FfiMlsFacade>,
+        input: FfiLeaveChatControlInput,
+    ) -> Result<FfiModifyChatDevicesControlOutcome, TrixFfiError> {
+        let client = clone_server_api_client(&client.inner)?;
+        let scope = match input.scope {
+            FfiLeaveChatScope::ThisDevice => trix_types::LeaveChatScope::ThisDevice,
+            FfiLeaveChatScope::AllMyDevices => trix_types::LeaveChatScope::AllMyDevices,
+        };
+        let outcome = {
+            let mut coordinator = lock(&self.inner)?;
+            let mut store = lock(&store.inner)?;
+            let mut facade = lock(&facade.inner)?;
+            self.runtime
+                .block_on(coordinator.leave_chat_control(
+                    &client,
+                    &mut store,
+                    &mut facade,
+                    LeaveChatControlInput {
+                        actor_account_id: parse_account_id(&input.actor_account_id)?,
+                        actor_device_id: parse_device_id(&input.actor_device_id)?,
+                        chat_id: parse_chat_id(&input.chat_id)?,
+                        scope,
+                        commit_aad_json: parse_optional_json(input.commit_aad_json)?,
+                    },
+                ))
+                .map_err(ffi_error)?
+        };
+        Ok(modify_chat_devices_control_outcome_to_ffi(outcome))
+    }
+
+    pub fn dm_global_delete_control(
+        &self,
+        client: Arc<FfiServerApiClient>,
+        store: Arc<FfiLocalHistoryStore>,
+        facade: Arc<FfiMlsFacade>,
+        input: FfiDmGlobalDeleteControlInput,
+    ) -> Result<FfiDmGlobalDeleteControlOutcome, TrixFfiError> {
+        let client = clone_server_api_client(&client.inner)?;
+        let outcome = {
+            let mut coordinator = lock(&self.inner)?;
+            let mut store = lock(&store.inner)?;
+            let mut facade = lock(&facade.inner)?;
+            self.runtime
+                .block_on(coordinator.dm_global_delete_control(
+                    &client,
+                    &mut store,
+                    &mut facade,
+                    DmGlobalDeleteControlInput {
+                        actor_account_id: parse_account_id(&input.actor_account_id)?,
+                        actor_device_id: parse_device_id(&input.actor_device_id)?,
+                        chat_id: parse_chat_id(&input.chat_id)?,
+                        commit_aad_json: parse_optional_json(input.commit_aad_json)?,
+                    },
+                ))
+                .map_err(ffi_error)?
+        };
+        Ok(dm_global_delete_control_outcome_to_ffi(outcome))
+    }
 }
 
 #[uniffi::export]
@@ -4086,6 +4259,25 @@ fn modify_chat_devices_response_to_ffi(
     }
 }
 
+fn dm_global_delete_response_to_ffi(
+    value: trix_types::DmGlobalDeleteResponse,
+) -> FfiDmGlobalDeleteResponse {
+    FfiDmGlobalDeleteResponse {
+        chat_id: value.chat_id.0.to_string(),
+        epoch: value.epoch,
+        changed_account_ids: value
+            .changed_account_ids
+            .into_iter()
+            .map(|account_id| account_id.0.to_string())
+            .collect(),
+        changed_device_ids: value
+            .changed_device_ids
+            .into_iter()
+            .map(|device_id| device_id.0.to_string())
+            .collect(),
+    }
+}
+
 fn message_envelope_to_ffi(value: trix_types::MessageEnvelope) -> FfiMessageEnvelope {
     FfiMessageEnvelope {
         message_id: value.message_id.0.to_string(),
@@ -4696,6 +4888,31 @@ fn modify_chat_devices_control_outcome_to_ffi(
     FfiModifyChatDevicesControlOutcome {
         chat_id: value.chat_id.0.to_string(),
         epoch: value.epoch,
+        changed_device_ids: value
+            .changed_device_ids
+            .into_iter()
+            .map(|device_id| device_id.0.to_string())
+            .collect(),
+        report: local_store_apply_report_to_ffi(value.report),
+        projected_messages: value
+            .projected_messages
+            .into_iter()
+            .map(local_projected_message_to_ffi)
+            .collect(),
+    }
+}
+
+fn dm_global_delete_control_outcome_to_ffi(
+    value: DmGlobalDeleteControlOutcome,
+) -> FfiDmGlobalDeleteControlOutcome {
+    FfiDmGlobalDeleteControlOutcome {
+        chat_id: value.chat_id.0.to_string(),
+        epoch: value.epoch,
+        changed_account_ids: value
+            .changed_account_ids
+            .into_iter()
+            .map(|account_id| account_id.0.to_string())
+            .collect(),
         changed_device_ids: value
             .changed_device_ids
             .into_iter()

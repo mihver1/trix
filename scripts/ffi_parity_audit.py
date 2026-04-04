@@ -110,6 +110,12 @@ TRANSITIVE_COVERAGE: dict[str, tuple[str, ...]] = {
     "FfiServerApiClient.remove_chat_devices": (
         "FfiSyncCoordinator.remove_chat_devices_control",
     ),
+    "FfiServerApiClient.leave_chat": (
+        "FfiSyncCoordinator.leave_chat_control",
+    ),
+    "FfiServerApiClient.dm_global_delete": (
+        "FfiSyncCoordinator.dm_global_delete_control",
+    ),
     "FfiServerApiClient.reserve_key_packages": (
         "FfiSyncCoordinator.create_chat_control",
         "FfiSyncCoordinator.add_chat_devices_control",
@@ -163,6 +169,8 @@ TRANSITIVE_COVERAGE: dict[str, tuple[str, ...]] = {
     "FfiMlsFacade.remove_members": (
         "FfiSyncCoordinator.remove_chat_members_control",
         "FfiSyncCoordinator.remove_chat_devices_control",
+        "FfiSyncCoordinator.leave_chat_control",
+        "FfiSyncCoordinator.dm_global_delete_control",
     ),
     "FfiMlsFacade.generate_key_package": (
         "FfiMlsFacade.generate_publish_key_packages",
@@ -183,6 +191,8 @@ TRANSITIVE_COVERAGE: dict[str, tuple[str, ...]] = {
         "FfiSyncCoordinator.remove_chat_members_control",
         "FfiSyncCoordinator.add_chat_devices_control",
         "FfiSyncCoordinator.remove_chat_devices_control",
+        "FfiSyncCoordinator.leave_chat_control",
+        "FfiSyncCoordinator.dm_global_delete_control",
     ),
     "FfiLocalHistoryStore.set_chat_mls_group_id": (
         "FfiSyncCoordinator.create_chat_control",
@@ -194,6 +204,8 @@ TRANSITIVE_COVERAGE: dict[str, tuple[str, ...]] = {
         "FfiSyncCoordinator.remove_chat_members_control",
         "FfiSyncCoordinator.add_chat_devices_control",
         "FfiSyncCoordinator.remove_chat_devices_control",
+        "FfiSyncCoordinator.leave_chat_control",
+        "FfiSyncCoordinator.dm_global_delete_control",
         "FfiLocalHistoryStore.project_chat_with_facade",
     ),
     "FfiMlsFacade.join_group_from_welcome": (

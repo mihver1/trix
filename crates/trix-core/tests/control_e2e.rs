@@ -9,14 +9,17 @@ use tokio::{
 };
 use trix_core::{
     AccountRootMaterial, CreateAccountParams, CreateChatControlInput, DeviceKeyMaterial,
-    LocalHistoryStore, LocalProjectionKind, MessageBody, MlsFacade, ModifyChatMembersControlInput,
-    PublishKeyPackageMaterial, ServerApiClient, SyncCoordinator, TextMessageBody,
+    DmGlobalDeleteControlInput, LeaveChatControlInput, LocalHistoryStore, LocalProjectionKind,
+    MessageBody, MlsFacade, ModifyChatMembersControlInput, PublishKeyPackageMaterial,
+    ServerApiClient, SyncCoordinator, TextMessageBody,
 };
 use trix_server::{
     auth::AuthManager, blobs::LocalBlobStore, build::BuildInfo, config::AppConfig, db::Database,
     signatures::account_bootstrap_message, state::AppState,
 };
-use trix_types::{AccountId, ChatType, DeviceId, MessageId, MessageKind, WebSocketServerFrame};
+use trix_types::{
+    AccountId, ChatType, DeviceId, LeaveChatScope, MessageId, MessageKind, WebSocketServerFrame,
+};
 use uuid::Uuid;
 
 const DEFAULT_TEST_DATABASE_URL: &str = "postgres://trix:trix@localhost:5432/trix";
@@ -431,6 +434,156 @@ async fn smoke_websocket_delivers_inbox_items_and_acknowledges() -> Result<()> {
     }
 
     bob_ws.close().await?;
+    server.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires local postgres"]
+async fn smoke_leave_chat_control_dm_this_device() -> Result<()> {
+    let server = spawn_test_server().await?;
+
+    let mut alice = create_authenticated_identity(&server.base_url, "alice").await?;
+    let bob = create_authenticated_identity(&server.base_url, "bob").await?;
+
+    bob.client
+        .publish_key_packages(vec![PublishKeyPackageMaterial {
+            cipher_suite: bob.facade.ciphersuite_label(),
+            key_package: bob.facade.generate_key_package()?,
+        }])
+        .await?;
+
+    let mut alice_store = LocalHistoryStore::new();
+    let mut alice_sync = SyncCoordinator::new();
+    let create_outcome = alice_sync
+        .create_chat_control(
+            &alice.client,
+            &mut alice_store,
+            &mut alice.facade,
+            CreateChatControlInput {
+                creator_account_id: alice.account_id,
+                creator_device_id: alice.device_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                participant_account_ids: vec![bob.account_id],
+                group_id: None,
+                commit_aad_json: None,
+                welcome_aad_json: None,
+            },
+        )
+        .await?;
+
+    let leave_outcome = alice_sync
+        .leave_chat_control(
+            &alice.client,
+            &mut alice_store,
+            &mut alice.facade,
+            LeaveChatControlInput {
+                actor_account_id: alice.account_id,
+                actor_device_id: alice.device_id,
+                chat_id: create_outcome.chat_id,
+                scope: LeaveChatScope::ThisDevice,
+                commit_aad_json: None,
+            },
+        )
+        .await?;
+
+    assert_eq!(leave_outcome.chat_id, create_outcome.chat_id);
+    assert!(
+        alice_store
+            .chat_mls_group_id(create_outcome.chat_id)
+            .is_none(),
+        "local MLS mapping should clear after leave"
+    );
+    let projected = alice_store.get_projected_messages(create_outcome.chat_id, None, Some(20));
+    assert!(
+        projected.iter().any(|message| {
+            matches!(message.projection_kind, LocalProjectionKind::CommitMerged)
+                && message.merged_epoch.is_some()
+        }),
+        "expected synthetic commit projection after leave"
+    );
+
+    let bob_chats = bob.client.list_chats().await?;
+    assert!(
+        bob_chats
+            .chats
+            .iter()
+            .any(|chat| chat.chat_id == create_outcome.chat_id),
+        "bob should still see the DM after alice leaves"
+    );
+
+    server.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires local postgres"]
+async fn smoke_dm_global_delete_control_dm() -> Result<()> {
+    let server = spawn_test_server().await?;
+
+    let mut alice = create_authenticated_identity(&server.base_url, "alice").await?;
+    let bob = create_authenticated_identity(&server.base_url, "bob").await?;
+
+    bob.client
+        .publish_key_packages(vec![PublishKeyPackageMaterial {
+            cipher_suite: bob.facade.ciphersuite_label(),
+            key_package: bob.facade.generate_key_package()?,
+        }])
+        .await?;
+
+    let mut alice_store = LocalHistoryStore::new();
+    let mut alice_sync = SyncCoordinator::new();
+    let create_outcome = alice_sync
+        .create_chat_control(
+            &alice.client,
+            &mut alice_store,
+            &mut alice.facade,
+            CreateChatControlInput {
+                creator_account_id: alice.account_id,
+                creator_device_id: alice.device_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                participant_account_ids: vec![bob.account_id],
+                group_id: None,
+                commit_aad_json: None,
+                welcome_aad_json: None,
+            },
+        )
+        .await?;
+
+    let delete_outcome = alice_sync
+        .dm_global_delete_control(
+            &alice.client,
+            &mut alice_store,
+            &mut alice.facade,
+            DmGlobalDeleteControlInput {
+                actor_account_id: alice.account_id,
+                actor_device_id: alice.device_id,
+                chat_id: create_outcome.chat_id,
+                commit_aad_json: None,
+            },
+        )
+        .await?;
+
+    assert_eq!(delete_outcome.chat_id, create_outcome.chat_id);
+    assert!(!delete_outcome.changed_account_ids.is_empty());
+    assert!(
+        alice_store
+            .chat_mls_group_id(create_outcome.chat_id)
+            .is_none(),
+        "local MLS mapping should clear after dm global delete"
+    );
+
+    let bob_chats = bob.client.list_chats().await?;
+    assert!(
+        !bob_chats
+            .chats
+            .iter()
+            .any(|chat| chat.chat_id == create_outcome.chat_id),
+        "bob should no longer list the DM after global delete"
+    );
+
     server.shutdown().await?;
     Ok(())
 }
