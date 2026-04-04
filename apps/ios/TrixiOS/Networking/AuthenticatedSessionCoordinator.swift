@@ -9,12 +9,9 @@ struct AuthenticatedContext {
 
 @MainActor
 final class AuthenticatedSessionCoordinator {
-    private let identityStore: LocalDeviceIdentityStore
     private let authSessionResolutionGate = AuthSessionResolutionGate()
 
-    init(identityStore: LocalDeviceIdentityStore) {
-        self.identityStore = identityStore
-    }
+    init() {}
 
     func validatedBaseURLString(_ baseURLString: String) throws -> String {
         try TrixCoreServerBridge.validatedBaseURLString(baseURLString)
@@ -44,12 +41,12 @@ final class AuthenticatedSessionCoordinator {
             existingSession: existingSession,
             leewaySeconds: 60
         ) {
-            try TrixCoreServerBridge.authenticate(
+            try await TrixCoreServerBridge.authenticate(
                 baseURLString: normalizedBaseURL,
                 identity: identity
             )
         }
-        let effectiveIdentity = try reconcileAuthenticatedIdentity(
+        let effectiveIdentity = try await reconcileAuthenticatedIdentity(
             baseURLString: normalizedBaseURL,
             accessToken: session.accessToken,
             identity: identity
@@ -75,12 +72,12 @@ final class AuthenticatedSessionCoordinator {
         baseURLString: String,
         accessToken: String,
         identity: LocalDeviceIdentity
-    ) throws -> LocalDeviceIdentity {
+    ) async throws -> LocalDeviceIdentity {
         var effectiveIdentity = identity.trustState == .active ? identity : identity.markingActive()
 
         if !effectiveIdentity.hasFullAccountAccess {
             do {
-                let transferBundle = try TrixCoreServerBridge.fetchDeviceTransferBundle(
+                let transferBundle = try await TrixCoreServerBridge.fetchDeviceTransferBundle(
                     baseURLString: baseURLString,
                     accessToken: accessToken,
                     deviceId: effectiveIdentity.deviceId
@@ -98,10 +95,6 @@ final class AuthenticatedSessionCoordinator {
             }
         }
 
-        if effectiveIdentity != identity {
-            try identityStore.save(effectiveIdentity)
-        }
-
         return effectiveIdentity
     }
 }
@@ -109,7 +102,8 @@ final class AuthenticatedSessionCoordinator {
 @MainActor
 final class AuthSessionResolutionGate {
     private var cachedAuthSession: CachedAuthSession?
-    private var inFlightResolution: (key: AuthSessionResolutionKey, task: Task<AuthSessionResponse, Error>)?
+    private var inFlightResolution: InFlightAuthSessionResolution?
+    private var invalidationGeneration: UInt64 = 0
 
     func currentUsableSession(
         for identity: LocalDeviceIdentity,
@@ -133,7 +127,7 @@ final class AuthSessionResolutionGate {
         baseURLString: String,
         existingSession: AuthSessionResponse?,
         leewaySeconds: UInt64,
-        authenticate: @escaping @MainActor () async throws -> AuthSessionResponse
+        authenticate: @escaping @Sendable () async throws -> AuthSessionResponse
     ) async throws -> AuthSessionResponse {
         let normalizedBaseURL = normalize(baseURLString)
         if let existingSession {
@@ -155,25 +149,40 @@ final class AuthSessionResolutionGate {
             accountId: identity.accountId,
             deviceId: identity.deviceId
         )
+        let generation = invalidationGeneration
         if let inFlightResolution,
-           inFlightResolution.key == key {
+           inFlightResolution.key == key,
+           inFlightResolution.generation == generation {
             return try await inFlightResolution.task.value
         }
 
-        let task = Task { @MainActor in
+        let resolutionID = UUID()
+        let task = Task {
             try await authenticate()
         }
-        inFlightResolution = (key, task)
+        inFlightResolution = InFlightAuthSessionResolution(
+            key: key,
+            generation: generation,
+            resolutionID: resolutionID,
+            task: task
+        )
 
         do {
             let session = try await task.value
+            guard invalidationGeneration == generation else {
+                if inFlightResolution?.resolutionID == resolutionID {
+                    inFlightResolution = nil
+                }
+                throw CancellationError()
+            }
+
             cache(session, for: identity, baseURLString: normalizedBaseURL)
-            if inFlightResolution?.key == key {
+            if inFlightResolution?.resolutionID == resolutionID {
                 inFlightResolution = nil
             }
             return session
         } catch {
-            if inFlightResolution?.key == key {
+            if inFlightResolution?.resolutionID == resolutionID {
                 inFlightResolution = nil
             }
             throw error
@@ -183,6 +192,7 @@ final class AuthSessionResolutionGate {
     func invalidate() -> AuthSessionResponse? {
         let invalidatedSession = cachedAuthSession?.session
         cachedAuthSession = nil
+        invalidationGeneration &+= 1
         inFlightResolution?.task.cancel()
         inFlightResolution = nil
         return invalidatedSession
@@ -204,6 +214,13 @@ final class AuthSessionResolutionGate {
     private func normalize(_ baseURLString: String) -> String {
         baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+}
+
+private struct InFlightAuthSessionResolution {
+    let key: AuthSessionResolutionKey
+    let generation: UInt64
+    let resolutionID: UUID
+    let task: Task<AuthSessionResponse, Error>
 }
 
 private struct AuthSessionResolutionKey: Equatable {

@@ -110,15 +110,14 @@ final class AppModel {
     @ObservationIgnored private var backgroundRealtimeTaskID: UIBackgroundTaskIdentifier = .invalid
     @ObservationIgnored private var linkIntentPollingTask: Task<Void, Never>?
     @ObservationIgnored private var linkIntentPendingBaselineDeviceIds: Set<String> = []
+    @ObservationIgnored private var identityInvalidationGeneration: UInt64 = 0
     private static let linkIntentPollingIntervalNanoseconds: UInt64 = 3_000_000_000
     private static let didRequestNotificationAuthorizationDefaultsKey =
         "notifications.ios.authorizationRequested"
 
     init(identityStore: LocalDeviceIdentityStore = LocalDeviceIdentityStore()) {
         self.identityStore = identityStore
-        self.authenticatedSessionCoordinator = AuthenticatedSessionCoordinator(
-            identityStore: identityStore
-        )
+        self.authenticatedSessionCoordinator = AuthenticatedSessionCoordinator()
     }
 
     deinit {
@@ -208,7 +207,7 @@ final class AppModel {
                     messengerSnapshot = nil
                     realtimeSession.clearCheckpoint()
                     messengerReadStates = [:]
-                    updateLocalCoreStateSnapshot(identity: localIdentity)
+                    await updateLocalCoreStateSnapshot(identity: localIdentity)
                     systemSnapshot = try? await fetchSystemSnapshot(
                         baseURLString: resolvedBaseURLString
                     )
@@ -348,7 +347,7 @@ final class AppModel {
                 baseURLString
             )
             let bootstrapMaterial = try DeviceBootstrapMaterial.generate()
-            let response = try TrixCoreServerBridge.createAccount(
+            let response = try await TrixCoreServerBridge.createAccount(
                 baseURLString: resolvedBaseURLString,
                 form: form,
                 bootstrapMaterial: bootstrapMaterial
@@ -363,7 +362,7 @@ final class AppModel {
 
             try identityStore.save(localIdentity)
             self.localIdentity = localIdentity
-            updateLocalCoreStateSnapshot(identity: localIdentity)
+            await updateLocalCoreStateSnapshot(identity: localIdentity)
             conversationSnapshotCache = [:]
 
             try await refreshAuthenticatedState(
@@ -403,7 +402,7 @@ final class AppModel {
                 baseURLString
             )
             let bootstrapMaterial = try DeviceBootstrapMaterial.generate()
-            let localIdentity = try TrixCorePersistentBridge.completeLinkDevice(
+            let localIdentity = try await TrixCorePersistentBridge.completeLinkDevice(
                 payload: payload,
                 form: form,
                 bootstrapMaterial: bootstrapMaterial
@@ -411,7 +410,7 @@ final class AppModel {
 
             try identityStore.save(localIdentity)
             self.localIdentity = localIdentity
-            updateLocalCoreStateSnapshot(identity: localIdentity)
+            await updateLocalCoreStateSnapshot(identity: localIdentity)
             updateDashboardState(nil)
             conversationSnapshotCache = [:]
             activeLinkIntent = nil
@@ -426,6 +425,7 @@ final class AppModel {
 
     func forgetLocalDevice() {
         do {
+            identityInvalidationGeneration &+= 1
             if let localIdentity {
                 try? TrixCorePersistentBridge.deletePersistentState(identity: localIdentity)
             }
@@ -464,12 +464,12 @@ final class AppModel {
         do {
             stopLinkIntentRefreshLoop()
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try TrixCorePersistentBridge.createLinkDeviceIntent(
+            let response = try await TrixCorePersistentBridge.createLinkDeviceIntent(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity
             )
-            let baselineSnapshot = try? TrixCorePersistentBridge.loadMessengerSnapshot(
+            let baselineSnapshot = try? await TrixCorePersistentBridge.loadMessengerSnapshot(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity
@@ -507,7 +507,7 @@ final class AppModel {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try TrixCorePersistentBridge.approveLinkedDevice(
+            let response = try await TrixCorePersistentBridge.approveLinkedDevice(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
@@ -550,7 +550,7 @@ final class AppModel {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let _: RevokeDeviceResponse = try TrixCorePersistentBridge.revokeDevice(
+            let _: RevokeDeviceResponse = try await TrixCorePersistentBridge.revokeDevice(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
@@ -625,14 +625,14 @@ final class AppModel {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try TrixCorePersistentBridge.publishKeyPackages(
+            let response = try await TrixCorePersistentBridge.publishKeyPackages(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
                 count: count
             )
 
-            updateLocalCoreStateSnapshot(identity: context.identity)
+            await updateLocalCoreStateSnapshot(identity: context.identity)
             try await refreshAuthenticatedState(
                 baseURLString: context.baseURLString,
                 identity: context.identity
@@ -668,7 +668,7 @@ final class AppModel {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            return try TrixCoreServerBridge.getAccountKeyPackages(
+            return try await TrixCoreServerBridge.getAccountKeyPackages(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 accountId: normalizedAccountId
@@ -709,7 +709,7 @@ final class AppModel {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            return try TrixCoreServerBridge.reserveKeyPackages(
+            return try await TrixCoreServerBridge.reserveKeyPackages(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 accountId: normalizedAccountId,
@@ -745,7 +745,7 @@ final class AppModel {
         }
 
         do {
-            return try TrixCorePersistentBridge.dryRunCreateGroupCommit(
+            return try await TrixCorePersistentBridge.dryRunCreateGroupCommit(
                 identity: identity,
                 reservedPackages: reservedPackages
             )
@@ -790,7 +790,7 @@ final class AppModel {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try TrixCorePersistentBridge.createConversation(
+            let response = try await TrixCorePersistentBridge.createConversation(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
@@ -836,7 +836,7 @@ final class AppModel {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try TrixCorePersistentBridge.addConversationMembers(
+            let response = try await TrixCorePersistentBridge.addConversationMembers(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
@@ -881,7 +881,7 @@ final class AppModel {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try TrixCorePersistentBridge.removeConversationMembers(
+            let response = try await TrixCorePersistentBridge.removeConversationMembers(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
@@ -933,7 +933,7 @@ final class AppModel {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try TrixCorePersistentBridge.addConversationDevices(
+            let response = try await TrixCorePersistentBridge.addConversationDevices(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
@@ -978,7 +978,7 @@ final class AppModel {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try TrixCorePersistentBridge.removeConversationDevices(
+            let response = try await TrixCorePersistentBridge.removeConversationDevices(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
@@ -1294,7 +1294,7 @@ final class AppModel {
         }
 
         let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-        let account = try TrixCoreServerBridge.getAccount(
+        let account = try await TrixCoreServerBridge.getAccount(
             baseURLString: baseURLString,
             accessToken: context.session.accessToken,
             accountId: accountId
@@ -1310,7 +1310,7 @@ final class AppModel {
         excludeSelf: Bool = true
     ) async throws -> [DirectoryAccountSummary] {
         let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-        let accounts = try TrixCoreServerBridge.searchAccountDirectory(
+        let accounts = try await TrixCoreServerBridge.searchAccountDirectory(
             baseURLString: baseURLString,
             accessToken: context.session.accessToken,
             query: query,
@@ -1351,7 +1351,7 @@ final class AppModel {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             for accountId in missingAccountIds {
                 do {
-                    let account = try TrixCoreServerBridge.getAccount(
+                    let account = try await TrixCoreServerBridge.getAccount(
                         baseURLString: baseURLString,
                         accessToken: context.session.accessToken,
                         accountId: accountId
@@ -1392,7 +1392,7 @@ final class AppModel {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let updated = try TrixCoreServerBridge.updateAccountProfile(
+            let updated = try await TrixCoreServerBridge.updateAccountProfile(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 form: form
@@ -1419,7 +1419,7 @@ final class AppModel {
         chatId: String
     ) async throws -> SafeConversationSnapshot {
         let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-        let snapshot = try TrixCorePersistentBridge.loadConversationSnapshot(
+        let snapshot = try await TrixCorePersistentBridge.loadConversationSnapshot(
             baseURLString: baseURLString,
             accessToken: context.session.accessToken,
             identity: context.identity,
@@ -1474,7 +1474,7 @@ final class AppModel {
             resolvedSafeSnapshot,
             currentIdentity: context.identity
         )
-        updateLocalCoreStateSnapshot(identity: localIdentity ?? context.identity)
+        await updateLocalCoreStateSnapshot(identity: localIdentity ?? context.identity)
 
         self.systemSnapshot = resolvedSystemSnapshot
         let dashboard = DashboardData(
@@ -1524,7 +1524,7 @@ final class AppModel {
 
         do {
             let normalizedBaseURL = normalizedBaseURLString(baseURLString)
-            let snapshot = try TrixCorePersistentBridge.loadMessengerSnapshot(
+            let snapshot = try await TrixCorePersistentBridge.loadMessengerSnapshot(
                 baseURLString: normalizedBaseURL,
                 accessToken: "",
                 identity: identity
@@ -1547,7 +1547,7 @@ final class AppModel {
             messengerSnapshot = snapshot
             realtimeSession.replaceCheckpoint(snapshot.checkpoint)
             syncLocalIdentityWithMessengerSnapshot(snapshot, currentIdentity: identity)
-            updateLocalCoreStateSnapshot(identity: localIdentity ?? identity)
+            await updateLocalCoreStateSnapshot(identity: localIdentity ?? identity)
             systemSnapshot = nil
             let dashboard = DashboardData(
                 session: session,
@@ -1583,14 +1583,14 @@ final class AppModel {
     private func refreshLinkedDevices(baseURLString: String, suppressErrors: Bool) async {
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let snapshot = try TrixCorePersistentBridge.loadMessengerSnapshot(
+            let snapshot = try await TrixCorePersistentBridge.loadMessengerSnapshot(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity
             )
             messengerSnapshot = snapshot
             realtimeSession.replaceCheckpoint(snapshot.checkpoint)
-            updateLocalCoreStateSnapshot(identity: localIdentity ?? context.identity)
+            await updateLocalCoreStateSnapshot(identity: localIdentity ?? context.identity)
             applyLoadedDevicesToDashboard(snapshot.devices)
         } catch {
             if !suppressErrors {
@@ -1836,12 +1836,19 @@ final class AppModel {
         guard let identity = explicitIdentity ?? localIdentity else {
             throw AppModelError.localIdentityMissing
         }
+        let invalidationGeneration = identityInvalidationGeneration
 
         let context = try await authenticatedSessionCoordinator.makeAuthenticatedContext(
             baseURLString: baseURLString,
             identity: identity,
             existingSession: existingSession
         )
+        guard identityInvalidationGeneration == invalidationGeneration else {
+            throw CancellationError()
+        }
+        if context.identity != identity {
+            try identityStore.save(context.identity)
+        }
         localIdentity = context.identity
         return context
     }
@@ -1861,7 +1868,7 @@ final class AppModel {
         accessToken: String,
         identity: LocalDeviceIdentity
     ) async throws {
-        let snapshot = try TrixCorePersistentBridge.loadMessengerSnapshot(
+        let snapshot = try await TrixCorePersistentBridge.loadMessengerSnapshot(
             baseURLString: baseURLString,
             accessToken: accessToken,
             identity: identity
@@ -1869,7 +1876,7 @@ final class AppModel {
         messengerSnapshot = snapshot
         realtimeSession.replaceCheckpoint(snapshot.checkpoint)
         syncLocalIdentityWithMessengerSnapshot(snapshot, currentIdentity: identity)
-        updateLocalCoreStateSnapshot(identity: localIdentity ?? identity)
+        await updateLocalCoreStateSnapshot(identity: localIdentity ?? identity)
 
         if let dashboard {
             updateDashboardState(DashboardData(
@@ -1936,7 +1943,7 @@ final class AppModel {
 
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let readState = try TrixCorePersistentBridge.markConversationRead(
+            let readState = try await TrixCorePersistentBridge.markConversationRead(
                 baseURLString: baseURLString,
                 accessToken: context.session.accessToken,
                 identity: context.identity,
@@ -2191,7 +2198,7 @@ final class AppModel {
                     identity: context.identity
                 )
             } else {
-                updateLocalCoreStateSnapshot(identity: localIdentity ?? context.identity)
+                await updateLocalCoreStateSnapshot(identity: localIdentity ?? context.identity)
             }
 
             if postNotifications, let currentSnapshot = messengerSnapshot {
@@ -2547,7 +2554,7 @@ final class AppModel {
         return false
     }
 
-    private func updateLocalCoreStateSnapshot(identity: LocalDeviceIdentity) {
+    private func updateLocalCoreStateSnapshot(identity: LocalDeviceIdentity) async {
         if let messengerSnapshot {
             do {
                 let paths = try PersistentCorePaths(identity: identity)
@@ -2581,7 +2588,7 @@ final class AppModel {
         }
 
         do {
-            localCoreState = try TrixCorePersistentBridge.localStateSnapshot(identity: identity)
+            localCoreState = try await TrixCorePersistentBridge.localStateSnapshot(identity: identity)
         } catch {
             localCoreState = nil
             errorMessage = error.trixUserFacingMessage
