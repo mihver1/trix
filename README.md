@@ -7,6 +7,7 @@ Confirmed components in the repo today:
 - single-binary `Axum` backend with `PostgreSQL`, automatic `sqlx` migrations, local blob storage, rate limiting, cleanup jobs, websocket inbox delivery, a separate `/v0/admin/*` control surface, and optional APNs-backed background inbox wake-up pushes for iOS and macOS devices
 - `v0` API surface for auth, accounts, directory search, device linking and approval, transfer bundles, device revoke, key packages, chats, message history, inbox lease and ack, history sync backfill and repair, blob upload and download, and operator admin/session/settings/users flows
 - shared `trix-core` library with `OpenMLS` group state, encrypted local stores, attachment helpers, device-transfer helpers, safe messenger snapshots/timelines, realtime and sync runtime, and `UniFFI` bindings
+- shared `strings.yaml` catalog plus `scripts/generate_strings.rb` for repo-wide user-facing chat strings, generating Android XML resources and iOS/macOS Swift lookup code for `en` and `ru`
 - Android, iOS, and macOS consumer clients now share the task-first create/link onboarding model, stored-session recovery that keeps reconnect vs approval/relink states explicit, projected timelines with outgoing delivery/read ticks, attachment send/download, and inline previews for common image types; macOS also ships the beta client and a separate macOS admin app
 - `trix-bot` and `trix-botd` for headless encrypted bot accounts, plus Rust, Python, and Go echo-bot examples
 
@@ -73,6 +74,7 @@ For APNs key placement and device lifecycle operations, see [docs/server-operati
 make check
 make contract-check
 make run-server
+make strings-generate
 cargo check -p trix-core
 cargo test -p trix-core
 make ffi-bindings
@@ -100,6 +102,7 @@ cargo run -q -p trix-botd -- stdio
 - macOS details: [apps/macos/README.md](apps/macos/README.md)
 - macOS admin details: [apps/macos-admin/README.md](apps/macos-admin/README.md)
 - Bot harness: [docs/bot-harness.md](docs/bot-harness.md)
+- Shared client string catalog and generation: [docs/client-localization.md](docs/client-localization.md)
 - FFI surface and binding generation: [docs/ffi-bindings.md](docs/ffi-bindings.md)
 - Bot examples: [examples/bots/README.md](examples/bots/README.md)
 

@@ -1756,3 +1756,105 @@ async fn safe_s11_same_device_pool_recovers_missed_offline_message_from_sibling_
 
     server.shutdown().await
 }
+
+#[tokio::test]
+#[ignore = "requires local postgres"]
+async fn safe_s12_dm_reply_from_peer_survives_creator_linked_secondary_device() -> Result<()> {
+    let server = spawn_test_server().await?;
+    let base_url = server.base_url.clone();
+
+    ffi(move || {
+        let alice_primary = create_safe_client(&base_url, "alice", true)?;
+        let bob = create_safe_client(&base_url, "bob", true)?;
+        alice_primary.client.load_snapshot()?;
+        bob.client.load_snapshot()?;
+
+        let intent = alice_primary.client.create_link_device_intent()?;
+        let alice_secondary =
+            create_pending_safe_client_identity(&base_url, "alice-secondary-bob-reply")?;
+        let pending = alice_secondary
+            .client
+            .complete_link_device(intent.payload, "Alice Secondary Bob Reply".to_owned())?;
+        alice_primary
+            .client
+            .approve_linked_device(pending.device_id.clone())?;
+        alice_secondary.client.load_snapshot()?;
+
+        let dm = alice_primary
+            .client
+            .create_conversation(dm_request(&bob.account_id))?;
+        let conversation_batch = bob.client.get_new_events(None)?;
+        assert!(conversation_batch.events.iter().any(|event| {
+            matches!(event.kind, FfiMessengerEventKind::ConversationUpdated)
+                && event.conversation_id.as_deref() == Some(dm.conversation_id.as_str())
+        }));
+
+        let alice_before_reply = alice_primary.client.load_snapshot()?;
+        let first_send = alice_primary
+            .client
+            .send_message(text_request(&dm.conversation_id, "hello bob from alice"))?;
+        assert_eq!(
+            message_text(&first_send.message),
+            Some("hello bob from alice")
+        );
+
+        let bob_message_batch = bob
+            .client
+            .get_new_events(conversation_batch.checkpoint.clone())?;
+        assert!(bob_message_batch.events.iter().any(|event| {
+            event
+                .message
+                .as_ref()
+                .and_then(message_text)
+                == Some("hello bob from alice")
+        }));
+
+        let bob_account_id = bob.account_id.clone();
+        let bob_root_path = bob.root_path.clone();
+        let bob_database_key = bob.database_key.clone();
+        drop(bob);
+
+        let bob_reopened = reopen_safe_client(
+            &base_url,
+            &bob_root_path,
+            bob_database_key.clone(),
+        )?;
+        let reopened_snapshot = bob_reopened.load_snapshot()?;
+        assert_eq!(reopened_snapshot.account_id.as_deref(), Some(bob_account_id.as_str()));
+
+        let bob_reply = bob_reopened
+            .send_message(text_request(&dm.conversation_id, "hello alice from bob"))?;
+        assert_eq!(message_text(&bob_reply.message), Some("hello alice from bob"));
+
+        drop(bob_reopened);
+        let bob_after_send = reopen_safe_client(&base_url, &bob_root_path, bob_database_key)?;
+        let bob_after_send_snapshot = bob_after_send.load_snapshot()?;
+        assert!(bob_after_send_snapshot
+            .conversations
+            .iter()
+            .any(|conversation| conversation.conversation_id == dm.conversation_id));
+        let bob_after_send_page = bob_after_send.get_messages(dm.conversation_id.clone(), None, None)?;
+        assert!(bob_after_send_page.messages.iter().any(|message| {
+            message_text(message) == Some("hello bob from alice")
+        }));
+        assert!(bob_after_send_page.messages.iter().any(|message| {
+            message_text(message) == Some("hello alice from bob")
+        }));
+
+        let alice_reply_batch = alice_primary
+            .client
+            .get_new_events(alice_before_reply.checkpoint.clone())?;
+        assert!(alice_reply_batch.events.iter().any(|event| {
+            event
+                .message
+                .as_ref()
+                .and_then(message_text)
+                == Some("hello alice from bob")
+        }));
+
+        Ok(())
+    })
+    .await?;
+
+    server.shutdown().await
+}

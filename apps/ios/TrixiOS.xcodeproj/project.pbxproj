@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		02221BC8016A7E1FA7EF7917 /* UITestConversationSeedStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EE27BEB5EF834A79EF67EA6 /* UITestConversationSeedStateTests.swift */; };
 		064D00F2E76BC347C26637AC /* SafeDiagnosticLogStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9C8631443110E522094F6A9 /* SafeDiagnosticLogStoreTests.swift */; };
+		0BD5BA5C486EA59030D76450 /* TrixUserFacingText.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFD9347FA050478D429A9B73 /* TrixUserFacingText.swift */; };
 		0C59311F8E54EDC1AD82DE2A /* LocalDeviceIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = C81238E1EC57CFBB2B333A7A /* LocalDeviceIdentity.swift */; };
 		1DE64D3ACC3B34A7341113CB /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 26D97D3BE9113B5609B948F5 /* Assets.xcassets */; };
 		216D9FC855FED05182FD63E8 /* TrixiOSInteropDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04353F1F4F70E3DFA332FEC3 /* TrixiOSInteropDriver.swift */; };
@@ -52,6 +53,7 @@
 		D5B3D522018E2EDCC239D6B3 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 229E4FE51C86DFFFFBEDA5BF /* KeychainStore.swift */; };
 		D7A634A74EF8AFA641149594 /* TrixCoreMessageBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39DC437F679BF827B2ECC4D1 /* TrixCoreMessageBridge.swift */; };
 		D8728BF5E7629A0B84E4CAB4 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B9EE7D8E7C908B372176F97 /* RootView.swift */; };
+		DB4088724FDDB92E7EE9DA42 /* TrixStrings.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CDEE6567E19EAB0511296F8 /* TrixStrings.generated.swift */; };
 		DB5806C60BE9AACB7A23AEE9 /* SystemStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2746CAF75EE97A4BDBA763BB /* SystemStatusView.swift */; };
 		E12020C5E8DE49261BED6B3D /* DiagnosticsLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DB067EA4F79D6FAD3ECE1F0 /* DiagnosticsLogView.swift */; };
 		E4F971691AB2F86D7BACBBB2 /* ServerConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E8E57CCC8925A9519C5EB59 /* ServerConfiguration.swift */; };
@@ -99,6 +101,7 @@
 		458D1438006A290DF807173D /* ConsumerInlineAttachmentPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConsumerInlineAttachmentPreview.swift; sourceTree = "<group>"; };
 		48115076F282C6F00F84200E /* trix_core.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = trix_core.swift; sourceTree = "<group>"; };
 		4947F3F335746A3BEADF9960 /* TrixiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TrixiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4CDEE6567E19EAB0511296F8 /* TrixStrings.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixStrings.generated.swift; sourceTree = "<group>"; };
 		4EE27BEB5EF834A79EF67EA6 /* UITestConversationSeedStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestConversationSeedStateTests.swift; sourceTree = "<group>"; };
 		4F9754F6512B52355BDF9422 /* UITestFixtureSeeder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestFixtureSeeder.swift; sourceTree = "<group>"; };
 		5B51840115EF40A8C585C795 /* UITestLaunchConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestLaunchConfiguration.swift; sourceTree = "<group>"; };
@@ -120,6 +123,7 @@
 		9E6C5B8826FF255BAF650A38 /* ChatDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatDetailView.swift; sourceTree = "<group>"; };
 		9E99B20CD4D5A31B630CCE43 /* TrixiOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixiOSApp.swift; sourceTree = "<group>"; };
 		A96D86962664B4EFF403EA16 /* trix_coreFFI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = trix_coreFFI.h; sourceTree = "<group>"; };
+		AFD9347FA050478D429A9B73 /* TrixUserFacingText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixUserFacingText.swift; sourceTree = "<group>"; };
 		B2512DCDBA23CAA2DD01D887 /* KeychainStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStoreTests.swift; sourceTree = "<group>"; };
 		B94177496704FC2F285C6E07 /* TrixUITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixUITestSupport.swift; sourceTree = "<group>"; };
 		BC373B8F990B456994383982 /* FormAndPayloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FormAndPayloadTests.swift; sourceTree = "<group>"; };
@@ -210,6 +214,7 @@
 			children = (
 				0B4F5BB41B01FD4D022964E0 /* SafeDiagnosticLogStore.swift */,
 				D57BB0CF361A1E7900DD676C /* TrixTheme.swift */,
+				AFD9347FA050478D429A9B73 /* TrixUserFacingText.swift */,
 			);
 			path = Support;
 			sourceTree = "<group>";
@@ -223,6 +228,14 @@
 				F16E8D46A5E1F90D5FA589FB /* MessagingLabView.swift */,
 			);
 			path = Chats;
+			sourceTree = "<group>";
+		};
+		3E3357764D05659F28E9F07A /* Generated */ = {
+			isa = PBXGroup;
+			children = (
+				4CDEE6567E19EAB0511296F8 /* TrixStrings.generated.swift */,
+			);
+			path = Generated;
 			sourceTree = "<group>";
 		};
 		450CADF3F30C14BED249E4BF /* Home */ = {
@@ -261,6 +274,7 @@
 				2CA7D68080A784175AE79AEF /* App */,
 				E58A7DEF110BE8B6DAC446CB /* Bridge */,
 				32A0C8F0C29984AE88B0A1C4 /* Features */,
+				3E3357764D05659F28E9F07A /* Generated */,
 				291D9E665D29513C2BC7CA74 /* Networking */,
 				B5991635791551AF2374D080 /* Resources */,
 				ADEC3DC46A424752ED3EA1A7 /* Security */,
@@ -366,7 +380,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 30FCD116EF8786C50C1E5B59 /* Build configuration list for PBXNativeTarget "TrixiOS" */;
 			buildPhases = (
-				039B02BC37AF207158729C3A /* Generate trix-core iOS bridge */,
+				039C6ED4423289D4160A2B1F /* Generate iOS strings and trix-core bridge */,
 				B310ED466CDDDF295B8C766A /* Sources */,
 				40F4BEBCFD16BD22B90AD4EA /* Resources */,
 			);
@@ -457,7 +471,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		039B02BC37AF207158729C3A /* Generate trix-core iOS bridge */ = {
+		039C6ED4423289D4160A2B1F /* Generate iOS strings and trix-core bridge */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -467,17 +481,18 @@
 			);
 			inputPaths = (
 			);
-			name = "Generate trix-core iOS bridge";
+			name = "Generate iOS strings and trix-core bridge";
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(SRCROOT)/TrixiOS/Generated/TrixStrings.generated.swift",
 				"$(SRCROOT)/TrixiOS/Bridge/Generated/trix_core.swift",
 				"$(SRCROOT)/../../target/aarch64-apple-ios/release/libtrix_core.a",
 				"$(SRCROOT)/../../target/ios-simulator-universal/release/libtrix_core.a",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "bash \"$SRCROOT/scripts/generate-trix-core-bridge.sh\"\n";
+			shellScript = "ruby \"$SRCROOT/../../scripts/generate_strings.rb\"\nbash \"$SRCROOT/scripts/generate-trix-core-bridge.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
@@ -531,8 +546,10 @@
 				9FFE059EB1320E146D1865E3 /* TrixCoreServerBridge.swift in Sources */,
 				9276BE9E34B7063E30FA1783 /* TrixInteropActionBridge.swift in Sources */,
 				6D9D86587DA600429E137BFA /* TrixInteropSupport.swift in Sources */,
+				DB4088724FDDB92E7EE9DA42 /* TrixStrings.generated.swift in Sources */,
 				44F1ABEC4D9100A89C6C4CA5 /* TrixTheme.swift in Sources */,
 				6417EF0F56F80EA188840E68 /* TrixUITestSupport.swift in Sources */,
+				0BD5BA5C486EA59030D76450 /* TrixUserFacingText.swift in Sources */,
 				BD87D15AEFAF56495250E94C /* TrixiOSApp.swift in Sources */,
 				3CFB6C6EEB3BF0694F8C2338 /* UITestFixtureSeeder.swift in Sources */,
 				7EDED62A58B17E6F48430C05 /* UITestLaunchConfiguration.swift in Sources */,

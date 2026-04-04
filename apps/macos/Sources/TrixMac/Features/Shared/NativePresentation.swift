@@ -17,9 +17,5 @@ func formattedUptime(_ uptimeMs: UInt64) -> String {
 }
 
 func localizedPendingOutgoingError(_ rawValue: String) -> String {
-    let normalized = rawValue.lowercased()
-    if normalized.contains("epoch") || normalized.contains("mls") {
-        return "Couldn't send this message right now. Try again in a moment."
-    }
-    return rawValue
+    TrixUserFacingText.sanitize(rawMessage: rawValue)
 }

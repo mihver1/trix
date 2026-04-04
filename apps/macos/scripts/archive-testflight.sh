@@ -26,6 +26,69 @@ case "$DESTINATION" in
     ;;
 esac
 
+validate_exported_package_signing() {
+  local export_root="$1"
+  local app_path=""
+  local pkg_path=""
+  local expanded_dir=""
+  local profile_path=""
+  local profile_plist=""
+  local profile_name=""
+  local aps_environment=""
+
+  app_path="$(find "$export_root" -maxdepth 3 -name '*.app' -print -quit || true)"
+  if [[ -z "$app_path" ]]; then
+    pkg_path="$(find "$export_root" -maxdepth 1 -name '*.pkg' -print -quit || true)"
+    if [[ -z "$pkg_path" ]]; then
+      echo "Expected an exported .app or .pkg under $export_root" >&2
+      return 1
+    fi
+
+    expanded_dir="$(mktemp -d "${TMPDIR:-/tmp}/trix-exported-pkg.XXXXXX")"
+    pkgutil --expand-full "$pkg_path" "$expanded_dir" >/dev/null
+    app_path="$(find "$expanded_dir" -maxdepth 5 -name '*.app' -print -quit || true)"
+    if [[ -z "$app_path" ]]; then
+      echo "Unable to locate exported app inside package: $pkg_path" >&2
+      rm -rf "$expanded_dir"
+      return 1
+    fi
+  fi
+
+  profile_path="$app_path/Contents/embedded.provisionprofile"
+  if [[ ! -f "$profile_path" ]]; then
+    echo "Expected embedded.provisionprofile in exported app: $app_path" >&2
+    rm -rf "$expanded_dir"
+    return 1
+  fi
+
+  profile_plist="$(mktemp "${TMPDIR:-/tmp}/trix-export-profile.XXXXXX")"
+  security cms -D -i "$profile_path" > "$profile_plist"
+  profile_name="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$profile_plist" 2>/dev/null || true)"
+  aps_environment="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.aps-environment' "$profile_plist" 2>/dev/null || true)"
+  rm -f "$profile_plist"
+
+  if [[ "$profile_name" != *"Store Provisioning Profile"* ]]; then
+    echo "Exported app did not use a store provisioning profile: ${profile_name:-<missing>}" >&2
+    rm -rf "$expanded_dir"
+    return 1
+  fi
+
+  if [[ "$aps_environment" != "production" ]]; then
+    echo "Exported app is not production signed for APNs: ${aps_environment:-<missing>}" >&2
+    rm -rf "$expanded_dir"
+    return 1
+  fi
+
+  echo "Validated exported signing profile: $profile_name"
+  echo "Validated APNs entitlement environment: $aps_environment"
+  rm -rf "$expanded_dir"
+}
+
+export_contains_distributable() {
+  local export_root="$1"
+  find "$export_root" -maxdepth 3 \( -name '*.app' -o -name '*.pkg' \) -print -quit | grep -q .
+}
+
 declare -a XCODEBUILD_AUTH_ARGS=()
 if [[ -n "${TRIX_ASC_AUTH_KEY_PATH:-}" ]]; then
   : "${TRIX_ASC_AUTH_KEY_ID:?Set TRIX_ASC_AUTH_KEY_ID when using TRIX_ASC_AUTH_KEY_PATH}"
@@ -40,7 +103,7 @@ fi
 mkdir -p "$DIST_ROOT"
 rm -rf "$ARCHIVE_PATH" "$EXPORT_PATH"
 
-TMP_EXPORT_OPTIONS_PLIST="$(mktemp "${TMPDIR:-/tmp}/trix-app-store-connect-export-options.XXXXXX.plist")"
+TMP_EXPORT_OPTIONS_PLIST="$(mktemp "${TMPDIR:-/tmp}/trix-app-store-connect-export-options.XXXXXX")"
 trap 'rm -f "$TMP_EXPORT_OPTIONS_PLIST"' EXIT
 
 cp "$EXPORT_OPTIONS_PLIST" "$TMP_EXPORT_OPTIONS_PLIST"
@@ -98,6 +161,13 @@ if [[ ${#XCODEBUILD_AUTH_ARGS[@]} -gt 0 ]]; then
   export_cmd+=("${XCODEBUILD_AUTH_ARGS[@]}")
 fi
 "${export_cmd[@]}"
+if [[ "$DESTINATION" == "export" ]]; then
+  validate_exported_package_signing "$EXPORT_PATH"
+elif export_contains_distributable "$EXPORT_PATH"; then
+  validate_exported_package_signing "$EXPORT_PATH"
+else
+  echo "Upload destination selected; no local exported package to validate"
+fi
 
 echo
 echo "Archive:"

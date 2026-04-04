@@ -24,6 +24,7 @@ The current slice covers:
 - PoC chat creation plus member/device add-remove flows using reserved key packages
 - working integration with `/v0/system/health` and `/v0/system/version`
 - working `UniFFI` bridge generation for `trix-core`
+- repo-level shared `strings.yaml` catalog for chat/user-facing copy, generated into `TrixiOS/Generated/TrixStrings.generated.swift`
 - `trix-core`-backed account bootstrap, link-intent completion, auth challenge/session, device approval, and revoke flows via generated Swift bindings
 - persistent `trix-core` local state under app storage for MLS signer state, local chat history, and inbox sync cursors
 - consumer chat detail backed by the safe messenger snapshot/timeline APIs, including unread badges, read-state reconciliation, outgoing delivery/read ticks, and projected local transcripts
@@ -78,6 +79,13 @@ Run the repo-standard iOS smoke packs:
 ./scripts/client-smoke-harness.sh --suite ios-server --stop-postgres
 ./scripts/client-smoke-harness.sh --suite ios-ui --stop-postgres
 ```
+
+## Shared Strings
+
+- shared user-facing chat copy lives in the root [`strings.yaml`](../../strings.yaml) catalog
+- refresh generated outputs manually with `make strings-generate`
+- the iOS app target prebuild also regenerates [`TrixiOS/Generated/TrixStrings.generated.swift`](./TrixiOS/Generated/TrixStrings.generated.swift) before the `trix-core` bridge step
+- do not hand-edit the generated Swift file; edit `strings.yaml` and regenerate instead
 
 The shared `TrixiOS` scheme forwards `TRIX_IOS_SERVER_SMOKE_BASE_URL` and `TRIX_IOS_UI_TEST_BASE_URL` into both test and launch actions, so the same scheme works for local laptop runs and server-backed smoke.
 
@@ -172,6 +180,7 @@ TRIX_ALTOOL_KEYCHAIN_ITEM=TRIX_APPSTORE_PASSWORD \
 - The app now defaults to `https://trix.artelproject.tech`. For local simulator work, override the server URL in-app or via the UI-test launch environment with `http://127.0.0.1:8080`.
 - `xcodebuild` requires an installed `iOS Simulator` runtime or device platform in the local `Xcode` setup.
 - `./scripts/generate-trix-core-bridge.sh` installs missing Rust iOS targets automatically, regenerates `UniFFI` Swift sources under `TrixiOS/Bridge/Generated`, and rebuilds the local `xcframework` under `Vendor/TrixCoreFFI.xcframework`. The app and TestFlight archive path invoke it automatically.
+- the XcodeGen target prebuild also regenerates `TrixiOS/Generated/TrixStrings.generated.swift` from the root `strings.yaml` catalog before building, but `make strings-generate` is the quickest way to refresh the checked-in file without opening Xcode
 - APNs wake-up pushes require matching Apple entitlements plus `trixd` APNs config; the server sends only safe background payloads, and message/body text is produced on-device after inbox sync.
 - Device approval accepts an optional `transfer_bundle_b64`, and the server exposes `GET /v0/devices/{device_id}/transfer-bundle`.
 - Linked devices that receive a transfer bundle automatically import shared account-root material on the next authenticated refresh. If no bundle is available, the device still becomes active for messaging but remains in the local `requiresRootUpgrade` capability state for account-management operations.

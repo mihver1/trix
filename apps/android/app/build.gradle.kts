@@ -12,6 +12,8 @@ val trixCoreUniffiConfig = File(trixCoreCrateDir, "uniffi.toml")
 val trixAndroidNdkVersion = "29.0.14206865"
 val generatedUniffiDir = layout.buildDirectory.dir("generated/source/uniffi/main")
 val generatedJniLibsDir = layout.buildDirectory.dir("generated/jniLibs/main")
+val androidStringsEn = layout.projectDirectory.file("src/main/res/values/strings.xml")
+val androidStringsRu = layout.projectDirectory.file("src/main/res/values-ru/strings.xml")
 
 fun loadLocalProperty(name: String): String? {
     val localPropertiesFile = rootProject.file("local.properties")
@@ -152,6 +154,14 @@ val buildTrixCoreHostLib by tasks.registering(Exec::class) {
     outputs.file(hostRustLibrary)
 }
 
+val generateTrixStrings by tasks.registering(Exec::class) {
+    workingDir = workspaceRoot
+    inputs.file(File(workspaceRoot, "strings.yaml"))
+    inputs.file(File(workspaceRoot, "scripts/generate_strings.rb"))
+    outputs.files(androidStringsEn, androidStringsRu)
+    commandLine("ruby", "scripts/generate_strings.rb")
+}
+
 val generateTrixCoreKotlinBindings by tasks.registering(Exec::class) {
     dependsOn(buildTrixCoreHostLib)
     workingDir = workspaceRoot
@@ -203,6 +213,7 @@ val buildTrixCoreAndroidLibs by tasks.registering(CargoNdkBuildTask::class) {
 }
 
 tasks.named("preBuild") {
+    dependsOn(generateTrixStrings)
     dependsOn(syncCheckedInTrixCoreKotlinBindings)
     if (!skipAndroidNdkBuild) {
         dependsOn(buildTrixCoreAndroidLibs)

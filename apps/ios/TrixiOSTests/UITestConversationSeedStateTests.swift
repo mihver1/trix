@@ -102,6 +102,10 @@ final class UITestConversationSeedStateTests: XCTestCase {
         XCTAssertTrue(
             initialSnapshot.messages.contains { $0.body?.text == seededDMMessage.text }
         )
+        XCTAssertEqual(
+            model.cachedConversationSnapshot(chatId: dmChat.chatId)?.detail.chatId,
+            dmChat.chatId
+        )
 
         let outgoingText = "unit-send-\(UUID().uuidString.prefix(6).lowercased())"
         let response = await model.postDebugMessage(
@@ -117,6 +121,11 @@ final class UITestConversationSeedStateTests: XCTestCase {
         )
         XCTAssertTrue(
             updatedSnapshot.messages.contains { $0.body?.text == outgoingText }
+        )
+        XCTAssertTrue(
+            model.cachedConversationSnapshot(chatId: dmChat.chatId)?
+                .messages
+                .contains { $0.body?.text == outgoingText } ?? false
         )
     }
 }

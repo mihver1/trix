@@ -134,10 +134,11 @@ internal fun resolveQuickReactionEmojis(
 internal fun reactionSendBlockReason(
     conversation: ChatConversation,
     isSending: Boolean,
+    inFlightMessage: String = "Finish the current send before adding a reaction.",
 ): String? {
     return when {
         !conversation.canSend -> conversation.composerHint
-        isSending -> "Finish the current send before adding a reaction."
+        isSending -> inFlightMessage
         else -> null
     }
 }
@@ -277,7 +278,7 @@ fun ChatsScreen(
             overviewState = overviewState.copy(
                 overview = fallbackOverview,
                 isRefreshing = false,
-                errorMessage = error.message ?: "Chat sync failed",
+                errorMessage = error.message ?: context.getString(R.string.chat_screen_sync_failed),
             )
             if (fallbackOverview != null) {
                 overviewVersion += 1
@@ -319,7 +320,7 @@ fun ChatsScreen(
         } catch (error: IOException) {
             sendState = sendState.copy(
                 isSending = false,
-                sendErrorMessage = error.message ?: "Failed to send message",
+                sendErrorMessage = error.message ?: context.getString(R.string.chat_screen_send_message_failed),
             )
         }
     }
@@ -353,7 +354,7 @@ fun ChatsScreen(
         } catch (error: IOException) {
             sendState = sendState.copy(
                 isSending = false,
-                sendErrorMessage = error.message ?: "Failed to send attachment",
+                sendErrorMessage = error.message ?: context.getString(R.string.chat_screen_send_attachment_failed),
             )
         }
     }
@@ -361,7 +362,11 @@ fun ChatsScreen(
     suspend fun sendReaction(message: ChatTimelineMessage, emoji: String) {
         val chatId = selectedConversationId ?: return
         val conversation = detailState.conversation?.takeIf { it.chatId == chatId } ?: return
-        val blockReason = reactionSendBlockReason(conversation, sendState.isSending)
+        val blockReason = reactionSendBlockReason(
+            conversation = conversation,
+            isSending = sendState.isSending,
+            inFlightMessage = context.getString(R.string.chat_reaction_send_blocked),
+        )
         if (blockReason != null) {
             reactionPickerMessageId = null
             sendState = sendState.copy(
@@ -400,7 +405,7 @@ fun ChatsScreen(
         } catch (error: IOException) {
             sendState = sendState.copy(
                 isSending = false,
-                sendErrorMessage = error.message ?: "Failed to send reaction",
+                sendErrorMessage = error.message ?: context.getString(R.string.chat_screen_send_reaction_failed),
             )
         }
     }
@@ -437,7 +442,7 @@ fun ChatsScreen(
         } catch (error: IOException) {
             directoryState = directoryState.copy(
                 isLoading = false,
-                errorMessage = error.message ?: "Directory search failed",
+                errorMessage = error.message ?: context.getString(R.string.chat_screen_directory_search_failed),
                 hasLoaded = true,
             )
         }
@@ -474,7 +479,7 @@ fun ChatsScreen(
             directoryState = directoryState.copy(
                 activeAccountId = null,
                 isSubmitting = false,
-                errorMessage = error.message ?: "Failed to create direct message",
+                errorMessage = error.message ?: context.getString(R.string.chat_screen_create_dm_failed),
             )
         }
     }
@@ -506,7 +511,7 @@ fun ChatsScreen(
         } catch (error: IOException) {
             directoryState = directoryState.copy(
                 isSubmitting = false,
-                errorMessage = error.message ?: "Failed to create group chat",
+                errorMessage = error.message ?: context.getString(R.string.chat_screen_create_group_failed),
             )
         }
     }
@@ -542,7 +547,7 @@ fun ChatsScreen(
         } catch (error: IOException) {
             directoryState = directoryState.copy(
                 isSubmitting = false,
-                errorMessage = error.message ?: "Failed to add members",
+                errorMessage = error.message ?: context.getString(R.string.chat_screen_add_members_failed),
             )
         }
     }
@@ -568,7 +573,7 @@ fun ChatsScreen(
                 errorMessage = null,
             )
         } catch (error: IOException) {
-            groupMembershipErrorMessage = error.message ?: "Failed to remove member"
+            groupMembershipErrorMessage = error.message ?: context.getString(R.string.chat_screen_remove_member_failed)
         } finally {
             activeGroupMemberAccountId = null
         }
@@ -650,7 +655,7 @@ fun ChatsScreen(
         try {
             repository.openAttachment(attachment)
         } catch (error: IOException) {
-            attachmentErrorMessage = error.message ?: "Failed to open attachment"
+            attachmentErrorMessage = error.message ?: context.getString(R.string.chat_screen_open_attachment_failed)
         } finally {
             activeAttachmentMessageId = null
         }
@@ -662,7 +667,7 @@ fun ChatsScreen(
         try {
             repository.shareAttachment(attachment)
         } catch (error: IOException) {
-            attachmentErrorMessage = error.message ?: "Failed to share attachment"
+            attachmentErrorMessage = error.message ?: context.getString(R.string.chat_screen_share_attachment_failed)
         } finally {
             activeAttachmentMessageId = null
         }
@@ -771,7 +776,7 @@ fun ChatsScreen(
                 currentDetailState = detailState,
                 currentSendState = sendState,
                 conversation = currentConversation,
-                errorMessage = error.message ?: "Failed to load conversation",
+                errorMessage = error.message ?: context.getString(R.string.chat_screen_load_conversation_failed),
             ).detailState
         }
     }
@@ -1227,13 +1232,13 @@ private fun NewChatActions(
         FilledTonalIconButton(onClick = onOpenDirectMessages) {
             Icon(
                 imageVector = Icons.Rounded.PersonAddAlt1,
-                contentDescription = "Start direct message",
+                contentDescription = stringResource(R.string.chat_action_start_direct_message),
             )
         }
         FilledTonalIconButton(onClick = onOpenGroupChats) {
             Icon(
                 imageVector = Icons.Rounded.Groups,
-                contentDescription = "Create group chat",
+                contentDescription = stringResource(R.string.chat_action_create_group_chat),
             )
         }
     }
@@ -1271,19 +1276,19 @@ private fun DirectoryAccountsSheet(
     val selectedCount = selectedAccountIds.size
     val minimumSelection = if (isGroupCreateMode) 2 else 1
     val submitLabel = when (config.mode) {
-        DirectorySheetMode.DIRECT_MESSAGE -> "Message"
-        DirectorySheetMode.GROUP_CREATE -> "Create group"
-        DirectorySheetMode.GROUP_ADD_MEMBERS -> "Add members"
+        DirectorySheetMode.DIRECT_MESSAGE -> stringResource(R.string.chat_directory_mode_message)
+        DirectorySheetMode.GROUP_CREATE -> stringResource(R.string.chat_directory_mode_create_group)
+        DirectorySheetMode.GROUP_ADD_MEMBERS -> stringResource(R.string.chat_directory_mode_add_members)
     }
     val sheetTitle = when (config.mode) {
-        DirectorySheetMode.DIRECT_MESSAGE -> "New direct message"
-        DirectorySheetMode.GROUP_CREATE -> "Create group chat"
-        DirectorySheetMode.GROUP_ADD_MEMBERS -> "Add members"
+        DirectorySheetMode.DIRECT_MESSAGE -> stringResource(R.string.chat_directory_title_new_direct_message)
+        DirectorySheetMode.GROUP_CREATE -> stringResource(R.string.chat_directory_title_create_group_chat)
+        DirectorySheetMode.GROUP_ADD_MEMBERS -> stringResource(R.string.chat_directory_title_add_members)
     }
     val sheetBody = when (config.mode) {
-        DirectorySheetMode.DIRECT_MESSAGE -> "Search the account directory and open a DM without leaving the chats surface."
-        DirectorySheetMode.GROUP_CREATE -> "Search the account directory, choose at least two people, and create a new group thread."
-        DirectorySheetMode.GROUP_ADD_MEMBERS -> "Search the account directory and add more people to the current group thread."
+        DirectorySheetMode.DIRECT_MESSAGE -> stringResource(R.string.chat_directory_description_new_direct_message)
+        DirectorySheetMode.GROUP_CREATE -> stringResource(R.string.chat_directory_description_create_group_chat)
+        DirectorySheetMode.GROUP_ADD_MEMBERS -> stringResource(R.string.chat_directory_description_add_members)
     }
 
     ModalBottomSheet(
@@ -1313,7 +1318,7 @@ private fun DirectoryAccountsSheet(
                             value = groupTitle,
                             onValueChange = onGroupTitleChange,
                             modifier = Modifier.fillMaxWidth(),
-                            placeholder = { Text("Group title (optional)") },
+                            placeholder = { Text(stringResource(R.string.chat_directory_group_title_optional)) },
                             singleLine = true,
                         )
                     }
@@ -1321,7 +1326,7 @@ private fun DirectoryAccountsSheet(
                         value = query,
                         onValueChange = onQueryChange,
                         modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("Search by name or @handle") },
+                        placeholder = { Text(stringResource(R.string.chat_directory_search_placeholder)) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Search),
                     )
@@ -1333,9 +1338,13 @@ private fun DirectoryAccountsSheet(
                         ) {
                             Text(
                                 text = if (isGroupCreateMode) {
-                                    "$selectedCount selected, minimum $minimumSelection"
+                                    stringResource(
+                                        R.string.chat_directory_selected_minimum,
+                                        selectedCount,
+                                        minimumSelection,
+                                    )
                                 } else {
-                                    "$selectedCount selected"
+                                    stringResource(R.string.chat_directory_selected_count, selectedCount)
                                 },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1384,12 +1393,12 @@ private fun DirectoryAccountsSheet(
                                 verticalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
                                 Text(
-                                    text = "No accounts found",
+                                    text = stringResource(R.string.chat_directory_empty_title),
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.SemiBold,
                                 )
                                 Text(
-                                    text = "Try a broader name fragment or handle.",
+                                    text = stringResource(R.string.chat_directory_empty_body),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -1477,7 +1486,7 @@ private fun DirectorySelectionRow(
             trailingContent = {
                 when {
                     isAlreadyInChat -> {
-                        TimelineBadge(label = "In group")
+                        TimelineBadge(label = stringResource(R.string.chat_member_badge_in_group))
                     }
 
                     isSelected -> {
@@ -1485,7 +1494,7 @@ private fun DirectorySelectionRow(
                             onClick = onToggleSelection,
                             enabled = enabled,
                         ) {
-                            Text("Selected")
+                            Text(stringResource(R.string.chat_member_selected))
                         }
                     }
 
@@ -1494,7 +1503,7 @@ private fun DirectorySelectionRow(
                             onClick = onToggleSelection,
                             enabled = enabled,
                         ) {
-                            Text("Select")
+                            Text(stringResource(R.string.chat_member_select))
                         }
                     }
                 }
@@ -1556,7 +1565,7 @@ private fun DirectoryAccountRow(
                             strokeWidth = 2.dp,
                         )
                     } else {
-                        Text("Message")
+                        Text(stringResource(R.string.chat_directory_mode_message))
                     }
                 }
             },
@@ -1586,12 +1595,16 @@ private fun GroupMembersSheet(
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "Group members",
+                        text = stringResource(R.string.chat_group_members_title),
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "${conversation.members.size} members in ${conversation.title}",
+                        text = stringResource(
+                            R.string.chat_group_members_count,
+                            conversation.members.size,
+                            conversation.title ?: conversation.participantsLabel,
+                        ),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1599,7 +1612,7 @@ private fun GroupMembersSheet(
                         onClick = onAddMembers,
                         enabled = conversation.canManageMembers && !isUpdatingMember,
                     ) {
-                        Text("Add members")
+                        Text(stringResource(R.string.chat_group_add_members))
                     }
                 }
             }
@@ -1659,7 +1672,7 @@ private fun GroupMemberRow(
             },
             trailingContent = {
                 when {
-                    member.isSelf -> TimelineBadge(label = "You")
+                    member.isSelf -> TimelineBadge(label = stringResource(R.string.chat_you))
                     canRemove -> {
                         OutlinedButton(
                             onClick = onRemoveMember,
@@ -1671,7 +1684,7 @@ private fun GroupMemberRow(
                                     strokeWidth = 2.dp,
                                 )
                             } else {
-                                Text("Remove")
+                                Text(stringResource(R.string.chat_member_remove))
                             }
                         }
                     }
@@ -1727,7 +1740,7 @@ private fun RefreshAction(
         FilledTonalIconButton(onClick = onRefresh) {
             Icon(
                 imageVector = Icons.Rounded.Sync,
-                contentDescription = "Refresh chats",
+                contentDescription = stringResource(R.string.chat_refresh_chats),
             )
         }
     }
@@ -1745,7 +1758,7 @@ private fun LoadingChatsPane(modifier: Modifier = Modifier) {
         ) {
             CircularProgressIndicator()
             Text(
-                text = "Restoring local chat cache",
+                text = stringResource(R.string.chat_restoring_local_cache),
                 style = MaterialTheme.typography.titleMedium,
             )
         }
@@ -1784,14 +1797,18 @@ private fun EmptyChatCachePane(
                 }
             }
             Text(
-                text = if (errorMessage == null) "No chats yet" else "Chat sync failed",
+                text = if (errorMessage == null) {
+                    stringResource(R.string.chat_empty_title)
+                } else {
+                    stringResource(R.string.chat_screen_sync_failed)
+                },
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center,
             )
             Text(
                 text = errorMessage
-                    ?: "Start a conversation and it will appear here.",
+                    ?: stringResource(R.string.chat_empty_body),
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (errorMessage == null) {
                     MaterialTheme.colorScheme.onSurfaceVariant
@@ -1804,7 +1821,13 @@ private fun EmptyChatCachePane(
                 onClick = onRefresh,
                 enabled = !isRefreshing,
             ) {
-                Text(if (isRefreshing) "Refreshing" else "Refresh")
+                Text(
+                    if (isRefreshing) {
+                        stringResource(R.string.chat_refreshing)
+                    } else {
+                        stringResource(R.string.chat_refresh)
+                    },
+                )
             }
         }
     }
@@ -1864,8 +1887,8 @@ private fun WideConversationLayout(
 
         if (selectedConversationId == null) {
             EmptyConversationPane(
-                title = "Select a conversation",
-                body = "Choose a chat to view messages.",
+                title = stringResource(R.string.chat_select_conversation_title),
+                body = stringResource(R.string.chat_select_conversation_body),
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight(),
@@ -2319,7 +2342,12 @@ private fun ConversationDetailContent(
                     ) {
                         TimelineBadge(label = conversation.participantsLabel)
                         if (conversation.chatType == FfiChatType.GROUP) {
-                            TimelineBadge(label = "${conversation.members.size} members")
+                            TimelineBadge(
+                                label = stringResource(
+                                    R.string.chat_group_members_badge,
+                                    conversation.members.size,
+                                ),
+                            )
                         }
                     }
                     Row(
@@ -2328,7 +2356,7 @@ private fun ConversationDetailContent(
                     ) {
                         if (conversation.canManageMembers && onManageMembers != null) {
                             TextButton(onClick = onManageMembers) {
-                                Text("Manage members")
+                                Text(stringResource(R.string.chat_manage_members))
                             }
                         }
                     }
@@ -2347,8 +2375,8 @@ private fun ConversationDetailContent(
 
             conversation == null -> {
                 EmptyConversationPane(
-                    title = "Conversation unavailable",
-                    body = errorMessage ?: "The local cache could not load this conversation.",
+                    title = stringResource(R.string.chat_conversation_unavailable_title),
+                    body = errorMessage ?: stringResource(R.string.chat_conversation_unavailable_body),
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
@@ -2403,8 +2431,8 @@ private fun ConversationTranscript(
 ) {
     if (conversation.messages.isEmpty()) {
         EmptyConversationPane(
-            title = "No messages yet",
-            body = "Send a message to start the conversation.",
+            title = stringResource(R.string.chat_no_messages_title),
+            body = stringResource(R.string.chat_no_messages_body),
             modifier = modifier,
         )
         return
@@ -2503,7 +2531,7 @@ private fun ConversationTranscript(
                                                 )
                                             }
                                             Spacer(Modifier.width(6.dp))
-                                            Text("Open")
+                                            Text(stringResource(R.string.chat_attachment_open))
                                         }
                                         OutlinedButton(
                                             onClick = { onShareAttachment(message.attachment) },
@@ -2514,7 +2542,7 @@ private fun ConversationTranscript(
                                                 contentDescription = null,
                                             )
                                             Spacer(Modifier.width(6.dp))
-                                            Text("Share")
+                                            Text(stringResource(R.string.chat_attachment_share))
                                         }
                                     }
                                 }
@@ -2577,7 +2605,7 @@ private fun QuickReactionSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = "Choose reaction",
+                text = stringResource(R.string.chat_choose_reaction),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -2701,7 +2729,7 @@ private fun ConversationComposerPane(
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.AttachFile,
-                        contentDescription = "Attach file",
+                        contentDescription = stringResource(R.string.chat_attach_file),
                     )
                 }
                 OutlinedTextField(
@@ -2734,7 +2762,7 @@ private fun ConversationComposerPane(
                     } else {
                         Icon(
                             imageVector = Icons.AutoMirrored.Rounded.Send,
-                            contentDescription = "Send message",
+                            contentDescription = stringResource(R.string.action_send),
                         )
                     }
                 }
@@ -2750,7 +2778,7 @@ private fun ConversationComposerPane(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
-                        text = "Sending unavailable",
+                        text = stringResource(R.string.chat_send_unavailable),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                     )

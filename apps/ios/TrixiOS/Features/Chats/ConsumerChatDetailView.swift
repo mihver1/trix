@@ -21,7 +21,7 @@ private enum ConsumerAttachmentImportError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .failedToLoadSelectedMedia:
-            return "Couldn't load the selected photo or video."
+            return TrixStrings.text(.chatConsumerAttachmentImportFailed)
         }
     }
 }
@@ -162,12 +162,12 @@ struct ConsumerChatDetailView: View {
                 Spacer()
 
                 if isLoadingSnapshot {
-                    ProgressView("Loading Conversation")
+                    ProgressView(TrixStrings.text(.chatLoadingConversation))
                 } else {
                     ContentUnavailableView(
-                        "Conversation Unavailable",
+                        TrixStrings.text(.chatConversationUnavailableTitle),
                         systemImage: "icloud.slash",
-                        description: Text(localErrorMessage ?? "The chat snapshot could not be loaded.")
+                        description: Text(localErrorMessage ?? TrixStrings.text(.chatSnapshotUnavailableBody))
                     )
                 }
 
@@ -230,19 +230,19 @@ struct ConsumerChatDetailView: View {
         }
         #if os(iOS)
         .confirmationDialog(
-            "Choose Attachment",
+            TrixStrings.text(.chatChooseAttachment),
             isPresented: $isShowingAttachmentOptions,
             titleVisibility: .visible
         ) {
-            Button("Photo or Video") {
+            Button(TrixStrings.text(.chatChoosePhotoOrVideo)) {
                 isImportingPhotoVideo = true
             }
 
-            Button("File") {
+            Button(TrixStrings.text(.chatChooseFile)) {
                 isImportingAttachment = true
             }
 
-            Button("Cancel", role: .cancel) {}
+            Button(TrixStrings.text(.actionCancel), role: .cancel) {}
         }
         .photosPicker(
             isPresented: $isImportingPhotoVideo,
@@ -352,7 +352,7 @@ struct ConsumerChatDetailView: View {
                             .font(.subheadline.weight(.medium))
                             .lineLimit(1)
 
-                        Text(selectedAttachment.fileSizeLabel ?? "Ready to send")
+                        Text(selectedAttachment.fileSizeLabel ?? TrixStrings.text(.chatAttachmentReadyToSend))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -393,7 +393,7 @@ struct ConsumerChatDetailView: View {
                 if selectedAttachment == nil {
                     ZStack {
                         TextField(
-                            "Message",
+                            TrixStrings.text(.chatMessagePlaceholder),
                             text: $composerText,
                             axis: .vertical
                         )
@@ -413,11 +413,11 @@ struct ConsumerChatDetailView: View {
                         isComposerFocused = true
                     }
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Message composer")
+                    .accessibilityLabel(TrixStrings.text(.chatMessagePlaceholder))
                     .accessibilityValue(composerText.isEmpty ? "Empty" : composerText)
                     .accessibilityIdentifier(TrixAccessibilityID.ChatDetail.messageBodyField)
                 } else {
-                    Text("Attachments send as secure files. Captions come next.")
+                    Text(TrixStrings.text(.chatAttachmentCaptionHint))
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -437,7 +437,7 @@ struct ConsumerChatDetailView: View {
                         .foregroundStyle(canSend ? consumerChatAccent : .secondary)
                 }
                 .disabled(!canSend || model.isLoading)
-                .accessibilityLabel("Send message")
+                .accessibilityLabel(TrixStrings.text(.actionSend))
                 .accessibilityValue(canSend ? "Ready" : "Disabled")
                 .accessibilityIdentifier(TrixAccessibilityID.ChatDetail.sendButton)
             }
@@ -461,6 +461,20 @@ struct ConsumerChatDetailView: View {
             latestSentText: latestSentText,
             downloadingAttachmentMessageId: downloadingAttachmentMessageId
         )
+    }
+
+    private var currentFixtureManifest: UITestFixtureManifest? {
+        UITestLaunchConfiguration.current.isEnabled ? UITestFixtureManifestStore.load() : nil
+    }
+
+    private func applyConversationSnapshot(_ loadedSnapshot: SafeConversationSnapshot) {
+        let renderPayload = ConsumerConversationTimelineBuilder.makeRenderPayload(
+            for: loadedSnapshot,
+            fixtureManifest: currentFixtureManifest
+        )
+        timelineItems = renderPayload.items
+        fixtureKindsByMessageId = renderPayload.fixtureKindsByMessageId
+        snapshot = loadedSnapshot
     }
 
     private var canSend: Bool {
@@ -493,6 +507,10 @@ struct ConsumerChatDetailView: View {
 
     private func loadSnapshot() async {
         isLoadingSnapshot = true
+        if snapshot == nil,
+           let cachedSnapshot = model.cachedConversationSnapshot(chatId: chatSummary.chatId) {
+            applyConversationSnapshot(cachedSnapshot)
+        }
         localErrorMessage = nil
 
         defer {
@@ -504,13 +522,7 @@ struct ConsumerChatDetailView: View {
                 baseURLString: serverBaseURL,
                 chatId: chatSummary.chatId
             )
-            let renderPayload = ConsumerConversationTimelineBuilder.makeRenderPayload(
-                for: loadedSnapshot,
-                fixtureManifest: UITestLaunchConfiguration.current.isEnabled ? UITestFixtureManifestStore.load() : nil
-            )
-            timelineItems = renderPayload.items
-            fixtureKindsByMessageId = renderPayload.fixtureKindsByMessageId
-            snapshot = loadedSnapshot
+            applyConversationSnapshot(loadedSnapshot)
             if loadedSnapshot.latestMessageId != nil {
                 _ = await model.acknowledgeConversationRead(
                     baseURLString: serverBaseURL,
@@ -520,8 +532,11 @@ struct ConsumerChatDetailView: View {
                 )
             }
         } catch {
-            fixtureKindsByMessageId = [:]
-            localErrorMessage = error.localizedDescription
+            localErrorMessage = TrixUserFacingText.conversationMessage(
+                error,
+                chatId: chatSummary.chatId,
+                historySyncJobs: model.dashboard?.historySyncJobs ?? []
+            )
         }
     }
 
@@ -564,7 +579,7 @@ struct ConsumerChatDetailView: View {
                 publishTypingState(for: "", force: true)
                 latestSentMessageId = response.messageId
                 latestSentText = trimmedText
-                activityMessage = "Message sent"
+                activityMessage = TrixStrings.text(.chatMessageSent)
                 await loadSnapshot()
             } else {
                 localErrorMessage = model.errorMessage
@@ -590,8 +605,12 @@ struct ConsumerChatDetailView: View {
                 publishTypingState(for: "", force: true)
                 self.selectedAttachment = nil
                 latestSentMessageId = outcome.createMessage.messageId
-                latestSentText = outcome.fileName ?? "attachment"
-                activityMessage = "Sent \(outcome.fileName ?? "attachment")"
+                let fallbackName = TrixStrings.text(.chatAttachmentDefaultName)
+                latestSentText = outcome.fileName ?? fallbackName
+                activityMessage = TrixStrings.text(
+                    .chatAttachmentSent,
+                    replacements: ["file_name": outcome.fileName ?? fallbackName]
+                )
                 await loadSnapshot()
             } else {
                 localErrorMessage = model.errorMessage
@@ -604,7 +623,7 @@ struct ConsumerChatDetailView: View {
             return
         }
         guard canReact else {
-            localErrorMessage = "Reaction is unavailable right now."
+            localErrorMessage = TrixStrings.text(.chatReactionUnavailable)
             return
         }
 
@@ -627,7 +646,9 @@ struct ConsumerChatDetailView: View {
                 emoji: trimmedEmoji,
                 removeExisting: removeExisting
             ) != nil {
-                activityMessage = removeExisting ? "Reaction removed" : "Reaction added"
+                activityMessage = removeExisting
+                    ? TrixStrings.text(.chatReactionRemoved)
+                    : TrixStrings.text(.chatReactionAdded)
                 await loadSnapshot()
             } else {
                 localErrorMessage = model.errorMessage
@@ -642,10 +663,10 @@ struct ConsumerChatDetailView: View {
                 selectedAttachment = try makeAttachmentDraft(fileURL: fileURL)
                 localErrorMessage = nil
             } catch {
-                localErrorMessage = error.localizedDescription
+                localErrorMessage = error.trixUserFacingMessage
             }
         case let .failure(error):
-            localErrorMessage = error.localizedDescription
+            localErrorMessage = error.trixUserFacingMessage
         }
     }
 
@@ -672,7 +693,7 @@ struct ConsumerChatDetailView: View {
 
         return ConsumerAttachmentDraft(
             fileURL: fileURL,
-            fileName: fileName.isEmpty ? "Attachment" : fileName,
+            fileName: fileName.isEmpty ? TrixStrings.text(.chatAttachmentDefaultName) : fileName,
             fileSizeLabel: fileSizeLabel ?? nil
         )
     }
@@ -694,7 +715,7 @@ struct ConsumerChatDetailView: View {
         } catch is CancellationError {
             return
         } catch {
-            localErrorMessage = error.localizedDescription
+            localErrorMessage = error.trixUserFacingMessage
         }
     }
 
@@ -710,11 +731,11 @@ struct ConsumerChatDetailView: View {
         }) ?? item.supportedContentTypes.first ?? .data
         let baseName: String
         if contentType.conforms(to: .movie) {
-            baseName = "Video"
+            baseName = TrixStrings.text(.chatVideoDefaultName)
         } else if contentType.conforms(to: .image) {
-            baseName = "Photo"
+            baseName = TrixStrings.text(.chatPhotoDefaultName)
         } else {
-            baseName = "Attachment"
+            baseName = TrixStrings.text(.chatAttachmentDefaultName)
         }
         let fileExtension = contentType.preferredFilenameExtension ?? defaultAttachmentExtension(for: contentType)
         let tempFileURL = FileManager.default.temporaryDirectory
@@ -747,7 +768,10 @@ struct ConsumerChatDetailView: View {
 
         downloadingAttachmentMessageId = message.id
         localErrorMessage = nil
-        activityMessage = "Downloading \(message.primaryText)"
+        activityMessage = TrixStrings.text(
+            .chatDownloadingAttachment,
+            replacements: ["title": message.primaryText]
+        )
 
         Task {
             if let downloadedAttachment = await model.downloadAttachment(
@@ -755,7 +779,10 @@ struct ConsumerChatDetailView: View {
                 attachment: attachmentBody
             ) {
                 self.downloadedAttachment = downloadedAttachment
-                activityMessage = "Ready to share \(downloadedAttachment.fileName)"
+                activityMessage = TrixStrings.text(
+                    .chatAttachmentReadyToShare,
+                    replacements: ["title": downloadedAttachment.fileName]
+                )
             } else {
                 localErrorMessage = model.errorMessage
                 activityMessage = nil
@@ -1052,9 +1079,9 @@ private struct ConsumerConversationTimelineView: View, Equatable {
     private func timelineRows() -> some View {
         if renderState.timelineItems.isEmpty {
             ContentUnavailableView(
-                "No Messages Yet",
+                TrixStrings.text(.chatNoMessagesConsumerTitle),
                 systemImage: "bubble.left.and.text.bubble.right",
-                description: Text("Start the conversation. New messages will appear here in a normal chat timeline.")
+                description: Text(TrixStrings.text(.chatNoMessagesConsumerBody))
             )
             .padding(.top, 96)
         } else {
@@ -1346,7 +1373,7 @@ private struct ConsumerMessageBubble: View {
             isReactionPickerPresented = true
         }
         .confirmationDialog(
-            "Choose reaction",
+            TrixStrings.text(.chatChooseReaction),
             isPresented: $isReactionPickerPresented,
             titleVisibility: .visible
         ) {
@@ -1480,7 +1507,9 @@ private struct ConsumerAttachmentBubbleContent: View {
     }
 
     private var detailLabel: String {
-        isDownloading ? "Decrypting secure attachment..." : (message.secondaryText ?? "Tap to open")
+        isDownloading
+            ? TrixStrings.text(.chatAttachmentDecrypting)
+            : (message.secondaryText ?? TrixStrings.text(.chatAttachmentTapToOpen))
     }
 
     private var attachmentIconName: String {

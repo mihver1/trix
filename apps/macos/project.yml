@@ -20,11 +20,13 @@ targets:
     deploymentTarget: "14.0"
     preBuildScripts:
       - script: |
+          ruby "$SRCROOT/../../scripts/generate_strings.rb"
           bash "$SRCROOT/scripts/generate-trix-core-bridge.sh"
           bash "$SRCROOT/scripts/build-trix-core-universal.sh"
-        name: Generate trix-core macOS bridge
+        name: Generate macOS strings and trix-core bridge
         basedOnDependencyAnalysis: false
         outputFiles:
+          - $(SRCROOT)/Sources/TrixMac/Generated/TrixStrings.generated.swift
           - $(SRCROOT)/Sources/TrixMac/Generated/trix_core.swift
           - $(SRCROOT)/Sources/trix_coreFFI/trix_coreFFI.h
           - $(SRCROOT)/Sources/trix_coreFFI/module.modulemap
