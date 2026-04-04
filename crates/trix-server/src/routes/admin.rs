@@ -14,6 +14,7 @@ use crate::{
         UpdateAdminRuntimeSettingsInput,
     },
     error::AppError,
+    routes::{admin_debug_metrics, admin_feature_flags},
     state::AppState,
 };
 use trix_types::{
@@ -26,6 +27,8 @@ use trix_types::{
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .merge(admin_feature_flags::router())
+        .merge(admin_debug_metrics::router())
         .route("/session", post(create_session).delete(delete_session))
         .route("/overview", get(overview))
         .route(
@@ -143,6 +146,7 @@ async fn overview(
         disabled_user_count: stats.disabled_user_count,
         admin_username: principal.username,
         admin_session_expires_at_unix: principal.expires_at_unix,
+        debug_metrics_enabled: state.config.debug_metrics_enabled,
     }))
 }
 
@@ -495,6 +499,7 @@ mod tests {
             apns_key_id: None,
             apns_topic: None,
             apns_private_key_pem: None,
+            debug_metrics_enabled: false,
         };
 
         let auth = AuthManager::new(&config.jwt_signing_key);
@@ -566,6 +571,7 @@ mod tests {
             apns_key_id: None,
             apns_topic: None,
             apns_private_key_pem: None,
+            debug_metrics_enabled: false,
         };
 
         let auth = AuthManager::new(&config.jwt_signing_key);

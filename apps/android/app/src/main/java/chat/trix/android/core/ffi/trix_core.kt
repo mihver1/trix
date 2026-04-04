@@ -962,6 +962,8 @@ external fun uniffi_trix_core_checksum_method_ffimessengerclient_create_conversa
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_create_link_device_intent(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_feature_flags_snapshot(
+): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_attachment(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_messages(
@@ -969,6 +971,8 @@ external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_messages(
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events_realtime(
+): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_is_feature_enabled(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_list_conversations(
 ): Short
@@ -981,6 +985,8 @@ external fun uniffi_trix_core_checksum_method_ffimessengerclient_load_snapshot(
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_load_snapshot_with_remote_sync(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_mark_read(
+): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_refresh_feature_flags(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_remove_conversation_devices(
 ): Short
@@ -1438,6 +1444,8 @@ external fun uniffi_trix_core_fn_method_ffimessengerclient_create_conversation(`
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_create_link_device_intent(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_feature_flags_snapshot(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_get_attachment(`ptr`: Long,`attachmentRef`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_get_messages(`ptr`: Long,`conversationId`: RustBuffer.ByValue,`pageCursor`: RustBuffer.ByValue,`limit`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1446,6 +1454,8 @@ external fun uniffi_trix_core_fn_method_ffimessengerclient_get_new_events(`ptr`:
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_get_new_events_realtime(`ptr`: Long,`checkpoint`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_is_feature_enabled(`ptr`: Long,`key`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
 external fun uniffi_trix_core_fn_method_ffimessengerclient_list_conversations(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_list_devices(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -1457,6 +1467,8 @@ external fun uniffi_trix_core_fn_method_ffimessengerclient_load_snapshot(`ptr`: 
 external fun uniffi_trix_core_fn_method_ffimessengerclient_load_snapshot_with_remote_sync(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_mark_read(`ptr`: Long,`conversationId`: RustBuffer.ByValue,`throughMessageId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_refresh_feature_flags(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_remove_conversation_devices(`ptr`: Long,`request`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -2105,6 +2117,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_create_link_device_intent() != 5659.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_feature_flags_snapshot() != 17993.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_get_attachment() != 9506.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -2115,6 +2130,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events_realtime() != 51892.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_is_feature_enabled() != 0.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_list_conversations() != 14380.toShort()) {
@@ -2133,6 +2151,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_mark_read() != 17060.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_refresh_feature_flags() != 20532.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_remove_conversation_devices() != 54965.toShort()) {
@@ -4426,6 +4447,8 @@ public interface FfiMessengerClientInterface {
     
     fun `createLinkDeviceIntent`(): FfiMessengerDeviceLinkIntent
     
+    fun `featureFlagsSnapshot`(): FeatureFlagsSnapshot
+    
     fun `getAttachment`(`attachmentRef`: kotlin.String): FfiMessengerAttachmentFile
     
     fun `getMessages`(`conversationId`: kotlin.String, `pageCursor`: kotlin.String?, `limit`: kotlin.UInt?): FfiMessengerMessagePage
@@ -4433,6 +4456,8 @@ public interface FfiMessengerClientInterface {
     fun `getNewEvents`(`checkpoint`: kotlin.String?): FfiMessengerEventBatch
     
     fun `getNewEventsRealtime`(`checkpoint`: kotlin.String?): FfiMessengerEventBatch
+    
+    fun `isFeatureEnabled`(`key`: kotlin.String): kotlin.Boolean
     
     fun `listConversations`(): List<FfiMessengerConversationSummary>
     
@@ -4445,6 +4470,8 @@ public interface FfiMessengerClientInterface {
     fun `loadSnapshotWithRemoteSync`(): FfiMessengerSnapshot
     
     fun `markRead`(`conversationId`: kotlin.String, `throughMessageId`: kotlin.String?): FfiMessengerReadStateResult
+    
+    fun `refreshFeatureFlags`(): FeatureFlagsSnapshot
     
     fun `removeConversationDevices`(`request`: FfiMessengerUpdateConversationDevicesRequest): FfiMessengerConversationMutationResult
     
@@ -4641,6 +4668,20 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
     
 
     
+    @Throws(FfiMessengerException::class)override fun `featureFlagsSnapshot`(): FeatureFlagsSnapshot {
+            return FfiConverterTypeFeatureFlagsSnapshot.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_feature_flags_snapshot(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(FfiMessengerException::class)override fun `getAttachment`(`attachmentRef`: kotlin.String): FfiMessengerAttachmentFile {
             return FfiConverterTypeFfiMessengerAttachmentFile.lift(
     callWithHandle {
@@ -4690,6 +4731,19 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
     UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_get_new_events_realtime(
         it,
         FfiConverterOptionalString.lower(`checkpoint`),_status)
+}
+    }
+    )
+    }
+    
+
+    override fun `isFeatureEnabled`(`key`: kotlin.String): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_is_feature_enabled(
+        it,
+        FfiConverterString.lower(`key`),_status)
 }
     }
     )
@@ -4774,6 +4828,20 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
     UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_mark_read(
         it,
         FfiConverterString.lower(`conversationId`),FfiConverterOptionalString.lower(`throughMessageId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiMessengerException::class)override fun `refreshFeatureFlags`(): FeatureFlagsSnapshot {
+            return FfiConverterTypeFeatureFlagsSnapshot.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_refresh_feature_flags(
+        it,
+        _status)
 }
     }
     )
@@ -8056,6 +8124,44 @@ public object FfiConverterTypeFfiSyncCoordinator: FfiConverter<FfiSyncCoordinato
 
     override fun write(value: FfiSyncCoordinator, buf: ByteBuffer) {
         buf.putLong(lower(value))
+    }
+}
+
+
+
+data class FeatureFlagsSnapshot (
+    var `revision`: kotlin.ULong
+    , 
+    var `flags`: Map<kotlin.String, kotlin.Boolean>
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFeatureFlagsSnapshot: FfiConverterRustBuffer<FeatureFlagsSnapshot> {
+    override fun read(buf: ByteBuffer): FeatureFlagsSnapshot {
+        return FeatureFlagsSnapshot(
+            FfiConverterULong.read(buf),
+            FfiConverterMapStringBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FeatureFlagsSnapshot) = (
+            FfiConverterULong.allocationSize(value.`revision`) +
+            FfiConverterMapStringBoolean.allocationSize(value.`flags`)
+    )
+
+    override fun write(value: FeatureFlagsSnapshot, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`revision`, buf)
+            FfiConverterMapStringBoolean.write(value.`flags`, buf)
     }
 }
 
@@ -17383,6 +17489,45 @@ public object FfiConverterSequenceTypeFfiSyncChatCursor: FfiConverterRustBuffer<
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeFfiSyncChatCursor.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterMapStringBoolean: FfiConverterRustBuffer<Map<kotlin.String, kotlin.Boolean>> {
+    override fun read(buf: ByteBuffer): Map<kotlin.String, kotlin.Boolean> {
+        val len = buf.getInt()
+        return buildMap<kotlin.String, kotlin.Boolean>(len) {
+            repeat(len) {
+                val k = FfiConverterString.read(buf)
+                val v = FfiConverterBoolean.read(buf)
+                this[k] = v
+            }
+        }
+    }
+
+    override fun allocationSize(value: Map<kotlin.String, kotlin.Boolean>): ULong {
+        val spaceForMapSize = 4UL
+        val spaceForChildren = value.map { (k, v) ->
+            FfiConverterString.allocationSize(k) +
+            FfiConverterBoolean.allocationSize(v)
+        }.sum()
+        return spaceForMapSize + spaceForChildren
+    }
+
+    override fun write(value: Map<kotlin.String, kotlin.Boolean>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        // The parens on `(k, v)` here ensure we're calling the right method,
+        // which is important for compatibility with older android devices.
+        // Ref https://blog.danlew.net/2017/03/16/kotlin-puzzler-whose-line-is-it-anyways/
+        value.forEach { (k, v) ->
+            FfiConverterString.write(k, buf)
+            FfiConverterBoolean.write(v, buf)
         }
     }
 } fun `ffiAccountBootstrapPayload`(`transportPubkey`: kotlin.ByteArray, `credentialIdentity`: kotlin.ByteArray): kotlin.ByteArray {

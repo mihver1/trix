@@ -249,7 +249,8 @@ private final class RecordingURLProtocol: URLProtocol {
       "user_count": 0,
       "disabled_user_count": 0,
       "admin_username": "admin",
-      "admin_session_expires_at_unix": 9999999999
+      "admin_session_expires_at_unix": 9999999999,
+      "debug_metrics_enabled": false
     }
     """
 }

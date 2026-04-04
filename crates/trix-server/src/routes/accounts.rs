@@ -1,26 +1,33 @@
 use axum::{
     Json, Router,
     extract::{Json as ExtractJson, Path, Query, State},
-    http::HeaderMap,
+    http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
 use base64::{Engine as _, engine::general_purpose};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::Deserialize;
+use uuid::Uuid;
 
 use crate::{
     db::CreateAccountInput, error::AppError, signatures::account_bootstrap_message, state::AppState,
 };
 use trix_types::{
-    AccountDirectoryResponse, AccountId, AccountKeyPackagesResponse, AccountProfileResponse,
-    CreateAccountRequest, CreateAccountResponse, DeviceId, DirectoryAccountSummary,
-    ReservedKeyPackage, UpdateAccountProfileRequest,
+    AccountDebugMetricsStatusResponse, AccountDirectoryResponse, AccountFeatureFlagsResponse,
+    AccountId, AccountKeyPackagesResponse, AccountProfileResponse, CreateAccountRequest,
+    CreateAccountResponse, DeviceId, DirectoryAccountSummary, ReservedKeyPackage,
+    SubmitDebugMetricsRequest, UpdateAccountProfileRequest,
 };
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", post(create_account))
         .route("/me", get(get_me).patch(update_me))
+        .route("/me/feature-flags", get(get_my_feature_flags))
+        .route(
+            "/me/debug/metrics",
+            get(get_debug_metrics_status).post(submit_debug_metrics),
+        )
         .route("/directory", get(search_directory))
         .route("/{account_id}", get(get_account))
         .route("/{account_id}/key-packages", get(get_account_key_packages))
@@ -132,6 +139,89 @@ async fn get_me(
         device_id: trix_types::DeviceId(profile.device_id),
         device_status: profile.device_status,
     }))
+}
+
+async fn get_my_feature_flags(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<AccountFeatureFlagsResponse>, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+    let platform = state
+        .db
+        .get_device_platform(principal.device_id)
+        .await?
+        .unwrap_or_else(|| "unknown".to_owned());
+    let (revision, flags) = state
+        .db
+        .resolve_feature_flags_for_device(
+            principal.account_id,
+            principal.device_id,
+            &platform,
+        )
+        .await?;
+    Ok(Json(AccountFeatureFlagsResponse { revision, flags }))
+}
+
+async fn get_debug_metrics_status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<AccountDebugMetricsStatusResponse>, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+    if !state.config.debug_metrics_enabled {
+        return Err(AppError::not_found("not found"));
+    }
+    let row = state
+        .db
+        .get_active_debug_metric_session_for_device(principal.account_id, principal.device_id)
+        .await?;
+    Ok(Json(match row {
+        Some(s) => AccountDebugMetricsStatusResponse {
+            active: true,
+            session_id: Some(s.session_id.to_string()),
+            user_visible_message: Some(s.user_visible_message),
+        },
+        None => AccountDebugMetricsStatusResponse {
+            active: false,
+            session_id: None,
+            user_visible_message: None,
+        },
+    }))
+}
+
+async fn submit_debug_metrics(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ExtractJson(body): ExtractJson<SubmitDebugMetricsRequest>,
+) -> Result<StatusCode, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+    if !state.config.debug_metrics_enabled {
+        return Err(AppError::not_found("not found"));
+    }
+    state
+        .enforce_rate_limit(
+            "debug_metrics_post",
+            principal.device_id.to_string(),
+            60,
+        )
+        .await?;
+
+    let session_id = Uuid::parse_str(body.session_id.trim())
+        .map_err(|_| AppError::bad_request("invalid session_id"))?;
+
+    if !body.payload.is_object() {
+        return Err(AppError::bad_request("payload must be a JSON object"));
+    }
+    let ser = serde_json::to_vec(&body.payload)
+        .map_err(|e| AppError::bad_request(format!("invalid payload: {e}")))?;
+    if ser.len() > 65_536 {
+        return Err(AppError::bad_request("payload too large"));
+    }
+
+    state
+        .db
+        .insert_debug_metric_batch(session_id, principal.device_id, body.payload)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn update_me(

@@ -26,6 +26,10 @@ struct AdminWorkspaceView: View {
                     ServerSettingsView(model: model)
                 case .users:
                     UserListView(model: model)
+                case .featureFlags:
+                    FeatureFlagsWorkspaceView(model: model)
+                case .debugMetrics:
+                    DebugMetricsWorkspaceView(model: model)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

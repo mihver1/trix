@@ -13,6 +13,8 @@ pub enum AppError {
     #[error("{0}")]
     Unauthorized(String),
     #[error("{0}")]
+    Forbidden(String),
+    #[error("{0}")]
     NotFound(String),
     #[error("{0}")]
     Conflict(String),
@@ -34,6 +36,10 @@ impl AppError {
 
     pub fn unauthorized(message: impl Into<String>) -> Self {
         Self::Unauthorized(message.into())
+    }
+
+    pub fn forbidden(message: impl Into<String>) -> Self {
+        Self::Forbidden(message.into())
     }
 
     pub fn not_found(message: impl Into<String>) -> Self {
@@ -67,6 +73,7 @@ impl IntoResponse for AppError {
             Self::Unauthorized(message) => {
                 (StatusCode::UNAUTHORIZED, "unauthorized", message, None)
             }
+            Self::Forbidden(message) => (StatusCode::FORBIDDEN, "forbidden", message, None),
             Self::NotFound(message) => (StatusCode::NOT_FOUND, "not_found", message, None),
             Self::Conflict(message) => (StatusCode::CONFLICT, "conflict", message, None),
             Self::Internal(message) => (

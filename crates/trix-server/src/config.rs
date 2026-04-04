@@ -33,6 +33,8 @@ pub struct AppConfig {
     pub apns_key_id: Option<String>,
     pub apns_topic: Option<String>,
     pub apns_private_key_pem: Option<String>,
+    /// When true, exposes debug metric ingestion and admin views (TRIX_DEBUG_METRICS_ENABLED).
+    pub debug_metrics_enabled: bool,
 }
 
 impl AppConfig {
@@ -134,6 +136,7 @@ impl AppConfig {
                 .ok()
                 .map(normalize_optional_env_value),
             apns_private_key_pem: apns_private_key_pem.map(normalize_optional_env_value),
+            debug_metrics_enabled: env_truthy("TRIX_DEBUG_METRICS_ENABLED"),
         };
 
         config.validate()?;
@@ -236,6 +239,16 @@ fn normalize_optional_env_value(value: String) -> String {
     }
 }
 
+fn env_truthy(key: &str) -> bool {
+    match env::var(key) {
+        Ok(value) => {
+            let trimmed = value.trim().to_ascii_lowercase();
+            matches!(trimmed.as_str(), "1" | "true" | "yes" | "on")
+        }
+        Err(_) => false,
+    }
+}
+
 fn env_csv(key: &str) -> Vec<String> {
     env::var(key)
         .ok()
@@ -287,6 +300,7 @@ mod tests {
             apns_key_id: None,
             apns_topic: None,
             apns_private_key_pem: None,
+            debug_metrics_enabled: false,
         }
     }
 

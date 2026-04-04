@@ -6,10 +6,12 @@ use std::{
 
 use anyhow::{Context, Result};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::{DateTime, Utc};
 use rand::RngCore;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use sqlx::{PgPool, Postgres, Row, postgres::PgPoolOptions};
+use sqlx::{PgPool, Postgres, QueryBuilder, Row, postgres::PgPoolOptions};
+use sqlx::types::Json;
 use uuid::Uuid;
 
 use crate::error::AppError;
@@ -483,6 +485,102 @@ pub struct UpdateAdminRuntimeSettingsInput {
 pub struct AdminAccountStats {
     pub user_count: u64,
     pub disabled_user_count: u64,
+}
+
+// --- Feature flags ---
+
+#[derive(Debug, Clone)]
+pub struct FeatureFlagDefinitionRow {
+    pub flag_key: String,
+    pub description: String,
+    pub default_enabled: bool,
+    pub deleted_at_unix: Option<u64>,
+    pub updated_at_unix: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct FeatureFlagOverrideRow {
+    pub override_id: Uuid,
+    pub flag_key: String,
+    pub scope: String,
+    pub platform: Option<String>,
+    pub account_id: Option<Uuid>,
+    pub device_id: Option<Uuid>,
+    pub enabled: bool,
+    pub expires_at_unix: Option<u64>,
+    pub updated_at_unix: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ListFeatureFlagOverridesInput {
+    pub flag_key: Option<String>,
+    pub scope: Option<String>,
+    pub platform: Option<String>,
+    pub account_id: Option<Uuid>,
+    pub device_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateFeatureFlagDefinitionInput {
+    pub flag_key: String,
+    pub description: String,
+    pub default_enabled: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PatchFeatureFlagDefinitionInput {
+    pub description: Option<String>,
+    pub default_enabled: Option<bool>,
+    pub deleted_at_unix: Option<Option<u64>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateFeatureFlagOverrideInput {
+    pub flag_key: String,
+    pub scope: String,
+    pub platform: Option<String>,
+    pub account_id: Option<Uuid>,
+    pub device_id: Option<Uuid>,
+    pub enabled: bool,
+    pub expires_at_unix: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PatchFeatureFlagOverrideInput {
+    pub enabled: Option<bool>,
+    pub expires_at_unix: Option<Option<u64>>,
+}
+
+// --- Debug metrics (opt-in server feature) ---
+
+#[derive(Debug, Clone)]
+pub struct DebugMetricSessionRow {
+    pub session_id: Uuid,
+    pub account_id: Uuid,
+    pub device_id: Option<Uuid>,
+    pub user_visible_message: String,
+    pub created_at_unix: u64,
+    pub expires_at_unix: u64,
+    pub revoked_at_unix: Option<u64>,
+    pub created_by_admin: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateDebugMetricSessionInput {
+    pub account_id: Uuid,
+    pub device_id: Option<Uuid>,
+    pub user_visible_message: String,
+    pub ttl_seconds: u64,
+    pub created_by_admin: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DebugMetricBatchRow {
+    pub batch_id: Uuid,
+    pub session_id: Uuid,
+    pub device_id: Uuid,
+    pub received_at_unix: u64,
+    pub payload: Value,
 }
 
 #[derive(Debug, Clone)]
@@ -6911,9 +7009,804 @@ fn map_db_error(err: sqlx::Error) -> AppError {
         if db_err.constraint() == Some("chats_dm_member_pair_key_idx") {
             return AppError::conflict("dm chat already exists");
         }
+
+        if db_err.constraint() == Some("feature_flag_definitions_pkey") {
+            return AppError::conflict("feature flag key already exists");
+        }
+
+        if matches!(
+            db_err.constraint(),
+            Some(
+                "feature_flag_overrides_global_uniq"
+                    | "feature_flag_overrides_platform_uniq"
+                    | "feature_flag_overrides_account_uniq"
+                    | "feature_flag_overrides_device_uniq"
+            ),
+        ) {
+            return AppError::conflict(format!(
+                "conflicting feature flag override ({})",
+                db_err.constraint().unwrap_or("unique")
+            ));
+        }
     }
 
     AppError::internal(format!("database error: {err}"))
+}
+
+impl Database {
+    pub async fn get_feature_flags_revision(&self) -> Result<u64, AppError> {
+        let revision: i64 = sqlx::query_scalar(
+            r#"SELECT revision FROM feature_flags_revision WHERE singleton = TRUE"#,
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        u64::try_from(revision).map_err(|_| AppError::internal("feature flags revision overflow"))
+    }
+
+    pub async fn resolve_feature_flags_for_device(
+        &self,
+        account_id: Uuid,
+        device_id: Uuid,
+        platform: &str,
+    ) -> Result<(u64, BTreeMap<String, bool>), AppError> {
+        let revision = self.get_feature_flags_revision().await?;
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                d.flag_key,
+                COALESCE(
+                    dev.enabled,
+                    acc.enabled,
+                    plat.enabled,
+                    glob.enabled,
+                    d.default_enabled
+                ) AS enabled
+            FROM feature_flag_definitions d
+            LEFT JOIN feature_flag_overrides dev
+                ON dev.flag_key = d.flag_key
+               AND dev.scope = 'device'::feature_flag_scope
+               AND dev.device_id = $2
+               AND dev.account_id = $1
+               AND (dev.expires_at IS NULL OR dev.expires_at > now())
+            LEFT JOIN feature_flag_overrides acc
+                ON acc.flag_key = d.flag_key
+               AND acc.scope = 'account'::feature_flag_scope
+               AND acc.account_id = $1
+               AND (acc.expires_at IS NULL OR acc.expires_at > now())
+            LEFT JOIN feature_flag_overrides plat
+                ON plat.flag_key = d.flag_key
+               AND plat.scope = 'platform'::feature_flag_scope
+               AND plat.platform = $3
+               AND (plat.expires_at IS NULL OR plat.expires_at > now())
+            LEFT JOIN feature_flag_overrides glob
+                ON glob.flag_key = d.flag_key
+               AND glob.scope = 'global'::feature_flag_scope
+               AND (glob.expires_at IS NULL OR glob.expires_at > now())
+            WHERE d.deleted_at IS NULL
+            ORDER BY d.flag_key ASC
+            "#,
+        )
+        .bind(account_id)
+        .bind(device_id)
+        .bind(platform)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let mut flags = BTreeMap::new();
+        for row in rows {
+            let key = row_text(&row, "flag_key")?;
+            let enabled = row_bool(&row, "enabled")?;
+            flags.insert(key, enabled);
+        }
+        Ok((revision, flags))
+    }
+
+    pub async fn list_feature_flag_definitions_admin(&self) -> Result<Vec<FeatureFlagDefinitionRow>, AppError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                flag_key,
+                description,
+                default_enabled,
+                EXTRACT(EPOCH FROM deleted_at)::bigint AS deleted_at_unix,
+                EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix
+            FROM feature_flag_definitions
+            ORDER BY flag_key ASC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(FeatureFlagDefinitionRow {
+                    flag_key: row_text(&row, "flag_key")?,
+                    description: row_text(&row, "description")?,
+                    default_enabled: row_bool(&row, "default_enabled")?,
+                    deleted_at_unix: row
+                        .try_get::<Option<i64>, _>("deleted_at_unix")
+                        .map_err(|e| AppError::internal(format!("deleted_at_unix: {e}")))?
+                        .and_then(|v| u64::try_from(v).ok()),
+                    updated_at_unix: row_u64_from_i64(&row, "updated_at_unix")?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn create_feature_flag_definition(
+        &self,
+        input: &CreateFeatureFlagDefinitionInput,
+    ) -> Result<FeatureFlagDefinitionRow, AppError> {
+        sqlx::query(
+            r#"
+            INSERT INTO feature_flag_definitions (flag_key, description, default_enabled)
+            VALUES ($1, $2, $3)
+            "#,
+        )
+        .bind(&input.flag_key)
+        .bind(&input.description)
+        .bind(input.default_enabled)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        self.get_feature_flag_definition_admin(&input.flag_key)
+            .await?
+            .ok_or_else(|| AppError::internal("feature flag definition missing after insert"))
+    }
+
+    pub async fn get_feature_flag_definition_admin(
+        &self,
+        flag_key: &str,
+    ) -> Result<Option<FeatureFlagDefinitionRow>, AppError> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                flag_key,
+                description,
+                default_enabled,
+                EXTRACT(EPOCH FROM deleted_at)::bigint AS deleted_at_unix,
+                EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix
+            FROM feature_flag_definitions
+            WHERE flag_key = $1
+            "#,
+        )
+        .bind(flag_key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        Ok(Some(FeatureFlagDefinitionRow {
+            flag_key: row_text(&row, "flag_key")?,
+            description: row_text(&row, "description")?,
+            default_enabled: row_bool(&row, "default_enabled")?,
+            deleted_at_unix: row
+                .try_get::<Option<i64>, _>("deleted_at_unix")
+                .map_err(|e| AppError::internal(format!("deleted_at_unix: {e}")))?
+                .and_then(|v| u64::try_from(v).ok()),
+            updated_at_unix: row_u64_from_i64(&row, "updated_at_unix")?,
+        }))
+    }
+
+    pub async fn patch_feature_flag_definition(
+        &self,
+        flag_key: &str,
+        patch: &PatchFeatureFlagDefinitionInput,
+    ) -> Result<FeatureFlagDefinitionRow, AppError> {
+        let current = self
+            .get_feature_flag_definition_admin(flag_key)
+            .await?
+            .ok_or_else(|| AppError::not_found("feature flag definition not found"))?;
+
+        let description = patch
+            .description
+            .clone()
+            .unwrap_or_else(|| current.description.clone());
+        let default_enabled = patch
+            .default_enabled
+            .unwrap_or(current.default_enabled);
+        let deleted_at: Option<DateTime<Utc>> = match &patch.deleted_at_unix {
+            None => current.deleted_at_unix.and_then(|unix| {
+                DateTime::<Utc>::from_timestamp(i64::try_from(unix).ok()?, 0)
+            }),
+            Some(None) => None,
+            Some(Some(unix)) => Some(
+                DateTime::<Utc>::from_timestamp(
+                    i64::try_from(*unix)
+                        .map_err(|_| AppError::bad_request("deleted_at_unix out of range"))?,
+                    0,
+                )
+                .ok_or_else(|| AppError::bad_request("invalid deleted_at_unix"))?,
+            ),
+        };
+
+        sqlx::query(
+            r#"
+            UPDATE feature_flag_definitions
+            SET
+                description = $2,
+                default_enabled = $3,
+                deleted_at = $4,
+                updated_at = now()
+            WHERE flag_key = $1
+            "#,
+        )
+        .bind(flag_key)
+        .bind(&description)
+        .bind(default_enabled)
+        .bind(deleted_at)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        self.get_feature_flag_definition_admin(flag_key)
+            .await?
+            .ok_or_else(|| AppError::not_found("feature flag definition not found"))
+    }
+
+    pub async fn list_feature_flag_overrides_admin(
+        &self,
+        input: &ListFeatureFlagOverridesInput,
+    ) -> Result<Vec<FeatureFlagOverrideRow>, AppError> {
+        let mut qb = QueryBuilder::new(
+            r#"
+            SELECT
+                override_id,
+                flag_key,
+                scope::text AS scope,
+                platform,
+                account_id,
+                device_id,
+                enabled,
+                EXTRACT(EPOCH FROM expires_at)::bigint AS expires_at_unix,
+                EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix
+            FROM feature_flag_overrides
+            WHERE 1 = 1
+            "#,
+        );
+        if let Some(ref k) = input.flag_key {
+            qb.push(" AND flag_key = ");
+            qb.push_bind(k);
+        }
+        if let Some(ref s) = input.scope {
+            qb.push(" AND scope = ");
+            qb.push_bind(s);
+            qb.push("::feature_flag_scope");
+        }
+        if let Some(ref p) = input.platform {
+            qb.push(" AND platform = ");
+            qb.push_bind(p);
+        }
+        if let Some(a) = input.account_id {
+            qb.push(" AND account_id = ");
+            qb.push_bind(a);
+        }
+        if let Some(d) = input.device_id {
+            qb.push(" AND device_id = ");
+            qb.push_bind(d);
+        }
+        qb.push(" ORDER BY flag_key ASC, scope ASC, override_id ASC");
+
+        let rows = qb.build().fetch_all(&self.pool).await.map_err(map_db_error)?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(FeatureFlagOverrideRow {
+                    override_id: row_uuid(&row, "override_id")?,
+                    flag_key: row_text(&row, "flag_key")?,
+                    scope: row_text(&row, "scope")?,
+                    platform: row_optional_text(&row, "platform")?,
+                    account_id: row_optional_uuid(&row, "account_id")?,
+                    device_id: row_optional_uuid(&row, "device_id")?,
+                    enabled: row_bool(&row, "enabled")?,
+                    expires_at_unix: row
+                        .try_get::<Option<i64>, _>("expires_at_unix")
+                        .map_err(|e| AppError::internal(format!("expires_at_unix: {e}")))?
+                        .and_then(|v| u64::try_from(v).ok()),
+                    updated_at_unix: row_u64_from_i64(&row, "updated_at_unix")?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn create_feature_flag_override(
+        &self,
+        input: &CreateFeatureFlagOverrideInput,
+    ) -> Result<FeatureFlagOverrideRow, AppError> {
+        let expires_at: Option<DateTime<Utc>> = match input.expires_at_unix {
+            Some(unix) => Some(
+                DateTime::<Utc>::from_timestamp(
+                    i64::try_from(unix)
+                        .map_err(|_| AppError::bad_request("expires_at_unix out of range"))?,
+                    0,
+                )
+                .ok_or_else(|| AppError::bad_request("invalid expires_at_unix"))?,
+            ),
+            None => None,
+        };
+
+        let row = sqlx::query(
+            r#"
+            INSERT INTO feature_flag_overrides (
+                flag_key, scope, platform, account_id, device_id, enabled, expires_at
+            )
+            VALUES (
+                $1,
+                $2::feature_flag_scope,
+                $3,
+                $4,
+                $5,
+                $6,
+                $7
+            )
+            RETURNING
+                override_id,
+                flag_key,
+                scope::text AS scope,
+                platform,
+                account_id,
+                device_id,
+                enabled,
+                EXTRACT(EPOCH FROM expires_at)::bigint AS expires_at_unix,
+                EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix
+            "#,
+        )
+        .bind(&input.flag_key)
+        .bind(&input.scope)
+        .bind(input.platform.as_deref())
+        .bind(input.account_id)
+        .bind(input.device_id)
+        .bind(input.enabled)
+        .bind(expires_at)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(FeatureFlagOverrideRow {
+            override_id: row_uuid(&row, "override_id")?,
+            flag_key: row_text(&row, "flag_key")?,
+            scope: row_text(&row, "scope")?,
+            platform: row_optional_text(&row, "platform")?,
+            account_id: row_optional_uuid(&row, "account_id")?,
+            device_id: row_optional_uuid(&row, "device_id")?,
+            enabled: row_bool(&row, "enabled")?,
+            expires_at_unix: row
+                .try_get::<Option<i64>, _>("expires_at_unix")
+                .map_err(|e| AppError::internal(format!("expires_at_unix: {e}")))?
+                .and_then(|v| u64::try_from(v).ok()),
+            updated_at_unix: row_u64_from_i64(&row, "updated_at_unix")?,
+        })
+    }
+
+    pub async fn patch_feature_flag_override(
+        &self,
+        override_id: Uuid,
+        patch: &PatchFeatureFlagOverrideInput,
+    ) -> Result<FeatureFlagOverrideRow, AppError> {
+        let current = sqlx::query(
+            r#"
+            SELECT
+                override_id,
+                flag_key,
+                scope::text AS scope,
+                platform,
+                account_id,
+                device_id,
+                enabled,
+                EXTRACT(EPOCH FROM expires_at)::bigint AS expires_at_unix,
+                EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix
+            FROM feature_flag_overrides
+            WHERE override_id = $1
+            "#,
+        )
+        .bind(override_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(current_row) = current else {
+            return Err(AppError::not_found("feature flag override not found"));
+        };
+
+        let enabled = patch
+            .enabled
+            .unwrap_or_else(|| row_bool(&current_row, "enabled").unwrap_or(false));
+        let expires_at: Option<DateTime<Utc>> = match &patch.expires_at_unix {
+            None => {
+                let raw: Option<i64> = current_row
+                    .try_get("expires_at_unix")
+                    .map_err(|e| AppError::internal(format!("expires_at_unix: {e}")))?;
+                raw.and_then(|v| DateTime::<Utc>::from_timestamp(v, 0))
+            }
+            Some(None) => None,
+            Some(Some(unix)) => Some(
+                DateTime::<Utc>::from_timestamp(
+                    i64::try_from(*unix)
+                        .map_err(|_| AppError::bad_request("expires_at_unix out of range"))?,
+                    0,
+                )
+                .ok_or_else(|| AppError::bad_request("invalid expires_at_unix"))?,
+            ),
+        };
+
+        sqlx::query(
+            r#"
+            UPDATE feature_flag_overrides
+            SET enabled = $2, expires_at = $3, updated_at = now()
+            WHERE override_id = $1
+            "#,
+        )
+        .bind(override_id)
+        .bind(enabled)
+        .bind(expires_at)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let row = sqlx::query(
+            r#"
+            SELECT
+                override_id,
+                flag_key,
+                scope::text AS scope,
+                platform,
+                account_id,
+                device_id,
+                enabled,
+                EXTRACT(EPOCH FROM expires_at)::bigint AS expires_at_unix,
+                EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix
+            FROM feature_flag_overrides
+            WHERE override_id = $1
+            "#,
+        )
+        .bind(override_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(FeatureFlagOverrideRow {
+            override_id: row_uuid(&row, "override_id")?,
+            flag_key: row_text(&row, "flag_key")?,
+            scope: row_text(&row, "scope")?,
+            platform: row_optional_text(&row, "platform")?,
+            account_id: row_optional_uuid(&row, "account_id")?,
+            device_id: row_optional_uuid(&row, "device_id")?,
+            enabled: row_bool(&row, "enabled")?,
+            expires_at_unix: row
+                .try_get::<Option<i64>, _>("expires_at_unix")
+                .map_err(|e| AppError::internal(format!("expires_at_unix: {e}")))?
+                .and_then(|v| u64::try_from(v).ok()),
+            updated_at_unix: row_u64_from_i64(&row, "updated_at_unix")?,
+        })
+    }
+
+    pub async fn delete_feature_flag_override(&self, override_id: Uuid) -> Result<(), AppError> {
+        let result = sqlx::query("DELETE FROM feature_flag_overrides WHERE override_id = $1")
+            .bind(override_id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::not_found("feature flag override not found"));
+        }
+        Ok(())
+    }
+
+    pub async fn get_device_platform(&self, device_id: Uuid) -> Result<Option<String>, AppError> {
+        let row = sqlx::query(
+            "SELECT platform FROM devices WHERE device_id = $1 AND device_status = 'active'::device_status",
+        )
+        .bind(device_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        Ok(row.and_then(|r| row_optional_text(&r, "platform").ok().flatten()))
+    }
+
+    // --- Debug metrics ---
+
+    pub async fn create_debug_metric_session(
+        &self,
+        input: &CreateDebugMetricSessionInput,
+    ) -> Result<DebugMetricSessionRow, AppError> {
+        let ttl_secs = i32::try_from(input.ttl_seconds)
+            .map_err(|_| AppError::bad_request("ttl_seconds out of range"))?;
+        if ttl_secs <= 0 || ttl_secs > 86400 * 30 {
+            return Err(AppError::bad_request(
+                "ttl_seconds must be between 1 and 2592000",
+            ));
+        }
+
+        let row = sqlx::query(
+            r#"
+            INSERT INTO debug_metric_sessions (
+                account_id, device_id, user_visible_message,
+                expires_at, created_by_admin
+            )
+            VALUES ($1, $2, $3, now() + make_interval(secs => $4), $5)
+            RETURNING
+                session_id,
+                account_id,
+                device_id,
+                user_visible_message,
+                EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix,
+                EXTRACT(EPOCH FROM expires_at)::bigint AS expires_at_unix,
+                EXTRACT(EPOCH FROM revoked_at)::bigint AS revoked_at_unix,
+                created_by_admin
+            "#,
+        )
+        .bind(input.account_id)
+        .bind(input.device_id)
+        .bind(&input.user_visible_message)
+        .bind(ttl_secs)
+        .bind(&input.created_by_admin)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(DebugMetricSessionRow {
+            session_id: row_uuid(&row, "session_id")?,
+            account_id: row_uuid(&row, "account_id")?,
+            device_id: row_optional_uuid(&row, "device_id")?,
+            user_visible_message: row_text(&row, "user_visible_message")?,
+            created_at_unix: row_u64_from_i64(&row, "created_at_unix")?,
+            expires_at_unix: row_u64_from_i64(&row, "expires_at_unix")?,
+            revoked_at_unix: row
+                .try_get::<Option<i64>, _>("revoked_at_unix")
+                .map_err(|e| AppError::internal(format!("revoked_at_unix: {e}")))?
+                .and_then(|v| u64::try_from(v).ok()),
+            created_by_admin: row_text(&row, "created_by_admin")?,
+        })
+    }
+
+    pub async fn revoke_debug_metric_session(&self, session_id: Uuid) -> Result<(), AppError> {
+        let result = sqlx::query(
+            r#"
+            UPDATE debug_metric_sessions
+            SET revoked_at = now()
+            WHERE session_id = $1 AND revoked_at IS NULL
+            "#,
+        )
+        .bind(session_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::not_found("debug metric session not found or already revoked"));
+        }
+        Ok(())
+    }
+
+    pub async fn list_debug_metric_sessions_admin(
+        &self,
+        account_id: Option<Uuid>,
+        limit: i64,
+    ) -> Result<Vec<DebugMetricSessionRow>, AppError> {
+        let limit = limit.clamp(1, 500);
+        let rows = if let Some(aid) = account_id {
+            sqlx::query(
+                r#"
+                SELECT
+                    session_id,
+                    account_id,
+                    device_id,
+                    user_visible_message,
+                    EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix,
+                    EXTRACT(EPOCH FROM expires_at)::bigint AS expires_at_unix,
+                    EXTRACT(EPOCH FROM revoked_at)::bigint AS revoked_at_unix,
+                    created_by_admin
+                FROM debug_metric_sessions
+                WHERE account_id = $1
+                ORDER BY created_at DESC
+                LIMIT $2
+                "#,
+            )
+            .bind(aid)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+        } else {
+            sqlx::query(
+                r#"
+                SELECT
+                    session_id,
+                    account_id,
+                    device_id,
+                    user_visible_message,
+                    EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix,
+                    EXTRACT(EPOCH FROM expires_at)::bigint AS expires_at_unix,
+                    EXTRACT(EPOCH FROM revoked_at)::bigint AS revoked_at_unix,
+                    created_by_admin
+                FROM debug_metric_sessions
+                ORDER BY created_at DESC
+                LIMIT $1
+                "#,
+            )
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+        }
+        .map_err(map_db_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(DebugMetricSessionRow {
+                    session_id: row_uuid(&row, "session_id")?,
+                    account_id: row_uuid(&row, "account_id")?,
+                    device_id: row_optional_uuid(&row, "device_id")?,
+                    user_visible_message: row_text(&row, "user_visible_message")?,
+                    created_at_unix: row_u64_from_i64(&row, "created_at_unix")?,
+                    expires_at_unix: row_u64_from_i64(&row, "expires_at_unix")?,
+                    revoked_at_unix: row
+                        .try_get::<Option<i64>, _>("revoked_at_unix")
+                        .map_err(|e| AppError::internal(format!("revoked_at_unix: {e}")))?
+                        .and_then(|v| u64::try_from(v).ok()),
+                    created_by_admin: row_text(&row, "created_by_admin")?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn list_debug_metric_batches_admin(
+        &self,
+        session_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<DebugMetricBatchRow>, AppError> {
+        let limit = limit.clamp(1, 500);
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                batch_id,
+                session_id,
+                device_id,
+                EXTRACT(EPOCH FROM received_at)::bigint AS received_at_unix,
+                payload_json
+            FROM debug_metric_batches
+            WHERE session_id = $1
+            ORDER BY received_at DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(session_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(DebugMetricBatchRow {
+                    batch_id: row_uuid(&row, "batch_id")?,
+                    session_id: row_uuid(&row, "session_id")?,
+                    device_id: row_uuid(&row, "device_id")?,
+                    received_at_unix: row_u64_from_i64(&row, "received_at_unix")?,
+                    payload: row_value(&row, "payload_json")?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn get_active_debug_metric_session_for_device(
+        &self,
+        account_id: Uuid,
+        device_id: Uuid,
+    ) -> Result<Option<DebugMetricSessionRow>, AppError> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                s.session_id,
+                s.account_id,
+                s.device_id,
+                s.user_visible_message,
+                EXTRACT(EPOCH FROM s.created_at)::bigint AS created_at_unix,
+                EXTRACT(EPOCH FROM s.expires_at)::bigint AS expires_at_unix,
+                EXTRACT(EPOCH FROM s.revoked_at)::bigint AS revoked_at_unix,
+                s.created_by_admin
+            FROM debug_metric_sessions s
+            WHERE s.account_id = $1
+              AND s.revoked_at IS NULL
+              AND s.expires_at > now()
+              AND (
+                    s.device_id IS NULL
+                 OR s.device_id = $2
+              )
+            ORDER BY (s.device_id = $2) DESC, s.created_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(account_id)
+        .bind(device_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        Ok(Some(DebugMetricSessionRow {
+            session_id: row_uuid(&row, "session_id")?,
+            account_id: row_uuid(&row, "account_id")?,
+            device_id: row_optional_uuid(&row, "device_id")?,
+            user_visible_message: row_text(&row, "user_visible_message")?,
+            created_at_unix: row_u64_from_i64(&row, "created_at_unix")?,
+            expires_at_unix: row_u64_from_i64(&row, "expires_at_unix")?,
+            revoked_at_unix: row
+                .try_get::<Option<i64>, _>("revoked_at_unix")
+                .map_err(|e| AppError::internal(format!("revoked_at_unix: {e}")))?
+                .and_then(|v| u64::try_from(v).ok()),
+            created_by_admin: row_text(&row, "created_by_admin")?,
+        }))
+    }
+
+    pub async fn insert_debug_metric_batch(
+        &self,
+        session_id: Uuid,
+        device_id: Uuid,
+        payload: Value,
+    ) -> Result<(), AppError> {
+        let session = sqlx::query(
+            r#"
+            SELECT account_id, device_id
+            FROM debug_metric_sessions
+            WHERE session_id = $1
+              AND revoked_at IS NULL
+              AND expires_at > now()
+            "#,
+        )
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(sess) = session else {
+            return Err(AppError::not_found("debug metric session not active"));
+        };
+
+        let sess_account: Uuid = row_uuid(&sess, "account_id")?;
+        let sess_device: Option<Uuid> = row_optional_uuid(&sess, "device_id")?;
+
+        let principal_device_account: Option<Uuid> = sqlx::query_scalar(
+            "SELECT account_id FROM devices WHERE device_id = $1 AND device_status = 'active'::device_status",
+        )
+        .bind(device_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let Some(p_account) = principal_device_account else {
+            return Err(AppError::forbidden("device not active"));
+        };
+
+        if p_account != sess_account {
+            return Err(AppError::forbidden("session account mismatch"));
+        }
+
+        if let Some(sd) = sess_device {
+            if sd != device_id {
+                return Err(AppError::forbidden("session is scoped to another device"));
+            }
+        }
+
+        sqlx::query(
+            r#"
+            INSERT INTO debug_metric_batches (session_id, device_id, payload_json)
+            VALUES ($1, $2, $3)
+            "#,
+        )
+        .bind(session_id)
+        .bind(device_id)
+        .bind(Json(payload))
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -6944,10 +7837,10 @@ mod tests {
 
     use super::{
         ApprovePendingDeviceInput, CompleteLinkIntentInput, ContentType, CreateAccountInput,
-        CreateAdminUserProvisionInput, CreateChatInput, CreateMessageInput, Database,
-        KeyPackageBytesInput, ListAdminUsersInput, MessageKind, ModifyChatDevicesInput,
-        PendingControlMessage, PublishKeyPackageInput, UpdateAccountProfileInput,
-        UpdateAdminRuntimeSettingsInput,
+        CreateAdminUserProvisionInput, CreateChatInput, CreateFeatureFlagDefinitionInput,
+        CreateFeatureFlagOverrideInput, CreateMessageInput, Database, KeyPackageBytesInput,
+        ListAdminUsersInput, MessageKind, ModifyChatDevicesInput, PendingControlMessage,
+        PublishKeyPackageInput, UpdateAccountProfileInput, UpdateAdminRuntimeSettingsInput,
     };
     use trix_types::{ChatType, HistorySyncJobStatus, HistorySyncJobType};
 
@@ -9455,6 +10348,117 @@ mod tests {
         );
     }
 
+    /// Exercises `resolve_feature_flags_for_device` against PostgreSQL so COALESCE precedence
+    /// (device → account → platform → global → default) cannot drift from the unit-test mirror.
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn resolve_feature_flags_precedence_matches_sql_coalesce_order() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        sqlx::query("DELETE FROM feature_flag_overrides")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM feature_flag_definitions")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+
+        let alice = db
+            .create_account(make_account_input(
+                "ff_prec_alice",
+                "Alice",
+                [11; 32],
+                [22; 32],
+            ))
+            .await
+            .unwrap();
+        let account_id = alice.account_id;
+        let device_id = alice.device_id;
+
+        db.create_feature_flag_definition(&CreateFeatureFlagDefinitionInput {
+            flag_key: "prec_test_flag".to_owned(),
+            description: String::new(),
+            default_enabled: false,
+        })
+        .await
+        .unwrap();
+
+        db.create_feature_flag_override(&CreateFeatureFlagOverrideInput {
+            flag_key: "prec_test_flag".to_owned(),
+            scope: "global".to_owned(),
+            platform: None,
+            account_id: None,
+            device_id: None,
+            enabled: true,
+            expires_at_unix: None,
+        })
+        .await
+        .unwrap();
+
+        let (_, flags) = db
+            .resolve_feature_flags_for_device(account_id, device_id, "macos")
+            .await
+            .unwrap();
+        assert_eq!(flags.get("prec_test_flag").copied(), Some(true));
+
+        db.create_feature_flag_override(&CreateFeatureFlagOverrideInput {
+            flag_key: "prec_test_flag".to_owned(),
+            scope: "platform".to_owned(),
+            platform: Some("macos".to_owned()),
+            account_id: None,
+            device_id: None,
+            enabled: false,
+            expires_at_unix: None,
+        })
+        .await
+        .unwrap();
+
+        let (_, flags) = db
+            .resolve_feature_flags_for_device(account_id, device_id, "macos")
+            .await
+            .unwrap();
+        assert_eq!(flags.get("prec_test_flag").copied(), Some(false));
+
+        db.create_feature_flag_override(&CreateFeatureFlagOverrideInput {
+            flag_key: "prec_test_flag".to_owned(),
+            scope: "account".to_owned(),
+            platform: None,
+            account_id: Some(account_id),
+            device_id: None,
+            enabled: true,
+            expires_at_unix: None,
+        })
+        .await
+        .unwrap();
+
+        let (_, flags) = db
+            .resolve_feature_flags_for_device(account_id, device_id, "macos")
+            .await
+            .unwrap();
+        assert_eq!(flags.get("prec_test_flag").copied(), Some(true));
+
+        db.create_feature_flag_override(&CreateFeatureFlagOverrideInput {
+            flag_key: "prec_test_flag".to_owned(),
+            scope: "device".to_owned(),
+            platform: None,
+            account_id: Some(account_id),
+            device_id: Some(device_id),
+            enabled: false,
+            expires_at_unix: None,
+        })
+        .await
+        .unwrap();
+
+        let (_, flags) = db
+            .resolve_feature_flags_for_device(account_id, device_id, "macos")
+            .await
+            .unwrap();
+        assert_eq!(flags.get("prec_test_flag").copied(), Some(false));
+    }
+
     async fn connect_test_db() -> Database {
         let database_url = env::var("TRIX_TEST_DATABASE_URL")
             .unwrap_or_else(|_| DEFAULT_TEST_DATABASE_URL.to_owned());
@@ -9585,5 +10589,33 @@ mod tests {
             ciphertext: tag.as_bytes().to_vec(),
             aad_json: json!({ "tag": tag }),
         }
+    }
+}
+
+/// Mirrors `resolve_feature_flags_for_device` COALESCE order (device → account → platform → global → default).
+#[cfg(test)]
+mod feature_flag_merge_tests {
+    fn pick(
+        default_enabled: bool,
+        global: Option<bool>,
+        platform: Option<bool>,
+        account: Option<bool>,
+        device: Option<bool>,
+    ) -> bool {
+        device
+            .or(account)
+            .or(platform)
+            .or(global)
+            .unwrap_or(default_enabled)
+    }
+
+    #[test]
+    fn precedence_device_over_account_over_platform_over_global_over_default() {
+        assert!(!pick(true, None, None, None, Some(false)));
+        assert!(pick(false, None, None, None, None));
+        assert!(!pick(true, Some(true), Some(true), Some(true), Some(false)));
+        assert!(pick(false, None, None, Some(true), None));
+        assert!(!pick(true, Some(true), Some(false), None, None));
+        assert!(pick(true, Some(false), None, None, None));
     }
 }
