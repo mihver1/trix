@@ -62,7 +62,7 @@ Current suites:
 - `ios-unit`: native iOS unit tests through `xcodebuild test` on an available iPhone simulator.
 - `ios-server`: native iOS server-backed smoke through `xcodebuild test` against a live backend on `TRIX_IOS_SERVER_SMOKE_BASE_URL` (defaults to `http://localhost:8080`), including server-backed bootstrap/fixture assertions that are intentionally excluded from `ios-unit`.
 - `ios-ui`: simulator-backed iOS `XCUITest` smoke through `xcodebuild test` against a live backend on `TRIX_IOS_UI_TEST_BASE_URL` (defaults to `http://localhost:8080`), including onboarding, approval-state, and seeded real-chat flows.
-- `macos`: `swift test` for the macOS client package.
+- `macos`: `swift test` for the macOS client package, including inline attachment preview layout clamps and session-restore helpers.
 - `macos-admin`: `swift test` for the macOS admin control app package.
 - `android-unit`: local Android JVM unit tests. The harness runs these with `-PtrixSkipAndroidNdkBuild=true`, so they do not require cross-compiling JNI libs through the Android NDK.
 - `android-ui`: Android instrumented UI tests for emulator/device runs.
@@ -91,14 +91,14 @@ Practical mapping today:
 - `ios-unit` covers the iOS-native bridge and model layer without requiring a live backend: onboarding/edit forms, link payload parsing, message-body serialization, attachment filename normalization, safe diagnostic log redaction/rotation, and pending-approval bootstrap state.
 - `ios-server` covers live iOS user scenarios against the local server: bootstrap/auth, link intent, DM delivery, cross-device DM delivery, group chat delivery, and deterministic seeded bootstrap/message-snapshot assertions used by the UI harness.
 - `ios-ui` covers simulator-backed native screen flows against the live backend: task-first onboarding, pending linked-device approval waiting state, seeded DM/group chat-list rows, real consumer chat-detail timelines, and DM send flow through the production composer.
-- `macos` covers host-level macOS model and presentation logic, including group-chat naming/subtitle behavior, session-restore disposition, relink-required recovery helpers, and device/workspace stabilization.
+- `macos` covers host-level macOS model and presentation logic, including group-chat naming/subtitle behavior, session-restore disposition, relink-required recovery helpers, inline attachment preview sizing clamps, and device/workspace stabilization.
 - `macos-admin` covers admin workspace state, cluster/session persistence, overview/settings loads, and operator user-management flows without touching the consumer FFI layer.
 - `android-unit` covers Android local state reducers, stored-device recovery messaging, and repository-adjacent logic on the JVM; `android-ui` adds Compose coverage for DM/group chat surfaces, group actions, and chat list/detail presentation.
 
 ## Known Gaps
 
 - iOS UI smoke still does not cover attachment send/download, inline image previews, delivery/read tick visuals, group membership mutations, or background/resume behavior.
-- no smoke suite currently drives native UI affordances for inline image preview rendering, manual chat-backfill / timeline-repair triggers, or relink-required recovery confirmation flows; those behaviors are covered today at the shared `safe-ffi` layer plus platform unit/model tests.
+- no smoke suite currently drives full native UI affordances for inline image preview rendering, manual chat-backfill / timeline-repair triggers, or relink-required recovery confirmation flows; those behaviors are covered today at the shared `safe-ffi` layer plus platform unit/model tests, and macOS preview sizing is covered at the package-test layer.
 - The harness does not boot a simulator or emulator for you. `android-ui` still expects an attached device or running emulator.
 - `ios-ui` expects an available iPhone simulator plus a reachable backend on `TRIX_IOS_UI_TEST_BASE_URL`.
 - `android-unit` still expects the normal Android/Gradle toolchain plus the Rust host toolchain used for checked-in UniFFI regeneration, but it no longer needs the Android NDK.

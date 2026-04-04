@@ -80,6 +80,7 @@ final class AppModel: ObservableObject {
     @Published var removingChatDeviceIDs: Set<UUID> = []
     @Published var isAddingChatMembers = false
     @Published var isAddingChatDevices = false
+    @Published var isPerformingChatLifecycleAction = false
     @Published var lastErrorMessage: String?
 
     private let sessionStore: SessionStore
@@ -1354,6 +1355,73 @@ final class AppModel: ObservableObject {
             )
         } catch {
             logWarn("devices", "remove_devices failed chat=\(shortLogID(chatId))", error: error)
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    func leaveSelectedConversation(scope: MessengerLeaveConversationScope) async {
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+        guard let client = makeClient(),
+              let chatId = selectedChatID,
+              let detail = selectedChatDetail,
+              detail.chatType != .accountSync else {
+            lastErrorMessage = "Чат или устройство ещё не загружены."
+            return
+        }
+
+        isPerformingChatLifecycleAction = true
+        defer { isPerformingChatLifecycleAction = false }
+
+        do {
+            logInfo(
+                "chat_lifecycle",
+                "leave start chat=\(shortLogID(chatId)) type=\(logChatType(detail.chatType)) scope=\(scope)"
+            )
+            let messenger = try makeAuthenticatedMessenger(accessToken: token)
+            _ = try await messenger.leaveConversation(conversationId: chatId, scope: scope)
+            try await loadWorkspace(
+                client: client,
+                accessToken: token,
+                selectionPreference: .automatic
+            )
+            logInfo("chat_lifecycle", "leave success chat=\(shortLogID(chatId))")
+        } catch {
+            logWarn("chat_lifecycle", "leave failed chat=\(shortLogID(chatId))", error: error)
+            lastErrorMessage = error.userFacingMessage
+        }
+    }
+
+    func dmGlobalDeleteSelectedConversation() async {
+        guard let token = accessToken else {
+            await restoreSession()
+            return
+        }
+        guard let client = makeClient(),
+              let chatId = selectedChatID,
+              let detail = selectedChatDetail,
+              detail.chatType == .dm else {
+            lastErrorMessage = "Глобальное удаление доступно только для личных чатов (DM)."
+            return
+        }
+
+        isPerformingChatLifecycleAction = true
+        defer { isPerformingChatLifecycleAction = false }
+
+        do {
+            logInfo("chat_lifecycle", "dm_global_delete start chat=\(shortLogID(chatId))")
+            let messenger = try makeAuthenticatedMessenger(accessToken: token)
+            _ = try await messenger.dmGlobalDeleteConversation(conversationId: chatId)
+            try await loadWorkspace(
+                client: client,
+                accessToken: token,
+                selectionPreference: .automatic
+            )
+            logInfo("chat_lifecycle", "dm_global_delete success chat=\(shortLogID(chatId))")
+        } catch {
+            logWarn("chat_lifecycle", "dm_global_delete failed chat=\(shortLogID(chatId))", error: error)
             lastErrorMessage = error.userFacingMessage
         }
     }

@@ -1,9 +1,11 @@
 use serde_json::{Value, json};
 use trix_types::{
     AccountDirectoryResponse, AccountId, AccountProfileResponse, AuthSessionResponse,
-    BlobUploadStatus, CreateAccountRequest, CreateLinkIntentResponse, DeviceId, DeviceListResponse,
-    DeviceStatus, DeviceSummary, DeviceTransferBundleResponse, DeviceTransportKeyResponse,
-    HealthResponse, HistorySyncJobType, ServiceStatus, VersionResponse,
+    BlobUploadStatus, ChatId, CreateAccountRequest, CreateLinkIntentResponse, DeviceId,
+    DeviceListResponse, DeviceStatus, DeviceSummary, DeviceTransferBundleResponse,
+    DeviceTransportKeyResponse, DmGlobalDeleteRequest, DmGlobalDeleteResponse, HealthResponse,
+    HistorySyncJobType, LeaveChatRequest, LeaveChatResponse, LeaveChatScope, ServiceStatus,
+    VersionResponse,
 };
 use uuid::Uuid;
 
@@ -13,7 +15,10 @@ fn fixed_uuid(seed: u128) -> Uuid {
 
 #[test]
 fn service_status_json_values_are_stable() {
-    assert_eq!(serde_json::to_value(ServiceStatus::Ok).unwrap(), json!("ok"));
+    assert_eq!(
+        serde_json::to_value(ServiceStatus::Ok).unwrap(),
+        json!("ok")
+    );
     assert_eq!(
         serde_json::to_value(ServiceStatus::Degraded).unwrap(),
         json!("degraded")
@@ -33,6 +38,14 @@ fn contract_enums_keep_snake_case_wire_values() {
     assert_eq!(
         serde_json::to_value(HistorySyncJobType::TimelineRepair).unwrap(),
         json!("timeline_repair")
+    );
+    assert_eq!(
+        serde_json::to_value(LeaveChatScope::ThisDevice).unwrap(),
+        json!("this_device")
+    );
+    assert_eq!(
+        serde_json::to_value(LeaveChatScope::AllMyDevices).unwrap(),
+        json!("all_my_devices")
     );
 }
 
@@ -200,6 +213,72 @@ fn directory_and_device_list_json_shapes_are_stable() {
                 "device_status": "pending",
                 "available_key_package_count": 7
             }]
+        })
+    );
+}
+
+#[test]
+fn leave_chat_and_dm_global_delete_json_shapes_are_stable() {
+    let leave_req = serde_json::to_value(LeaveChatRequest {
+        scope: LeaveChatScope::AllMyDevices,
+        epoch: 3,
+        commit_message: None,
+    })
+    .unwrap();
+    assert_eq!(
+        leave_req,
+        json!({
+            "scope": "all_my_devices",
+            "epoch": 3u64,
+            "commit_message": Value::Null
+        })
+    );
+
+    let leave_res = serde_json::to_value(LeaveChatResponse {
+        chat_id: ChatId(fixed_uuid(20)),
+        epoch: 4,
+        changed_device_ids: vec![DeviceId(fixed_uuid(21))],
+    })
+    .unwrap();
+    assert_eq!(
+        leave_res,
+        json!({
+            "chat_id": fixed_uuid(20).to_string(),
+            "epoch": 4u64,
+            "changed_device_ids": [fixed_uuid(21).to_string()]
+        })
+    );
+
+    let dm_req = serde_json::to_value(DmGlobalDeleteRequest {
+        epoch: 1,
+        commit_message: None,
+    })
+    .unwrap();
+    assert_eq!(
+        dm_req,
+        json!({
+            "epoch": 1u64,
+            "commit_message": Value::Null
+        })
+    );
+
+    let dm_res = serde_json::to_value(DmGlobalDeleteResponse {
+        chat_id: ChatId(fixed_uuid(22)),
+        epoch: 2,
+        changed_account_ids: vec![AccountId(fixed_uuid(23)), AccountId(fixed_uuid(24))],
+        changed_device_ids: vec![DeviceId(fixed_uuid(25))],
+    })
+    .unwrap();
+    assert_eq!(
+        dm_res,
+        json!({
+            "chat_id": fixed_uuid(22).to_string(),
+            "epoch": 2u64,
+            "changed_account_ids": [
+                fixed_uuid(23).to_string(),
+                fixed_uuid(24).to_string()
+            ],
+            "changed_device_ids": [fixed_uuid(25).to_string()]
         })
     );
 }

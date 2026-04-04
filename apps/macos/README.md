@@ -12,12 +12,14 @@
 - text and attachment messaging with optimistic local send rows
 - inline previews for common image attachment types with Quick Look full preview on open
 - profile editing, device approval/revoke and notification settings
+- trusted-device approval can include an encrypted transfer bundle so a newly linked Mac can import shared account-root material on reconnect
 - background inbox sync via polling fallback plus APNs wake-up pushes for local notifications
 - local session persistence in `Application Support`
 - secret material persisted in `Keychain`
 - persistent local history store and sync cursor state under `Application Support/com.softgrid.trixapp/workspaces/<account-id>/`
 - stale restore paths now preserve reconnect vs relink-required recovery states instead of silently dropping back into a blank bootstrap form
 - advanced operational tooling under `Settings > Advanced`
+- repo-level shared `strings.yaml` catalog for chat/user-facing copy, generated into `Sources/TrixMac/Generated/TrixStrings.generated.swift`
 
 ## Layout
 
@@ -87,7 +89,49 @@ cd apps/macos
 ./scripts/archive-testflight.sh
 ```
 
-That script now refreshes the checked-in Swift bridge and rebuilds the fresh universal `trix-core` archive before running `xcodebuild archive`, so TestFlight exports do not reuse stale FFI artifacts.
+Upload directly instead of producing a local export payload:
+
+```bash
+TRIX_ASC_DESTINATION=upload ./scripts/archive-testflight.sh
+```
+
+Use explicit App Store Connect API key auth when the local Xcode account state is not enough:
+
+```bash
+export TRIX_ASC_AUTH_KEY_PATH="$HOME/.appstoreconnect/private_keys/AuthKey_ABC123XYZ.p8"
+export TRIX_ASC_AUTH_KEY_ID="ABC123XYZ"
+export TRIX_ASC_AUTH_ISSUER_ID="00000000-0000-0000-0000-000000000000"
+TRIX_ASC_DESTINATION=upload ./scripts/archive-testflight.sh
+```
+
+Useful overrides:
+
+```bash
+TRIX_MACOS_BUILD_NUMBER=42 \
+TRIX_TESTFLIGHT_INTERNAL_ONLY=1 \
+TRIX_ASC_DESTINATION=upload \
+./scripts/archive-testflight.sh
+```
+
+That script now:
+
+- regenerates the shared Swift string file, checked-in Swift bridge, and fresh universal `trix-core` archive before `xcodebuild archive`
+- keeps automatic signing in place instead of forcing a manual distribution identity or provisioning profile
+- validates locally exported `.app` or `.pkg` payloads by checking that the embedded provisioning profile is a Store profile and that `com.apple.developer.aps-environment=production`
+- skips the local validation step only when `TRIX_ASC_DESTINATION=upload` produces no local distributable to inspect
+
+Regression coverage for the archive driver lives in:
+
+```bash
+./scripts/test-archive-testflight.sh
+```
+
+## Shared Strings
+
+- shared user-facing chat copy lives in the root [`strings.yaml`](../../strings.yaml) catalog
+- refresh generated outputs manually with `make strings-generate`
+- the macOS Xcode target prebuild also regenerates [`Sources/TrixMac/Generated/TrixStrings.generated.swift`](./Sources/TrixMac/Generated/TrixStrings.generated.swift) before the bridge/universal-library steps
+- do not hand-edit the generated Swift file; edit `strings.yaml` instead
 
 ## Bindings
 

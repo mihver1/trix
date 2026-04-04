@@ -439,7 +439,7 @@ final class ServerBackedSmokeTests: XCTestCase {
 
         let form = makeAccountForm(label: "iOS Smoke", suffix: suffix)
         let bootstrapMaterial = try DeviceBootstrapMaterial.generate()
-        let created = try TrixCoreServerBridge.createAccount(
+        let created = try await TrixCoreServerBridge.createAccount(
             baseURLString: baseURL,
             form: form,
             bootstrapMaterial: bootstrapMaterial
@@ -456,7 +456,7 @@ final class ServerBackedSmokeTests: XCTestCase {
             deviceDisplayName: form.deviceDisplayName,
             platform: form.platform
         )
-        let session = try TrixCoreServerBridge.authenticate(
+        let session = try await TrixCoreServerBridge.authenticate(
             baseURLString: baseURL,
             identity: identity
         )
@@ -488,7 +488,7 @@ final class ServerBackedSmokeTests: XCTestCase {
         XCTAssertEqual(currentDevice.platform, form.platform)
         XCTAssertEqual(currentDevice.deviceStatus, .active)
 
-        let linkIntent = try TrixCoreServerBridge.createLinkIntent(
+        let linkIntent = try await TrixCoreServerBridge.createLinkIntent(
             baseURLString: baseURL,
             accessToken: session.accessToken
         )
@@ -709,6 +709,124 @@ final class ServerBackedSmokeTests: XCTestCase {
 
         _ = try await waitForTextMessage(replyText, on: alicePrimary, chatId: created.chatId)
         _ = try await waitForTextMessage(replyText, on: aliceLinked, chatId: created.chatId)
+    }
+
+    func testAppModelKeepsBobConversationAvailableWhenPeerLinkedDeviceNeverOpensFreshDM() async throws {
+        let baseURL = configuredBaseURL()
+        try await skipUnlessServerReachable(at: baseURL)
+        UITestServerHarness.resetLocalAppState()
+
+        var devicesToCleanup: [ScenarioDevice] = []
+        defer {
+            cleanupPersistentState(for: devicesToCleanup)
+            UITestServerHarness.resetLocalAppState()
+        }
+
+        let alicePrimary = try createScenarioDevice(baseURL: baseURL, label: "Alice Dormant Primary")
+        devicesToCleanup.append(alicePrimary)
+        let bob = try createScenarioDevice(baseURL: baseURL, label: "Bob Dormant Primary")
+        devicesToCleanup.append(bob)
+        let aliceLinked = try createApprovedLinkedDevice(
+            trustedOwner: alicePrimary,
+            label: "Alice Dormant Linked"
+        )
+        devicesToCleanup.append(aliceLinked)
+
+        let created = try alicePrimary.createDM(peerAccountId: bob.identity.accountId)
+
+        let firstText = "alice-dormant-\(uniqueSuffix(length: 6))"
+        _ = try alicePrimary.sendText(chatId: created.chatId, text: firstText)
+        _ = try await waitForTextMessage(firstText, on: bob, chatId: created.chatId)
+
+        try LocalDeviceIdentityStore().save(bob.identity)
+        let model = AppModel()
+        await model.start(baseURLString: baseURL)
+
+        let initialSnapshot = try await model.fetchConversationSnapshot(
+            baseURLString: baseURL,
+            chatId: created.chatId
+        )
+        XCTAssertTrue(
+            initialSnapshot.messages.contains { $0.body?.text == firstText }
+        )
+
+        let replyText = "bob-dormant-\(uniqueSuffix(length: 6))"
+        let response = await model.postDebugMessage(
+            baseURLString: baseURL,
+            chatId: created.chatId,
+            draft: DebugMessageDraft(kind: .text, text: replyText)
+        )
+        XCTAssertNotNil(response, model.errorMessage ?? "Expected Bob reply to succeed with dormant peer linked device.")
+
+        let updatedSnapshot = try await model.fetchConversationSnapshot(
+            baseURLString: baseURL,
+            chatId: created.chatId
+        )
+        XCTAssertTrue(
+            updatedSnapshot.messages.contains { $0.body?.text == replyText }
+        )
+
+        _ = try await waitForTextMessage(replyText, on: alicePrimary, chatId: created.chatId)
+    }
+
+    func testAppModelKeepsBobConversationAvailableWhenPeerLinksSecondDeviceAfterDMCreation() async throws {
+        let baseURL = configuredBaseURL()
+        try await skipUnlessServerReachable(at: baseURL)
+        UITestServerHarness.resetLocalAppState()
+
+        var devicesToCleanup: [ScenarioDevice] = []
+        defer {
+            cleanupPersistentState(for: devicesToCleanup)
+            UITestServerHarness.resetLocalAppState()
+        }
+
+        let alicePrimary = try createScenarioDevice(baseURL: baseURL, label: "Alice PostDM Primary")
+        devicesToCleanup.append(alicePrimary)
+        let bob = try createScenarioDevice(baseURL: baseURL, label: "Bob PostDM Primary")
+        devicesToCleanup.append(bob)
+
+        let created = try alicePrimary.createDM(peerAccountId: bob.identity.accountId)
+        _ = try await waitForConversation(on: bob, chatId: created.chatId)
+
+        let aliceLinked = try createApprovedLinkedDevice(
+            trustedOwner: alicePrimary,
+            label: "Alice PostDM Linked"
+        )
+        devicesToCleanup.append(aliceLinked)
+
+        let firstText = "alice-postdm-\(uniqueSuffix(length: 6))"
+        _ = try alicePrimary.sendText(chatId: created.chatId, text: firstText)
+        _ = try await waitForTextMessage(firstText, on: bob, chatId: created.chatId)
+
+        try LocalDeviceIdentityStore().save(bob.identity)
+        let model = AppModel()
+        await model.start(baseURLString: baseURL)
+
+        let initialSnapshot = try await model.fetchConversationSnapshot(
+            baseURLString: baseURL,
+            chatId: created.chatId
+        )
+        XCTAssertTrue(
+            initialSnapshot.messages.contains { $0.body?.text == firstText }
+        )
+
+        let replyText = "bob-postdm-\(uniqueSuffix(length: 6))"
+        let response = await model.postDebugMessage(
+            baseURLString: baseURL,
+            chatId: created.chatId,
+            draft: DebugMessageDraft(kind: .text, text: replyText)
+        )
+        XCTAssertNotNil(response, model.errorMessage ?? "Expected Bob reply to succeed after peer linked a second device.")
+
+        let updatedSnapshot = try await model.fetchConversationSnapshot(
+            baseURLString: baseURL,
+            chatId: created.chatId
+        )
+        XCTAssertTrue(
+            updatedSnapshot.messages.contains { $0.body?.text == replyText }
+        )
+
+        _ = try await waitForTextMessage(replyText, on: alicePrimary, chatId: created.chatId)
     }
 
     func testLinkedDeviceRecoversOrphanedPersistentStateForExistingDM() async throws {

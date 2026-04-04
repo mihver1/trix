@@ -3,6 +3,8 @@ use serde_json::{Value, json};
 
 pub mod accounts;
 pub mod admin;
+pub mod admin_debug_metrics;
+pub mod admin_feature_flags;
 pub mod auth;
 pub mod blobs;
 pub mod chats;

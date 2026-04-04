@@ -34,7 +34,7 @@ The UI, lifecycle, adaptive navigation, and Android-secure local persistence sti
 - realtime websocket delivery through `FfiRealtimeDriver`
 - safe messenger conversation snapshots, unread counts, message history, attachment send/download, receipts, typing, and member/device mutations through `FfiMessengerClient`
 
-The Android project now generates Kotlin bindings from UniFFI during the Gradle build and cross-compiles `libtrix_core.so` for `arm64-v8a` and `x86_64` via `cargo ndk`.
+The Android project now generates Kotlin bindings from UniFFI during the Gradle build, regenerates shared `strings.xml` resources from the repo-level catalog, and cross-compiles `libtrix_core.so` for `arm64-v8a` and `x86_64` via `cargo ndk`.
 
 ## Why Kotlin-First Around It
 
@@ -84,6 +84,13 @@ The better tradeoff for this PoC is still:
 - manage group members and device membership through the shared messenger-core mutation APIs
 - render trusted-device link intents as QR codes and share/copy them from Android
 - list linked devices, create link intents, and approve/revoke devices when this Android client has local account-root material
+
+## Shared Strings
+
+- shared user-facing chat copy lives in the root [`strings.yaml`](../../strings.yaml) catalog
+- refresh generated outputs manually with `make strings-generate`
+- the Android build also regenerates [`app/src/main/res/values/strings.xml`](./app/src/main/res/values/strings.xml) and [`app/src/main/res/values-ru/strings.xml`](./app/src/main/res/values-ru/strings.xml) automatically from that catalog
+- do not hand-edit the generated XML resources; edit `strings.yaml` instead
 
 ## FFI Build Requirements
 

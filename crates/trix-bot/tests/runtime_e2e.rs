@@ -363,6 +363,7 @@ async fn spawn_test_server() -> Result<TestServer> {
         apns_key_id: None,
         apns_topic: None,
         apns_private_key_pem: None,
+        debug_metrics_enabled: false,
     };
 
     let db = Database::connect(&config.database_url).await?;

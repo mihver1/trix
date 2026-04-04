@@ -1599,6 +1599,10 @@ public protocol FfiMessengerClientProtocol: AnyObject, Sendable {
     
     func createLinkDeviceIntent() throws  -> FfiMessengerDeviceLinkIntent
     
+    func dmGlobalDeleteConversation(conversationId: String) throws  -> FfiMessengerConversationMutationResult
+    
+    func featureFlagsSnapshot() throws  -> FeatureFlagsSnapshot
+    
     func getAttachment(attachmentRef: String) throws  -> FfiMessengerAttachmentFile
     
     func getMessages(conversationId: String, pageCursor: String?, limit: UInt32?) throws  -> FfiMessengerMessagePage
@@ -1606,6 +1610,10 @@ public protocol FfiMessengerClientProtocol: AnyObject, Sendable {
     func getNewEvents(checkpoint: String?) throws  -> FfiMessengerEventBatch
     
     func getNewEventsRealtime(checkpoint: String?) throws  -> FfiMessengerEventBatch
+    
+    func isFeatureEnabled(key: String)  -> Bool
+    
+    func leaveConversation(request: FfiMessengerLeaveConversationRequest) throws  -> FfiMessengerConversationMutationResult
     
     func listConversations() throws  -> [FfiMessengerConversationSummary]
     
@@ -1618,6 +1626,8 @@ public protocol FfiMessengerClientProtocol: AnyObject, Sendable {
     func loadSnapshotWithRemoteSync() throws  -> FfiMessengerSnapshot
     
     func markRead(conversationId: String, throughMessageId: String?) throws  -> FfiMessengerReadStateResult
+    
+    func refreshFeatureFlags() throws  -> FeatureFlagsSnapshot
     
     func removeConversationDevices(request: FfiMessengerUpdateConversationDevicesRequest) throws  -> FfiMessengerConversationMutationResult
     
@@ -1750,6 +1760,23 @@ open func createLinkDeviceIntent()throws  -> FfiMessengerDeviceLinkIntent  {
 })
 }
     
+open func dmGlobalDeleteConversation(conversationId: String)throws  -> FfiMessengerConversationMutationResult  {
+    return try  FfiConverterTypeFfiMessengerConversationMutationResult_lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
+    uniffi_trix_core_fn_method_ffimessengerclient_dm_global_delete_conversation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(conversationId),$0
+    )
+})
+}
+    
+open func featureFlagsSnapshot()throws  -> FeatureFlagsSnapshot  {
+    return try  FfiConverterTypeFeatureFlagsSnapshot_lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
+    uniffi_trix_core_fn_method_ffimessengerclient_feature_flags_snapshot(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
 open func getAttachment(attachmentRef: String)throws  -> FfiMessengerAttachmentFile  {
     return try  FfiConverterTypeFfiMessengerAttachmentFile_lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
     uniffi_trix_core_fn_method_ffimessengerclient_get_attachment(
@@ -1784,6 +1811,24 @@ open func getNewEventsRealtime(checkpoint: String?)throws  -> FfiMessengerEventB
     uniffi_trix_core_fn_method_ffimessengerclient_get_new_events_realtime(
             self.uniffiCloneHandle(),
         FfiConverterOptionString.lower(checkpoint),$0
+    )
+})
+}
+    
+open func isFeatureEnabled(key: String) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_trix_core_fn_method_ffimessengerclient_is_feature_enabled(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(key),$0
+    )
+})
+}
+    
+open func leaveConversation(request: FfiMessengerLeaveConversationRequest)throws  -> FfiMessengerConversationMutationResult  {
+    return try  FfiConverterTypeFfiMessengerConversationMutationResult_lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
+    uniffi_trix_core_fn_method_ffimessengerclient_leave_conversation(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiMessengerLeaveConversationRequest_lower(request),$0
     )
 })
 }
@@ -1834,6 +1879,14 @@ open func markRead(conversationId: String, throughMessageId: String?)throws  -> 
             self.uniffiCloneHandle(),
         FfiConverterString.lower(conversationId),
         FfiConverterOptionString.lower(throughMessageId),$0
+    )
+})
+}
+    
+open func refreshFeatureFlags()throws  -> FeatureFlagsSnapshot  {
+    return try  FfiConverterTypeFeatureFlagsSnapshot_lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
+    uniffi_trix_core_fn_method_ffimessengerclient_refresh_feature_flags(
+            self.uniffiCloneHandle(),$0
     )
 })
 }
@@ -2644,6 +2697,8 @@ public protocol FfiServerApiClientProtocol: AnyObject, Sendable {
     
     func deleteApplePushToken() throws 
     
+    func dmGlobalDelete(chatId: String, params: FfiDmGlobalDeleteParams) throws  -> FfiDmGlobalDeleteResponse
+    
     func downloadAttachment(body: FfiMessageBody) throws  -> FfiDownloadedAttachment
     
     func downloadBlob(blobId: String) throws  -> Data
@@ -2675,6 +2730,8 @@ public protocol FfiServerApiClientProtocol: AnyObject, Sendable {
     func headBlob(blobId: String) throws  -> FfiBlobHead
     
     func leaseInbox(params: FfiLeaseInboxParams) throws  -> FfiLeaseInboxResponse
+    
+    func leaveChat(chatId: String, params: FfiLeaveChatParams) throws  -> FfiModifyChatDevicesResponse
     
     func listChats() throws  -> [FfiChatSummary]
     
@@ -2975,6 +3032,16 @@ open func deleteApplePushToken()throws   {try rustCallWithError(FfiConverterType
 }
 }
     
+open func dmGlobalDelete(chatId: String, params: FfiDmGlobalDeleteParams)throws  -> FfiDmGlobalDeleteResponse  {
+    return try  FfiConverterTypeFfiDmGlobalDeleteResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverapiclient_dm_global_delete(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(chatId),
+        FfiConverterTypeFfiDmGlobalDeleteParams_lower(params),$0
+    )
+})
+}
+    
 open func downloadAttachment(body: FfiMessageBody)throws  -> FfiDownloadedAttachment  {
     return try  FfiConverterTypeFfiDownloadedAttachment_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffiserverapiclient_download_attachment(
@@ -3118,6 +3185,16 @@ open func leaseInbox(params: FfiLeaseInboxParams)throws  -> FfiLeaseInboxRespons
     uniffi_trix_core_fn_method_ffiserverapiclient_lease_inbox(
             self.uniffiCloneHandle(),
         FfiConverterTypeFfiLeaseInboxParams_lower(params),$0
+    )
+})
+}
+    
+open func leaveChat(chatId: String, params: FfiLeaveChatParams)throws  -> FfiModifyChatDevicesResponse  {
+    return try  FfiConverterTypeFfiModifyChatDevicesResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffiserverapiclient_leave_chat(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(chatId),
+        FfiConverterTypeFfiLeaveChatParams_lower(params),$0
     )
 })
 }
@@ -3501,11 +3578,15 @@ public protocol FfiSyncCoordinatorProtocol: AnyObject, Sendable {
     
     func createChatControl(client: FfiServerApiClient, store: FfiLocalHistoryStore, facade: FfiMlsFacade, input: FfiCreateChatControlInput) throws  -> FfiCreateChatControlOutcome
     
+    func dmGlobalDeleteControl(client: FfiServerApiClient, store: FfiLocalHistoryStore, facade: FfiMlsFacade, input: FfiDmGlobalDeleteControlInput) throws  -> FfiDmGlobalDeleteControlOutcome
+    
     func leaseInbox(client: FfiServerApiClient, limit: UInt32?, leaseTtlSeconds: UInt64?) throws  -> FfiLeaseInboxResponse
     
     func leaseInboxIntoStore(client: FfiServerApiClient, store: FfiLocalHistoryStore, limit: UInt32?, leaseTtlSeconds: UInt64?) throws  -> FfiInboxApplyOutcome
     
     func leaseOwner() throws  -> String
+    
+    func leaveChatControl(client: FfiServerApiClient, store: FfiLocalHistoryStore, facade: FfiMlsFacade, input: FfiLeaveChatControlInput) throws  -> FfiModifyChatDevicesControlOutcome
     
     func processHistorySyncJobs(client: FfiServerApiClient, store: FfiLocalHistoryStore, transportPrivateKey: Data) throws  -> FfiHistorySyncProcessReport
     
@@ -3663,6 +3744,18 @@ open func createChatControl(client: FfiServerApiClient, store: FfiLocalHistorySt
 })
 }
     
+open func dmGlobalDeleteControl(client: FfiServerApiClient, store: FfiLocalHistoryStore, facade: FfiMlsFacade, input: FfiDmGlobalDeleteControlInput)throws  -> FfiDmGlobalDeleteControlOutcome  {
+    return try  FfiConverterTypeFfiDmGlobalDeleteControlOutcome_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffisynccoordinator_dm_global_delete_control(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiServerApiClient_lower(client),
+        FfiConverterTypeFfiLocalHistoryStore_lower(store),
+        FfiConverterTypeFfiMlsFacade_lower(facade),
+        FfiConverterTypeFfiDmGlobalDeleteControlInput_lower(input),$0
+    )
+})
+}
+    
 open func leaseInbox(client: FfiServerApiClient, limit: UInt32?, leaseTtlSeconds: UInt64?)throws  -> FfiLeaseInboxResponse  {
     return try  FfiConverterTypeFfiLeaseInboxResponse_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffisynccoordinator_lease_inbox(
@@ -3690,6 +3783,18 @@ open func leaseOwner()throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
     uniffi_trix_core_fn_method_ffisynccoordinator_lease_owner(
             self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+open func leaveChatControl(client: FfiServerApiClient, store: FfiLocalHistoryStore, facade: FfiMlsFacade, input: FfiLeaveChatControlInput)throws  -> FfiModifyChatDevicesControlOutcome  {
+    return try  FfiConverterTypeFfiModifyChatDevicesControlOutcome_lift(try rustCallWithError(FfiConverterTypeTrixFfiError_lift) {
+    uniffi_trix_core_fn_method_ffisynccoordinator_leave_chat_control(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiServerApiClient_lower(client),
+        FfiConverterTypeFfiLocalHistoryStore_lower(store),
+        FfiConverterTypeFfiMlsFacade_lower(facade),
+        FfiConverterTypeFfiLeaveChatControlInput_lower(input),$0
     )
 })
 }
@@ -3840,6 +3945,60 @@ public func FfiConverterTypeFfiSyncCoordinator_lower(_ value: FfiSyncCoordinator
 }
 
 
+
+
+public struct FeatureFlagsSnapshot: Equatable, Hashable {
+    public var revision: UInt64
+    public var flags: [String: Bool]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(revision: UInt64, flags: [String: Bool]) {
+        self.revision = revision
+        self.flags = flags
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FeatureFlagsSnapshot: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFeatureFlagsSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FeatureFlagsSnapshot {
+        return
+            try FeatureFlagsSnapshot(
+                revision: FfiConverterUInt64.read(from: &buf), 
+                flags: FfiConverterDictionaryStringBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FeatureFlagsSnapshot, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.revision, into: &buf)
+        FfiConverterDictionaryStringBool.write(value.flags, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFeatureFlagsSnapshot_lift(_ buf: RustBuffer) throws -> FeatureFlagsSnapshot {
+    return try FfiConverterTypeFeatureFlagsSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFeatureFlagsSnapshot_lower(_ value: FeatureFlagsSnapshot) -> RustBuffer {
+    return FfiConverterTypeFeatureFlagsSnapshot.lower(value)
+}
 
 
 public struct FfiAccountDirectory: Equatable, Hashable {
@@ -6348,6 +6507,254 @@ public func FfiConverterTypeFfiDirectoryAccount_lower(_ value: FfiDirectoryAccou
 }
 
 
+public struct FfiDmGlobalDeleteControlInput: Equatable, Hashable {
+    public var actorAccountId: String
+    public var actorDeviceId: String
+    public var chatId: String
+    public var commitAadJson: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(actorAccountId: String, actorDeviceId: String, chatId: String, commitAadJson: String?) {
+        self.actorAccountId = actorAccountId
+        self.actorDeviceId = actorDeviceId
+        self.chatId = chatId
+        self.commitAadJson = commitAadJson
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiDmGlobalDeleteControlInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiDmGlobalDeleteControlInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDmGlobalDeleteControlInput {
+        return
+            try FfiDmGlobalDeleteControlInput(
+                actorAccountId: FfiConverterString.read(from: &buf), 
+                actorDeviceId: FfiConverterString.read(from: &buf), 
+                chatId: FfiConverterString.read(from: &buf), 
+                commitAadJson: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiDmGlobalDeleteControlInput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.actorAccountId, into: &buf)
+        FfiConverterString.write(value.actorDeviceId, into: &buf)
+        FfiConverterString.write(value.chatId, into: &buf)
+        FfiConverterOptionString.write(value.commitAadJson, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDmGlobalDeleteControlInput_lift(_ buf: RustBuffer) throws -> FfiDmGlobalDeleteControlInput {
+    return try FfiConverterTypeFfiDmGlobalDeleteControlInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDmGlobalDeleteControlInput_lower(_ value: FfiDmGlobalDeleteControlInput) -> RustBuffer {
+    return FfiConverterTypeFfiDmGlobalDeleteControlInput.lower(value)
+}
+
+
+public struct FfiDmGlobalDeleteControlOutcome: Equatable, Hashable {
+    public var chatId: String
+    public var epoch: UInt64
+    public var changedAccountIds: [String]
+    public var changedDeviceIds: [String]
+    public var report: FfiLocalStoreApplyReport
+    public var projectedMessages: [FfiLocalProjectedMessage]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(chatId: String, epoch: UInt64, changedAccountIds: [String], changedDeviceIds: [String], report: FfiLocalStoreApplyReport, projectedMessages: [FfiLocalProjectedMessage]) {
+        self.chatId = chatId
+        self.epoch = epoch
+        self.changedAccountIds = changedAccountIds
+        self.changedDeviceIds = changedDeviceIds
+        self.report = report
+        self.projectedMessages = projectedMessages
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiDmGlobalDeleteControlOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiDmGlobalDeleteControlOutcome: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDmGlobalDeleteControlOutcome {
+        return
+            try FfiDmGlobalDeleteControlOutcome(
+                chatId: FfiConverterString.read(from: &buf), 
+                epoch: FfiConverterUInt64.read(from: &buf), 
+                changedAccountIds: FfiConverterSequenceString.read(from: &buf), 
+                changedDeviceIds: FfiConverterSequenceString.read(from: &buf), 
+                report: FfiConverterTypeFfiLocalStoreApplyReport.read(from: &buf), 
+                projectedMessages: FfiConverterSequenceTypeFfiLocalProjectedMessage.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiDmGlobalDeleteControlOutcome, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.chatId, into: &buf)
+        FfiConverterUInt64.write(value.epoch, into: &buf)
+        FfiConverterSequenceString.write(value.changedAccountIds, into: &buf)
+        FfiConverterSequenceString.write(value.changedDeviceIds, into: &buf)
+        FfiConverterTypeFfiLocalStoreApplyReport.write(value.report, into: &buf)
+        FfiConverterSequenceTypeFfiLocalProjectedMessage.write(value.projectedMessages, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDmGlobalDeleteControlOutcome_lift(_ buf: RustBuffer) throws -> FfiDmGlobalDeleteControlOutcome {
+    return try FfiConverterTypeFfiDmGlobalDeleteControlOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDmGlobalDeleteControlOutcome_lower(_ value: FfiDmGlobalDeleteControlOutcome) -> RustBuffer {
+    return FfiConverterTypeFfiDmGlobalDeleteControlOutcome.lower(value)
+}
+
+
+public struct FfiDmGlobalDeleteParams: Equatable, Hashable {
+    public var epoch: UInt64
+    public var commitMessage: FfiControlMessage?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(epoch: UInt64, commitMessage: FfiControlMessage?) {
+        self.epoch = epoch
+        self.commitMessage = commitMessage
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiDmGlobalDeleteParams: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiDmGlobalDeleteParams: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDmGlobalDeleteParams {
+        return
+            try FfiDmGlobalDeleteParams(
+                epoch: FfiConverterUInt64.read(from: &buf), 
+                commitMessage: FfiConverterOptionTypeFfiControlMessage.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiDmGlobalDeleteParams, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.epoch, into: &buf)
+        FfiConverterOptionTypeFfiControlMessage.write(value.commitMessage, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDmGlobalDeleteParams_lift(_ buf: RustBuffer) throws -> FfiDmGlobalDeleteParams {
+    return try FfiConverterTypeFfiDmGlobalDeleteParams.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDmGlobalDeleteParams_lower(_ value: FfiDmGlobalDeleteParams) -> RustBuffer {
+    return FfiConverterTypeFfiDmGlobalDeleteParams.lower(value)
+}
+
+
+public struct FfiDmGlobalDeleteResponse: Equatable, Hashable {
+    public var chatId: String
+    public var epoch: UInt64
+    public var changedAccountIds: [String]
+    public var changedDeviceIds: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(chatId: String, epoch: UInt64, changedAccountIds: [String], changedDeviceIds: [String]) {
+        self.chatId = chatId
+        self.epoch = epoch
+        self.changedAccountIds = changedAccountIds
+        self.changedDeviceIds = changedDeviceIds
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiDmGlobalDeleteResponse: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiDmGlobalDeleteResponse: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDmGlobalDeleteResponse {
+        return
+            try FfiDmGlobalDeleteResponse(
+                chatId: FfiConverterString.read(from: &buf), 
+                epoch: FfiConverterUInt64.read(from: &buf), 
+                changedAccountIds: FfiConverterSequenceString.read(from: &buf), 
+                changedDeviceIds: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiDmGlobalDeleteResponse, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.chatId, into: &buf)
+        FfiConverterUInt64.write(value.epoch, into: &buf)
+        FfiConverterSequenceString.write(value.changedAccountIds, into: &buf)
+        FfiConverterSequenceString.write(value.changedDeviceIds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDmGlobalDeleteResponse_lift(_ buf: RustBuffer) throws -> FfiDmGlobalDeleteResponse {
+    return try FfiConverterTypeFfiDmGlobalDeleteResponse.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDmGlobalDeleteResponse_lower(_ value: FfiDmGlobalDeleteResponse) -> RustBuffer {
+    return FfiConverterTypeFfiDmGlobalDeleteResponse.lower(value)
+}
+
+
 public struct FfiDownloadedAttachment: Equatable, Hashable {
     public var body: FfiMessageBody
     public var plaintext: Data
@@ -7027,6 +7434,130 @@ public func FfiConverterTypeFfiLeaseInboxResponse_lift(_ buf: RustBuffer) throws
 #endif
 public func FfiConverterTypeFfiLeaseInboxResponse_lower(_ value: FfiLeaseInboxResponse) -> RustBuffer {
     return FfiConverterTypeFfiLeaseInboxResponse.lower(value)
+}
+
+
+public struct FfiLeaveChatControlInput: Equatable, Hashable {
+    public var actorAccountId: String
+    public var actorDeviceId: String
+    public var chatId: String
+    public var scope: FfiLeaveChatScope
+    public var commitAadJson: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(actorAccountId: String, actorDeviceId: String, chatId: String, scope: FfiLeaveChatScope, commitAadJson: String?) {
+        self.actorAccountId = actorAccountId
+        self.actorDeviceId = actorDeviceId
+        self.chatId = chatId
+        self.scope = scope
+        self.commitAadJson = commitAadJson
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiLeaveChatControlInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiLeaveChatControlInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiLeaveChatControlInput {
+        return
+            try FfiLeaveChatControlInput(
+                actorAccountId: FfiConverterString.read(from: &buf), 
+                actorDeviceId: FfiConverterString.read(from: &buf), 
+                chatId: FfiConverterString.read(from: &buf), 
+                scope: FfiConverterTypeFfiLeaveChatScope.read(from: &buf), 
+                commitAadJson: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiLeaveChatControlInput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.actorAccountId, into: &buf)
+        FfiConverterString.write(value.actorDeviceId, into: &buf)
+        FfiConverterString.write(value.chatId, into: &buf)
+        FfiConverterTypeFfiLeaveChatScope.write(value.scope, into: &buf)
+        FfiConverterOptionString.write(value.commitAadJson, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLeaveChatControlInput_lift(_ buf: RustBuffer) throws -> FfiLeaveChatControlInput {
+    return try FfiConverterTypeFfiLeaveChatControlInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLeaveChatControlInput_lower(_ value: FfiLeaveChatControlInput) -> RustBuffer {
+    return FfiConverterTypeFfiLeaveChatControlInput.lower(value)
+}
+
+
+public struct FfiLeaveChatParams: Equatable, Hashable {
+    public var scope: FfiLeaveChatScope
+    public var epoch: UInt64
+    public var commitMessage: FfiControlMessage?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(scope: FfiLeaveChatScope, epoch: UInt64, commitMessage: FfiControlMessage?) {
+        self.scope = scope
+        self.epoch = epoch
+        self.commitMessage = commitMessage
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiLeaveChatParams: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiLeaveChatParams: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiLeaveChatParams {
+        return
+            try FfiLeaveChatParams(
+                scope: FfiConverterTypeFfiLeaveChatScope.read(from: &buf), 
+                epoch: FfiConverterUInt64.read(from: &buf), 
+                commitMessage: FfiConverterOptionTypeFfiControlMessage.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiLeaveChatParams, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiLeaveChatScope.write(value.scope, into: &buf)
+        FfiConverterUInt64.write(value.epoch, into: &buf)
+        FfiConverterOptionTypeFfiControlMessage.write(value.commitMessage, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLeaveChatParams_lift(_ buf: RustBuffer) throws -> FfiLeaveChatParams {
+    return try FfiConverterTypeFfiLeaveChatParams.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLeaveChatParams_lower(_ value: FfiLeaveChatParams) -> RustBuffer {
+    return FfiConverterTypeFfiLeaveChatParams.lower(value)
 }
 
 
@@ -8843,6 +9374,60 @@ public func FfiConverterTypeFfiMessengerEventBatch_lift(_ buf: RustBuffer) throw
 #endif
 public func FfiConverterTypeFfiMessengerEventBatch_lower(_ value: FfiMessengerEventBatch) -> RustBuffer {
     return FfiConverterTypeFfiMessengerEventBatch.lower(value)
+}
+
+
+public struct FfiMessengerLeaveConversationRequest: Equatable, Hashable {
+    public var conversationId: String
+    public var scope: FfiLeaveChatScope
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(conversationId: String, scope: FfiLeaveChatScope) {
+        self.conversationId = conversationId
+        self.scope = scope
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiMessengerLeaveConversationRequest: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiMessengerLeaveConversationRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiMessengerLeaveConversationRequest {
+        return
+            try FfiMessengerLeaveConversationRequest(
+                conversationId: FfiConverterString.read(from: &buf), 
+                scope: FfiConverterTypeFfiLeaveChatScope.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiMessengerLeaveConversationRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.conversationId, into: &buf)
+        FfiConverterTypeFfiLeaveChatScope.write(value.scope, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiMessengerLeaveConversationRequest_lift(_ buf: RustBuffer) throws -> FfiMessengerLeaveConversationRequest {
+    return try FfiConverterTypeFfiMessengerLeaveConversationRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiMessengerLeaveConversationRequest_lower(_ value: FfiMessengerLeaveConversationRequest) -> RustBuffer {
+    return FfiConverterTypeFfiMessengerLeaveConversationRequest.lower(value)
 }
 
 
@@ -12392,6 +12977,73 @@ public func FfiConverterTypeFfiHistorySyncJobType_lower(_ value: FfiHistorySyncJ
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum FfiLeaveChatScope: Equatable, Hashable {
+    
+    case thisDevice
+    case allMyDevices
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiLeaveChatScope: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiLeaveChatScope: FfiConverterRustBuffer {
+    typealias SwiftType = FfiLeaveChatScope
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiLeaveChatScope {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .thisDevice
+        
+        case 2: return .allMyDevices
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiLeaveChatScope, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .thisDevice:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .allMyDevices:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLeaveChatScope_lift(_ buf: RustBuffer) throws -> FfiLeaveChatScope {
+    return try FfiConverterTypeFfiLeaveChatScope.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLeaveChatScope_lower(_ value: FfiLeaveChatScope) -> RustBuffer {
+    return FfiConverterTypeFfiLeaveChatScope.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum FfiLocalOutboxStatus: Equatable, Hashable {
     
     case pending
@@ -15262,6 +15914,32 @@ fileprivate struct FfiConverterSequenceTypeFfiSyncChatCursor: FfiConverterRustBu
         return seq
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterDictionaryStringBool: FfiConverterRustBuffer {
+    public static func write(_ value: [String: Bool], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for (key, value) in value {
+            FfiConverterString.write(key, into: &buf)
+            FfiConverterBool.write(value, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String: Bool] {
+        let len: Int32 = try readInt(&buf)
+        var dict = [String: Bool]()
+        dict.reserveCapacity(Int(len))
+        for _ in 0..<len {
+            let key = try FfiConverterString.read(from: &buf)
+            let value = try FfiConverterBool.read(from: &buf)
+            dict[key] = value
+        }
+        return dict
+    }
+}
 public func ffiAccountBootstrapPayload(transportPubkey: Data, credentialIdentity: Data) -> Data  {
     return try!  FfiConverterData.lift(try! rustCall() {
     uniffi_trix_core_fn_func_ffi_account_bootstrap_payload(
@@ -15642,6 +16320,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_delete_apple_push_token() != 21843) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffiserverapiclient_dm_global_delete() != 18512) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_download_attachment() != 65126) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -15688,6 +16369,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_lease_inbox() != 55258) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffiserverapiclient_leave_chat() != 60721) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffiserverapiclient_list_chats() != 42496) {
@@ -15771,6 +16455,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_create_chat_control() != 18857) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffisynccoordinator_dm_global_delete_control() != 55297) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_lease_inbox() != 39845) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -15778,6 +16465,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_lease_owner() != 50562) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffisynccoordinator_leave_chat_control() != 53742) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffisynccoordinator_process_history_sync_jobs() != 52647) {
@@ -15825,6 +16515,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffimessengerclient_create_link_device_intent() != 5659) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffimessengerclient_dm_global_delete_conversation() != 24503) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffimessengerclient_feature_flags_snapshot() != 17993) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_get_attachment() != 9506) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -15835,6 +16531,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events_realtime() != 51892) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffimessengerclient_is_feature_enabled() != 0) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffimessengerclient_leave_conversation() != 55333) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_list_conversations() != 14380) {
@@ -15853,6 +16555,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_mark_read() != 17060) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffimessengerclient_refresh_feature_flags() != 20532) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_remove_conversation_devices() != 54965) {

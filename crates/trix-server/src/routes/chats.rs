@@ -10,8 +10,8 @@ use serde_json::Value;
 
 use crate::{
     db::{
-        CreateChatInput, CreateMessageInput, MessageEnvelopeRow, ModifyChatDevicesInput,
-        ModifyChatMembersInput, PendingControlMessage,
+        CreateChatInput, CreateMessageInput, DmGlobalDeleteInput, LeaveChatInput,
+        MessageEnvelopeRow, ModifyChatDevicesInput, ModifyChatMembersInput, PendingControlMessage,
     },
     error::AppError,
     state::AppState,
@@ -20,6 +20,7 @@ use trix_types::{
     ChatDetailResponse, ChatDeviceSummary, ChatHistoryResponse, ChatListResponse,
     ChatMemberSummary, ChatParticipantProfileSummary, ChatSummary, ControlMessageInput,
     CreateChatRequest, CreateChatResponse, CreateMessageRequest, CreateMessageResponse,
+    DmGlobalDeleteRequest, DmGlobalDeleteResponse, LeaveChatRequest, LeaveChatResponse,
     MessageEnvelope, ModifyChatDevicesRequest, ModifyChatDevicesResponse, ModifyChatMembersRequest,
     ModifyChatMembersResponse,
 };
@@ -53,6 +54,8 @@ pub fn router() -> Router<AppState> {
         .route("/{chat_id}/members:remove", post(remove_members))
         .route("/{chat_id}/devices:add", post(add_devices))
         .route("/{chat_id}/devices:remove", post(remove_devices))
+        .route("/{chat_id}/leave", post(leave_chat))
+        .route("/{chat_id}/dm-global-delete", post(dm_global_delete))
 }
 
 #[derive(Debug, Deserialize)]
@@ -375,6 +378,80 @@ async fn add_devices(
     Ok(Json(ModifyChatDevicesResponse {
         chat_id: trix_types::ChatId(updated.chat_id),
         epoch: updated.epoch,
+        changed_device_ids: updated
+            .changed_device_ids
+            .into_iter()
+            .map(trix_types::DeviceId)
+            .collect(),
+    }))
+}
+
+async fn leave_chat(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(chat_id): Path<trix_types::ChatId>,
+    Json(request): Json<LeaveChatRequest>,
+) -> Result<Json<LeaveChatResponse>, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+    let updated = state
+        .db
+        .leave_chat(LeaveChatInput {
+            chat_id: chat_id.0,
+            actor_account_id: principal.account_id,
+            actor_device_id: principal.device_id,
+            epoch: request.epoch,
+            scope: request.scope,
+            commit_message: request
+                .commit_message
+                .map(decode_control_message)
+                .transpose()?,
+        })
+        .await?;
+
+    state.notify_pending_inbox_for_chat(chat_id.0).await;
+
+    Ok(Json(LeaveChatResponse {
+        chat_id: trix_types::ChatId(updated.chat_id),
+        epoch: updated.epoch,
+        changed_device_ids: updated
+            .changed_device_ids
+            .into_iter()
+            .map(trix_types::DeviceId)
+            .collect(),
+    }))
+}
+
+async fn dm_global_delete(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(chat_id): Path<trix_types::ChatId>,
+    Json(request): Json<DmGlobalDeleteRequest>,
+) -> Result<Json<DmGlobalDeleteResponse>, AppError> {
+    let principal = state.authenticate_active_headers(&headers).await?;
+    let updated = state
+        .db
+        .dm_global_delete(DmGlobalDeleteInput {
+            chat_id: chat_id.0,
+            actor_account_id: principal.account_id,
+            actor_device_id: principal.device_id,
+            epoch: request.epoch,
+            commit_message: request
+                .commit_message
+                .map(decode_control_message)
+                .transpose()?,
+        })
+        .await?;
+
+    state.notify_pending_inbox_for_chat(chat_id.0).await;
+
+    Ok(Json(DmGlobalDeleteResponse {
+        chat_id: trix_types::ChatId(updated.chat_id),
+        epoch: updated.epoch,
+        changed_account_ids: updated
+            .changed_account_ids
+            .into_iter()
+            .map(trix_types::AccountId)
+            .collect(),
         changed_device_ids: updated
             .changed_device_ids
             .into_iter()

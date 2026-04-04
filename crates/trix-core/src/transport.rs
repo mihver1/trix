@@ -13,8 +13,9 @@ use tokio_tungstenite::{
     tungstenite::{Message, client::IntoClientRequest},
 };
 use trix_types::{
-    AccountDirectoryResponse, AccountId, AccountKeyPackagesResponse, AccountProfileResponse,
-    AckInboxRequest, AckInboxResponse, AppendHistorySyncChunkRequest,
+    AccountDebugMetricsStatusResponse, AccountDirectoryResponse, AccountFeatureFlagsResponse,
+    AccountId, AccountKeyPackagesResponse, AccountProfileResponse, AckInboxRequest, AckInboxResponse,
+    AppendHistorySyncChunkRequest,
     AppendHistorySyncChunkResponse, ApplePushEnvironment, BlobMetadataResponse, BlobUploadStatus,
     ChatDetailResponse, ChatHistoryResponse, ChatId, ChatListResponse,
     CompleteHistorySyncJobRequest, CompleteHistorySyncJobResponse, CompleteLinkIntentRequest,
@@ -23,14 +24,16 @@ use trix_types::{
     CreateLinkIntentResponse, CreateMessageRequest, CreateMessageResponse,
     DeviceApprovePayloadResponse, DeviceId, DeviceListResponse, DeviceStatus,
     DeviceTransferBundleResponse, DeviceTransportKeyResponse, DirectoryAccountSummary,
-    ErrorResponse, HealthResponse, HistorySyncChunkListResponse, HistorySyncChunkSummary,
-    HistorySyncJobListResponse, HistorySyncJobRole, HistorySyncJobStatus, LeaseInboxRequest,
-    LeaseInboxResponse, MessageId, ModifyChatDevicesRequest, ModifyChatDevicesResponse,
-    ModifyChatMembersRequest, ModifyChatMembersResponse, PublishKeyPackageItem,
-    PublishKeyPackagesRequest, PublishKeyPackagesResponse, RegisterApplePushTokenRequest,
-    RegisterApplePushTokenResponse, RequestChatBackfillRequest, RequestChatBackfillResponse,
-    RequestHistorySyncRepairRequest, RequestHistorySyncRepairResponse, ReserveKeyPackagesRequest,
-    ResetKeyPackagesResponse, RevokeDeviceRequest, RevokeDeviceResponse,
+    DmGlobalDeleteRequest, DmGlobalDeleteResponse, ErrorResponse, HealthResponse,
+    HistorySyncChunkListResponse, HistorySyncChunkSummary, HistorySyncJobListResponse,
+    HistorySyncJobRole, HistorySyncJobStatus, LeaseInboxRequest, LeaseInboxResponse,
+    LeaveChatRequest, LeaveChatResponse, MessageId, ModifyChatDevicesRequest,
+    ModifyChatDevicesResponse, ModifyChatMembersRequest, ModifyChatMembersResponse,
+    PublishKeyPackageItem, PublishKeyPackagesRequest, PublishKeyPackagesResponse,
+    RegisterApplePushTokenRequest, RegisterApplePushTokenResponse, RequestChatBackfillRequest,
+    RequestChatBackfillResponse, RequestHistorySyncRepairRequest, RequestHistorySyncRepairResponse,
+    ReserveKeyPackagesRequest, ResetKeyPackagesResponse, RevokeDeviceRequest, RevokeDeviceResponse,
+    SubmitDebugMetricsRequest,
     UpdateAccountProfileRequest, VersionResponse, WebSocketClientFrame, WebSocketServerFrame,
 };
 
@@ -331,6 +334,34 @@ impl ServerApiClient {
     pub async fn get_me(&self) -> Result<AccountProfileResponse, ServerApiError> {
         self.send_json(self.request(Method::GET, "v0/accounts/me")?)
             .await
+    }
+
+    pub async fn get_feature_flags(&self) -> Result<AccountFeatureFlagsResponse, ServerApiError> {
+        self.send_json(self.request(Method::GET, "v0/accounts/me/feature-flags")?)
+            .await
+    }
+
+    pub async fn get_debug_metrics_status(
+        &self,
+    ) -> Result<AccountDebugMetricsStatusResponse, ServerApiError> {
+        self.send_json(self.request(Method::GET, "v0/accounts/me/debug/metrics")?)
+            .await
+    }
+
+    pub async fn submit_debug_metrics(
+        &self,
+        session_id: impl Into<String>,
+        payload: Value,
+    ) -> Result<(), ServerApiError> {
+        self.send_empty(
+            self.request(Method::POST, "v0/accounts/me/debug/metrics")?.json(
+                &SubmitDebugMetricsRequest {
+                    session_id: session_id.into(),
+                    payload,
+                },
+            ),
+        )
+        .await
     }
 
     pub async fn search_account_directory(
@@ -807,6 +838,33 @@ impl ServerApiClient {
             self.request(
                 Method::POST,
                 &format!("v0/chats/{}/devices:remove", chat_id.0),
+            )?
+            .json(&request),
+        )
+        .await
+    }
+
+    pub async fn leave_chat(
+        &self,
+        chat_id: ChatId,
+        request: LeaveChatRequest,
+    ) -> Result<LeaveChatResponse, ServerApiError> {
+        self.send_json(
+            self.request(Method::POST, &format!("v0/chats/{}/leave", chat_id.0))?
+                .json(&request),
+        )
+        .await
+    }
+
+    pub async fn dm_global_delete(
+        &self,
+        chat_id: ChatId,
+        request: DmGlobalDeleteRequest,
+    ) -> Result<DmGlobalDeleteResponse, ServerApiError> {
+        self.send_json(
+            self.request(
+                Method::POST,
+                &format!("v0/chats/{}/dm-global-delete", chat_id.0),
             )?
             .json(&request),
         )

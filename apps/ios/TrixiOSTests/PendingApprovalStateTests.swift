@@ -13,7 +13,7 @@ final class PendingApprovalStateTests: XCTestCase {
             baseURLString: baseURL,
             label: "Pending Start Owner"
         )
-        let ownerSession = try TrixCoreServerBridge.authenticate(
+        let ownerSession = try await TrixCoreServerBridge.authenticate(
             baseURLString: baseURL,
             identity: ownerIdentity
         )

@@ -12,9 +12,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use trix_types::{
     AccountId, AckInboxResponse, ChatDetailResponse, ChatDeviceSummary, ChatHistoryResponse,
-    ChatId, ChatType, CreateChatRequest, DeviceId, HistorySyncJobStatus, HistorySyncJobType,
-    LeaseInboxRequest, LeaseInboxResponse, MessageEnvelope, MessageId, MessageKind,
-    ModifyChatDevicesRequest, ModifyChatMembersRequest,
+    ChatId, ChatType, CreateChatRequest, DeviceId, DmGlobalDeleteRequest, HistorySyncJobStatus,
+    HistorySyncJobType, LeaseInboxRequest, LeaseInboxResponse, LeaveChatRequest, LeaveChatScope,
+    MessageEnvelope, MessageId, MessageKind, ModifyChatDevicesRequest, ModifyChatMembersRequest,
 };
 use uuid::Uuid;
 
@@ -160,6 +160,35 @@ pub struct ModifyChatDevicesControlInput {
 pub struct ModifyChatDevicesControlOutcome {
     pub chat_id: ChatId,
     pub epoch: u64,
+    pub changed_device_ids: Vec<DeviceId>,
+    pub report: LocalStoreApplyReport,
+    pub projected_messages: Vec<LocalProjectedMessage>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LeaveChatControlInput {
+    pub actor_account_id: AccountId,
+    pub actor_device_id: DeviceId,
+    pub chat_id: ChatId,
+    pub scope: LeaveChatScope,
+    pub commit_aad_json: Option<Value>,
+}
+
+pub type LeaveChatControlOutcome = ModifyChatDevicesControlOutcome;
+
+#[derive(Debug, Clone)]
+pub struct DmGlobalDeleteControlInput {
+    pub actor_account_id: AccountId,
+    pub actor_device_id: DeviceId,
+    pub chat_id: ChatId,
+    pub commit_aad_json: Option<Value>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DmGlobalDeleteControlOutcome {
+    pub chat_id: ChatId,
+    pub epoch: u64,
+    pub changed_account_ids: Vec<AccountId>,
     pub changed_device_ids: Vec<DeviceId>,
     pub report: LocalStoreApplyReport,
     pub projected_messages: Vec<LocalProjectedMessage>,
@@ -1873,6 +1902,183 @@ impl SyncCoordinator {
         })
     }
 
+    pub async fn leave_chat_control(
+        &mut self,
+        client: &ServerApiClient,
+        store: &mut LocalHistoryStore,
+        facade: &mut MlsFacade,
+        input: LeaveChatControlInput,
+    ) -> Result<LeaveChatControlOutcome> {
+        let (chat_detail, mut conversation) = self
+            .prepare_chat_control_context(client, store, facade, input.chat_id)
+            .await?;
+        let target_device_ids: Vec<DeviceId> = match input.scope {
+            LeaveChatScope::ThisDevice => vec![input.actor_device_id],
+            LeaveChatScope::AllMyDevices => {
+                let mut ids: Vec<DeviceId> = chat_detail
+                    .device_members
+                    .iter()
+                    .filter(|m| m.account_id == input.actor_account_id)
+                    .map(|m| m.device_id)
+                    .collect();
+                ids.sort_by_key(|d| d.0);
+                ids.dedup();
+                if ids.is_empty() {
+                    return Err(anyhow!("no active devices found for actor in chat"));
+                }
+                ids
+            }
+        };
+        let leaf_indices =
+            collect_leaf_indices_for_devices(&chat_detail.device_members, &target_device_ids)?;
+        let snapshot = facade.snapshot_state()?;
+        let remove_bundle = match facade.remove_members(&mut conversation, &leaf_indices) {
+            Ok(bundle) => bundle,
+            Err(err) => {
+                facade.restore_snapshot(&snapshot)?;
+                return Err(err);
+            }
+        };
+        let commit_message_id = MessageId::default();
+        let baseline_last = chat_detail.last_server_seq;
+
+        let response = match client
+            .leave_chat(
+                input.chat_id,
+                LeaveChatRequest {
+                    scope: input.scope,
+                    epoch: chat_detail.epoch,
+                    commit_message: Some(crate::make_control_message_input(
+                        commit_message_id,
+                        &remove_bundle.commit_message,
+                        input.commit_aad_json,
+                    )),
+                },
+            )
+            .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                facade.restore_snapshot(&snapshot).with_context(|| {
+                    format!("failed to rollback MLS state after server rejected chat leave: {err}")
+                })?;
+                return Err(err.into());
+            }
+        };
+
+        let commit_server_seq =
+            store.allocate_synthetic_commit_server_seq(input.chat_id, baseline_last);
+        let (report, synthetic) = store
+            .finalize_chat_after_terminal_control(
+                input.chat_id,
+                input.actor_account_id,
+                input.actor_device_id,
+                response.epoch,
+                commit_message_id,
+                remove_bundle.epoch,
+                commit_server_seq,
+            )
+            .map_err(|error| {
+                control_mutation_requires_resync("leave_chat_control", input.chat_id, error)
+            })?;
+        self.record_chat_server_seq(input.chat_id, commit_server_seq)?;
+        self.record_projected_chat_cursor(store, input.chat_id)
+            .map_err(|error| {
+                control_mutation_requires_resync("leave_chat_control", input.chat_id, error)
+            })?;
+
+        Ok(LeaveChatControlOutcome {
+            chat_id: response.chat_id,
+            epoch: response.epoch,
+            changed_device_ids: response.changed_device_ids,
+            report,
+            projected_messages: vec![synthetic],
+        })
+    }
+
+    pub async fn dm_global_delete_control(
+        &mut self,
+        client: &ServerApiClient,
+        store: &mut LocalHistoryStore,
+        facade: &mut MlsFacade,
+        input: DmGlobalDeleteControlInput,
+    ) -> Result<DmGlobalDeleteControlOutcome> {
+        let (chat_detail, mut conversation) = self
+            .prepare_chat_control_context(client, store, facade, input.chat_id)
+            .await?;
+        if chat_detail.chat_type != ChatType::Dm {
+            return Err(anyhow!(
+                "dm_global_delete_control is only valid for DM chats"
+            ));
+        }
+        let leaf_indices = collect_leaf_indices_for_all_devices(&chat_detail.device_members)?;
+        let snapshot = facade.snapshot_state()?;
+        let remove_bundle = match facade.remove_members(&mut conversation, &leaf_indices) {
+            Ok(bundle) => bundle,
+            Err(err) => {
+                facade.restore_snapshot(&snapshot)?;
+                return Err(err);
+            }
+        };
+        let commit_message_id = MessageId::default();
+        let baseline_last = chat_detail.last_server_seq;
+
+        let response = match client
+            .dm_global_delete(
+                input.chat_id,
+                DmGlobalDeleteRequest {
+                    epoch: chat_detail.epoch,
+                    commit_message: Some(crate::make_control_message_input(
+                        commit_message_id,
+                        &remove_bundle.commit_message,
+                        input.commit_aad_json,
+                    )),
+                },
+            )
+            .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                facade.restore_snapshot(&snapshot).with_context(|| {
+                    format!(
+                        "failed to rollback MLS state after server rejected dm global delete: {err}"
+                    )
+                })?;
+                return Err(err.into());
+            }
+        };
+
+        let commit_server_seq =
+            store.allocate_synthetic_commit_server_seq(input.chat_id, baseline_last);
+        let (report, synthetic) = store
+            .finalize_chat_after_terminal_control(
+                input.chat_id,
+                input.actor_account_id,
+                input.actor_device_id,
+                response.epoch,
+                commit_message_id,
+                remove_bundle.epoch,
+                commit_server_seq,
+            )
+            .map_err(|error| {
+                control_mutation_requires_resync("dm_global_delete_control", input.chat_id, error)
+            })?;
+        self.record_chat_server_seq(input.chat_id, commit_server_seq)?;
+        self.record_projected_chat_cursor(store, input.chat_id)
+            .map_err(|error| {
+                control_mutation_requires_resync("dm_global_delete_control", input.chat_id, error)
+            })?;
+
+        Ok(DmGlobalDeleteControlOutcome {
+            chat_id: response.chat_id,
+            epoch: response.epoch,
+            changed_account_ids: response.changed_account_ids,
+            changed_device_ids: response.changed_device_ids,
+            report,
+            projected_messages: vec![synthetic],
+        })
+    }
+
     async fn prepare_chat_mutation_conversation(
         &mut self,
         client: &ServerApiClient,
@@ -2278,6 +2484,16 @@ fn collect_leaf_indices_for_devices(
         ));
     }
     leaf_indices.sort_unstable();
+    Ok(leaf_indices)
+}
+
+fn collect_leaf_indices_for_all_devices(device_members: &[ChatDeviceSummary]) -> Result<Vec<u32>> {
+    if device_members.is_empty() {
+        return Err(anyhow!("chat has no device members"));
+    }
+    let mut leaf_indices: Vec<u32> = device_members.iter().map(|m| m.leaf_index).collect();
+    leaf_indices.sort_unstable();
+    leaf_indices.dedup();
     Ok(leaf_indices)
 }
 
