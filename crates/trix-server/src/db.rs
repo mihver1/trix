@@ -17,7 +17,7 @@ use uuid::Uuid;
 use crate::error::AppError;
 use trix_types::{
     ApplePushEnvironment, BlobUploadStatus, ChatType, ContentType, DeviceStatus,
-    HistorySyncJobStatus, HistorySyncJobType, MessageKind,
+    HistorySyncJobStatus, HistorySyncJobType, LeaveChatScope, MessageKind,
 };
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./../../migrations");
@@ -387,6 +387,40 @@ pub struct ModifyChatDevicesInput {
 pub struct ModifyChatDevicesOutput {
     pub chat_id: Uuid,
     pub epoch: u64,
+    pub changed_device_ids: Vec<Uuid>,
+}
+
+#[derive(Debug)]
+pub struct LeaveChatInput {
+    pub chat_id: Uuid,
+    pub actor_account_id: Uuid,
+    pub actor_device_id: Uuid,
+    pub epoch: u64,
+    pub scope: LeaveChatScope,
+    pub commit_message: Option<PendingControlMessage>,
+}
+
+#[derive(Debug)]
+pub struct LeaveChatOutput {
+    pub chat_id: Uuid,
+    pub epoch: u64,
+    pub changed_device_ids: Vec<Uuid>,
+}
+
+#[derive(Debug)]
+pub struct DmGlobalDeleteInput {
+    pub chat_id: Uuid,
+    pub actor_account_id: Uuid,
+    pub actor_device_id: Uuid,
+    pub epoch: u64,
+    pub commit_message: Option<PendingControlMessage>,
+}
+
+#[derive(Debug)]
+pub struct DmGlobalDeleteOutput {
+    pub chat_id: Uuid,
+    pub epoch: u64,
+    pub changed_account_ids: Vec<Uuid>,
     pub changed_device_ids: Vec<Uuid>,
 }
 
@@ -3732,6 +3766,7 @@ impl Database {
               AND cdm.device_id = $2
               AND cdm.membership_status = 'active'::device_membership_status
               AND c.archived_at IS NULL
+              AND c.closed_at IS NULL
               AND c.chat_type <> 'account_sync'::chat_type
             ORDER BY c.last_server_seq DESC, c.created_at DESC
             "#,
@@ -3996,6 +4031,8 @@ impl Database {
                 SELECT chat_id
                 FROM chats
                 WHERE dm_member_pair_key = $1
+                  AND closed_at IS NULL
+                  AND chat_type = 'dm'::chat_type
                 LIMIT 1
                 "#,
             )
@@ -4185,6 +4222,7 @@ impl Database {
             JOIN devices d
               ON d.device_id = cdm.device_id
             WHERE c.chat_id = $1
+              AND c.closed_at IS NULL
               AND cam.account_id = $2
               AND cam.membership_status = 'active'::membership_status
               AND cdm.device_id = $3
@@ -4466,6 +4504,7 @@ impl Database {
             JOIN devices d
               ON d.device_id = cdm.device_id
             WHERE c.chat_id = $1
+              AND c.closed_at IS NULL
               AND cam.account_id = $2
               AND cam.membership_status = 'active'::membership_status
               AND cdm.device_id = $3
@@ -4647,6 +4686,7 @@ impl Database {
             JOIN devices d
               ON d.device_id = cdm.device_id
             WHERE c.chat_id = $1
+              AND c.closed_at IS NULL
               AND cam.account_id = $2
               AND cam.membership_status = 'active'::membership_status
               AND cdm.device_id = $3
@@ -4898,6 +4938,7 @@ impl Database {
             JOIN devices d
               ON d.device_id = cdm.device_id
             WHERE c.chat_id = $1
+              AND c.closed_at IS NULL
               AND cam.account_id = $2
               AND cam.membership_status = 'active'::membership_status
               AND cdm.device_id = $3
@@ -5041,6 +5082,439 @@ impl Database {
         })
     }
 
+    pub async fn leave_chat(&self, input: LeaveChatInput) -> Result<LeaveChatOutput, AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
+        let actor_row = sqlx::query(
+            r#"
+            SELECT
+                c.chat_type::text AS chat_type,
+                mgs.epoch
+            FROM chats c
+            JOIN mls_group_states mgs
+              ON mgs.chat_id = c.chat_id
+            JOIN chat_account_members cam
+              ON cam.chat_id = c.chat_id
+            JOIN chat_device_members cdm
+              ON cdm.chat_id = c.chat_id
+            JOIN devices d
+              ON d.device_id = cdm.device_id
+            WHERE c.chat_id = $1
+              AND c.closed_at IS NULL
+              AND cam.account_id = $2
+              AND cam.membership_status = 'active'::membership_status
+              AND cdm.device_id = $3
+              AND cdm.membership_status = 'active'::device_membership_status
+              AND d.account_id = $2
+              AND d.device_status = 'active'::device_status
+            "#,
+        )
+        .bind(input.chat_id)
+        .bind(input.actor_account_id)
+        .bind(input.actor_device_id)
+        .fetch_optional(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+        let Some(actor_row) = actor_row else {
+            return Err(AppError::not_found("active chat membership not found"));
+        };
+
+        let chat_type = parse_chat_type(&row_text(&actor_row, "chat_type")?)?;
+        let current_epoch = row_u64_from_i64(&actor_row, "epoch")?;
+        if current_epoch != input.epoch {
+            return Err(AppError::conflict("chat epoch is out of date"));
+        }
+
+        let target_device_ids: Vec<Uuid> = match input.scope {
+            LeaveChatScope::ThisDevice => vec![input.actor_device_id],
+            LeaveChatScope::AllMyDevices => {
+                if chat_type == ChatType::Group {
+                    let other_row = sqlx::query(
+                        r#"
+                        SELECT COUNT(*)::bigint AS cnt
+                        FROM chat_account_members
+                        WHERE chat_id = $1
+                          AND membership_status = 'active'::membership_status
+                          AND account_id <> $2
+                        "#,
+                    )
+                    .bind(input.chat_id)
+                    .bind(input.actor_account_id)
+                    .fetch_one(tx.deref_mut())
+                    .await
+                    .map_err(map_db_error)?;
+                    let cnt = row_u64_from_i64(&other_row, "cnt")?;
+                    if cnt == 0 {
+                        return Err(AppError::conflict(
+                            "cannot leave the group as the only remaining member",
+                        ));
+                    }
+                }
+                let rows = sqlx::query(
+                    r#"
+                    SELECT cdm.device_id
+                    FROM chat_device_members cdm
+                    JOIN devices d
+                      ON d.device_id = cdm.device_id
+                    WHERE cdm.chat_id = $1
+                      AND d.account_id = $2
+                      AND cdm.membership_status = 'active'::device_membership_status
+                    FOR UPDATE
+                    "#,
+                )
+                .bind(input.chat_id)
+                .bind(input.actor_account_id)
+                .fetch_all(tx.deref_mut())
+                .await
+                .map_err(map_db_error)?;
+                if rows.is_empty() {
+                    return Err(AppError::conflict("no active devices to leave"));
+                }
+                rows.into_iter()
+                    .map(|r| row_uuid(&r, "device_id"))
+                    .collect::<Result<Vec<_>, _>>()?
+            }
+        };
+
+        let target_rows = sqlx::query(
+            r#"
+            SELECT
+                d.device_id,
+                d.account_id
+            FROM devices d
+            WHERE d.device_id = ANY($1)
+            FOR UPDATE
+            "#,
+        )
+        .bind(&target_device_ids)
+        .fetch_all(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+        if target_rows.len() != target_device_ids.len() {
+            return Err(AppError::not_found(
+                "one or more target devices were not found",
+            ));
+        }
+
+        for row in &target_rows {
+            let account_id = row_uuid(row, "account_id")?;
+            if account_id != input.actor_account_id {
+                return Err(AppError::unauthorized(
+                    "all target devices must belong to the authenticated account",
+                ));
+            }
+        }
+
+        let membership_rows = sqlx::query(
+            r#"
+            SELECT device_id, membership_status::text AS membership_status
+            FROM chat_device_members
+            WHERE chat_id = $1
+              AND device_id = ANY($2)
+            FOR UPDATE
+            "#,
+        )
+        .bind(input.chat_id)
+        .bind(&target_device_ids)
+        .fetch_all(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+        if membership_rows.len() != target_device_ids.len() {
+            return Err(AppError::conflict(
+                "one or more target devices are not active in the chat",
+            ));
+        }
+
+        for row in &membership_rows {
+            if row_text(row, "membership_status")? != "active" {
+                return Err(AppError::conflict(
+                    "one or more target devices are not active in the chat",
+                ));
+            }
+        }
+
+        let next_epoch = current_epoch + 1;
+        sqlx::query(
+            r#"
+            UPDATE chat_device_members
+            SET membership_status = 'removed'::device_membership_status,
+                removed_in_epoch = $3,
+                removed_at = now()
+            WHERE chat_id = $1
+              AND device_id = ANY($2)
+              AND membership_status = 'active'::device_membership_status
+            "#,
+        )
+        .bind(input.chat_id)
+        .bind(&target_device_ids)
+        .bind(u64_to_i64(next_epoch, "next epoch")?)
+        .execute(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        if matches!(input.scope, LeaveChatScope::AllMyDevices) {
+            sqlx::query(
+                r#"
+                UPDATE chat_account_members
+                SET membership_status = 'left'::membership_status,
+                    left_at = now()
+                WHERE chat_id = $1
+                  AND account_id = $2
+                "#,
+            )
+            .bind(input.chat_id)
+            .bind(input.actor_account_id)
+            .execute(tx.deref_mut())
+            .await
+            .map_err(map_db_error)?;
+        }
+
+        sqlx::query(
+            r#"
+            UPDATE mls_group_states
+            SET epoch = $2,
+                updated_at = now()
+            WHERE chat_id = $1
+            "#,
+        )
+        .bind(input.chat_id)
+        .bind(u64_to_i64(next_epoch, "next epoch")?)
+        .execute(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        if let Some(commit) = input.commit_message {
+            let commit_message_id = commit.message_id;
+            let recipients =
+                active_chat_device_ids_tx(&mut tx, input.chat_id, input.actor_device_id, None)
+                    .await?;
+            insert_control_message_tx(
+                &mut tx,
+                input.chat_id,
+                input.actor_account_id,
+                input.actor_device_id,
+                next_epoch,
+                MessageKind::Commit,
+                commit,
+                &recipients,
+            )
+            .await?;
+            set_last_commit_message_id_tx(&mut tx, input.chat_id, commit_message_id).await?;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
+
+        Ok(LeaveChatOutput {
+            chat_id: input.chat_id,
+            epoch: next_epoch,
+            changed_device_ids: target_device_ids,
+        })
+    }
+
+    pub async fn dm_global_delete(
+        &self,
+        input: DmGlobalDeleteInput,
+    ) -> Result<DmGlobalDeleteOutput, AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to begin transaction: {err}")))?;
+
+        let actor_row = sqlx::query(
+            r#"
+            SELECT
+                c.chat_type::text AS chat_type,
+                mgs.epoch
+            FROM chats c
+            JOIN mls_group_states mgs
+              ON mgs.chat_id = c.chat_id
+            JOIN chat_account_members cam
+              ON cam.chat_id = c.chat_id
+            JOIN chat_device_members cdm
+              ON cdm.chat_id = c.chat_id
+            JOIN devices d
+              ON d.device_id = cdm.device_id
+            WHERE c.chat_id = $1
+              AND c.closed_at IS NULL
+              AND cam.account_id = $2
+              AND cam.membership_status = 'active'::membership_status
+              AND cdm.device_id = $3
+              AND cdm.membership_status = 'active'::device_membership_status
+              AND d.account_id = $2
+              AND d.device_status = 'active'::device_status
+            "#,
+        )
+        .bind(input.chat_id)
+        .bind(input.actor_account_id)
+        .bind(input.actor_device_id)
+        .fetch_optional(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+        let Some(actor_row) = actor_row else {
+            return Err(AppError::not_found("active chat membership not found"));
+        };
+
+        let chat_type = parse_chat_type(&row_text(&actor_row, "chat_type")?)?;
+        if chat_type != ChatType::Dm {
+            return Err(AppError::bad_request(
+                "global delete is only supported for dm chats",
+            ));
+        }
+
+        let active_member_rows = sqlx::query(
+            r#"
+            SELECT account_id
+            FROM chat_account_members
+            WHERE chat_id = $1
+              AND membership_status = 'active'::membership_status
+            FOR UPDATE
+            "#,
+        )
+        .bind(input.chat_id)
+        .fetch_all(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+        if active_member_rows.len() != 2 {
+            return Err(AppError::conflict(
+                "dm global delete requires two active accounts in the chat",
+            ));
+        }
+        let changed_account_ids: Vec<Uuid> = active_member_rows
+            .iter()
+            .map(|row| row_uuid(row, "account_id"))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let current_epoch = row_u64_from_i64(&actor_row, "epoch")?;
+        if current_epoch != input.epoch {
+            return Err(AppError::conflict("chat epoch is out of date"));
+        }
+
+        let device_rows = sqlx::query(
+            r#"
+            SELECT cdm.device_id
+            FROM chat_device_members cdm
+            JOIN devices d
+              ON d.device_id = cdm.device_id
+            WHERE cdm.chat_id = $1
+              AND cdm.membership_status = 'active'::device_membership_status
+              AND d.device_status = 'active'::device_status
+            FOR UPDATE
+            "#,
+        )
+        .bind(input.chat_id)
+        .fetch_all(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+        let changed_device_ids: Vec<Uuid> = device_rows
+            .into_iter()
+            .map(|row| row_uuid(&row, "device_id"))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let recipients_for_commit = if input.commit_message.is_some() {
+            Some(
+                active_chat_device_ids_tx(&mut tx, input.chat_id, input.actor_device_id, None)
+                    .await?,
+            )
+        } else {
+            None
+        };
+
+        let next_epoch = current_epoch + 1;
+
+        sqlx::query(
+            r#"
+            UPDATE chat_device_members
+            SET membership_status = 'removed'::device_membership_status,
+                removed_in_epoch = $2,
+                removed_at = now()
+            WHERE chat_id = $1
+              AND membership_status = 'active'::device_membership_status
+            "#,
+        )
+        .bind(input.chat_id)
+        .bind(u64_to_i64(next_epoch, "next epoch")?)
+        .execute(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        sqlx::query(
+            r#"
+            UPDATE chat_account_members
+            SET membership_status = 'left'::membership_status,
+                left_at = now()
+            WHERE chat_id = $1
+              AND membership_status = 'active'::membership_status
+            "#,
+        )
+        .bind(input.chat_id)
+        .execute(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        sqlx::query(
+            r#"
+            UPDATE chats
+            SET closed_at = now()
+            WHERE chat_id = $1
+            "#,
+        )
+        .bind(input.chat_id)
+        .execute(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        sqlx::query(
+            r#"
+            UPDATE mls_group_states
+            SET epoch = $2,
+                updated_at = now()
+            WHERE chat_id = $1
+            "#,
+        )
+        .bind(input.chat_id)
+        .bind(u64_to_i64(next_epoch, "next epoch")?)
+        .execute(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        if let Some(commit) = input.commit_message {
+            let commit_message_id = commit.message_id;
+            let recipients = recipients_for_commit.as_ref().ok_or_else(|| {
+                AppError::internal("dm global delete: commit present but recipients not prefetched")
+            })?;
+            insert_control_message_tx(
+                &mut tx,
+                input.chat_id,
+                input.actor_account_id,
+                input.actor_device_id,
+                next_epoch,
+                MessageKind::Commit,
+                commit,
+                recipients,
+            )
+            .await?;
+            set_last_commit_message_id_tx(&mut tx, input.chat_id, commit_message_id).await?;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|err| AppError::internal(format!("failed to commit transaction: {err}")))?;
+
+        Ok(DmGlobalDeleteOutput {
+            chat_id: input.chat_id,
+            epoch: next_epoch,
+            changed_account_ids,
+            changed_device_ids,
+        })
+    }
+
     pub async fn get_chat_detail_for_device(
         &self,
         chat_id: Uuid,
@@ -5067,6 +5541,7 @@ impl Database {
               AND cdm.membership_status = 'active'::device_membership_status
               AND d.device_status = 'active'::device_status
               AND c.archived_at IS NULL
+              AND c.closed_at IS NULL
             "#,
         )
         .bind(chat_id)
@@ -5292,6 +5767,8 @@ impl Database {
             FROM chat_device_members cdm
             JOIN devices d
               ON d.device_id = cdm.device_id
+            JOIN chats c
+              ON c.chat_id = cdm.chat_id
             JOIN mls_group_states mgs
               ON mgs.chat_id = cdm.chat_id
             WHERE cdm.chat_id = $1
@@ -5299,6 +5776,7 @@ impl Database {
               AND d.account_id = $3
               AND d.device_status = 'active'::device_status
               AND cdm.membership_status = 'active'::device_membership_status
+              AND c.closed_at IS NULL
             "#,
         )
         .bind(input.chat_id)
@@ -5315,6 +5793,52 @@ impl Database {
         let current_epoch = row_u64_from_i64(&membership_row, "epoch")?;
         if current_epoch != input.epoch {
             return Err(AppError::conflict("chat epoch is out of date"));
+        }
+
+        let chat_state_row = sqlx::query(
+            r#"
+            SELECT
+                c.chat_type::text AS chat_type,
+                c.last_server_seq,
+                (c.closed_at IS NOT NULL) AS is_closed
+            FROM chats c
+            WHERE c.chat_id = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(input.chat_id)
+        .fetch_optional(tx.deref_mut())
+        .await
+        .map_err(map_db_error)?;
+        let Some(chat_state_row) = chat_state_row else {
+            return Err(AppError::not_found("chat not found"));
+        };
+        if row_bool(&chat_state_row, "is_closed")? {
+            return Err(AppError::conflict("chat is closed"));
+        }
+        let chat_type = parse_chat_type(&row_text(&chat_state_row, "chat_type")?)?;
+        let last_seq_before = row_u64_from_i64(&chat_state_row, "last_server_seq")?;
+
+        if chat_type == ChatType::Dm && input.message_kind == MessageKind::Application {
+            sqlx::query(
+                r#"
+                UPDATE chat_account_members AS cam
+                SET membership_status = 'active'::membership_status,
+                    left_at = NULL,
+                    dm_history_cutoff_server_seq = $3
+                FROM chats c
+                WHERE cam.chat_id = c.chat_id
+                  AND c.chat_id = $1
+                  AND cam.account_id <> $2
+                  AND cam.membership_status = 'left'::membership_status
+                "#,
+            )
+            .bind(input.chat_id)
+            .bind(input.sender_account_id)
+            .bind(u64_to_i64(last_seq_before, "dm history cutoff")?)
+            .execute(tx.deref_mut())
+            .await
+            .map_err(map_db_error)?;
         }
 
         let seq_row = sqlx::query(
@@ -5408,14 +5932,20 @@ impl Database {
     ) -> Result<Option<Vec<MessageEnvelopeRow>>, AppError> {
         let membership_row = sqlx::query(
             r#"
-            SELECT 1
+            SELECT COALESCE(cam.dm_history_cutoff_server_seq, 0)::bigint AS dm_cutoff
             FROM chat_device_members cdm
             JOIN devices d
               ON d.device_id = cdm.device_id
+            JOIN chats c
+              ON c.chat_id = cdm.chat_id
+            JOIN chat_account_members cam
+              ON cam.chat_id = cdm.chat_id
+             AND cam.account_id = d.account_id
             WHERE cdm.chat_id = $1
               AND cdm.device_id = $2
               AND cdm.membership_status = 'active'::device_membership_status
               AND d.device_status = 'active'::device_status
+              AND c.closed_at IS NULL
             "#,
         )
         .bind(chat_id)
@@ -5424,11 +5954,13 @@ impl Database {
         .await
         .map_err(map_db_error)?;
 
-        if membership_row.is_none() {
+        let Some(membership_row) = membership_row else {
             return Ok(None);
-        }
+        };
 
-        let after_server_seq = u64_to_i64(after_server_seq.unwrap_or(0), "history cursor")?;
+        let dm_cutoff = row_u64_from_i64(&membership_row, "dm_cutoff")?;
+        let cursor = after_server_seq.unwrap_or(0).max(dm_cutoff);
+        let after_server_seq = u64_to_i64(cursor, "history cursor")?;
         let limit = clamp_limit(limit, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT);
 
         let rows = sqlx::query(
@@ -5684,9 +6216,13 @@ impl Database {
             FROM device_inbox di
             JOIN devices d
               ON d.device_id = di.device_id
+            JOIN chat_device_members cdm
+              ON cdm.chat_id = di.chat_id
+             AND cdm.device_id = di.device_id
             WHERE di.chat_id = $1
               AND di.delivery_state = 'pending'::delivery_state
               AND d.device_status = 'active'::device_status
+              AND cdm.membership_status = 'active'::device_membership_status
             ORDER BY di.device_id ASC
             "#,
         )
@@ -6062,6 +6598,7 @@ async fn schedule_approved_device_sync_jobs_tx(
         WHERE cam.account_id = $1
           AND cam.membership_status = 'active'::membership_status
           AND c.archived_at IS NULL
+          AND c.closed_at IS NULL
           AND c.chat_type <> 'account_sync'::chat_type
         ORDER BY c.created_at ASC, c.chat_id ASC
         "#,
@@ -7006,7 +7543,7 @@ fn map_db_error(err: sqlx::Error) -> AppError {
             return AppError::conflict("message already exists");
         }
 
-        if db_err.constraint() == Some("chats_dm_member_pair_key_idx") {
+        if db_err.constraint() == Some("chats_dm_open_pair_key_idx") {
             return AppError::conflict("dm chat already exists");
         }
 
@@ -7831,6 +8368,7 @@ mod tests {
     use std::env;
 
     use serde_json::json;
+    use sqlx::Row;
     use uuid::Uuid;
 
     use crate::{error::AppError, test_support::POSTGRES_TEST_LOCK};
@@ -7838,11 +8376,12 @@ mod tests {
     use super::{
         ApprovePendingDeviceInput, CompleteLinkIntentInput, ContentType, CreateAccountInput,
         CreateAdminUserProvisionInput, CreateChatInput, CreateFeatureFlagDefinitionInput,
-        CreateFeatureFlagOverrideInput, CreateMessageInput, Database, KeyPackageBytesInput,
-        ListAdminUsersInput, MessageKind, ModifyChatDevicesInput, PendingControlMessage,
-        PublishKeyPackageInput, UpdateAccountProfileInput, UpdateAdminRuntimeSettingsInput,
+        CreateFeatureFlagOverrideInput, CreateMessageInput, Database, DmGlobalDeleteInput,
+        KeyPackageBytesInput, LeaveChatInput, ListAdminUsersInput, MessageKind,
+        ModifyChatDevicesInput, PendingControlMessage, PublishKeyPackageInput,
+        UpdateAccountProfileInput, UpdateAdminRuntimeSettingsInput,
     };
-    use trix_types::{ChatType, HistorySyncJobStatus, HistorySyncJobType};
+    use trix_types::{ChatType, HistorySyncJobStatus, HistorySyncJobType, LeaveChatScope};
 
     const DEFAULT_TEST_DATABASE_URL: &str = "postgres://trix:trix@localhost:5432/trix";
     const TEST_CIPHER_SUITE: &str = "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519";
@@ -9971,6 +10510,328 @@ mod tests {
             AppError::Conflict(message) => assert_eq!(message, "dm chat already exists"),
             other => panic!("expected duplicate dm conflict, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn dm_global_delete_allows_recreating_open_dm_for_same_pair() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [117; 32],
+                [118; 32],
+            ))
+            .await
+            .expect("create alice");
+        let bob = db
+            .create_account(make_account_input(
+                "bob",
+                "Bob Primary",
+                [119; 32],
+                [120; 32],
+            ))
+            .await
+            .expect("create bob");
+
+        db.publish_key_packages(
+            bob.device_id,
+            vec![PublishKeyPackageInput {
+                device_id: bob.device_id,
+                cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                key_package_bytes: b"bob-primary-kp".to_vec(),
+            }],
+        )
+        .await
+        .expect("publish bob key package");
+
+        let bob_reserved = db
+            .reserve_key_packages_for_account(alice.account_id, bob.account_id)
+            .await
+            .expect("reserve bob key package");
+        let first = db
+            .create_chat(CreateChatInput {
+                creator_account_id: alice.account_id,
+                creator_device_id: alice.device_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                participant_account_ids: vec![bob.account_id],
+                reserved_key_package_ids: bob_reserved
+                    .iter()
+                    .map(|package| package.key_package_id)
+                    .collect(),
+                initial_commit: Some(make_control_message("dm-create-commit")),
+                welcome_message: Some(make_control_message("dm-create-welcome")),
+            })
+            .await
+            .expect("create first dm");
+
+        let deleted = db
+            .dm_global_delete(DmGlobalDeleteInput {
+                chat_id: first.chat_id,
+                actor_account_id: alice.account_id,
+                actor_device_id: alice.device_id,
+                epoch: first.epoch,
+                commit_message: None,
+            })
+            .await
+            .expect("dm global delete");
+
+        assert_eq!(deleted.epoch, first.epoch + 1);
+
+        db.publish_key_packages(
+            bob.device_id,
+            vec![PublishKeyPackageInput {
+                device_id: bob.device_id,
+                cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                key_package_bytes: b"bob-primary-kp-2".to_vec(),
+            }],
+        )
+        .await
+        .expect("republish bob key package");
+
+        let bob_reserved_2 = db
+            .reserve_key_packages_for_account(alice.account_id, bob.account_id)
+            .await
+            .expect("reserve bob key package again");
+        let second = db
+            .create_chat(CreateChatInput {
+                creator_account_id: alice.account_id,
+                creator_device_id: alice.device_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                participant_account_ids: vec![bob.account_id],
+                reserved_key_package_ids: bob_reserved_2
+                    .iter()
+                    .map(|package| package.key_package_id)
+                    .collect(),
+                initial_commit: Some(make_control_message("dm-create-commit-2")),
+                welcome_message: Some(make_control_message("dm-create-welcome-2")),
+            })
+            .await
+            .expect("create second dm after global delete");
+
+        assert_ne!(second.chat_id, first.chat_id);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn append_fails_after_dm_global_delete() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [121; 32],
+                [122; 32],
+            ))
+            .await
+            .expect("create alice");
+        let bob = db
+            .create_account(make_account_input(
+                "bob",
+                "Bob Primary",
+                [123; 32],
+                [124; 32],
+            ))
+            .await
+            .expect("create bob");
+
+        db.publish_key_packages(
+            bob.device_id,
+            vec![PublishKeyPackageInput {
+                device_id: bob.device_id,
+                cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                key_package_bytes: b"bob-primary-kp".to_vec(),
+            }],
+        )
+        .await
+        .expect("publish bob key package");
+
+        let bob_reserved = db
+            .reserve_key_packages_for_account(alice.account_id, bob.account_id)
+            .await
+            .expect("reserve bob key package");
+        let dm = db
+            .create_chat(CreateChatInput {
+                creator_account_id: alice.account_id,
+                creator_device_id: alice.device_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                participant_account_ids: vec![bob.account_id],
+                reserved_key_package_ids: bob_reserved
+                    .iter()
+                    .map(|package| package.key_package_id)
+                    .collect(),
+                initial_commit: Some(make_control_message("dm-create-commit")),
+                welcome_message: Some(make_control_message("dm-create-welcome")),
+            })
+            .await
+            .expect("create dm");
+
+        let deleted = db
+            .dm_global_delete(DmGlobalDeleteInput {
+                chat_id: dm.chat_id,
+                actor_account_id: alice.account_id,
+                actor_device_id: alice.device_id,
+                epoch: dm.epoch,
+                commit_message: None,
+            })
+            .await
+            .expect("dm global delete");
+
+        let append_err = db
+            .append_message(CreateMessageInput {
+                chat_id: dm.chat_id,
+                sender_account_id: alice.account_id,
+                sender_device_id: alice.device_id,
+                message_id: Uuid::new_v4(),
+                epoch: deleted.epoch,
+                message_kind: MessageKind::Application,
+                content_type: ContentType::Text,
+                ciphertext: b"nope".to_vec(),
+                aad_json: json!({}),
+            })
+            .await
+            .expect_err("append on closed dm must fail");
+
+        match append_err {
+            AppError::NotFound(message) => {
+                assert_eq!(message, "active chat membership not found");
+            }
+            other => panic!("expected not found, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn dm_application_message_sets_peer_history_cutoff_after_peer_left_all_devices() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [131; 32],
+                [132; 32],
+            ))
+            .await
+            .expect("create alice");
+        let bob = db
+            .create_account(make_account_input(
+                "bob",
+                "Bob Primary",
+                [133; 32],
+                [134; 32],
+            ))
+            .await
+            .expect("create bob");
+
+        db.publish_key_packages(
+            bob.device_id,
+            vec![PublishKeyPackageInput {
+                device_id: bob.device_id,
+                cipher_suite: TEST_CIPHER_SUITE.to_owned(),
+                key_package_bytes: b"bob-primary-kp".to_vec(),
+            }],
+        )
+        .await
+        .expect("publish bob key package");
+
+        let bob_reserved = db
+            .reserve_key_packages_for_account(alice.account_id, bob.account_id)
+            .await
+            .expect("reserve bob key package");
+        let dm = db
+            .create_chat(CreateChatInput {
+                creator_account_id: alice.account_id,
+                creator_device_id: alice.device_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                participant_account_ids: vec![bob.account_id],
+                reserved_key_package_ids: bob_reserved
+                    .iter()
+                    .map(|package| package.key_package_id)
+                    .collect(),
+                initial_commit: Some(make_control_message("dm-create-commit")),
+                welcome_message: Some(make_control_message("dm-create-welcome")),
+            })
+            .await
+            .expect("create dm");
+
+        let left = db
+            .leave_chat(LeaveChatInput {
+                chat_id: dm.chat_id,
+                actor_account_id: bob.account_id,
+                actor_device_id: bob.device_id,
+                epoch: dm.epoch,
+                scope: LeaveChatScope::AllMyDevices,
+                commit_message: None,
+            })
+            .await
+            .expect("bob leaves all devices");
+
+        assert_eq!(left.epoch, dm.epoch + 1);
+
+        let seq_before_row = sqlx::query(
+            r#"SELECT last_server_seq::bigint AS last_server_seq FROM chats WHERE chat_id = $1"#,
+        )
+        .bind(dm.chat_id)
+        .fetch_one(db.pool())
+        .await
+        .expect("read last_server_seq");
+        let last_seq_before: i64 = seq_before_row
+            .try_get("last_server_seq")
+            .expect("last_server_seq column");
+
+        db.append_message(CreateMessageInput {
+            chat_id: dm.chat_id,
+            sender_account_id: alice.account_id,
+            sender_device_id: alice.device_id,
+            message_id: Uuid::new_v4(),
+            epoch: left.epoch,
+            message_kind: MessageKind::Application,
+            content_type: ContentType::Text,
+            ciphertext: b"hey-again".to_vec(),
+            aad_json: json!({"preview":"hey-again"}),
+        })
+        .await
+        .expect("alice reopens dm for bob");
+
+        let bob_row = sqlx::query(
+            r#"
+            SELECT
+                membership_status::text AS membership_status,
+                dm_history_cutoff_server_seq::bigint AS dm_history_cutoff_server_seq
+            FROM chat_account_members
+            WHERE chat_id = $1 AND account_id = $2
+            "#,
+        )
+        .bind(dm.chat_id)
+        .bind(bob.account_id)
+        .fetch_one(db.pool())
+        .await
+        .expect("read bob account membership");
+
+        assert_eq!(
+            bob_row.try_get::<String, _>("membership_status").unwrap(),
+            "active"
+        );
+        assert_eq!(
+            bob_row
+                .try_get::<Option<i64>, _>("dm_history_cutoff_server_seq")
+                .unwrap(),
+            Some(last_seq_before)
+        );
     }
 
     #[tokio::test]

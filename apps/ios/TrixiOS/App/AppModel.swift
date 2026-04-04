@@ -91,6 +91,7 @@ final class AppModel {
     private(set) var systemSnapshot: ServerSnapshot?
     private(set) var lastUpdatedAt: Date?
     private(set) var isLoading = false
+    private(set) var isPerformingChatLifecycleAction = false
     private(set) var errorMessage: String?
 
     @ObservationIgnored private let identityStore: LocalDeviceIdentityStore
@@ -896,6 +897,92 @@ final class AppModel {
             return response
         } catch {
             errorMessage = error.trixUserFacingMessage
+            return nil
+        }
+    }
+
+    @discardableResult
+    func leaveChat(
+        baseURLString: String,
+        chatId: String,
+        chatType: ChatType,
+        scope: FfiLeaveChatScope
+    ) async -> ModifyChatMembersResponse? {
+        guard chatType != .accountSync else {
+            errorMessage = "This chat cannot be left."
+            return nil
+        }
+
+        guard !isLoading, !isPerformingChatLifecycleAction else {
+            return nil
+        }
+
+        isPerformingChatLifecycleAction = true
+        errorMessage = nil
+
+        defer {
+            isPerformingChatLifecycleAction = false
+        }
+
+        do {
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            let response = try TrixCorePersistentBridge.leaveConversation(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: context.identity,
+                chatId: chatId,
+                scope: scope
+            )
+
+            try await refreshAuthenticatedState(
+                baseURLString: context.baseURLString,
+                identity: context.identity
+            )
+            return response
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    @discardableResult
+    func dmGlobalDeleteChat(
+        baseURLString: String,
+        chatId: String,
+        chatType: ChatType
+    ) async -> ModifyChatMembersResponse? {
+        guard chatType == .dm else {
+            errorMessage = "Global delete is only available for direct messages."
+            return nil
+        }
+
+        guard !isLoading, !isPerformingChatLifecycleAction else {
+            return nil
+        }
+
+        isPerformingChatLifecycleAction = true
+        errorMessage = nil
+
+        defer {
+            isPerformingChatLifecycleAction = false
+        }
+
+        do {
+            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+            let response = try TrixCorePersistentBridge.dmGlobalDeleteConversation(
+                baseURLString: baseURLString,
+                accessToken: context.session.accessToken,
+                identity: context.identity,
+                chatId: chatId
+            )
+
+            try await refreshAuthenticatedState(
+                baseURLString: context.baseURLString,
+                identity: context.identity
+            )
+            return response
+        } catch {
+            errorMessage = error.localizedDescription
             return nil
         }
     }

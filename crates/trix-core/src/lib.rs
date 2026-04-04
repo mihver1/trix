@@ -58,8 +58,9 @@ pub use storage::{
 };
 pub use sync::{
     CoreEvent, CoreEventSink, CreateChatControlInput, CreateChatControlOutcome,
-    HistorySyncProcessReport, InboxApplyOutcome, ModifyChatDevicesControlInput,
-    ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
+    DmGlobalDeleteControlInput, DmGlobalDeleteControlOutcome, HistorySyncProcessReport,
+    InboxApplyOutcome, LeaveChatControlInput, LeaveChatControlOutcome,
+    ModifyChatDevicesControlInput, ModifyChatDevicesControlOutcome, ModifyChatMembersControlInput,
     ModifyChatMembersControlOutcome, SendMessageOutcome, SyncChatCursor, SyncCoordinator,
     SyncStateSnapshot,
 };

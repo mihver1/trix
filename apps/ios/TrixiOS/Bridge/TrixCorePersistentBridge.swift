@@ -501,11 +501,7 @@ enum TrixCorePersistentBridge {
                     participantAccountIds: participantAccountIds
                 )
             )
-            return ModifyChatMembersResponse(
-                chatId: result.conversationId,
-                epoch: result.conversation?.epoch ?? 0,
-                changedAccountIds: result.changedAccountIds
-            )
+            return Self.modifyMembersResponse(from: result)
         }
     }
 
@@ -553,11 +549,7 @@ enum TrixCorePersistentBridge {
                     participantAccountIds: participantAccountIds
                 )
             )
-            return ModifyChatMembersResponse(
-                chatId: result.conversationId,
-                epoch: result.conversation?.epoch ?? 0,
-                changedAccountIds: result.changedAccountIds
-            )
+            return Self.modifyMembersResponse(from: result)
         }
     }
 
@@ -579,12 +571,54 @@ enum TrixCorePersistentBridge {
                     participantAccountIds: participantAccountIds
                 )
             )
-            return ModifyChatMembersResponse(
-                chatId: result.conversationId,
-                epoch: result.conversation?.epoch ?? 0,
-                changedAccountIds: result.changedAccountIds
-            )
+            return Self.modifyMembersResponse(from: result)
         }
+    }
+
+    static func leaveConversation(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        scope: FfiLeaveChatScope
+    ) throws -> ModifyChatMembersResponse {
+        try withMessengerClient(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        ) { client in
+            let result = try client.leaveConversation(
+                request: FfiMessengerLeaveConversationRequest(
+                    conversationId: chatId,
+                    scope: scope
+                )
+            )
+            return Self.modifyMembersResponse(from: result)
+        }
+    }
+
+    static func dmGlobalDeleteConversation(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        chatId: String
+    ) throws -> ModifyChatMembersResponse {
+        try withMessengerClient(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        ) { client in
+            let result = try client.dmGlobalDeleteConversation(conversationId: chatId)
+            return Self.modifyMembersResponse(from: result)
+        }
+    }
+
+    private static func modifyMembersResponse(from result: FfiMessengerConversationMutationResult) -> ModifyChatMembersResponse {
+        ModifyChatMembersResponse(
+            chatId: result.conversationId,
+            epoch: result.conversation?.epoch ?? 0,
+            changedAccountIds: result.changedAccountIds
+        )
     }
 
     static func addConversationDevices(

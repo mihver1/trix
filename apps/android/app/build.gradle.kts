@@ -200,6 +200,7 @@ val syncCheckedInTrixCoreKotlinBindings by tasks.registering(Copy::class) {
 }
 
 val buildTrixCoreAndroidLibs by tasks.registering(CargoNdkBuildTask::class) {
+    dependsOn(generateTrixStrings)
     dependsOn(buildTrixCoreHostLib)
     dependsOn(generateTrixCoreKotlinBindings)
     dependsOn(syncCheckedInTrixCoreKotlinBindings)

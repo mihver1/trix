@@ -24,6 +24,7 @@ struct ChatDetailView: View {
     @State private var addDeviceAccountId = ""
     @State private var addDeviceIds = ""
     @State private var removeDeviceIds = ""
+    @State private var isConfirmingDmGlobalDelete = false
 
     var body: some View {
         List {
@@ -360,6 +361,31 @@ struct ChatDetailView: View {
                     Text("The acting device cannot remove itself through this endpoint.")
                 }
 
+                if snapshot.detail.chatType != .accountSync {
+                    Section {
+                        Button("Leave on this device") {
+                            leaveChatDebug(scope: .thisDevice)
+                        }
+                        .disabled(model.isLoading || model.isPerformingChatLifecycleAction)
+
+                        Button("Leave on all my devices") {
+                            leaveChatDebug(scope: .allMyDevices)
+                        }
+                        .disabled(model.isLoading || model.isPerformingChatLifecycleAction)
+
+                        if snapshot.detail.chatType == .dm {
+                            Button("Delete chat for both", role: .destructive) {
+                                isConfirmingDmGlobalDelete = true
+                            }
+                            .disabled(model.isLoading || model.isPerformingChatLifecycleAction)
+                        }
+                    } header: {
+                        Text("Chat Lifecycle")
+                    } footer: {
+                        Text("Leave removes your devices from MLS. Global delete ends a DM for both participants.")
+                    }
+                }
+
                 Section {
                     if snapshot.messages.isEmpty {
                         Text("No cached messenger-core messages for this chat yet.")
@@ -434,7 +460,11 @@ struct ChatDetailView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Reload", action: reload)
-                    .disabled(isLoadingSnapshot || model.isLoading)
+                    .disabled(
+                        isLoadingSnapshot ||
+                            model.isLoading ||
+                            model.isPerformingChatLifecycleAction
+                    )
             }
         }
         .task(id: liveSnapshotRefreshToken) {
@@ -448,6 +478,18 @@ struct ChatDetailView: View {
             allowedContentTypes: [.item]
         ) { result in
             handleAttachmentImport(result)
+        }
+        .confirmationDialog(
+            "Delete this chat for both participants?",
+            isPresented: $isConfirmingDmGlobalDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete for both", role: .destructive) {
+                dmGlobalDeleteDebug()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes the DM for everyone. It cannot be undone.")
         }
     }
 
@@ -679,6 +721,51 @@ struct ChatDetailView: View {
             ) {
                 removeDeviceIds = ""
                 activityMessage = "Removed \(response.changedDeviceIds.count) devices. Chat epoch is now \(response.epoch)."
+                await loadSnapshot()
+            } else {
+                localErrorMessage = model.errorMessage
+            }
+        }
+    }
+
+    private func leaveChatDebug(scope: FfiLeaveChatScope) {
+        guard let snapshot else {
+            return
+        }
+
+        activityMessage = nil
+        localErrorMessage = nil
+
+        Task {
+            if let response = await model.leaveChat(
+                baseURLString: serverBaseURL,
+                chatId: snapshot.detail.chatId,
+                chatType: snapshot.detail.chatType,
+                scope: scope
+            ) {
+                activityMessage = "Left chat. Epoch \(response.epoch)."
+                await loadSnapshot()
+            } else {
+                localErrorMessage = model.errorMessage
+            }
+        }
+    }
+
+    private func dmGlobalDeleteDebug() {
+        guard let snapshot else {
+            return
+        }
+
+        activityMessage = nil
+        localErrorMessage = nil
+
+        Task {
+            if let response = await model.dmGlobalDeleteChat(
+                baseURLString: serverBaseURL,
+                chatId: snapshot.detail.chatId,
+                chatType: snapshot.detail.chatType
+            ) {
+                activityMessage = "DM deleted globally. Epoch \(response.epoch)."
                 await loadSnapshot()
             } else {
                 localErrorMessage = model.errorMessage

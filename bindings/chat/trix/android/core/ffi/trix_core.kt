@@ -840,6 +840,8 @@ external fun uniffi_trix_core_checksum_method_ffiserverapiclient_create_message(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_delete_apple_push_token(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffiserverapiclient_dm_global_delete(
+): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_download_attachment(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_download_blob(
@@ -871,6 +873,8 @@ external fun uniffi_trix_core_checksum_method_ffiserverapiclient_get_version(
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_head_blob(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_lease_inbox(
+): Short
+external fun uniffi_trix_core_checksum_method_ffiserverapiclient_leave_chat(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_list_chats(
 ): Short
@@ -926,11 +930,15 @@ external fun uniffi_trix_core_checksum_method_ffisynccoordinator_chat_cursor(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffisynccoordinator_create_chat_control(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffisynccoordinator_dm_global_delete_control(
+): Short
 external fun uniffi_trix_core_checksum_method_ffisynccoordinator_lease_inbox(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffisynccoordinator_lease_inbox_into_store(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffisynccoordinator_lease_owner(
+): Short
+external fun uniffi_trix_core_checksum_method_ffisynccoordinator_leave_chat_control(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffisynccoordinator_process_history_sync_jobs(
 ): Short
@@ -962,6 +970,8 @@ external fun uniffi_trix_core_checksum_method_ffimessengerclient_create_conversa
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_create_link_device_intent(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_dm_global_delete_conversation(
+): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_feature_flags_snapshot(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_attachment(
@@ -973,6 +983,8 @@ external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events(
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events_realtime(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_is_feature_enabled(
+): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_leave_conversation(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_list_conversations(
 ): Short
@@ -1304,6 +1316,8 @@ external fun uniffi_trix_core_fn_method_ffiserverapiclient_create_message(`ptr`:
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_delete_apple_push_token(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
+external fun uniffi_trix_core_fn_method_ffiserverapiclient_dm_global_delete(`ptr`: Long,`chatId`: RustBuffer.ByValue,`params`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_download_attachment(`ptr`: Long,`body`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_download_blob(`ptr`: Long,`blobId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1335,6 +1349,8 @@ external fun uniffi_trix_core_fn_method_ffiserverapiclient_get_version(`ptr`: Lo
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_head_blob(`ptr`: Long,`blobId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_lease_inbox(`ptr`: Long,`params`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffiserverapiclient_leave_chat(`ptr`: Long,`chatId`: RustBuffer.ByValue,`params`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_list_chats(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1402,11 +1418,15 @@ external fun uniffi_trix_core_fn_method_ffisynccoordinator_chat_cursor(`ptr`: Lo
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffisynccoordinator_create_chat_control(`ptr`: Long,`client`: Long,`store`: Long,`facade`: Long,`input`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffisynccoordinator_dm_global_delete_control(`ptr`: Long,`client`: Long,`store`: Long,`facade`: Long,`input`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffisynccoordinator_lease_inbox(`ptr`: Long,`client`: Long,`limit`: RustBuffer.ByValue,`leaseTtlSeconds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffisynccoordinator_lease_inbox_into_store(`ptr`: Long,`client`: Long,`store`: Long,`limit`: RustBuffer.ByValue,`leaseTtlSeconds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffisynccoordinator_lease_owner(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffisynccoordinator_leave_chat_control(`ptr`: Long,`client`: Long,`store`: Long,`facade`: Long,`input`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffisynccoordinator_process_history_sync_jobs(`ptr`: Long,`client`: Long,`store`: Long,`transportPrivateKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1444,6 +1464,8 @@ external fun uniffi_trix_core_fn_method_ffimessengerclient_create_conversation(`
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_create_link_device_intent(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_dm_global_delete_conversation(`ptr`: Long,`conversationId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_feature_flags_snapshot(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_get_attachment(`ptr`: Long,`attachmentRef`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1456,6 +1478,8 @@ external fun uniffi_trix_core_fn_method_ffimessengerclient_get_new_events_realti
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_is_feature_enabled(`ptr`: Long,`key`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Byte
+external fun uniffi_trix_core_fn_method_ffimessengerclient_leave_conversation(`ptr`: Long,`request`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_list_conversations(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_list_devices(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -1934,6 +1958,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_delete_apple_push_token() != 21843.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_dm_global_delete() != 18512.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_download_attachment() != 65126.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1980,6 +2007,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_lease_inbox() != 55258.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_leave_chat() != 60721.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_list_chats() != 42496.toShort()) {
@@ -2063,6 +2093,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_create_chat_control() != 18857.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_dm_global_delete_control() != 55297.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_lease_inbox() != 39845.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -2070,6 +2103,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_lease_owner() != 50562.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_leave_chat_control() != 53742.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffisynccoordinator_process_history_sync_jobs() != 52647.toShort()) {
@@ -2117,6 +2153,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_create_link_device_intent() != 5659.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_dm_global_delete_conversation() != 24503.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_feature_flags_snapshot() != 17993.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -2133,6 +2172,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_is_feature_enabled() != 0.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_leave_conversation() != 55333.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_list_conversations() != 14380.toShort()) {
@@ -4447,6 +4489,8 @@ public interface FfiMessengerClientInterface {
     
     fun `createLinkDeviceIntent`(): FfiMessengerDeviceLinkIntent
     
+    fun `dmGlobalDeleteConversation`(`conversationId`: kotlin.String): FfiMessengerConversationMutationResult
+    
     fun `featureFlagsSnapshot`(): FeatureFlagsSnapshot
     
     fun `getAttachment`(`attachmentRef`: kotlin.String): FfiMessengerAttachmentFile
@@ -4458,6 +4502,8 @@ public interface FfiMessengerClientInterface {
     fun `getNewEventsRealtime`(`checkpoint`: kotlin.String?): FfiMessengerEventBatch
     
     fun `isFeatureEnabled`(`key`: kotlin.String): kotlin.Boolean
+    
+    fun `leaveConversation`(`request`: FfiMessengerLeaveConversationRequest): FfiMessengerConversationMutationResult
     
     fun `listConversations`(): List<FfiMessengerConversationSummary>
     
@@ -4668,6 +4714,20 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
     
 
     
+    @Throws(FfiMessengerException::class)override fun `dmGlobalDeleteConversation`(`conversationId`: kotlin.String): FfiMessengerConversationMutationResult {
+            return FfiConverterTypeFfiMessengerConversationMutationResult.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_dm_global_delete_conversation(
+        it,
+        FfiConverterString.lower(`conversationId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(FfiMessengerException::class)override fun `featureFlagsSnapshot`(): FeatureFlagsSnapshot {
             return FfiConverterTypeFeatureFlagsSnapshot.lift(
     callWithHandle {
@@ -4744,6 +4804,20 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
     UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_is_feature_enabled(
         it,
         FfiConverterString.lower(`key`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiMessengerException::class)override fun `leaveConversation`(`request`: FfiMessengerLeaveConversationRequest): FfiMessengerConversationMutationResult {
+            return FfiConverterTypeFfiMessengerConversationMutationResult.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_leave_conversation(
+        it,
+        FfiConverterTypeFfiMessengerLeaveConversationRequest.lower(`request`),_status)
 }
     }
     )
@@ -6310,6 +6384,8 @@ public interface FfiServerApiClientInterface {
     
     fun `deleteApplePushToken`()
     
+    fun `dmGlobalDelete`(`chatId`: kotlin.String, `params`: FfiDmGlobalDeleteParams): FfiDmGlobalDeleteResponse
+    
     fun `downloadAttachment`(`body`: FfiMessageBody): FfiDownloadedAttachment
     
     fun `downloadBlob`(`blobId`: kotlin.String): kotlin.ByteArray
@@ -6341,6 +6417,8 @@ public interface FfiServerApiClientInterface {
     fun `headBlob`(`blobId`: kotlin.String): FfiBlobHead
     
     fun `leaseInbox`(`params`: FfiLeaseInboxParams): FfiLeaseInboxResponse
+    
+    fun `leaveChat`(`chatId`: kotlin.String, `params`: FfiLeaveChatParams): FfiModifyChatDevicesResponse
     
     fun `listChats`(): List<FfiChatSummary>
     
@@ -6772,6 +6850,20 @@ open class FfiServerApiClient: Disposable, AutoCloseable, FfiServerApiClientInte
     
 
     
+    @Throws(TrixFfiException::class)override fun `dmGlobalDelete`(`chatId`: kotlin.String, `params`: FfiDmGlobalDeleteParams): FfiDmGlobalDeleteResponse {
+            return FfiConverterTypeFfiDmGlobalDeleteResponse.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_dm_global_delete(
+        it,
+        FfiConverterString.lower(`chatId`),FfiConverterTypeFfiDmGlobalDeleteParams.lower(`params`),_status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(TrixFfiException::class)override fun `downloadAttachment`(`body`: FfiMessageBody): FfiDownloadedAttachment {
             return FfiConverterTypeFfiDownloadedAttachment.lift(
     callWithHandle {
@@ -6989,6 +7081,20 @@ open class FfiServerApiClient: Disposable, AutoCloseable, FfiServerApiClientInte
     UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_lease_inbox(
         it,
         FfiConverterTypeFfiLeaseInboxParams.lower(`params`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `leaveChat`(`chatId`: kotlin.String, `params`: FfiLeaveChatParams): FfiModifyChatDevicesResponse {
+            return FfiConverterTypeFfiModifyChatDevicesResponse.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_leave_chat(
+        it,
+        FfiConverterString.lower(`chatId`),FfiConverterTypeFfiLeaveChatParams.lower(`params`),_status)
 }
     }
     )
@@ -7678,11 +7784,15 @@ public interface FfiSyncCoordinatorInterface {
     
     fun `createChatControl`(`client`: FfiServerApiClient, `store`: FfiLocalHistoryStore, `facade`: FfiMlsFacade, `input`: FfiCreateChatControlInput): FfiCreateChatControlOutcome
     
+    fun `dmGlobalDeleteControl`(`client`: FfiServerApiClient, `store`: FfiLocalHistoryStore, `facade`: FfiMlsFacade, `input`: FfiDmGlobalDeleteControlInput): FfiDmGlobalDeleteControlOutcome
+    
     fun `leaseInbox`(`client`: FfiServerApiClient, `limit`: kotlin.UInt?, `leaseTtlSeconds`: kotlin.ULong?): FfiLeaseInboxResponse
     
     fun `leaseInboxIntoStore`(`client`: FfiServerApiClient, `store`: FfiLocalHistoryStore, `limit`: kotlin.UInt?, `leaseTtlSeconds`: kotlin.ULong?): FfiInboxApplyOutcome
     
     fun `leaseOwner`(): kotlin.String
+    
+    fun `leaveChatControl`(`client`: FfiServerApiClient, `store`: FfiLocalHistoryStore, `facade`: FfiMlsFacade, `input`: FfiLeaveChatControlInput): FfiModifyChatDevicesControlOutcome
     
     fun `processHistorySyncJobs`(`client`: FfiServerApiClient, `store`: FfiLocalHistoryStore, `transportPrivateKey`: kotlin.ByteArray): FfiHistorySyncProcessReport
     
@@ -7888,6 +7998,20 @@ open class FfiSyncCoordinator: Disposable, AutoCloseable, FfiSyncCoordinatorInte
     
 
     
+    @Throws(TrixFfiException::class)override fun `dmGlobalDeleteControl`(`client`: FfiServerApiClient, `store`: FfiLocalHistoryStore, `facade`: FfiMlsFacade, `input`: FfiDmGlobalDeleteControlInput): FfiDmGlobalDeleteControlOutcome {
+            return FfiConverterTypeFfiDmGlobalDeleteControlOutcome.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffisynccoordinator_dm_global_delete_control(
+        it,
+        FfiConverterTypeFfiServerApiClient.lower(`client`),FfiConverterTypeFfiLocalHistoryStore.lower(`store`),FfiConverterTypeFfiMlsFacade.lower(`facade`),FfiConverterTypeFfiDmGlobalDeleteControlInput.lower(`input`),_status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(TrixFfiException::class)override fun `leaseInbox`(`client`: FfiServerApiClient, `limit`: kotlin.UInt?, `leaseTtlSeconds`: kotlin.ULong?): FfiLeaseInboxResponse {
             return FfiConverterTypeFfiLeaseInboxResponse.lift(
     callWithHandle {
@@ -7923,6 +8047,20 @@ open class FfiSyncCoordinator: Disposable, AutoCloseable, FfiSyncCoordinatorInte
     UniffiLib.uniffi_trix_core_fn_method_ffisynccoordinator_lease_owner(
         it,
         _status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `leaveChatControl`(`client`: FfiServerApiClient, `store`: FfiLocalHistoryStore, `facade`: FfiMlsFacade, `input`: FfiLeaveChatControlInput): FfiModifyChatDevicesControlOutcome {
+            return FfiConverterTypeFfiModifyChatDevicesControlOutcome.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffisynccoordinator_leave_chat_control(
+        it,
+        FfiConverterTypeFfiServerApiClient.lower(`client`),FfiConverterTypeFfiLocalHistoryStore.lower(`store`),FfiConverterTypeFfiMlsFacade.lower(`facade`),FfiConverterTypeFfiLeaveChatControlInput.lower(`input`),_status)
 }
     }
     )
@@ -10149,6 +10287,198 @@ public object FfiConverterTypeFfiDirectoryAccount: FfiConverterRustBuffer<FfiDir
 
 
 
+data class FfiDmGlobalDeleteControlInput (
+    var `actorAccountId`: kotlin.String
+    , 
+    var `actorDeviceId`: kotlin.String
+    , 
+    var `chatId`: kotlin.String
+    , 
+    var `commitAadJson`: kotlin.String?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiDmGlobalDeleteControlInput: FfiConverterRustBuffer<FfiDmGlobalDeleteControlInput> {
+    override fun read(buf: ByteBuffer): FfiDmGlobalDeleteControlInput {
+        return FfiDmGlobalDeleteControlInput(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiDmGlobalDeleteControlInput) = (
+            FfiConverterString.allocationSize(value.`actorAccountId`) +
+            FfiConverterString.allocationSize(value.`actorDeviceId`) +
+            FfiConverterString.allocationSize(value.`chatId`) +
+            FfiConverterOptionalString.allocationSize(value.`commitAadJson`)
+    )
+
+    override fun write(value: FfiDmGlobalDeleteControlInput, buf: ByteBuffer) {
+            FfiConverterString.write(value.`actorAccountId`, buf)
+            FfiConverterString.write(value.`actorDeviceId`, buf)
+            FfiConverterString.write(value.`chatId`, buf)
+            FfiConverterOptionalString.write(value.`commitAadJson`, buf)
+    }
+}
+
+
+
+data class FfiDmGlobalDeleteControlOutcome (
+    var `chatId`: kotlin.String
+    , 
+    var `epoch`: kotlin.ULong
+    , 
+    var `changedAccountIds`: List<kotlin.String>
+    , 
+    var `changedDeviceIds`: List<kotlin.String>
+    , 
+    var `report`: FfiLocalStoreApplyReport
+    , 
+    var `projectedMessages`: List<FfiLocalProjectedMessage>
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiDmGlobalDeleteControlOutcome: FfiConverterRustBuffer<FfiDmGlobalDeleteControlOutcome> {
+    override fun read(buf: ByteBuffer): FfiDmGlobalDeleteControlOutcome {
+        return FfiDmGlobalDeleteControlOutcome(
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterTypeFfiLocalStoreApplyReport.read(buf),
+            FfiConverterSequenceTypeFfiLocalProjectedMessage.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiDmGlobalDeleteControlOutcome) = (
+            FfiConverterString.allocationSize(value.`chatId`) +
+            FfiConverterULong.allocationSize(value.`epoch`) +
+            FfiConverterSequenceString.allocationSize(value.`changedAccountIds`) +
+            FfiConverterSequenceString.allocationSize(value.`changedDeviceIds`) +
+            FfiConverterTypeFfiLocalStoreApplyReport.allocationSize(value.`report`) +
+            FfiConverterSequenceTypeFfiLocalProjectedMessage.allocationSize(value.`projectedMessages`)
+    )
+
+    override fun write(value: FfiDmGlobalDeleteControlOutcome, buf: ByteBuffer) {
+            FfiConverterString.write(value.`chatId`, buf)
+            FfiConverterULong.write(value.`epoch`, buf)
+            FfiConverterSequenceString.write(value.`changedAccountIds`, buf)
+            FfiConverterSequenceString.write(value.`changedDeviceIds`, buf)
+            FfiConverterTypeFfiLocalStoreApplyReport.write(value.`report`, buf)
+            FfiConverterSequenceTypeFfiLocalProjectedMessage.write(value.`projectedMessages`, buf)
+    }
+}
+
+
+
+data class FfiDmGlobalDeleteParams (
+    var `epoch`: kotlin.ULong
+    , 
+    var `commitMessage`: FfiControlMessage?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiDmGlobalDeleteParams: FfiConverterRustBuffer<FfiDmGlobalDeleteParams> {
+    override fun read(buf: ByteBuffer): FfiDmGlobalDeleteParams {
+        return FfiDmGlobalDeleteParams(
+            FfiConverterULong.read(buf),
+            FfiConverterOptionalTypeFfiControlMessage.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiDmGlobalDeleteParams) = (
+            FfiConverterULong.allocationSize(value.`epoch`) +
+            FfiConverterOptionalTypeFfiControlMessage.allocationSize(value.`commitMessage`)
+    )
+
+    override fun write(value: FfiDmGlobalDeleteParams, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`epoch`, buf)
+            FfiConverterOptionalTypeFfiControlMessage.write(value.`commitMessage`, buf)
+    }
+}
+
+
+
+data class FfiDmGlobalDeleteResponse (
+    var `chatId`: kotlin.String
+    , 
+    var `epoch`: kotlin.ULong
+    , 
+    var `changedAccountIds`: List<kotlin.String>
+    , 
+    var `changedDeviceIds`: List<kotlin.String>
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiDmGlobalDeleteResponse: FfiConverterRustBuffer<FfiDmGlobalDeleteResponse> {
+    override fun read(buf: ByteBuffer): FfiDmGlobalDeleteResponse {
+        return FfiDmGlobalDeleteResponse(
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiDmGlobalDeleteResponse) = (
+            FfiConverterString.allocationSize(value.`chatId`) +
+            FfiConverterULong.allocationSize(value.`epoch`) +
+            FfiConverterSequenceString.allocationSize(value.`changedAccountIds`) +
+            FfiConverterSequenceString.allocationSize(value.`changedDeviceIds`)
+    )
+
+    override fun write(value: FfiDmGlobalDeleteResponse, buf: ByteBuffer) {
+            FfiConverterString.write(value.`chatId`, buf)
+            FfiConverterULong.write(value.`epoch`, buf)
+            FfiConverterSequenceString.write(value.`changedAccountIds`, buf)
+            FfiConverterSequenceString.write(value.`changedDeviceIds`, buf)
+    }
+}
+
+
+
 data class FfiDownloadedAttachment (
     var `body`: FfiMessageBody
     , 
@@ -10672,6 +11002,102 @@ public object FfiConverterTypeFfiLeaseInboxResponse: FfiConverterRustBuffer<FfiL
             FfiConverterString.write(value.`leaseOwner`, buf)
             FfiConverterULong.write(value.`leaseExpiresAtUnix`, buf)
             FfiConverterSequenceTypeFfiInboxItem.write(value.`items`, buf)
+    }
+}
+
+
+
+data class FfiLeaveChatControlInput (
+    var `actorAccountId`: kotlin.String
+    , 
+    var `actorDeviceId`: kotlin.String
+    , 
+    var `chatId`: kotlin.String
+    , 
+    var `scope`: FfiLeaveChatScope
+    , 
+    var `commitAadJson`: kotlin.String?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiLeaveChatControlInput: FfiConverterRustBuffer<FfiLeaveChatControlInput> {
+    override fun read(buf: ByteBuffer): FfiLeaveChatControlInput {
+        return FfiLeaveChatControlInput(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterTypeFfiLeaveChatScope.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiLeaveChatControlInput) = (
+            FfiConverterString.allocationSize(value.`actorAccountId`) +
+            FfiConverterString.allocationSize(value.`actorDeviceId`) +
+            FfiConverterString.allocationSize(value.`chatId`) +
+            FfiConverterTypeFfiLeaveChatScope.allocationSize(value.`scope`) +
+            FfiConverterOptionalString.allocationSize(value.`commitAadJson`)
+    )
+
+    override fun write(value: FfiLeaveChatControlInput, buf: ByteBuffer) {
+            FfiConverterString.write(value.`actorAccountId`, buf)
+            FfiConverterString.write(value.`actorDeviceId`, buf)
+            FfiConverterString.write(value.`chatId`, buf)
+            FfiConverterTypeFfiLeaveChatScope.write(value.`scope`, buf)
+            FfiConverterOptionalString.write(value.`commitAadJson`, buf)
+    }
+}
+
+
+
+data class FfiLeaveChatParams (
+    var `scope`: FfiLeaveChatScope
+    , 
+    var `epoch`: kotlin.ULong
+    , 
+    var `commitMessage`: FfiControlMessage?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiLeaveChatParams: FfiConverterRustBuffer<FfiLeaveChatParams> {
+    override fun read(buf: ByteBuffer): FfiLeaveChatParams {
+        return FfiLeaveChatParams(
+            FfiConverterTypeFfiLeaveChatScope.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterOptionalTypeFfiControlMessage.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiLeaveChatParams) = (
+            FfiConverterTypeFfiLeaveChatScope.allocationSize(value.`scope`) +
+            FfiConverterULong.allocationSize(value.`epoch`) +
+            FfiConverterOptionalTypeFfiControlMessage.allocationSize(value.`commitMessage`)
+    )
+
+    override fun write(value: FfiLeaveChatParams, buf: ByteBuffer) {
+            FfiConverterTypeFfiLeaveChatScope.write(value.`scope`, buf)
+            FfiConverterULong.write(value.`epoch`, buf)
+            FfiConverterOptionalTypeFfiControlMessage.write(value.`commitMessage`, buf)
     }
 }
 
@@ -12234,6 +12660,44 @@ public object FfiConverterTypeFfiMessengerEventBatch: FfiConverterRustBuffer<Ffi
     override fun write(value: FfiMessengerEventBatch, buf: ByteBuffer) {
             FfiConverterOptionalString.write(value.`checkpoint`, buf)
             FfiConverterSequenceTypeFfiMessengerEvent.write(value.`events`, buf)
+    }
+}
+
+
+
+data class FfiMessengerLeaveConversationRequest (
+    var `conversationId`: kotlin.String
+    , 
+    var `scope`: FfiLeaveChatScope
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiMessengerLeaveConversationRequest: FfiConverterRustBuffer<FfiMessengerLeaveConversationRequest> {
+    override fun read(buf: ByteBuffer): FfiMessengerLeaveConversationRequest {
+        return FfiMessengerLeaveConversationRequest(
+            FfiConverterString.read(buf),
+            FfiConverterTypeFfiLeaveChatScope.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiMessengerLeaveConversationRequest) = (
+            FfiConverterString.allocationSize(value.`conversationId`) +
+            FfiConverterTypeFfiLeaveChatScope.allocationSize(value.`scope`)
+    )
+
+    override fun write(value: FfiMessengerLeaveConversationRequest, buf: ByteBuffer) {
+            FfiConverterString.write(value.`conversationId`, buf)
+            FfiConverterTypeFfiLeaveChatScope.write(value.`scope`, buf)
     }
 }
 
@@ -14858,6 +15322,40 @@ public object FfiConverterTypeFfiHistorySyncJobType: FfiConverterRustBuffer<FfiH
     override fun allocationSize(value: FfiHistorySyncJobType) = 4UL
 
     override fun write(value: FfiHistorySyncJobType, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
+enum class FfiLeaveChatScope {
+    
+    THIS_DEVICE,
+    ALL_MY_DEVICES;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiLeaveChatScope: FfiConverterRustBuffer<FfiLeaveChatScope> {
+    override fun read(buf: ByteBuffer) = try {
+        FfiLeaveChatScope.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: FfiLeaveChatScope) = 4UL
+
+    override fun write(value: FfiLeaveChatScope, buf: ByteBuffer) {
         buf.putInt(value.ordinal + 1)
     }
 }

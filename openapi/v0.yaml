@@ -802,6 +802,56 @@ paths:
                 $ref: '#/components/schemas/ModifyChatDevicesResponse'
         '409':
           $ref: '#/components/responses/Conflict'
+  /v0/chats/{chat_id}/leave:
+    post:
+      operationId: leaveChat
+      tags: [chats]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeaveChatRequest'
+      responses:
+        '200':
+          description: Left the chat on this device or all devices for the account; epoch advanced when a commit was supplied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaveChatResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v0/chats/{chat_id}/dm-global-delete:
+    post:
+      operationId: dmGlobalDelete
+      tags: [chats]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DmGlobalDeleteRequest'
+      responses:
+        '200':
+          description: DM closed for both accounts; chat is terminal until a new DM is created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DmGlobalDeleteResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v0/inbox:
     get:
       operationId: getInbox
@@ -2485,6 +2535,61 @@ components:
         epoch:
           type: integer
           format: int64
+        changed_device_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uuid'
+    LeaveChatScope:
+      type: string
+      enum: [this_device, all_my_devices]
+    LeaveChatRequest:
+      type: object
+      required: [scope, epoch]
+      properties:
+        scope:
+          $ref: '#/components/schemas/LeaveChatScope'
+        epoch:
+          type: integer
+          format: int64
+        commit_message:
+          $ref: '#/components/schemas/ControlMessageInput'
+          nullable: true
+    LeaveChatResponse:
+      type: object
+      required: [chat_id, epoch, changed_device_ids]
+      properties:
+        chat_id:
+          $ref: '#/components/schemas/Uuid'
+        epoch:
+          type: integer
+          format: int64
+        changed_device_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uuid'
+    DmGlobalDeleteRequest:
+      type: object
+      required: [epoch]
+      properties:
+        epoch:
+          type: integer
+          format: int64
+        commit_message:
+          $ref: '#/components/schemas/ControlMessageInput'
+          nullable: true
+    DmGlobalDeleteResponse:
+      type: object
+      required: [chat_id, epoch, changed_account_ids, changed_device_ids]
+      properties:
+        chat_id:
+          $ref: '#/components/schemas/Uuid'
+        epoch:
+          type: integer
+          format: int64
+        changed_account_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uuid'
         changed_device_ids:
           type: array
           items:

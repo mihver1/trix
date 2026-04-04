@@ -24,14 +24,16 @@ use trix_types::{
     CreateLinkIntentResponse, CreateMessageRequest, CreateMessageResponse,
     DeviceApprovePayloadResponse, DeviceId, DeviceListResponse, DeviceStatus,
     DeviceTransferBundleResponse, DeviceTransportKeyResponse, DirectoryAccountSummary,
-    ErrorResponse, HealthResponse, HistorySyncChunkListResponse, HistorySyncChunkSummary,
-    HistorySyncJobListResponse, HistorySyncJobRole, HistorySyncJobStatus, LeaseInboxRequest,
-    LeaseInboxResponse, MessageId, ModifyChatDevicesRequest, ModifyChatDevicesResponse,
-    ModifyChatMembersRequest, ModifyChatMembersResponse, PublishKeyPackageItem,
-    PublishKeyPackagesRequest, PublishKeyPackagesResponse, RegisterApplePushTokenRequest,
-    RegisterApplePushTokenResponse, RequestChatBackfillRequest, RequestChatBackfillResponse,
-    RequestHistorySyncRepairRequest, RequestHistorySyncRepairResponse, ReserveKeyPackagesRequest,
-    ResetKeyPackagesResponse, RevokeDeviceRequest, RevokeDeviceResponse, SubmitDebugMetricsRequest,
+    DmGlobalDeleteRequest, DmGlobalDeleteResponse, ErrorResponse, HealthResponse,
+    HistorySyncChunkListResponse, HistorySyncChunkSummary, HistorySyncJobListResponse,
+    HistorySyncJobRole, HistorySyncJobStatus, LeaseInboxRequest, LeaseInboxResponse,
+    LeaveChatRequest, LeaveChatResponse, MessageId, ModifyChatDevicesRequest,
+    ModifyChatDevicesResponse, ModifyChatMembersRequest, ModifyChatMembersResponse,
+    PublishKeyPackageItem, PublishKeyPackagesRequest, PublishKeyPackagesResponse,
+    RegisterApplePushTokenRequest, RegisterApplePushTokenResponse, RequestChatBackfillRequest,
+    RequestChatBackfillResponse, RequestHistorySyncRepairRequest, RequestHistorySyncRepairResponse,
+    ReserveKeyPackagesRequest, ResetKeyPackagesResponse, RevokeDeviceRequest, RevokeDeviceResponse,
+    SubmitDebugMetricsRequest,
     UpdateAccountProfileRequest, VersionResponse, WebSocketClientFrame, WebSocketServerFrame,
 };
 
@@ -836,6 +838,33 @@ impl ServerApiClient {
             self.request(
                 Method::POST,
                 &format!("v0/chats/{}/devices:remove", chat_id.0),
+            )?
+            .json(&request),
+        )
+        .await
+    }
+
+    pub async fn leave_chat(
+        &self,
+        chat_id: ChatId,
+        request: LeaveChatRequest,
+    ) -> Result<LeaveChatResponse, ServerApiError> {
+        self.send_json(
+            self.request(Method::POST, &format!("v0/chats/{}/leave", chat_id.0))?
+                .json(&request),
+        )
+        .await
+    }
+
+    pub async fn dm_global_delete(
+        &self,
+        chat_id: ChatId,
+        request: DmGlobalDeleteRequest,
+    ) -> Result<DmGlobalDeleteResponse, ServerApiError> {
+        self.send_json(
+            self.request(
+                Method::POST,
+                &format!("v0/chats/{}/dm-global-delete", chat_id.0),
             )?
             .json(&request),
         )

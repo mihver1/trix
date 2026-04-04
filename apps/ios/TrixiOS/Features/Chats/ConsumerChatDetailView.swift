@@ -123,6 +123,7 @@ struct ConsumerChatDetailView: View {
     @State private var latestSentText: String?
     @State private var fixtureKindsByMessageId: [String: UITestFixtureMessageKind] = [:]
     @FocusState private var isComposerFocused: Bool
+    @State private var isConfirmingDmGlobalDelete = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -179,11 +180,40 @@ struct ConsumerChatDetailView: View {
         .navigationTitle(conversationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if canShowChatLifecycleMenu {
+                    Menu {
+                        Button("Leave on this device") {
+                            Task { await performLeaveChat(scope: .thisDevice) }
+                        }
+
+                        Button("Leave on all my devices") {
+                            Task { await performLeaveChat(scope: .allMyDevices) }
+                        }
+
+                        if effectiveChatType == .dm {
+                            Button("Delete chat for both", role: .destructive) {
+                                isConfirmingDmGlobalDelete = true
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .disabled(
+                        model.isLoading ||
+                            model.isPerformingChatLifecycleAction ||
+                            isLoadingSnapshot
+                    )
+                }
+
                 Button(action: reload) {
                     Image(systemName: "arrow.clockwise")
                 }
-                .disabled(model.isLoading || isLoadingSnapshot)
+                .disabled(
+                    model.isLoading ||
+                        model.isPerformingChatLifecycleAction ||
+                        isLoadingSnapshot
+                )
             }
         }
         .task(id: snapshotTaskID) {
@@ -238,6 +268,75 @@ struct ConsumerChatDetailView: View {
         .onDisappear {
             publishTypingState(for: "", force: true)
         }
+        .confirmationDialog(
+            "Delete this chat for both participants?",
+            isPresented: $isConfirmingDmGlobalDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete for both", role: .destructive) {
+                Task { await performDmGlobalDelete() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes the DM for everyone. It cannot be undone.")
+        }
+    }
+
+    private var effectiveChatType: ChatType {
+        snapshot?.detail.chatType ?? chatSummary.chatType
+    }
+
+    private var canShowChatLifecycleMenu: Bool {
+        effectiveChatType != .accountSync
+    }
+
+    private func performLeaveChat(scope: FfiLeaveChatScope) async {
+        localErrorMessage = nil
+        activityMessage = nil
+
+        let response = await model.leaveChat(
+            baseURLString: serverBaseURL,
+            chatId: chatSummary.chatId,
+            chatType: effectiveChatType,
+            scope: scope
+        )
+
+        guard response != nil else {
+            if let error = model.errorMessage {
+                localErrorMessage = error
+            }
+            return
+        }
+
+        switch scope {
+        case .thisDevice:
+            activityMessage = "Left on this device"
+        case .allMyDevices:
+            activityMessage = "Left on all your devices"
+        }
+
+        await loadSnapshot()
+    }
+
+    private func performDmGlobalDelete() async {
+        localErrorMessage = nil
+        activityMessage = nil
+
+        let response = await model.dmGlobalDeleteChat(
+            baseURLString: serverBaseURL,
+            chatId: chatSummary.chatId,
+            chatType: effectiveChatType
+        )
+
+        guard response != nil else {
+            if let error = model.errorMessage {
+                localErrorMessage = error
+            }
+            return
+        }
+
+        activityMessage = "Chat removed for both participants"
+        await loadSnapshot()
     }
 
     private var composer: some View {

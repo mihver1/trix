@@ -4,15 +4,16 @@ use std::{
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result, anyhow};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use trix_types::{
-    ChatDetailResponse, ChatDeviceSummary, ChatHistoryResponse, ChatId, ChatListResponse,
-    ChatMemberSummary, ChatParticipantProfileSummary, ChatSummary, ChatType, InboxItem,
-    MessageEnvelope, MessageId,
+    AccountId, ChatDetailResponse, ChatDeviceSummary, ChatHistoryResponse, ChatId,
+    ChatListResponse, ChatMemberSummary, ChatParticipantProfileSummary, ChatSummary, ChatType,
+    ContentType, DeviceId, InboxItem, MessageEnvelope, MessageId, MessageKind,
 };
 use uuid::Uuid;
 
@@ -2030,7 +2031,7 @@ impl LocalHistoryStore {
         Ok(report)
     }
 
-    fn apply_projected_messages_in_memory(
+    pub(crate) fn apply_projected_messages_in_memory(
         &mut self,
         chat_id: ChatId,
         projected_messages: &[LocalProjectedMessage],
@@ -2080,6 +2081,88 @@ impl LocalHistoryStore {
                 advanced_to_server_seq,
             },
             changed,
+        ))
+    }
+
+    pub(crate) fn allocate_synthetic_commit_server_seq(
+        &self,
+        chat_id: ChatId,
+        baseline_last_server_seq: u64,
+    ) -> u64 {
+        let chat_key = chat_id.0.to_string();
+        let Some(chat) = self.state.chats.get(&chat_key) else {
+            return baseline_last_server_seq.saturating_add(1).max(1);
+        };
+        let mut next = baseline_last_server_seq.saturating_add(1).max(1);
+        while chat.messages.contains_key(&next) || chat.projected_messages.contains_key(&next) {
+            next = next.saturating_add(1);
+        }
+        next
+    }
+
+    /// After server-side leave or DM global delete, this device can no longer fetch chat detail/history.
+    /// Records synthetic commit projection, advances the projected cursor, clears MLS mapping, and marks the chat inactive.
+    pub(crate) fn finalize_chat_after_terminal_control(
+        &mut self,
+        chat_id: ChatId,
+        actor_account_id: AccountId,
+        actor_device_id: DeviceId,
+        server_epoch: u64,
+        commit_message_id: MessageId,
+        mls_merged_epoch: u64,
+        commit_server_seq: u64,
+    ) -> Result<(LocalStoreApplyReport, LocalProjectedMessage)> {
+        let chat_key = chat_id.0.to_string();
+        let previous_chat = self.state.chats.get(&chat_key).cloned();
+        self.ensure_chat_exists(chat_id);
+        {
+            let chat = self
+                .state
+                .chats
+                .get_mut(&chat_key)
+                .ok_or_else(|| anyhow!("chat {} is missing from local store", chat_id.0))?;
+            chat.is_active = false;
+            chat.epoch = server_epoch;
+            chat.last_server_seq = chat.last_server_seq.max(commit_server_seq);
+            chat.last_commit_message_id = Some(commit_message_id);
+            chat.mls_group_id_b64 = None;
+        }
+        let created_at_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let projected = LocalProjectedMessage {
+            server_seq: commit_server_seq,
+            message_id: commit_message_id,
+            sender_account_id: actor_account_id,
+            sender_device_id: actor_device_id,
+            epoch: server_epoch,
+            message_kind: MessageKind::Commit,
+            content_type: ContentType::ChatEvent,
+            projection_kind: LocalProjectionKind::CommitMerged,
+            payload: None,
+            merged_epoch: Some(mls_merged_epoch),
+            created_at_unix,
+        };
+        let (_projection_report, _) =
+            match self.apply_projected_messages_in_memory(chat_id, &[projected.clone()]) {
+                Ok(result) => result,
+                Err(error) => {
+                    self.restore_chat_snapshot(&chat_key, previous_chat);
+                    return Err(error);
+                }
+            };
+        if let Err(error) = self.persist_if_needed(true) {
+            self.restore_chat_snapshot(&chat_key, previous_chat);
+            return Err(error);
+        }
+        Ok((
+            LocalStoreApplyReport {
+                chats_upserted: 1,
+                messages_upserted: 0,
+                changed_chat_ids: vec![chat_id],
+            },
+            projected,
         ))
     }
 
