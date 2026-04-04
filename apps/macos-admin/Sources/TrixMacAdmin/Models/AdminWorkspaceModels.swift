@@ -5,6 +5,8 @@ enum AdminWorkspaceSection: String, CaseIterable, Identifiable, Sendable {
     case registration
     case server
     case users
+    case featureFlags
+    case debugMetrics
 
     var id: String { rawValue }
 
@@ -18,6 +20,10 @@ enum AdminWorkspaceSection: String, CaseIterable, Identifiable, Sendable {
             return "Server"
         case .users:
             return "Users"
+        case .featureFlags:
+            return "Feature flags"
+        case .debugMetrics:
+            return "Debug metrics"
         }
     }
 }

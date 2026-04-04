@@ -838,6 +838,8 @@ external fun uniffi_trix_core_checksum_method_ffiserverapiclient_create_link_int
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_create_message(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffiserverapiclient_delete_apple_push_token(
+): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_download_attachment(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_download_blob(
@@ -877,6 +879,8 @@ external fun uniffi_trix_core_checksum_method_ffiserverapiclient_list_devices(
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_list_history_sync_jobs(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_publish_key_packages(
+): Short
+external fun uniffi_trix_core_checksum_method_ffiserverapiclient_register_apple_push_token(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffiserverapiclient_remove_chat_devices(
 ): Short
@@ -958,6 +962,8 @@ external fun uniffi_trix_core_checksum_method_ffimessengerclient_create_conversa
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_create_link_device_intent(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_feature_flags_snapshot(
+): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_attachment(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_messages(
@@ -966,13 +972,21 @@ external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events_realtime(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_is_feature_enabled(
+): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_list_conversations(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_list_devices(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_load_cached_snapshot(
+): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_load_snapshot(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_load_snapshot_with_remote_sync(
+): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_mark_read(
+): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_refresh_feature_flags(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_remove_conversation_devices(
 ): Short
@@ -1288,6 +1302,8 @@ external fun uniffi_trix_core_fn_method_ffiserverapiclient_create_link_intent(`p
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_create_message(`ptr`: Long,`chatId`: RustBuffer.ByValue,`params`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffiserverapiclient_delete_apple_push_token(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_download_attachment(`ptr`: Long,`body`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_download_blob(`ptr`: Long,`blobId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1327,6 +1343,8 @@ external fun uniffi_trix_core_fn_method_ffiserverapiclient_list_devices(`ptr`: L
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_list_history_sync_jobs(`ptr`: Long,`role`: RustBuffer.ByValue,`status`: RustBuffer.ByValue,`limit`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_publish_key_packages(`ptr`: Long,`packages`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffiserverapiclient_register_apple_push_token(`ptr`: Long,`tokenHex`: RustBuffer.ByValue,`environment`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffiserverapiclient_remove_chat_devices(`ptr`: Long,`chatId`: RustBuffer.ByValue,`params`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1426,6 +1444,8 @@ external fun uniffi_trix_core_fn_method_ffimessengerclient_create_conversation(`
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_create_link_device_intent(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_feature_flags_snapshot(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_get_attachment(`ptr`: Long,`attachmentRef`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_get_messages(`ptr`: Long,`conversationId`: RustBuffer.ByValue,`pageCursor`: RustBuffer.ByValue,`limit`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1434,13 +1454,21 @@ external fun uniffi_trix_core_fn_method_ffimessengerclient_get_new_events(`ptr`:
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_get_new_events_realtime(`ptr`: Long,`checkpoint`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_is_feature_enabled(`ptr`: Long,`key`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
 external fun uniffi_trix_core_fn_method_ffimessengerclient_list_conversations(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_list_devices(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_load_cached_snapshot(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_load_snapshot(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_load_snapshot_with_remote_sync(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_mark_read(`ptr`: Long,`conversationId`: RustBuffer.ByValue,`throughMessageId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_refresh_feature_flags(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_remove_conversation_devices(`ptr`: Long,`request`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1903,6 +1931,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_create_message() != 38461.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_delete_apple_push_token() != 21843.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_download_attachment() != 65126.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1961,6 +1992,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_publish_key_packages() != 7992.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_register_apple_push_token() != 54319.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffiserverapiclient_remove_chat_devices() != 29544.toShort()) {
@@ -2083,6 +2117,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_create_link_device_intent() != 5659.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_feature_flags_snapshot() != 17993.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_get_attachment() != 9506.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -2095,16 +2132,28 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events_realtime() != 51892.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_is_feature_enabled() != 0.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_list_conversations() != 14380.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_list_devices() != 41983.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_load_cached_snapshot() != 34929.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_load_snapshot() != 36763.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_load_snapshot_with_remote_sync() != 40209.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_mark_read() != 17060.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_refresh_feature_flags() != 20532.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_remove_conversation_devices() != 54965.toShort()) {
@@ -4398,6 +4447,8 @@ public interface FfiMessengerClientInterface {
     
     fun `createLinkDeviceIntent`(): FfiMessengerDeviceLinkIntent
     
+    fun `featureFlagsSnapshot`(): FeatureFlagsSnapshot
+    
     fun `getAttachment`(`attachmentRef`: kotlin.String): FfiMessengerAttachmentFile
     
     fun `getMessages`(`conversationId`: kotlin.String, `pageCursor`: kotlin.String?, `limit`: kotlin.UInt?): FfiMessengerMessagePage
@@ -4406,13 +4457,21 @@ public interface FfiMessengerClientInterface {
     
     fun `getNewEventsRealtime`(`checkpoint`: kotlin.String?): FfiMessengerEventBatch
     
+    fun `isFeatureEnabled`(`key`: kotlin.String): kotlin.Boolean
+    
     fun `listConversations`(): List<FfiMessengerConversationSummary>
     
     fun `listDevices`(): List<FfiMessengerDeviceRecord>
     
+    fun `loadCachedSnapshot`(): FfiMessengerSnapshot
+    
     fun `loadSnapshot`(): FfiMessengerSnapshot
     
+    fun `loadSnapshotWithRemoteSync`(): FfiMessengerSnapshot
+    
     fun `markRead`(`conversationId`: kotlin.String, `throughMessageId`: kotlin.String?): FfiMessengerReadStateResult
+    
+    fun `refreshFeatureFlags`(): FeatureFlagsSnapshot
     
     fun `removeConversationDevices`(`request`: FfiMessengerUpdateConversationDevicesRequest): FfiMessengerConversationMutationResult
     
@@ -4609,6 +4668,20 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
     
 
     
+    @Throws(FfiMessengerException::class)override fun `featureFlagsSnapshot`(): FeatureFlagsSnapshot {
+            return FfiConverterTypeFeatureFlagsSnapshot.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_feature_flags_snapshot(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(FfiMessengerException::class)override fun `getAttachment`(`attachmentRef`: kotlin.String): FfiMessengerAttachmentFile {
             return FfiConverterTypeFfiMessengerAttachmentFile.lift(
     callWithHandle {
@@ -4664,6 +4737,19 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
     }
     
 
+    override fun `isFeatureEnabled`(`key`: kotlin.String): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_is_feature_enabled(
+        it,
+        FfiConverterString.lower(`key`),_status)
+}
+    }
+    )
+    }
+    
+
     
     @Throws(FfiMessengerException::class)override fun `listConversations`(): List<FfiMessengerConversationSummary> {
             return FfiConverterSequenceTypeFfiMessengerConversationSummary.lift(
@@ -4693,11 +4779,39 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
     
 
     
+    @Throws(FfiMessengerException::class)override fun `loadCachedSnapshot`(): FfiMessengerSnapshot {
+            return FfiConverterTypeFfiMessengerSnapshot.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_load_cached_snapshot(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(FfiMessengerException::class)override fun `loadSnapshot`(): FfiMessengerSnapshot {
             return FfiConverterTypeFfiMessengerSnapshot.lift(
     callWithHandle {
     uniffiRustCallWithError(FfiMessengerException) { _status ->
     UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_load_snapshot(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiMessengerException::class)override fun `loadSnapshotWithRemoteSync`(): FfiMessengerSnapshot {
+            return FfiConverterTypeFfiMessengerSnapshot.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_load_snapshot_with_remote_sync(
         it,
         _status)
 }
@@ -4714,6 +4828,20 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
     UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_mark_read(
         it,
         FfiConverterString.lower(`conversationId`),FfiConverterOptionalString.lower(`throughMessageId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiMessengerException::class)override fun `refreshFeatureFlags`(): FeatureFlagsSnapshot {
+            return FfiConverterTypeFeatureFlagsSnapshot.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_refresh_feature_flags(
+        it,
+        _status)
 }
     }
     )
@@ -6180,6 +6308,8 @@ public interface FfiServerApiClientInterface {
     
     fun `createMessage`(`chatId`: kotlin.String, `params`: FfiCreateMessageParams): FfiCreateMessageResponse
     
+    fun `deleteApplePushToken`()
+    
     fun `downloadAttachment`(`body`: FfiMessageBody): FfiDownloadedAttachment
     
     fun `downloadBlob`(`blobId`: kotlin.String): kotlin.ByteArray
@@ -6219,6 +6349,8 @@ public interface FfiServerApiClientInterface {
     fun `listHistorySyncJobs`(`role`: FfiHistorySyncJobRole?, `status`: FfiHistorySyncJobStatus?, `limit`: kotlin.UInt?): List<FfiHistorySyncJob>
     
     fun `publishKeyPackages`(`packages`: List<FfiPublishKeyPackage>): FfiPublishKeyPackagesResponse
+    
+    fun `registerApplePushToken`(`tokenHex`: kotlin.String, `environment`: FfiApplePushEnvironment): FfiRegisterApplePushTokenResponse
     
     fun `removeChatDevices`(`chatId`: kotlin.String, `params`: FfiModifyChatDevicesParams): FfiModifyChatDevicesResponse
     
@@ -6627,6 +6759,19 @@ open class FfiServerApiClient: Disposable, AutoCloseable, FfiServerApiClientInte
     
 
     
+    @Throws(TrixFfiException::class)override fun `deleteApplePushToken`()
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_delete_apple_push_token(
+        it,
+        _status)
+}
+    }
+    
+    
+
+    
     @Throws(TrixFfiException::class)override fun `downloadAttachment`(`body`: FfiMessageBody): FfiDownloadedAttachment {
             return FfiConverterTypeFfiDownloadedAttachment.lift(
     callWithHandle {
@@ -6900,6 +7045,20 @@ open class FfiServerApiClient: Disposable, AutoCloseable, FfiServerApiClientInte
     UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_publish_key_packages(
         it,
         FfiConverterSequenceTypeFfiPublishKeyPackage.lower(`packages`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(TrixFfiException::class)override fun `registerApplePushToken`(`tokenHex`: kotlin.String, `environment`: FfiApplePushEnvironment): FfiRegisterApplePushTokenResponse {
+            return FfiConverterTypeFfiRegisterApplePushTokenResponse.lift(
+    callWithHandle {
+    uniffiRustCallWithError(TrixFfiException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffiserverapiclient_register_apple_push_token(
+        it,
+        FfiConverterString.lower(`tokenHex`),FfiConverterTypeFfiApplePushEnvironment.lower(`environment`),_status)
 }
     }
     )
@@ -7965,6 +8124,44 @@ public object FfiConverterTypeFfiSyncCoordinator: FfiConverter<FfiSyncCoordinato
 
     override fun write(value: FfiSyncCoordinator, buf: ByteBuffer) {
         buf.putLong(lower(value))
+    }
+}
+
+
+
+data class FeatureFlagsSnapshot (
+    var `revision`: kotlin.ULong
+    , 
+    var `flags`: Map<kotlin.String, kotlin.Boolean>
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFeatureFlagsSnapshot: FfiConverterRustBuffer<FeatureFlagsSnapshot> {
+    override fun read(buf: ByteBuffer): FeatureFlagsSnapshot {
+        return FeatureFlagsSnapshot(
+            FfiConverterULong.read(buf),
+            FfiConverterMapStringBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FeatureFlagsSnapshot) = (
+            FfiConverterULong.allocationSize(value.`revision`) +
+            FfiConverterMapStringBoolean.allocationSize(value.`flags`)
+    )
+
+    override fun write(value: FeatureFlagsSnapshot, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`revision`, buf)
+            FfiConverterMapStringBoolean.write(value.`flags`, buf)
     }
 }
 
@@ -13682,6 +13879,49 @@ public object FfiConverterTypeFfiRealtimeEvent: FfiConverterRustBuffer<FfiRealti
 
 
 
+data class FfiRegisterApplePushTokenResponse (
+    var `deviceId`: kotlin.String
+    , 
+    var `environment`: FfiApplePushEnvironment
+    , 
+    var `pushDeliveryEnabled`: kotlin.Boolean
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiRegisterApplePushTokenResponse: FfiConverterRustBuffer<FfiRegisterApplePushTokenResponse> {
+    override fun read(buf: ByteBuffer): FfiRegisterApplePushTokenResponse {
+        return FfiRegisterApplePushTokenResponse(
+            FfiConverterString.read(buf),
+            FfiConverterTypeFfiApplePushEnvironment.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiRegisterApplePushTokenResponse) = (
+            FfiConverterString.allocationSize(value.`deviceId`) +
+            FfiConverterTypeFfiApplePushEnvironment.allocationSize(value.`environment`) +
+            FfiConverterBoolean.allocationSize(value.`pushDeliveryEnabled`)
+    )
+
+    override fun write(value: FfiRegisterApplePushTokenResponse, buf: ByteBuffer) {
+            FfiConverterString.write(value.`deviceId`, buf)
+            FfiConverterTypeFfiApplePushEnvironment.write(value.`environment`, buf)
+            FfiConverterBoolean.write(value.`pushDeliveryEnabled`, buf)
+    }
+}
+
+
+
 data class FfiReservedKeyPackage (
     var `keyPackageId`: kotlin.String
     , 
@@ -14341,6 +14581,40 @@ public object FfiConverterTypeFfiWebSocketServerFrame: FfiConverterRustBuffer<Ff
             FfiConverterOptionalTypeFfiWebSocketErrorFrame.write(value.`error`, buf)
     }
 }
+
+
+
+
+enum class FfiApplePushEnvironment {
+    
+    SANDBOX,
+    PRODUCTION;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiApplePushEnvironment: FfiConverterRustBuffer<FfiApplePushEnvironment> {
+    override fun read(buf: ByteBuffer) = try {
+        FfiApplePushEnvironment.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: FfiApplePushEnvironment) = 4UL
+
+    override fun write(value: FfiApplePushEnvironment, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
 
 
 
@@ -17215,6 +17489,45 @@ public object FfiConverterSequenceTypeFfiSyncChatCursor: FfiConverterRustBuffer<
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeFfiSyncChatCursor.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterMapStringBoolean: FfiConverterRustBuffer<Map<kotlin.String, kotlin.Boolean>> {
+    override fun read(buf: ByteBuffer): Map<kotlin.String, kotlin.Boolean> {
+        val len = buf.getInt()
+        return buildMap<kotlin.String, kotlin.Boolean>(len) {
+            repeat(len) {
+                val k = FfiConverterString.read(buf)
+                val v = FfiConverterBoolean.read(buf)
+                this[k] = v
+            }
+        }
+    }
+
+    override fun allocationSize(value: Map<kotlin.String, kotlin.Boolean>): ULong {
+        val spaceForMapSize = 4UL
+        val spaceForChildren = value.map { (k, v) ->
+            FfiConverterString.allocationSize(k) +
+            FfiConverterBoolean.allocationSize(v)
+        }.sum()
+        return spaceForMapSize + spaceForChildren
+    }
+
+    override fun write(value: Map<kotlin.String, kotlin.Boolean>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        // The parens on `(k, v)` here ensure we're calling the right method,
+        // which is important for compatibility with older android devices.
+        // Ref https://blog.danlew.net/2017/03/16/kotlin-puzzler-whose-line-is-it-anyways/
+        value.forEach { (k, v) ->
+            FfiConverterString.write(k, buf)
+            FfiConverterBoolean.write(v, buf)
         }
     }
 } fun `ffiAccountBootstrapPayload`(`transportPubkey`: kotlin.ByteArray, `credentialIdentity`: kotlin.ByteArray): kotlin.ByteArray {

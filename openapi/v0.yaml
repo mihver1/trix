@@ -125,6 +125,58 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AccountProfileResponse'
+  /v0/accounts/me/feature-flags:
+    get:
+      operationId: getCurrentAccountFeatureFlags
+      tags: [accounts]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Merged feature flags for the authenticated device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountFeatureFlagsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v0/accounts/me/debug/metrics:
+    get:
+      operationId: getCurrentAccountDebugMetricsStatus
+      tags: [accounts]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Active debug metrics session for this account and device, if any
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountDebugMetricsStatusResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Debug metrics are not enabled on this server
+    post:
+      operationId: submitCurrentAccountDebugMetrics
+      tags: [accounts]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitDebugMetricsRequest'
+      responses:
+        '204':
+          description: Metrics batch accepted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Debug metrics are not enabled on this server
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v0/accounts/directory:
     get:
       operationId: searchAccountDirectory
@@ -1067,6 +1119,299 @@ paths:
                 $ref: '#/components/schemas/AdminServerSettingsResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v0/admin/feature-flags/definitions:
+    get:
+      operationId: listAdminFeatureFlagDefinitions
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      responses:
+        '200':
+          description: All feature flag definitions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFeatureFlagDefinitionListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createAdminFeatureFlagDefinition
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAdminFeatureFlagDefinitionRequest'
+      responses:
+        '200':
+          description: Definition created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFeatureFlagDefinition'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v0/admin/feature-flags/definitions/{flag_key}:
+    get:
+      operationId: getAdminFeatureFlagDefinition
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      parameters:
+        - name: flag_key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Feature flag definition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFeatureFlagDefinition'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: patchAdminFeatureFlagDefinition
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      parameters:
+        - name: flag_key
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchAdminFeatureFlagDefinitionRequest'
+      responses:
+        '200':
+          description: Updated definition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFeatureFlagDefinition'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v0/admin/feature-flags/overrides:
+    get:
+      operationId: listAdminFeatureFlagOverrides
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      parameters:
+        - name: flag_key
+          in: query
+          schema:
+            type: string
+        - name: scope
+          in: query
+          schema:
+            type: string
+            enum: [global, platform, account, device]
+        - name: platform
+          in: query
+          schema:
+            type: string
+        - name: account_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: device_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Matching overrides
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFeatureFlagOverrideListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createAdminFeatureFlagOverride
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAdminFeatureFlagOverrideRequest'
+      responses:
+        '200':
+          description: Override created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFeatureFlagOverride'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v0/admin/feature-flags/overrides/{override_id}:
+    patch:
+      operationId: patchAdminFeatureFlagOverride
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      parameters:
+        - name: override_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchAdminFeatureFlagOverrideRequest'
+      responses:
+        '200':
+          description: Updated override
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFeatureFlagOverride'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteAdminFeatureFlagOverride
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      parameters:
+        - name: override_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Override removed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v0/admin/debug/metric-sessions:
+    get:
+      operationId: listAdminDebugMetricSessions
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      parameters:
+        - name: account_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Recent debug metric sessions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminDebugMetricSessionListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Debug metrics are not enabled on this server
+    post:
+      operationId: createAdminDebugMetricSession
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAdminDebugMetricSessionRequest'
+      responses:
+        '200':
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminDebugMetricSessionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Debug metrics are not enabled on this server
+  /v0/admin/debug/metric-sessions/{session_id}:
+    delete:
+      operationId: revokeAdminDebugMetricSession
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Session revoked
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v0/admin/debug/metric-sessions/{session_id}/batches:
+    get:
+      operationId: listAdminDebugMetricBatches
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Received metric batches for the session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminDebugMetricBatchListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Debug metrics are not enabled on this server
   /v0/admin/users:
     get:
       operationId: listAdminUsers
@@ -2401,6 +2746,7 @@ components:
         - disabled_user_count
         - admin_username
         - admin_session_expires_at_unix
+        - debug_metrics_enabled
       properties:
         status:
           type: string
@@ -2429,6 +2775,261 @@ components:
         admin_session_expires_at_unix:
           type: integer
           format: int64
+        debug_metrics_enabled:
+          type: boolean
+          description: When true, debug metric ingestion and admin views are enabled (TRIX_DEBUG_METRICS_ENABLED).
+    AccountFeatureFlagsResponse:
+      type: object
+      required: [revision, flags]
+      properties:
+        revision:
+          type: integer
+          format: int64
+        flags:
+          type: object
+          additionalProperties:
+            type: boolean
+    FeatureFlagScope:
+      type: string
+      enum: [global, platform, account, device]
+    AdminFeatureFlagDefinition:
+      type: object
+      required:
+        - flag_key
+        - description
+        - default_enabled
+        - updated_at_unix
+      properties:
+        flag_key:
+          type: string
+        description:
+          type: string
+        default_enabled:
+          type: boolean
+        deleted_at_unix:
+          type: integer
+          format: int64
+          nullable: true
+        updated_at_unix:
+          type: integer
+          format: int64
+    AdminFeatureFlagDefinitionListResponse:
+      type: object
+      required: [definitions]
+      properties:
+        definitions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminFeatureFlagDefinition'
+    CreateAdminFeatureFlagDefinitionRequest:
+      type: object
+      required: [flag_key, description, default_enabled]
+      properties:
+        flag_key:
+          type: string
+        description:
+          type: string
+        default_enabled:
+          type: boolean
+    PatchAdminFeatureFlagDefinitionRequest:
+      type: object
+      properties:
+        description:
+          type: string
+        default_enabled:
+          type: boolean
+        deleted_at_unix:
+          type: integer
+          format: int64
+          nullable: true
+    AdminFeatureFlagOverride:
+      type: object
+      required:
+        - override_id
+        - flag_key
+        - scope
+        - enabled
+        - updated_at_unix
+      properties:
+        override_id:
+          type: string
+          format: uuid
+        flag_key:
+          type: string
+        scope:
+          $ref: '#/components/schemas/FeatureFlagScope'
+        platform:
+          type: string
+          nullable: true
+        account_id:
+          $ref: '#/components/schemas/Uuid'
+          nullable: true
+        device_id:
+          $ref: '#/components/schemas/Uuid'
+          nullable: true
+        enabled:
+          type: boolean
+        expires_at_unix:
+          type: integer
+          format: int64
+          nullable: true
+        updated_at_unix:
+          type: integer
+          format: int64
+    AdminFeatureFlagOverrideListResponse:
+      type: object
+      required: [overrides]
+      properties:
+        overrides:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminFeatureFlagOverride'
+    CreateAdminFeatureFlagOverrideRequest:
+      type: object
+      required: [flag_key, scope, enabled]
+      properties:
+        flag_key:
+          type: string
+        scope:
+          $ref: '#/components/schemas/FeatureFlagScope'
+        platform:
+          type: string
+          nullable: true
+        account_id:
+          $ref: '#/components/schemas/Uuid'
+          nullable: true
+        device_id:
+          $ref: '#/components/schemas/Uuid'
+          nullable: true
+        enabled:
+          type: boolean
+        expires_at_unix:
+          type: integer
+          format: int64
+          nullable: true
+    PatchAdminFeatureFlagOverrideRequest:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        expires_at_unix:
+          type: integer
+          format: int64
+          nullable: true
+    AccountDebugMetricsStatusResponse:
+      type: object
+      required: [active]
+      properties:
+        active:
+          type: boolean
+        session_id:
+          type: string
+          format: uuid
+          nullable: true
+        user_visible_message:
+          type: string
+          nullable: true
+    SubmitDebugMetricsRequest:
+      type: object
+      required: [session_id, payload]
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        payload:
+          type: object
+          additionalProperties: true
+    CreateAdminDebugMetricSessionRequest:
+      type: object
+      required: [account_id, user_visible_message, ttl_seconds]
+      properties:
+        account_id:
+          $ref: '#/components/schemas/Uuid'
+        device_id:
+          $ref: '#/components/schemas/Uuid'
+          nullable: true
+        user_visible_message:
+          type: string
+        ttl_seconds:
+          type: integer
+          format: int64
+    AdminDebugMetricSession:
+      type: object
+      required:
+        - session_id
+        - account_id
+        - user_visible_message
+        - created_at_unix
+        - expires_at_unix
+        - created_by_admin
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        account_id:
+          $ref: '#/components/schemas/Uuid'
+        device_id:
+          $ref: '#/components/schemas/Uuid'
+          nullable: true
+        user_visible_message:
+          type: string
+        created_at_unix:
+          type: integer
+          format: int64
+        expires_at_unix:
+          type: integer
+          format: int64
+        revoked_at_unix:
+          type: integer
+          format: int64
+          nullable: true
+        created_by_admin:
+          type: string
+    AdminDebugMetricSessionResponse:
+      type: object
+      required: [session]
+      properties:
+        session:
+          $ref: '#/components/schemas/AdminDebugMetricSession'
+    AdminDebugMetricSessionListResponse:
+      type: object
+      required: [sessions]
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminDebugMetricSession'
+    AdminDebugMetricBatch:
+      type: object
+      required:
+        - batch_id
+        - session_id
+        - device_id
+        - received_at_unix
+        - payload
+      properties:
+        batch_id:
+          type: string
+          format: uuid
+        session_id:
+          type: string
+          format: uuid
+        device_id:
+          $ref: '#/components/schemas/Uuid'
+        received_at_unix:
+          type: integer
+          format: int64
+        payload:
+          type: object
+          additionalProperties: true
+    AdminDebugMetricBatchListResponse:
+      type: object
+      required: [batches]
+      properties:
+        batches:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminDebugMetricBatch'
     AdminUserSummary:
       type: object
       required:

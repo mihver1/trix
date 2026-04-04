@@ -59,6 +59,77 @@ protocol AdminAPIProtocol: Sendable {
     ) async throws
 
     func reactivateUser(cluster: ClusterProfile, accessToken: String, accountId: UUID) async throws
+
+    // MARK: - Feature flags
+
+    func fetchFeatureFlagDefinitions(cluster: ClusterProfile, accessToken: String) async throws
+        -> AdminFeatureFlagDefinitionListResponse
+
+    func createFeatureFlagDefinition(
+        cluster: ClusterProfile,
+        accessToken: String,
+        request: CreateAdminFeatureFlagDefinitionRequest
+    ) async throws -> AdminFeatureFlagDefinition
+
+    func patchFeatureFlagDefinition(
+        cluster: ClusterProfile,
+        accessToken: String,
+        flagKey: String,
+        patch: PatchAdminFeatureFlagDefinitionRequest
+    ) async throws -> AdminFeatureFlagDefinition
+
+    func fetchFeatureFlagOverrides(
+        cluster: ClusterProfile,
+        accessToken: String,
+        query: FeatureFlagOverrideListQuery
+    ) async throws -> AdminFeatureFlagOverrideListResponse
+
+    func createFeatureFlagOverride(
+        cluster: ClusterProfile,
+        accessToken: String,
+        request: CreateAdminFeatureFlagOverrideRequest
+    ) async throws -> AdminFeatureFlagOverride
+
+    func patchFeatureFlagOverride(
+        cluster: ClusterProfile,
+        accessToken: String,
+        overrideId: UUID,
+        patch: PatchAdminFeatureFlagOverrideRequest
+    ) async throws -> AdminFeatureFlagOverride
+
+    func deleteFeatureFlagOverride(cluster: ClusterProfile, accessToken: String, overrideId: UUID) async throws
+
+    // MARK: - Debug metrics
+
+    func fetchDebugMetricSessions(
+        cluster: ClusterProfile,
+        accessToken: String,
+        accountId: UUID?,
+        limit: Int?
+    ) async throws -> AdminDebugMetricSessionListResponse
+
+    func createDebugMetricSession(
+        cluster: ClusterProfile,
+        accessToken: String,
+        request: CreateAdminDebugMetricSessionRequest
+    ) async throws -> AdminDebugMetricSessionResponse
+
+    func revokeDebugMetricSession(cluster: ClusterProfile, accessToken: String, sessionId: UUID) async throws
+
+    func fetchDebugMetricBatches(
+        cluster: ClusterProfile,
+        accessToken: String,
+        sessionId: UUID,
+        limit: Int?
+    ) async throws -> AdminDebugMetricBatchListResponse
+}
+
+struct FeatureFlagOverrideListQuery: Equatable, Sendable {
+    var flagKey: String?
+    var scope: AdminFeatureFlagScope?
+    var platform: String?
+    var accountId: UUID?
+    var deviceId: UUID?
 }
 
 struct AdminAPIClient: Sendable, AdminAPIProtocol {
@@ -282,7 +353,216 @@ struct AdminAPIClient: Sendable, AdminAPIProtocol {
         try throwIfNotSuccess(response, body: nil)
     }
 
+    // MARK: - Feature flags
+
+    func fetchFeatureFlagDefinitions(
+        cluster: ClusterProfile,
+        accessToken: String
+    ) async throws -> AdminFeatureFlagDefinitionListResponse {
+        let (data, response) = try await send(
+            cluster: cluster,
+            path: "v0/admin/feature-flags/definitions",
+            method: "GET",
+            accessToken: accessToken,
+            body: nil
+        )
+        return try decode(AdminFeatureFlagDefinitionListResponse.self, from: data, response: response)
+    }
+
+    func createFeatureFlagDefinition(
+        cluster: ClusterProfile,
+        accessToken: String,
+        request: CreateAdminFeatureFlagDefinitionRequest
+    ) async throws -> AdminFeatureFlagDefinition {
+        let body = try jsonEncoder.encode(request)
+        let (data, response) = try await send(
+            cluster: cluster,
+            path: "v0/admin/feature-flags/definitions",
+            method: "POST",
+            accessToken: accessToken,
+            body: body
+        )
+        return try decode(AdminFeatureFlagDefinition.self, from: data, response: response)
+    }
+
+    func patchFeatureFlagDefinition(
+        cluster: ClusterProfile,
+        accessToken: String,
+        flagKey: String,
+        patch: PatchAdminFeatureFlagDefinitionRequest
+    ) async throws -> AdminFeatureFlagDefinition {
+        let enc = Self.pathEncodeFeatureFlagKey(flagKey)
+        let body = try jsonEncoder.encode(patch)
+        let (data, response) = try await send(
+            cluster: cluster,
+            path: "v0/admin/feature-flags/definitions/\(enc)",
+            method: "PATCH",
+            accessToken: accessToken,
+            body: body
+        )
+        return try decode(AdminFeatureFlagDefinition.self, from: data, response: response)
+    }
+
+    func fetchFeatureFlagOverrides(
+        cluster: ClusterProfile,
+        accessToken: String,
+        query: FeatureFlagOverrideListQuery
+    ) async throws -> AdminFeatureFlagOverrideListResponse {
+        let baseURL = try adminURL(cluster: cluster, path: "v0/admin/feature-flags/overrides")
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+            throw AdminAPIError.invalidURL
+        }
+        var items: [URLQueryItem] = []
+        if let flagKey = query.flagKey {
+            items.append(URLQueryItem(name: "flag_key", value: flagKey))
+        }
+        if let scope = query.scope {
+            items.append(URLQueryItem(name: "scope", value: scope.rawValue))
+        }
+        if let platform = query.platform {
+            items.append(URLQueryItem(name: "platform", value: platform))
+        }
+        if let accountId = query.accountId {
+            items.append(URLQueryItem(name: "account_id", value: accountId.uuidString.lowercased()))
+        }
+        if let deviceId = query.deviceId {
+            items.append(URLQueryItem(name: "device_id", value: deviceId.uuidString.lowercased()))
+        }
+        if !items.isEmpty {
+            components.queryItems = items
+        }
+        guard let url = components.url else {
+            throw AdminAPIError.invalidURL
+        }
+        let (data, response) = try await send(url: url, method: "GET", accessToken: accessToken, body: nil)
+        return try decode(AdminFeatureFlagOverrideListResponse.self, from: data, response: response)
+    }
+
+    func createFeatureFlagOverride(
+        cluster: ClusterProfile,
+        accessToken: String,
+        request: CreateAdminFeatureFlagOverrideRequest
+    ) async throws -> AdminFeatureFlagOverride {
+        let body = try jsonEncoder.encode(request)
+        let (data, response) = try await send(
+            cluster: cluster,
+            path: "v0/admin/feature-flags/overrides",
+            method: "POST",
+            accessToken: accessToken,
+            body: body
+        )
+        return try decode(AdminFeatureFlagOverride.self, from: data, response: response)
+    }
+
+    func patchFeatureFlagOverride(
+        cluster: ClusterProfile,
+        accessToken: String,
+        overrideId: UUID,
+        patch: PatchAdminFeatureFlagOverrideRequest
+    ) async throws -> AdminFeatureFlagOverride {
+        let body = try jsonEncoder.encode(patch)
+        let (data, response) = try await send(
+            cluster: cluster,
+            path: "v0/admin/feature-flags/overrides/\(overrideId.uuidString.lowercased())",
+            method: "PATCH",
+            accessToken: accessToken,
+            body: body
+        )
+        return try decode(AdminFeatureFlagOverride.self, from: data, response: response)
+    }
+
+    func deleteFeatureFlagOverride(cluster: ClusterProfile, accessToken: String, overrideId: UUID) async throws {
+        let (_, response) = try await send(
+            cluster: cluster,
+            path: "v0/admin/feature-flags/overrides/\(overrideId.uuidString.lowercased())",
+            method: "DELETE",
+            accessToken: accessToken,
+            body: nil
+        )
+        try throwIfNotSuccess(response, body: nil)
+    }
+
+    // MARK: - Debug metrics
+
+    func fetchDebugMetricSessions(
+        cluster: ClusterProfile,
+        accessToken: String,
+        accountId: UUID?,
+        limit: Int?
+    ) async throws -> AdminDebugMetricSessionListResponse {
+        let baseURL = try adminURL(cluster: cluster, path: "v0/admin/debug/metric-sessions")
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+            throw AdminAPIError.invalidURL
+        }
+        var items: [URLQueryItem] = []
+        if let accountId {
+            items.append(URLQueryItem(name: "account_id", value: accountId.uuidString.lowercased()))
+        }
+        if let limit {
+            items.append(URLQueryItem(name: "limit", value: String(limit)))
+        }
+        if !items.isEmpty {
+            components.queryItems = items
+        }
+        guard let url = components.url else {
+            throw AdminAPIError.invalidURL
+        }
+        let (data, response) = try await send(url: url, method: "GET", accessToken: accessToken, body: nil)
+        return try decode(AdminDebugMetricSessionListResponse.self, from: data, response: response)
+    }
+
+    func createDebugMetricSession(
+        cluster: ClusterProfile,
+        accessToken: String,
+        request: CreateAdminDebugMetricSessionRequest
+    ) async throws -> AdminDebugMetricSessionResponse {
+        let body = try jsonEncoder.encode(request)
+        let (data, response) = try await send(
+            cluster: cluster,
+            path: "v0/admin/debug/metric-sessions",
+            method: "POST",
+            accessToken: accessToken,
+            body: body
+        )
+        return try decode(AdminDebugMetricSessionResponse.self, from: data, response: response)
+    }
+
+    func revokeDebugMetricSession(cluster: ClusterProfile, accessToken: String, sessionId: UUID) async throws {
+        let (_, response) = try await send(
+            cluster: cluster,
+            path: "v0/admin/debug/metric-sessions/\(sessionId.uuidString.lowercased())",
+            method: "DELETE",
+            accessToken: accessToken,
+            body: nil
+        )
+        try throwIfNotSuccess(response, body: nil)
+    }
+
+    func fetchDebugMetricBatches(
+        cluster: ClusterProfile,
+        accessToken: String,
+        sessionId: UUID,
+        limit: Int?
+    ) async throws -> AdminDebugMetricBatchListResponse {
+        var path = "v0/admin/debug/metric-sessions/\(sessionId.uuidString.lowercased())/batches"
+        if let limit {
+            path += "?limit=\(limit)"
+        }
+        let (data, response) = try await send(
+            cluster: cluster,
+            path: path,
+            method: "GET",
+            accessToken: accessToken,
+            body: nil
+        )
+        return try decode(AdminDebugMetricBatchListResponse.self, from: data, response: response)
+    }
+
     // MARK: - Internals
+
+    private static func pathEncodeFeatureFlagKey(_ key: String) -> String {
+        key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? key
+    }
 
     private func adminURL(cluster: ClusterProfile, path: String) throws -> URL {
         guard let url = URL(string: path, relativeTo: cluster.baseURL) else {

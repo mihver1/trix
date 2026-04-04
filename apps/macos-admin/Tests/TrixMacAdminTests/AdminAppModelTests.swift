@@ -211,8 +211,157 @@ final class MockAdminAPIClient: AdminAPIProtocol {
             userCount: 0,
             disabledUserCount: 0,
             adminUsername: "admin",
-            adminSessionExpiresAtUnix: 9_999_999_999
+            adminSessionExpiresAtUnix: 9_999_999_999,
+            debugMetricsEnabled: false
         )
+    }
+
+    func fetchFeatureFlagDefinitions(
+        cluster: ClusterProfile,
+        accessToken: String
+    ) async throws -> AdminFeatureFlagDefinitionListResponse {
+        try gateUnauthorized()
+        return AdminFeatureFlagDefinitionListResponse(definitions: [])
+    }
+
+    func createFeatureFlagDefinition(
+        cluster: ClusterProfile,
+        accessToken: String,
+        request: CreateAdminFeatureFlagDefinitionRequest
+    ) async throws -> AdminFeatureFlagDefinition {
+        try gateUnauthorized()
+        return AdminFeatureFlagDefinition(
+            flagKey: request.flagKey,
+            description: request.description,
+            defaultEnabled: request.defaultEnabled,
+            deletedAtUnix: nil,
+            updatedAtUnix: 0
+        )
+    }
+
+    func patchFeatureFlagDefinition(
+        cluster: ClusterProfile,
+        accessToken: String,
+        flagKey: String,
+        patch: PatchAdminFeatureFlagDefinitionRequest
+    ) async throws -> AdminFeatureFlagDefinition {
+        try gateUnauthorized()
+        let del: UInt64?
+        switch patch.deletedAtUnix {
+        case .unchanged, .clear:
+            del = nil
+        case .set(let u):
+            del = u
+        }
+        return AdminFeatureFlagDefinition(
+            flagKey: flagKey,
+            description: patch.description ?? "",
+            defaultEnabled: patch.defaultEnabled ?? false,
+            deletedAtUnix: del,
+            updatedAtUnix: 0
+        )
+    }
+
+    func fetchFeatureFlagOverrides(
+        cluster: ClusterProfile,
+        accessToken: String,
+        query: FeatureFlagOverrideListQuery
+    ) async throws -> AdminFeatureFlagOverrideListResponse {
+        try gateUnauthorized()
+        _ = query
+        return AdminFeatureFlagOverrideListResponse(overrides: [])
+    }
+
+    func createFeatureFlagOverride(
+        cluster: ClusterProfile,
+        accessToken: String,
+        request: CreateAdminFeatureFlagOverrideRequest
+    ) async throws -> AdminFeatureFlagOverride {
+        try gateUnauthorized()
+        return AdminFeatureFlagOverride(
+            overrideId: UUID().uuidString,
+            flagKey: request.flagKey,
+            scope: request.scope,
+            platform: request.platform,
+            accountId: request.accountId,
+            deviceId: request.deviceId,
+            enabled: request.enabled,
+            expiresAtUnix: request.expiresAtUnix,
+            updatedAtUnix: 0
+        )
+    }
+
+    func patchFeatureFlagOverride(
+        cluster: ClusterProfile,
+        accessToken: String,
+        overrideId: UUID,
+        patch: PatchAdminFeatureFlagOverrideRequest
+    ) async throws -> AdminFeatureFlagOverride {
+        try gateUnauthorized()
+        return AdminFeatureFlagOverride(
+            overrideId: overrideId.uuidString,
+            flagKey: "mock",
+            scope: .global,
+            platform: nil,
+            accountId: nil,
+            deviceId: nil,
+            enabled: patch.enabled ?? true,
+            expiresAtUnix: nil,
+            updatedAtUnix: 0
+        )
+    }
+
+    func deleteFeatureFlagOverride(cluster: ClusterProfile, accessToken: String, overrideId: UUID) async throws {
+        try gateUnauthorized()
+        _ = overrideId
+    }
+
+    func fetchDebugMetricSessions(
+        cluster: ClusterProfile,
+        accessToken: String,
+        accountId: UUID?,
+        limit: Int?
+    ) async throws -> AdminDebugMetricSessionListResponse {
+        try gateUnauthorized()
+        _ = accountId
+        _ = limit
+        return AdminDebugMetricSessionListResponse(sessions: [])
+    }
+
+    func createDebugMetricSession(
+        cluster: ClusterProfile,
+        accessToken: String,
+        request: CreateAdminDebugMetricSessionRequest
+    ) async throws -> AdminDebugMetricSessionResponse {
+        try gateUnauthorized()
+        let session = AdminDebugMetricSession(
+            sessionId: UUID().uuidString,
+            accountId: request.accountId,
+            deviceId: request.deviceId,
+            userVisibleMessage: request.userVisibleMessage,
+            createdAtUnix: 0,
+            expiresAtUnix: 0,
+            revokedAtUnix: nil,
+            createdByAdmin: "mock"
+        )
+        return AdminDebugMetricSessionResponse(session: session)
+    }
+
+    func revokeDebugMetricSession(cluster: ClusterProfile, accessToken: String, sessionId: UUID) async throws {
+        try gateUnauthorized()
+        _ = sessionId
+    }
+
+    func fetchDebugMetricBatches(
+        cluster: ClusterProfile,
+        accessToken: String,
+        sessionId: UUID,
+        limit: Int?
+    ) async throws -> AdminDebugMetricBatchListResponse {
+        try gateUnauthorized()
+        _ = sessionId
+        _ = limit
+        return AdminDebugMetricBatchListResponse(batches: [])
     }
 }
 

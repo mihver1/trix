@@ -13,8 +13,9 @@ use tokio_tungstenite::{
     tungstenite::{Message, client::IntoClientRequest},
 };
 use trix_types::{
-    AccountDirectoryResponse, AccountId, AccountKeyPackagesResponse, AccountProfileResponse,
-    AckInboxRequest, AckInboxResponse, AppendHistorySyncChunkRequest,
+    AccountDebugMetricsStatusResponse, AccountDirectoryResponse, AccountFeatureFlagsResponse,
+    AccountId, AccountKeyPackagesResponse, AccountProfileResponse, AckInboxRequest, AckInboxResponse,
+    AppendHistorySyncChunkRequest,
     AppendHistorySyncChunkResponse, ApplePushEnvironment, BlobMetadataResponse, BlobUploadStatus,
     ChatDetailResponse, ChatHistoryResponse, ChatId, ChatListResponse,
     CompleteHistorySyncJobRequest, CompleteHistorySyncJobResponse, CompleteLinkIntentRequest,
@@ -30,7 +31,7 @@ use trix_types::{
     PublishKeyPackagesRequest, PublishKeyPackagesResponse, RegisterApplePushTokenRequest,
     RegisterApplePushTokenResponse, RequestChatBackfillRequest, RequestChatBackfillResponse,
     RequestHistorySyncRepairRequest, RequestHistorySyncRepairResponse, ReserveKeyPackagesRequest,
-    ResetKeyPackagesResponse, RevokeDeviceRequest, RevokeDeviceResponse,
+    ResetKeyPackagesResponse, RevokeDeviceRequest, RevokeDeviceResponse, SubmitDebugMetricsRequest,
     UpdateAccountProfileRequest, VersionResponse, WebSocketClientFrame, WebSocketServerFrame,
 };
 
@@ -331,6 +332,34 @@ impl ServerApiClient {
     pub async fn get_me(&self) -> Result<AccountProfileResponse, ServerApiError> {
         self.send_json(self.request(Method::GET, "v0/accounts/me")?)
             .await
+    }
+
+    pub async fn get_feature_flags(&self) -> Result<AccountFeatureFlagsResponse, ServerApiError> {
+        self.send_json(self.request(Method::GET, "v0/accounts/me/feature-flags")?)
+            .await
+    }
+
+    pub async fn get_debug_metrics_status(
+        &self,
+    ) -> Result<AccountDebugMetricsStatusResponse, ServerApiError> {
+        self.send_json(self.request(Method::GET, "v0/accounts/me/debug/metrics")?)
+            .await
+    }
+
+    pub async fn submit_debug_metrics(
+        &self,
+        session_id: impl Into<String>,
+        payload: Value,
+    ) -> Result<(), ServerApiError> {
+        self.send_empty(
+            self.request(Method::POST, "v0/accounts/me/debug/metrics")?.json(
+                &SubmitDebugMetricsRequest {
+                    session_id: session_id.into(),
+                    payload,
+                },
+            ),
+        )
+        .await
     }
 
     pub async fn search_account_directory(
