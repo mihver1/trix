@@ -28,6 +28,7 @@ Co-Authored-By: <agent name> <agent email>
 
 ## Common Commands
 - Start local Postgres: `docker compose up -d postgres`
+- Default client smoke pack: `./scripts/client-smoke-harness.sh`
 - Run backend: `cargo run -p trixd` or `make run-server`
 - Contract gates: `make contract-check`
 - Workspace check: `cargo check --workspace` or `make check`
@@ -36,12 +37,14 @@ Co-Authored-By: <agent name> <agent email>
 - Generate Kotlin bindings: `make ffi-bindings-kotlin`
 - Generate UniFFI bindings: `make ffi-bindings`
 - Audit FFI parity: `make ffi-parity-audit`
+- Verify checked-in UniFFI bindings: `./scripts/verify-uniffi-bindings.sh`
 - Run bot daemon over stdio: `cargo run -q -p trix-botd -- stdio`
 
 ## Workflows
-- Local backend: copy `.env.example` to `.env`, export it with `set -a; source .env; set +a`; the example file carries the admin auth env required by the current `trixd` startup path. Then verify `curl http://127.0.0.1:8080/v0/system/health`
+- Local backend: copy `.env.example` to `.env`, export it with `set -a; source .env; set +a`; the example file carries the admin auth env required by the current `trixd` startup path. Then verify `curl http://127.0.0.1:8080/v0/system/health` and `curl http://127.0.0.1:8080/v0/system/version`
 - Physical-device backend: set a reachable `TRIX_PUBLIC_BASE_URL` and usually `TRIX_BIND_ADDR=0.0.0.0:8080` before generating link QR payloads. See `docs/server-operations.md`
 - Client smoke harness: default pack runs `client-scenarios`, `safe-ffi`, `bot-runtime`, `macos`, `android-unit`; use `--no-postgres` or `--stop-postgres` when needed. See `docs/client-smoke-harness.md`
+- Server-backed iOS smoke: `ios-server` / `ios-ui` auto-start local compose services, rebuild the `app` service, and require `jq` plus `curl` when not using `--no-postgres`. See `docs/client-smoke-harness.md`
 - Bot harness: `trix-botd` supports `init`, `run`, `publish-key-packages`, `stdio`; export `TRIX_BOT_MASTER_SECRET` before `init`. See `docs/bot-harness.md`
 - macOS admin: regenerate the Xcode project after `project.yml` changes with `xcodegen generate --spec apps/macos-admin/project.yml`
 - Platform-specific iOS, macOS, and Android build/archive flows live in the app READMEs; keep those docs authoritative.
