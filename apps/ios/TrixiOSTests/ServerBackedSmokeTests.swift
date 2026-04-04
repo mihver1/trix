@@ -439,7 +439,7 @@ final class ServerBackedSmokeTests: XCTestCase {
 
         let form = makeAccountForm(label: "iOS Smoke", suffix: suffix)
         let bootstrapMaterial = try DeviceBootstrapMaterial.generate()
-        let created = try TrixCoreServerBridge.createAccount(
+        let created = try await TrixCoreServerBridge.createAccount(
             baseURLString: baseURL,
             form: form,
             bootstrapMaterial: bootstrapMaterial
@@ -456,7 +456,7 @@ final class ServerBackedSmokeTests: XCTestCase {
             deviceDisplayName: form.deviceDisplayName,
             platform: form.platform
         )
-        let session = try TrixCoreServerBridge.authenticate(
+        let session = try await TrixCoreServerBridge.authenticate(
             baseURLString: baseURL,
             identity: identity
         )
@@ -488,7 +488,7 @@ final class ServerBackedSmokeTests: XCTestCase {
         XCTAssertEqual(currentDevice.platform, form.platform)
         XCTAssertEqual(currentDevice.deviceStatus, .active)
 
-        let linkIntent = try TrixCoreServerBridge.createLinkIntent(
+        let linkIntent = try await TrixCoreServerBridge.createLinkIntent(
             baseURLString: baseURL,
             accessToken: session.accessToken
         )

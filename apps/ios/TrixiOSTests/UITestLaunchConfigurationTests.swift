@@ -99,7 +99,7 @@ final class AuthSessionResolutionGateTests: XCTestCase {
             existingSession: nil,
             leewaySeconds: 60
         ) {
-            counter.increment()
+            await counter.increment()
             try await Task.sleep(nanoseconds: 50_000_000)
             return session
         }
@@ -110,7 +110,7 @@ final class AuthSessionResolutionGateTests: XCTestCase {
             existingSession: nil,
             leewaySeconds: 60
         ) {
-            counter.increment()
+            await counter.increment()
             return session
         }
 
@@ -121,6 +121,59 @@ final class AuthSessionResolutionGateTests: XCTestCase {
         XCTAssertEqual(
             [firstSession.accessToken, secondSession.accessToken],
             ["access-token", "access-token"]
+        )
+    }
+
+    func testInvalidateCancelsInflightResolutionAndPreventsCaching() async throws {
+        let gate = AuthSessionResolutionGate()
+        let identity = LocalDeviceIdentity(
+            accountId: "account-1",
+            deviceId: "device-1",
+            accountSyncChatId: nil,
+            deviceDisplayName: "iPhone",
+            platform: "ios",
+            credentialIdentity: Data([0x01, 0x02, 0x03]),
+            accountRootPrivateKeyRaw: Data([0x04]),
+            transportPrivateKeyRaw: Data([0x05]),
+            trustState: .active,
+            capabilityState: .fullAccountAccess
+        )
+        let session = AuthSessionResponse(
+            accessToken: "access-token",
+            expiresAtUnix: UInt64(Date().timeIntervalSince1970) + 3_600,
+            accountId: identity.accountId,
+            deviceStatus: .active
+        )
+        let started = expectation(description: "auth started")
+
+        let resolutionTask = Task {
+            try await gate.resolve(
+                identity: identity,
+                baseURLString: "http://127.0.0.1:8080",
+                existingSession: nil,
+                leewaySeconds: 60
+            ) {
+                started.fulfill()
+                try await Task.sleep(nanoseconds: 100_000_000)
+                return session
+            }
+        }
+
+        await fulfillment(of: [started], timeout: 1.0)
+        XCTAssertNil(gate.invalidate())
+
+        do {
+            _ = try await resolutionTask.value
+            XCTFail("Expected in-flight resolution to be cancelled after invalidate().")
+        } catch is CancellationError {
+        }
+
+        XCTAssertNil(
+            gate.currentUsableSession(
+                for: identity,
+                baseURLString: "http://127.0.0.1:8080",
+                leewaySeconds: 60
+            )
         )
     }
 }

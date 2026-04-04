@@ -157,6 +157,7 @@ enum TrixCorePersistentBridge {
     // Serialize access so snapshot refresh, realtime polling, and device mutations cannot race
     // each other while draining history sync jobs.
     private static let messengerClientLock = NSLock()
+    private static let persistentContextLock = NSLock()
 
     static func loadMessengerSnapshot(
         baseURLString: String,
@@ -164,6 +165,20 @@ enum TrixCorePersistentBridge {
         identity: LocalDeviceIdentity
     ) throws -> SafeMessengerSnapshot {
         try withMessengerClient(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        ) { client in
+            try client.loadSnapshot().trix_safeMessengerSnapshot
+        }
+    }
+
+    static func loadMessengerSnapshot(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity
+    ) async throws -> SafeMessengerSnapshot {
+        try await withMessengerClientAsync(
             baseURLString: baseURLString,
             accessToken: accessToken,
             identity: identity
@@ -204,72 +219,30 @@ enum TrixCorePersistentBridge {
             accessToken: accessToken,
             identity: identity
         ) { client in
-            var snapshot = try client.loadSnapshot()
-            var conversation = snapshot.conversations.first { $0.conversationId == chatId }
+            try makeConversationSnapshot(
+                from: client,
+                chatId: chatId,
+                messageLimit: messageLimit
+            )
+        }
+    }
 
-            if conversation?.historyRecoveryPending == true {
-                _ = try? client.syncPendingHistoryRepairs(conversationIds: [chatId])
-                snapshot = try client.loadSnapshot()
-                conversation = snapshot.conversations.first { $0.conversationId == chatId }
-            }
-
-            let detail = conversation?.trix_chatDetailResponse
-                ?? ChatDetailResponse(
-                    chatId: chatId,
-                    chatType: .dm,
-                    title: nil,
-                    lastServerSeq: 0,
-                    pendingMessageCount: 0,
-                    epoch: 0,
-                    lastCommitMessageId: nil,
-                    lastMessage: nil,
-                    participantProfiles: [],
-                    members: [],
-                    deviceMembers: []
-                )
-            let totalLimit = max(messageLimit, 1)
-            var pageCursor: String?
-            var allMessages: [FfiMessengerMessageRecord] = []
-            var seenMessageIDs = Set<String>()
-
-            while allMessages.count < totalLimit {
-                let pageLimit = UInt32(min(max(totalLimit - allMessages.count, 1), 500))
-                let messagesCountBeforePage = allMessages.count
-                let page = try client.getMessages(
-                    conversationId: chatId,
-                    pageCursor: pageCursor,
-                    limit: pageLimit
-                )
-                guard !page.messages.isEmpty else {
-                    break
-                }
-                for message in page.messages where seenMessageIDs.insert(message.messageId).inserted {
-                    allMessages.append(message)
-                    if allMessages.count >= totalLimit {
-                        break
-                    }
-                }
-                guard allMessages.count > messagesCountBeforePage else {
-                    break
-                }
-                guard let nextCursor = page.nextCursor,
-                      allMessages.count < totalLimit
-                else {
-                    break
-                }
-                pageCursor = nextCursor
-            }
-
-            allMessages.sort { lhs, rhs in
-                if lhs.serverSeq == rhs.serverSeq {
-                    return lhs.createdAtUnix < rhs.createdAtUnix
-                }
-                return lhs.serverSeq < rhs.serverSeq
-            }
-            return SafeConversationSnapshot(
-                detail: detail,
-                messages: allMessages.map(\.trix_safeMessengerMessage),
-                nextCursor: nil
+    static func loadConversationSnapshot(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        messageLimit: Int = 150
+    ) async throws -> SafeConversationSnapshot {
+        try await withMessengerClientAsync(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        ) { client in
+            try makeConversationSnapshot(
+                from: client,
+                chatId: chatId,
+                messageLimit: messageLimit
             )
         }
     }
@@ -481,6 +454,35 @@ enum TrixCorePersistentBridge {
         }
     }
 
+    static func createConversation(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        chatType: ChatType,
+        title: String?,
+        participantAccountIds: [String]
+    ) async throws -> CreateChatResponse {
+        try await withMessengerClientAsync(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        ) { client in
+            let result = try client.createConversation(
+                request: FfiMessengerCreateConversationRequest(
+                    conversationType: chatType.trix_ffiChatType,
+                    title: title?.trix_trimmedOrNil(),
+                    participantAccountIds: participantAccountIds
+                )
+            )
+            let conversation = result.conversation
+            return CreateChatResponse(
+                chatId: result.conversationId,
+                chatType: conversation?.conversationType.trix_chatType ?? chatType,
+                epoch: conversation?.epoch ?? 0
+            )
+        }
+    }
+
     static func addConversationMembers(
         baseURLString: String,
         accessToken: String,
@@ -489,6 +491,32 @@ enum TrixCorePersistentBridge {
         participantAccountIds: [String]
     ) throws -> ModifyChatMembersResponse {
         try withMessengerClient(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        ) { client in
+            let result = try client.updateConversationMembers(
+                request: FfiMessengerUpdateConversationMembersRequest(
+                    conversationId: chatId,
+                    participantAccountIds: participantAccountIds
+                )
+            )
+            return ModifyChatMembersResponse(
+                chatId: result.conversationId,
+                epoch: result.conversation?.epoch ?? 0,
+                changedAccountIds: result.changedAccountIds
+            )
+        }
+    }
+
+    static func addConversationMembers(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        participantAccountIds: [String]
+    ) async throws -> ModifyChatMembersResponse {
+        try await withMessengerClientAsync(
             baseURLString: baseURLString,
             accessToken: accessToken,
             identity: identity
@@ -533,6 +561,32 @@ enum TrixCorePersistentBridge {
         }
     }
 
+    static func removeConversationMembers(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        participantAccountIds: [String]
+    ) async throws -> ModifyChatMembersResponse {
+        try await withMessengerClientAsync(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        ) { client in
+            let result = try client.removeConversationMembers(
+                request: FfiMessengerUpdateConversationMembersRequest(
+                    conversationId: chatId,
+                    participantAccountIds: participantAccountIds
+                )
+            )
+            return ModifyChatMembersResponse(
+                chatId: result.conversationId,
+                epoch: result.conversation?.epoch ?? 0,
+                changedAccountIds: result.changedAccountIds
+            )
+        }
+    }
+
     static func addConversationDevices(
         baseURLString: String,
         accessToken: String,
@@ -541,6 +595,32 @@ enum TrixCorePersistentBridge {
         deviceIds: [String]
     ) throws -> ModifyChatDevicesResponse {
         try withMessengerClient(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        ) { client in
+            let result = try client.updateConversationDevices(
+                request: FfiMessengerUpdateConversationDevicesRequest(
+                    conversationId: chatId,
+                    deviceIds: deviceIds
+                )
+            )
+            return ModifyChatDevicesResponse(
+                chatId: result.conversationId,
+                epoch: result.conversation?.epoch ?? 0,
+                changedDeviceIds: result.changedDeviceIds
+            )
+        }
+    }
+
+    static func addConversationDevices(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        deviceIds: [String]
+    ) async throws -> ModifyChatDevicesResponse {
+        try await withMessengerClientAsync(
             baseURLString: baseURLString,
             accessToken: accessToken,
             identity: identity
@@ -585,6 +665,32 @@ enum TrixCorePersistentBridge {
         }
     }
 
+    static func removeConversationDevices(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        deviceIds: [String]
+    ) async throws -> ModifyChatDevicesResponse {
+        try await withMessengerClientAsync(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        ) { client in
+            let result = try client.removeConversationDevices(
+                request: FfiMessengerUpdateConversationDevicesRequest(
+                    conversationId: chatId,
+                    deviceIds: deviceIds
+                )
+            )
+            return ModifyChatDevicesResponse(
+                chatId: result.conversationId,
+                epoch: result.conversation?.epoch ?? 0,
+                changedDeviceIds: result.changedDeviceIds
+            )
+        }
+    }
+
     static func markConversationRead(
         baseURLString: String,
         accessToken: String,
@@ -593,6 +699,24 @@ enum TrixCorePersistentBridge {
         throughMessageId: String?
     ) throws -> LocalChatReadStateSnapshot {
         try withMessengerClient(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        ) { client in
+            try client
+                .markRead(conversationId: chatId, throughMessageId: throughMessageId?.trix_trimmedOrNil())
+                .trix_localChatReadStateSnapshot
+        }
+    }
+
+    static func markConversationRead(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        chatId: String,
+        throughMessageId: String?
+    ) async throws -> LocalChatReadStateSnapshot {
+        try await withMessengerClientAsync(
             baseURLString: baseURLString,
             accessToken: accessToken,
             identity: identity
@@ -650,6 +774,25 @@ enum TrixCorePersistentBridge {
         }
     }
 
+    static func createLinkDeviceIntent(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity
+    ) async throws -> CreateLinkIntentResponse {
+        try await withMessengerClientAsync(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        ) { client in
+            let response = try client.createLinkDeviceIntent()
+            return CreateLinkIntentResponse(
+                linkIntentId: response.linkIntentId,
+                qrPayload: response.payload,
+                expiresAtUnix: response.expiresAtUnix
+            )
+        }
+    }
+
     static func completeLinkDevice(
         payload: LinkIntentPayload,
         form: LinkExistingAccountForm,
@@ -662,6 +805,47 @@ enum TrixCorePersistentBridge {
             platform: form.platform
         )
         return try withMessengerClient(
+            baseURLString: payload.baseURL,
+            accessToken: nil,
+            identity: provisionalIdentity
+        ) { client in
+            let response = try client.completeLinkDevice(
+                linkPayload: payload.trix_rawPayload,
+                deviceDisplayName: form.deviceDisplayName.trix_trimmed()
+            )
+            let finalizedIdentity = LocalDeviceIdentity(
+                accountId: response.accountId,
+                deviceId: response.deviceId,
+                accountSyncChatId: provisionalIdentity.accountSyncChatId,
+                deviceDisplayName: provisionalIdentity.deviceDisplayName,
+                platform: provisionalIdentity.platform,
+                credentialIdentity: provisionalIdentity.credentialIdentity,
+                accountRootPrivateKeyRaw: provisionalIdentity.accountRootPrivateKeyRaw,
+                transportPrivateKeyRaw: provisionalIdentity.transportPrivateKeyRaw,
+                trustState: provisionalIdentity.trustState,
+                capabilityState: provisionalIdentity.capabilityState
+            )
+            try relocatePersistentState(
+                from: provisionalIdentity,
+                to: finalizedIdentity,
+                requireSource: true
+            )
+            return finalizedIdentity
+        }
+    }
+
+    static func completeLinkDevice(
+        payload: LinkIntentPayload,
+        form: LinkExistingAccountForm,
+        bootstrapMaterial: DeviceBootstrapMaterial
+    ) async throws -> LocalDeviceIdentity {
+        let provisionalIdentity = bootstrapMaterial.makeLinkedLocalIdentity(
+            accountId: payload.accountId,
+            deviceId: UUID().uuidString,
+            deviceDisplayName: form.deviceDisplayName.trix_trimmed(),
+            platform: form.platform
+        )
+        return try await withMessengerClientAsync(
             baseURLString: payload.baseURL,
             accessToken: nil,
             identity: provisionalIdentity
@@ -711,6 +895,26 @@ enum TrixCorePersistentBridge {
         }
     }
 
+    static func approveLinkedDevice(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        deviceId: String
+    ) async throws -> ApproveDeviceResponse {
+        try await withMessengerClientAsync(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        ) { client in
+            let response = try client.approveLinkedDevice(deviceId: deviceId)
+            return ApproveDeviceResponse(
+                accountId: response.accountId ?? identity.accountId,
+                deviceId: response.deviceId,
+                deviceStatus: response.deviceStatus.trix_deviceStatus
+            )
+        }
+    }
+
     static func revokeDevice(
         baseURLString: String,
         accessToken: String,
@@ -737,18 +941,60 @@ enum TrixCorePersistentBridge {
         }
     }
 
+    static func revokeDevice(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        deviceId: String,
+        reason: String
+    ) async throws -> RevokeDeviceResponse {
+        try await withMessengerClientAsync(
+            baseURLString: baseURLString,
+            accessToken: accessToken,
+            identity: identity
+        ) { client in
+            let response = try client.revokeDevice(
+                request: FfiMessengerRevokeDeviceRequest(
+                    deviceId: deviceId,
+                    reason: reason.trix_trimmedOrNil()
+                )
+            )
+            return RevokeDeviceResponse(
+                accountId: response.accountId ?? identity.accountId,
+                deviceId: response.deviceId,
+                deviceStatus: response.deviceStatus.trix_deviceStatus
+            )
+        }
+    }
+
     static func publishKeyPackages(
         baseURLString: String,
         accessToken: String,
         identity: LocalDeviceIdentity,
         count: Int
     ) throws -> PublishKeyPackagesResponse {
-        let context = try loadOrCreateContext(identity: identity)
-        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
-        let keyPackages = try context.mlsFacade.generatePublishKeyPackages(count: UInt32(count))
-        let response = try client.publishKeyPackages(packages: keyPackages)
-        try context.mlsFacade.saveState()
-        return response.trix_publishKeyPackagesResponse
+        try withPersistentContext(identity: identity) { context in
+            let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+            let keyPackages = try context.mlsFacade.generatePublishKeyPackages(count: UInt32(count))
+            let response = try client.publishKeyPackages(packages: keyPackages)
+            try context.mlsFacade.saveState()
+            return response.trix_publishKeyPackagesResponse
+        }
+    }
+
+    static func publishKeyPackages(
+        baseURLString: String,
+        accessToken: String,
+        identity: LocalDeviceIdentity,
+        count: Int
+    ) async throws -> PublishKeyPackagesResponse {
+        try await withPersistentContextAsync(identity: identity) { context in
+            let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+            let keyPackages = try context.mlsFacade.generatePublishKeyPackages(count: UInt32(count))
+            let response = try client.publishKeyPackages(packages: keyPackages)
+            try context.mlsFacade.saveState()
+            return response.trix_publishKeyPackagesResponse
+        }
     }
 
     static func ensureOwnDeviceKeyPackages(
@@ -774,16 +1020,34 @@ enum TrixCorePersistentBridge {
         identity: LocalDeviceIdentity,
         reservedPackages: [ReservedKeyPackage]
     ) throws -> UInt64 {
-        let context = try loadOrCreateContext(identity: identity)
-        let keyPackages = try reservedPackages.map {
-            try $0.keyPackageB64.trix_decodedBase64(fieldName: "key_package_b64")
+        try withPersistentContext(identity: identity) { context in
+            let keyPackages = try reservedPackages.map {
+                try $0.keyPackageB64.trix_decodedBase64(fieldName: "key_package_b64")
+            }
+            let groupId = try Data.trix_random(count: 16)
+            let conversation = try context.mlsFacade.createGroup(groupId: groupId)
+            return try context.mlsFacade.addMembers(
+                conversation: conversation,
+                keyPackages: keyPackages
+            ).epoch
         }
-        let groupId = try Data.trix_random(count: 16)
-        let conversation = try context.mlsFacade.createGroup(groupId: groupId)
-        return try context.mlsFacade.addMembers(
-            conversation: conversation,
-            keyPackages: keyPackages
-        ).epoch
+    }
+
+    static func dryRunCreateGroupCommit(
+        identity: LocalDeviceIdentity,
+        reservedPackages: [ReservedKeyPackage]
+    ) async throws -> UInt64 {
+        try await withPersistentContextAsync(identity: identity) { context in
+            let keyPackages = try reservedPackages.map {
+                try $0.keyPackageB64.trix_decodedBase64(fieldName: "key_package_b64")
+            }
+            let groupId = try Data.trix_random(count: 16)
+            let conversation = try context.mlsFacade.createGroup(groupId: groupId)
+            return try context.mlsFacade.addMembers(
+                conversation: conversation,
+                keyPackages: keyPackages
+            ).epoch
+        }
     }
 
     static func prepareLinkedDeviceState(
@@ -893,7 +1157,26 @@ enum TrixCorePersistentBridge {
     }
 
     static func localStateSnapshot(identity: LocalDeviceIdentity) throws -> LocalCoreStateSnapshot {
-        let context = try loadOrCreateContext(identity: identity)
+        try withPersistentContext(identity: identity) { context in
+            try makeLocalStateSnapshot(
+                context: context,
+                identity: identity
+            )
+        }
+    }
+
+    static func localStateSnapshot(
+        identity: LocalDeviceIdentity
+    ) async throws -> LocalCoreStateSnapshot {
+        try await withPersistentContextAsync(identity: identity) { context in
+            try makeLocalStateSnapshot(context: context, identity: identity)
+        }
+    }
+
+    private static func makeLocalStateSnapshot(
+        context: PersistentCoreContext,
+        identity: LocalDeviceIdentity
+    ) throws -> LocalCoreStateSnapshot {
         let syncState = try context.syncCoordinator.stateSnapshot()
         let storedChats = try context.historyStore.listChats()
         let chatIdsNeedingProjection = try storedChats.compactMap { chat in
@@ -1196,6 +1479,110 @@ enum TrixCorePersistentBridge {
                 }
             }
         }
+    }
+
+    private static func withPersistentContextAsync<Response: Sendable>(
+        identity: LocalDeviceIdentity,
+        _ operation: @escaping @Sendable (PersistentCoreContext) throws -> Response
+    ) async throws -> Response {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    continuation.resume(
+                        returning: try withPersistentContext(
+                            identity: identity,
+                            operation
+                        )
+                    )
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private static func withPersistentContext<Response>(
+        identity: LocalDeviceIdentity,
+        _ operation: (PersistentCoreContext) throws -> Response
+    ) throws -> Response {
+        persistentContextLock.lock()
+        defer { persistentContextLock.unlock() }
+        let context = try loadOrCreateContext(identity: identity)
+        return try operation(context)
+    }
+
+    private static func makeConversationSnapshot(
+        from client: FfiMessengerClient,
+        chatId: String,
+        messageLimit: Int
+    ) throws -> SafeConversationSnapshot {
+        var snapshot = try client.loadSnapshot()
+        var conversation = snapshot.conversations.first { $0.conversationId == chatId }
+
+        if conversation?.historyRecoveryPending == true {
+            _ = try? client.syncPendingHistoryRepairs(conversationIds: [chatId])
+            snapshot = try client.loadSnapshot()
+            conversation = snapshot.conversations.first { $0.conversationId == chatId }
+        }
+
+        let detail = conversation?.trix_chatDetailResponse
+            ?? ChatDetailResponse(
+                chatId: chatId,
+                chatType: .dm,
+                title: nil,
+                lastServerSeq: 0,
+                pendingMessageCount: 0,
+                epoch: 0,
+                lastCommitMessageId: nil,
+                lastMessage: nil,
+                participantProfiles: [],
+                members: [],
+                deviceMembers: []
+            )
+        let totalLimit = max(messageLimit, 1)
+        var pageCursor: String?
+        var allMessages: [FfiMessengerMessageRecord] = []
+        var seenMessageIDs = Set<String>()
+
+        while allMessages.count < totalLimit {
+            let pageLimit = UInt32(min(max(totalLimit - allMessages.count, 1), 500))
+            let messagesCountBeforePage = allMessages.count
+            let page = try client.getMessages(
+                conversationId: chatId,
+                pageCursor: pageCursor,
+                limit: pageLimit
+            )
+            guard !page.messages.isEmpty else {
+                break
+            }
+            for message in page.messages where seenMessageIDs.insert(message.messageId).inserted {
+                allMessages.append(message)
+                if allMessages.count >= totalLimit {
+                    break
+                }
+            }
+            guard allMessages.count > messagesCountBeforePage else {
+                break
+            }
+            guard let nextCursor = page.nextCursor,
+                  allMessages.count < totalLimit
+            else {
+                break
+            }
+            pageCursor = nextCursor
+        }
+
+        allMessages.sort { lhs, rhs in
+            if lhs.serverSeq == rhs.serverSeq {
+                return lhs.createdAtUnix < rhs.createdAtUnix
+            }
+            return lhs.serverSeq < rhs.serverSeq
+        }
+        return SafeConversationSnapshot(
+            detail: detail,
+            messages: allMessages.map(\.trix_safeMessengerMessage),
+            nextCursor: nil
+        )
     }
 
     private static func openMessengerClient(
