@@ -1108,21 +1108,24 @@ final class AppModel {
         }
 
         do {
-            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try await TrixCorePersistentBridge.sendMessage(
-                baseURLString: baseURLString,
-                accessToken: context.session.accessToken,
-                identity: context.identity,
-                chatId: chatId,
-                draft: draft
-            )
+            return try await performRealtimePausedMessengerMutation(
+                baseURLString: baseURLString
+            ) { context in
+                let response = try await TrixCorePersistentBridge.sendMessage(
+                    baseURLString: baseURLString,
+                    accessToken: context.session.accessToken,
+                    identity: context.identity,
+                    chatId: chatId,
+                    draft: draft
+                )
 
-            try await refreshSafeMessengerState(
-                baseURLString: baseURLString,
-                accessToken: context.session.accessToken,
-                identity: context.identity
-            )
-            return response
+                try await refreshSafeMessengerState(
+                    baseURLString: baseURLString,
+                    accessToken: context.session.accessToken,
+                    identity: context.identity
+                )
+                return response
+            }
         } catch {
             errorMessage = error.trixUserFacingMessage
             return nil
@@ -1167,25 +1170,64 @@ final class AppModel {
         }
 
         do {
-            let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
-            let response = try await TrixCorePersistentBridge.sendAttachment(
-                baseURLString: baseURLString,
-                accessToken: context.session.accessToken,
-                identity: context.identity,
-                chatId: chatId,
-                fileURL: fileURL
-            )
+            return try await performRealtimePausedMessengerMutation(
+                baseURLString: baseURLString
+            ) { context in
+                let response = try await TrixCorePersistentBridge.sendAttachment(
+                    baseURLString: baseURLString,
+                    accessToken: context.session.accessToken,
+                    identity: context.identity,
+                    chatId: chatId,
+                    fileURL: fileURL
+                )
 
-            try await refreshSafeMessengerState(
-                baseURLString: baseURLString,
-                accessToken: context.session.accessToken,
-                identity: context.identity
-            )
-            return response
+                try await refreshSafeMessengerState(
+                    baseURLString: baseURLString,
+                    accessToken: context.session.accessToken,
+                    identity: context.identity
+                )
+                return response
+            }
         } catch {
             errorMessage = error.trixUserFacingMessage
             return nil
         }
+    }
+
+    private func performRealtimePausedMessengerMutation<Response>(
+        baseURLString: String,
+        _ operation: (AuthenticatedContext) async throws -> Response
+    ) async throws -> Response {
+        let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
+        let shouldResumeRealtime = realtimeSession.hasActiveLoop
+
+        if shouldResumeRealtime {
+            await stopRealtimeConnection()
+        }
+
+        do {
+            let response = try await operation(context)
+            await resumeRealtimeConnectionIfNeeded(using: context, shouldResume: shouldResumeRealtime)
+            return response
+        } catch {
+            await resumeRealtimeConnectionIfNeeded(using: context, shouldResume: shouldResumeRealtime)
+            throw error
+        }
+    }
+
+    private func resumeRealtimeConnectionIfNeeded(
+        using context: AuthenticatedContext,
+        shouldResume: Bool
+    ) async {
+        guard shouldResume else {
+            return
+        }
+
+        await startRealtimeConnection(
+            baseURLString: currentServerBaseURLString ?? context.baseURLString,
+            accessToken: context.session.accessToken,
+            identity: localIdentity ?? context.identity
+        )
     }
 
     @discardableResult
