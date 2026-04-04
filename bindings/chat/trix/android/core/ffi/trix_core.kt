@@ -970,6 +970,8 @@ external fun uniffi_trix_core_checksum_method_ffimessengerclient_create_conversa
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_create_link_device_intent(
 ): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_dm_global_delete_conversation(
+): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_attachment(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_messages(
@@ -977,6 +979,8 @@ external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_messages(
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events_realtime(
+): Short
+external fun uniffi_trix_core_checksum_method_ffimessengerclient_leave_conversation(
 ): Short
 external fun uniffi_trix_core_checksum_method_ffimessengerclient_list_conversations(
 ): Short
@@ -1454,6 +1458,8 @@ external fun uniffi_trix_core_fn_method_ffimessengerclient_create_conversation(`
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_create_link_device_intent(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_dm_global_delete_conversation(`ptr`: Long,`conversationId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_get_attachment(`ptr`: Long,`attachmentRef`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_get_messages(`ptr`: Long,`conversationId`: RustBuffer.ByValue,`pageCursor`: RustBuffer.ByValue,`limit`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1461,6 +1467,8 @@ external fun uniffi_trix_core_fn_method_ffimessengerclient_get_messages(`ptr`: L
 external fun uniffi_trix_core_fn_method_ffimessengerclient_get_new_events(`ptr`: Long,`checkpoint`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_get_new_events_realtime(`ptr`: Long,`checkpoint`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_trix_core_fn_method_ffimessengerclient_leave_conversation(`ptr`: Long,`request`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_trix_core_fn_method_ffimessengerclient_list_conversations(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -2133,6 +2141,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_create_link_device_intent() != 5659.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_dm_global_delete_conversation() != 24503.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_get_attachment() != 9506.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -2143,6 +2154,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events_realtime() != 51892.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_leave_conversation() != 55333.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_trix_core_checksum_method_ffimessengerclient_list_conversations() != 14380.toShort()) {
@@ -4454,6 +4468,8 @@ public interface FfiMessengerClientInterface {
     
     fun `createLinkDeviceIntent`(): FfiMessengerDeviceLinkIntent
     
+    fun `dmGlobalDeleteConversation`(`conversationId`: kotlin.String): FfiMessengerConversationMutationResult
+    
     fun `getAttachment`(`attachmentRef`: kotlin.String): FfiMessengerAttachmentFile
     
     fun `getMessages`(`conversationId`: kotlin.String, `pageCursor`: kotlin.String?, `limit`: kotlin.UInt?): FfiMessengerMessagePage
@@ -4461,6 +4477,8 @@ public interface FfiMessengerClientInterface {
     fun `getNewEvents`(`checkpoint`: kotlin.String?): FfiMessengerEventBatch
     
     fun `getNewEventsRealtime`(`checkpoint`: kotlin.String?): FfiMessengerEventBatch
+    
+    fun `leaveConversation`(`request`: FfiMessengerLeaveConversationRequest): FfiMessengerConversationMutationResult
     
     fun `listConversations`(): List<FfiMessengerConversationSummary>
     
@@ -4669,6 +4687,20 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
     
 
     
+    @Throws(FfiMessengerException::class)override fun `dmGlobalDeleteConversation`(`conversationId`: kotlin.String): FfiMessengerConversationMutationResult {
+            return FfiConverterTypeFfiMessengerConversationMutationResult.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_dm_global_delete_conversation(
+        it,
+        FfiConverterString.lower(`conversationId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(FfiMessengerException::class)override fun `getAttachment`(`attachmentRef`: kotlin.String): FfiMessengerAttachmentFile {
             return FfiConverterTypeFfiMessengerAttachmentFile.lift(
     callWithHandle {
@@ -4718,6 +4750,20 @@ open class FfiMessengerClient: Disposable, AutoCloseable, FfiMessengerClientInte
     UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_get_new_events_realtime(
         it,
         FfiConverterOptionalString.lower(`checkpoint`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiMessengerException::class)override fun `leaveConversation`(`request`: FfiMessengerLeaveConversationRequest): FfiMessengerConversationMutationResult {
+            return FfiConverterTypeFfiMessengerConversationMutationResult.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiMessengerException) { _status ->
+    UniffiLib.uniffi_trix_core_fn_method_ffimessengerclient_leave_conversation(
+        it,
+        FfiConverterTypeFfiMessengerLeaveConversationRequest.lower(`request`),_status)
 }
     }
     )
@@ -12508,6 +12554,44 @@ public object FfiConverterTypeFfiMessengerEventBatch: FfiConverterRustBuffer<Ffi
     override fun write(value: FfiMessengerEventBatch, buf: ByteBuffer) {
             FfiConverterOptionalString.write(value.`checkpoint`, buf)
             FfiConverterSequenceTypeFfiMessengerEvent.write(value.`events`, buf)
+    }
+}
+
+
+
+data class FfiMessengerLeaveConversationRequest (
+    var `conversationId`: kotlin.String
+    , 
+    var `scope`: FfiLeaveChatScope
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiMessengerLeaveConversationRequest: FfiConverterRustBuffer<FfiMessengerLeaveConversationRequest> {
+    override fun read(buf: ByteBuffer): FfiMessengerLeaveConversationRequest {
+        return FfiMessengerLeaveConversationRequest(
+            FfiConverterString.read(buf),
+            FfiConverterTypeFfiLeaveChatScope.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiMessengerLeaveConversationRequest) = (
+            FfiConverterString.allocationSize(value.`conversationId`) +
+            FfiConverterTypeFfiLeaveChatScope.allocationSize(value.`scope`)
+    )
+
+    override fun write(value: FfiMessengerLeaveConversationRequest, buf: ByteBuffer) {
+            FfiConverterString.write(value.`conversationId`, buf)
+            FfiConverterTypeFfiLeaveChatScope.write(value.`scope`, buf)
     }
 }
 

@@ -4,10 +4,12 @@ import android.content.Context
 import chat.trix.android.core.auth.AuthenticatedSession
 import chat.trix.android.core.auth.DeviceDatabaseKeyStore
 import chat.trix.android.core.ffi.FfiChatType
+import chat.trix.android.core.ffi.FfiLeaveChatScope
 import chat.trix.android.core.ffi.FfiMessengerAttachmentFile
 import chat.trix.android.core.ffi.FfiMessengerAttachmentMetadata
 import chat.trix.android.core.ffi.FfiMessengerClient
 import chat.trix.android.core.ffi.FfiMessengerConversationMutationResult
+import chat.trix.android.core.ffi.FfiMessengerLeaveConversationRequest
 import chat.trix.android.core.ffi.FfiMessengerConversationSummary
 import chat.trix.android.core.ffi.FfiMessengerEventBatch
 import chat.trix.android.core.ffi.FfiMessengerEventKind
@@ -243,6 +245,22 @@ internal class AndroidMessengerClient(
                 deviceIds = deviceIds,
             ),
         )
+    }
+
+    fun leaveConversation(
+        conversationId: String,
+        scope: FfiLeaveChatScope,
+    ): FfiMessengerConversationMutationResult {
+        return client().leaveConversation(
+            FfiMessengerLeaveConversationRequest(
+                conversationId = conversationId,
+                scope = scope,
+            ),
+        )
+    }
+
+    fun dmGlobalDeleteConversation(conversationId: String): FfiMessengerConversationMutationResult {
+        return client().dmGlobalDeleteConversation(conversationId)
     }
 
     fun markRead(

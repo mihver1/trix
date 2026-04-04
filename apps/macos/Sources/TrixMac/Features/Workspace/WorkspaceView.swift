@@ -703,6 +703,13 @@ struct WorkspaceView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     inspectorHeroCard(detail: detail, currentAccount: currentAccount)
 
+                    if detail.chatType != .accountSync {
+                        TrixSurface {
+                            chatLifecycleInspector(detail: detail)
+                                .padding(20)
+                        }
+                    }
+
                     TrixSurface {
                         chatMembersInspector(detail: detail, currentAccount: currentAccount)
                             .padding(20)
@@ -725,6 +732,49 @@ struct WorkspaceView: View {
                 .padding(28)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func chatLifecycleInspector(detail: ChatDetailResponse) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            detailsSectionHeader(
+                title: "Участие",
+                subtitle: "Покинуть чат или полностью завершить личную переписку."
+            )
+
+            VStack(alignment: .leading, spacing: 10) {
+                Button {
+                    Task {
+                        await model.leaveSelectedConversation(scope: .thisDevice)
+                    }
+                } label: {
+                    Label("Покинуть на этом устройстве", systemImage: "rectangle.portrait.and.arrow.right")
+                }
+                .buttonStyle(.bordered)
+                .disabled(model.isPerformingChatLifecycleAction)
+
+                Button {
+                    Task {
+                        await model.leaveSelectedConversation(scope: .allMyDevices)
+                    }
+                } label: {
+                    Label("Покинуть на всех моих устройствах", systemImage: "ipad.and.iphone")
+                }
+                .buttonStyle(.bordered)
+                .disabled(model.isPerformingChatLifecycleAction)
+
+                if detail.chatType == .dm {
+                    Button(role: .destructive) {
+                        Task {
+                            await model.dmGlobalDeleteSelectedConversation()
+                        }
+                    } label: {
+                        Label("Удалить чат для обоих", systemImage: "trash")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.isPerformingChatLifecycleAction)
+                }
+            }
         }
     }
 

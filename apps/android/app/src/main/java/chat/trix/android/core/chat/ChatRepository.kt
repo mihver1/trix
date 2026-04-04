@@ -8,6 +8,7 @@ import chat.trix.android.core.auth.DeviceDatabaseKeyStore
 import chat.trix.android.core.ffi.FfiContentType
 import chat.trix.android.core.ffi.FfiChatDetail
 import chat.trix.android.core.ffi.FfiChatType
+import chat.trix.android.core.ffi.FfiLeaveChatScope
 import chat.trix.android.core.ffi.FfiClientStore
 import chat.trix.android.core.ffi.FfiClientStoreConfig
 import chat.trix.android.core.ffi.FfiCreateChatControlInput
@@ -470,6 +471,47 @@ class ChatRepository(
                 },
                 buildConversation = { buildMessengerConversation(chatId) },
                 createResult = ::ChatMembershipUpdateResult,
+            )
+        }
+    }
+
+    suspend fun leaveChat(
+        chatId: String,
+        scope: FfiLeaveChatScope,
+    ): ChatLifecycleMutationResult = withContext(Dispatchers.IO) {
+        val summary = messengerConversationSummary(chatId)
+            ?: throw IOException("Conversation is not available in the local cache")
+        if (summary.conversationType == FfiChatType.ACCOUNT_SYNC) {
+            throw IOException("This chat cannot be left")
+        }
+
+        runFfi("Failed to leave chat") {
+            messenger().leaveConversation(chatId, scope)
+            ChatLifecycleMutationResult(
+                overview = buildMessengerOverview(
+                    conversations = messenger().listConversations(),
+                    rootPath = messenger().rootPath(),
+                ),
+                conversation = buildMessengerConversation(chatId),
+            )
+        }
+    }
+
+    suspend fun dmGlobalDeleteChat(chatId: String): ChatLifecycleMutationResult = withContext(Dispatchers.IO) {
+        val summary = messengerConversationSummary(chatId)
+            ?: throw IOException("Conversation is not available in the local cache")
+        if (summary.conversationType != FfiChatType.DM) {
+            throw IOException("Global delete is only available for direct messages")
+        }
+
+        runFfi("Failed to delete direct message") {
+            messenger().dmGlobalDeleteConversation(chatId)
+            ChatLifecycleMutationResult(
+                overview = buildMessengerOverview(
+                    conversations = messenger().listConversations(),
+                    rootPath = messenger().rootPath(),
+                ),
+                conversation = buildMessengerConversation(chatId),
             )
         }
     }
@@ -944,6 +986,11 @@ data class ChatCreateResult(
 data class ChatMembershipUpdateResult(
     val overview: ChatOverview,
     val conversation: ChatConversation,
+)
+
+data class ChatLifecycleMutationResult(
+    val overview: ChatOverview,
+    val conversation: ChatConversation?,
 )
 
 data class ChatReadResult(

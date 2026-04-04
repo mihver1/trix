@@ -1599,6 +1599,8 @@ public protocol FfiMessengerClientProtocol: AnyObject, Sendable {
     
     func createLinkDeviceIntent() throws  -> FfiMessengerDeviceLinkIntent
     
+    func dmGlobalDeleteConversation(conversationId: String) throws  -> FfiMessengerConversationMutationResult
+    
     func getAttachment(attachmentRef: String) throws  -> FfiMessengerAttachmentFile
     
     func getMessages(conversationId: String, pageCursor: String?, limit: UInt32?) throws  -> FfiMessengerMessagePage
@@ -1606,6 +1608,8 @@ public protocol FfiMessengerClientProtocol: AnyObject, Sendable {
     func getNewEvents(checkpoint: String?) throws  -> FfiMessengerEventBatch
     
     func getNewEventsRealtime(checkpoint: String?) throws  -> FfiMessengerEventBatch
+    
+    func leaveConversation(request: FfiMessengerLeaveConversationRequest) throws  -> FfiMessengerConversationMutationResult
     
     func listConversations() throws  -> [FfiMessengerConversationSummary]
     
@@ -1750,6 +1754,15 @@ open func createLinkDeviceIntent()throws  -> FfiMessengerDeviceLinkIntent  {
 })
 }
     
+open func dmGlobalDeleteConversation(conversationId: String)throws  -> FfiMessengerConversationMutationResult  {
+    return try  FfiConverterTypeFfiMessengerConversationMutationResult_lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
+    uniffi_trix_core_fn_method_ffimessengerclient_dm_global_delete_conversation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(conversationId),$0
+    )
+})
+}
+    
 open func getAttachment(attachmentRef: String)throws  -> FfiMessengerAttachmentFile  {
     return try  FfiConverterTypeFfiMessengerAttachmentFile_lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
     uniffi_trix_core_fn_method_ffimessengerclient_get_attachment(
@@ -1784,6 +1797,15 @@ open func getNewEventsRealtime(checkpoint: String?)throws  -> FfiMessengerEventB
     uniffi_trix_core_fn_method_ffimessengerclient_get_new_events_realtime(
             self.uniffiCloneHandle(),
         FfiConverterOptionString.lower(checkpoint),$0
+    )
+})
+}
+    
+open func leaveConversation(request: FfiMessengerLeaveConversationRequest)throws  -> FfiMessengerConversationMutationResult  {
+    return try  FfiConverterTypeFfiMessengerConversationMutationResult_lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
+    uniffi_trix_core_fn_method_ffimessengerclient_leave_conversation(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiMessengerLeaveConversationRequest_lower(request),$0
     )
 })
 }
@@ -9270,6 +9292,60 @@ public func FfiConverterTypeFfiMessengerEventBatch_lower(_ value: FfiMessengerEv
 }
 
 
+public struct FfiMessengerLeaveConversationRequest: Equatable, Hashable {
+    public var conversationId: String
+    public var scope: FfiLeaveChatScope
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(conversationId: String, scope: FfiLeaveChatScope) {
+        self.conversationId = conversationId
+        self.scope = scope
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiMessengerLeaveConversationRequest: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiMessengerLeaveConversationRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiMessengerLeaveConversationRequest {
+        return
+            try FfiMessengerLeaveConversationRequest(
+                conversationId: FfiConverterString.read(from: &buf), 
+                scope: FfiConverterTypeFfiLeaveChatScope.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiMessengerLeaveConversationRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.conversationId, into: &buf)
+        FfiConverterTypeFfiLeaveChatScope.write(value.scope, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiMessengerLeaveConversationRequest_lift(_ buf: RustBuffer) throws -> FfiMessengerLeaveConversationRequest {
+    return try FfiConverterTypeFfiMessengerLeaveConversationRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiMessengerLeaveConversationRequest_lower(_ value: FfiMessengerLeaveConversationRequest) -> RustBuffer {
+    return FfiConverterTypeFfiMessengerLeaveConversationRequest.lower(value)
+}
+
+
 public struct FfiMessengerMessageBody: Equatable, Hashable {
     public var kind: FfiMessengerMessageBodyKind
     public var text: String?
@@ -16328,6 +16404,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffimessengerclient_create_link_device_intent() != 5659) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffimessengerclient_dm_global_delete_conversation() != 24503) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_get_attachment() != 9506) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -16338,6 +16417,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events_realtime() != 51892) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffimessengerclient_leave_conversation() != 55333) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_list_conversations() != 14380) {

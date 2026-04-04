@@ -41,13 +41,17 @@ import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.MarkUnreadChatAlt
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PersonAddAlt1
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.Badge
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedAssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
@@ -103,6 +107,7 @@ import chat.trix.android.core.chat.ChatReceiptStatus
 import chat.trix.android.core.chat.ChatTimelineMessage
 import chat.trix.android.core.chat.supportsLocalImagePreview
 import chat.trix.android.core.ffi.FfiChatType
+import chat.trix.android.core.ffi.FfiLeaveChatScope
 import chat.trix.android.core.ffi.ffiDefaultQuickReactionEmojis
 import chat.trix.android.core.runtime.RealtimeForegroundService
 import chat.trix.android.ui.adaptive.TrixAdaptiveInfo
@@ -181,6 +186,8 @@ fun ChatsScreen(
     var activeAttachmentMessageId by remember(repository) { mutableStateOf<String?>(null) }
     var attachmentErrorMessage by remember(repository) { mutableStateOf<String?>(null) }
     var reactionPickerMessageId by rememberSaveable(selectedConversationId) { mutableStateOf<String?>(null) }
+    var isChatLifecycleBusy by remember(repository) { mutableStateOf(false) }
+    var dmGlobalDeletePending by remember(repository) { mutableStateOf<DmGlobalDeletePending?>(null) }
     var publishedTypingState by remember(session.localState.deviceId) {
         mutableStateOf<Pair<String?, Boolean>>(null to false)
     }
@@ -567,6 +574,76 @@ fun ChatsScreen(
         }
     }
 
+    suspend fun leaveConversation(scope: FfiLeaveChatScope) {
+        val chatId = selectedConversationId ?: return
+        isChatLifecycleBusy = true
+        try {
+            val result = repository.leaveChat(chatId, scope)
+            overviewState = overviewState.copy(
+                overview = result.overview,
+                errorMessage = null,
+            )
+            overviewVersion += 1
+            if (result.overview.conversations.none { it.chatId == chatId }) {
+                selectedConversationId = null
+            }
+            if (selectedConversationId == chatId && result.conversation != null) {
+                val loadedState = applyPassiveConversationReload(
+                    currentDetailState = detailState,
+                    currentSendState = sendState,
+                    conversation = result.conversation,
+                    errorMessage = null,
+                )
+                sendState = loadedState.sendState
+                detailState = loadedState.detailState
+            } else {
+                detailState = detailState.copy(errorMessage = null)
+            }
+        } catch (error: IOException) {
+            detailState = detailState.copy(
+                errorMessage = error.message ?: "Failed to leave chat",
+            )
+        } finally {
+            isChatLifecycleBusy = false
+        }
+    }
+
+    suspend fun dmGlobalDeleteChat(targetChatId: String) {
+        isChatLifecycleBusy = true
+        try {
+            val result = repository.dmGlobalDeleteChat(targetChatId)
+            overviewState = overviewState.copy(
+                overview = result.overview,
+                errorMessage = null,
+            )
+            overviewVersion += 1
+            if (result.overview.conversations.none { it.chatId == targetChatId }) {
+                if (selectedConversationId == targetChatId) {
+                    selectedConversationId = null
+                }
+            }
+            if (selectedConversationId == targetChatId && result.conversation != null) {
+                val loadedState = applyPassiveConversationReload(
+                    currentDetailState = detailState,
+                    currentSendState = sendState,
+                    conversation = result.conversation,
+                    errorMessage = null,
+                )
+                sendState = loadedState.sendState
+                detailState = loadedState.detailState
+            } else {
+                detailState = detailState.copy(errorMessage = null)
+            }
+        } catch (error: IOException) {
+            detailState = detailState.copy(
+                errorMessage = error.message ?: "Failed to delete chat",
+            )
+        } finally {
+            isChatLifecycleBusy = false
+            dmGlobalDeletePending = null
+        }
+    }
+
     suspend fun openAttachment(attachment: ChatAttachment) {
         activeAttachmentMessageId = attachment.messageId
         attachmentErrorMessage = null
@@ -650,6 +727,13 @@ fun ChatsScreen(
 
         if (showTwoPane && selectedConversationId == null) {
             selectedConversationId = conversationIds.first()
+        }
+    }
+
+    LaunchedEffect(selectedConversationId) {
+        val pending = dmGlobalDeletePending ?: return@LaunchedEffect
+        if (selectedConversationId != pending.chatId) {
+            dmGlobalDeletePending = null
         }
     }
 
@@ -773,6 +857,29 @@ fun ChatsScreen(
     } else {
         emptySet()
     }
+    val chatLifecycleCallbacks: ChatLifecycleMenuCallbacks? =
+        selectedConversation?.takeUnless { it.isAccountSyncChat }?.let { conv ->
+            ChatLifecycleMenuCallbacks(
+                isBusy = isChatLifecycleBusy,
+                showDmGlobalDelete = conv.chatType == FfiChatType.DM,
+                onLeaveThisDevice = {
+                    coroutineScope.launch {
+                        leaveConversation(FfiLeaveChatScope.THIS_DEVICE)
+                    }
+                },
+                onLeaveAllDevices = {
+                    coroutineScope.launch {
+                        leaveConversation(FfiLeaveChatScope.ALL_MY_DEVICES)
+                    }
+                },
+                onRequestDmGlobalDelete = {
+                    dmGlobalDeletePending = DmGlobalDeletePending(
+                        chatId = conv.chatId,
+                        title = conv.title,
+                    )
+                },
+            )
+        }
     val detailOnly = !showTwoPane && selectedConversationId != null
 
     BackHandler(enabled = detailOnly) {
@@ -869,6 +976,50 @@ fun ChatsScreen(
             onEmojiSelected = { emoji ->
                 coroutineScope.launch {
                     sendReaction(reactionTargetMessage, emoji)
+                }
+            },
+        )
+    }
+
+    dmGlobalDeletePending?.let { pendingDelete ->
+        AlertDialog(
+            onDismissRequest = {
+                if (!isChatLifecycleBusy) {
+                    dmGlobalDeletePending = null
+                }
+            },
+            title = { Text("Delete for both participants?") },
+            text = {
+                Column {
+                    if (pendingDelete.title.isNotBlank()) {
+                        Text(
+                            text = pendingDelete.title,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    Text("This removes the direct message for everyone. It cannot be undone.")
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val targetId = pendingDelete.chatId
+                        coroutineScope.launch { dmGlobalDeleteChat(targetId) }
+                    },
+                    enabled = !isChatLifecycleBusy,
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { dmGlobalDeletePending = null },
+                    enabled = !isChatLifecycleBusy,
+                ) {
+                    Text("Cancel")
                 }
             },
         )
@@ -977,6 +1128,7 @@ fun ChatsScreen(
                         isGroupMembersSheetVisible = true
                         groupMembershipErrorMessage = null
                     },
+                    chatLifecycle = chatLifecycleCallbacks,
                     modifier = contentModifier,
                 )
             }
@@ -1012,6 +1164,7 @@ fun ChatsScreen(
                         isGroupMembersSheetVisible = true
                         groupMembershipErrorMessage = null
                     },
+                    chatLifecycle = chatLifecycleCallbacks,
                     foldPosture = windowInfo.foldPosture,
                     foldBounds = windowInfo.foldBounds,
                     modifier = contentModifier,
@@ -1047,6 +1200,7 @@ fun ChatsScreen(
                         isGroupMembersSheetVisible = true
                         groupMembershipErrorMessage = null
                     },
+                    chatLifecycle = chatLifecycleCallbacks,
                     modifier = contentModifier,
                 )
             }
@@ -1676,6 +1830,7 @@ private fun WideConversationLayout(
     onShareAttachment: (ChatAttachment) -> Unit,
     onReactToMessage: ((ChatTimelineMessage) -> Unit)?,
     onManageMembers: (() -> Unit)?,
+    chatLifecycle: ChatLifecycleMenuCallbacks?,
     foldPosture: TrixFoldPosture,
     foldBounds: Rect?,
     modifier: Modifier = Modifier,
@@ -1732,6 +1887,7 @@ private fun WideConversationLayout(
                 onShareAttachment = onShareAttachment,
                 onReactToMessage = onReactToMessage,
                 onManageMembers = onManageMembers,
+                chatLifecycle = chatLifecycle,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight(),
@@ -1758,6 +1914,7 @@ private fun TabletopConversationLayout(
     onShareAttachment: (ChatAttachment) -> Unit,
     onReactToMessage: ((ChatTimelineMessage) -> Unit)?,
     onManageMembers: (() -> Unit)?,
+    chatLifecycle: ChatLifecycleMenuCallbacks?,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -1780,6 +1937,7 @@ private fun TabletopConversationLayout(
             onShareAttachment = onShareAttachment,
             onReactToMessage = onReactToMessage,
             onManageMembers = onManageMembers,
+            chatLifecycle = chatLifecycle,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
@@ -2073,6 +2231,7 @@ private fun ConversationDetailPane(
     onShareAttachment: (ChatAttachment) -> Unit,
     onReactToMessage: ((ChatTimelineMessage) -> Unit)?,
     onManageMembers: (() -> Unit)?,
+    chatLifecycle: ChatLifecycleMenuCallbacks? = null,
     modifier: Modifier = Modifier,
 ) {
     ConversationDetailContent(
@@ -2092,6 +2251,7 @@ private fun ConversationDetailPane(
         onShareAttachment = onShareAttachment,
         onReactToMessage = onReactToMessage,
         onManageMembers = onManageMembers,
+        chatLifecycle = chatLifecycle,
         modifier = modifier,
         showComposer = true,
         compactHeader = true,
@@ -2116,6 +2276,7 @@ private fun ConversationDetailContent(
     onShareAttachment: (ChatAttachment) -> Unit,
     onReactToMessage: ((ChatTimelineMessage) -> Unit)?,
     onManageMembers: (() -> Unit)?,
+    chatLifecycle: ChatLifecycleMenuCallbacks? = null,
     modifier: Modifier = Modifier,
     showComposer: Boolean,
     compactHeader: Boolean,
@@ -2134,15 +2295,25 @@ private fun ConversationDetailContent(
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Text(
-                        text = conversation.title,
-                        style = if (compactHeader) {
-                            MaterialTheme.typography.headlineSmall
-                        } else {
-                            MaterialTheme.typography.titleLarge
-                        },
-                        fontWeight = FontWeight.SemiBold,
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = conversation.title,
+                            style = if (compactHeader) {
+                                MaterialTheme.typography.headlineSmall
+                            } else {
+                                MaterialTheme.typography.titleLarge
+                            },
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (chatLifecycle != null) {
+                            ChatLifecycleMenu(callbacks = chatLifecycle)
+                        }
+                    }
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
@@ -2151,9 +2322,14 @@ private fun ConversationDetailContent(
                             TimelineBadge(label = "${conversation.members.size} members")
                         }
                     }
-                    if (conversation.canManageMembers && onManageMembers != null) {
-                        TextButton(onClick = onManageMembers) {
-                            Text("Manage members")
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (conversation.canManageMembers && onManageMembers != null) {
+                            TextButton(onClick = onManageMembers) {
+                                Text("Manage members")
+                            }
                         }
                     }
                 }
@@ -2628,6 +2804,63 @@ private fun ConversationAvatar(name: String) {
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onTertiaryContainer,
         )
+    }
+}
+
+private data class DmGlobalDeletePending(
+    val chatId: String,
+    val title: String,
+)
+
+private data class ChatLifecycleMenuCallbacks(
+    val isBusy: Boolean,
+    val showDmGlobalDelete: Boolean,
+    val onLeaveThisDevice: () -> Unit,
+    val onLeaveAllDevices: () -> Unit,
+    val onRequestDmGlobalDelete: () -> Unit,
+)
+
+@Composable
+private fun ChatLifecycleMenu(callbacks: ChatLifecycleMenuCallbacks) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(
+            onClick = { expanded = true },
+            enabled = !callbacks.isBusy,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.MoreVert,
+                contentDescription = "Chat actions",
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            DropdownMenuItem(
+                text = { Text("Leave on this device") },
+                onClick = {
+                    expanded = false
+                    callbacks.onLeaveThisDevice()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Leave on all my devices") },
+                onClick = {
+                    expanded = false
+                    callbacks.onLeaveAllDevices()
+                },
+            )
+            if (callbacks.showDmGlobalDelete) {
+                DropdownMenuItem(
+                    text = { Text("Delete chat for both") },
+                    onClick = {
+                        expanded = false
+                        callbacks.onRequestDmGlobalDelete()
+                    },
+                )
+            }
+        }
     }
 }
 

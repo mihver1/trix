@@ -46,6 +46,20 @@ struct MessengerConversationMutationResult: Sendable {
     let changedDeviceIDs: [UUID]
 }
 
+enum MessengerLeaveConversationScope: Sendable {
+    case thisDevice
+    case allMyDevices
+
+    fileprivate var ffiValue: FfiLeaveChatScope {
+        switch self {
+        case .thisDevice:
+            return .thisDevice
+        case .allMyDevices:
+            return .allMyDevices
+        }
+    }
+}
+
 struct MessengerPendingDeviceResult: Sendable {
     let accountId: UUID
     let deviceId: UUID
@@ -374,6 +388,28 @@ struct TrixMessengerClient {
                     deviceIds: deviceIds.map(\.uuidString)
                 )
             )
+            return try convertConversationMutationResult(result)
+        }
+    }
+
+    func leaveConversation(
+        conversationId: UUID,
+        scope: MessengerLeaveConversationScope
+    ) async throws -> MessengerConversationMutationResult {
+        try await callFFI { client in
+            let result = try client.leaveConversation(
+                request: FfiMessengerLeaveConversationRequest(
+                    conversationId: conversationId.uuidString,
+                    scope: scope.ffiValue
+                )
+            )
+            return try convertConversationMutationResult(result)
+        }
+    }
+
+    func dmGlobalDeleteConversation(conversationId: UUID) async throws -> MessengerConversationMutationResult {
+        try await callFFI { client in
+            let result = try client.dmGlobalDeleteConversation(conversationId: conversationId.uuidString)
             return try convertConversationMutationResult(result)
         }
     }
