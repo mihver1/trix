@@ -24,6 +24,10 @@ struct OverviewView: View {
                         LabeledContent("Users", value: String(overview.response.userCount))
                         LabeledContent("Disabled", value: String(overview.response.disabledUserCount))
                         LabeledContent("Public registration", value: overview.response.allowPublicAccountRegistration ? "On" : "Off")
+                        LabeledContent(
+                            "Debug metrics (server)",
+                            value: overview.response.debugMetricsEnabled ? "Enabled" : "Disabled"
+                        )
                     }
                     Section("Session") {
                         LabeledContent("Admin", value: overview.response.adminUsername)

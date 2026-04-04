@@ -1601,6 +1601,8 @@ public protocol FfiMessengerClientProtocol: AnyObject, Sendable {
     
     func dmGlobalDeleteConversation(conversationId: String) throws  -> FfiMessengerConversationMutationResult
     
+    func featureFlagsSnapshot() throws  -> FeatureFlagsSnapshot
+    
     func getAttachment(attachmentRef: String) throws  -> FfiMessengerAttachmentFile
     
     func getMessages(conversationId: String, pageCursor: String?, limit: UInt32?) throws  -> FfiMessengerMessagePage
@@ -1608,6 +1610,8 @@ public protocol FfiMessengerClientProtocol: AnyObject, Sendable {
     func getNewEvents(checkpoint: String?) throws  -> FfiMessengerEventBatch
     
     func getNewEventsRealtime(checkpoint: String?) throws  -> FfiMessengerEventBatch
+    
+    func isFeatureEnabled(key: String)  -> Bool
     
     func leaveConversation(request: FfiMessengerLeaveConversationRequest) throws  -> FfiMessengerConversationMutationResult
     
@@ -1622,6 +1626,8 @@ public protocol FfiMessengerClientProtocol: AnyObject, Sendable {
     func loadSnapshotWithRemoteSync() throws  -> FfiMessengerSnapshot
     
     func markRead(conversationId: String, throughMessageId: String?) throws  -> FfiMessengerReadStateResult
+    
+    func refreshFeatureFlags() throws  -> FeatureFlagsSnapshot
     
     func removeConversationDevices(request: FfiMessengerUpdateConversationDevicesRequest) throws  -> FfiMessengerConversationMutationResult
     
@@ -1763,6 +1769,14 @@ open func dmGlobalDeleteConversation(conversationId: String)throws  -> FfiMessen
 })
 }
     
+open func featureFlagsSnapshot()throws  -> FeatureFlagsSnapshot  {
+    return try  FfiConverterTypeFeatureFlagsSnapshot_lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
+    uniffi_trix_core_fn_method_ffimessengerclient_feature_flags_snapshot(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
 open func getAttachment(attachmentRef: String)throws  -> FfiMessengerAttachmentFile  {
     return try  FfiConverterTypeFfiMessengerAttachmentFile_lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
     uniffi_trix_core_fn_method_ffimessengerclient_get_attachment(
@@ -1797,6 +1811,15 @@ open func getNewEventsRealtime(checkpoint: String?)throws  -> FfiMessengerEventB
     uniffi_trix_core_fn_method_ffimessengerclient_get_new_events_realtime(
             self.uniffiCloneHandle(),
         FfiConverterOptionString.lower(checkpoint),$0
+    )
+})
+}
+    
+open func isFeatureEnabled(key: String) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_trix_core_fn_method_ffimessengerclient_is_feature_enabled(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(key),$0
     )
 })
 }
@@ -1856,6 +1879,14 @@ open func markRead(conversationId: String, throughMessageId: String?)throws  -> 
             self.uniffiCloneHandle(),
         FfiConverterString.lower(conversationId),
         FfiConverterOptionString.lower(throughMessageId),$0
+    )
+})
+}
+    
+open func refreshFeatureFlags()throws  -> FeatureFlagsSnapshot  {
+    return try  FfiConverterTypeFeatureFlagsSnapshot_lift(try rustCallWithError(FfiConverterTypeFfiMessengerError_lift) {
+    uniffi_trix_core_fn_method_ffimessengerclient_refresh_feature_flags(
+            self.uniffiCloneHandle(),$0
     )
 })
 }
@@ -3914,6 +3945,60 @@ public func FfiConverterTypeFfiSyncCoordinator_lower(_ value: FfiSyncCoordinator
 }
 
 
+
+
+public struct FeatureFlagsSnapshot: Equatable, Hashable {
+    public var revision: UInt64
+    public var flags: [String: Bool]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(revision: UInt64, flags: [String: Bool]) {
+        self.revision = revision
+        self.flags = flags
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FeatureFlagsSnapshot: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFeatureFlagsSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FeatureFlagsSnapshot {
+        return
+            try FeatureFlagsSnapshot(
+                revision: FfiConverterUInt64.read(from: &buf), 
+                flags: FfiConverterDictionaryStringBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FeatureFlagsSnapshot, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.revision, into: &buf)
+        FfiConverterDictionaryStringBool.write(value.flags, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFeatureFlagsSnapshot_lift(_ buf: RustBuffer) throws -> FeatureFlagsSnapshot {
+    return try FfiConverterTypeFeatureFlagsSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFeatureFlagsSnapshot_lower(_ value: FeatureFlagsSnapshot) -> RustBuffer {
+    return FfiConverterTypeFeatureFlagsSnapshot.lower(value)
+}
 
 
 public struct FfiAccountDirectory: Equatable, Hashable {
@@ -15829,6 +15914,32 @@ fileprivate struct FfiConverterSequenceTypeFfiSyncChatCursor: FfiConverterRustBu
         return seq
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterDictionaryStringBool: FfiConverterRustBuffer {
+    public static func write(_ value: [String: Bool], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for (key, value) in value {
+            FfiConverterString.write(key, into: &buf)
+            FfiConverterBool.write(value, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String: Bool] {
+        let len: Int32 = try readInt(&buf)
+        var dict = [String: Bool]()
+        dict.reserveCapacity(Int(len))
+        for _ in 0..<len {
+            let key = try FfiConverterString.read(from: &buf)
+            let value = try FfiConverterBool.read(from: &buf)
+            dict[key] = value
+        }
+        return dict
+    }
+}
 public func ffiAccountBootstrapPayload(transportPubkey: Data, credentialIdentity: Data) -> Data  {
     return try!  FfiConverterData.lift(try! rustCall() {
     uniffi_trix_core_fn_func_ffi_account_bootstrap_payload(
@@ -16407,6 +16518,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_trix_core_checksum_method_ffimessengerclient_dm_global_delete_conversation() != 24503) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_trix_core_checksum_method_ffimessengerclient_feature_flags_snapshot() != 17993) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_get_attachment() != 9506) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -16417,6 +16531,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_get_new_events_realtime() != 51892) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffimessengerclient_is_feature_enabled() != 0) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_leave_conversation() != 55333) {
@@ -16438,6 +16555,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_mark_read() != 17060) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_trix_core_checksum_method_ffimessengerclient_refresh_feature_flags() != 20532) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_trix_core_checksum_method_ffimessengerclient_remove_conversation_devices() != 54965) {

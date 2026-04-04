@@ -13,14 +13,15 @@ struct TrixCoreServerBridge {
     static func fetchSystemSnapshot(
         baseURLString: String
     ) async throws -> ServerSnapshot {
-        let client = try makeClient(baseURLString: baseURLString)
-        let health = try client.getHealth()
-        let version = try client.getVersion()
+        try await withClientAsync(baseURLString: baseURLString) { client in
+            let health = try client.getHealth()
+            let version = try client.getVersion()
 
-        return ServerSnapshot(
-            health: health.trix_serverHealthResponse,
-            version: version.trix_serverVersionResponse
-        )
+            return ServerSnapshot(
+                health: health.trix_serverHealthResponse,
+                version: version.trix_serverVersionResponse
+            )
+        }
     }
 
     static func createAccount(
@@ -73,6 +74,57 @@ struct TrixCoreServerBridge {
         )
     }
 
+    static func createAccount(
+        baseURLString: String,
+        form: CreateAccountForm,
+        bootstrapMaterial: DeviceBootstrapMaterial
+    ) async throws -> CreateAccountResponse {
+        try await withClientAsync(baseURLString: baseURLString) { client in
+            let accountRoot = try bootstrapMaterial.accountRootMaterial()
+            let deviceKeys = try bootstrapMaterial.deviceKeyMaterial()
+            let transportPubkey = deviceKeys.publicKeyBytes()
+            let accountBootstrapPayload = accountRoot.accountBootstrapPayload(
+                transportPubkey: transportPubkey,
+                credentialIdentity: bootstrapMaterial.credentialIdentity
+            )
+            let response: FfiCreateAccountResponse
+            do {
+                response = try client.createAccount(
+                    params: FfiCreateAccountParams(
+                        handle: form.handle.trix_trimmedOrNil(),
+                        profileName: form.profileName.trix_trimmed(),
+                        profileBio: form.profileBio.trix_trimmedOrNil(),
+                        deviceDisplayName: form.deviceDisplayName.trix_trimmed(),
+                        platform: form.platform,
+                        credentialIdentity: bootstrapMaterial.credentialIdentity,
+                        accountRootPubkey: accountRoot.publicKeyBytes(),
+                        accountRootSignature: accountRoot.sign(payload: accountBootstrapPayload),
+                        transportPubkey: transportPubkey
+                    )
+                )
+            } catch {
+                response = try client.createAccountWithMaterials(
+                    params: FfiCreateAccountWithMaterialsParams(
+                        handle: form.handle.trix_trimmedOrNil(),
+                        profileName: form.profileName.trix_trimmed(),
+                        profileBio: form.profileBio.trix_trimmedOrNil(),
+                        deviceDisplayName: form.deviceDisplayName.trix_trimmed(),
+                        platform: form.platform,
+                        credentialIdentity: bootstrapMaterial.credentialIdentity
+                    ),
+                    accountRoot: accountRoot,
+                    deviceKeys: deviceKeys
+                )
+            }
+
+            return CreateAccountResponse(
+                accountId: response.accountId,
+                deviceId: response.deviceId,
+                accountSyncChatId: response.accountSyncChatId
+            )
+        }
+    }
+
     static func createLinkIntent(
         baseURLString: String,
         accessToken: String
@@ -118,6 +170,34 @@ struct TrixCoreServerBridge {
         }
     }
 
+    static func searchAccountDirectory(
+        baseURLString: String,
+        accessToken: String,
+        query: String?,
+        limit: Int = 20,
+        excludeSelf: Bool = true
+    ) async throws -> [DirectoryAccountSummary] {
+        try await withClientAsync(
+            baseURLString: baseURLString,
+            accessToken: accessToken
+        ) { client in
+            let response = try client.searchAccountDirectory(
+                query: query?.trix_trimmedOrNil(),
+                limit: limit > 0 ? UInt32(limit) : nil,
+                excludeSelf: excludeSelf
+            )
+
+            return response.accounts.map { account in
+                DirectoryAccountSummary(
+                    accountId: account.accountId,
+                    handle: account.handle,
+                    profileName: account.profileName,
+                    profileBio: account.profileBio
+                )
+            }
+        }
+    }
+
     static func getAccount(
         baseURLString: String,
         accessToken: String,
@@ -131,6 +211,25 @@ struct TrixCoreServerBridge {
             profileName: account.profileName,
             profileBio: account.profileBio
         )
+    }
+
+    static func getAccount(
+        baseURLString: String,
+        accessToken: String,
+        accountId: String
+    ) async throws -> DirectoryAccountSummary {
+        try await withClientAsync(
+            baseURLString: baseURLString,
+            accessToken: accessToken
+        ) { client in
+            let account = try client.getAccount(accountId: accountId)
+            return DirectoryAccountSummary(
+                accountId: account.accountId,
+                handle: account.handle,
+                profileName: account.profileName,
+                profileBio: account.profileBio
+            )
+        }
     }
 
     static func updateAccountProfile(
@@ -155,6 +254,34 @@ struct TrixCoreServerBridge {
             deviceId: profile.deviceId,
             deviceStatus: profile.deviceStatus.trix_serverDeviceStatus
         )
+    }
+
+    static func updateAccountProfile(
+        baseURLString: String,
+        accessToken: String,
+        form: EditProfileForm
+    ) async throws -> AccountProfileResponse {
+        try await withClientAsync(
+            baseURLString: baseURLString,
+            accessToken: accessToken
+        ) { client in
+            let profile = try client.updateAccountProfile(
+                params: FfiUpdateAccountProfileParams(
+                    handle: form.handle.trix_trimmedOrNil(),
+                    profileName: form.profileName.trix_trimmed(),
+                    profileBio: form.profileBio.trix_trimmedOrNil()
+                )
+            )
+
+            return AccountProfileResponse(
+                accountId: profile.accountId,
+                handle: profile.handle,
+                profileName: profile.profileName,
+                profileBio: profile.profileBio,
+                deviceId: profile.deviceId,
+                deviceStatus: profile.deviceStatus.trix_serverDeviceStatus
+            )
+        }
     }
 
     static func completeLinkIntent(
@@ -209,20 +336,54 @@ struct TrixCoreServerBridge {
         }
     }
 
+    static func authenticate(
+        baseURLString: String,
+        identity: LocalDeviceIdentity
+    ) async throws -> AuthSessionResponse {
+        try await withClientAsync(baseURLString: baseURLString) { client in
+            let deviceKeys = try identity.deviceKeyMaterial()
+            _ = deviceKeys.publicKeyBytes()
+
+            do {
+                let challenge = try client.createAuthChallenge(deviceId: identity.deviceId)
+                let session = try client.createAuthSession(
+                    deviceId: identity.deviceId,
+                    challengeId: challenge.challengeId,
+                    signature: deviceKeys.sign(payload: challenge.challenge)
+                )
+                return session.trix_authSessionResponse
+            } catch {
+                return try client.authenticateWithDeviceKey(
+                    deviceId: identity.deviceId,
+                    deviceKeys: deviceKeys,
+                    setAccessToken: false
+                ).trix_authSessionResponse
+            }
+        }
+    }
+
     static func getAccountProfile(
         baseURLString: String,
         accessToken: String
     ) async throws -> AccountProfileResponse {
-        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
-        return try client.getMe().trix_serverAccountProfileResponse
+        try await withClientAsync(
+            baseURLString: baseURLString,
+            accessToken: accessToken
+        ) { client in
+            try client.getMe().trix_serverAccountProfileResponse
+        }
     }
 
     static func listDevices(
         baseURLString: String,
         accessToken: String
     ) async throws -> DeviceListResponse {
-        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
-        return try client.listDevices().trix_serverDeviceListResponse
+        try await withClientAsync(
+            baseURLString: baseURLString,
+            accessToken: accessToken
+        ) { client in
+            try client.listDevices().trix_serverDeviceListResponse
+        }
     }
 
     static func registerApplePushToken(
@@ -231,12 +392,16 @@ struct TrixCoreServerBridge {
         tokenHex: String,
         environment: ApplePushEnvironment
     ) async throws -> RegisterApplePushTokenResponse {
-        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
-        return try client.registerApplePushToken(
-            tokenHex: tokenHex,
-            environment: environment.trix_ffiApplePushEnvironment
-        )
-        .trix_serverRegisterApplePushTokenResponse
+        try await withClientAsync(
+            baseURLString: baseURLString,
+            accessToken: accessToken
+        ) { client in
+            try client.registerApplePushToken(
+                tokenHex: tokenHex,
+                environment: environment.trix_ffiApplePushEnvironment
+            )
+            .trix_serverRegisterApplePushTokenResponse
+        }
     }
 
     static func reserveKeyPackages(
@@ -252,6 +417,23 @@ struct TrixCoreServerBridge {
         ).trix_serverAccountKeyPackagesResponse(accountId: accountId)
     }
 
+    static func reserveKeyPackages(
+        baseURLString: String,
+        accessToken: String,
+        accountId: String,
+        deviceIds: [String]
+    ) async throws -> AccountKeyPackagesResponse {
+        try await withClientAsync(
+            baseURLString: baseURLString,
+            accessToken: accessToken
+        ) { client in
+            try client.reserveKeyPackages(
+                accountId: accountId,
+                deviceIds: deviceIds
+            ).trix_serverAccountKeyPackagesResponse(accountId: accountId)
+        }
+    }
+
     static func getAccountKeyPackages(
         baseURLString: String,
         accessToken: String,
@@ -262,19 +444,37 @@ struct TrixCoreServerBridge {
             .trix_serverAccountKeyPackagesResponse(accountId: accountId)
     }
 
+    static func getAccountKeyPackages(
+        baseURLString: String,
+        accessToken: String,
+        accountId: String
+    ) async throws -> AccountKeyPackagesResponse {
+        try await withClientAsync(
+            baseURLString: baseURLString,
+            accessToken: accessToken
+        ) { client in
+            try client.getAccountKeyPackages(accountId: accountId)
+                .trix_serverAccountKeyPackagesResponse(accountId: accountId)
+        }
+    }
+
     static func listHistorySyncJobs(
         baseURLString: String,
         accessToken: String,
         role: HistorySyncJobRole? = nil,
         limit: Int = 50
     ) async throws -> HistorySyncJobListResponse {
-        let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
-        let clampedLimit = limit > 0 ? UInt32(limit) : nil
-        return try client.listHistorySyncJobs(
-            role: role?.trix_ffiHistorySyncJobRole,
-            status: nil,
-            limit: clampedLimit
-        ).trix_serverHistorySyncJobListResponse(role: role)
+        try await withClientAsync(
+            baseURLString: baseURLString,
+            accessToken: accessToken
+        ) { client in
+            let clampedLimit = limit > 0 ? UInt32(limit) : nil
+            return try client.listHistorySyncJobs(
+                role: role?.trix_ffiHistorySyncJobRole,
+                status: nil,
+                limit: clampedLimit
+            ).trix_serverHistorySyncJobListResponse(role: role)
+        }
     }
 
     static func getHistorySyncChunks(
@@ -448,6 +648,25 @@ struct TrixCoreServerBridge {
         )
     }
 
+    static func fetchDeviceTransferBundle(
+        baseURLString: String,
+        accessToken: String,
+        deviceId: String
+    ) async throws -> DeviceTransferBundleResponse {
+        try await withClientAsync(
+            baseURLString: baseURLString,
+            accessToken: accessToken
+        ) { client in
+            let response = try client.getDeviceTransferBundle(deviceId: deviceId)
+            return DeviceTransferBundleResponse(
+                accountId: response.accountId,
+                deviceId: response.deviceId,
+                transferBundleB64: response.transferBundle.base64EncodedString(),
+                uploadedAtUnix: response.uploadedAtUnix
+            )
+        }
+    }
+
     static func getMe(
         baseURLString: String,
         accessToken: String
@@ -530,6 +749,23 @@ struct TrixCoreServerBridge {
             try client.setAccessToken(accessToken: accessToken)
         }
         return client
+    }
+
+    private static func withClientAsync<Response: Sendable>(
+        baseURLString: String,
+        accessToken: String? = nil,
+        _ operation: @escaping @Sendable (FfiServerApiClient) throws -> Response
+    ) async throws -> Response {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    let client = try makeClient(baseURLString: baseURLString, accessToken: accessToken)
+                    continuation.resume(returning: try operation(client))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 }
 

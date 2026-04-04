@@ -669,6 +669,7 @@ async fn spawn_test_server_with_cors(cors_allowed_origins: Vec<String>) -> Resul
         apns_key_id: None,
         apns_topic: None,
         apns_private_key_pem: None,
+        debug_metrics_enabled: false,
     };
 
     let db = Database::connect(&config.database_url).await?;

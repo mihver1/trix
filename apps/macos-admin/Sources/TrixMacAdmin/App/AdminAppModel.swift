@@ -60,6 +60,23 @@ final class AdminAppModel: ObservableObject {
     @Published var reactivateConfirmationText = ""
     @Published private(set) var isReactivatingUser = false
 
+    @Published private(set) var featureFlagDefinitions: [AdminFeatureFlagDefinition] = []
+    @Published private(set) var featureFlagOverrides: [AdminFeatureFlagOverride] = []
+    @Published var featureFlagsError: String?
+    @Published private(set) var isFeatureFlagsLoading = false
+
+    @Published private(set) var debugMetricSessions: [AdminDebugMetricSession] = []
+    @Published private(set) var debugMetricBatches: [AdminDebugMetricBatch] = []
+    @Published var debugMetricSessionsFilterAccountText = ""
+    @Published var selectedDebugMetricSessionId: String?
+    @Published var debugMetricsError: String?
+    @Published private(set) var isDebugMetricSessionsLoading = false
+    @Published private(set) var isDebugMetricBatchesLoading = false
+
+    private var featureFlagsDataGeneration: UInt64 = 0
+    private var debugSessionsDataGeneration: UInt64 = 0
+    private var debugBatchesDataGeneration: UInt64 = 0
+
     /// Invalidates in-flight user list loads when cluster/session changes or a new list fetch supersedes a prior one.
     private var userListDataGeneration: UInt64 = 0
     private var userSearchDebounceTask: Task<Void, Never>?
@@ -414,6 +431,20 @@ final class AdminAppModel: ObservableObject {
         registrationSettings = nil
         serverSettings = nil
         workspaceError = nil
+        featureFlagDefinitions = []
+        featureFlagOverrides = []
+        featureFlagsError = nil
+        isFeatureFlagsLoading = false
+        debugMetricSessions = []
+        debugMetricBatches = []
+        debugMetricSessionsFilterAccountText = ""
+        selectedDebugMetricSessionId = nil
+        debugMetricsError = nil
+        isDebugMetricSessionsLoading = false
+        isDebugMetricBatchesLoading = false
+        featureFlagsDataGeneration &+= 1
+        debugSessionsDataGeneration &+= 1
+        debugBatchesDataGeneration &+= 1
         clearUsersWorkspaceState()
     }
 
@@ -651,6 +682,231 @@ final class AdminAppModel: ObservableObject {
             await loadUserDetail(accountId: userID)
         }
         await refreshWorkspaceData()
+    }
+
+    // MARK: - Feature flags
+
+    func refreshFeatureFlagsWorkspace() async {
+        guard let cluster = selectedCluster, let session = activeSession else {
+            featureFlagDefinitions = []
+            featureFlagOverrides = []
+            return
+        }
+        let clusterID = cluster.id
+        featureFlagsDataGeneration &+= 1
+        let generation = featureFlagsDataGeneration
+        isFeatureFlagsLoading = true
+        featureFlagsError = nil
+        defer {
+            if featureFlagsDataGeneration == generation {
+                isFeatureFlagsLoading = false
+            }
+        }
+        let client = api
+        do {
+            async let defs = requestCoordinator.perform(clusterID: clusterID) {
+                try await client.fetchFeatureFlagDefinitions(cluster: cluster, accessToken: session.accessToken)
+            }
+            async let ovs = requestCoordinator.perform(clusterID: clusterID) {
+                try await client.fetchFeatureFlagOverrides(
+                    cluster: cluster,
+                    accessToken: session.accessToken,
+                    query: FeatureFlagOverrideListQuery()
+                )
+            }
+            let (d, o) = try await (defs, ovs)
+            guard await isStillActiveCluster(clusterID) else { return }
+            guard featureFlagsDataGeneration == generation else { return }
+            featureFlagDefinitions = d.definitions
+            featureFlagOverrides = o.overrides
+        } catch is CancellationError {
+        } catch {
+            guard await isStillActiveCluster(clusterID) else { return }
+            guard featureFlagsDataGeneration == generation else { return }
+            featureFlagsError = error.localizedDescription
+        }
+    }
+
+    func createFeatureFlagDefinition(flagKey: String, description: String, defaultEnabled: Bool) async throws {
+        guard let cluster = selectedCluster, let session = activeSession else {
+            throw AdminOperatorError.noClusterOrSession
+        }
+        let clusterID = cluster.id
+        let req = CreateAdminFeatureFlagDefinitionRequest(
+            flagKey: flagKey.trimmingCharacters(in: .whitespacesAndNewlines),
+            description: description,
+            defaultEnabled: defaultEnabled
+        )
+        _ = try await requestCoordinator.perform(clusterID: clusterID) {
+            try await self.api.createFeatureFlagDefinition(cluster: cluster, accessToken: session.accessToken, request: req)
+        }
+        guard await isStillActiveCluster(clusterID) else { return }
+        await refreshFeatureFlagsWorkspace()
+    }
+
+    func archiveFeatureFlagDefinition(flagKey: String) async throws {
+        guard let cluster = selectedCluster, let session = activeSession else {
+            throw AdminOperatorError.noClusterOrSession
+        }
+        let clusterID = cluster.id
+        let unix = UInt64(Date().timeIntervalSince1970)
+        let patch = PatchAdminFeatureFlagDefinitionRequest(deletedAtUnix: .set(unix))
+        _ = try await requestCoordinator.perform(clusterID: clusterID) {
+            try await self.api.patchFeatureFlagDefinition(
+                cluster: cluster,
+                accessToken: session.accessToken,
+                flagKey: flagKey,
+                patch: patch
+            )
+        }
+        guard await isStillActiveCluster(clusterID) else { return }
+        await refreshFeatureFlagsWorkspace()
+    }
+
+    func createFeatureFlagOverride(request: CreateAdminFeatureFlagOverrideRequest) async throws {
+        guard let cluster = selectedCluster, let session = activeSession else {
+            throw AdminOperatorError.noClusterOrSession
+        }
+        let clusterID = cluster.id
+        _ = try await requestCoordinator.perform(clusterID: clusterID) {
+            try await self.api.createFeatureFlagOverride(cluster: cluster, accessToken: session.accessToken, request: request)
+        }
+        guard await isStillActiveCluster(clusterID) else { return }
+        await refreshFeatureFlagsWorkspace()
+    }
+
+    func deleteFeatureFlagOverride(overrideId: UUID) async throws {
+        guard let cluster = selectedCluster, let session = activeSession else {
+            throw AdminOperatorError.noClusterOrSession
+        }
+        let clusterID = cluster.id
+        _ = try await requestCoordinator.perform(clusterID: clusterID) {
+            try await self.api.deleteFeatureFlagOverride(cluster: cluster, accessToken: session.accessToken, overrideId: overrideId)
+        }
+        guard await isStillActiveCluster(clusterID) else { return }
+        await refreshFeatureFlagsWorkspace()
+    }
+
+    // MARK: - Debug metrics
+
+    func refreshDebugMetricSessions() async {
+        guard let cluster = selectedCluster, let session = activeSession else {
+            debugMetricSessions = []
+            return
+        }
+        let clusterID = cluster.id
+        debugSessionsDataGeneration &+= 1
+        let generation = debugSessionsDataGeneration
+        isDebugMetricSessionsLoading = true
+        debugMetricsError = nil
+        defer {
+            if debugSessionsDataGeneration == generation {
+                isDebugMetricSessionsLoading = false
+            }
+        }
+        let trimmed = debugMetricSessionsFilterAccountText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let accountFilter = UUID(uuidString: trimmed)
+        let client = api
+        do {
+            let list = try await requestCoordinator.perform(clusterID: clusterID) {
+                try await client.fetchDebugMetricSessions(
+                    cluster: cluster,
+                    accessToken: session.accessToken,
+                    accountId: accountFilter,
+                    limit: 200
+                )
+            }
+            guard await isStillActiveCluster(clusterID) else { return }
+            guard debugSessionsDataGeneration == generation else { return }
+            debugMetricSessions = list.sessions
+        } catch is CancellationError {
+        } catch let err as AdminAPIError {
+            guard await isStillActiveCluster(clusterID) else { return }
+            guard debugSessionsDataGeneration == generation else { return }
+            if case let .unexpectedStatus(code, _) = err, code == 404 {
+                debugMetricsError = "Debug metrics are not enabled on this server."
+                debugMetricSessions = []
+            } else {
+                debugMetricsError = err.localizedDescription
+            }
+        } catch {
+            guard await isStillActiveCluster(clusterID) else { return }
+            guard debugSessionsDataGeneration == generation else { return }
+            debugMetricsError = error.localizedDescription
+        }
+    }
+
+    func refreshDebugMetricBatches() async {
+        guard let cluster = selectedCluster, let session = activeSession,
+              let sid = selectedDebugMetricSessionId,
+              let sessionUUID = UUID(uuidString: sid)
+        else {
+            debugMetricBatches = []
+            return
+        }
+        let clusterID = cluster.id
+        debugBatchesDataGeneration &+= 1
+        let generation = debugBatchesDataGeneration
+        isDebugMetricBatchesLoading = true
+        defer {
+            if debugBatchesDataGeneration == generation {
+                isDebugMetricBatchesLoading = false
+            }
+        }
+        let client = api
+        do {
+            let list = try await requestCoordinator.perform(clusterID: clusterID) {
+                try await client.fetchDebugMetricBatches(
+                    cluster: cluster,
+                    accessToken: session.accessToken,
+                    sessionId: sessionUUID,
+                    limit: 100
+                )
+            }
+            guard await isStillActiveCluster(clusterID) else { return }
+            guard debugBatchesDataGeneration == generation else { return }
+            debugMetricBatches = list.batches
+        } catch is CancellationError {
+        } catch {
+            guard await isStillActiveCluster(clusterID) else { return }
+            guard debugBatchesDataGeneration == generation else { return }
+            debugMetricsError = error.localizedDescription
+        }
+    }
+
+    func createDebugMetricSession(accountId: UUID, deviceId: UUID?, userVisibleMessage: String, ttlSeconds: UInt64) async throws {
+        guard let cluster = selectedCluster, let session = activeSession else {
+            throw AdminOperatorError.noClusterOrSession
+        }
+        let clusterID = cluster.id
+        let req = CreateAdminDebugMetricSessionRequest(
+            accountId: accountId,
+            deviceId: deviceId,
+            userVisibleMessage: userVisibleMessage,
+            ttlSeconds: ttlSeconds
+        )
+        _ = try await requestCoordinator.perform(clusterID: clusterID) {
+            try await self.api.createDebugMetricSession(cluster: cluster, accessToken: session.accessToken, request: req)
+        }
+        guard await isStillActiveCluster(clusterID) else { return }
+        await refreshDebugMetricSessions()
+    }
+
+    func revokeDebugMetricSession(sessionId: UUID) async throws {
+        guard let cluster = selectedCluster, let session = activeSession else {
+            throw AdminOperatorError.noClusterOrSession
+        }
+        let clusterID = cluster.id
+        _ = try await requestCoordinator.perform(clusterID: clusterID) {
+            try await self.api.revokeDebugMetricSession(cluster: cluster, accessToken: session.accessToken, sessionId: sessionId)
+        }
+        guard await isStillActiveCluster(clusterID) else { return }
+        let revoked = sessionId.uuidString.lowercased()
+        if selectedDebugMetricSessionId?.lowercased() == revoked {
+            selectedDebugMetricSessionId = nil
+            debugMetricBatches = []
+        }
+        await refreshDebugMetricSessions()
     }
 
     private func beginNewUserListEpochIfReplacing(_ replacing: Bool) {

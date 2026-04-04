@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
@@ -205,6 +205,12 @@ pub struct FfiMessengerSnapshot {
     pub devices: Vec<FfiMessengerDeviceRecord>,
     pub capabilities: FfiMessengerCapabilityFlags,
     pub checkpoint: Option<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FeatureFlagsSnapshot {
+    pub revision: u64,
+    pub flags: HashMap<String, bool>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -414,6 +420,17 @@ struct MessengerClientState {
     attachment_ref_index: BTreeMap<String, String>,
     #[serde(default)]
     device_statuses: BTreeMap<String, StoredDeviceState>,
+    #[serde(default)]
+    feature_flags_revision: Option<u64>,
+    #[serde(default)]
+    feature_flags: BTreeMap<String, bool>,
+}
+
+fn feature_flags_snapshot_from_state(state: &MessengerClientState) -> FeatureFlagsSnapshot {
+    FeatureFlagsSnapshot {
+        revision: state.feature_flags_revision.unwrap_or(0),
+        flags: state.feature_flags.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -557,8 +574,17 @@ impl FfiMessengerClient {
             client.set_access_token(access_token);
         }
 
+        let runtime = build_runtime().map_err(messenger_error)?;
+        if state.access_token.is_some() {
+            if let Ok(flags) = runtime.block_on(client.get_feature_flags()) {
+                state.feature_flags_revision = Some(flags.revision);
+                state.feature_flags = flags.flags;
+                save_state_to_path(&state_path, &config.database_key, &state)?;
+            }
+        }
+
         Ok(Arc::new(Self {
-            runtime: build_runtime().map_err(messenger_error)?,
+            runtime,
             client: Mutex::new(client),
             history_store: Mutex::new(history_store),
             sync_coordinator: Mutex::new(sync_coordinator),
@@ -576,6 +602,25 @@ impl FfiMessengerClient {
 
     pub fn root_path(&self) -> String {
         self.root_path.clone()
+    }
+
+    pub fn refresh_feature_flags(&self) -> Result<FeatureFlagsSnapshot, FfiMessengerError> {
+        let client = self.authenticated_client()?;
+        self.persist_feature_flags_from_client(&client)?;
+        let state = lock_state(&self.state)?;
+        Ok(feature_flags_snapshot_from_state(&state))
+    }
+
+    pub fn feature_flags_snapshot(&self) -> Result<FeatureFlagsSnapshot, FfiMessengerError> {
+        let state = lock_state(&self.state)?;
+        Ok(feature_flags_snapshot_from_state(&state))
+    }
+
+    pub fn is_feature_enabled(&self, key: String) -> bool {
+        lock_state(&self.state)
+            .ok()
+            .map(|s| s.feature_flags.get(&key).copied().unwrap_or(false))
+            .unwrap_or(false)
     }
 
     pub fn load_snapshot(&self) -> Result<FfiMessengerSnapshot, FfiMessengerError> {
@@ -1479,6 +1524,20 @@ impl FfiMessengerClient {
         save_state_to_path(Path::new(&self.state_path), &self.database_key, state)
     }
 
+    fn persist_feature_flags_from_client(
+        &self,
+        client: &ServerApiClient,
+    ) -> Result<(), FfiMessengerError> {
+        let flags = self
+            .runtime
+            .block_on(client.get_feature_flags())
+            .map_err(messenger_error)?;
+        let mut state = lock_state(&self.state)?;
+        state.feature_flags_revision = Some(flags.revision);
+        state.feature_flags = flags.flags;
+        self.save_state_locked(&state)
+    }
+
     fn rebuild_client_base_url(&self, base_url: &str) -> Result<(), FfiMessengerError> {
         self.close_realtime_socket_best_effort();
         let mut client = lock_client(&self.client)?;
@@ -1593,7 +1652,11 @@ impl FfiMessengerClient {
             state.account_id = Some(session.account_id.0.to_string());
             self.save_state_locked(&state)?;
         }
-        lock_client(&self.client)?.set_access_token(session.access_token);
+        lock_client(&self.client)?.set_access_token(session.access_token.clone());
+        {
+            let client = lock_client(&self.client)?.clone();
+            let _ = self.persist_feature_flags_from_client(&client);
+        }
         Ok(challenge)
     }
 
