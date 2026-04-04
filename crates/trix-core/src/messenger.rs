@@ -2313,14 +2313,28 @@ impl FfiMessengerClient {
     }
 
     fn ensure_chat_projection_current(&self, chat_id: ChatId) -> Result<(), FfiMessengerError> {
-        let (needs_history_refresh, needs_projection) = {
+        let (mut needs_history_refresh, mut needs_projection, needs_bootstrap) = {
             let store = lock_history_store(&self.history_store)?;
-            (
-                store.needs_history_refresh(chat_id),
-                store.needs_projection(chat_id),
-            )
+            let needs_history_refresh = store.needs_history_refresh(chat_id);
+            let needs_projection = store.needs_projection(chat_id);
+            let needs_bootstrap = store.get_chat(chat_id).is_none()
+                || (store.chat_mls_group_id(chat_id).is_none()
+                    && (needs_history_refresh || needs_projection));
+            (needs_history_refresh, needs_projection, needs_bootstrap)
         };
         let client = self.authenticated_client()?;
+
+        if needs_bootstrap {
+            {
+                let mut store = lock_history_store(&self.history_store)?;
+                self.bootstrap_chat_if_needed(&client, &mut store, chat_id)?;
+            }
+            let store = lock_history_store(&self.history_store)?;
+            // `bootstrap_chat_if_needed` fetches the full detail/history payload, so this
+            // call only needs to materialize the freshly loaded timeline.
+            needs_history_refresh = false;
+            needs_projection = store.needs_projection(chat_id);
+        }
 
         if needs_history_refresh {
             self.refresh_chat_history_fully(&client, chat_id)?;
@@ -5541,6 +5555,183 @@ mod tests {
         assert_eq!(state.history_requests, 1);
         assert_eq!(state.history_after_server_seq_requests, vec![None]);
         assert_eq!(state.create_requests.len(), 1);
+        drop(state);
+
+        server.shutdown();
+        fs::remove_dir_all(root_path).ok();
+    }
+
+    #[test]
+    fn get_messages_bootstraps_missing_chat_state_before_projection() {
+        let root_path = env::temp_dir().join(format!(
+            "trix-messenger-get-messages-bootstrap-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let chat_id = ChatId(Uuid::new_v4());
+        let alice_account = AccountId(Uuid::new_v4());
+        let alice_device = DeviceId(Uuid::new_v4());
+        let current_account = AccountId(Uuid::new_v4());
+        let current_device = DeviceId(Uuid::new_v4());
+        let current_identity = b"current-device".to_vec();
+
+        let alice = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+
+        let client = FfiMessengerClient::open(FfiMessengerOpenConfig {
+            root_path: root_path.to_string_lossy().into_owned(),
+            database_key: vec![41u8; 32],
+            base_url: "http://127.0.0.1:9".to_owned(),
+            access_token: Some("test-access-token".to_owned()),
+            account_id: Some(current_account.0.to_string()),
+            device_id: Some(current_device.0.to_string()),
+            account_sync_chat_id: None,
+            device_display_name: Some("current-device".to_owned()),
+            platform: Some("ios".to_owned()),
+            credential_identity: Some(current_identity.clone()),
+            account_root_private_key: None,
+            transport_private_key: None,
+        })
+        .unwrap();
+
+        let current_member =
+            MlsFacade::new_persistent(current_identity, PathBuf::from(&client.mls_storage_root))
+                .unwrap();
+        let current_key_package = current_member.generate_key_package().unwrap();
+        let mut alice_group = alice.create_group(chat_id.0.as_bytes()).unwrap();
+        let add_bundle = alice
+            .add_members(&mut alice_group, &[current_key_package])
+            .unwrap();
+        let expected_group_id = alice_group.group_id();
+        let ciphertext = alice
+            .create_application_message(&mut alice_group, b"hello after bootstrap")
+            .unwrap();
+        current_member.save_state().unwrap();
+        drop(current_member);
+
+        let commit_message_id = MessageId(Uuid::new_v4());
+        let welcome_message_id = MessageId(Uuid::new_v4());
+        let application_message_id = MessageId(Uuid::new_v4());
+        let application_message = MessageEnvelope {
+            message_id: application_message_id,
+            chat_id,
+            server_seq: 3,
+            sender_account_id: alice_account,
+            sender_device_id: alice_device,
+            epoch: add_bundle.epoch,
+            message_kind: MessageKind::Application,
+            content_type: ContentType::Text,
+            ciphertext_b64: encode_b64(&ciphertext),
+            aad_json: serde_json::json!({}),
+            created_at_unix: 3,
+        };
+        let full_history = vec![
+            MessageEnvelope {
+                message_id: commit_message_id,
+                chat_id,
+                server_seq: 1,
+                sender_account_id: alice_account,
+                sender_device_id: alice_device,
+                epoch: add_bundle.epoch,
+                message_kind: MessageKind::Commit,
+                content_type: ContentType::ChatEvent,
+                ciphertext_b64: encode_b64(&add_bundle.commit_message),
+                aad_json: serde_json::json!({}),
+                created_at_unix: 1,
+            },
+            MessageEnvelope {
+                message_id: welcome_message_id,
+                chat_id,
+                server_seq: 2,
+                sender_account_id: alice_account,
+                sender_device_id: alice_device,
+                epoch: add_bundle.epoch,
+                message_kind: MessageKind::WelcomeRef,
+                content_type: ContentType::ChatEvent,
+                ciphertext_b64: encode_b64(add_bundle.welcome_message.as_ref().unwrap()),
+                aad_json: serde_json::json!({
+                    "_trix": {
+                        "ratchet_tree_b64": encode_b64(
+                            add_bundle.ratchet_tree.as_ref().unwrap()
+                        )
+                    }
+                }),
+                created_at_unix: 2,
+            },
+            application_message.clone(),
+        ];
+
+        let chat_detail = ChatDetailResponse {
+            chat_id,
+            chat_type: ChatType::Dm,
+            title: None,
+            last_server_seq: 3,
+            pending_message_count: 0,
+            epoch: add_bundle.epoch,
+            last_commit_message_id: Some(commit_message_id),
+            last_message: Some(application_message),
+            participant_profiles: vec![
+                ChatParticipantProfileSummary {
+                    account_id: current_account,
+                    handle: Some("current".to_owned()),
+                    profile_name: "Current".to_owned(),
+                    profile_bio: None,
+                },
+                ChatParticipantProfileSummary {
+                    account_id: alice_account,
+                    handle: Some("alice".to_owned()),
+                    profile_name: "Alice".to_owned(),
+                    profile_bio: None,
+                },
+            ],
+            members: Vec::new(),
+            device_members: Vec::new(),
+        };
+
+        {
+            let mut store = lock_history_store(&client.history_store).unwrap();
+            store.apply_chat_detail(&chat_detail).unwrap();
+        }
+
+        let server = MockSendServer::spawn(MockSendServerState {
+            chat_detail,
+            history: full_history,
+            sender_account_id: current_account,
+            sender_device_id: current_device,
+            expected_create_epoch: None,
+            create_requests: Vec::new(),
+            chat_detail_requests: 0,
+            history_requests: 0,
+            history_after_server_seq_requests: Vec::new(),
+        });
+        {
+            let mut state = lock_state(&client.state).unwrap();
+            state.base_url = server.base_url.clone();
+            client.save_state_locked(&state).unwrap();
+        }
+        client.rebuild_client_base_url(&server.base_url).unwrap();
+
+        let page = client
+            .get_messages(chat_id.0.to_string(), None, Some(20))
+            .unwrap();
+        assert!(page.messages.iter().any(|message| {
+            message
+                .body
+                .as_ref()
+                .and_then(|body| body.text.as_deref())
+                == Some("hello after bootstrap")
+        }));
+        {
+            let store = lock_history_store(&client.history_store).unwrap();
+            assert_eq!(
+                store.chat_mls_group_id(chat_id).as_deref(),
+                Some(expected_group_id.as_slice())
+            );
+        }
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.chat_detail_requests, 1);
+        assert_eq!(state.history_requests, 1);
+        assert_eq!(state.history_after_server_seq_requests, vec![None]);
         drop(state);
 
         server.shutdown();

@@ -103,6 +103,7 @@ final class AppModel {
     @ObservationIgnored private var hasScheduledBackgroundRefresh = false
     @ObservationIgnored private var messengerSnapshot: SafeMessengerSnapshot?
     @ObservationIgnored private var messengerReadStates: [String: LocalChatReadStateSnapshot] = [:]
+    @ObservationIgnored private var conversationSnapshotCache: [String: SafeConversationSnapshot] = [:]
     @ObservationIgnored private var cachedAttachmentFiles: [String: DownloadedAttachmentFile] = [:]
     @ObservationIgnored private var attachmentDownloadTasks: [String: Task<DownloadedAttachmentFile, Error>] = [:]
     @ObservationIgnored private var apnsTokenHex: String?
@@ -203,6 +204,7 @@ final class AppModel {
                     invalidateCachedAuthSession()
                     await stopRealtimeConnection()
                     updateDashboardState(nil)
+                    conversationSnapshotCache = [:]
                     messengerSnapshot = nil
                     realtimeSession.clearCheckpoint()
                     messengerReadStates = [:]
@@ -215,6 +217,7 @@ final class AppModel {
             } else {
                 await stopRealtimeConnection()
                 updateDashboardState(nil)
+                conversationSnapshotCache = [:]
                 localCoreState = nil
                 messengerSnapshot = nil
                 realtimeSession.clearCheckpoint()
@@ -361,6 +364,7 @@ final class AppModel {
             try identityStore.save(localIdentity)
             self.localIdentity = localIdentity
             updateLocalCoreStateSnapshot(identity: localIdentity)
+            conversationSnapshotCache = [:]
 
             try await refreshAuthenticatedState(
                 baseURLString: resolvedBaseURLString,
@@ -409,6 +413,7 @@ final class AppModel {
             self.localIdentity = localIdentity
             updateLocalCoreStateSnapshot(identity: localIdentity)
             updateDashboardState(nil)
+            conversationSnapshotCache = [:]
             activeLinkIntent = nil
             stopLinkIntentRefreshLoop()
             invalidateCachedAuthSession()
@@ -431,6 +436,7 @@ final class AppModel {
             localIdentity = nil
             localCoreState = nil
             messengerSnapshot = nil
+            conversationSnapshotCache = [:]
             realtimeSession.clearCheckpoint()
             messengerReadStates = [:]
             updateDashboardState(nil)
@@ -1419,8 +1425,13 @@ final class AppModel {
             identity: context.identity,
             chatId: chatId
         )
+        conversationSnapshotCache[chatId] = snapshot
         seedDirectoryAccountCache(with: snapshot.detail.participantProfiles)
         return snapshot
+    }
+
+    func cachedConversationSnapshot(chatId: String) -> SafeConversationSnapshot? {
+        conversationSnapshotCache[chatId]
     }
 
     private func refreshAuthenticatedState(

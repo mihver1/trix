@@ -364,6 +364,20 @@ struct ConsumerChatDetailView: View {
         )
     }
 
+    private var currentFixtureManifest: UITestFixtureManifest? {
+        UITestLaunchConfiguration.current.isEnabled ? UITestFixtureManifestStore.load() : nil
+    }
+
+    private func applyConversationSnapshot(_ loadedSnapshot: SafeConversationSnapshot) {
+        let renderPayload = ConsumerConversationTimelineBuilder.makeRenderPayload(
+            for: loadedSnapshot,
+            fixtureManifest: currentFixtureManifest
+        )
+        timelineItems = renderPayload.items
+        fixtureKindsByMessageId = renderPayload.fixtureKindsByMessageId
+        snapshot = loadedSnapshot
+    }
+
     private var canSend: Bool {
         selectedAttachment != nil || !composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -394,6 +408,10 @@ struct ConsumerChatDetailView: View {
 
     private func loadSnapshot() async {
         isLoadingSnapshot = true
+        if snapshot == nil,
+           let cachedSnapshot = model.cachedConversationSnapshot(chatId: chatSummary.chatId) {
+            applyConversationSnapshot(cachedSnapshot)
+        }
         localErrorMessage = nil
 
         defer {
@@ -405,13 +423,7 @@ struct ConsumerChatDetailView: View {
                 baseURLString: serverBaseURL,
                 chatId: chatSummary.chatId
             )
-            let renderPayload = ConsumerConversationTimelineBuilder.makeRenderPayload(
-                for: loadedSnapshot,
-                fixtureManifest: UITestLaunchConfiguration.current.isEnabled ? UITestFixtureManifestStore.load() : nil
-            )
-            timelineItems = renderPayload.items
-            fixtureKindsByMessageId = renderPayload.fixtureKindsByMessageId
-            snapshot = loadedSnapshot
+            applyConversationSnapshot(loadedSnapshot)
             if loadedSnapshot.latestMessageId != nil {
                 _ = await model.acknowledgeConversationRead(
                     baseURLString: serverBaseURL,
@@ -421,7 +433,6 @@ struct ConsumerChatDetailView: View {
                 )
             }
         } catch {
-            fixtureKindsByMessageId = [:]
             localErrorMessage = TrixUserFacingText.conversationMessage(
                 error,
                 chatId: chatSummary.chatId,
