@@ -153,11 +153,7 @@ async fn get_my_feature_flags(
         .unwrap_or_else(|| "unknown".to_owned());
     let (revision, flags) = state
         .db
-        .resolve_feature_flags_for_device(
-            principal.account_id,
-            principal.device_id,
-            &platform,
-        )
+        .resolve_feature_flags_for_device(principal.account_id, principal.device_id, &platform)
         .await?;
     Ok(Json(AccountFeatureFlagsResponse { revision, flags }))
 }
@@ -198,11 +194,7 @@ async fn submit_debug_metrics(
         return Err(AppError::not_found("not found"));
     }
     state
-        .enforce_rate_limit(
-            "debug_metrics_post",
-            principal.device_id.to_string(),
-            60,
-        )
+        .enforce_rate_limit("debug_metrics_post", principal.device_id.to_string(), 60)
         .await?;
 
     let session_id = Uuid::parse_str(body.session_id.trim())

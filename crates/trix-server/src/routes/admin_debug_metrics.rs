@@ -16,7 +16,10 @@ use trix_types::{
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/debug/metric-sessions", get(list_sessions).post(create_session))
+        .route(
+            "/debug/metric-sessions",
+            get(list_sessions).post(create_session),
+        )
         .route(
             "/debug/metric-sessions/{session_id}",
             delete(revoke_session),
@@ -29,7 +32,9 @@ pub fn router() -> Router<AppState> {
 
 fn ensure_debug_enabled(state: &AppState) -> Result<(), AppError> {
     if !state.config.debug_metrics_enabled {
-        return Err(AppError::not_found("debug metrics are not enabled on this server"));
+        return Err(AppError::not_found(
+            "debug metrics are not enabled on this server",
+        ));
     }
     Ok(())
 }
@@ -62,7 +67,9 @@ async fn create_session(
     ensure_debug_enabled(&state)?;
     let msg = body.user_visible_message.trim();
     if msg.is_empty() {
-        return Err(AppError::bad_request("user_visible_message must not be empty"));
+        return Err(AppError::bad_request(
+            "user_visible_message must not be empty",
+        ));
     }
     if msg.len() > 2000 {
         return Err(AppError::bad_request(

@@ -22,10 +22,10 @@ use uuid::Uuid;
 use crate::{
     AttachmentMessageBody, AuthChallengeMaterial, CompleteLinkIntentParams, CreateChatControlInput,
     DeviceKeyMaterial, DmGlobalDeleteControlInput, DmGlobalDeleteControlOutcome, FfiChatType,
-    FfiContentType, FfiDeviceStatus, FfiLeaveChatScope, FfiMessageReactionSummary, FfiReactionAction,
-    FfiReceiptType, LeaveChatControlInput, LocalChatListItem, LocalHistoryRepairCandidate,
-    LocalHistoryRepairReason, LocalHistoryRepairWindow, LocalHistoryStore,
-    LocalMessageRecoveryState, LocalTimelineItem, MessageBody, MlsFacade,
+    FfiContentType, FfiDeviceStatus, FfiLeaveChatScope, FfiMessageReactionSummary,
+    FfiReactionAction, FfiReceiptType, LeaveChatControlInput, LocalChatListItem,
+    LocalHistoryRepairCandidate, LocalHistoryRepairReason, LocalHistoryRepairWindow,
+    LocalHistoryStore, LocalMessageRecoveryState, LocalTimelineItem, MessageBody, MlsFacade,
     ModifyChatDevicesControlInput, ModifyChatMembersControlInput, PublishKeyPackageMaterial,
     ReactionAction, ReceiptType, SendMessageOutcome, ServerApiClient, ServerApiError,
     SyncCoordinator, account_bootstrap_message, create_device_transfer_bundle,
@@ -429,7 +429,11 @@ struct MessengerClientState {
 fn feature_flags_snapshot_from_state(state: &MessengerClientState) -> FeatureFlagsSnapshot {
     FeatureFlagsSnapshot {
         revision: state.feature_flags_revision.unwrap_or(0),
-        flags: state.feature_flags.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+        flags: state
+            .feature_flags
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect(),
     }
 }
 
@@ -842,13 +846,14 @@ impl FfiMessengerClient {
     ) -> Result<FfiMessengerSendMessageResult, FfiMessengerError> {
         let chat_id = parse_chat_id(&request.conversation_id)?;
         let body = self.build_send_message_body(&request)?;
-        let client = self.authenticated_client()?;
+        let bootstrap_client = self.authenticated_client()?;
         let (self_account_id, self_device_id) = self.require_self_identity()?;
 
         {
             let mut store = lock_history_store(&self.history_store)?;
-            self.bootstrap_chat_if_needed(&client, &mut store, chat_id)?;
+            self.bootstrap_chat_if_needed(&bootstrap_client, &mut store, chat_id)?;
         }
+        let client = self.authenticated_client()?;
 
         let outcome = self.with_mls_facade(|facade| {
             let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
@@ -1059,12 +1064,13 @@ impl FfiMessengerClient {
         request: FfiMessengerUpdateConversationMembersRequest,
     ) -> Result<FfiMessengerConversationMutationResult, FfiMessengerError> {
         let chat_id = parse_chat_id(&request.conversation_id)?;
-        let client = self.authenticated_client()?;
+        let bootstrap_client = self.authenticated_client()?;
         let (self_account_id, self_device_id) = self.require_self_identity()?;
         let outcome = self.with_mls_facade(|facade| {
             let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
             let mut store = lock_history_store(&self.history_store)?;
-            self.bootstrap_chat_if_needed(&client, &mut store, chat_id)?;
+            self.bootstrap_chat_if_needed(&bootstrap_client, &mut store, chat_id)?;
+            let client = self.authenticated_client()?;
             self.runtime
                 .block_on(
                     coordinator.add_chat_members_control(
@@ -1095,12 +1101,13 @@ impl FfiMessengerClient {
         request: FfiMessengerUpdateConversationMembersRequest,
     ) -> Result<FfiMessengerConversationMutationResult, FfiMessengerError> {
         let chat_id = parse_chat_id(&request.conversation_id)?;
-        let client = self.authenticated_client()?;
+        let bootstrap_client = self.authenticated_client()?;
         let (self_account_id, self_device_id) = self.require_self_identity()?;
         let outcome = self.with_mls_facade(|facade| {
             let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
             let mut store = lock_history_store(&self.history_store)?;
-            self.bootstrap_chat_if_needed(&client, &mut store, chat_id)?;
+            self.bootstrap_chat_if_needed(&bootstrap_client, &mut store, chat_id)?;
+            let client = self.authenticated_client()?;
             self.runtime
                 .block_on(
                     coordinator.remove_chat_members_control(
@@ -1131,12 +1138,13 @@ impl FfiMessengerClient {
         request: FfiMessengerUpdateConversationDevicesRequest,
     ) -> Result<FfiMessengerConversationMutationResult, FfiMessengerError> {
         let chat_id = parse_chat_id(&request.conversation_id)?;
-        let client = self.authenticated_client()?;
+        let bootstrap_client = self.authenticated_client()?;
         let (self_account_id, self_device_id) = self.require_self_identity()?;
         let outcome = self.with_mls_facade(|facade| {
             let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
             let mut store = lock_history_store(&self.history_store)?;
-            self.bootstrap_chat_if_needed(&client, &mut store, chat_id)?;
+            self.bootstrap_chat_if_needed(&bootstrap_client, &mut store, chat_id)?;
+            let client = self.authenticated_client()?;
             self.runtime
                 .block_on(
                     coordinator.add_chat_devices_control(
@@ -1167,12 +1175,13 @@ impl FfiMessengerClient {
         request: FfiMessengerUpdateConversationDevicesRequest,
     ) -> Result<FfiMessengerConversationMutationResult, FfiMessengerError> {
         let chat_id = parse_chat_id(&request.conversation_id)?;
-        let client = self.authenticated_client()?;
+        let bootstrap_client = self.authenticated_client()?;
         let (self_account_id, self_device_id) = self.require_self_identity()?;
         let outcome = self.with_mls_facade(|facade| {
             let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
             let mut store = lock_history_store(&self.history_store)?;
-            self.bootstrap_chat_if_needed(&client, &mut store, chat_id)?;
+            self.bootstrap_chat_if_needed(&bootstrap_client, &mut store, chat_id)?;
+            let client = self.authenticated_client()?;
             self.runtime
                 .block_on(
                     coordinator.remove_chat_devices_control(
@@ -1203,7 +1212,7 @@ impl FfiMessengerClient {
         request: FfiMessengerLeaveConversationRequest,
     ) -> Result<FfiMessengerConversationMutationResult, FfiMessengerError> {
         let chat_id = parse_chat_id(&request.conversation_id)?;
-        let client = self.authenticated_client()?;
+        let bootstrap_client = self.authenticated_client()?;
         let (self_account_id, self_device_id) = self.require_self_identity()?;
         let scope = match request.scope {
             FfiLeaveChatScope::ThisDevice => LeaveChatScope::ThisDevice,
@@ -1212,22 +1221,21 @@ impl FfiMessengerClient {
         let outcome = self.with_mls_facade(|facade| {
             let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
             let mut store = lock_history_store(&self.history_store)?;
-            self.bootstrap_chat_if_needed(&client, &mut store, chat_id)?;
+            self.bootstrap_chat_if_needed(&bootstrap_client, &mut store, chat_id)?;
+            let client = self.authenticated_client()?;
             self.runtime
-                .block_on(
-                    coordinator.leave_chat_control(
-                        &client,
-                        &mut store,
-                        facade,
-                        LeaveChatControlInput {
-                            actor_account_id: self_account_id,
-                            actor_device_id: self_device_id,
-                            chat_id,
-                            scope,
-                            commit_aad_json: None,
-                        },
-                    ),
-                )
+                .block_on(coordinator.leave_chat_control(
+                    &client,
+                    &mut store,
+                    facade,
+                    LeaveChatControlInput {
+                        actor_account_id: self_account_id,
+                        actor_device_id: self_device_id,
+                        chat_id,
+                        scope,
+                        commit_aad_json: None,
+                    },
+                ))
                 .map_err(map_domain_error)
         })?;
         self.conversation_mutation_from_device_outcome(outcome)
@@ -1238,26 +1246,25 @@ impl FfiMessengerClient {
         conversation_id: String,
     ) -> Result<FfiMessengerConversationMutationResult, FfiMessengerError> {
         let chat_id = parse_chat_id(&conversation_id)?;
-        let client = self.authenticated_client()?;
+        let bootstrap_client = self.authenticated_client()?;
         let (self_account_id, self_device_id) = self.require_self_identity()?;
         let outcome = self.with_mls_facade(|facade| {
             let mut coordinator = lock_sync_coordinator(&self.sync_coordinator)?;
             let mut store = lock_history_store(&self.history_store)?;
-            self.bootstrap_chat_if_needed(&client, &mut store, chat_id)?;
+            self.bootstrap_chat_if_needed(&bootstrap_client, &mut store, chat_id)?;
+            let client = self.authenticated_client()?;
             self.runtime
-                .block_on(
-                    coordinator.dm_global_delete_control(
-                        &client,
-                        &mut store,
-                        facade,
-                        DmGlobalDeleteControlInput {
-                            actor_account_id: self_account_id,
-                            actor_device_id: self_device_id,
-                            chat_id,
-                            commit_aad_json: None,
-                        },
-                    ),
-                )
+                .block_on(coordinator.dm_global_delete_control(
+                    &client,
+                    &mut store,
+                    facade,
+                    DmGlobalDeleteControlInput {
+                        actor_account_id: self_account_id,
+                        actor_device_id: self_device_id,
+                        chat_id,
+                        commit_aad_json: None,
+                    },
+                ))
                 .map_err(map_domain_error)
         })?;
         self.conversation_mutation_from_dm_global_delete_outcome(outcome)
@@ -2322,7 +2329,7 @@ impl FfiMessengerClient {
 
     fn ensure_chat_history_repair_requested(
         &self,
-        client: &ServerApiClient,
+        _client: &ServerApiClient,
         candidate: LocalHistoryRepairCandidate,
     ) -> Result<HistoryRepairRequestStatus, FfiMessengerError> {
         let existing_window = {
@@ -2330,17 +2337,15 @@ impl FfiMessengerClient {
             store.pending_history_repair_window(candidate.chat_id)
         };
 
-        let response = self
-            .runtime
-            .block_on(client.request_history_sync_repair(
-                trix_types::RequestHistorySyncRepairRequest {
-                    chat_id: candidate.chat_id,
-                    repair_from_server_seq: candidate.window.from_server_seq,
-                    repair_through_server_seq: candidate.window.through_server_seq,
-                    reason: history_repair_reason_label(candidate.reason).to_owned(),
-                },
-            ))
-            .map_err(messenger_error)?;
+        let request = trix_types::RequestHistorySyncRepairRequest {
+            chat_id: candidate.chat_id,
+            repair_from_server_seq: candidate.window.from_server_seq,
+            repair_through_server_seq: candidate.window.through_server_seq,
+            reason: history_repair_reason_label(candidate.reason).to_owned(),
+        };
+        let response = self.run_transport(|runtime, client| {
+            runtime.block_on(client.request_history_sync_repair(request.clone()))
+        })?;
         if response.jobs.is_empty() {
             return Ok(HistoryRepairRequestStatus::Unavailable);
         }
@@ -2361,15 +2366,13 @@ impl FfiMessengerClient {
 
     fn refresh_chat_details(
         &self,
-        client: &ServerApiClient,
+        _client: &ServerApiClient,
         chat_ids: &[ChatId],
     ) -> Result<(), FfiMessengerError> {
-        let mut store = lock_history_store(&self.history_store)?;
         for chat_id in chat_ids {
-            let detail = self
-                .runtime
-                .block_on(client.get_chat(*chat_id))
-                .map_err(messenger_error)?;
+            let detail =
+                self.run_transport(|runtime, client| runtime.block_on(client.get_chat(*chat_id)))?;
+            let mut store = lock_history_store(&self.history_store)?;
             store.apply_chat_detail(&detail).map_err(map_domain_error)?;
         }
         Ok(())
@@ -2402,22 +2405,19 @@ impl FfiMessengerClient {
 
     fn bootstrap_chat_if_needed(
         &self,
-        client: &ServerApiClient,
+        _client: &ServerApiClient,
         store: &mut LocalHistoryStore,
         chat_id: ChatId,
     ) -> Result<(), FfiMessengerError> {
         if store.get_chat(chat_id).is_some() && store.chat_mls_group_id(chat_id).is_some() {
             return Ok(());
         }
-        let detail = self
-            .runtime
-            .block_on(client.get_chat(chat_id))
-            .map_err(messenger_error)?;
+        let (detail, history) = self.run_transport(|runtime, client| {
+            let detail = runtime.block_on(client.get_chat(chat_id))?;
+            let history = runtime.block_on(client.get_chat_history(chat_id, None, None))?;
+            Ok((detail, history))
+        })?;
         store.apply_chat_detail(&detail).map_err(map_domain_error)?;
-        let history = self
-            .runtime
-            .block_on(client.get_chat_history(chat_id, None, None))
-            .map_err(messenger_error)?;
         store
             .apply_chat_history(&history)
             .map_err(map_domain_error)?;
@@ -2499,17 +2499,14 @@ impl FfiMessengerClient {
 
     fn refresh_chat_history_fully(
         &self,
-        client: &ServerApiClient,
+        _client: &ServerApiClient,
         chat_id: ChatId,
     ) -> Result<(), FfiMessengerError> {
-        let detail = self
-            .runtime
-            .block_on(client.get_chat(chat_id))
-            .map_err(messenger_error)?;
-        let history = self
-            .runtime
-            .block_on(client.get_chat_history(chat_id, None, None))
-            .map_err(messenger_error)?;
+        let (detail, history) = self.run_transport(|runtime, client| {
+            let detail = runtime.block_on(client.get_chat(chat_id))?;
+            let history = runtime.block_on(client.get_chat_history(chat_id, None, None))?;
+            Ok((detail, history))
+        })?;
         {
             let mut store = lock_history_store(&self.history_store)?;
             store.apply_chat_detail(&detail).map_err(map_domain_error)?;
@@ -3887,7 +3884,7 @@ mod tests {
     use axum::{
         Json, Router,
         extract::{Path as AxumPath, Query, State},
-        http::StatusCode,
+        http::{HeaderMap, StatusCode},
         response::IntoResponse,
         routing::{get, post},
     };
@@ -3898,6 +3895,7 @@ mod tests {
         task::JoinHandle,
     };
     use trix_types::{
+        AuthChallengeRequest, AuthChallengeResponse, AuthSessionRequest, AuthSessionResponse,
         ChatDetailResponse, ChatHistoryResponse, ChatParticipantProfileSummary, ChatType,
         ContentType, CreateMessageRequest, CreateMessageResponse, ErrorResponse,
         HistorySyncChunkListResponse, HistorySyncJobListResponse, HistorySyncJobRole,
@@ -5082,6 +5080,81 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct MockAuthRefreshChatServerState {
+        account_id: AccountId,
+        device_id: DeviceId,
+        fresh_access_token: String,
+        chat_detail: ChatDetailResponse,
+        history: Vec<MessageEnvelope>,
+        sender_account_id: AccountId,
+        sender_device_id: DeviceId,
+        expected_create_epoch: Option<u64>,
+        create_requests: Vec<CreateMessageRequest>,
+        challenge_requests: usize,
+        session_requests: usize,
+        unauthorized_requests: usize,
+        chat_detail_requests: usize,
+        history_requests: usize,
+        history_after_server_seq_requests: Vec<Option<u64>>,
+    }
+
+    struct MockAuthRefreshChatServer {
+        base_url: String,
+        state: Arc<Mutex<MockAuthRefreshChatServerState>>,
+        runtime: Runtime,
+        task: JoinHandle<()>,
+    }
+
+    impl MockAuthRefreshChatServer {
+        fn spawn(state: MockAuthRefreshChatServerState) -> Self {
+            let runtime = Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .unwrap();
+            let (base_url, state, task) = runtime.block_on(async move {
+                let state = Arc::new(Mutex::new(state));
+                let app = Router::new()
+                    .route("/v0/auth/challenge", post(mock_auth_refresh_challenge))
+                    .route("/v0/auth/session", post(mock_auth_refresh_session))
+                    .route("/v0/chats/{chat_id}", get(mock_auth_refresh_get_chat))
+                    .route(
+                        "/v0/chats/{chat_id}/history",
+                        get(mock_auth_refresh_get_chat_history),
+                    )
+                    .route(
+                        "/v0/chats/{chat_id}/messages",
+                        post(mock_auth_refresh_create_message),
+                    )
+                    .with_state(state.clone());
+                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let base_url = format!("http://{}", listener.local_addr().unwrap());
+                let task = tokio::spawn(async move {
+                    axum::serve(listener, app)
+                        .await
+                        .expect("mock auth refresh chat server should stay up");
+                });
+
+                (base_url, state, task)
+            });
+
+            Self {
+                base_url,
+                state,
+                runtime,
+                task,
+            }
+        }
+
+        fn shutdown(self) {
+            self.runtime.block_on(async {
+                self.task.abort();
+                let _ = self.task.await;
+            });
+        }
+    }
+
     async fn mock_request_history_sync_repair(
         State(state): State<Arc<Mutex<MockRepairServerState>>>,
         Json(request): Json<RequestHistorySyncRepairRequest>,
@@ -5256,6 +5329,171 @@ mod tests {
         Json(request): Json<CreateMessageRequest>,
     ) -> impl IntoResponse {
         let mut state = state.lock().unwrap();
+        if state.chat_detail.chat_id != ChatId(chat_id) {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        if let Some(expected_epoch) = state.expected_create_epoch
+            && request.epoch != expected_epoch
+        {
+            return (
+                StatusCode::CONFLICT,
+                Json(ErrorResponse {
+                    code: "epoch_conflict".to_owned(),
+                    message: format!("expected epoch {expected_epoch}, got {}", request.epoch),
+                }),
+            )
+                .into_response();
+        }
+
+        state.create_requests.push(request.clone());
+        let server_seq = state
+            .history
+            .last()
+            .map(|message| message.server_seq)
+            .unwrap_or_default()
+            + 1;
+        let envelope = MessageEnvelope {
+            message_id: request.message_id,
+            chat_id: ChatId(chat_id),
+            server_seq,
+            sender_account_id: state.sender_account_id,
+            sender_device_id: state.sender_device_id,
+            epoch: request.epoch,
+            message_kind: request.message_kind,
+            content_type: request.content_type,
+            ciphertext_b64: request.ciphertext_b64.clone(),
+            aad_json: request
+                .aad_json
+                .clone()
+                .unwrap_or_else(|| serde_json::json!({})),
+            created_at_unix: 1_700_000_000 + server_seq,
+        };
+        state.history.push(envelope.clone());
+        state.chat_detail.last_server_seq = server_seq;
+        state.chat_detail.epoch = request.epoch;
+        state.chat_detail.last_message = Some(envelope);
+        Json(CreateMessageResponse {
+            message_id: request.message_id,
+            server_seq,
+        })
+        .into_response()
+    }
+
+    fn has_expected_access_token(headers: &HeaderMap, expected_token: &str) -> bool {
+        headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value == format!("Bearer {expected_token}"))
+            .unwrap_or(false)
+    }
+
+    fn unauthorized_error_response() -> axum::response::Response {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                code: "unauthorized".to_owned(),
+                message: "invalid access token".to_owned(),
+            }),
+        )
+            .into_response()
+    }
+
+    async fn mock_auth_refresh_challenge(
+        State(state): State<Arc<Mutex<MockAuthRefreshChatServerState>>>,
+        Json(request): Json<AuthChallengeRequest>,
+    ) -> impl IntoResponse {
+        let mut state = state.lock().unwrap();
+        assert_eq!(request.device_id, state.device_id);
+        state.challenge_requests += 1;
+        Json(AuthChallengeResponse {
+            challenge_id: Uuid::new_v4().to_string(),
+            challenge_b64: encode_b64(&[7u8; 32]),
+            expires_at_unix: u64::MAX,
+        })
+        .into_response()
+    }
+
+    async fn mock_auth_refresh_session(
+        State(state): State<Arc<Mutex<MockAuthRefreshChatServerState>>>,
+        Json(request): Json<AuthSessionRequest>,
+    ) -> impl IntoResponse {
+        let mut state = state.lock().unwrap();
+        assert_eq!(request.device_id, state.device_id);
+        state.session_requests += 1;
+        Json(AuthSessionResponse {
+            access_token: state.fresh_access_token.clone(),
+            expires_at_unix: u64::MAX,
+            account_id: state.account_id,
+            device_status: DeviceStatus::Active,
+        })
+        .into_response()
+    }
+
+    async fn mock_auth_refresh_get_chat(
+        headers: HeaderMap,
+        AxumPath(chat_id): AxumPath<Uuid>,
+        State(state): State<Arc<Mutex<MockAuthRefreshChatServerState>>>,
+    ) -> impl IntoResponse {
+        let mut state = state.lock().unwrap();
+        if !has_expected_access_token(&headers, &state.fresh_access_token) {
+            state.unauthorized_requests += 1;
+            return unauthorized_error_response();
+        }
+        if state.chat_detail.chat_id != ChatId(chat_id) {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        state.chat_detail_requests += 1;
+        Json(state.chat_detail.clone()).into_response()
+    }
+
+    async fn mock_auth_refresh_get_chat_history(
+        headers: HeaderMap,
+        AxumPath(chat_id): AxumPath<Uuid>,
+        Query(query): Query<MockSendHistoryQuery>,
+        State(state): State<Arc<Mutex<MockAuthRefreshChatServerState>>>,
+    ) -> impl IntoResponse {
+        let mut state = state.lock().unwrap();
+        if !has_expected_access_token(&headers, &state.fresh_access_token) {
+            state.unauthorized_requests += 1;
+            return unauthorized_error_response();
+        }
+        if state.chat_detail.chat_id != ChatId(chat_id) {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        state.history_requests += 1;
+        state
+            .history_after_server_seq_requests
+            .push(query.after_server_seq);
+        let mut messages = state
+            .history
+            .iter()
+            .filter(|message| {
+                query
+                    .after_server_seq
+                    .map(|after| message.server_seq > after)
+                    .unwrap_or(true)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        messages.truncate(query.limit.unwrap_or(100));
+        Json(ChatHistoryResponse {
+            chat_id: state.chat_detail.chat_id,
+            messages,
+        })
+        .into_response()
+    }
+
+    async fn mock_auth_refresh_create_message(
+        headers: HeaderMap,
+        AxumPath(chat_id): AxumPath<Uuid>,
+        State(state): State<Arc<Mutex<MockAuthRefreshChatServerState>>>,
+        Json(request): Json<CreateMessageRequest>,
+    ) -> impl IntoResponse {
+        let mut state = state.lock().unwrap();
+        if !has_expected_access_token(&headers, &state.fresh_access_token) {
+            state.unauthorized_requests += 1;
+            return unauthorized_error_response();
+        }
         if state.chat_detail.chat_id != ChatId(chat_id) {
             return StatusCode::NOT_FOUND.into_response();
         }
@@ -5897,10 +6135,7 @@ mod tests {
             .get_messages(chat_id.0.to_string(), None, Some(20))
             .unwrap();
         assert!(page.messages.iter().any(|message| {
-            message
-                .body
-                .as_ref()
-                .and_then(|body| body.text.as_deref())
+            message.body.as_ref().and_then(|body| body.text.as_deref())
                 == Some("hello after bootstrap")
         }));
         {
@@ -5914,6 +6149,378 @@ mod tests {
         assert_eq!(state.chat_detail_requests, 1);
         assert_eq!(state.history_requests, 1);
         assert_eq!(state.history_after_server_seq_requests, vec![None]);
+        drop(state);
+
+        server.shutdown();
+        fs::remove_dir_all(root_path).ok();
+    }
+
+    #[test]
+    fn get_messages_refreshes_auth_session_before_bootstrap_fetches() {
+        let root_path = env::temp_dir().join(format!(
+            "trix-messenger-get-messages-auth-refresh-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let chat_id = ChatId(Uuid::new_v4());
+        let alice_account = AccountId(Uuid::new_v4());
+        let alice_device = DeviceId(Uuid::new_v4());
+        let current_account = AccountId(Uuid::new_v4());
+        let current_device = DeviceId(Uuid::new_v4());
+        let current_identity = b"current-device".to_vec();
+
+        let alice = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+
+        let client = FfiMessengerClient::open(FfiMessengerOpenConfig {
+            root_path: root_path.to_string_lossy().into_owned(),
+            database_key: vec![43u8; 32],
+            base_url: "http://127.0.0.1:9".to_owned(),
+            access_token: Some("stale-access-token".to_owned()),
+            account_id: Some(current_account.0.to_string()),
+            device_id: Some(current_device.0.to_string()),
+            account_sync_chat_id: None,
+            device_display_name: Some("current-device".to_owned()),
+            platform: Some("ios".to_owned()),
+            credential_identity: Some(current_identity.clone()),
+            account_root_private_key: None,
+            transport_private_key: Some(vec![29u8; 32]),
+        })
+        .unwrap();
+
+        let current_member =
+            MlsFacade::new_persistent(current_identity, PathBuf::from(&client.mls_storage_root))
+                .unwrap();
+        let current_key_package = current_member.generate_key_package().unwrap();
+        let mut alice_group = alice.create_group(chat_id.0.as_bytes()).unwrap();
+        let add_bundle = alice
+            .add_members(&mut alice_group, &[current_key_package])
+            .unwrap();
+        let expected_group_id = alice_group.group_id();
+        let ciphertext = alice
+            .create_application_message(&mut alice_group, b"hello after auth refresh")
+            .unwrap();
+        current_member.save_state().unwrap();
+        drop(current_member);
+
+        let commit_message_id = MessageId(Uuid::new_v4());
+        let welcome_message_id = MessageId(Uuid::new_v4());
+        let application_message_id = MessageId(Uuid::new_v4());
+        let application_message = MessageEnvelope {
+            message_id: application_message_id,
+            chat_id,
+            server_seq: 3,
+            sender_account_id: alice_account,
+            sender_device_id: alice_device,
+            epoch: add_bundle.epoch,
+            message_kind: MessageKind::Application,
+            content_type: ContentType::Text,
+            ciphertext_b64: encode_b64(&ciphertext),
+            aad_json: serde_json::json!({}),
+            created_at_unix: 3,
+        };
+        let full_history = vec![
+            MessageEnvelope {
+                message_id: commit_message_id,
+                chat_id,
+                server_seq: 1,
+                sender_account_id: alice_account,
+                sender_device_id: alice_device,
+                epoch: add_bundle.epoch,
+                message_kind: MessageKind::Commit,
+                content_type: ContentType::ChatEvent,
+                ciphertext_b64: encode_b64(&add_bundle.commit_message),
+                aad_json: serde_json::json!({}),
+                created_at_unix: 1,
+            },
+            MessageEnvelope {
+                message_id: welcome_message_id,
+                chat_id,
+                server_seq: 2,
+                sender_account_id: alice_account,
+                sender_device_id: alice_device,
+                epoch: add_bundle.epoch,
+                message_kind: MessageKind::WelcomeRef,
+                content_type: ContentType::ChatEvent,
+                ciphertext_b64: encode_b64(add_bundle.welcome_message.as_ref().unwrap()),
+                aad_json: serde_json::json!({
+                    "_trix": {
+                        "ratchet_tree_b64": encode_b64(
+                            add_bundle.ratchet_tree.as_ref().unwrap()
+                        )
+                    }
+                }),
+                created_at_unix: 2,
+            },
+            application_message.clone(),
+        ];
+
+        let chat_detail = ChatDetailResponse {
+            chat_id,
+            chat_type: ChatType::Dm,
+            title: None,
+            last_server_seq: 3,
+            pending_message_count: 0,
+            epoch: add_bundle.epoch,
+            last_commit_message_id: Some(commit_message_id),
+            last_message: Some(application_message),
+            participant_profiles: vec![
+                ChatParticipantProfileSummary {
+                    account_id: current_account,
+                    handle: Some("current".to_owned()),
+                    profile_name: "Current".to_owned(),
+                    profile_bio: None,
+                },
+                ChatParticipantProfileSummary {
+                    account_id: alice_account,
+                    handle: Some("alice".to_owned()),
+                    profile_name: "Alice".to_owned(),
+                    profile_bio: None,
+                },
+            ],
+            members: Vec::new(),
+            device_members: Vec::new(),
+        };
+
+        {
+            let mut store = lock_history_store(&client.history_store).unwrap();
+            store.apply_chat_detail(&chat_detail).unwrap();
+        }
+
+        let server = MockAuthRefreshChatServer::spawn(MockAuthRefreshChatServerState {
+            account_id: current_account,
+            device_id: current_device,
+            fresh_access_token: "fresh-access-token".to_owned(),
+            chat_detail,
+            history: full_history,
+            sender_account_id: current_account,
+            sender_device_id: current_device,
+            expected_create_epoch: None,
+            create_requests: Vec::new(),
+            challenge_requests: 0,
+            session_requests: 0,
+            unauthorized_requests: 0,
+            chat_detail_requests: 0,
+            history_requests: 0,
+            history_after_server_seq_requests: Vec::new(),
+        });
+        {
+            let mut state = lock_state(&client.state).unwrap();
+            state.base_url = server.base_url.clone();
+            client.save_state_locked(&state).unwrap();
+        }
+        client.rebuild_client_base_url(&server.base_url).unwrap();
+
+        let page = client
+            .get_messages(chat_id.0.to_string(), None, Some(20))
+            .unwrap();
+        assert!(page.messages.iter().any(|message| {
+            message.body.as_ref().and_then(|body| body.text.as_deref())
+                == Some("hello after auth refresh")
+        }));
+        {
+            let store = lock_history_store(&client.history_store).unwrap();
+            assert_eq!(
+                store.chat_mls_group_id(chat_id).as_deref(),
+                Some(expected_group_id.as_slice())
+            );
+        }
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.challenge_requests, 1);
+        assert_eq!(state.session_requests, 1);
+        assert_eq!(state.unauthorized_requests, 1);
+        assert_eq!(state.chat_detail_requests, 1);
+        assert_eq!(state.history_requests, 1);
+        assert_eq!(state.history_after_server_seq_requests, vec![None]);
+        drop(state);
+
+        server.shutdown();
+        fs::remove_dir_all(root_path).ok();
+    }
+
+    #[test]
+    fn send_message_refreshes_auth_session_before_bootstrap_mutation() {
+        let root_path = env::temp_dir().join(format!(
+            "trix-messenger-send-message-auth-refresh-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let chat_id = ChatId(Uuid::new_v4());
+        let alice_account = AccountId(Uuid::new_v4());
+        let alice_device = DeviceId(Uuid::new_v4());
+        let current_account = AccountId(Uuid::new_v4());
+        let current_device = DeviceId(Uuid::new_v4());
+        let current_identity = b"current-device".to_vec();
+
+        let alice = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+
+        let client = FfiMessengerClient::open(FfiMessengerOpenConfig {
+            root_path: root_path.to_string_lossy().into_owned(),
+            database_key: vec![47u8; 32],
+            base_url: "http://127.0.0.1:9".to_owned(),
+            access_token: Some("stale-access-token".to_owned()),
+            account_id: Some(current_account.0.to_string()),
+            device_id: Some(current_device.0.to_string()),
+            account_sync_chat_id: None,
+            device_display_name: Some("current-device".to_owned()),
+            platform: Some("ios".to_owned()),
+            credential_identity: Some(current_identity.clone()),
+            account_root_private_key: None,
+            transport_private_key: Some(vec![31u8; 32]),
+        })
+        .unwrap();
+
+        let current_member =
+            MlsFacade::new_persistent(current_identity, PathBuf::from(&client.mls_storage_root))
+                .unwrap();
+        let current_key_package = current_member.generate_key_package().unwrap();
+        let mut alice_group = alice.create_group(chat_id.0.as_bytes()).unwrap();
+        let add_bundle = alice
+            .add_members(&mut alice_group, &[current_key_package])
+            .unwrap();
+        let expected_group_id = alice_group.group_id();
+        current_member.save_state().unwrap();
+        drop(current_member);
+
+        let commit_message_id = MessageId(Uuid::new_v4());
+        let welcome_message_id = MessageId(Uuid::new_v4());
+        let full_history = vec![
+            MessageEnvelope {
+                message_id: commit_message_id,
+                chat_id,
+                server_seq: 1,
+                sender_account_id: alice_account,
+                sender_device_id: alice_device,
+                epoch: add_bundle.epoch,
+                message_kind: MessageKind::Commit,
+                content_type: ContentType::ChatEvent,
+                ciphertext_b64: encode_b64(&add_bundle.commit_message),
+                aad_json: serde_json::json!({}),
+                created_at_unix: 1,
+            },
+            MessageEnvelope {
+                message_id: welcome_message_id,
+                chat_id,
+                server_seq: 2,
+                sender_account_id: alice_account,
+                sender_device_id: alice_device,
+                epoch: add_bundle.epoch,
+                message_kind: MessageKind::WelcomeRef,
+                content_type: ContentType::ChatEvent,
+                ciphertext_b64: encode_b64(add_bundle.welcome_message.as_ref().unwrap()),
+                aad_json: serde_json::json!({
+                    "_trix": {
+                        "ratchet_tree_b64": encode_b64(
+                            add_bundle.ratchet_tree.as_ref().unwrap()
+                        )
+                    }
+                }),
+                created_at_unix: 2,
+            },
+        ];
+
+        let chat_detail = ChatDetailResponse {
+            chat_id,
+            chat_type: ChatType::Dm,
+            title: None,
+            last_server_seq: 2,
+            pending_message_count: 0,
+            epoch: add_bundle.epoch,
+            last_commit_message_id: Some(commit_message_id),
+            last_message: Some(full_history[1].clone()),
+            participant_profiles: vec![
+                ChatParticipantProfileSummary {
+                    account_id: current_account,
+                    handle: Some("current".to_owned()),
+                    profile_name: "Current".to_owned(),
+                    profile_bio: None,
+                },
+                ChatParticipantProfileSummary {
+                    account_id: alice_account,
+                    handle: Some("alice".to_owned()),
+                    profile_name: "Alice".to_owned(),
+                    profile_bio: None,
+                },
+            ],
+            members: Vec::new(),
+            device_members: Vec::new(),
+        };
+
+        {
+            let mut store = lock_history_store(&client.history_store).unwrap();
+            store.apply_chat_detail(&chat_detail).unwrap();
+        }
+
+        let server = MockAuthRefreshChatServer::spawn(MockAuthRefreshChatServerState {
+            account_id: current_account,
+            device_id: current_device,
+            fresh_access_token: "fresh-access-token".to_owned(),
+            chat_detail,
+            history: full_history,
+            sender_account_id: current_account,
+            sender_device_id: current_device,
+            expected_create_epoch: Some(add_bundle.epoch),
+            create_requests: Vec::new(),
+            challenge_requests: 0,
+            session_requests: 0,
+            unauthorized_requests: 0,
+            chat_detail_requests: 0,
+            history_requests: 0,
+            history_after_server_seq_requests: Vec::new(),
+        });
+        {
+            let mut state = lock_state(&client.state).unwrap();
+            state.base_url = server.base_url.clone();
+            client.save_state_locked(&state).unwrap();
+        }
+        client.rebuild_client_base_url(&server.base_url).unwrap();
+
+        let result = client
+            .send_message(FfiMessengerSendMessageRequest {
+                conversation_id: chat_id.0.to_string(),
+                message_id: None,
+                kind: FfiMessengerMessageBodyKind::Text,
+                text: Some("hello after auth refresh".to_owned()),
+                target_message_id: None,
+                emoji: None,
+                reaction_action: None,
+                receipt_type: None,
+                receipt_at_unix: None,
+                event_type: None,
+                event_json: None,
+                attachment_tokens: Vec::new(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            result
+                .message
+                .body
+                .as_ref()
+                .and_then(|body| body.text.as_deref()),
+            Some("hello after auth refresh")
+        );
+        {
+            let store = lock_history_store(&client.history_store).unwrap();
+            assert_eq!(
+                store.chat_mls_group_id(chat_id).as_deref(),
+                Some(expected_group_id.as_slice())
+            );
+        }
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.challenge_requests, 1);
+        assert_eq!(state.session_requests, 1);
+        assert_eq!(state.unauthorized_requests, 1);
+        assert!(state.chat_detail_requests >= 1);
+        assert!(state.history_requests >= 1);
+        assert!(
+            state
+                .history_after_server_seq_requests
+                .iter()
+                .all(Option::is_none)
+        );
+        assert_eq!(state.create_requests.len(), 1);
         drop(state);
 
         server.shutdown();

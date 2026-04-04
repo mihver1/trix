@@ -19,8 +19,8 @@ use crate::{
 use trix_types::{
     AdminFeatureFlagDefinition, AdminFeatureFlagDefinitionListResponse, AdminFeatureFlagOverride,
     AdminFeatureFlagOverrideListResponse, CreateAdminFeatureFlagDefinitionRequest,
-    CreateAdminFeatureFlagOverrideRequest, FeatureFlagScope, PatchAdminFeatureFlagDefinitionRequest,
-    PatchAdminFeatureFlagOverrideRequest,
+    CreateAdminFeatureFlagOverrideRequest, FeatureFlagScope,
+    PatchAdminFeatureFlagDefinitionRequest, PatchAdminFeatureFlagOverrideRequest,
 };
 
 pub fn router() -> Router<AppState> {
@@ -96,7 +96,9 @@ fn parse_scope(text: &str) -> Result<FeatureFlagScope, AppError> {
     }
 }
 
-fn row_to_admin_override(row: crate::db::FeatureFlagOverrideRow) -> Result<AdminFeatureFlagOverride, AppError> {
+fn row_to_admin_override(
+    row: crate::db::FeatureFlagOverrideRow,
+) -> Result<AdminFeatureFlagOverride, AppError> {
     Ok(AdminFeatureFlagOverride {
         override_id: row.override_id.to_string(),
         flag_key: row.flag_key,
@@ -170,11 +172,11 @@ async fn patch_definition(
     ExtractJson(body): ExtractJson<PatchAdminFeatureFlagDefinitionRequest>,
 ) -> Result<Json<AdminFeatureFlagDefinition>, AppError> {
     state.authenticate_admin_headers(&headers)?;
-    if body.description.is_none() && body.default_enabled.is_none() && body.deleted_at_unix.is_none()
+    if body.description.is_none()
+        && body.default_enabled.is_none()
+        && body.deleted_at_unix.is_none()
     {
-        return Err(AppError::bad_request(
-            "at least one field must be provided",
-        ));
+        return Err(AppError::bad_request("at least one field must be provided"));
     }
     let patch = PatchFeatureFlagDefinitionInput {
         description: body.description,
@@ -237,7 +239,9 @@ fn validate_override_request(body: &CreateAdminFeatureFlagOverrideRequest) -> Re
         }
         FeatureFlagScope::Platform => {
             let Some(ref p) = body.platform else {
-                return Err(AppError::bad_request("platform is required for platform scope"));
+                return Err(AppError::bad_request(
+                    "platform is required for platform scope",
+                ));
             };
             if p.trim().is_empty() {
                 return Err(AppError::bad_request("platform must not be empty"));
@@ -250,7 +254,9 @@ fn validate_override_request(body: &CreateAdminFeatureFlagOverrideRequest) -> Re
         }
         FeatureFlagScope::Account => {
             if body.account_id.is_none() {
-                return Err(AppError::bad_request("account_id is required for account scope"));
+                return Err(AppError::bad_request(
+                    "account_id is required for account scope",
+                ));
             }
             if body.platform.is_some() || body.device_id.is_some() {
                 return Err(AppError::bad_request(
@@ -305,9 +311,7 @@ async fn patch_override(
 ) -> Result<Json<AdminFeatureFlagOverride>, AppError> {
     state.authenticate_admin_headers(&headers)?;
     if body.enabled.is_none() && body.expires_at_unix.is_none() {
-        return Err(AppError::bad_request(
-            "at least one field must be provided",
-        ));
+        return Err(AppError::bad_request("at least one field must be provided"));
     }
     let patch = PatchFeatureFlagOverrideInput {
         enabled: body.enabled,

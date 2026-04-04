@@ -1803,11 +1803,7 @@ async fn safe_s12_dm_reply_from_peer_survives_creator_linked_secondary_device() 
             .client
             .get_new_events(conversation_batch.checkpoint.clone())?;
         assert!(bob_message_batch.events.iter().any(|event| {
-            event
-                .message
-                .as_ref()
-                .and_then(message_text)
-                == Some("hello bob from alice")
+            event.message.as_ref().and_then(message_text) == Some("hello bob from alice")
         }));
 
         let bob_account_id = bob.account_id.clone();
@@ -1815,42 +1811,49 @@ async fn safe_s12_dm_reply_from_peer_survives_creator_linked_secondary_device() 
         let bob_database_key = bob.database_key.clone();
         drop(bob);
 
-        let bob_reopened = reopen_safe_client(
-            &base_url,
-            &bob_root_path,
-            bob_database_key.clone(),
-        )?;
+        let bob_reopened = reopen_safe_client(&base_url, &bob_root_path, bob_database_key.clone())?;
         let reopened_snapshot = bob_reopened.load_snapshot()?;
-        assert_eq!(reopened_snapshot.account_id.as_deref(), Some(bob_account_id.as_str()));
+        assert_eq!(
+            reopened_snapshot.account_id.as_deref(),
+            Some(bob_account_id.as_str())
+        );
 
-        let bob_reply = bob_reopened
-            .send_message(text_request(&dm.conversation_id, "hello alice from bob"))?;
-        assert_eq!(message_text(&bob_reply.message), Some("hello alice from bob"));
+        let bob_reply =
+            bob_reopened.send_message(text_request(&dm.conversation_id, "hello alice from bob"))?;
+        assert_eq!(
+            message_text(&bob_reply.message),
+            Some("hello alice from bob")
+        );
 
         drop(bob_reopened);
         let bob_after_send = reopen_safe_client(&base_url, &bob_root_path, bob_database_key)?;
         let bob_after_send_snapshot = bob_after_send.load_snapshot()?;
-        assert!(bob_after_send_snapshot
-            .conversations
-            .iter()
-            .any(|conversation| conversation.conversation_id == dm.conversation_id));
-        let bob_after_send_page = bob_after_send.get_messages(dm.conversation_id.clone(), None, None)?;
-        assert!(bob_after_send_page.messages.iter().any(|message| {
-            message_text(message) == Some("hello bob from alice")
-        }));
-        assert!(bob_after_send_page.messages.iter().any(|message| {
-            message_text(message) == Some("hello alice from bob")
-        }));
+        assert!(
+            bob_after_send_snapshot
+                .conversations
+                .iter()
+                .any(|conversation| conversation.conversation_id == dm.conversation_id)
+        );
+        let bob_after_send_page =
+            bob_after_send.get_messages(dm.conversation_id.clone(), None, None)?;
+        assert!(
+            bob_after_send_page
+                .messages
+                .iter()
+                .any(|message| { message_text(message) == Some("hello bob from alice") })
+        );
+        assert!(
+            bob_after_send_page
+                .messages
+                .iter()
+                .any(|message| { message_text(message) == Some("hello alice from bob") })
+        );
 
         let alice_reply_batch = alice_primary
             .client
             .get_new_events(alice_before_reply.checkpoint.clone())?;
         assert!(alice_reply_batch.events.iter().any(|event| {
-            event
-                .message
-                .as_ref()
-                .and_then(message_text)
-                == Some("hello alice from bob")
+            event.message.as_ref().and_then(message_text) == Some("hello alice from bob")
         }));
 
         Ok(())

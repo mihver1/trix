@@ -10,8 +10,8 @@ use chrono::{DateTime, Utc};
 use rand::RngCore;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use sqlx::{PgPool, Postgres, QueryBuilder, Row, postgres::PgPoolOptions};
 use sqlx::types::Json;
+use sqlx::{PgPool, Postgres, QueryBuilder, Row, postgres::PgPoolOptions};
 use uuid::Uuid;
 
 use crate::error::AppError;
@@ -7640,7 +7640,9 @@ impl Database {
         Ok((revision, flags))
     }
 
-    pub async fn list_feature_flag_definitions_admin(&self) -> Result<Vec<FeatureFlagDefinitionRow>, AppError> {
+    pub async fn list_feature_flag_definitions_admin(
+        &self,
+    ) -> Result<Vec<FeatureFlagDefinitionRow>, AppError> {
         let rows = sqlx::query(
             r#"
             SELECT
@@ -7745,13 +7747,11 @@ impl Database {
             .description
             .clone()
             .unwrap_or_else(|| current.description.clone());
-        let default_enabled = patch
-            .default_enabled
-            .unwrap_or(current.default_enabled);
+        let default_enabled = patch.default_enabled.unwrap_or(current.default_enabled);
         let deleted_at: Option<DateTime<Utc>> = match &patch.deleted_at_unix {
-            None => current.deleted_at_unix.and_then(|unix| {
-                DateTime::<Utc>::from_timestamp(i64::try_from(unix).ok()?, 0)
-            }),
+            None => current
+                .deleted_at_unix
+                .and_then(|unix| DateTime::<Utc>::from_timestamp(i64::try_from(unix).ok()?, 0)),
             Some(None) => None,
             Some(Some(unix)) => Some(
                 DateTime::<Utc>::from_timestamp(
@@ -7830,7 +7830,11 @@ impl Database {
         }
         qb.push(" ORDER BY flag_key ASC, scope ASC, override_id ASC");
 
-        let rows = qb.build().fetch_all(&self.pool).await.map_err(map_db_error)?;
+        let rows = qb
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_db_error)?;
         rows.into_iter()
             .map(|row| {
                 Ok(FeatureFlagOverrideRow {
@@ -8114,7 +8118,9 @@ impl Database {
         .await
         .map_err(map_db_error)?;
         if result.rows_affected() == 0 {
-            return Err(AppError::not_found("debug metric session not found or already revoked"));
+            return Err(AppError::not_found(
+                "debug metric session not found or already revoked",
+            ));
         }
         Ok(())
     }

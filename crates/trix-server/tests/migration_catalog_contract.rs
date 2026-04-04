@@ -26,9 +26,9 @@ fn sqlx_migration_versions_are_unique() {
             .unwrap_or_else(|| panic!("missing file name for {}", path.display()))
             .to_string_lossy()
             .into_owned();
-        let (version, _) = file_name
-            .split_once('_')
-            .unwrap_or_else(|| panic!("migration file {file_name} is missing the <version>_ prefix"));
+        let (version, _) = file_name.split_once('_').unwrap_or_else(|| {
+            panic!("migration file {file_name} is missing the <version>_ prefix")
+        });
         let version = version.parse::<u64>().unwrap_or_else(|err| {
             panic!("migration file {file_name} has invalid version {version}: {err}")
         });

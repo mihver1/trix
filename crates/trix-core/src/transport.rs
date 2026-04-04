@@ -14,27 +14,26 @@ use tokio_tungstenite::{
 };
 use trix_types::{
     AccountDebugMetricsStatusResponse, AccountDirectoryResponse, AccountFeatureFlagsResponse,
-    AccountId, AccountKeyPackagesResponse, AccountProfileResponse, AckInboxRequest, AckInboxResponse,
-    AppendHistorySyncChunkRequest,
-    AppendHistorySyncChunkResponse, ApplePushEnvironment, BlobMetadataResponse, BlobUploadStatus,
-    ChatDetailResponse, ChatHistoryResponse, ChatId, ChatListResponse,
-    CompleteHistorySyncJobRequest, CompleteHistorySyncJobResponse, CompleteLinkIntentRequest,
-    CompleteLinkIntentResponse, ControlMessageInput, CreateAccountRequest, CreateAccountResponse,
-    CreateBlobUploadRequest, CreateBlobUploadResponse, CreateChatRequest, CreateChatResponse,
-    CreateLinkIntentResponse, CreateMessageRequest, CreateMessageResponse,
-    DeviceApprovePayloadResponse, DeviceId, DeviceListResponse, DeviceStatus,
-    DeviceTransferBundleResponse, DeviceTransportKeyResponse, DirectoryAccountSummary,
-    DmGlobalDeleteRequest, DmGlobalDeleteResponse, ErrorResponse, HealthResponse,
-    HistorySyncChunkListResponse, HistorySyncChunkSummary, HistorySyncJobListResponse,
-    HistorySyncJobRole, HistorySyncJobStatus, LeaseInboxRequest, LeaseInboxResponse,
-    LeaveChatRequest, LeaveChatResponse, MessageId, ModifyChatDevicesRequest,
+    AccountId, AccountKeyPackagesResponse, AccountProfileResponse, AckInboxRequest,
+    AckInboxResponse, AppendHistorySyncChunkRequest, AppendHistorySyncChunkResponse,
+    ApplePushEnvironment, BlobMetadataResponse, BlobUploadStatus, ChatDetailResponse,
+    ChatHistoryResponse, ChatId, ChatListResponse, CompleteHistorySyncJobRequest,
+    CompleteHistorySyncJobResponse, CompleteLinkIntentRequest, CompleteLinkIntentResponse,
+    ControlMessageInput, CreateAccountRequest, CreateAccountResponse, CreateBlobUploadRequest,
+    CreateBlobUploadResponse, CreateChatRequest, CreateChatResponse, CreateLinkIntentResponse,
+    CreateMessageRequest, CreateMessageResponse, DeviceApprovePayloadResponse, DeviceId,
+    DeviceListResponse, DeviceStatus, DeviceTransferBundleResponse, DeviceTransportKeyResponse,
+    DirectoryAccountSummary, DmGlobalDeleteRequest, DmGlobalDeleteResponse, ErrorResponse,
+    HealthResponse, HistorySyncChunkListResponse, HistorySyncChunkSummary,
+    HistorySyncJobListResponse, HistorySyncJobRole, HistorySyncJobStatus, LeaseInboxRequest,
+    LeaseInboxResponse, LeaveChatRequest, LeaveChatResponse, MessageId, ModifyChatDevicesRequest,
     ModifyChatDevicesResponse, ModifyChatMembersRequest, ModifyChatMembersResponse,
     PublishKeyPackageItem, PublishKeyPackagesRequest, PublishKeyPackagesResponse,
     RegisterApplePushTokenRequest, RegisterApplePushTokenResponse, RequestChatBackfillRequest,
     RequestChatBackfillResponse, RequestHistorySyncRepairRequest, RequestHistorySyncRepairResponse,
     ReserveKeyPackagesRequest, ResetKeyPackagesResponse, RevokeDeviceRequest, RevokeDeviceResponse,
-    SubmitDebugMetricsRequest,
-    UpdateAccountProfileRequest, VersionResponse, WebSocketClientFrame, WebSocketServerFrame,
+    SubmitDebugMetricsRequest, UpdateAccountProfileRequest, VersionResponse, WebSocketClientFrame,
+    WebSocketServerFrame,
 };
 
 const CONTROL_AAD_META_KEY: &str = "_trix";
@@ -354,12 +353,11 @@ impl ServerApiClient {
         payload: Value,
     ) -> Result<(), ServerApiError> {
         self.send_empty(
-            self.request(Method::POST, "v0/accounts/me/debug/metrics")?.json(
-                &SubmitDebugMetricsRequest {
+            self.request(Method::POST, "v0/accounts/me/debug/metrics")?
+                .json(&SubmitDebugMetricsRequest {
                     session_id: session_id.into(),
                     payload,
-                },
-            ),
+                }),
         )
         .await
     }
