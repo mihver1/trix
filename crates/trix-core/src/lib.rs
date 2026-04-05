@@ -5,6 +5,7 @@ pub mod device_transfer;
 pub mod ffi;
 pub mod history_sync_payload;
 pub mod message;
+pub mod message_repair_payload;
 pub mod messenger;
 pub mod realtime;
 pub mod signatures;
@@ -42,6 +43,9 @@ pub use ffi::*;
 pub use message::{
     AttachmentMessageBody, ChatEventMessageBody, MessageBody, ReactionAction, ReactionMessageBody,
     ReceiptMessageBody, ReceiptType, TextMessageBody,
+};
+pub(crate) use message_repair_payload::{
+    decrypt_message_repair_payload, encrypt_message_repair_payload,
 };
 pub use messenger::*;
 pub use realtime::{

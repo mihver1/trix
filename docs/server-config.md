@@ -72,6 +72,15 @@ These control server-side garbage collection for auth challenges, device-link ar
 - overlapping pending `timeline_repair` requests are coalesced server-side by widening the stored `repair_from_server_seq` / `repair_through_server_seq` window instead of creating duplicate pending jobs.
 - if an account has no other active source device, `/v0/history-sync/jobs/request` returns `404` and `/v0/history-sync/jobs:request-repair` returns an empty `jobs` array.
 
+## Message Repair Witness
+
+- `POST /v0/message-repairs:request` is a second-line, per-message recovery path used only after ordinary `timeline_repair` did not restore a specific canonical message.
+- the request is bound to canonical server metadata: `chat_id`, `message_id`, `server_seq`, `epoch`, sender identifiers, message shape, and the stored ciphertext hash.
+- the server chooses an eligible witness only from active devices of the sender account, preferring the original `sender_device_id`.
+- if no eligible sender-side witness exists, the route returns a clean `unavailable` outcome; it does not fall back to arbitrary plaintext holders.
+- the server stores only short-lived request state and an opaque relay payload; it never stores durable plaintext-derived backups and cannot decrypt the witness payload.
+- witness payloads are encrypted directly to the target device transport key and are single-use once the target calls `POST /v0/message-repairs/{request_id}/complete`.
+
 ## Admin API Summary
 
 Current operator routes:

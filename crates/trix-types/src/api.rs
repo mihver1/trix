@@ -6,7 +6,8 @@ use serde_json::Value;
 
 use crate::{
     AccountId, ChatId, ChatType, ContentType, DeviceId, DeviceStatus, HistorySyncJobRole,
-    HistorySyncJobStatus, HistorySyncJobType, MessageId, MessageKind,
+    HistorySyncJobStatus, HistorySyncJobType, MessageId, MessageKind, MessageRepairRequestStatus,
+    MessageRepairTargetOutcome, MessageRepairWitnessOutcome,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -622,6 +623,89 @@ pub struct RequestHistorySyncRepairRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RequestHistorySyncRepairResponse {
     pub jobs: Vec<HistorySyncJobSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MessageRepairBinding {
+    pub chat_id: ChatId,
+    pub message_id: MessageId,
+    pub server_seq: u64,
+    pub epoch: u64,
+    pub sender_account_id: AccountId,
+    pub sender_device_id: DeviceId,
+    pub message_kind: MessageKind,
+    pub content_type: ContentType,
+    pub ciphertext_sha256_b64: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestMessageRepairWitnessRequest {
+    pub binding: MessageRepairBinding,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MessageRepairWitnessRequestSummary {
+    pub request_id: String,
+    pub binding: MessageRepairBinding,
+    pub target_device_id: DeviceId,
+    pub witness_account_id: AccountId,
+    pub witness_device_id: DeviceId,
+    pub status: MessageRepairRequestStatus,
+    #[serde(default)]
+    pub target_transport_pubkey_b64: Option<String>,
+    #[serde(default)]
+    pub result_payload_b64: Option<String>,
+    #[serde(default)]
+    pub submitted_by_device_id: Option<DeviceId>,
+    #[serde(default)]
+    pub unavailable_reason: Option<String>,
+    pub created_at_unix: u64,
+    pub updated_at_unix: u64,
+    pub expires_at_unix: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RequestMessageRepairWitnessResponse {
+    pub request: Option<MessageRepairWitnessRequestSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WitnessMessageRepairRequestListResponse {
+    pub requests: Vec<MessageRepairWitnessRequestSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TargetMessageRepairRequestListResponse {
+    pub requests: Vec<MessageRepairWitnessRequestSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubmitMessageRepairWitnessResultRequest {
+    pub binding: MessageRepairBinding,
+    pub outcome: MessageRepairWitnessOutcome,
+    #[serde(default)]
+    pub payload_b64: Option<String>,
+    #[serde(default)]
+    pub unavailable_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubmitMessageRepairWitnessResultResponse {
+    pub request_id: String,
+    pub status: MessageRepairRequestStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompleteMessageRepairWitnessRequest {
+    pub outcome: MessageRepairTargetOutcome,
+    #[serde(default)]
+    pub rejection_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompleteMessageRepairWitnessResponse {
+    pub request_id: String,
+    pub status: MessageRepairRequestStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
