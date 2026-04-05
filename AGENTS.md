@@ -39,6 +39,7 @@ Co-Authored-By: <agent name> <agent email>
 - Audit FFI parity: `make ffi-parity-audit`
 - Verify checked-in UniFFI bindings: `./scripts/verify-uniffi-bindings.sh`
 - Run bot daemon over stdio: `cargo run -q -p trix-botd -- stdio`
+- Terminal UI client (Linux/Windows/macOS; same bot state as `docs/bot-harness.md`): `cargo run -p trix-tui -- --server-url http://127.0.0.1:8080 --state-dir ./.trix-tui` (optional: `--plaintext-dev-store`, `--profile-name`, `--handle`, `--master-secret-env`; do not share `state_dir` with a running `trix-botd`)
 
 ## Workflows
 - Local backend: copy `.env.example` to `.env`, export it with `set -a; source .env; set +a`; the example file carries the admin auth env required by the current `trixd` startup path. Then verify `curl http://127.0.0.1:8080/v0/system/health` and `curl http://127.0.0.1:8080/v0/system/version`

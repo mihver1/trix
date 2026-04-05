@@ -84,6 +84,12 @@ cargo run -p trix-botd -- publish-key-packages \
   --count 32
 ```
 
+`init` also accepts optional `--platform <string>` (sent to the server on account creation; defaults to `bot`).
+
+## Trix TUI
+
+Cross-platform terminal UI: `cargo run -p trix-tui -- --server-url http://127.0.0.1:8080 --state-dir ./.trix-tui`. It uses the **same** `state_dir` layout and secrets as this document (`TRIX_BOT_MASTER_SECRET`, `--plaintext-dev-store`, `--master-secret-env`). On first run it creates an account with `platform=tui`. Do not run `trix-botd run` or a second `trix-tui` against the same `state_dir` at the same time.
+
 ## JSON-RPC Stdio Contract
 
 Launch the daemon:

@@ -34,6 +34,8 @@ pub struct BotInitConfig {
     pub state_dir: PathBuf,
     pub profile_name: String,
     pub handle: Option<String>,
+    /// Device platform string sent to the server on account creation. Defaults to `"bot"` when unset.
+    pub platform: Option<String>,
     pub master_secret_env: Option<String>,
     pub plaintext_dev_store: bool,
 }
@@ -210,7 +212,7 @@ impl Bot {
                     .handle
                     .clone()
                     .unwrap_or_else(|| "trix-bot".to_owned()),
-                platform: "bot".to_owned(),
+                platform: config.platform.clone().unwrap_or_else(|| "bot".to_owned()),
                 credential_identity: credential_identity.clone(),
                 account_root_pubkey: account_root.public_key_bytes(),
                 account_root_signature: account_root.sign(&trix_core::account_bootstrap_message(

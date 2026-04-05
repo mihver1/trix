@@ -20,6 +20,7 @@ async fn main() -> Result<()> {
         state_dir: state_dir.clone(),
         profile_name,
         handle,
+        platform: None,
         master_secret_env,
         plaintext_dev_store,
     })

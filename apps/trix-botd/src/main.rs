@@ -140,6 +140,8 @@ struct RpcInitParams {
     state_dir: String,
     profile_name: String,
     handle: Option<String>,
+    #[serde(default)]
+    platform: Option<String>,
     master_secret_env: Option<String>,
     #[serde(default)]
     plaintext_dev_store: bool,
@@ -202,6 +204,7 @@ async fn handle_rpc_request(
                 state_dir: PathBuf::from(params.state_dir),
                 profile_name: params.profile_name,
                 handle: params.handle,
+                platform: params.platform,
                 master_secret_env: params.master_secret_env,
                 plaintext_dev_store: params.plaintext_dev_store,
             })
@@ -547,6 +550,7 @@ fn parse_init_config(args: &[String]) -> Result<BotInitConfig> {
         state_dir: PathBuf::from(required_flag(args, "--state-dir")?),
         profile_name: required_flag(args, "--profile-name")?,
         handle: flag_value(args, "--handle"),
+        platform: flag_value(args, "--platform"),
         master_secret_env: flag_value(args, "--master-secret-env"),
         plaintext_dev_store: has_flag(args, "--plaintext-dev-store"),
     })

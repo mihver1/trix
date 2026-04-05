@@ -51,6 +51,7 @@ async fn bot_receives_text_replies_and_dedupes_after_restart() -> Result<()> {
         state_dir: state_dir.clone(),
         profile_name: "Echo Bot".to_owned(),
         handle: Some("echo-bot".to_owned()),
+        platform: None,
         master_secret_env: None,
         plaintext_dev_store: true,
     })
@@ -168,6 +169,7 @@ async fn bot_falls_back_to_polling_after_session_replaced() -> Result<()> {
         state_dir: state_dir.clone(),
         profile_name: "Polling Bot".to_owned(),
         handle: Some("poll-bot".to_owned()),
+        platform: None,
         master_secret_env: None,
         plaintext_dev_store: true,
     })
@@ -227,6 +229,7 @@ async fn bot_can_manually_republish_key_packages() -> Result<()> {
         state_dir: state_dir.clone(),
         profile_name: "Republish Bot".to_owned(),
         handle: Some("republish-bot".to_owned()),
+        platform: None,
         master_secret_env: None,
         plaintext_dev_store: true,
     })
@@ -250,6 +253,7 @@ async fn bot_receives_and_downloads_file_attachments() -> Result<()> {
         state_dir: state_dir.clone(),
         profile_name: "File Bot".to_owned(),
         handle: Some("file-bot".to_owned()),
+        platform: None,
         master_secret_env: None,
         plaintext_dev_store: true,
     })
