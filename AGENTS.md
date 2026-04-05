@@ -30,8 +30,9 @@ Co-Authored-By: <agent name> <agent email>
 - Start local Postgres: `docker compose up -d postgres`
 - Default client smoke pack: `./scripts/client-smoke-harness.sh`
 - Run backend: `cargo run -p trixd` or `make run-server`
+- Generate localized client strings: `make strings-generate`
 - Contract gates: `make contract-check`
-- Workspace check: `cargo check --workspace` or `make check`
+- Workspace check: `cargo check --workspace` or `make check` (`make check` runs `make contract-check` first)
 - Workspace tests: `cargo test --workspace`
 - Generate Swift bindings: `make ffi-bindings-swift`
 - Generate Kotlin bindings: `make ffi-bindings-kotlin`
@@ -46,9 +47,10 @@ Co-Authored-By: <agent name> <agent email>
 - Client smoke harness: default pack runs `client-scenarios`, `safe-ffi`, `bot-runtime`, `macos`, `android-unit`; use `--no-postgres` or `--stop-postgres` when needed. See `docs/client-smoke-harness.md`
 - Server-backed iOS smoke: `ios-server` / `ios-ui` auto-start local compose services, rebuild the `app` service, and require `jq` plus `curl` when not using `--no-postgres`. See `docs/client-smoke-harness.md`
 - Bot harness: `trix-botd` supports `init`, `run`, `publish-key-packages`, `stdio`; export `TRIX_BOT_MASTER_SECRET` before `init`. See `docs/bot-harness.md`
+- Localization catalog: after editing `strings.yaml`, run `make strings-generate` before committing checked-in platform outputs. See `docs/client-localization.md`
 - macOS admin: regenerate the Xcode project after `project.yml` changes with `xcodegen generate --spec apps/macos-admin/project.yml`
 - Platform-specific iOS, macOS, and Android build/archive flows live in the app READMEs; keep those docs authoritative.
 
 ## Key Conventions
-- Root commands should stay grounded in `README.md`, `Makefile`, `docs/client-smoke-harness.md`, `docs/contracts.md`, `docs/ffi-bindings.md`, `docs/server-config.md`, `docs/server-operations.md`, `apps/macos-admin/README.md`, and `examples/bots/README.md`
+- Root commands should stay grounded in `README.md`, `Makefile`, `docs/client-localization.md`, `docs/client-smoke-harness.md`, `docs/contracts.md`, `docs/ffi-bindings.md`, `docs/server-config.md`, `docs/server-operations.md`, `apps/macos-admin/README.md`, and `examples/bots/README.md`
 - Do not hand-edit generated UniFFI outputs without rerunning the documented binding workflow
