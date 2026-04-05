@@ -812,6 +812,66 @@ Rules:
 
 Marks a history sync job as completed and optionally updates its cursor payload.
 
+## Message Repair Witness
+
+These routes are a second-line recovery path for one broken canonical message after ordinary `timeline_repair` has already run and the same server-stored ciphertext still cannot be materialized locally.
+
+Security model:
+
+- this is not escrow and not general history backfill
+- the server keeps only short-lived request state plus an opaque result blob and cannot decrypt repaired plaintext
+- the repair blob is encrypted by the witness device directly to the target device transport key
+- target-side apply is accepted only when the decrypted payload still matches the canonical server message binding
+
+### `POST /v0/message-repairs:request`
+
+Creates or reuses a short-lived one-shot repair request for a single canonical message.
+
+Request:
+
+- `binding`
+  - `chat_id`
+  - `message_id`
+  - `server_seq`
+  - `epoch`
+  - `sender_account_id`
+  - `sender_device_id`
+  - `message_kind`
+  - `content_type`
+  - `ciphertext_sha256_b64`
+
+Rules:
+
+- caller must already be an authenticated active target device that can still see the referenced message
+- server validates the supplied binding against the canonical stored message before creating the request
+- the default witness is an active device of the sender account, preferring the original `sender_device_id`
+- if no eligible sender-side witness exists, the response returns `unavailable` instead of widening trust to another plaintext holder
+
+### `GET /v0/message-repairs/witness`
+
+Lists pending one-shot repair requests assigned to the authenticated witness device.
+
+### `POST /v0/message-repairs/{request_id}/submit`
+
+Witness submits either:
+
+- `completed` with transport-encrypted `payload_b64`, or
+- `unavailable` with a reason string
+
+Rules:
+
+- witness must echo the exact canonical binding from the request
+- duplicate identical submissions are idempotent
+- conflicting submissions are rejected
+
+### `GET /v0/message-repairs/target`
+
+Lists pending or completed witness-repair requests for the authenticated target device.
+
+### `POST /v0/message-repairs/{request_id}/complete`
+
+Marks the one-shot relay entry consumed after the target either applied or rejected the payload.
+
 ## Key Packages
 
 ### `POST /v0/key-packages:publish`

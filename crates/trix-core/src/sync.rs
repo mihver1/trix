@@ -14,7 +14,10 @@ use trix_types::{
     AccountId, AckInboxResponse, ChatDetailResponse, ChatDeviceSummary, ChatHistoryResponse,
     ChatId, ChatType, CreateChatRequest, DeviceId, DmGlobalDeleteRequest, HistorySyncJobStatus,
     HistorySyncJobType, LeaseInboxRequest, LeaseInboxResponse, LeaveChatRequest, LeaveChatScope,
-    MessageEnvelope, MessageId, MessageKind, ModifyChatDevicesRequest, ModifyChatMembersRequest,
+    MessageEnvelope, MessageId, MessageKind, MessageRepairRequestStatus,
+    MessageRepairTargetOutcome, MessageRepairWitnessOutcome, ModifyChatDevicesRequest,
+    ModifyChatMembersRequest, RequestMessageRepairWitnessRequest,
+    SubmitMessageRepairWitnessResultRequest,
 };
 use uuid::Uuid;
 
@@ -22,7 +25,8 @@ use crate::{
     DeviceKeyMaterial, LocalHistoryRepairWindow, LocalHistoryStore,
     LocalOutgoingMessageApplyOutcome, LocalProjectedMessage, LocalProjectionKind,
     LocalStoreApplyReport, MessageBody, MlsConversation, MlsFacade, PreparedLocalOutboxSend,
-    ServerApiClient, ServerApiError, SyncStateStore, decode_b64_field, encode_b64,
+    ServerApiClient, ServerApiError, SyncStateStore, decode_b64_field,
+    decrypt_message_repair_payload, encode_b64, encrypt_message_repair_payload,
     history_sync_payload::{
         HistorySyncChatMetadata, HistorySyncExportMetadata, decrypt_projected_message_chunk,
         encrypt_projected_message_chunk, parse_chat_metadata, parse_export_metadata,
@@ -621,6 +625,13 @@ impl SyncCoordinator {
             }
         }
 
+        self.process_witness_message_repair_requests(client, store, device_keys)
+            .await?;
+        changed_chat_ids.extend(
+            self.process_target_message_repair_requests(client, store, device_keys)
+                .await?,
+        );
+
         let mut changed_chat_ids = changed_chat_ids.into_iter().collect::<Vec<_>>();
         changed_chat_ids.sort_by_key(|chat_id| chat_id.0);
 
@@ -823,7 +834,234 @@ impl SyncCoordinator {
             changed_chat_ids.insert(chat_id);
         }
 
+        if job.job_type == HistorySyncJobType::TimelineRepair
+            && matches!(job.job_status, HistorySyncJobStatus::Completed)
+            && !has_active_timeline_repair_for_chat
+            && let Some(job_window) = parse_timeline_repair_window(&job.cursor_json)
+            && self
+                .maybe_request_message_repair_witness_for_window(
+                    client,
+                    store,
+                    chat_id,
+                    LocalHistoryRepairWindow {
+                        from_server_seq: job_window.from_server_seq,
+                        through_server_seq: job_window.through_server_seq,
+                    },
+                )
+                .await?
+        {
+            changed_chat_ids.insert(chat_id);
+        }
+
         Ok(processed_any_chunk)
+    }
+
+    async fn process_witness_message_repair_requests(
+        &mut self,
+        client: &ServerApiClient,
+        store: &mut LocalHistoryStore,
+        device_keys: &DeviceKeyMaterial,
+    ) -> Result<()> {
+        for request in client.list_witness_message_repairs().await? {
+            if request.status != MessageRepairRequestStatus::Pending {
+                continue;
+            }
+
+            let submit_request = if let Some(repaired_body) =
+                store.materialized_body_for_message_repair(&request.binding)
+            {
+                let target_transport_pubkey =
+                    request.target_transport_pubkey.as_ref().ok_or_else(|| {
+                        anyhow!("message repair request is missing target transport key")
+                    })?;
+                let payload = encrypt_message_repair_payload(
+                    &request.request_id,
+                    request.binding.clone(),
+                    request.witness_account_id,
+                    request.witness_device_id,
+                    &repaired_body,
+                    device_keys,
+                    target_transport_pubkey,
+                )?;
+                SubmitMessageRepairWitnessResultRequest {
+                    binding: request.binding.clone(),
+                    outcome: MessageRepairWitnessOutcome::Completed,
+                    payload_b64: Some(encode_b64(&payload)),
+                    unavailable_reason: None,
+                }
+            } else {
+                SubmitMessageRepairWitnessResultRequest {
+                    binding: request.binding.clone(),
+                    outcome: MessageRepairWitnessOutcome::Unavailable,
+                    payload_b64: None,
+                    unavailable_reason: Some("materialized_body_unavailable".to_owned()),
+                }
+            };
+
+            client
+                .submit_message_repair_witness_result(&request.request_id, submit_request)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn process_target_message_repair_requests(
+        &mut self,
+        client: &ServerApiClient,
+        store: &mut LocalHistoryStore,
+        device_keys: &DeviceKeyMaterial,
+    ) -> Result<HashSet<ChatId>> {
+        let mut changed_chat_ids = HashSet::new();
+        for request in client.list_target_message_repairs().await? {
+            match request.status {
+                MessageRepairRequestStatus::Pending => {
+                    if store.set_message_repair_mailbox_entry(
+                        request.binding.chat_id,
+                        request.binding.server_seq,
+                        mailbox_entry_from_request(
+                            &request,
+                            crate::storage::LocalMessageRepairMailboxStatus::PendingWitness,
+                            None,
+                        ),
+                    )? {
+                        changed_chat_ids.insert(request.binding.chat_id);
+                    }
+                }
+                MessageRepairRequestStatus::Unavailable => {
+                    if store.set_message_repair_mailbox_entry(
+                        request.binding.chat_id,
+                        request.binding.server_seq,
+                        mailbox_entry_from_request(
+                            &request,
+                            crate::storage::LocalMessageRepairMailboxStatus::WitnessUnavailable,
+                            request.unavailable_reason.clone(),
+                        ),
+                    )? {
+                        changed_chat_ids.insert(request.binding.chat_id);
+                    }
+                    client
+                        .complete_message_repair_witness(
+                            &request.request_id,
+                            trix_types::CompleteMessageRepairWitnessRequest {
+                                outcome: MessageRepairTargetOutcome::Rejected,
+                                rejection_reason: request.unavailable_reason.clone(),
+                            },
+                        )
+                        .await?;
+                }
+                MessageRepairRequestStatus::Completed => {
+                    let rejection_updated_at_unix = current_unix_seconds()?;
+                    let outcome = match request.result_payload.as_deref() {
+                        Some(payload) => match apply_target_message_repair_result(
+                            store,
+                            device_keys,
+                            &request,
+                            payload,
+                        ) {
+                            Ok(changed) => {
+                                if changed {
+                                    changed_chat_ids.insert(request.binding.chat_id);
+                                }
+                                MessageRepairTargetOutcome::Applied
+                            }
+                            Err(_) => {
+                                store.set_message_repair_mailbox_entry(
+                                    request.binding.chat_id,
+                                    request.binding.server_seq,
+                                    mailbox_entry_from_request_with_updated_at(
+                                        &request,
+                                        crate::storage::LocalMessageRepairMailboxStatus::WitnessUnavailable,
+                                        Some("rejected_message_repair_payload".to_owned()),
+                                        rejection_updated_at_unix,
+                                    ),
+                                )?;
+                                changed_chat_ids.insert(request.binding.chat_id);
+                                MessageRepairTargetOutcome::Rejected
+                            }
+                        },
+                        None => {
+                            store.set_message_repair_mailbox_entry(
+                                request.binding.chat_id,
+                                request.binding.server_seq,
+                                mailbox_entry_from_request_with_updated_at(
+                                    &request,
+                                    crate::storage::LocalMessageRepairMailboxStatus::WitnessUnavailable,
+                                    Some("missing_message_repair_payload".to_owned()),
+                                    rejection_updated_at_unix,
+                                ),
+                            )?;
+                            changed_chat_ids.insert(request.binding.chat_id);
+                            MessageRepairTargetOutcome::Rejected
+                        }
+                    };
+
+                    client
+                        .complete_message_repair_witness(
+                            &request.request_id,
+                            trix_types::CompleteMessageRepairWitnessRequest {
+                                outcome,
+                                rejection_reason: (outcome == MessageRepairTargetOutcome::Rejected)
+                                    .then_some("target_rejected_message_repair".to_owned()),
+                            },
+                        )
+                        .await?;
+                }
+                MessageRepairRequestStatus::Consumed | MessageRepairRequestStatus::Expired => {}
+            }
+        }
+        Ok(changed_chat_ids)
+    }
+
+    async fn maybe_request_message_repair_witness_for_window(
+        &mut self,
+        client: &ServerApiClient,
+        store: &mut LocalHistoryStore,
+        chat_id: ChatId,
+        window: LocalHistoryRepairWindow,
+    ) -> Result<bool> {
+        let candidates = store.message_repair_witness_candidates_in_window(chat_id, window);
+        if candidates.is_empty() {
+            return Ok(false);
+        }
+
+        let mut changed = false;
+        for candidate in candidates {
+            let response = client
+                .request_message_repair_witness(RequestMessageRepairWitnessRequest {
+                    binding: candidate.binding.clone(),
+                })
+                .await?;
+            let Some(request) = response else {
+                continue;
+            };
+
+            let (status, unavailable_reason) = match request.status {
+                MessageRepairRequestStatus::Pending => (
+                    crate::storage::LocalMessageRepairMailboxStatus::PendingWitness,
+                    None,
+                ),
+                MessageRepairRequestStatus::Completed => (
+                    crate::storage::LocalMessageRepairMailboxStatus::PendingWitness,
+                    None,
+                ),
+                MessageRepairRequestStatus::Unavailable => (
+                    crate::storage::LocalMessageRepairMailboxStatus::WitnessUnavailable,
+                    request.unavailable_reason.clone(),
+                ),
+                MessageRepairRequestStatus::Consumed | MessageRepairRequestStatus::Expired => {
+                    continue;
+                }
+            };
+
+            changed |= store.set_message_repair_mailbox_entry(
+                chat_id,
+                request.binding.server_seq,
+                mailbox_entry_from_request(&request, status, unavailable_reason),
+            )?;
+        }
+
+        Ok(changed)
     }
 
     async fn bootstrap_history_sync_chat_if_needed(
@@ -2745,6 +2983,77 @@ fn save_state_to_path(
     Ok(())
 }
 
+fn mailbox_entry_from_request(
+    request: &crate::transport::MessageRepairWitnessRequestMaterial,
+    status: crate::storage::LocalMessageRepairMailboxStatus,
+    unavailable_reason: Option<String>,
+) -> crate::storage::LocalMessageRepairMailboxEntry {
+    mailbox_entry_from_request_with_updated_at(
+        request,
+        status,
+        unavailable_reason,
+        request.updated_at_unix,
+    )
+}
+
+fn mailbox_entry_from_request_with_updated_at(
+    request: &crate::transport::MessageRepairWitnessRequestMaterial,
+    status: crate::storage::LocalMessageRepairMailboxStatus,
+    unavailable_reason: Option<String>,
+    updated_at_unix: u64,
+) -> crate::storage::LocalMessageRepairMailboxEntry {
+    crate::storage::LocalMessageRepairMailboxEntry {
+        request_id: request.request_id.clone(),
+        message_id: request.binding.message_id,
+        ciphertext_sha256_b64: request.binding.ciphertext_sha256_b64.clone(),
+        witness_account_id: request.witness_account_id,
+        witness_device_id: request.witness_device_id,
+        unavailable_reason,
+        status,
+        updated_at_unix,
+        expires_at_unix: request.expires_at_unix,
+    }
+}
+
+fn apply_target_message_repair_result(
+    store: &mut LocalHistoryStore,
+    device_keys: &DeviceKeyMaterial,
+    request: &crate::transport::MessageRepairWitnessRequestMaterial,
+    payload: &[u8],
+) -> Result<bool> {
+    let decrypted = decrypt_message_repair_payload(payload, device_keys)?;
+    if decrypted.request_id != request.request_id {
+        return Err(anyhow!(
+            "message repair payload request id mismatch: expected {}, got {}",
+            request.request_id,
+            decrypted.request_id
+        ));
+    }
+    if decrypted.binding != request.binding {
+        return Err(anyhow!(
+            "message repair payload binding mismatch for request {}",
+            request.request_id
+        ));
+    }
+    if decrypted.witness_account_id != request.witness_account_id
+        || decrypted.witness_device_id != request.witness_device_id
+    {
+        return Err(anyhow!(
+            "message repair payload witness mismatch for request {}",
+            request.request_id
+        ));
+    }
+
+    store.apply_message_repair_witness_payload(
+        &request.request_id,
+        &request.binding,
+        decrypted.witness_account_id,
+        decrypted.witness_device_id,
+        &decrypted.repaired_body,
+        request.updated_at_unix,
+    )
+}
+
 fn load_state_from_path(path: &Path) -> Result<PersistedSyncState> {
     if !is_sqlite_database(path)? {
         let state = load_legacy_json_state_from_path(path)?;
@@ -3124,11 +3433,17 @@ mod tests {
     use tokio::{net::TcpListener, task::JoinHandle};
     use trix_types::{
         AccountId, ChatDetailResponse, ChatHistoryResponse, ChatId, ChatParticipantProfileSummary,
-        ChatSummary, ChatType, ContentType, CreateMessageRequest, CreateMessageResponse, DeviceId,
-        DeviceStatus, DeviceTransportKeyResponse, ErrorResponse, HistorySyncChunkListResponse,
-        HistorySyncChunkSummary, HistorySyncJobListResponse, HistorySyncJobRole,
-        HistorySyncJobStatus, HistorySyncJobSummary, InboxItem, MessageEnvelope, MessageId,
-        MessageKind, PublishKeyPackagesRequest, PublishKeyPackagesResponse, PublishedKeyPackage,
+        ChatSummary, ChatType, CompleteMessageRepairWitnessRequest,
+        CompleteMessageRepairWitnessResponse, ContentType, CreateMessageRequest,
+        CreateMessageResponse, DeviceId, DeviceStatus, DeviceTransportKeyResponse, ErrorResponse,
+        HistorySyncChunkListResponse, HistorySyncChunkSummary, HistorySyncJobListResponse,
+        HistorySyncJobRole, HistorySyncJobStatus, HistorySyncJobSummary, InboxItem,
+        MessageEnvelope, MessageId, MessageKind, MessageRepairBinding, MessageRepairRequestStatus,
+        MessageRepairWitnessOutcome, MessageRepairWitnessRequestSummary, PublishKeyPackagesRequest,
+        PublishKeyPackagesResponse, PublishedKeyPackage, RequestMessageRepairWitnessRequest,
+        RequestMessageRepairWitnessResponse, SubmitMessageRepairWitnessResultRequest,
+        SubmitMessageRepairWitnessResultResponse, TargetMessageRepairRequestListResponse,
+        WitnessMessageRepairRequestListResponse,
     };
     use uuid::Uuid;
 
@@ -3140,6 +3455,7 @@ mod tests {
         DeviceKeyMaterial, LocalHistoryRepairWindow, LocalHistoryStore, LocalOutboxStatus,
         LocalProjectedMessage, LocalProjectionKind, LocalStoreApplyReport, MessageBody, MlsFacade,
         MlsProcessResult, ServerApiClient, TextMessageBody, decode_b64_field,
+        decrypt_message_repair_payload, encrypt_message_repair_payload,
     };
 
     const MOCK_HISTORY_PAGE_LIMIT: usize = 100;
@@ -3355,13 +3671,19 @@ mod tests {
         limit: Option<usize>,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Default)]
     struct MockHistorySyncServerState {
         source_jobs: Vec<HistorySyncJobSummary>,
         target_jobs: Vec<HistorySyncJobSummary>,
         chunks_by_job_id: BTreeMap<String, Vec<HistorySyncChunkSummary>>,
         device_transport_keys: BTreeMap<String, Vec<u8>>,
         completed_job_ids: Vec<String>,
+        requested_message_repair_bindings: Vec<MessageRepairBinding>,
+        request_message_repair_response: Option<MessageRepairWitnessRequestSummary>,
+        witness_message_repair_requests: Vec<MessageRepairWitnessRequestSummary>,
+        target_message_repair_requests: Vec<MessageRepairWitnessRequestSummary>,
+        submitted_message_repairs: Vec<(String, SubmitMessageRepairWitnessResultRequest)>,
+        completed_message_repairs: Vec<(String, CompleteMessageRepairWitnessRequest)>,
     }
 
     struct MockHistorySyncServer {
@@ -3386,6 +3708,26 @@ mod tests {
                 .route(
                     "/v0/history-sync/jobs/{job_id}/complete",
                     post(mock_complete_history_sync_job),
+                )
+                .route(
+                    "/v0/message-repairs:request",
+                    post(mock_request_message_repair_witness),
+                )
+                .route(
+                    "/v0/message-repairs/witness",
+                    get(mock_list_witness_message_repairs),
+                )
+                .route(
+                    "/v0/message-repairs/target",
+                    get(mock_list_target_message_repairs),
+                )
+                .route(
+                    "/v0/message-repairs/{request_id}/submit",
+                    post(mock_submit_message_repair_result),
+                )
+                .route(
+                    "/v0/message-repairs/{request_id}/complete",
+                    post(mock_complete_message_repair_request),
                 )
                 .with_state(state.clone());
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -3536,6 +3878,75 @@ mod tests {
         .into_response()
     }
 
+    async fn mock_request_message_repair_witness(
+        State(state): State<Arc<Mutex<MockHistorySyncServerState>>>,
+        Json(request): Json<RequestMessageRepairWitnessRequest>,
+    ) -> impl IntoResponse {
+        let mut state = state.lock().unwrap();
+        state
+            .requested_message_repair_bindings
+            .push(request.binding.clone());
+        Json(RequestMessageRepairWitnessResponse {
+            request: state.request_message_repair_response.clone(),
+        })
+        .into_response()
+    }
+
+    async fn mock_list_witness_message_repairs(
+        State(state): State<Arc<Mutex<MockHistorySyncServerState>>>,
+    ) -> impl IntoResponse {
+        let state = state.lock().unwrap();
+        Json(WitnessMessageRepairRequestListResponse {
+            requests: state.witness_message_repair_requests.clone(),
+        })
+        .into_response()
+    }
+
+    async fn mock_list_target_message_repairs(
+        State(state): State<Arc<Mutex<MockHistorySyncServerState>>>,
+    ) -> impl IntoResponse {
+        let state = state.lock().unwrap();
+        Json(TargetMessageRepairRequestListResponse {
+            requests: state.target_message_repair_requests.clone(),
+        })
+        .into_response()
+    }
+
+    async fn mock_submit_message_repair_result(
+        AxumPath(request_id): AxumPath<String>,
+        State(state): State<Arc<Mutex<MockHistorySyncServerState>>>,
+        Json(request): Json<SubmitMessageRepairWitnessResultRequest>,
+    ) -> impl IntoResponse {
+        let mut state = state.lock().unwrap();
+        state
+            .submitted_message_repairs
+            .push((request_id.clone(), request.clone()));
+        Json(SubmitMessageRepairWitnessResultResponse {
+            request_id,
+            status: match request.outcome {
+                MessageRepairWitnessOutcome::Completed => MessageRepairRequestStatus::Completed,
+                MessageRepairWitnessOutcome::Unavailable => MessageRepairRequestStatus::Unavailable,
+            },
+        })
+        .into_response()
+    }
+
+    async fn mock_complete_message_repair_request(
+        AxumPath(request_id): AxumPath<String>,
+        State(state): State<Arc<Mutex<MockHistorySyncServerState>>>,
+        Json(request): Json<CompleteMessageRepairWitnessRequest>,
+    ) -> impl IntoResponse {
+        let mut state = state.lock().unwrap();
+        state
+            .completed_message_repairs
+            .push((request_id.clone(), request.clone()));
+        Json(CompleteMessageRepairWitnessResponse {
+            request_id,
+            status: MessageRepairRequestStatus::Consumed,
+        })
+        .into_response()
+    }
+
     fn text_body(text: &str) -> MessageBody {
         MessageBody::Text(TextMessageBody {
             text: text.to_owned(),
@@ -3584,6 +3995,73 @@ mod tests {
             merged_epoch: None,
             created_at_unix: 1_700_000_000 + server_seq,
         }
+    }
+
+    fn message_repair_binding(message: &MessageEnvelope) -> MessageRepairBinding {
+        use sha2::{Digest, Sha256};
+
+        let ciphertext = decode_b64_field("ciphertext_b64", &message.ciphertext_b64).unwrap();
+        MessageRepairBinding {
+            chat_id: message.chat_id,
+            message_id: message.message_id,
+            server_seq: message.server_seq,
+            epoch: message.epoch,
+            sender_account_id: message.sender_account_id,
+            sender_device_id: message.sender_device_id,
+            message_kind: message.message_kind,
+            content_type: message.content_type,
+            ciphertext_sha256_b64: crate::encode_b64(&Sha256::digest(ciphertext)),
+        }
+    }
+
+    fn message_repair_request_summary(
+        request_id: &str,
+        binding: MessageRepairBinding,
+        target_device_id: DeviceId,
+        witness_account_id: AccountId,
+        witness_device_id: DeviceId,
+        status: MessageRepairRequestStatus,
+        target_transport_pubkey: Option<&[u8]>,
+        result_payload: Option<&[u8]>,
+        unavailable_reason: Option<&str>,
+    ) -> MessageRepairWitnessRequestSummary {
+        MessageRepairWitnessRequestSummary {
+            request_id: request_id.to_owned(),
+            binding,
+            target_device_id,
+            witness_account_id,
+            witness_device_id,
+            status,
+            target_transport_pubkey_b64: target_transport_pubkey.map(crate::encode_b64),
+            result_payload_b64: result_payload.map(crate::encode_b64),
+            submitted_by_device_id: Some(witness_device_id),
+            unavailable_reason: unavailable_reason.map(str::to_owned),
+            created_at_unix: 10,
+            updated_at_unix: 11,
+            expires_at_unix: 1_800_000_000,
+        }
+    }
+
+    fn seed_broken_message_chat(
+        store: &mut LocalHistoryStore,
+        chat_id: ChatId,
+        message: MessageEnvelope,
+    ) {
+        store
+            .apply_chat_detail(&empty_chat_detail(
+                chat_id,
+                message.server_seq,
+                message.epoch,
+                Some(message.clone()),
+                None,
+            ))
+            .unwrap();
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![message],
+            })
+            .unwrap();
     }
 
     #[test]
@@ -3936,6 +4414,7 @@ mod tests {
                 target_keys.public_key_bytes(),
             )]),
             completed_job_ids: Vec::new(),
+            ..Default::default()
         })
         .await;
 
@@ -4026,6 +4505,7 @@ mod tests {
             )]),
             device_transport_keys: BTreeMap::new(),
             completed_job_ids: Vec::new(),
+            ..Default::default()
         })
         .await;
 
@@ -4143,6 +4623,7 @@ mod tests {
             chunks_by_job_id: BTreeMap::new(),
             device_transport_keys: BTreeMap::new(),
             completed_job_ids: Vec::new(),
+            ..Default::default()
         })
         .await;
 
@@ -4165,6 +4646,456 @@ mod tests {
                 through_server_seq: 11,
             })
         );
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn process_history_sync_jobs_requests_message_repair_witness_after_completed_timeline_repair()
+     {
+        let chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+        let target_device_id = DeviceId(Uuid::new_v4());
+        let target_keys = DeviceKeyMaterial::generate();
+        let request_id = Uuid::new_v4().to_string();
+        let message = MessageEnvelope {
+            message_id: MessageId(Uuid::new_v4()),
+            chat_id,
+            server_seq: 10,
+            sender_account_id,
+            sender_device_id,
+            epoch: 4,
+            message_kind: MessageKind::Application,
+            content_type: ContentType::Text,
+            ciphertext_b64: crate::encode_b64(b"broken-ciphertext"),
+            aad_json: json!({}),
+            created_at_unix: 1_700_000_010,
+        };
+        let binding = message_repair_binding(&message);
+
+        let mut store = LocalHistoryStore::new();
+        seed_broken_message_chat(&mut store, chat_id, message);
+        store
+            .set_pending_history_repair_window(
+                chat_id,
+                LocalHistoryRepairWindow {
+                    from_server_seq: 10,
+                    through_server_seq: 10,
+                },
+            )
+            .unwrap();
+
+        let server = MockHistorySyncServer::spawn(MockHistorySyncServerState {
+            target_jobs: vec![HistorySyncJobSummary {
+                job_id: Uuid::new_v4().to_string(),
+                job_type: trix_types::HistorySyncJobType::TimelineRepair,
+                job_status: HistorySyncJobStatus::Completed,
+                source_device_id: sender_device_id,
+                target_device_id,
+                chat_id: Some(chat_id),
+                cursor_json: json!({
+                    "kind": "timeline_repair",
+                    "chat_id": chat_id.0,
+                    "repair_from_server_seq": 10,
+                    "repair_through_server_seq": 10,
+                    "reason": "unmaterialized_projection",
+                }),
+                created_at_unix: 1,
+                updated_at_unix: 2,
+            }],
+            request_message_repair_response: Some(message_repair_request_summary(
+                &request_id,
+                binding.clone(),
+                target_device_id,
+                sender_account_id,
+                sender_device_id,
+                MessageRepairRequestStatus::Pending,
+                None,
+                None,
+                None,
+            )),
+            ..Default::default()
+        })
+        .await;
+
+        let client = server.client();
+        let mut coordinator = SyncCoordinator::new();
+        let report = coordinator
+            .process_history_sync_jobs(&client, &mut store, &target_keys)
+            .await
+            .unwrap();
+
+        assert!(report.changed_chat_ids.contains(&chat_id));
+        assert_eq!(store.pending_history_repair_window(chat_id), None);
+        assert!(
+            store.history_repair_candidate(chat_id).is_none(),
+            "the escalated witness repair should suppress repeated timeline repair candidates"
+        );
+
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.requested_message_repair_bindings, vec![binding]);
+        assert!(state.completed_message_repairs.is_empty());
+        drop(state);
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn process_history_sync_jobs_requests_message_repair_witness_for_each_broken_message_in_window()
+     {
+        let chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+        let target_device_id = DeviceId(Uuid::new_v4());
+        let target_keys = DeviceKeyMaterial::generate();
+        let message_one = MessageEnvelope {
+            message_id: MessageId(Uuid::new_v4()),
+            chat_id,
+            server_seq: 10,
+            sender_account_id,
+            sender_device_id,
+            epoch: 4,
+            message_kind: MessageKind::Application,
+            content_type: ContentType::Text,
+            ciphertext_b64: crate::encode_b64(b"broken-ciphertext-1"),
+            aad_json: json!({}),
+            created_at_unix: 1_700_000_010,
+        };
+        let message_two = MessageEnvelope {
+            message_id: MessageId(Uuid::new_v4()),
+            chat_id,
+            server_seq: 11,
+            sender_account_id,
+            sender_device_id,
+            epoch: 4,
+            message_kind: MessageKind::Application,
+            content_type: ContentType::Text,
+            ciphertext_b64: crate::encode_b64(b"broken-ciphertext-2"),
+            aad_json: json!({}),
+            created_at_unix: 1_700_000_011,
+        };
+        let binding_one = message_repair_binding(&message_one);
+        let binding_two = message_repair_binding(&message_two);
+
+        let mut store = LocalHistoryStore::new();
+        store
+            .apply_chat_detail(&empty_chat_detail(
+                chat_id,
+                message_two.server_seq,
+                message_two.epoch,
+                Some(message_two.clone()),
+                None,
+            ))
+            .unwrap();
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![message_one, message_two],
+            })
+            .unwrap();
+        store
+            .set_pending_history_repair_window(
+                chat_id,
+                LocalHistoryRepairWindow {
+                    from_server_seq: 10,
+                    through_server_seq: 11,
+                },
+            )
+            .unwrap();
+
+        let server = MockHistorySyncServer::spawn(MockHistorySyncServerState {
+            target_jobs: vec![HistorySyncJobSummary {
+                job_id: Uuid::new_v4().to_string(),
+                job_type: trix_types::HistorySyncJobType::TimelineRepair,
+                job_status: HistorySyncJobStatus::Completed,
+                source_device_id: sender_device_id,
+                target_device_id,
+                chat_id: Some(chat_id),
+                cursor_json: json!({
+                    "kind": "timeline_repair",
+                    "chat_id": chat_id.0,
+                    "repair_from_server_seq": 10,
+                    "repair_through_server_seq": 11,
+                    "reason": "projection_failure",
+                }),
+                created_at_unix: 1,
+                updated_at_unix: 2,
+            }],
+            ..Default::default()
+        })
+        .await;
+
+        let client = server.client();
+        let mut coordinator = SyncCoordinator::new();
+        let report = coordinator
+            .process_history_sync_jobs(&client, &mut store, &target_keys)
+            .await
+            .unwrap();
+
+        assert!(report.changed_chat_ids.contains(&chat_id));
+        assert_eq!(store.pending_history_repair_window(chat_id), None);
+
+        let state = server.state.lock().unwrap();
+        let mut requested = state.requested_message_repair_bindings.clone();
+        requested.sort_by_key(|binding| binding.server_seq);
+        assert_eq!(requested, vec![binding_one, binding_two]);
+        drop(state);
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn process_history_sync_jobs_submits_completed_witness_repair_payload() {
+        let chat_id = ChatId(Uuid::new_v4());
+        let witness_account_id = AccountId(Uuid::new_v4());
+        let witness_device_id = DeviceId(Uuid::new_v4());
+        let target_device_id = DeviceId(Uuid::new_v4());
+        let witness_keys = DeviceKeyMaterial::generate();
+        let target_keys = DeviceKeyMaterial::generate();
+        let repaired_body = text_body("restored through witness").to_bytes().unwrap();
+        let message = MessageEnvelope {
+            message_id: MessageId(Uuid::new_v4()),
+            chat_id,
+            server_seq: 7,
+            sender_account_id: witness_account_id,
+            sender_device_id: witness_device_id,
+            epoch: 3,
+            message_kind: MessageKind::Application,
+            content_type: ContentType::Text,
+            ciphertext_b64: crate::encode_b64(b"ciphertext"),
+            aad_json: json!({}),
+            created_at_unix: 1_700_000_007,
+        };
+        let binding = message_repair_binding(&message);
+
+        let mut store = LocalHistoryStore::new();
+        seed_broken_message_chat(&mut store, chat_id, message);
+        store
+            .apply_projected_messages(
+                chat_id,
+                &[projected_text_message(
+                    7,
+                    witness_account_id,
+                    witness_device_id,
+                    3,
+                    "restored through witness",
+                )],
+            )
+            .unwrap();
+
+        let server = MockHistorySyncServer::spawn(MockHistorySyncServerState {
+            witness_message_repair_requests: vec![message_repair_request_summary(
+                "request-1",
+                binding.clone(),
+                target_device_id,
+                witness_account_id,
+                witness_device_id,
+                MessageRepairRequestStatus::Pending,
+                Some(&target_keys.public_key_bytes()),
+                None,
+                None,
+            )],
+            ..Default::default()
+        })
+        .await;
+
+        let client = server.client();
+        let mut coordinator = SyncCoordinator::new();
+        coordinator
+            .process_history_sync_jobs(&client, &mut store, &witness_keys)
+            .await
+            .unwrap();
+
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.submitted_message_repairs.len(), 1);
+        let (submitted_request_id, submitted_request) = &state.submitted_message_repairs[0];
+        assert_eq!(submitted_request_id, "request-1");
+        assert_eq!(
+            submitted_request.outcome,
+            MessageRepairWitnessOutcome::Completed
+        );
+        let payload = decode_b64_field(
+            "payload_b64",
+            submitted_request
+                .payload_b64
+                .as_ref()
+                .expect("completed witness repair should include payload"),
+        )
+        .unwrap();
+        drop(state);
+
+        let decrypted = decrypt_message_repair_payload(&payload, &target_keys).unwrap();
+        assert_eq!(decrypted.request_id, "request-1");
+        assert_eq!(decrypted.binding, binding);
+        assert_eq!(decrypted.repaired_body, repaired_body);
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn process_history_sync_jobs_applies_completed_message_repair_payload() {
+        let chat_id = ChatId(Uuid::new_v4());
+        let witness_account_id = AccountId(Uuid::new_v4());
+        let witness_device_id = DeviceId(Uuid::new_v4());
+        let target_device_id = DeviceId(Uuid::new_v4());
+        let witness_keys = DeviceKeyMaterial::generate();
+        let target_keys = DeviceKeyMaterial::generate();
+        let repaired_body = text_body("recovered body").to_bytes().unwrap();
+        let message = MessageEnvelope {
+            message_id: MessageId(Uuid::new_v4()),
+            chat_id,
+            server_seq: 11,
+            sender_account_id: witness_account_id,
+            sender_device_id: witness_device_id,
+            epoch: 5,
+            message_kind: MessageKind::Application,
+            content_type: ContentType::Text,
+            ciphertext_b64: crate::encode_b64(b"recoverable-ciphertext"),
+            aad_json: json!({}),
+            created_at_unix: 1_700_000_011,
+        };
+        let binding = message_repair_binding(&message);
+        let payload = encrypt_message_repair_payload(
+            "request-apply",
+            binding.clone(),
+            witness_account_id,
+            witness_device_id,
+            &repaired_body,
+            &witness_keys,
+            &target_keys.public_key_bytes(),
+        )
+        .unwrap();
+
+        let mut store = LocalHistoryStore::new();
+        seed_broken_message_chat(&mut store, chat_id, message);
+
+        let server = MockHistorySyncServer::spawn(MockHistorySyncServerState {
+            target_message_repair_requests: vec![message_repair_request_summary(
+                "request-apply",
+                binding.clone(),
+                target_device_id,
+                witness_account_id,
+                witness_device_id,
+                MessageRepairRequestStatus::Completed,
+                None,
+                Some(&payload),
+                None,
+            )],
+            ..Default::default()
+        })
+        .await;
+
+        let client = server.client();
+        let mut coordinator = SyncCoordinator::new();
+        let report = coordinator
+            .process_history_sync_jobs(&client, &mut store, &target_keys)
+            .await
+            .unwrap();
+
+        assert!(report.changed_chat_ids.contains(&chat_id));
+        let projected = store.get_projected_messages(chat_id, None, Some(10));
+        assert_eq!(projected.len(), 1);
+        assert_eq!(
+            projected[0].payload.as_deref(),
+            Some(repaired_body.as_slice())
+        );
+
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.completed_message_repairs.len(), 1);
+        assert_eq!(state.completed_message_repairs[0].0, "request-apply");
+        assert_eq!(
+            state.completed_message_repairs[0].1.outcome,
+            trix_types::MessageRepairTargetOutcome::Applied
+        );
+        drop(state);
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn process_history_sync_jobs_rejects_mismatched_message_repair_payload() {
+        let chat_id = ChatId(Uuid::new_v4());
+        let witness_account_id = AccountId(Uuid::new_v4());
+        let witness_device_id = DeviceId(Uuid::new_v4());
+        let target_device_id = DeviceId(Uuid::new_v4());
+        let witness_keys = DeviceKeyMaterial::generate();
+        let target_keys = DeviceKeyMaterial::generate();
+        let message = MessageEnvelope {
+            message_id: MessageId(Uuid::new_v4()),
+            chat_id,
+            server_seq: 12,
+            sender_account_id: witness_account_id,
+            sender_device_id: witness_device_id,
+            epoch: 6,
+            message_kind: MessageKind::Application,
+            content_type: ContentType::Text,
+            ciphertext_b64: crate::encode_b64(b"mismatch-ciphertext"),
+            aad_json: json!({}),
+            created_at_unix: 1_700_000_012,
+        };
+        let binding = message_repair_binding(&message);
+        let mut mismatched_binding = binding.clone();
+        mismatched_binding.ciphertext_sha256_b64 = crate::encode_b64(&[9u8; 32]);
+        let payload = encrypt_message_repair_payload(
+            "request-reject",
+            mismatched_binding,
+            witness_account_id,
+            witness_device_id,
+            &text_body("wrong body").to_bytes().unwrap(),
+            &witness_keys,
+            &target_keys.public_key_bytes(),
+        )
+        .unwrap();
+
+        let mut store = LocalHistoryStore::new();
+        seed_broken_message_chat(&mut store, chat_id, message);
+
+        let server = MockHistorySyncServer::spawn(MockHistorySyncServerState {
+            target_message_repair_requests: vec![message_repair_request_summary(
+                "request-reject",
+                binding,
+                target_device_id,
+                witness_account_id,
+                witness_device_id,
+                MessageRepairRequestStatus::Completed,
+                None,
+                Some(&payload),
+                None,
+            )],
+            ..Default::default()
+        })
+        .await;
+
+        let client = server.client();
+        let mut coordinator = SyncCoordinator::new();
+        let report = coordinator
+            .process_history_sync_jobs(&client, &mut store, &target_keys)
+            .await
+            .unwrap();
+
+        assert!(report.changed_chat_ids.contains(&chat_id));
+        assert!(
+            store
+                .get_projected_messages(chat_id, None, Some(10))
+                .is_empty(),
+            "mismatched witness payload must not materialize the broken message"
+        );
+
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.completed_message_repairs.len(), 1);
+        assert_eq!(
+            state.completed_message_repairs[0].1.outcome,
+            trix_types::MessageRepairTargetOutcome::Rejected
+        );
+        assert_eq!(
+            state.completed_message_repairs[0]
+                .1
+                .rejection_reason
+                .as_deref(),
+            Some("target_rejected_message_repair")
+        );
+        drop(state);
 
         server.shutdown().await;
     }

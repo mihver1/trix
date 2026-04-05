@@ -10,6 +10,7 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use trix_types::{
     AccountId, ChatDetailResponse, ChatDeviceSummary, ChatHistoryResponse, ChatId,
     ChatListResponse, ChatMemberSummary, ChatParticipantProfileSummary, ChatSummary, ChatType,
@@ -164,6 +165,33 @@ pub enum LocalMessageRecoveryState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LocalMessageRepairMailboxStatus {
+    PendingWitness,
+    WitnessUnavailable,
+}
+
+const MESSAGE_REPAIR_WITNESS_PENDING_TTL_SECONDS: u64 = 15 * 60;
+const MESSAGE_REPAIR_WITNESS_RETRY_BACKOFF_SECONDS: u64 = 60;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LocalMessageRepairMailboxEntry {
+    pub request_id: String,
+    pub message_id: MessageId,
+    pub ciphertext_sha256_b64: String,
+    pub witness_account_id: trix_types::AccountId,
+    pub witness_device_id: trix_types::DeviceId,
+    pub unavailable_reason: Option<String>,
+    pub status: LocalMessageRepairMailboxStatus,
+    pub updated_at_unix: u64,
+    pub expires_at_unix: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LocalMessageRepairWitnessCandidate {
+    pub binding: trix_types::MessageRepairBinding,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocalHistoryRepairReason {
     ProjectedGap,
     UnmaterializedProjection,
@@ -296,6 +324,8 @@ struct PersistedChatState {
     pending_history_repair_from_server_seq: Option<u64>,
     #[serde(default)]
     pending_history_repair_through_server_seq: Option<u64>,
+    #[serde(default)]
+    message_repair_mailbox: BTreeMap<u64, PersistedMessageRepairMailboxEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -310,8 +340,41 @@ struct PersistedProjectedMessage {
     projection_kind: LocalProjectionKind,
     #[serde(default, alias = "payload_b64")]
     materialized_body_b64: Option<String>,
+    #[serde(default)]
+    witness_repair: Option<PersistedWitnessRepairProvenance>,
     merged_epoch: Option<u64>,
     created_at_unix: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PersistedMessageRepairMailboxStatus {
+    PendingWitness,
+    WitnessUnavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PersistedMessageRepairMailboxEntry {
+    request_id: String,
+    message_id: MessageId,
+    ciphertext_sha256_b64: String,
+    witness_account_id: trix_types::AccountId,
+    witness_device_id: trix_types::DeviceId,
+    #[serde(default)]
+    unavailable_reason: Option<String>,
+    status: PersistedMessageRepairMailboxStatus,
+    updated_at_unix: u64,
+    #[serde(default)]
+    expires_at_unix: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PersistedWitnessRepairProvenance {
+    request_id: String,
+    witness_account_id: trix_types::AccountId,
+    witness_device_id: trix_types::DeviceId,
+    ciphertext_sha256_b64: String,
+    repaired_at_unix: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -787,6 +850,7 @@ impl LocalHistoryStore {
                     projected_messages: BTreeMap::new(),
                     pending_history_repair_from_server_seq: None,
                     pending_history_repair_through_server_seq: None,
+                    message_repair_mailbox: BTreeMap::new(),
                 });
         let group_id_b64 = crate::encode_b64(group_id);
         if entry.mls_group_id_b64.as_deref() == Some(group_id_b64.as_str()) {
@@ -1097,17 +1161,20 @@ impl LocalHistoryStore {
     pub fn history_repair_candidate(&self, chat_id: ChatId) -> Option<LocalHistoryRepairCandidate> {
         let chat = self.state.chats.get(&chat_id.0.to_string())?;
         projected_gap_after_cursor(chat)
+            .filter(|window| !history_repair_window_is_suppressed(chat, *window))
             .map(|window| LocalHistoryRepairCandidate {
                 chat_id,
                 window,
                 reason: LocalHistoryRepairReason::ProjectedGap,
             })
             .or_else(|| {
-                unmaterialized_application_window(chat).map(|window| LocalHistoryRepairCandidate {
-                    chat_id,
-                    window,
-                    reason: LocalHistoryRepairReason::UnmaterializedProjection,
-                })
+                unmaterialized_application_window(chat)
+                    .filter(|window| !history_repair_window_is_suppressed(chat, *window))
+                    .map(|window| LocalHistoryRepairCandidate {
+                        chat_id,
+                        window,
+                        reason: LocalHistoryRepairReason::UnmaterializedProjection,
+                    })
             })
     }
 
@@ -1117,12 +1184,189 @@ impl LocalHistoryStore {
     ) -> Option<LocalHistoryRepairCandidate> {
         self.history_repair_candidate(chat_id).or_else(|| {
             let chat = self.state.chats.get(&chat_id.0.to_string())?;
-            unprojected_tail_window(chat).map(|window| LocalHistoryRepairCandidate {
-                chat_id,
-                window,
-                reason: LocalHistoryRepairReason::ProjectionFailure,
-            })
+            unprojected_tail_window(chat)
+                .filter(|window| !history_repair_window_is_suppressed(chat, *window))
+                .map(|window| LocalHistoryRepairCandidate {
+                    chat_id,
+                    window,
+                    reason: LocalHistoryRepairReason::ProjectionFailure,
+                })
         })
+    }
+
+    pub(crate) fn message_repair_witness_candidates_in_window(
+        &self,
+        chat_id: ChatId,
+        window: LocalHistoryRepairWindow,
+    ) -> Vec<LocalMessageRepairWitnessCandidate> {
+        let Some(chat) = self.state.chats.get(&chat_id.0.to_string()) else {
+            return Vec::new();
+        };
+        let now_unix = current_unix_seconds_for_mailbox_retry();
+        chat.messages
+            .range(window.from_server_seq..=window.through_server_seq)
+            .filter_map(|(server_seq, message)| {
+                let binding = unresolved_message_repair_binding(chat, *server_seq, message)?;
+                let suppressed = chat
+                    .message_repair_mailbox
+                    .get(server_seq)
+                    .is_some_and(|entry| {
+                        message_repair_mailbox_entry_suppresses_retry(entry, now_unix)
+                    });
+                (!suppressed).then_some(LocalMessageRepairWitnessCandidate { binding })
+            })
+            .collect::<Vec<_>>()
+    }
+
+    pub(crate) fn set_message_repair_mailbox_entry(
+        &mut self,
+        chat_id: ChatId,
+        server_seq: u64,
+        entry: LocalMessageRepairMailboxEntry,
+    ) -> Result<bool> {
+        self.ensure_chat_exists(chat_id);
+        let Some(chat) = self.state.chats.get_mut(&chat_id.0.to_string()) else {
+            return Ok(false);
+        };
+        let persisted = PersistedMessageRepairMailboxEntry::from(entry);
+        let changed = chat
+            .message_repair_mailbox
+            .get(&server_seq)
+            .map(|existing| existing != &persisted)
+            .unwrap_or(true);
+        if !changed {
+            return Ok(false);
+        }
+        chat.message_repair_mailbox.insert(server_seq, persisted);
+        self.save_state()?;
+        Ok(true)
+    }
+
+    pub(crate) fn materialized_body_for_message_repair(
+        &self,
+        binding: &trix_types::MessageRepairBinding,
+    ) -> Option<Vec<u8>> {
+        let chat = self.state.chats.get(&binding.chat_id.0.to_string())?;
+        let message = chat.messages.get(&binding.server_seq)?;
+        if !binding_matches_message(message, binding).ok()? {
+            return None;
+        }
+        let projected = chat.projected_messages.get(&binding.server_seq)?;
+        if projected.projection_kind != LocalProjectionKind::ApplicationMessage {
+            return None;
+        }
+        let payload_b64 = projected.materialized_body_b64.as_ref()?;
+        let payload = decode_b64_field("materialized_body_b64", payload_b64).ok()?;
+        MessageBody::from_bytes(binding.content_type, &payload).ok()?;
+        Some(payload)
+    }
+
+    pub(crate) fn apply_message_repair_witness_payload(
+        &mut self,
+        request_id: &str,
+        binding: &trix_types::MessageRepairBinding,
+        witness_account_id: trix_types::AccountId,
+        witness_device_id: trix_types::DeviceId,
+        repaired_body: &[u8],
+        repaired_at_unix: u64,
+    ) -> Result<bool> {
+        MessageBody::from_bytes(binding.content_type, repaired_body).with_context(|| {
+            format!(
+                "repaired witness payload for message {} is not valid {:?}",
+                binding.message_id.0, binding.content_type
+            )
+        })?;
+
+        let chat_key = binding.chat_id.0.to_string();
+        let previous_chat = self.state.chats.get(&chat_key).cloned();
+        let result =
+            (|| -> Result<bool> {
+                let chat = self.state.chats.get_mut(&chat_key).ok_or_else(|| {
+                    anyhow!("chat {} is missing from local store", binding.chat_id.0)
+                })?;
+                let message = chat.messages.get(&binding.server_seq).ok_or_else(|| {
+                    anyhow!("message server_seq {} is missing", binding.server_seq)
+                })?;
+                if !binding_matches_message(message, binding)? {
+                    return Err(anyhow!(
+                        "message repair binding mismatch for {}",
+                        binding.message_id.0
+                    ));
+                }
+
+                let mut persisted = PersistedProjectedMessage {
+                    server_seq: message.server_seq,
+                    message_id: message.message_id,
+                    sender_account_id: message.sender_account_id,
+                    sender_device_id: message.sender_device_id,
+                    epoch: message.epoch,
+                    message_kind: message.message_kind,
+                    content_type: message.content_type,
+                    projection_kind: LocalProjectionKind::ApplicationMessage,
+                    materialized_body_b64: Some(crate::encode_b64(repaired_body)),
+                    witness_repair: Some(PersistedWitnessRepairProvenance {
+                        request_id: request_id.to_owned(),
+                        witness_account_id,
+                        witness_device_id,
+                        ciphertext_sha256_b64: binding.ciphertext_sha256_b64.clone(),
+                        repaired_at_unix,
+                    }),
+                    merged_epoch: None,
+                    created_at_unix: message.created_at_unix,
+                };
+                let changed = match chat.projected_messages.get(&binding.server_seq) {
+                    Some(existing) if existing == &persisted => false,
+                    Some(existing)
+                        if existing
+                            .witness_repair
+                            .as_ref()
+                            .map(|value| value.request_id.as_str())
+                            == Some(request_id) =>
+                    {
+                        persisted.merged_epoch = existing.merged_epoch;
+                        false
+                    }
+                    Some(existing) => {
+                        persisted.merged_epoch = existing.merged_epoch;
+                        chat.projected_messages
+                            .insert(binding.server_seq, persisted);
+                        true
+                    }
+                    None => {
+                        chat.projected_messages
+                            .insert(binding.server_seq, persisted);
+                        true
+                    }
+                };
+
+                let cursor_advanced = advance_projected_cursor(chat);
+                let pending_repair_changed = reconcile_pending_history_repair_in_chat(chat);
+                let mailbox_changed = chat
+                    .message_repair_mailbox
+                    .remove(&binding.server_seq)
+                    .is_some();
+                let reconciled_mailbox = reconcile_message_repair_mailbox_in_chat(chat);
+
+                Ok(changed
+                    || cursor_advanced
+                    || pending_repair_changed
+                    || mailbox_changed
+                    || reconciled_mailbox)
+            })();
+
+        match result {
+            Ok(changed) => {
+                if let Err(error) = self.persist_if_needed(changed) {
+                    self.restore_chat_snapshot(&chat_key, previous_chat);
+                    return Err(error);
+                }
+                Ok(changed)
+            }
+            Err(error) => {
+                self.restore_chat_snapshot(&chat_key, previous_chat);
+                Err(error)
+            }
+        }
     }
 
     pub fn pending_history_repair_window(
@@ -1979,7 +2223,9 @@ impl LocalHistoryStore {
                     advanced_to_server_seq = Some(chat.projected_cursor_server_seq);
                 }
             }
-            if reconcile_pending_history_repair_in_chat(chat) {
+            if reconcile_pending_history_repair_in_chat(chat)
+                || reconcile_message_repair_mailbox_in_chat(chat)
+            {
                 changed = true;
             }
 
@@ -2067,7 +2313,8 @@ impl LocalHistoryStore {
         }
 
         let pending_repair_changed = reconcile_pending_history_repair_in_chat(chat);
-        if pending_repair_changed {
+        let mailbox_changed = reconcile_message_repair_mailbox_in_chat(chat);
+        if pending_repair_changed || mailbox_changed {
             changed = true;
         }
 
@@ -2189,6 +2436,7 @@ impl LocalHistoryStore {
                 projected_messages: BTreeMap::new(),
                 pending_history_repair_from_server_seq: None,
                 pending_history_repair_through_server_seq: None,
+                message_repair_mailbox: BTreeMap::new(),
             });
     }
 
@@ -2223,6 +2471,7 @@ impl LocalHistoryStore {
                     projected_messages: BTreeMap::new(),
                     pending_history_repair_from_server_seq: None,
                     pending_history_repair_through_server_seq: None,
+                    message_repair_mailbox: BTreeMap::new(),
                 });
 
             let mut changed = false;
@@ -2345,6 +2594,7 @@ impl LocalHistoryStore {
                 projected_messages: BTreeMap::new(),
                 pending_history_repair_from_server_seq: None,
                 pending_history_repair_through_server_seq: None,
+                message_repair_mailbox: BTreeMap::new(),
             });
 
         let mut changed = false;
@@ -2460,6 +2710,7 @@ impl LocalHistoryStore {
                 projected_messages: BTreeMap::new(),
                 pending_history_repair_from_server_seq: None,
                 pending_history_repair_through_server_seq: None,
+                message_repair_mailbox: BTreeMap::new(),
             });
 
         let mut chat_changed = false;
@@ -3047,9 +3298,182 @@ fn persisted_projected_message_from(value: LocalProjectedMessage) -> PersistedPr
         content_type: value.content_type,
         projection_kind: value.projection_kind,
         materialized_body_b64: value.payload.map(|payload| crate::encode_b64(&payload)),
+        witness_repair: None,
         merged_epoch: value.merged_epoch,
         created_at_unix: value.created_at_unix,
     }
+}
+
+impl From<LocalMessageRepairMailboxEntry> for PersistedMessageRepairMailboxEntry {
+    fn from(value: LocalMessageRepairMailboxEntry) -> Self {
+        Self {
+            request_id: value.request_id,
+            message_id: value.message_id,
+            ciphertext_sha256_b64: value.ciphertext_sha256_b64,
+            witness_account_id: value.witness_account_id,
+            witness_device_id: value.witness_device_id,
+            unavailable_reason: value.unavailable_reason,
+            status: match value.status {
+                LocalMessageRepairMailboxStatus::PendingWitness => {
+                    PersistedMessageRepairMailboxStatus::PendingWitness
+                }
+                LocalMessageRepairMailboxStatus::WitnessUnavailable => {
+                    PersistedMessageRepairMailboxStatus::WitnessUnavailable
+                }
+            },
+            updated_at_unix: value.updated_at_unix,
+            expires_at_unix: value.expires_at_unix,
+        }
+    }
+}
+
+fn history_repair_window_is_suppressed(
+    chat: &PersistedChatState,
+    window: LocalHistoryRepairWindow,
+) -> bool {
+    let now_unix = current_unix_seconds_for_mailbox_retry();
+    chat.message_repair_mailbox
+        .get(&window.from_server_seq)
+        .is_some_and(|entry| pending_message_repair_mailbox_entry_is_active(entry, now_unix))
+}
+
+fn pending_message_repair_mailbox_entry_is_active(
+    entry: &PersistedMessageRepairMailboxEntry,
+    now_unix: u64,
+) -> bool {
+    if !matches!(
+        entry.status,
+        PersistedMessageRepairMailboxStatus::PendingWitness
+    ) {
+        return false;
+    }
+    let suppress_until = if entry.expires_at_unix > 0 {
+        entry.expires_at_unix
+    } else {
+        entry
+            .updated_at_unix
+            .saturating_add(MESSAGE_REPAIR_WITNESS_PENDING_TTL_SECONDS)
+    };
+    now_unix < suppress_until
+}
+
+fn message_repair_mailbox_entry_suppresses_retry(
+    entry: &PersistedMessageRepairMailboxEntry,
+    now_unix: u64,
+) -> bool {
+    match entry.status {
+        PersistedMessageRepairMailboxStatus::PendingWitness => {
+            pending_message_repair_mailbox_entry_is_active(entry, now_unix)
+        }
+        PersistedMessageRepairMailboxStatus::WitnessUnavailable => {
+            now_unix.saturating_sub(entry.updated_at_unix)
+                < MESSAGE_REPAIR_WITNESS_RETRY_BACKOFF_SECONDS
+        }
+    }
+}
+
+fn current_unix_seconds_for_mailbox_retry() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default()
+}
+
+fn reconcile_message_repair_mailbox_in_chat(chat: &mut PersistedChatState) -> bool {
+    let stale_server_seqs = chat
+        .message_repair_mailbox
+        .iter()
+        .filter_map(|(server_seq, _)| {
+            let message = chat.messages.get(server_seq)?;
+            (!message_still_requires_witness_repair(chat, *server_seq, message))
+                .then_some(*server_seq)
+        })
+        .collect::<Vec<_>>();
+    if stale_server_seqs.is_empty() {
+        return false;
+    }
+    for server_seq in stale_server_seqs {
+        chat.message_repair_mailbox.remove(&server_seq);
+    }
+    true
+}
+
+fn unresolved_message_repair_binding(
+    chat: &PersistedChatState,
+    server_seq: u64,
+    message: &MessageEnvelope,
+) -> Option<trix_types::MessageRepairBinding> {
+    if !message_still_requires_witness_repair(chat, server_seq, message) {
+        return None;
+    }
+    Some(message_repair_binding_from_message(message).ok()?)
+}
+
+fn message_still_requires_witness_repair(
+    chat: &PersistedChatState,
+    server_seq: u64,
+    message: &MessageEnvelope,
+) -> bool {
+    if message.message_kind != MessageKind::Application {
+        return false;
+    }
+    match chat.projected_messages.get(&server_seq) {
+        Some(projected) => {
+            if projected.message_id != message.message_id
+                || projected.sender_account_id != message.sender_account_id
+                || projected.sender_device_id != message.sender_device_id
+                || projected.epoch != message.epoch
+                || projected.message_kind != message.message_kind
+                || projected.content_type != message.content_type
+            {
+                return true;
+            }
+            if projected.projection_kind != LocalProjectionKind::ApplicationMessage {
+                return true;
+            }
+            let Some(payload_b64) = projected.materialized_body_b64.as_ref() else {
+                return true;
+            };
+            let Ok(payload) = decode_b64_field("materialized_body_b64", payload_b64) else {
+                return true;
+            };
+            MessageBody::from_bytes(message.content_type, &payload).is_err()
+        }
+        None => true,
+    }
+}
+
+fn message_repair_binding_from_message(
+    message: &MessageEnvelope,
+) -> Result<trix_types::MessageRepairBinding> {
+    let ciphertext = decode_b64_field("ciphertext_b64", &message.ciphertext_b64)?;
+    Ok(trix_types::MessageRepairBinding {
+        chat_id: message.chat_id,
+        message_id: message.message_id,
+        server_seq: message.server_seq,
+        epoch: message.epoch,
+        sender_account_id: message.sender_account_id,
+        sender_device_id: message.sender_device_id,
+        message_kind: message.message_kind,
+        content_type: message.content_type,
+        ciphertext_sha256_b64: crate::encode_b64(Sha256::digest(ciphertext).as_slice()),
+    })
+}
+
+fn binding_matches_message(
+    message: &MessageEnvelope,
+    binding: &trix_types::MessageRepairBinding,
+) -> Result<bool> {
+    Ok(binding.chat_id == message.chat_id
+        && binding.message_id == message.message_id
+        && binding.server_seq == message.server_seq
+        && binding.epoch == message.epoch
+        && binding.sender_account_id == message.sender_account_id
+        && binding.sender_device_id == message.sender_device_id
+        && binding.message_kind == message.message_kind
+        && binding.content_type == message.content_type
+        && binding.ciphertext_sha256_b64
+            == message_repair_binding_from_message(message)?.ciphertext_sha256_b64)
 }
 
 fn ensure_application_message_is_materialized(message: &LocalProjectedMessage) -> Result<()> {
@@ -3861,8 +4285,9 @@ fn save_state_to_path(
             read_cursor_server_seq,
             projected_cursor_server_seq,
             pending_history_repair_from_server_seq,
-            pending_history_repair_through_server_seq
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            pending_history_repair_through_server_seq,
+            message_repair_mailbox_json
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
         "#,
     )?;
     let mut message_statement = transaction.prepare(
@@ -3920,6 +4345,7 @@ fn save_state_to_path(
             chat.pending_history_repair_through_server_seq
                 .map(|value| u64_to_i64(value, "pending_history_repair_through_server_seq"))
                 .transpose()?,
+            serde_json::to_string(&chat.message_repair_mailbox)?,
         ])?;
 
         for (server_seq, message) in &chat.messages {
@@ -4040,7 +4466,8 @@ fn load_state_from_sqlite(
             read_cursor_server_seq,
             projected_cursor_server_seq,
             pending_history_repair_from_server_seq,
-            pending_history_repair_through_server_seq
+            pending_history_repair_through_server_seq,
+            message_repair_mailbox_json
         FROM local_history_chats
         ORDER BY chat_id
         "#,
@@ -4063,6 +4490,10 @@ fn load_state_from_sqlite(
         let projected_cursor_server_seq: i64 = row.get(14)?;
         let pending_history_repair_from_server_seq: Option<i64> = row.get(15)?;
         let pending_history_repair_through_server_seq: Option<i64> = row.get(16)?;
+        let message_repair_mailbox_json: Option<String> = row.get(17)?;
+        let message_repair_mailbox =
+            serde_json::from_str(message_repair_mailbox_json.as_deref().unwrap_or("{}"))
+                .map_err(sqlite_serde_error)?;
 
         Ok((
             chat_id,
@@ -4112,6 +4543,7 @@ fn load_state_from_sqlite(
                                 .map_err(sqlite_anyhow_error)
                         })
                         .transpose()?,
+                message_repair_mailbox,
             },
         ))
     })?;
@@ -4285,7 +4717,8 @@ fn open_history_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Conne
             read_cursor_server_seq INTEGER NOT NULL,
             projected_cursor_server_seq INTEGER NOT NULL,
             pending_history_repair_from_server_seq INTEGER,
-            pending_history_repair_through_server_seq INTEGER
+            pending_history_repair_through_server_seq INTEGER,
+            message_repair_mailbox_json TEXT NOT NULL DEFAULT '{}'
         );
         CREATE TABLE IF NOT EXISTS local_history_messages (
             chat_id TEXT NOT NULL,
@@ -4327,6 +4760,12 @@ fn open_history_sqlite(path: &Path, database_key: Option<&[u8]>) -> Result<Conne
         "local_history_chats",
         "pending_history_repair_through_server_seq",
         "INTEGER",
+    )?;
+    ensure_sqlite_column(
+        &connection,
+        "local_history_chats",
+        "message_repair_mailbox_json",
+        "TEXT NOT NULL DEFAULT '{}'",
     )?;
     Ok(connection)
 }
@@ -5167,6 +5606,83 @@ mod tests {
     }
 
     #[test]
+    fn local_history_store_persists_message_repair_mailbox_entries_across_sqlite_reload() {
+        let database_path =
+            env::temp_dir().join(format!("trix-history-mailbox-{}.db", Uuid::new_v4()));
+        let chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+        let message_id = MessageId(Uuid::new_v4());
+        let mut store = LocalHistoryStore::new_persistent(&database_path).unwrap();
+
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![MessageEnvelope {
+                    message_id,
+                    chat_id,
+                    server_seq: 1,
+                    sender_account_id,
+                    sender_device_id,
+                    epoch: 1,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    ciphertext_b64: crate::encode_b64(b"broken"),
+                    aad_json: json!({}),
+                    created_at_unix: 1,
+                }],
+            })
+            .unwrap();
+        store
+            .set_message_repair_mailbox_entry(
+                chat_id,
+                1,
+                LocalMessageRepairMailboxEntry {
+                    request_id: "repair-req-persisted".to_owned(),
+                    message_id,
+                    ciphertext_sha256_b64: crate::encode_b64(b"hash"),
+                    witness_account_id: sender_account_id,
+                    witness_device_id: sender_device_id,
+                    unavailable_reason: Some("temporarily_unavailable".to_owned()),
+                    status: LocalMessageRepairMailboxStatus::WitnessUnavailable,
+                    updated_at_unix: current_unix_seconds_for_mailbox_retry(),
+                    expires_at_unix: 0,
+                },
+            )
+            .unwrap();
+
+        let restored = LocalHistoryStore::new_persistent(&database_path).unwrap();
+        let chat = restored
+            .state
+            .chats
+            .get(&chat_id.0.to_string())
+            .expect("chat should survive reload");
+        let mailbox_entry = chat
+            .message_repair_mailbox
+            .get(&1)
+            .expect("mailbox entry should survive reload");
+        assert_eq!(mailbox_entry.request_id, "repair-req-persisted");
+        assert_eq!(
+            mailbox_entry.status,
+            PersistedMessageRepairMailboxStatus::WitnessUnavailable
+        );
+
+        let candidates = restored.message_repair_witness_candidates_in_window(
+            chat_id,
+            LocalHistoryRepairWindow {
+                from_server_seq: 1,
+                through_server_seq: 1,
+            },
+        );
+        assert!(
+            candidates.is_empty(),
+            "persisted unavailable mailbox entry should preserve retry backoff after restart"
+        );
+
+        cleanup_sqlite_test_path(&database_path);
+    }
+
+    #[test]
     fn local_history_store_migrates_legacy_json_state_to_sqlite() {
         let database_path =
             env::temp_dir().join(format!("trix-history-legacy-{}.json", Uuid::new_v4()));
@@ -5208,6 +5724,7 @@ mod tests {
                     projected_messages: BTreeMap::new(),
                     pending_history_repair_from_server_seq: None,
                     pending_history_repair_through_server_seq: None,
+                    message_repair_mailbox: BTreeMap::new(),
                 },
             )]),
             attachment_refs: BTreeMap::new(),
@@ -5278,6 +5795,7 @@ mod tests {
                         projected_messages: BTreeMap::new(),
                         pending_history_repair_from_server_seq: None,
                         pending_history_repair_through_server_seq: None,
+                        message_repair_mailbox: BTreeMap::new(),
                     },
                 ),
                 (
@@ -5314,6 +5832,7 @@ mod tests {
                         projected_messages: BTreeMap::new(),
                         pending_history_repair_from_server_seq: None,
                         pending_history_repair_through_server_seq: None,
+                        message_repair_mailbox: BTreeMap::new(),
                     },
                 ),
             ]),
@@ -5640,6 +6159,7 @@ mod tests {
                     content_type: ContentType::Text,
                     projection_kind: LocalProjectionKind::ApplicationMessage,
                     materialized_body_b64: None,
+                    witness_repair: None,
                     merged_epoch: None,
                     created_at_unix: 10,
                 },
@@ -6097,6 +6617,7 @@ mod tests {
                     .collect(),
                 pending_history_repair_from_server_seq: None,
                 pending_history_repair_through_server_seq: None,
+                message_repair_mailbox: BTreeMap::new(),
             },
         );
 
@@ -7952,6 +8473,7 @@ mod tests {
                     content_type: ContentType::Text,
                     projection_kind: LocalProjectionKind::ApplicationMessage,
                     materialized_body_b64: None,
+                    witness_repair: None,
                     merged_epoch: None,
                     created_at_unix: 3,
                 },
@@ -7968,6 +8490,7 @@ mod tests {
                     content_type: ContentType::Text,
                     projection_kind: LocalProjectionKind::ApplicationMessage,
                     materialized_body_b64: Some(second_body_b64.clone()),
+                    witness_repair: None,
                     merged_epoch: None,
                     created_at_unix: 4,
                 },
@@ -8070,6 +8593,7 @@ mod tests {
                     content_type: ContentType::Text,
                     projection_kind: LocalProjectionKind::ApplicationMessage,
                     materialized_body_b64: None,
+                    witness_repair: None,
                     merged_epoch: None,
                     created_at_unix: 10,
                 },
@@ -8129,6 +8653,7 @@ mod tests {
                     content_type: ContentType::Text,
                     projection_kind: LocalProjectionKind::ApplicationMessage,
                     materialized_body_b64: None,
+                    witness_repair: None,
                     merged_epoch: None,
                     created_at_unix: 10,
                 },
@@ -8145,6 +8670,7 @@ mod tests {
                     content_type: ContentType::Text,
                     projection_kind: LocalProjectionKind::ApplicationMessage,
                     materialized_body_b64: Some(crate::encode_b64(&materialized_body)),
+                    witness_repair: None,
                     merged_epoch: None,
                     created_at_unix: 11,
                 },
@@ -8212,6 +8738,7 @@ mod tests {
                     content_type: ContentType::Text,
                     projection_kind: LocalProjectionKind::ApplicationMessage,
                     materialized_body_b64: Some(crate::encode_b64(&body)),
+                    witness_repair: None,
                     merged_epoch: None,
                     created_at_unix: 10,
                 },
@@ -8313,6 +8840,7 @@ mod tests {
                         .to_bytes()
                         .unwrap(),
                     )),
+                    witness_repair: None,
                     merged_epoch: None,
                     created_at_unix: 1,
                 },
@@ -8347,6 +8875,247 @@ mod tests {
                 through_server_seq: 3,
             })
         );
+    }
+
+    #[test]
+    fn unavailable_witness_mailbox_entry_does_not_block_future_history_repair_candidates() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+        let message_id = MessageId(Uuid::new_v4());
+
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![MessageEnvelope {
+                    message_id,
+                    chat_id,
+                    server_seq: 1,
+                    sender_account_id,
+                    sender_device_id,
+                    epoch: 1,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    ciphertext_b64: crate::encode_b64(b"broken"),
+                    aad_json: json!({}),
+                    created_at_unix: 1,
+                }],
+            })
+            .unwrap();
+
+        store
+            .set_message_repair_mailbox_entry(
+                chat_id,
+                1,
+                LocalMessageRepairMailboxEntry {
+                    request_id: "repair-req-1".to_owned(),
+                    message_id,
+                    ciphertext_sha256_b64: crate::encode_b64(b"hash"),
+                    witness_account_id: sender_account_id,
+                    witness_device_id: sender_device_id,
+                    unavailable_reason: Some("no_eligible_witness".to_owned()),
+                    status: LocalMessageRepairMailboxStatus::WitnessUnavailable,
+                    updated_at_unix: 42,
+                    expires_at_unix: 0,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            store.history_repair_candidate_after_projection_failure(chat_id),
+            Some(LocalHistoryRepairCandidate {
+                chat_id,
+                window: LocalHistoryRepairWindow {
+                    from_server_seq: 1,
+                    through_server_seq: 1,
+                },
+                reason: LocalHistoryRepairReason::ProjectionFailure,
+            })
+        );
+    }
+
+    #[test]
+    fn message_repair_witness_candidates_include_multiple_unresolved_messages() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 1,
+                        sender_account_id,
+                        sender_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        ciphertext_b64: crate::encode_b64(b"broken-1"),
+                        aad_json: json!({}),
+                        created_at_unix: 1,
+                    },
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 2,
+                        sender_account_id,
+                        sender_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        ciphertext_b64: crate::encode_b64(b"broken-2"),
+                        aad_json: json!({}),
+                        created_at_unix: 2,
+                    },
+                ],
+            })
+            .unwrap();
+
+        let candidates = store.message_repair_witness_candidates_in_window(
+            chat_id,
+            LocalHistoryRepairWindow {
+                from_server_seq: 1,
+                through_server_seq: 2,
+            },
+        );
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.binding.server_seq)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+    }
+
+    #[test]
+    fn recent_unavailable_message_repair_mailbox_entry_delays_retry_candidates() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+        let message_id = MessageId(Uuid::new_v4());
+
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![MessageEnvelope {
+                    message_id,
+                    chat_id,
+                    server_seq: 1,
+                    sender_account_id,
+                    sender_device_id,
+                    epoch: 1,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    ciphertext_b64: crate::encode_b64(b"broken"),
+                    aad_json: json!({}),
+                    created_at_unix: 1,
+                }],
+            })
+            .unwrap();
+
+        store
+            .set_message_repair_mailbox_entry(
+                chat_id,
+                1,
+                LocalMessageRepairMailboxEntry {
+                    request_id: "repair-req-recent".to_owned(),
+                    message_id,
+                    ciphertext_sha256_b64: crate::encode_b64(b"hash"),
+                    witness_account_id: sender_account_id,
+                    witness_device_id: sender_device_id,
+                    unavailable_reason: Some("temporarily_unavailable".to_owned()),
+                    status: LocalMessageRepairMailboxStatus::WitnessUnavailable,
+                    updated_at_unix: current_unix_seconds_for_mailbox_retry(),
+                    expires_at_unix: 0,
+                },
+            )
+            .unwrap();
+
+        let candidates = store.message_repair_witness_candidates_in_window(
+            chat_id,
+            LocalHistoryRepairWindow {
+                from_server_seq: 1,
+                through_server_seq: 1,
+            },
+        );
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn expired_pending_witness_mailbox_entry_allows_retry_candidates_again() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+        let message_id = MessageId(Uuid::new_v4());
+        let now_unix = current_unix_seconds_for_mailbox_retry();
+
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![MessageEnvelope {
+                    message_id,
+                    chat_id,
+                    server_seq: 1,
+                    sender_account_id,
+                    sender_device_id,
+                    epoch: 1,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    ciphertext_b64: crate::encode_b64(b"broken"),
+                    aad_json: json!({}),
+                    created_at_unix: 1,
+                }],
+            })
+            .unwrap();
+
+        store
+            .set_message_repair_mailbox_entry(
+                chat_id,
+                1,
+                LocalMessageRepairMailboxEntry {
+                    request_id: "repair-req-expired".to_owned(),
+                    message_id,
+                    ciphertext_sha256_b64: crate::encode_b64(b"hash"),
+                    witness_account_id: sender_account_id,
+                    witness_device_id: sender_device_id,
+                    unavailable_reason: None,
+                    status: LocalMessageRepairMailboxStatus::PendingWitness,
+                    updated_at_unix: now_unix
+                        .saturating_sub(MESSAGE_REPAIR_WITNESS_PENDING_TTL_SECONDS + 1),
+                    expires_at_unix: now_unix.saturating_sub(1),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            store.history_repair_candidate_after_projection_failure(chat_id),
+            Some(LocalHistoryRepairCandidate {
+                chat_id,
+                window: LocalHistoryRepairWindow {
+                    from_server_seq: 1,
+                    through_server_seq: 1,
+                },
+                reason: LocalHistoryRepairReason::ProjectionFailure,
+            })
+        );
+
+        let candidates = store.message_repair_witness_candidates_in_window(
+            chat_id,
+            LocalHistoryRepairWindow {
+                from_server_seq: 1,
+                through_server_seq: 1,
+            },
+        );
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].binding.server_seq, 1);
     }
 
     #[test]

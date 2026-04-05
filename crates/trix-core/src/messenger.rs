@@ -2329,7 +2329,7 @@ impl FfiMessengerClient {
 
     fn ensure_chat_history_repair_requested(
         &self,
-        _client: &ServerApiClient,
+        client: &ServerApiClient,
         candidate: LocalHistoryRepairCandidate,
     ) -> Result<HistoryRepairRequestStatus, FfiMessengerError> {
         let existing_window = {
@@ -2343,9 +2343,10 @@ impl FfiMessengerClient {
             repair_through_server_seq: candidate.window.through_server_seq,
             reason: history_repair_reason_label(candidate.reason).to_owned(),
         };
-        let response = self.run_transport(|runtime, client| {
-            runtime.block_on(client.request_history_sync_repair(request.clone()))
-        })?;
+        let response = self
+            .runtime
+            .block_on(client.request_history_sync_repair(request.clone()))
+            .map_err(messenger_error)?;
         if response.jobs.is_empty() {
             return Ok(HistoryRepairRequestStatus::Unavailable);
         }
@@ -3901,6 +3902,8 @@ mod tests {
         HistorySyncChunkListResponse, HistorySyncJobListResponse, HistorySyncJobRole,
         HistorySyncJobStatus, HistorySyncJobSummary, HistorySyncJobType, MessageEnvelope,
         MessageKind, RequestHistorySyncRepairRequest, RequestHistorySyncRepairResponse,
+        RequestMessageRepairWitnessRequest, RequestMessageRepairWitnessResponse,
+        TargetMessageRepairRequestListResponse, WitnessMessageRepairRequestListResponse,
     };
 
     #[test]
@@ -4950,6 +4953,18 @@ mod tests {
                         "/v0/history-sync/jobs:request-repair",
                         post(mock_request_history_sync_repair),
                     )
+                    .route(
+                        "/v0/message-repairs:request",
+                        post(mock_request_message_repair_witness),
+                    )
+                    .route(
+                        "/v0/message-repairs/witness",
+                        get(mock_list_witness_message_repairs),
+                    )
+                    .route(
+                        "/v0/message-repairs/target",
+                        get(mock_list_target_message_repairs),
+                    )
                     .with_state(state.clone());
                 let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
                 let base_url = format!("http://{}", listener.local_addr().unwrap());
@@ -5005,6 +5020,31 @@ mod tests {
             chunks: Vec::new(),
         })
         .into_response()
+    }
+
+    async fn mock_list_witness_message_repairs(
+        State(_state): State<Arc<Mutex<MockRepairServerState>>>,
+    ) -> impl IntoResponse {
+        Json(WitnessMessageRepairRequestListResponse {
+            requests: Vec::new(),
+        })
+        .into_response()
+    }
+
+    async fn mock_list_target_message_repairs(
+        State(_state): State<Arc<Mutex<MockRepairServerState>>>,
+    ) -> impl IntoResponse {
+        Json(TargetMessageRepairRequestListResponse {
+            requests: Vec::new(),
+        })
+        .into_response()
+    }
+
+    async fn mock_request_message_repair_witness(
+        State(_state): State<Arc<Mutex<MockRepairServerState>>>,
+        Json(_request): Json<RequestMessageRepairWitnessRequest>,
+    ) -> impl IntoResponse {
+        Json(RequestMessageRepairWitnessResponse { request: None }).into_response()
     }
 
     #[derive(Debug, Clone, Deserialize)]

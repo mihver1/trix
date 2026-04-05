@@ -17,7 +17,8 @@ use uuid::Uuid;
 use crate::error::AppError;
 use trix_types::{
     ApplePushEnvironment, BlobUploadStatus, ChatType, ContentType, DeviceStatus,
-    HistorySyncJobStatus, HistorySyncJobType, LeaveChatScope, MessageKind,
+    HistorySyncJobStatus, HistorySyncJobType, LeaveChatScope, MessageKind, MessageRepairBinding,
+    MessageRepairRequestStatus, MessageRepairTargetOutcome, MessageRepairWitnessOutcome,
 };
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./../../migrations");
@@ -35,6 +36,7 @@ const DEFAULT_HISTORY_SYNC_JOB_LIMIT: usize = 100;
 const MAX_HISTORY_SYNC_JOB_LIMIT: usize = 500;
 const DEFAULT_ACCOUNT_DIRECTORY_LIMIT: usize = 20;
 const MAX_ACCOUNT_DIRECTORY_LIMIT: usize = 50;
+const MESSAGE_REPAIR_WITNESS_REQUEST_TTL_SECONDS: i32 = 15 * 60;
 
 #[derive(Debug, Clone)]
 pub struct Database {
@@ -247,6 +249,25 @@ pub struct HistorySyncChunkRow {
     pub cursor_json: Option<Value>,
     pub is_final: bool,
     pub uploaded_at_unix: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct MessageRepairWitnessRequestRow {
+    pub request_id: Uuid,
+    pub binding: MessageRepairBinding,
+    pub target_account_id: Uuid,
+    pub target_device_id: Uuid,
+    pub witness_account_id: Uuid,
+    pub witness_device_id: Uuid,
+    pub status: MessageRepairRequestStatus,
+    pub target_transport_pubkey: Vec<u8>,
+    pub result_payload: Option<Vec<u8>>,
+    pub submitted_by_device_id: Option<Uuid>,
+    pub unavailable_reason: Option<String>,
+    pub rejection_reason: Option<String>,
+    pub created_at_unix: u64,
+    pub updated_at_unix: u64,
+    pub expires_at_unix: u64,
 }
 
 #[derive(Debug)]
@@ -2035,6 +2056,636 @@ impl Database {
         tx.commit().await.map_err(map_db_error)?;
         jobs.sort_by_key(|job| job.source_device_id);
         Ok(jobs)
+    }
+
+    pub async fn request_message_repair_witness(
+        &self,
+        target_account_id: Uuid,
+        target_device_id: Uuid,
+        binding: &MessageRepairBinding,
+    ) -> Result<Option<MessageRepairWitnessRequestRow>, AppError> {
+        self.expire_message_repair_witness_requests().await?;
+
+        let visible_message = self
+            .get_visible_message_for_device(binding.chat_id.0, target_device_id, binding.server_seq)
+            .await?
+            .ok_or_else(|| {
+                AppError::not_found("message was not found for the authenticated device")
+            })?;
+        let canonical_binding = message_repair_binding_from_message_row(&visible_message);
+        if &canonical_binding != binding {
+            return Err(AppError::bad_request(
+                "message repair binding does not match canonical server message",
+            ));
+        }
+
+        let target_transport = self
+            .get_device_transport_key_for_account(target_account_id, target_device_id)
+            .await?
+            .filter(|row| row.device_status == DeviceStatus::Active)
+            .ok_or_else(|| AppError::not_found("target device transport key was not found"))?;
+
+        let selected_witness_device_id = self
+            .select_message_repair_witness_device(
+                binding.chat_id.0,
+                binding.sender_account_id.0,
+                binding.sender_device_id.0,
+                target_device_id,
+            )
+            .await?;
+        let (witness_account_id, witness_device_id, status, unavailable_reason) =
+            match selected_witness_device_id {
+                Some(device_id) => (
+                    binding.sender_account_id.0,
+                    device_id,
+                    MessageRepairRequestStatus::Pending,
+                    None,
+                ),
+                None => (
+                    binding.sender_account_id.0,
+                    binding.sender_device_id.0,
+                    MessageRepairRequestStatus::Unavailable,
+                    Some("no_eligible_witness".to_owned()),
+                ),
+            };
+
+        let row = sqlx::query(
+            r#"
+            INSERT INTO message_repair_witness_requests (
+                target_account_id,
+                target_device_id,
+                chat_id,
+                message_id,
+                server_seq,
+                epoch,
+                sender_account_id,
+                sender_device_id,
+                message_kind,
+                content_type,
+                ciphertext_sha256,
+                witness_account_id,
+                witness_device_id,
+                target_transport_pubkey,
+                status,
+                unavailable_reason,
+                expires_at
+            )
+            VALUES (
+                $1,
+                $2,
+                $3,
+                $4,
+                $5,
+                $6,
+                $7,
+                $8,
+                $9::message_kind,
+                $10::content_type,
+                $11,
+                $12,
+                $13,
+                $14,
+                $15::message_repair_request_status,
+                $16,
+                now() + make_interval(secs => $17)
+            )
+            ON CONFLICT (target_device_id, chat_id, server_seq)
+            WHERE status IN (
+                'pending'::message_repair_request_status,
+                'completed'::message_repair_request_status,
+                'unavailable'::message_repair_request_status
+            )
+            DO UPDATE SET
+                updated_at = now(),
+                expires_at = EXCLUDED.expires_at,
+                witness_account_id = CASE
+                    WHEN message_repair_witness_requests.status = 'completed'::message_repair_request_status
+                    THEN message_repair_witness_requests.witness_account_id
+                    ELSE EXCLUDED.witness_account_id
+                END,
+                witness_device_id = CASE
+                    WHEN message_repair_witness_requests.status = 'completed'::message_repair_request_status
+                    THEN message_repair_witness_requests.witness_device_id
+                    ELSE EXCLUDED.witness_device_id
+                END,
+                target_transport_pubkey = CASE
+                    WHEN message_repair_witness_requests.status = 'completed'::message_repair_request_status
+                    THEN message_repair_witness_requests.target_transport_pubkey
+                    ELSE EXCLUDED.target_transport_pubkey
+                END,
+                status = CASE
+                    WHEN message_repair_witness_requests.status = 'completed'::message_repair_request_status
+                    THEN message_repair_witness_requests.status
+                    ELSE EXCLUDED.status
+                END,
+                unavailable_reason = CASE
+                    WHEN message_repair_witness_requests.status = 'completed'::message_repair_request_status
+                    THEN message_repair_witness_requests.unavailable_reason
+                    ELSE EXCLUDED.unavailable_reason
+                END,
+                result_payload = CASE
+                    WHEN message_repair_witness_requests.status = 'completed'::message_repair_request_status
+                    THEN message_repair_witness_requests.result_payload
+                    ELSE NULL
+                END,
+                submitted_by_device_id = CASE
+                    WHEN message_repair_witness_requests.status = 'completed'::message_repair_request_status
+                    THEN message_repair_witness_requests.submitted_by_device_id
+                    ELSE NULL
+                END,
+                rejection_reason = CASE
+                    WHEN message_repair_witness_requests.status = 'completed'::message_repair_request_status
+                    THEN message_repair_witness_requests.rejection_reason
+                    ELSE NULL
+                END
+            RETURNING
+                request_id,
+                target_account_id,
+                target_device_id,
+                chat_id,
+                message_id,
+                server_seq,
+                epoch,
+                sender_account_id,
+                sender_device_id,
+                message_kind::text AS message_kind,
+                content_type::text AS content_type,
+                ciphertext_sha256,
+                witness_account_id,
+                witness_device_id,
+                target_transport_pubkey,
+                status::text AS status,
+                result_payload,
+                submitted_by_device_id,
+                unavailable_reason,
+                rejection_reason,
+                extract(epoch from created_at)::bigint AS created_at_unix,
+                extract(epoch from updated_at)::bigint AS updated_at_unix,
+                extract(epoch from expires_at)::bigint AS expires_at_unix
+            "#,
+        )
+        .bind(target_account_id)
+        .bind(target_device_id)
+        .bind(binding.chat_id.0)
+        .bind(binding.message_id.0)
+        .bind(u64_to_i64(binding.server_seq, "message server sequence")?)
+        .bind(u64_to_i64(binding.epoch, "message epoch")?)
+        .bind(binding.sender_account_id.0)
+        .bind(binding.sender_device_id.0)
+        .bind(message_kind_db(binding.message_kind))
+        .bind(content_type_db(binding.content_type))
+        .bind(decode_base64_lenient(&binding.ciphertext_sha256_b64, "ciphertext_sha256_b64")?)
+        .bind(witness_account_id)
+        .bind(witness_device_id)
+        .bind(target_transport.transport_pubkey)
+        .bind(message_repair_request_status_db(status))
+        .bind(unavailable_reason)
+        .bind(MESSAGE_REPAIR_WITNESS_REQUEST_TTL_SECONDS)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(Some(message_repair_request_row_from_db(row)?))
+    }
+
+    pub async fn list_message_repair_requests_for_witness_device(
+        &self,
+        witness_account_id: Uuid,
+        witness_device_id: Uuid,
+        limit: Option<usize>,
+    ) -> Result<Vec<MessageRepairWitnessRequestRow>, AppError> {
+        self.expire_message_repair_witness_requests().await?;
+        let limit = clamp_limit(
+            limit,
+            DEFAULT_HISTORY_SYNC_JOB_LIMIT,
+            MAX_HISTORY_SYNC_JOB_LIMIT,
+        );
+        let rows =
+            sqlx::query(
+                r#"
+            SELECT
+                request_id,
+                target_account_id,
+                target_device_id,
+                chat_id,
+                message_id,
+                server_seq,
+                epoch,
+                sender_account_id,
+                sender_device_id,
+                message_kind::text AS message_kind,
+                content_type::text AS content_type,
+                ciphertext_sha256,
+                witness_account_id,
+                witness_device_id,
+                target_transport_pubkey,
+                status::text AS status,
+                result_payload,
+                submitted_by_device_id,
+                unavailable_reason,
+                rejection_reason,
+                extract(epoch from created_at)::bigint AS created_at_unix,
+                extract(epoch from updated_at)::bigint AS updated_at_unix,
+                extract(epoch from expires_at)::bigint AS expires_at_unix
+            FROM message_repair_witness_requests
+            WHERE witness_account_id = $1
+              AND witness_device_id = $2
+              AND status = 'pending'::message_repair_request_status
+            ORDER BY created_at ASC, request_id ASC
+            LIMIT $3
+            "#,
+            )
+            .bind(witness_account_id)
+            .bind(witness_device_id)
+            .bind(i64::try_from(limit).map_err(|_| {
+                AppError::bad_request("message repair limit exceeds supported range")
+            })?)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+
+        let mut requests = Vec::with_capacity(rows.len());
+        for row in rows {
+            let request = message_repair_request_row_from_db(row)?;
+            if self
+                .message_repair_witness_device_is_eligible(
+                    request.binding.chat_id.0,
+                    request.witness_account_id,
+                    request.witness_device_id,
+                )
+                .await?
+            {
+                requests.push(request);
+            }
+        }
+        Ok(requests)
+    }
+
+    pub async fn list_message_repair_requests_for_target_device(
+        &self,
+        target_account_id: Uuid,
+        target_device_id: Uuid,
+        limit: Option<usize>,
+    ) -> Result<Vec<MessageRepairWitnessRequestRow>, AppError> {
+        self.expire_message_repair_witness_requests().await?;
+        let limit = clamp_limit(
+            limit,
+            DEFAULT_HISTORY_SYNC_JOB_LIMIT,
+            MAX_HISTORY_SYNC_JOB_LIMIT,
+        );
+        let rows =
+            sqlx::query(
+                r#"
+            SELECT
+                request_id,
+                target_account_id,
+                target_device_id,
+                chat_id,
+                message_id,
+                server_seq,
+                epoch,
+                sender_account_id,
+                sender_device_id,
+                message_kind::text AS message_kind,
+                content_type::text AS content_type,
+                ciphertext_sha256,
+                witness_account_id,
+                witness_device_id,
+                target_transport_pubkey,
+                status::text AS status,
+                result_payload,
+                submitted_by_device_id,
+                unavailable_reason,
+                rejection_reason,
+                extract(epoch from created_at)::bigint AS created_at_unix,
+                extract(epoch from updated_at)::bigint AS updated_at_unix,
+                extract(epoch from expires_at)::bigint AS expires_at_unix
+            FROM message_repair_witness_requests
+            WHERE target_account_id = $1
+              AND target_device_id = $2
+              AND status IN (
+                    'pending'::message_repair_request_status,
+                    'completed'::message_repair_request_status,
+                    'unavailable'::message_repair_request_status
+              )
+            ORDER BY created_at ASC, request_id ASC
+            LIMIT $3
+            "#,
+            )
+            .bind(target_account_id)
+            .bind(target_device_id)
+            .bind(i64::try_from(limit).map_err(|_| {
+                AppError::bad_request("message repair limit exceeds supported range")
+            })?)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+
+        let mut requests = Vec::with_capacity(rows.len());
+        for row in rows {
+            let request = message_repair_request_row_from_db(row)?;
+            if self
+                .target_device_can_view_message(
+                    request.binding.chat_id.0,
+                    target_device_id,
+                    request.binding.server_seq,
+                )
+                .await?
+            {
+                requests.push(request);
+            }
+        }
+        Ok(requests)
+    }
+
+    pub async fn submit_message_repair_witness_result(
+        &self,
+        witness_account_id: Uuid,
+        witness_device_id: Uuid,
+        request_id: Uuid,
+        binding: &MessageRepairBinding,
+        outcome: MessageRepairWitnessOutcome,
+        payload: Option<Vec<u8>>,
+        unavailable_reason: Option<&str>,
+    ) -> Result<Option<MessageRepairWitnessRequestRow>, AppError> {
+        self.expire_message_repair_witness_requests().await?;
+
+        let existing_row = sqlx::query(
+            r#"
+            SELECT
+                request_id,
+                target_account_id,
+                target_device_id,
+                chat_id,
+                message_id,
+                server_seq,
+                epoch,
+                sender_account_id,
+                sender_device_id,
+                message_kind::text AS message_kind,
+                content_type::text AS content_type,
+                ciphertext_sha256,
+                witness_account_id,
+                witness_device_id,
+                target_transport_pubkey,
+                status::text AS status,
+                result_payload,
+                submitted_by_device_id,
+                unavailable_reason,
+                rejection_reason,
+                extract(epoch from created_at)::bigint AS created_at_unix,
+                extract(epoch from updated_at)::bigint AS updated_at_unix,
+                extract(epoch from expires_at)::bigint AS expires_at_unix
+            FROM message_repair_witness_requests
+            WHERE request_id = $1
+              AND witness_account_id = $2
+              AND witness_device_id = $3
+            "#,
+        )
+        .bind(request_id)
+        .bind(witness_account_id)
+        .bind(witness_device_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        let Some(existing_row) = existing_row else {
+            return Ok(None);
+        };
+        let existing = message_repair_request_row_from_db(existing_row)?;
+        if &existing.binding != binding {
+            return Err(AppError::bad_request(
+                "message repair binding does not match request",
+            ));
+        }
+        if !self
+            .message_repair_witness_device_is_eligible(
+                existing.binding.chat_id.0,
+                witness_account_id,
+                witness_device_id,
+            )
+            .await?
+        {
+            return Ok(None);
+        }
+
+        let target_status = match outcome {
+            MessageRepairWitnessOutcome::Completed => {
+                if payload.is_none() {
+                    return Err(AppError::bad_request(
+                        "completed witness repair requires payload_b64",
+                    ));
+                }
+                MessageRepairRequestStatus::Completed
+            }
+            MessageRepairWitnessOutcome::Unavailable => MessageRepairRequestStatus::Unavailable,
+        };
+
+        match existing.status {
+            MessageRepairRequestStatus::Pending => {}
+            MessageRepairRequestStatus::Completed | MessageRepairRequestStatus::Unavailable => {
+                let is_same_status = existing.status == target_status;
+                let is_same_submitter = existing.submitted_by_device_id == Some(witness_device_id);
+                let is_same_payload = existing.result_payload == payload;
+                let is_same_reason = existing.unavailable_reason.as_deref() == unavailable_reason;
+                if is_same_status && is_same_submitter && is_same_payload && is_same_reason {
+                    return Ok(Some(existing));
+                }
+                return Err(AppError::conflict(
+                    "message repair request already has a different result",
+                ));
+            }
+            MessageRepairRequestStatus::Consumed | MessageRepairRequestStatus::Expired => {
+                return Err(AppError::conflict(
+                    "message repair request is no longer pending",
+                ));
+            }
+        }
+
+        let row = sqlx::query(
+            r#"
+            UPDATE message_repair_witness_requests
+            SET status = $4::message_repair_request_status,
+                result_payload = $5,
+                submitted_by_device_id = $6,
+                unavailable_reason = $7,
+                rejection_reason = NULL,
+                updated_at = now()
+            WHERE request_id = $1
+              AND witness_account_id = $2
+              AND witness_device_id = $3
+              AND status = 'pending'::message_repair_request_status
+            RETURNING
+                request_id,
+                target_account_id,
+                target_device_id,
+                chat_id,
+                message_id,
+                server_seq,
+                epoch,
+                sender_account_id,
+                sender_device_id,
+                message_kind::text AS message_kind,
+                content_type::text AS content_type,
+                ciphertext_sha256,
+                witness_account_id,
+                witness_device_id,
+                target_transport_pubkey,
+                status::text AS status,
+                result_payload,
+                submitted_by_device_id,
+                unavailable_reason,
+                rejection_reason,
+                extract(epoch from created_at)::bigint AS created_at_unix,
+                extract(epoch from updated_at)::bigint AS updated_at_unix,
+                extract(epoch from expires_at)::bigint AS expires_at_unix
+            "#,
+        )
+        .bind(request_id)
+        .bind(witness_account_id)
+        .bind(witness_device_id)
+        .bind(message_repair_request_status_db(target_status))
+        .bind(payload)
+        .bind(witness_device_id)
+        .bind(unavailable_reason)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        row.map(message_repair_request_row_from_db).transpose()
+    }
+
+    pub async fn complete_message_repair_witness(
+        &self,
+        target_account_id: Uuid,
+        target_device_id: Uuid,
+        request_id: Uuid,
+        outcome: MessageRepairTargetOutcome,
+        rejection_reason: Option<&str>,
+    ) -> Result<Option<MessageRepairWitnessRequestRow>, AppError> {
+        self.expire_message_repair_witness_requests().await?;
+
+        let existing_row = sqlx::query(
+            r#"
+            SELECT
+                request_id,
+                target_account_id,
+                target_device_id,
+                chat_id,
+                message_id,
+                server_seq,
+                epoch,
+                sender_account_id,
+                sender_device_id,
+                message_kind::text AS message_kind,
+                content_type::text AS content_type,
+                ciphertext_sha256,
+                witness_account_id,
+                witness_device_id,
+                target_transport_pubkey,
+                status::text AS status,
+                result_payload,
+                submitted_by_device_id,
+                unavailable_reason,
+                rejection_reason,
+                extract(epoch from created_at)::bigint AS created_at_unix,
+                extract(epoch from updated_at)::bigint AS updated_at_unix,
+                extract(epoch from expires_at)::bigint AS expires_at_unix
+            FROM message_repair_witness_requests
+            WHERE request_id = $1
+              AND target_account_id = $2
+              AND target_device_id = $3
+            "#,
+        )
+        .bind(request_id)
+        .bind(target_account_id)
+        .bind(target_device_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        let Some(existing_row) = existing_row else {
+            return Ok(None);
+        };
+        let existing = message_repair_request_row_from_db(existing_row)?;
+        if !self
+            .target_device_can_view_message(
+                existing.binding.chat_id.0,
+                target_device_id,
+                existing.binding.server_seq,
+            )
+            .await?
+        {
+            return Ok(None);
+        }
+
+        match (existing.status, outcome) {
+            (MessageRepairRequestStatus::Completed, MessageRepairTargetOutcome::Applied)
+            | (MessageRepairRequestStatus::Completed, MessageRepairTargetOutcome::Rejected)
+            | (MessageRepairRequestStatus::Unavailable, MessageRepairTargetOutcome::Rejected) => {}
+            (MessageRepairRequestStatus::Consumed, _) => return Ok(Some(existing)),
+            (MessageRepairRequestStatus::Pending, _) => {
+                return Err(AppError::conflict(
+                    "message repair request is still waiting for witness result",
+                ));
+            }
+            (MessageRepairRequestStatus::Expired, _) => {
+                return Err(AppError::conflict("message repair request has expired"));
+            }
+            (MessageRepairRequestStatus::Unavailable, MessageRepairTargetOutcome::Applied) => {
+                return Err(AppError::conflict(
+                    "unavailable witness repair cannot be marked as applied",
+                ));
+            }
+        }
+
+        let row = sqlx::query(
+            r#"
+            UPDATE message_repair_witness_requests
+            SET status = 'consumed'::message_repair_request_status,
+                result_payload = NULL,
+                rejection_reason = $4,
+                updated_at = now()
+            WHERE request_id = $1
+              AND target_account_id = $2
+              AND target_device_id = $3
+              AND status IN (
+                    'completed'::message_repair_request_status,
+                    'unavailable'::message_repair_request_status
+              )
+            RETURNING
+                request_id,
+                target_account_id,
+                target_device_id,
+                chat_id,
+                message_id,
+                server_seq,
+                epoch,
+                sender_account_id,
+                sender_device_id,
+                message_kind::text AS message_kind,
+                content_type::text AS content_type,
+                ciphertext_sha256,
+                witness_account_id,
+                witness_device_id,
+                target_transport_pubkey,
+                status::text AS status,
+                result_payload,
+                submitted_by_device_id,
+                unavailable_reason,
+                rejection_reason,
+                extract(epoch from created_at)::bigint AS created_at_unix,
+                extract(epoch from updated_at)::bigint AS updated_at_unix,
+                extract(epoch from expires_at)::bigint AS expires_at_unix
+            "#,
+        )
+        .bind(request_id)
+        .bind(target_account_id)
+        .bind(target_device_id)
+        .bind(rejection_reason)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        row.map(message_repair_request_row_from_db).transpose()
     }
     pub async fn request_chat_backfill(
         &self,
@@ -7336,6 +7987,21 @@ fn parse_history_sync_job_status(value: &str) -> Result<HistorySyncJobStatus, Ap
     }
 }
 
+fn parse_message_repair_request_status(
+    value: &str,
+) -> Result<MessageRepairRequestStatus, AppError> {
+    match value {
+        "pending" => Ok(MessageRepairRequestStatus::Pending),
+        "completed" => Ok(MessageRepairRequestStatus::Completed),
+        "unavailable" => Ok(MessageRepairRequestStatus::Unavailable),
+        "consumed" => Ok(MessageRepairRequestStatus::Consumed),
+        "expired" => Ok(MessageRepairRequestStatus::Expired),
+        other => Err(AppError::internal(format!(
+            "unknown message repair request status from database: {other}"
+        ))),
+    }
+}
+
 fn parse_content_type(value: &str) -> Result<ContentType, AppError> {
     match value {
         "text" => Ok(ContentType::Text),
@@ -7392,6 +8058,16 @@ fn history_sync_job_status_db(value: HistorySyncJobStatus) -> &'static str {
         HistorySyncJobStatus::Completed => "completed",
         HistorySyncJobStatus::Failed => "failed",
         HistorySyncJobStatus::Canceled => "canceled",
+    }
+}
+
+fn message_repair_request_status_db(value: MessageRepairRequestStatus) -> &'static str {
+    match value {
+        MessageRepairRequestStatus::Pending => "pending",
+        MessageRepairRequestStatus::Completed => "completed",
+        MessageRepairRequestStatus::Unavailable => "unavailable",
+        MessageRepairRequestStatus::Consumed => "consumed",
+        MessageRepairRequestStatus::Expired => "expired",
     }
 }
 
@@ -7464,6 +8140,20 @@ fn row_u64_from_i64(row: &sqlx::postgres::PgRow, column: &str) -> Result<u64, Ap
         .map_err(|_| AppError::internal(format!("negative value encountered for {column}")))
 }
 
+fn decode_base64_lenient(value: &str, field: &str) -> Result<Vec<u8>, AppError> {
+    for engine in [
+        &base64::engine::general_purpose::STANDARD,
+        &base64::engine::general_purpose::STANDARD_NO_PAD,
+        &base64::engine::general_purpose::URL_SAFE,
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+    ] {
+        if let Ok(bytes) = engine.decode(value) {
+            return Ok(bytes);
+        }
+    }
+    Err(AppError::bad_request(format!("invalid base64 for {field}")))
+}
+
 fn row_i32(row: &sqlx::postgres::PgRow, column: &str) -> Result<i32, AppError> {
     row.try_get(column)
         .map_err(|err| AppError::internal(format!("failed to read {column}: {err}")))
@@ -7514,6 +8204,58 @@ fn history_sync_chunk_row_from_db(
             .try_get("is_final")
             .map_err(|err| AppError::internal(format!("failed to read is_final: {err}")))?,
         uploaded_at_unix: row_u64_from_i64(&row, "uploaded_at_unix")?,
+    })
+}
+
+fn message_repair_binding_from_message_row(message: &MessageEnvelopeRow) -> MessageRepairBinding {
+    MessageRepairBinding {
+        chat_id: trix_types::ChatId(message.chat_id),
+        message_id: trix_types::MessageId(message.message_id),
+        server_seq: message.server_seq,
+        epoch: message.epoch,
+        sender_account_id: trix_types::AccountId(message.sender_account_id),
+        sender_device_id: trix_types::DeviceId(message.sender_device_id),
+        message_kind: message.message_kind,
+        content_type: message.content_type,
+        ciphertext_sha256_b64: base64::engine::general_purpose::STANDARD
+            .encode(Sha256::digest(&message.ciphertext)),
+    }
+}
+
+fn message_repair_request_row_from_db(
+    row: sqlx::postgres::PgRow,
+) -> Result<MessageRepairWitnessRequestRow, AppError> {
+    let binding = MessageRepairBinding {
+        chat_id: trix_types::ChatId(row_uuid(&row, "chat_id")?),
+        message_id: trix_types::MessageId(row_uuid(&row, "message_id")?),
+        server_seq: row_u64_from_i64(&row, "server_seq")?,
+        epoch: row_u64_from_i64(&row, "epoch")?,
+        sender_account_id: trix_types::AccountId(row_uuid(&row, "sender_account_id")?),
+        sender_device_id: trix_types::DeviceId(row_uuid(&row, "sender_device_id")?),
+        message_kind: parse_message_kind(&row_text(&row, "message_kind")?)?,
+        content_type: parse_content_type(&row_text(&row, "content_type")?)?,
+        ciphertext_sha256_b64: base64::engine::general_purpose::STANDARD
+            .encode(row_bytes(&row, "ciphertext_sha256")?),
+    };
+
+    Ok(MessageRepairWitnessRequestRow {
+        request_id: row_uuid(&row, "request_id")?,
+        binding,
+        target_account_id: row_uuid(&row, "target_account_id")?,
+        target_device_id: row_uuid(&row, "target_device_id")?,
+        witness_account_id: row_uuid(&row, "witness_account_id")?,
+        witness_device_id: row_uuid(&row, "witness_device_id")?,
+        status: parse_message_repair_request_status(&row_text(&row, "status")?)?,
+        target_transport_pubkey: row_bytes(&row, "target_transport_pubkey")?,
+        result_payload: row
+            .try_get("result_payload")
+            .map_err(|err| AppError::internal(format!("failed to read result_payload: {err}")))?,
+        submitted_by_device_id: row_optional_uuid(&row, "submitted_by_device_id")?,
+        unavailable_reason: row_optional_text(&row, "unavailable_reason")?,
+        rejection_reason: row_optional_text(&row, "rejection_reason")?,
+        created_at_unix: row_u64_from_i64(&row, "created_at_unix")?,
+        updated_at_unix: row_u64_from_i64(&row, "updated_at_unix")?,
+        expires_at_unix: row_u64_from_i64(&row, "expires_at_unix")?,
     })
 }
 
@@ -8352,6 +9094,169 @@ impl Database {
     }
 }
 
+impl Database {
+    async fn expire_message_repair_witness_requests(&self) -> Result<(), AppError> {
+        sqlx::query(
+            r#"
+            UPDATE message_repair_witness_requests
+            SET status = 'expired'::message_repair_request_status,
+                result_payload = NULL,
+                updated_at = now()
+            WHERE status IN (
+                    'pending'::message_repair_request_status,
+                    'completed'::message_repair_request_status,
+                    'unavailable'::message_repair_request_status
+                )
+              AND expires_at <= now()
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        Ok(())
+    }
+
+    async fn target_device_can_view_message(
+        &self,
+        chat_id: Uuid,
+        target_device_id: Uuid,
+        server_seq: u64,
+    ) -> Result<bool, AppError> {
+        Ok(self
+            .get_visible_message_for_device(chat_id, target_device_id, server_seq)
+            .await?
+            .is_some())
+    }
+
+    async fn message_repair_witness_device_is_eligible(
+        &self,
+        chat_id: Uuid,
+        witness_account_id: Uuid,
+        witness_device_id: Uuid,
+    ) -> Result<bool, AppError> {
+        sqlx::query_scalar::<_, bool>(
+            r#"
+            SELECT EXISTS (
+                SELECT 1
+                FROM chats c
+                JOIN devices d
+                  ON d.device_id = $3
+                JOIN chat_account_members cam
+                  ON cam.chat_id = c.chat_id
+                 AND cam.account_id = d.account_id
+                JOIN chat_device_members cdm
+                  ON cdm.chat_id = c.chat_id
+                 AND cdm.device_id = d.device_id
+                WHERE c.chat_id = $1
+                  AND d.account_id = $2
+                  AND d.device_status = 'active'::device_status
+                  AND cam.membership_status = 'active'::membership_status
+                  AND cdm.membership_status = 'active'::device_membership_status
+                  AND c.closed_at IS NULL
+            )
+            "#,
+        )
+        .bind(chat_id)
+        .bind(witness_account_id)
+        .bind(witness_device_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)
+    }
+
+    async fn get_visible_message_for_device(
+        &self,
+        chat_id: Uuid,
+        device_id: Uuid,
+        server_seq: u64,
+    ) -> Result<Option<MessageEnvelopeRow>, AppError> {
+        let row = sqlx::query(
+            r#"
+            WITH viewer AS (
+                SELECT COALESCE(cam.dm_history_cutoff_server_seq, 0)::bigint AS dm_cutoff
+                FROM chat_device_members cdm
+                JOIN devices d
+                  ON d.device_id = cdm.device_id
+                JOIN chats c
+                  ON c.chat_id = cdm.chat_id
+                JOIN chat_account_members cam
+                  ON cam.chat_id = cdm.chat_id
+                 AND cam.account_id = d.account_id
+                WHERE cdm.chat_id = $1
+                  AND cdm.device_id = $2
+                  AND cdm.membership_status = 'active'::device_membership_status
+                  AND d.device_status = 'active'::device_status
+                  AND c.closed_at IS NULL
+            )
+            SELECT
+                m.message_id,
+                m.chat_id,
+                m.server_seq,
+                m.sender_account_id,
+                m.sender_device_id,
+                m.epoch,
+                m.message_kind::text AS message_kind,
+                m.content_type::text AS content_type,
+                m.ciphertext,
+                m.aad_json,
+                extract(epoch from m.created_at)::bigint AS created_at_unix
+            FROM messages m
+            JOIN viewer v
+              ON TRUE
+            WHERE m.chat_id = $1
+              AND m.server_seq = $3
+              AND m.server_seq > v.dm_cutoff
+            "#,
+        )
+        .bind(chat_id)
+        .bind(device_id)
+        .bind(u64_to_i64(server_seq, "message server sequence")?)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        row.map(message_row_from_db).transpose()
+    }
+
+    async fn select_message_repair_witness_device(
+        &self,
+        chat_id: Uuid,
+        sender_account_id: Uuid,
+        preferred_device_id: Uuid,
+        target_device_id: Uuid,
+    ) -> Result<Option<Uuid>, AppError> {
+        sqlx::query_scalar::<_, Uuid>(
+            r#"
+            SELECT d.device_id
+            FROM devices d
+            JOIN chats c
+              ON c.chat_id = $1
+            JOIN chat_account_members cam
+              ON cam.chat_id = $1
+             AND cam.account_id = d.account_id
+            JOIN chat_device_members cdm
+              ON cdm.chat_id = $1
+             AND cdm.device_id = d.device_id
+            WHERE d.account_id = $2
+              AND d.device_status = 'active'::device_status
+              AND cam.membership_status = 'active'::membership_status
+              AND cdm.membership_status = 'active'::device_membership_status
+              AND c.closed_at IS NULL
+              AND d.device_id <> $4
+            ORDER BY CASE WHEN d.device_id = $3 THEN 0 ELSE 1 END, d.device_id ASC
+            LIMIT 1
+            "#,
+        )
+        .bind(chat_id)
+        .bind(sender_account_id)
+        .bind(preferred_device_id)
+        .bind(target_device_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)
+    }
+}
+
 #[cfg(test)]
 impl Database {
     /// Builds a pool that does not open a TCP connection until the first query and skips
@@ -8373,7 +9278,9 @@ impl Database {
 mod tests {
     use std::env;
 
+    use base64::Engine as _;
     use serde_json::json;
+    use sha2::{Digest, Sha256};
     use sqlx::Row;
     use uuid::Uuid;
 
@@ -8387,7 +9294,12 @@ mod tests {
         ModifyChatDevicesInput, PendingControlMessage, PublishKeyPackageInput,
         UpdateAccountProfileInput, UpdateAdminRuntimeSettingsInput,
     };
-    use trix_types::{ChatType, HistorySyncJobStatus, HistorySyncJobType, LeaveChatScope};
+    use trix_types::{
+        AccountId, ChatId, ChatType, ContentType as ApiContentType, DeviceId, HistorySyncJobStatus,
+        HistorySyncJobType, LeaveChatScope, MessageId, MessageKind as ApiMessageKind,
+        MessageRepairBinding, MessageRepairRequestStatus, MessageRepairTargetOutcome,
+        MessageRepairWitnessOutcome,
+    };
 
     const DEFAULT_TEST_DATABASE_URL: &str = "postgres://trix:trix@localhost:5432/trix";
     const TEST_CIPHER_SUITE: &str = "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519";
@@ -10038,6 +10950,671 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires local postgres"]
+    async fn request_message_repair_witness_selects_sender_side_witness_device() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [141; 32],
+                [142; 32],
+            ))
+            .await
+            .expect("create alice");
+        let bob = db
+            .create_account(make_account_input(
+                "bob",
+                "Bob Primary",
+                [143; 32],
+                [144; 32],
+            ))
+            .await
+            .expect("create bob");
+        let chat_id = create_test_dm_chat(
+            &db,
+            alice.account_id,
+            alice.device_id,
+            bob.account_id,
+            bob.device_id,
+        )
+        .await;
+        let target_device_id = approve_linked_device(
+            &db,
+            alice.account_id,
+            alice.device_id,
+            "Alice Target",
+            "alice-message-repair-target",
+            [145; 32],
+        )
+        .await;
+        let binding = append_text_message_and_binding(
+            &db,
+            chat_id,
+            bob.account_id,
+            bob.device_id,
+            b"repairable from bob",
+        )
+        .await;
+
+        let request = db
+            .request_message_repair_witness(alice.account_id, target_device_id, &binding)
+            .await
+            .expect("request witness repair")
+            .expect("request row should exist");
+
+        assert_eq!(request.status, MessageRepairRequestStatus::Pending);
+        assert_eq!(request.target_account_id, alice.account_id);
+        assert_eq!(request.target_device_id, target_device_id);
+        assert_eq!(request.witness_account_id, bob.account_id);
+        assert_eq!(request.witness_device_id, bob.device_id);
+        assert_eq!(request.binding, binding);
+        assert_eq!(request.target_transport_pubkey, vec![145; 32]);
+
+        let witness_requests = db
+            .list_message_repair_requests_for_witness_device(
+                bob.account_id,
+                bob.device_id,
+                Some(10),
+            )
+            .await
+            .expect("list witness requests");
+        assert_eq!(witness_requests.len(), 1);
+        assert_eq!(witness_requests[0].request_id, request.request_id);
+
+        let target_requests = db
+            .list_message_repair_requests_for_target_device(
+                alice.account_id,
+                target_device_id,
+                Some(10),
+            )
+            .await
+            .expect("list target requests");
+        assert_eq!(target_requests.len(), 1);
+        assert_eq!(target_requests[0].request_id, request.request_id);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn request_message_repair_witness_returns_unavailable_when_no_eligible_witness() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [151; 32],
+                [152; 32],
+            ))
+            .await
+            .expect("create alice");
+        let bob = db
+            .create_account(make_account_input(
+                "bob",
+                "Bob Primary",
+                [153; 32],
+                [154; 32],
+            ))
+            .await
+            .expect("create bob");
+        let chat_id = create_test_dm_chat(
+            &db,
+            alice.account_id,
+            alice.device_id,
+            bob.account_id,
+            bob.device_id,
+        )
+        .await;
+        let binding = append_text_message_and_binding(
+            &db,
+            chat_id,
+            alice.account_id,
+            alice.device_id,
+            b"self-authored message without sibling witness",
+        )
+        .await;
+
+        let request = db
+            .request_message_repair_witness(alice.account_id, alice.device_id, &binding)
+            .await
+            .expect("request witness repair")
+            .expect("request row should exist");
+
+        assert_eq!(request.status, MessageRepairRequestStatus::Unavailable);
+        assert_eq!(request.witness_account_id, alice.account_id);
+        assert_eq!(request.witness_device_id, alice.device_id);
+        assert_eq!(
+            request.unavailable_reason.as_deref(),
+            Some("no_eligible_witness")
+        );
+        assert!(request.result_payload.is_none());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn request_message_repair_witness_skips_unjoined_sender_sibling_devices() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [155; 32],
+                [156; 32],
+            ))
+            .await
+            .expect("create alice");
+        let bob = db
+            .create_account(make_account_input(
+                "bob",
+                "Bob Primary",
+                [157; 32],
+                [158; 32],
+            ))
+            .await
+            .expect("create bob");
+        let chat_id = create_test_dm_chat(
+            &db,
+            alice.account_id,
+            alice.device_id,
+            bob.account_id,
+            bob.device_id,
+        )
+        .await;
+        let binding = append_text_message_and_binding(
+            &db,
+            chat_id,
+            alice.account_id,
+            alice.device_id,
+            b"self-authored message waiting for sibling",
+        )
+        .await;
+
+        let initial = db
+            .request_message_repair_witness(alice.account_id, alice.device_id, &binding)
+            .await
+            .expect("initial witness repair request")
+            .expect("initial request row should exist");
+        assert_eq!(initial.status, MessageRepairRequestStatus::Unavailable);
+
+        let sibling_device_id = approve_linked_device(
+            &db,
+            alice.account_id,
+            alice.device_id,
+            "Alice Sibling",
+            "alice-message-repair-sibling-unjoined",
+            [159; 32],
+        )
+        .await;
+
+        let retried = db
+            .request_message_repair_witness(alice.account_id, alice.device_id, &binding)
+            .await
+            .expect("retry witness repair")
+            .expect("retried request row should exist");
+
+        assert_eq!(retried.request_id, initial.request_id);
+        assert_eq!(retried.status, MessageRepairRequestStatus::Unavailable);
+        assert_eq!(retried.witness_device_id, alice.device_id);
+        assert_ne!(retried.witness_device_id, sibling_device_id);
+        assert_eq!(
+            retried.unavailable_reason.as_deref(),
+            Some("no_eligible_witness")
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn request_message_repair_witness_retry_refreshes_assignment_after_sender_device_joins() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [181; 32],
+                [182; 32],
+            ))
+            .await
+            .expect("create alice");
+        let bob = db
+            .create_account(make_account_input(
+                "bob",
+                "Bob Primary",
+                [183; 32],
+                [184; 32],
+            ))
+            .await
+            .expect("create bob");
+        let chat_id = create_test_dm_chat(
+            &db,
+            alice.account_id,
+            alice.device_id,
+            bob.account_id,
+            bob.device_id,
+        )
+        .await;
+        let binding = append_text_message_and_binding(
+            &db,
+            chat_id,
+            alice.account_id,
+            alice.device_id,
+            b"self-authored message that gains a sibling witness",
+        )
+        .await;
+
+        let initial = db
+            .request_message_repair_witness(alice.account_id, alice.device_id, &binding)
+            .await
+            .expect("initial witness repair request")
+            .expect("initial request row should exist");
+        assert_eq!(initial.status, MessageRepairRequestStatus::Unavailable);
+
+        let sibling_device_id = approve_linked_device(
+            &db,
+            alice.account_id,
+            alice.device_id,
+            "Alice Sibling",
+            "alice-message-repair-sibling-joined",
+            [185; 32],
+        )
+        .await;
+        let detail = db
+            .get_chat_detail_for_device(chat_id, alice.device_id)
+            .await
+            .expect("load chat detail for alice primary")
+            .expect("alice primary should see chat");
+        insert_active_chat_device_member(&db, chat_id, sibling_device_id, detail.epoch).await;
+
+        let retried = db
+            .request_message_repair_witness(alice.account_id, alice.device_id, &binding)
+            .await
+            .expect("retry witness repair")
+            .expect("retried request row should exist");
+
+        assert_eq!(retried.request_id, initial.request_id);
+        assert_eq!(retried.status, MessageRepairRequestStatus::Pending);
+        assert_eq!(retried.witness_account_id, alice.account_id);
+        assert_eq!(retried.witness_device_id, sibling_device_id);
+        assert_eq!(retried.unavailable_reason, None);
+        assert!(retried.result_payload.is_none());
+
+        let witness_requests = db
+            .list_message_repair_requests_for_witness_device(
+                alice.account_id,
+                sibling_device_id,
+                Some(10),
+            )
+            .await
+            .expect("list sibling witness requests");
+        assert_eq!(witness_requests.len(), 1);
+        assert_eq!(witness_requests[0].request_id, retried.request_id);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn message_repair_witness_list_and_submit_require_current_witness_membership() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [186; 32],
+                [187; 32],
+            ))
+            .await
+            .expect("create alice");
+        let bob = db
+            .create_account(make_account_input(
+                "bob",
+                "Bob Primary",
+                [188; 32],
+                [189; 32],
+            ))
+            .await
+            .expect("create bob");
+        let chat_id = create_test_dm_chat(
+            &db,
+            alice.account_id,
+            alice.device_id,
+            bob.account_id,
+            bob.device_id,
+        )
+        .await;
+        let target_device_id = approve_linked_device(
+            &db,
+            alice.account_id,
+            alice.device_id,
+            "Alice Target",
+            "alice-message-repair-target-membership",
+            [190; 32],
+        )
+        .await;
+        let binding = append_text_message_and_binding(
+            &db,
+            chat_id,
+            bob.account_id,
+            bob.device_id,
+            b"repair candidate after witness removal",
+        )
+        .await;
+
+        let request = db
+            .request_message_repair_witness(alice.account_id, target_device_id, &binding)
+            .await
+            .expect("request witness repair")
+            .expect("request row should exist");
+        assert_eq!(request.status, MessageRepairRequestStatus::Pending);
+
+        remove_chat_device_member(&db, chat_id, bob.device_id).await;
+
+        let listed = db
+            .list_message_repair_requests_for_witness_device(
+                bob.account_id,
+                bob.device_id,
+                Some(10),
+            )
+            .await
+            .expect("list witness requests");
+        assert!(listed.is_empty());
+
+        let submitted = db
+            .submit_message_repair_witness_result(
+                bob.account_id,
+                bob.device_id,
+                request.request_id,
+                &binding,
+                MessageRepairWitnessOutcome::Unavailable,
+                None,
+                Some("removed_from_chat"),
+            )
+            .await
+            .expect("submit after witness removal");
+        assert!(submitted.is_none());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn message_repair_target_list_and_complete_require_current_visibility() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [191; 32],
+                [192; 32],
+            ))
+            .await
+            .expect("create alice");
+        let bob = db
+            .create_account(make_account_input(
+                "bob",
+                "Bob Primary",
+                [193; 32],
+                [194; 32],
+            ))
+            .await
+            .expect("create bob");
+        let chat_id = create_test_dm_chat(
+            &db,
+            alice.account_id,
+            alice.device_id,
+            bob.account_id,
+            bob.device_id,
+        )
+        .await;
+        let binding = append_text_message_and_binding(
+            &db,
+            chat_id,
+            alice.account_id,
+            alice.device_id,
+            b"self-authored message before target visibility loss",
+        )
+        .await;
+
+        let request = db
+            .request_message_repair_witness(alice.account_id, alice.device_id, &binding)
+            .await
+            .expect("request witness repair")
+            .expect("request row should exist");
+        assert_eq!(request.status, MessageRepairRequestStatus::Unavailable);
+
+        remove_chat_device_member(&db, chat_id, alice.device_id).await;
+
+        let listed = db
+            .list_message_repair_requests_for_target_device(
+                alice.account_id,
+                alice.device_id,
+                Some(10),
+            )
+            .await
+            .expect("list target requests");
+        assert!(listed.is_empty());
+
+        let completed = db
+            .complete_message_repair_witness(
+                alice.account_id,
+                alice.device_id,
+                request.request_id,
+                MessageRepairTargetOutcome::Rejected,
+                Some("lost_visibility"),
+            )
+            .await
+            .expect("complete after target visibility loss");
+        assert!(completed.is_none());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn request_message_repair_witness_rejects_foreign_chat_message() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [161; 32],
+                [162; 32],
+            ))
+            .await
+            .expect("create alice");
+        let bob = db
+            .create_account(make_account_input(
+                "bob",
+                "Bob Primary",
+                [163; 32],
+                [164; 32],
+            ))
+            .await
+            .expect("create bob");
+        let charlie = db
+            .create_account(make_account_input(
+                "charlie",
+                "Charlie Primary",
+                [165; 32],
+                [166; 32],
+            ))
+            .await
+            .expect("create charlie");
+        let foreign_chat_id = create_test_dm_chat(
+            &db,
+            bob.account_id,
+            bob.device_id,
+            charlie.account_id,
+            charlie.device_id,
+        )
+        .await;
+        let foreign_binding = append_text_message_and_binding(
+            &db,
+            foreign_chat_id,
+            bob.account_id,
+            bob.device_id,
+            b"foreign repair candidate",
+        )
+        .await;
+
+        let error = db
+            .request_message_repair_witness(alice.account_id, alice.device_id, &foreign_binding)
+            .await
+            .expect_err("foreign chat repair must be rejected");
+        assert!(matches!(error, AppError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
+    async fn submit_message_repair_witness_result_rejects_binding_mismatch_and_is_idempotent() {
+        let _db_guard = POSTGRES_TEST_LOCK.lock().await;
+        let db = connect_test_db().await;
+        reset_test_db(&db).await;
+
+        let alice = db
+            .create_account(make_account_input(
+                "alice",
+                "Alice Primary",
+                [171; 32],
+                [172; 32],
+            ))
+            .await
+            .expect("create alice");
+        let bob = db
+            .create_account(make_account_input(
+                "bob",
+                "Bob Primary",
+                [173; 32],
+                [174; 32],
+            ))
+            .await
+            .expect("create bob");
+        let chat_id = create_test_dm_chat(
+            &db,
+            alice.account_id,
+            alice.device_id,
+            bob.account_id,
+            bob.device_id,
+        )
+        .await;
+        let target_device_id = approve_linked_device(
+            &db,
+            alice.account_id,
+            alice.device_id,
+            "Alice Target",
+            "alice-submit-target",
+            [175; 32],
+        )
+        .await;
+        let binding = append_text_message_and_binding(
+            &db,
+            chat_id,
+            bob.account_id,
+            bob.device_id,
+            b"witness-submit-candidate",
+        )
+        .await;
+        let request = db
+            .request_message_repair_witness(alice.account_id, target_device_id, &binding)
+            .await
+            .expect("request witness repair")
+            .expect("request row should exist");
+
+        let mut mismatched_binding = binding.clone();
+        mismatched_binding.server_seq += 1;
+        let mismatch_error = db
+            .submit_message_repair_witness_result(
+                bob.account_id,
+                bob.device_id,
+                request.request_id,
+                &mismatched_binding,
+                MessageRepairWitnessOutcome::Completed,
+                Some(vec![1, 2, 3]),
+                None,
+            )
+            .await
+            .expect_err("binding mismatch must be rejected");
+        assert!(matches!(mismatch_error, AppError::BadRequest(_)));
+
+        let payload = vec![9, 8, 7, 6];
+        let submitted = db
+            .submit_message_repair_witness_result(
+                bob.account_id,
+                bob.device_id,
+                request.request_id,
+                &binding,
+                MessageRepairWitnessOutcome::Completed,
+                Some(payload.clone()),
+                None,
+            )
+            .await
+            .expect("submit witness result")
+            .expect("request row should exist");
+        assert_eq!(submitted.status, MessageRepairRequestStatus::Completed);
+        assert_eq!(
+            submitted.result_payload.as_deref(),
+            Some(payload.as_slice())
+        );
+        assert_eq!(submitted.submitted_by_device_id, Some(bob.device_id));
+
+        let replayed = db
+            .submit_message_repair_witness_result(
+                bob.account_id,
+                bob.device_id,
+                request.request_id,
+                &binding,
+                MessageRepairWitnessOutcome::Completed,
+                Some(payload.clone()),
+                None,
+            )
+            .await
+            .expect("replay identical witness result")
+            .expect("request row should still exist");
+        assert_eq!(replayed.status, MessageRepairRequestStatus::Completed);
+        assert_eq!(replayed.result_payload.as_deref(), Some(payload.as_slice()));
+
+        let consumed = db
+            .complete_message_repair_witness(
+                alice.account_id,
+                target_device_id,
+                request.request_id,
+                MessageRepairTargetOutcome::Applied,
+                None,
+            )
+            .await
+            .expect("consume completed witness repair")
+            .expect("request row should still exist");
+        assert_eq!(consumed.status, MessageRepairRequestStatus::Consumed);
+        assert!(consumed.result_payload.is_none());
+
+        let consumed_again = db
+            .complete_message_repair_witness(
+                alice.account_id,
+                target_device_id,
+                request.request_id,
+                MessageRepairTargetOutcome::Applied,
+                None,
+            )
+            .await
+            .expect("repeat consume")
+            .expect("consumed row should be returned idempotently");
+        assert_eq!(consumed_again.status, MessageRepairRequestStatus::Consumed);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local postgres"]
     async fn smoke_searches_account_directory() {
         let _db_guard = POSTGRES_TEST_LOCK.lock().await;
         let db = connect_test_db().await;
@@ -11410,6 +12987,82 @@ mod tests {
         completed.pending_device_id
     }
 
+    async fn insert_active_chat_device_member(
+        db: &Database,
+        chat_id: Uuid,
+        device_id: Uuid,
+        added_in_epoch: u64,
+    ) {
+        let leaf_index_row = sqlx::query(
+            r#"
+            SELECT COALESCE(MAX(leaf_index), -1) AS max_leaf_index
+            FROM chat_device_members
+            WHERE chat_id = $1
+            "#,
+        )
+        .bind(chat_id)
+        .fetch_one(db.pool())
+        .await
+        .expect("load max leaf index");
+        let next_leaf_index = crate::db::row_i32(&leaf_index_row, "max_leaf_index").unwrap() + 1;
+
+        sqlx::query(
+            r#"
+            INSERT INTO chat_device_members (
+                chat_id,
+                device_id,
+                leaf_index,
+                membership_status,
+                added_in_epoch,
+                removed_in_epoch,
+                joined_at,
+                removed_at
+            )
+            VALUES (
+                $1,
+                $2,
+                $3,
+                'active'::device_membership_status,
+                $4,
+                NULL,
+                now(),
+                NULL
+            )
+            ON CONFLICT (chat_id, device_id) DO UPDATE
+            SET leaf_index = EXCLUDED.leaf_index,
+                membership_status = 'active'::device_membership_status,
+                added_in_epoch = EXCLUDED.added_in_epoch,
+                removed_in_epoch = NULL,
+                joined_at = now(),
+                removed_at = NULL
+            "#,
+        )
+        .bind(chat_id)
+        .bind(device_id)
+        .bind(next_leaf_index)
+        .bind(crate::db::u64_to_i64(added_in_epoch, "added_in_epoch").unwrap())
+        .execute(db.pool())
+        .await
+        .expect("insert active chat device member");
+    }
+
+    async fn remove_chat_device_member(db: &Database, chat_id: Uuid, device_id: Uuid) {
+        sqlx::query(
+            r#"
+            UPDATE chat_device_members
+            SET membership_status = 'removed'::device_membership_status,
+                removed_at = now()
+            WHERE chat_id = $1
+              AND device_id = $2
+            "#,
+        )
+        .bind(chat_id)
+        .bind(device_id)
+        .execute(db.pool())
+        .await
+        .expect("remove chat device member");
+    }
+
     async fn create_test_dm_chat(
         db: &Database,
         creator_account_id: Uuid,
@@ -11450,6 +13103,48 @@ mod tests {
         .chat_id
     }
 
+    async fn append_text_message_and_binding(
+        db: &Database,
+        chat_id: Uuid,
+        sender_account_id: Uuid,
+        sender_device_id: Uuid,
+        ciphertext: &[u8],
+    ) -> MessageRepairBinding {
+        let detail = db
+            .get_chat_detail_for_device(chat_id, sender_device_id)
+            .await
+            .expect("load chat detail for sender")
+            .expect("sender device should see chat");
+        let message_id = Uuid::new_v4();
+        let created = db
+            .append_message(CreateMessageInput {
+                chat_id,
+                sender_account_id,
+                sender_device_id,
+                message_id,
+                epoch: detail.epoch,
+                message_kind: MessageKind::Application,
+                content_type: ContentType::Text,
+                ciphertext: ciphertext.to_vec(),
+                aad_json: json!({ "preview": "repair-candidate" }),
+            })
+            .await
+            .expect("append repair candidate message");
+
+        MessageRepairBinding {
+            chat_id: ChatId(chat_id),
+            message_id: MessageId(message_id),
+            server_seq: created.server_seq,
+            epoch: detail.epoch,
+            sender_account_id: AccountId(sender_account_id),
+            sender_device_id: DeviceId(sender_device_id),
+            message_kind: ApiMessageKind::Application,
+            content_type: ApiContentType::Text,
+            ciphertext_sha256_b64: base64::engine::general_purpose::STANDARD
+                .encode(Sha256::digest(ciphertext)),
+        }
+    }
+
     fn make_control_message(tag: &str) -> PendingControlMessage {
         PendingControlMessage {
             message_id: Uuid::new_v4(),
@@ -11479,10 +13174,10 @@ mod feature_flag_merge_tests {
     #[test]
     fn precedence_device_over_account_over_platform_over_global_over_default() {
         assert!(!pick(true, None, None, None, Some(false)));
-        assert!(pick(false, None, None, None, None));
+        assert!(!pick(false, None, None, None, None));
         assert!(!pick(true, Some(true), Some(true), Some(true), Some(false)));
         assert!(pick(false, None, None, Some(true), None));
         assert!(!pick(true, Some(true), Some(false), None, None));
-        assert!(pick(true, Some(false), None, None, None));
+        assert!(!pick(true, Some(false), None, None, None));
     }
 }

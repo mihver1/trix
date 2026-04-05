@@ -12,6 +12,7 @@ pub mod devices;
 pub mod history_sync;
 pub mod inbox;
 pub mod key_packages;
+pub mod message_repairs;
 pub mod system;
 pub mod ws;
 
@@ -33,6 +34,7 @@ pub fn v0_router() -> Router<crate::state::AppState> {
         .nest("/devices", devices::router())
         .nest("/chats", chats::router())
         .nest("/history-sync", history_sync::router())
+        .merge(message_repairs::router())
         .merge(inbox::router())
         .merge(key_packages::router())
         .nest("/blobs", blobs::router())
