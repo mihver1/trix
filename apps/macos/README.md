@@ -113,6 +113,10 @@ TRIX_ASC_DESTINATION=upload \
 ./scripts/archive-testflight.sh
 ```
 
+Release export-compliance metadata is committed with `ITSAppUsesNonExemptEncryption=YES`, because Trix ships industry-standard cryptography beyond Apple-provided OS-only mechanisms.
+
+France availability is not stored in the macOS Xcode project. Keep the macOS app unavailable in France in App Store Connect unless you intentionally upload the required French encryption declaration and receive an `ITSEncryptionExportComplianceCode` for the app record.
+
 That script now:
 
 - regenerates the shared Swift string file, checked-in Swift bridge, and fresh universal `trix-core` archive before `xcodebuild archive`

@@ -141,6 +141,10 @@ The script also:
 - can re-validate or upload an existing `.ipa` with `--ipa path/to/Trix.ipa`
 - honors an explicit `TRIX_IOS_BUILD_NUMBER`; if the env var is unset, archive builds fall back to a generated timestamp-based `CURRENT_PROJECT_VERSION`
 
+Release export-compliance metadata is committed with `ITSAppUsesNonExemptEncryption=YES`, because Trix ships industry-standard cryptography beyond Apple-provided OS-only mechanisms.
+
+France availability is not stored in the Xcode project. Keep the iOS app unavailable in France in App Store Connect unless you intentionally upload the required French encryption declaration and receive an `ITSEncryptionExportComplianceCode` for the app record.
+
 With a fresh archive, `--upload` uses the same `xcodebuild -exportArchive` upload path as `apps/macos/scripts/archive-testflight.sh`. If Xcode is signed in locally, you can use that account state directly without checking any private credentials into git.
 
 If you prefer explicit App Store Connect API key auth, set `TRIX_ASC_AUTH_KEY_PATH` / `TRIX_ASC_AUTH_KEY_ID` / `TRIX_ASC_AUTH_ISSUER_ID`.
