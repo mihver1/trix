@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use crate::{
     AttachmentMessageBody, MessageBody, MlsConversation, MlsFacade, MlsProcessResult,
-    control_message_ratchet_tree, decode_b64_field,
+    control_message_ratchet_tree, decode_b64_field, history_recovery::ChatHistoryRecovery,
 };
 
 #[derive(Debug, Clone)]
@@ -106,6 +106,24 @@ pub struct LocalProjectionApplyReport {
     pub advanced_to_server_seq: Option<u64>,
 }
 
+#[derive(Debug)]
+struct CurrentDeviceReplayProjectionError {
+    message_id: MessageId,
+    chat_id: ChatId,
+}
+
+impl std::fmt::Display for CurrentDeviceReplayProjectionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "current device replay for message {} in chat {} would discard its durable body",
+            self.message_id.0, self.chat_id.0
+        )
+    }
+}
+
+impl std::error::Error for CurrentDeviceReplayProjectionError {}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalChatReadState {
     pub chat_id: ChatId,
@@ -130,8 +148,14 @@ pub struct LocalChatListItem {
     pub preview_server_seq: Option<u64>,
     pub preview_created_at_unix: Option<u64>,
     pub participant_profiles: Vec<ChatParticipantProfileSummary>,
+    /// Whether the chat still has projected gaps or unavailable placeholders that
+    /// require sibling-history recovery.
     pub history_recovery_pending: bool,
+    /// Summary start of the current recovery window. This is an aggregate span for
+    /// UI state and is not guaranteed to represent an exact sparse set of gaps.
     pub history_recovery_from_server_seq: Option<u64>,
+    /// Summary end of the current recovery window. This is an aggregate span for
+    /// UI state and is not guaranteed to represent an exact sparse set of gaps.
     pub history_recovery_through_server_seq: Option<u64>,
 }
 
@@ -1193,16 +1217,40 @@ impl LocalHistoryStore {
         self.clear_pending_history_repair_window(chat_id)?;
         Ok(None)
     }
+
+    pub fn chats_with_pending_history_repairs(&self) -> Vec<ChatId> {
+        self.state
+            .chats
+            .iter()
+            .filter_map(|(key, chat)| {
+                pending_history_repair_window_from(chat)
+                    .and_then(|_| uuid::Uuid::parse_str(key).ok().map(ChatId))
+            })
+            .collect()
+    }
+
+    pub fn unavailable_message_server_seqs(&self, chat_id: ChatId) -> BTreeSet<u64> {
+        self.state
+            .chats
+            .get(&chat_id.0.to_string())
+            .map(unavailable_message_server_seqs_in_chat)
+            .unwrap_or_default()
+    }
+
+    pub fn has_backfillable_unavailable_messages(&self, chat_id: ChatId) -> bool {
+        self.state
+            .chats
+            .get(&chat_id.0.to_string())
+            .map(chat_has_backfillable_unavailable_messages)
+            .unwrap_or(false)
+    }
+
     pub fn chats_with_unavailable_messages(&self) -> Vec<ChatId> {
         self.state
             .chats
             .iter()
             .filter_map(|(key, chat)| {
-                let has_unavailable = chat.projected_messages.values().any(|msg| {
-                    msg.projection_kind == LocalProjectionKind::ApplicationMessage
-                        && msg.materialized_body_b64.is_none()
-                        && msg.message_kind == trix_types::MessageKind::Application
-                });
+                let has_unavailable = !unavailable_message_server_seqs_in_chat(chat).is_empty();
                 if has_unavailable {
                     uuid::Uuid::parse_str(key).ok().map(ChatId)
                 } else {
@@ -1776,6 +1824,29 @@ impl LocalHistoryStore {
         messages
     }
 
+    pub fn get_local_timeline_items_for_server_seqs(
+        &self,
+        chat_id: ChatId,
+        self_account_id: Option<trix_types::AccountId>,
+        server_seqs: &BTreeSet<u64>,
+    ) -> Vec<LocalTimelineItem> {
+        self.state
+            .chats
+            .get(&chat_id.0.to_string())
+            .map(|state| {
+                let decorations = local_timeline_decorations(state, self_account_id);
+                server_seqs
+                    .iter()
+                    .filter_map(|server_seq| state.projected_messages.get(server_seq).cloned())
+                    .map(projected_message_from_persisted)
+                    .map(|message| {
+                        local_timeline_item_from(message, state, self_account_id, &decorations)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    }
+
     pub fn list_outbox_messages(&self, chat_id: Option<ChatId>) -> Vec<LocalOutboxMessage> {
         let mut messages = self
             .state
@@ -1956,11 +2027,11 @@ impl LocalHistoryStore {
                     &projected,
                     current_device_id.as_ref(),
                 ) {
-                    return Err(anyhow!(
-                        "current device replay for message {} in chat {} would discard its durable body",
-                        envelope.message_id.0,
-                        chat_id.0
-                    ));
+                    return Err(CurrentDeviceReplayProjectionError {
+                        message_id: envelope.message_id,
+                        chat_id,
+                    }
+                    .into());
                 }
                 let persisted = persisted_projected_message_from(projected);
                 let entry_changed = match chat.projected_messages.get(&envelope.server_seq) {
@@ -2948,6 +3019,12 @@ fn is_group_id_mismatch_projection_error(error: &anyhow::Error) -> bool {
     })
 }
 
+pub(crate) fn is_current_device_replay_projection_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.is::<CurrentDeviceReplayProjectionError>())
+}
+
 fn projected_message_from_persisted(value: PersistedProjectedMessage) -> LocalProjectedMessage {
     LocalProjectedMessage {
         server_seq: value.server_seq,
@@ -3184,6 +3261,22 @@ fn chat_has_unmaterialized_application_messages(chat: &PersistedChatState) -> bo
     first_unmaterialized_application_projection(chat).is_some()
 }
 
+fn unavailable_message_server_seqs_in_chat(chat: &PersistedChatState) -> BTreeSet<u64> {
+    chat.projected_messages
+        .iter()
+        .filter_map(|(server_seq, message)| {
+            ((message.projection_kind == LocalProjectionKind::ApplicationMessage)
+                && message.materialized_body_b64.is_none()
+                && message.message_kind == trix_types::MessageKind::Application)
+                .then_some(*server_seq)
+        })
+        .collect()
+}
+
+fn chat_has_backfillable_unavailable_messages(chat: &PersistedChatState) -> bool {
+    chat_history_recovery(chat).has_backfillable_unavailable_messages()
+}
+
 fn pending_history_repair_window_from(
     chat: &PersistedChatState,
 ) -> Option<LocalHistoryRepairWindow> {
@@ -3191,6 +3284,14 @@ fn pending_history_repair_window_from(
         from_server_seq: chat.pending_history_repair_from_server_seq?,
         through_server_seq: chat.pending_history_repair_through_server_seq?,
     })
+}
+
+fn chat_history_recovery(chat: &PersistedChatState) -> ChatHistoryRecovery {
+    ChatHistoryRecovery::new(
+        pending_history_repair_window_from(chat),
+        projected_gap_after_cursor(chat),
+        unavailable_message_server_seqs_in_chat(chat),
+    )
 }
 
 fn reconcile_pending_history_repair_in_chat(chat: &mut PersistedChatState) -> bool {
@@ -3227,7 +3328,8 @@ fn local_chat_list_item_from(
     self_account_id: Option<trix_types::AccountId>,
 ) -> LocalChatListItem {
     let preview = latest_preview_from_chat(state, self_account_id);
-    let pending_window = pending_history_repair_window_from(state);
+    let recovery = chat_history_recovery(state);
+    let recovery_window = recovery.summary_window();
     LocalChatListItem {
         chat_id,
         chat_type: state.chat_type,
@@ -3246,9 +3348,10 @@ fn local_chat_list_item_from(
         preview_server_seq: preview.as_ref().map(|preview| preview.server_seq),
         preview_created_at_unix: preview.as_ref().map(|preview| preview.created_at_unix),
         participant_profiles: state.participant_profiles.clone(),
-        history_recovery_pending: pending_window.is_some(),
-        history_recovery_from_server_seq: pending_window.map(|window| window.from_server_seq),
-        history_recovery_through_server_seq: pending_window.map(|window| window.through_server_seq),
+        history_recovery_pending: recovery_window.is_some(),
+        history_recovery_from_server_seq: recovery_window.map(|window| window.from_server_seq),
+        history_recovery_through_server_seq: recovery_window
+            .map(|window| window.through_server_seq),
     }
 }
 
@@ -3296,14 +3399,8 @@ fn local_timeline_item_from(
     };
     let preview_text =
         preview_text_for_projected_message(&message, body.as_ref(), body_parse_error.as_deref());
-    let recovery_state = pending_history_repair_window_from(state).and_then(|window| {
-        body.is_none()
-            .then_some(message.server_seq)
-            .filter(|server_seq| {
-                *server_seq >= window.from_server_seq && *server_seq <= window.through_server_seq
-            })
-            .map(|_| LocalMessageRecoveryState::PendingSiblingHistory)
-    });
+    let recovery_state =
+        chat_history_recovery(state).recovery_state_for_message(message.server_seq, body.is_some());
     let is_visible_in_timeline = !decorations.hidden_message_ids.contains(&message.message_id);
     let receipt_status = decorations
         .receipt_status_by_message_id
@@ -7817,7 +7914,7 @@ mod tests {
         let error = store
             .project_chat_with_facade_for_device(chat_id, &bob, None, Some(bob_device))
             .unwrap_err();
-        assert!(error.to_string().contains("would discard its durable body"));
+        assert!(is_current_device_replay_projection_error(&error));
         assert_eq!(store.projected_cursor(chat_id), Some(0));
         assert!(
             store
@@ -8237,6 +8334,223 @@ mod tests {
         assert_eq!(timeline.len(), 1);
         assert_eq!(timeline[0].server_seq, 3);
         assert_eq!(timeline[0].recovery_state, None);
+    }
+
+    #[test]
+    fn local_chat_list_item_marks_projected_gap_without_stored_repair_window() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+        let first_body = MessageBody::Text(crate::TextMessageBody {
+            text: "visible head".to_owned(),
+        })
+        .to_bytes()
+        .unwrap();
+        let tail_body = MessageBody::Text(crate::TextMessageBody {
+            text: "visible tail".to_owned(),
+        })
+        .to_bytes()
+        .unwrap();
+
+        store
+            .apply_chat_list(&ChatListResponse {
+                chats: vec![ChatSummary {
+                    chat_id,
+                    chat_type: ChatType::Dm,
+                    title: Some("Gap".to_owned()),
+                    last_server_seq: 3,
+                    epoch: 1,
+                    pending_message_count: 0,
+                    last_message: None,
+                    participant_profiles: Vec::new(),
+                }],
+            })
+            .unwrap();
+
+        {
+            let chat = store.state.chats.get_mut(&chat_id.0.to_string()).unwrap();
+            chat.projected_messages.insert(
+                1,
+                PersistedProjectedMessage {
+                    server_seq: 1,
+                    message_id: MessageId(Uuid::new_v4()),
+                    sender_account_id,
+                    sender_device_id,
+                    epoch: 1,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    projection_kind: LocalProjectionKind::ApplicationMessage,
+                    materialized_body_b64: Some(crate::encode_b64(&first_body)),
+                    merged_epoch: None,
+                    created_at_unix: 9,
+                },
+            );
+            chat.projected_messages.insert(
+                3,
+                PersistedProjectedMessage {
+                    server_seq: 3,
+                    message_id: MessageId(Uuid::new_v4()),
+                    sender_account_id,
+                    sender_device_id,
+                    epoch: 1,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    projection_kind: LocalProjectionKind::ApplicationMessage,
+                    materialized_body_b64: Some(crate::encode_b64(&tail_body)),
+                    merged_epoch: None,
+                    created_at_unix: 10,
+                },
+            );
+            chat.projected_cursor_server_seq = 1;
+        }
+
+        let summary = store.get_local_chat_list_item(chat_id, None).unwrap();
+        assert!(summary.history_recovery_pending);
+        assert_eq!(summary.history_recovery_from_server_seq, Some(2));
+        assert_eq!(summary.history_recovery_through_server_seq, Some(2));
+
+        let timeline = store.get_local_timeline_items(chat_id, None, None, Some(10));
+        assert_eq!(timeline.len(), 2);
+        assert_eq!(timeline[0].server_seq, 1);
+        assert_eq!(timeline[0].recovery_state, None);
+        assert_eq!(timeline[1].server_seq, 3);
+        assert_eq!(timeline[1].recovery_state, None);
+    }
+
+    #[test]
+    fn local_chat_list_item_merges_gap_and_placeholder_without_pending_window() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+        let head_body = MessageBody::Text(crate::TextMessageBody {
+            text: "visible head".to_owned(),
+        })
+        .to_bytes()
+        .unwrap();
+
+        store
+            .apply_chat_list(&ChatListResponse {
+                chats: vec![ChatSummary {
+                    chat_id,
+                    chat_type: ChatType::Dm,
+                    title: Some("Gap+Placeholder".to_owned()),
+                    last_server_seq: 4,
+                    epoch: 1,
+                    pending_message_count: 0,
+                    last_message: None,
+                    participant_profiles: Vec::new(),
+                }],
+            })
+            .unwrap();
+
+        {
+            let chat = store.state.chats.get_mut(&chat_id.0.to_string()).unwrap();
+            chat.projected_messages.insert(
+                1,
+                PersistedProjectedMessage {
+                    server_seq: 1,
+                    message_id: MessageId(Uuid::new_v4()),
+                    sender_account_id,
+                    sender_device_id,
+                    epoch: 1,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    projection_kind: LocalProjectionKind::ApplicationMessage,
+                    materialized_body_b64: Some(crate::encode_b64(&head_body)),
+                    merged_epoch: None,
+                    created_at_unix: 9,
+                },
+            );
+            chat.projected_messages.insert(
+                4,
+                PersistedProjectedMessage {
+                    server_seq: 4,
+                    message_id: MessageId(Uuid::new_v4()),
+                    sender_account_id,
+                    sender_device_id,
+                    epoch: 1,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    projection_kind: LocalProjectionKind::ApplicationMessage,
+                    materialized_body_b64: None,
+                    merged_epoch: None,
+                    created_at_unix: 10,
+                },
+            );
+            chat.projected_cursor_server_seq = 1;
+        }
+
+        let summary = store.get_local_chat_list_item(chat_id, None).unwrap();
+        assert!(summary.history_recovery_pending);
+        assert_eq!(summary.history_recovery_from_server_seq, Some(2));
+        assert_eq!(summary.history_recovery_through_server_seq, Some(4));
+
+        let timeline = store.get_local_timeline_items(chat_id, None, None, Some(10));
+        assert_eq!(timeline.len(), 2);
+        assert_eq!(timeline[0].server_seq, 1);
+        assert_eq!(timeline[0].recovery_state, None);
+        assert_eq!(timeline[1].server_seq, 4);
+        assert_eq!(
+            timeline[1].recovery_state,
+            Some(LocalMessageRecoveryState::PendingSiblingHistory)
+        );
+    }
+
+    #[test]
+    fn unavailable_placeholder_summary_includes_leading_projected_gap() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+
+        store
+            .apply_chat_list(&ChatListResponse {
+                chats: vec![ChatSummary {
+                    chat_id,
+                    chat_type: ChatType::Dm,
+                    title: Some("Replay".to_owned()),
+                    last_server_seq: 3,
+                    epoch: 1,
+                    pending_message_count: 0,
+                    last_message: None,
+                    participant_profiles: Vec::new(),
+                }],
+            })
+            .unwrap();
+
+        {
+            let chat = store.state.chats.get_mut(&chat_id.0.to_string()).unwrap();
+            chat.projected_messages.insert(
+                3,
+                PersistedProjectedMessage {
+                    server_seq: 3,
+                    message_id: MessageId(Uuid::new_v4()),
+                    sender_account_id,
+                    sender_device_id,
+                    epoch: 1,
+                    message_kind: MessageKind::Application,
+                    content_type: ContentType::Text,
+                    projection_kind: LocalProjectionKind::ApplicationMessage,
+                    materialized_body_b64: None,
+                    merged_epoch: None,
+                    created_at_unix: 10,
+                },
+            );
+        }
+
+        let summary = store.get_local_chat_list_item(chat_id, None).unwrap();
+        assert!(summary.history_recovery_pending);
+        assert_eq!(summary.history_recovery_from_server_seq, Some(1));
+        assert_eq!(summary.history_recovery_through_server_seq, Some(3));
+
+        let timeline = store.get_local_timeline_items(chat_id, None, None, Some(10));
+        assert_eq!(timeline.len(), 1);
+        assert_eq!(
+            timeline[0].recovery_state,
+            Some(LocalMessageRecoveryState::PendingSiblingHistory)
+        );
     }
 
     #[test]

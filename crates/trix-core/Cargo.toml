@@ -30,6 +30,7 @@ thiserror.workspace = true
 tls_codec.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
+tracing.workspace = true
 trix-types = { path = "../trix-types" }
 uniffi = { workspace = true, features = ["tokio", "cli"] }
 uuid.workspace = true

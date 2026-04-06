@@ -4047,6 +4047,7 @@ dependencies = [
  "tls_codec",
  "tokio",
  "tokio-tungstenite",
+ "tracing",
  "trix-server",
  "trix-types",
  "uniffi",

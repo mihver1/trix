@@ -3,6 +3,7 @@ pub mod config;
 pub mod crypto;
 pub mod device_transfer;
 pub mod ffi;
+mod history_recovery;
 pub mod history_sync_payload;
 pub mod message;
 pub mod messenger;
