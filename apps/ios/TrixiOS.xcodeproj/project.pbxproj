@@ -15,6 +15,7 @@
 		216D9FC855FED05182FD63E8 /* TrixiOSInteropDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04353F1F4F70E3DFA332FEC3 /* TrixiOSInteropDriver.swift */; };
 		299255BB4FA97D30B09AE774 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22C33A945CFEA9105871D033 /* AppModel.swift */; };
 		2A4D048B3AE35BA823611D63 /* APIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D76E826883729659D5B0DF4 /* APIError.swift */; };
+		2DF776F7AA83A0EE17FE814E /* NotificationSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 612598F4B268EEA1189A79D2 /* NotificationSupportTests.swift */; };
 		2E71C4248DCC0FBAEACD2550 /* FormAndPayloadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC373B8F990B456994383982 /* FormAndPayloadTests.swift */; };
 		2F7D3413498393667AF7D47C /* UITestLaunchConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFBAFE33FD857EED36B6B54D /* UITestLaunchConfigurationTests.swift */; };
 		34290FD5C5D6893807F2ED59 /* TrixiOSSmokeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77AFAFDD2946D1C49895D188 /* TrixiOSSmokeUITests.swift */; };
@@ -105,6 +106,7 @@
 		4EE27BEB5EF834A79EF67EA6 /* UITestConversationSeedStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestConversationSeedStateTests.swift; sourceTree = "<group>"; };
 		4F9754F6512B52355BDF9422 /* UITestFixtureSeeder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestFixtureSeeder.swift; sourceTree = "<group>"; };
 		5B51840115EF40A8C585C795 /* UITestLaunchConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestLaunchConfiguration.swift; sourceTree = "<group>"; };
+		612598F4B268EEA1189A79D2 /* NotificationSupportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSupportTests.swift; sourceTree = "<group>"; };
 		658A7042AB73BF905B248D96 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
 		6B9EE7D8E7C908B372176F97 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		6CA0CB45A603B4FED3E98410 /* ServerBackedSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerBackedSmokeTests.swift; sourceTree = "<group>"; };
@@ -288,6 +290,7 @@
 			children = (
 				BC373B8F990B456994383982 /* FormAndPayloadTests.swift */,
 				B2512DCDBA23CAA2DD01D887 /* KeychainStoreTests.swift */,
+				612598F4B268EEA1189A79D2 /* NotificationSupportTests.swift */,
 				08AA5221B78BFACBC4672FF9 /* PendingApprovalStateTests.swift */,
 				C9C8631443110E522094F6A9 /* SafeDiagnosticLogStoreTests.swift */,
 				6CA0CB45A603B4FED3E98410 /* ServerBackedSmokeTests.swift */,
@@ -504,6 +507,7 @@
 			files = (
 				2E71C4248DCC0FBAEACD2550 /* FormAndPayloadTests.swift in Sources */,
 				8D9307A1BB782025F7435959 /* KeychainStoreTests.swift in Sources */,
+				2DF776F7AA83A0EE17FE814E /* NotificationSupportTests.swift in Sources */,
 				52A18846B8478503566F0B39 /* PendingApprovalStateTests.swift in Sources */,
 				064D00F2E76BC347C26637AC /* SafeDiagnosticLogStoreTests.swift in Sources */,
 				A4388599633E8E37A9BF4580 /* ServerBackedSmokeTests.swift in Sources */,

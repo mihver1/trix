@@ -219,6 +219,9 @@ struct ConsumerChatDetailView: View {
         .task(id: snapshotTaskID) {
             await loadSnapshot()
         }
+        .onAppear {
+            model.handleChatScreenDidAppear(chatId: chatSummary.chatId)
+        }
         .refreshable {
             await loadSnapshot()
         }
@@ -266,6 +269,7 @@ struct ConsumerChatDetailView: View {
             publishTypingState(for: newValue)
         }
         .onDisappear {
+            model.handleChatScreenDidDisappear(chatId: chatSummary.chatId)
             publishTypingState(for: "", force: true)
         }
         .confirmationDialog(

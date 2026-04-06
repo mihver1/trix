@@ -108,6 +108,7 @@ final class AppModel {
     @ObservationIgnored private var cachedAttachmentFiles: [String: DownloadedAttachmentFile] = [:]
     @ObservationIgnored private var attachmentDownloadTasks: [String: Task<DownloadedAttachmentFile, Error>] = [:]
     @ObservationIgnored private var apnsTokenHex: String?
+    @ObservationIgnored private var visibleChatID: String?
     @ObservationIgnored private var backgroundRealtimeTaskID: UIBackgroundTaskIdentifier = .invalid
     @ObservationIgnored private var linkIntentPollingTask: Task<Void, Never>?
     @ObservationIgnored private var linkIntentPendingBaselineDeviceIds: Set<String> = []
@@ -245,6 +246,17 @@ final class AppModel {
     func clearServerStatus() {
         systemSnapshot = nil
         lastUpdatedAt = nil
+    }
+
+    func handleChatScreenDidAppear(chatId: String) {
+        visibleChatID = chatId
+    }
+
+    func handleChatScreenDidDisappear(chatId: String) {
+        guard visibleChatID == chatId else {
+            return
+        }
+        visibleChatID = nil
     }
 
     func handleAppDidBecomeActive(baseURLString: String) async {
@@ -2175,6 +2187,8 @@ final class AppModel {
             return
         }
 
+        let previousSnapshot = messengerSnapshot
+
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             try await refreshSafeMessengerState(
@@ -2182,6 +2196,13 @@ final class AppModel {
                 accessToken: context.session.accessToken,
                 identity: context.identity
             )
+            if let currentSnapshot = messengerSnapshot {
+                await postMessageNotificationsIfNeeded(
+                    previousSnapshot: previousSnapshot,
+                    currentSnapshot: currentSnapshot,
+                    events: batch.events
+                )
+            }
         } catch {
             scheduleBackgroundRefresh(delayNanoseconds: 300_000_000)
         }
@@ -2301,7 +2322,7 @@ final class AppModel {
     private func runIncrementalBackgroundRecovery(
         baseURLString: String,
         resumeRealtimeConnection: Bool = true,
-        postNotifications: Bool = false
+        postNotifications: Bool = true
     ) async -> Bool {
         guard dashboard != nil else {
             return false
@@ -2331,7 +2352,7 @@ final class AppModel {
             }
 
             if postNotifications, let currentSnapshot = messengerSnapshot {
-                await postBackgroundMessageNotificationsIfNeeded(
+                await postMessageNotificationsIfNeeded(
                     previousSnapshot: previousSnapshot,
                     currentSnapshot: currentSnapshot,
                     events: batch.events
@@ -2359,44 +2380,47 @@ final class AppModel {
         }
     }
 
-    private func postBackgroundMessageNotificationsIfNeeded(
+    private func postMessageNotificationsIfNeeded(
         previousSnapshot: SafeMessengerSnapshot?,
         currentSnapshot: SafeMessengerSnapshot,
         events: [SafeMessengerEvent]
     ) async {
-        guard UIApplication.shared.applicationState != .active else {
-            return
-        }
         guard let currentAccountId = currentSnapshot.accountId else {
             return
         }
 
+        let applicationIsActive = UIApplication.shared.applicationState == .active
         let previousByChatId = Dictionary(
             uniqueKeysWithValues: (previousSnapshot?.chatListItems ?? []).map { ($0.chatId, $0) }
         )
+        let payloads = makeMessageNotificationPayloads(
+            previousItems: previousSnapshot?.chatListItems ?? [],
+            currentItems: currentSnapshot.chatListItems,
+            currentAccountId: currentAccountId,
+            applicationIsActive: applicationIsActive,
+            visibleChatID: visibleChatID
+        )
+        let messageNotificationChatIds = Set<String>(currentSnapshot.chatListItems.compactMap { item in
+            guard messageNotificationPreviewServerSeq(
+                item: item,
+                previousItem: previousByChatId[item.chatId],
+                currentAccountId: currentAccountId,
+                applicationIsActive: applicationIsActive,
+                visibleChatID: visibleChatID
+            ) != nil else {
+                return nil
+            }
+            return item.chatId
+        })
         let currentByChatId = Dictionary(
             uniqueKeysWithValues: currentSnapshot.chatListItems.map { ($0.chatId, $0) }
         )
-        var messageNotificationsByChatId: [String: (serverSeq: UInt64, body: String)] = [:]
         var participantChangeChatIds = Set<String>()
 
         for event in events {
             guard let chatId = event.conversationId,
                   let currentItem = currentByChatId[chatId],
                   currentItem.chatType != .accountSync else {
-                continue
-            }
-
-            if let message = event.message,
-               shouldPostBackgroundNotification(for: event, message: message, currentAccountId: currentAccountId) {
-                let existing = messageNotificationsByChatId[chatId]
-                let existingServerSeq = existing?.serverSeq ?? 0
-                if existing == nil || message.serverSeq > existingServerSeq {
-                    messageNotificationsByChatId[chatId] = (
-                        serverSeq: message.serverSeq,
-                        body: message.previewText
-                    )
-                }
                 continue
             }
 
@@ -2409,21 +2433,21 @@ final class AppModel {
             }
         }
 
+        for payload in payloads {
+            await notificationCoordinator.postMessageNotification(
+                identifier: payload.identifier,
+                title: payload.title,
+                body: payload.body
+            )
+        }
+
         for item in currentSnapshot.chatListItems {
             guard item.chatType != .accountSync else {
                 continue
             }
-
-            if let messageNotification = messageNotificationsByChatId[item.chatId] {
-                await notificationCoordinator.postMessageNotification(
-                    identifier: "chat-\(item.chatId)-\(messageNotification.serverSeq)",
-                    title: "\(item.displayTitle): New message",
-                    body: messageNotification.body
-                )
-                continue
-            }
-
-            guard participantChangeChatIds.contains(item.chatId) else {
+            guard participantChangeChatIds.contains(item.chatId),
+                  !messageNotificationChatIds.contains(item.chatId),
+                  !applicationIsActive || visibleChatID != item.chatId else {
                 continue
             }
             await notificationCoordinator.postMessageNotification(

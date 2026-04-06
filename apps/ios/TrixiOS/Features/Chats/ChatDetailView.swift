@@ -470,6 +470,9 @@ struct ChatDetailView: View {
         .task(id: liveSnapshotRefreshToken) {
             await loadSnapshot()
         }
+        .onAppear {
+            model.handleChatScreenDidAppear(chatId: chatSummary.chatId)
+        }
         .refreshable {
             await loadSnapshot()
         }
@@ -490,6 +493,9 @@ struct ChatDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes the DM for everyone. It cannot be undone.")
+        }
+        .onDisappear {
+            model.handleChatScreenDidDisappear(chatId: chatSummary.chatId)
         }
     }
 

@@ -2113,6 +2113,9 @@ final class AppModel: ObservableObject {
             guard currentItem.previewSenderAccountId != currentAccountID else {
                 continue
             }
+            guard NSApp?.isActive != true || selectedChatID != chatId else {
+                continue
+            }
 
             await notificationCoordinator.postMessageNotification(
                 identifier: "chat-\(chatId.uuidString)-\(currentItem.lastServerSeq)",
