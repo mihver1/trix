@@ -108,6 +108,7 @@ final class AppModel {
     @ObservationIgnored private var cachedAttachmentFiles: [String: DownloadedAttachmentFile] = [:]
     @ObservationIgnored private var attachmentDownloadTasks: [String: Task<DownloadedAttachmentFile, Error>] = [:]
     @ObservationIgnored private var apnsTokenHex: String?
+    @ObservationIgnored private var visibleChatID: String?
     @ObservationIgnored private var backgroundRealtimeTaskID: UIBackgroundTaskIdentifier = .invalid
     @ObservationIgnored private var linkIntentPollingTask: Task<Void, Never>?
     @ObservationIgnored private var linkIntentPendingBaselineDeviceIds: Set<String> = []
@@ -245,6 +246,17 @@ final class AppModel {
     func clearServerStatus() {
         systemSnapshot = nil
         lastUpdatedAt = nil
+    }
+
+    func handleChatScreenDidAppear(chatId: String) {
+        visibleChatID = chatId
+    }
+
+    func handleChatScreenDidDisappear(chatId: String) {
+        guard visibleChatID == chatId else {
+            return
+        }
+        visibleChatID = nil
     }
 
     func handleAppDidBecomeActive(baseURLString: String) async {
@@ -2175,6 +2187,8 @@ final class AppModel {
             return
         }
 
+        let previousSnapshot = messengerSnapshot
+
         do {
             let context = try await makeAuthenticatedContext(baseURLString: baseURLString)
             try await refreshSafeMessengerState(
@@ -2182,6 +2196,12 @@ final class AppModel {
                 accessToken: context.session.accessToken,
                 identity: context.identity
             )
+            if let currentSnapshot = messengerSnapshot {
+                await postMessageNotificationsIfNeeded(
+                    previousSnapshot: previousSnapshot,
+                    currentSnapshot: currentSnapshot
+                )
+            }
         } catch {
             scheduleBackgroundRefresh(delayNanoseconds: 300_000_000)
         }
@@ -2301,7 +2321,7 @@ final class AppModel {
     private func runIncrementalBackgroundRecovery(
         baseURLString: String,
         resumeRealtimeConnection: Bool = true,
-        postNotifications: Bool = false
+        postNotifications: Bool = true
     ) async -> Bool {
         guard dashboard != nil else {
             return false
@@ -2331,7 +2351,7 @@ final class AppModel {
             }
 
             if postNotifications, let currentSnapshot = messengerSnapshot {
-                await postBackgroundMessageNotificationsIfNeeded(
+                await postMessageNotificationsIfNeeded(
                     previousSnapshot: previousSnapshot,
                     currentSnapshot: currentSnapshot
                 )
@@ -2358,38 +2378,27 @@ final class AppModel {
         }
     }
 
-    private func postBackgroundMessageNotificationsIfNeeded(
+    private func postMessageNotificationsIfNeeded(
         previousSnapshot: SafeMessengerSnapshot?,
         currentSnapshot: SafeMessengerSnapshot
     ) async {
-        guard UIApplication.shared.applicationState != .active else {
-            return
-        }
         guard let currentAccountId = currentSnapshot.accountId else {
             return
         }
 
-        let previousByChatId = Dictionary(
-            uniqueKeysWithValues: (previousSnapshot?.chatListItems ?? []).map { ($0.chatId, $0) }
+        let payloads = makeMessageNotificationPayloads(
+            previousItems: previousSnapshot?.chatListItems ?? [],
+            currentItems: currentSnapshot.chatListItems,
+            currentAccountId: currentAccountId,
+            applicationIsActive: UIApplication.shared.applicationState == .active,
+            visibleChatID: visibleChatID
         )
 
-        for item in currentSnapshot.chatListItems {
-            guard item.chatType != .accountSync else {
-                continue
-            }
-
-            let previousServerSeq = previousByChatId[item.chatId]?.lastServerSeq ?? 0
-            guard item.lastServerSeq > previousServerSeq else {
-                continue
-            }
-            guard item.previewSenderAccountId != currentAccountId else {
-                continue
-            }
-
+        for payload in payloads {
             await notificationCoordinator.postMessageNotification(
-                identifier: "chat-\(item.chatId)-\(item.lastServerSeq)",
-                title: "\(item.displayTitle): New message",
-                body: item.previewText ?? ""
+                identifier: payload.identifier,
+                title: payload.title,
+                body: payload.body
             )
         }
     }
