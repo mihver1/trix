@@ -45,6 +45,7 @@ final class MockAdminAPIClient: AdminAPIProtocol {
     var updatedRegistrationStates: [Bool] = []
 
     var usersListResponse = AdminUserListResponse(users: [], nextCursor: nil)
+    var serverLogsResponse = AdminServerLogListResponse(entries: [], droppedEntries: 0)
     var nextProvisionResponse: CreateAdminUserProvisionResponse?
     var disabledUserIDs: [UUID] = []
     var reactivatedUserIDs: [UUID] = []
@@ -117,6 +118,18 @@ final class MockAdminAPIClient: AdminAPIProtocol {
     func fetchServerSettings(cluster: ClusterProfile, accessToken: String) async throws -> AdminServerSettingsResponse {
         try gateUnauthorized()
         return AdminServerSettingsResponse(brandDisplayName: nil, supportContact: nil, policyText: nil)
+    }
+
+    func fetchServerLogs(
+        cluster: ClusterProfile,
+        accessToken: String,
+        limit: Int?
+    ) async throws -> AdminServerLogListResponse {
+        try gateUnauthorized()
+        _ = cluster
+        _ = accessToken
+        _ = limit
+        return serverLogsResponse
     }
 
     func updateServerSettings(
@@ -415,6 +428,42 @@ final class AdminAppModelTests: XCTestCase {
         await model.refreshWorkspaceData()
 
         XCTAssertTrue(model.requiresReauthentication)
+    }
+
+    func testRefreshServerLogsPublishesEntriesAndSelectsNewest() async throws {
+        let client = MockAdminAPIClient()
+        client.serverLogsResponse = AdminServerLogListResponse(
+            entries: [
+                AdminServerLogEntry(
+                    entryId: 7,
+                    recordedAtUnixMs: 1_700_000_007_000,
+                    level: .info,
+                    target: "trix_server::app",
+                    modulePath: nil,
+                    file: nil,
+                    line: nil,
+                    message: "server started",
+                    fields: .object([:]),
+                    rendered: "server started"
+                )
+            ],
+            droppedEntries: 3
+        )
+        let cluster = ClusterProfile(
+            id: UUID(),
+            displayName: "prod-eu",
+            baseURL: URL(string: "https://eu.example")!,
+            environmentLabel: "prod"
+        )
+        let (model, sessionStore) = AdminAppModel.testHarness(api: client)
+        try seedActiveAdminSession(sessionStore: sessionStore, clusterID: cluster.id)
+
+        await model.selectCluster(cluster)
+        await model.refreshServerLogs()
+
+        XCTAssertEqual(model.serverLogEntries.count, 1)
+        XCTAssertEqual(model.serverLogDroppedEntries, 3)
+        XCTAssertEqual(model.selectedServerLogEntryID, 7)
     }
 
     func testConfirmDisableUserRequiresMatchingClusterName() async throws {

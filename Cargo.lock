@@ -4119,6 +4119,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "tracing-subscriber",
  "trix-types",
  "uuid",
 ]

@@ -7452,7 +7452,9 @@ mod tests {
             state.base_url = "http://127.0.0.1:9".to_owned();
             client.save_state_locked(&state).unwrap();
         }
-        client.rebuild_client_base_url("http://127.0.0.1:9").unwrap();
+        client
+            .rebuild_client_base_url("http://127.0.0.1:9")
+            .unwrap();
         let mut failing_client = client.authenticated_client().unwrap();
         client.request_backfill_for_unavailable_chats_best_effort(&mut failing_client, &[]);
 
@@ -7463,7 +7465,10 @@ mod tests {
             .keys()
             .copied()
             .collect::<HashSet<_>>();
-        assert_eq!(reserved_after_failure.len(), MAX_BACKFILL_REQUESTS_PER_SWEEP);
+        assert_eq!(
+            reserved_after_failure.len(),
+            MAX_BACKFILL_REQUESTS_PER_SWEEP
+        );
 
         let server = MockSendServer::spawn(MockSendServerState {
             chat_detail: ChatDetailResponse {

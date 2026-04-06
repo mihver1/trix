@@ -24,6 +24,8 @@ struct AdminWorkspaceView: View {
                     RegistrationSettingsView(model: model)
                 case .server:
                     ServerSettingsView(model: model)
+                case .logs:
+                    ServerLogsWorkspaceView(model: model)
                 case .users:
                     UserListView(model: model)
                 case .featureFlags:

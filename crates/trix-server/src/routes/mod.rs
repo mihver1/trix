@@ -5,6 +5,7 @@ pub mod accounts;
 pub mod admin;
 pub mod admin_debug_metrics;
 pub mod admin_feature_flags;
+pub mod admin_logs;
 pub mod auth;
 pub mod blobs;
 pub mod chats;

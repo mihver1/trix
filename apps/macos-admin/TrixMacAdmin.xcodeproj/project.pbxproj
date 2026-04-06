@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0329E2C5377E2227FC5B8073 /* FeatureFlagsWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DCAD1B52565308FE2FE5358 /* FeatureFlagsWorkspaceView.swift */; };
 		0680F955D543C44ED76CEE49 /* AdminWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 950EAD177D2F5B6D7BF7D796 /* AdminWorkspaceView.swift */; };
 		0B2BD743204C2BCB9456F7B3 /* ClusterProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AFFDDA5F5285ACE6B99CC05 /* ClusterProfileStore.swift */; };
 		0C99606196AE189F36F116B7 /* AdminLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAE4992C8AADCF951AF8D362 /* AdminLoginView.swift */; };
@@ -18,6 +19,7 @@
 		35F9C84E2721A605B00F241D /* UserDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8F19B5C210FFFA29FF0EBA7 /* UserDetailView.swift */; };
 		3AEFADD7E7093E67E730D7A7 /* AdminRequestCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF328BDEBD704F214C8B1FC7 /* AdminRequestCoordinator.swift */; };
 		4C43B909253CBE14E883949F /* ProvisionUserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA2FD98FA3512820510A097A /* ProvisionUserView.swift */; };
+		4CF8FB5F87ECECF63F6D5392 /* DebugMetricsWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 899CA0A9C3CBFB01CBE4E87B /* DebugMetricsWorkspaceView.swift */; };
 		502ADA8124B9AA5EED06FA02 /* AdminSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90AD8968A7844B51B4041FF4 /* AdminSessionStore.swift */; };
 		5133385C8BE1BAF8D2BF850D /* AdminAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AADDB9C3BBD00FB34013EB16 /* AdminAPIClientTests.swift */; };
 		53C5B90F4A476DAAC1329A38 /* ClusterProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58456308E6B408A870B2C446 /* ClusterProfile.swift */; };
@@ -35,6 +37,7 @@
 		B83EEE4F7EAB447C78282404 /* UserAdminSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 503A411C91ED2944475622EB /* UserAdminSmokeTests.swift */; };
 		BDA0A66617A1DD0089645F67 /* RegistrationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CDD90AB7E5F754951A8D5F5 /* RegistrationSettingsView.swift */; };
 		C002F508D989E38DB340CC3A /* TrixMacAdminPlaceholderUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CD2497DF2480A2DB67EA7EC /* TrixMacAdminPlaceholderUITests.swift */; };
+		DF8C801527ACDE290D8FECD3 /* ServerLogsWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A3B4A3F6B3A04703E34F81F /* ServerLogsWorkspaceView.swift */; };
 		E077BD9AC01ECAFDDD1091B0 /* ClusterSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBAA3FC72D819BE8F7AD9D46 /* ClusterSidebarView.swift */; };
 		E1CCCA8F485ADB4EAF239B75 /* AdminRequestCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A49826814E985E040C9BFBF1 /* AdminRequestCoordinatorTests.swift */; };
 		E796FA3EC13E9A51CA0B8BCB /* AdminWorkspaceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADC46407516A7AEC939ADDEA /* AdminWorkspaceModels.swift */; };
@@ -64,12 +67,15 @@
 		1AFFDDA5F5285ACE6B99CC05 /* ClusterProfileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterProfileStore.swift; sourceTree = "<group>"; };
 		2CDD90AB7E5F754951A8D5F5 /* RegistrationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegistrationSettingsView.swift; sourceTree = "<group>"; };
 		45CB5A43D330BC7C4FCBBCE8 /* AdminAppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminAppModel.swift; sourceTree = "<group>"; };
+		4A3B4A3F6B3A04703E34F81F /* ServerLogsWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerLogsWorkspaceView.swift; sourceTree = "<group>"; };
 		4E169BF8F1A6AA470113CA27 /* AdminKeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminKeychainStore.swift; sourceTree = "<group>"; };
 		4FEB71525C9E86E09744CE05 /* UserListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserListView.swift; sourceTree = "<group>"; };
 		503A411C91ED2944475622EB /* UserAdminSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserAdminSmokeTests.swift; sourceTree = "<group>"; };
 		58456308E6B408A870B2C446 /* ClusterProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterProfile.swift; sourceTree = "<group>"; };
 		5CD2497DF2480A2DB67EA7EC /* TrixMacAdminPlaceholderUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMacAdminPlaceholderUITests.swift; sourceTree = "<group>"; };
 		6B1831A21929134544EE4E02 /* AdminAppModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminAppModelTests.swift; sourceTree = "<group>"; };
+		6DCAD1B52565308FE2FE5358 /* FeatureFlagsWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeatureFlagsWorkspaceView.swift; sourceTree = "<group>"; };
+		899CA0A9C3CBFB01CBE4E87B /* DebugMetricsWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugMetricsWorkspaceView.swift; sourceTree = "<group>"; };
 		8BC1ED8776D6B6CEC80265E7 /* AppIdentityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIdentityTests.swift; sourceTree = "<group>"; };
 		90AD8968A7844B51B4041FF4 /* AdminSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminSessionStore.swift; sourceTree = "<group>"; };
 		94206ADF76BD4E6E198CD162 /* AdminAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminAPIClient.swift; sourceTree = "<group>"; };
@@ -113,6 +119,14 @@
 			path = Services;
 			sourceTree = "<group>";
 		};
+		3409F3F5B6924B31B22EA46A /* FeatureFlags */ = {
+			isa = PBXGroup;
+			children = (
+				6DCAD1B52565308FE2FE5358 /* FeatureFlagsWorkspaceView.swift */,
+			);
+			path = FeatureFlags;
+			sourceTree = "<group>";
+		};
 		45AE4F23A877A649ACC138AE /* TrixMacAdminTests */ = {
 			isa = PBXGroup;
 			children = (
@@ -133,6 +147,14 @@
 				B4DEF389B3B5D3540428032F /* RootView.swift */,
 			);
 			path = Shell;
+			sourceTree = "<group>";
+		};
+		5AF76FC8EC24439632B196F7 /* DebugMetrics */ = {
+			isa = PBXGroup;
+			children = (
+				899CA0A9C3CBFB01CBE4E87B /* DebugMetricsWorkspaceView.swift */,
+			);
+			path = DebugMetrics;
 			sourceTree = "<group>";
 		};
 		6273D18ACAFA08F6E4431DEA /* Overview */ = {
@@ -196,8 +218,11 @@
 			children = (
 				1461AA44095FAECEB5E0629D /* Auth */,
 				69BEB8A17C83413EC3A4A838 /* Clusters */,
+				5AF76FC8EC24439632B196F7 /* DebugMetrics */,
+				3409F3F5B6924B31B22EA46A /* FeatureFlags */,
 				6273D18ACAFA08F6E4431DEA /* Overview */,
 				AC1A9F1C16376F485A455C3F /* Registration */,
+				D5CAFDA0AFFFE5270E47E2D9 /* ServerLogs */,
 				C037810B90CE9C45832B51E1 /* ServerSettings */,
 				4CC39F1290AFECA649756E5D /* Shell */,
 				D862B342E010C479B36F6027 /* Users */,
@@ -252,6 +277,14 @@
 				503A411C91ED2944475622EB /* UserAdminSmokeTests.swift */,
 			);
 			path = TrixMacAdminUITests;
+			sourceTree = "<group>";
+		};
+		D5CAFDA0AFFFE5270E47E2D9 /* ServerLogs */ = {
+			isa = PBXGroup;
+			children = (
+				4A3B4A3F6B3A04703E34F81F /* ServerLogsWorkspaceView.swift */,
+			);
+			path = ServerLogs;
 			sourceTree = "<group>";
 		};
 		D862B342E010C479B36F6027 /* Users */ = {
@@ -401,11 +434,14 @@
 				9DBF0FC2E76B3E9B3350ED39 /* ClusterProfileEditorView.swift in Sources */,
 				0B2BD743204C2BCB9456F7B3 /* ClusterProfileStore.swift in Sources */,
 				E077BD9AC01ECAFDDD1091B0 /* ClusterSidebarView.swift in Sources */,
+				4CF8FB5F87ECECF63F6D5392 /* DebugMetricsWorkspaceView.swift in Sources */,
+				0329E2C5377E2227FC5B8073 /* FeatureFlagsWorkspaceView.swift in Sources */,
 				22ECAEB0D0D5292AA8DD8E68 /* MacAdminUITestSupport.swift in Sources */,
 				F0CE928199C8E1CAA6BD0858 /* OverviewView.swift in Sources */,
 				4C43B909253CBE14E883949F /* ProvisionUserView.swift in Sources */,
 				BDA0A66617A1DD0089645F67 /* RegistrationSettingsView.swift in Sources */,
 				55DC949F65DF42D51A25F17E /* RootView.swift in Sources */,
+				DF8C801527ACDE290D8FECD3 /* ServerLogsWorkspaceView.swift in Sources */,
 				A6D0ED68AF2283C0C4BB4D1C /* ServerSettingsView.swift in Sources */,
 				A9819FC58AD9EF0FD3345891 /* TrixMacAdminApp.swift in Sources */,
 				35F9C84E2721A605B00F241D /* UserDetailView.swift in Sources */,

@@ -24,6 +24,12 @@ protocol AdminAPIProtocol: Sendable {
 
     func fetchServerSettings(cluster: ClusterProfile, accessToken: String) async throws -> AdminServerSettingsResponse
 
+    func fetchServerLogs(
+        cluster: ClusterProfile,
+        accessToken: String,
+        limit: Int?
+    ) async throws -> AdminServerLogListResponse
+
     func updateServerSettings(
         cluster: ClusterProfile,
         accessToken: String,
@@ -229,6 +235,25 @@ struct AdminAPIClient: Sendable, AdminAPIProtocol {
             body: nil
         )
         return try decode(AdminServerSettingsResponse.self, from: data, response: response)
+    }
+
+    func fetchServerLogs(
+        cluster: ClusterProfile,
+        accessToken: String,
+        limit: Int?
+    ) async throws -> AdminServerLogListResponse {
+        let baseURL = try adminURL(cluster: cluster, path: "v0/admin/server/logs")
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+            throw AdminAPIError.invalidURL
+        }
+        if let limit {
+            components.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+        }
+        guard let url = components.url else {
+            throw AdminAPIError.invalidURL
+        }
+        let (data, response) = try await send(url: url, method: "GET", accessToken: accessToken, body: nil)
+        return try decode(AdminServerLogListResponse.self, from: data, response: response)
     }
 
     func updateServerSettings(

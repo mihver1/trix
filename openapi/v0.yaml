@@ -1575,6 +1575,31 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           description: Debug metrics are not enabled on this server
+  /v0/admin/server/logs:
+    get:
+      operationId: listAdminServerLogs
+      tags: [admin]
+      security:
+        - adminBearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 1000
+      responses:
+        '200':
+          description: Recent in-memory server log entries captured from this running process
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminServerLogListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /v0/admin/users:
     get:
       operationId: listAdminUsers
@@ -3407,6 +3432,58 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AdminDebugMetricBatch'
+    AdminServerLogLevel:
+      type: string
+      enum: [trace, debug, info, warn, error]
+    AdminServerLogEntry:
+      type: object
+      required:
+        - entry_id
+        - recorded_at_unix_ms
+        - level
+        - target
+        - message
+        - fields
+        - rendered
+      properties:
+        entry_id:
+          type: integer
+          format: int64
+        recorded_at_unix_ms:
+          type: integer
+          format: int64
+        level:
+          $ref: '#/components/schemas/AdminServerLogLevel'
+        target:
+          type: string
+        module_path:
+          type: string
+          nullable: true
+        file:
+          type: string
+          nullable: true
+        line:
+          type: integer
+          format: int32
+          nullable: true
+        message:
+          type: string
+        fields:
+          type: object
+          additionalProperties: true
+        rendered:
+          type: string
+    AdminServerLogListResponse:
+      type: object
+      required: [entries, dropped_entries]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminServerLogEntry'
+        dropped_entries:
+          type: integer
+          format: int64
     AdminUserSummary:
       type: object
       required:

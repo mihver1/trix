@@ -14,7 +14,7 @@ use crate::{
         UpdateAdminRuntimeSettingsInput,
     },
     error::AppError,
-    routes::{admin_debug_metrics, admin_feature_flags},
+    routes::{admin_debug_metrics, admin_feature_flags, admin_logs},
     state::AppState,
 };
 use trix_types::{
@@ -29,6 +29,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .merge(admin_feature_flags::router())
         .merge(admin_debug_metrics::router())
+        .merge(admin_logs::router())
         .route("/session", post(create_session).delete(delete_session))
         .route("/overview", get(overview))
         .route(

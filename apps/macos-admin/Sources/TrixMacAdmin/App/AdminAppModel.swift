@@ -33,9 +33,14 @@ final class AdminAppModel: ObservableObject {
     @Published private(set) var overview: AdminOverviewState?
     @Published private(set) var registrationSettings: AdminRegistrationSettingsResponse?
     @Published private(set) var serverSettings: AdminServerSettingsResponse?
+    @Published private(set) var serverLogEntries: [AdminServerLogEntry] = []
+    @Published private(set) var serverLogDroppedEntries: UInt64 = 0
+    @Published var selectedServerLogEntryID: UInt64?
     @Published private(set) var requiresReauthentication = false
     @Published var workspaceError: String?
     @Published private(set) var isWorkspaceLoading = false
+    @Published var serverLogsError: String?
+    @Published private(set) var isServerLogsLoading = false
 
     @Published private(set) var users: [AdminUserSummary] = []
     @Published private(set) var usersNextCursor: String?
@@ -74,6 +79,7 @@ final class AdminAppModel: ObservableObject {
     @Published private(set) var isDebugMetricBatchesLoading = false
 
     private var featureFlagsDataGeneration: UInt64 = 0
+    private var serverLogsDataGeneration: UInt64 = 0
     private var debugSessionsDataGeneration: UInt64 = 0
     private var debugBatchesDataGeneration: UInt64 = 0
 
@@ -399,6 +405,61 @@ final class AdminAppModel: ObservableObject {
         serverSettings = canonical
     }
 
+    func refreshServerLogs(limit: Int = 400) async {
+        guard let cluster = selectedCluster, let session = activeSession else {
+            serverLogEntries = []
+            serverLogDroppedEntries = 0
+            selectedServerLogEntryID = nil
+            return
+        }
+        let clusterID = cluster.id
+        serverLogsDataGeneration &+= 1
+        let generation = serverLogsDataGeneration
+        isServerLogsLoading = true
+        serverLogsError = nil
+        defer {
+            if serverLogsDataGeneration == generation {
+                isServerLogsLoading = false
+            }
+        }
+        let client = api
+        do {
+            let response = try await requestCoordinator.perform(clusterID: clusterID) {
+                try await client.fetchServerLogs(
+                    cluster: cluster,
+                    accessToken: session.accessToken,
+                    limit: limit
+                )
+            }
+            guard await isStillActiveCluster(clusterID) else { return }
+            guard serverLogsDataGeneration == generation else { return }
+            serverLogEntries = response.entries
+            serverLogDroppedEntries = response.droppedEntries
+            if let selected = selectedServerLogEntryID,
+               response.entries.contains(where: { $0.entryId == selected }) {
+                selectedServerLogEntryID = selected
+            } else {
+                selectedServerLogEntryID = response.entries.first?.entryId
+            }
+        } catch is CancellationError {
+        } catch let err as AdminAPIError {
+            guard await isStillActiveCluster(clusterID) else { return }
+            guard serverLogsDataGeneration == generation else { return }
+            if case let .unexpectedStatus(code, _) = err, code == 404 {
+                serverLogsError = "Server log feed is not available on this server."
+                serverLogEntries = []
+                serverLogDroppedEntries = 0
+                selectedServerLogEntryID = nil
+            } else {
+                serverLogsError = err.localizedDescription
+            }
+        } catch {
+            guard await isStillActiveCluster(clusterID) else { return }
+            guard serverLogsDataGeneration == generation else { return }
+            serverLogsError = error.localizedDescription
+        }
+    }
+
     private func refreshOverviewOnly(clusterID: UUID, displayName: String, token: String, dataGeneration: UInt64) async {
         guard let cluster = selectedCluster, cluster.id == clusterID else { return }
         let client = api
@@ -430,6 +491,11 @@ final class AdminAppModel: ObservableObject {
         overview = nil
         registrationSettings = nil
         serverSettings = nil
+        serverLogEntries = []
+        serverLogDroppedEntries = 0
+        selectedServerLogEntryID = nil
+        serverLogsError = nil
+        isServerLogsLoading = false
         workspaceError = nil
         featureFlagDefinitions = []
         featureFlagOverrides = []
@@ -443,6 +509,7 @@ final class AdminAppModel: ObservableObject {
         isDebugMetricSessionsLoading = false
         isDebugMetricBatchesLoading = false
         featureFlagsDataGeneration &+= 1
+        serverLogsDataGeneration &+= 1
         debugSessionsDataGeneration &+= 1
         debugBatchesDataGeneration &+= 1
         clearUsersWorkspaceState()

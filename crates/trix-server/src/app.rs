@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use axum::{
@@ -14,16 +14,30 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{error, info, warn};
 
 use crate::{
-    auth::AuthManager, blobs::LocalBlobStore, build::BuildInfo, config::AppConfig, db::Database,
-    routes, state::AppState,
+    admin_logs::AdminLogBuffer, auth::AuthManager, blobs::LocalBlobStore, build::BuildInfo,
+    config::AppConfig, db::Database, routes, state::AppState,
 };
 
 pub async fn run(config: AppConfig) -> Result<()> {
+    run_with_admin_log_buffer(config, Arc::new(AdminLogBuffer::default())).await
+}
+
+pub async fn run_with_admin_log_buffer(
+    config: AppConfig,
+    admin_log_buffer: Arc<AdminLogBuffer>,
+) -> Result<()> {
     let db = Database::connect(&config.database_url).await?;
     let blob_store = LocalBlobStore::new(&config.blob_root)?;
     let auth = AuthManager::new(&config.jwt_signing_key);
     let build = BuildInfo::current();
-    let state = AppState::new(config.clone(), build, db, auth, blob_store)?;
+    let state = AppState::new_with_admin_log_buffer(
+        config.clone(),
+        build,
+        db,
+        auth,
+        blob_store,
+        admin_log_buffer,
+    )?;
     let app = build_router(state.clone())?;
 
     let (cleanup_shutdown_tx, cleanup_shutdown_rx) = watch::channel(false);

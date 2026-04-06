@@ -819,6 +819,36 @@ pub struct AdminOverviewResponse {
     pub debug_metrics_enabled: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AdminServerLogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdminServerLogEntry {
+    pub entry_id: u64,
+    pub recorded_at_unix_ms: u64,
+    pub level: AdminServerLogLevel,
+    pub target: String,
+    pub module_path: Option<String>,
+    pub file: Option<String>,
+    pub line: Option<u32>,
+    pub message: String,
+    pub fields: Value,
+    pub rendered: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdminServerLogListResponse {
+    pub entries: Vec<AdminServerLogEntry>,
+    pub dropped_entries: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdminUserSummary {
     pub account_id: AccountId,

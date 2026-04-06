@@ -64,6 +64,23 @@ final class AdminAPIClientTests: XCTestCase {
         XCTAssertEqual(obj["allow_public_account_registration"] as? Bool, false)
     }
 
+    func testFetchServerLogsEncodesLimitQueryOnLogsEndpoint() async throws {
+        let recorder = HTTPRequestRecorder()
+        let client = AdminAPIClient(session: recorder.session)
+        let cluster = makeCluster()
+
+        _ = try await client.fetchServerLogs(cluster: cluster, accessToken: "tok", limit: 250)
+
+        let req = try XCTUnwrap(recorder.lastRequest)
+        XCTAssertEqual(req.httpMethod, "GET")
+        XCTAssertEqual(req.value(forHTTPHeaderField: "Authorization"), "Bearer tok")
+
+        let url = try XCTUnwrap(req.url)
+        XCTAssertEqual(url.path, "/v0/admin/server/logs")
+        let items = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
+        XCTAssertEqual(items.first { $0.name == "limit" }?.value, "250")
+    }
+
     func testDisableUserPostsToDisablePathWithBearerAndReasonJSON() async throws {
         let recorder = HTTPRequestRecorder()
         let client = AdminAPIClient(session: recorder.session)
@@ -188,6 +205,8 @@ private final class RecordingURLProtocol: URLProtocol {
                 return (200, Self.sessionResponseJSON.data(using: .utf8)!, "application/json")
             case ("PATCH", "/v0/admin/settings/registration"):
                 return (200, Self.registrationSettingsJSON.data(using: .utf8)!, "application/json")
+            case ("GET", "/v0/admin/server/logs"):
+                return (200, Self.serverLogsJSON.data(using: .utf8)!, "application/json")
             case ("POST", _) where path.hasSuffix("/disable"):
                 return (204, Data(), nil)
             case ("GET", "/v0/admin/users"):
@@ -234,6 +253,13 @@ private final class RecordingURLProtocol: URLProtocol {
     {
       "users": [],
       "next_cursor": null
+    }
+    """
+
+    private static let serverLogsJSON = """
+    {
+      "entries": [],
+      "dropped_entries": 0
     }
     """
 

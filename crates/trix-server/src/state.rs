@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::{
     admin_auth::{AdminAuthManager, AdminPrincipal},
+    admin_logs::AdminLogBuffer,
     auth::{AuthManager, SessionPrincipal},
     blobs::LocalBlobStore,
     build::BuildInfo,
@@ -34,6 +35,7 @@ pub struct AppState {
     pub ws_registry: Arc<WebSocketSessionRegistry>,
     pub push_notifications: Arc<PushNotificationService>,
     pub rate_limiter: Arc<RateLimiter>,
+    pub admin_log_buffer: Arc<AdminLogBuffer>,
 }
 
 impl AppState {
@@ -43,6 +45,24 @@ impl AppState {
         db: Database,
         auth: AuthManager,
         blob_store: LocalBlobStore,
+    ) -> Result<Self> {
+        Self::new_with_admin_log_buffer(
+            config,
+            build,
+            db,
+            auth,
+            blob_store,
+            Arc::new(AdminLogBuffer::default()),
+        )
+    }
+
+    pub fn new_with_admin_log_buffer(
+        config: AppConfig,
+        build: BuildInfo,
+        db: Database,
+        auth: AuthManager,
+        blob_store: LocalBlobStore,
+        admin_log_buffer: Arc<AdminLogBuffer>,
     ) -> Result<Self> {
         let admin_auth = AdminAuthManager::new(
             config.admin_jwt_signing_key.as_bytes(),
@@ -60,6 +80,7 @@ impl AppState {
             ws_registry: Arc::new(WebSocketSessionRegistry::default()),
             push_notifications: Arc::new(push_notifications),
             rate_limiter: Arc::new(RateLimiter::new()),
+            admin_log_buffer,
         })
     }
 

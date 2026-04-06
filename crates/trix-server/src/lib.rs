@@ -1,4 +1,5 @@
 pub mod admin_auth;
+pub mod admin_logs;
 pub mod app;
 pub mod auth;
 pub mod blobs;
@@ -12,7 +13,8 @@ pub mod routes;
 pub mod signatures;
 pub mod state;
 
-pub use app::run;
+pub use admin_logs::{AdminLogBuffer, AdminLogLayer};
+pub use app::{run, run_with_admin_log_buffer};
 pub use build::BuildInfo;
 pub use config::AppConfig;
 

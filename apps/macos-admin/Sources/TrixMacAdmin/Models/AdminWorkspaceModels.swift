@@ -4,6 +4,7 @@ enum AdminWorkspaceSection: String, CaseIterable, Identifiable, Sendable {
     case overview
     case registration
     case server
+    case logs
     case users
     case featureFlags
     case debugMetrics
@@ -18,6 +19,8 @@ enum AdminWorkspaceSection: String, CaseIterable, Identifiable, Sendable {
             return "Registration"
         case .server:
             return "Server"
+        case .logs:
+            return "Logs"
         case .users:
             return "Users"
         case .featureFlags:

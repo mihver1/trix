@@ -56,6 +56,54 @@ struct AdminOverviewResponse: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - Server logs
+
+enum AdminServerLogLevel: String, Codable, Sendable {
+    case trace
+    case debug
+    case info
+    case warn
+    case error
+}
+
+struct AdminServerLogEntry: Codable, Equatable, Identifiable, Sendable {
+    var entryId: UInt64
+    var recordedAtUnixMs: UInt64
+    var level: AdminServerLogLevel
+    var target: String
+    var modulePath: String?
+    var file: String?
+    var line: UInt32?
+    var message: String
+    var fields: JSONValue
+    var rendered: String
+
+    var id: UInt64 { entryId }
+
+    enum CodingKeys: String, CodingKey {
+        case entryId = "entry_id"
+        case recordedAtUnixMs = "recorded_at_unix_ms"
+        case level
+        case target
+        case modulePath = "module_path"
+        case file
+        case line
+        case message
+        case fields
+        case rendered
+    }
+}
+
+struct AdminServerLogListResponse: Codable, Equatable, Sendable {
+    var entries: [AdminServerLogEntry]
+    var droppedEntries: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case entries
+        case droppedEntries = "dropped_entries"
+    }
+}
+
 // MARK: - Registration settings
 
 struct AdminRegistrationSettingsResponse: Codable, Equatable, Sendable {
@@ -580,6 +628,15 @@ extension JSONValue {
             }.joined(separator: ",\n\(pad)  ")
             return "{\n\(pad)  \(inner)\n\(pad)}"
         }
+    }
+}
+
+extension JSONValue {
+    var isEmptyObject: Bool {
+        if case let .object(obj) = self {
+            return obj.isEmpty
+        }
+        return false
     }
 }
 
