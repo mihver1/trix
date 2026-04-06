@@ -41,7 +41,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: TrixMac.entitlements
-        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: YES
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.social-networking
         OTHER_SWIFT_FLAGS:
           - -Xcc

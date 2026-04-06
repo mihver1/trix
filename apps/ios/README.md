@@ -141,7 +141,7 @@ The script also:
 - can re-validate or upload an existing `.ipa` with `--ipa path/to/Trix.ipa`
 - honors an explicit `TRIX_IOS_BUILD_NUMBER`; if the env var is unset, archive builds fall back to a generated timestamp-based `CURRENT_PROJECT_VERSION`
 
-Release export-compliance metadata is committed with `ITSAppUsesNonExemptEncryption=YES`, because Trix ships industry-standard cryptography beyond Apple-provided OS-only mechanisms.
+Release export-compliance metadata is committed with `ITSAppUsesNonExemptEncryption=NO`, matching the current App Store Connect compliance answers for the TestFlight path where France distribution stays disabled.
 
 France availability is not stored in the Xcode project. Keep the iOS app unavailable in France in App Store Connect unless you intentionally upload the required French encryption declaration and receive an `ITSEncryptionExportComplianceCode` for the app record.
 

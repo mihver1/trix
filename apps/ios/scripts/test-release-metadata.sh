@@ -97,7 +97,7 @@ assert_release_project_has_no_development_asset_paths() {
 main() {
   assert_plist_value "$INFO_PLIST" "CFBundleIconName" "AppIcon"
   assert_plist_value "$INFO_PLIST" "UILaunchStoryboardName" "LaunchScreen"
-  assert_plist_value "$INFO_PLIST" "ITSAppUsesNonExemptEncryption" "true"
+  assert_plist_value "$INFO_PLIST" "ITSAppUsesNonExemptEncryption" "false"
   assert_file_exists "$LAUNCH_SCREEN_STORYBOARD"
   assert_app_icon_asset_is_complete
   assert_release_project_has_no_development_asset_paths
