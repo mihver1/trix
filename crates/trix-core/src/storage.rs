@@ -2265,7 +2265,17 @@ impl LocalHistoryStore {
             let mut projected_messages_upserted = 0usize;
             let mut advanced_to_server_seq = None;
             for envelope in envelopes {
-                let projected = project_envelope(facade, conversation, &envelope)?;
+                let projected = if envelope.message_kind == trix_types::MessageKind::Application
+                    && envelope.epoch < conversation.epoch()
+                {
+                    // A later welcome can bootstrap this device straight into a newer epoch.
+                    // Older application ciphertexts from before that join point cannot be
+                    // replayed into the recovered conversation, so keep cursor continuity with
+                    // an unavailable placeholder instead of failing the entire projection.
+                    unavailable_application_projection_from(&envelope)
+                } else {
+                    project_envelope(facade, conversation, &envelope)?
+                };
                 if current_device_replay_would_drop_body(
                     &envelope,
                     &projected,
@@ -3362,6 +3372,22 @@ fn synthetic_control_projection_from(envelope: &MessageEnvelope) -> Result<Local
         merged_epoch,
         created_at_unix: envelope.created_at_unix,
     })
+}
+
+fn unavailable_application_projection_from(envelope: &MessageEnvelope) -> LocalProjectedMessage {
+    LocalProjectedMessage {
+        server_seq: envelope.server_seq,
+        message_id: envelope.message_id,
+        sender_account_id: envelope.sender_account_id,
+        sender_device_id: envelope.sender_device_id,
+        epoch: envelope.epoch,
+        message_kind: envelope.message_kind,
+        content_type: envelope.content_type,
+        projection_kind: LocalProjectionKind::ApplicationMessage,
+        payload: None,
+        merged_epoch: None,
+        created_at_unix: envelope.created_at_unix,
+    }
 }
 
 fn persisted_projected_message_from(value: LocalProjectedMessage) -> PersistedProjectedMessage {
@@ -9736,6 +9762,180 @@ mod tests {
         assert_eq!(
             projected[4].payload.as_deref(),
             Some(b"hello after charlie joined".as_slice())
+        );
+    }
+
+    #[test]
+    fn project_chat_with_facade_keeps_prejoin_application_as_unavailable_placeholder() {
+        let mut store = LocalHistoryStore::new();
+        let chat_id = ChatId(Uuid::new_v4());
+        let alice_account = AccountId(Uuid::new_v4());
+        let alice_device = DeviceId(Uuid::new_v4());
+        let alice = MlsFacade::new(b"alice-device".to_vec()).unwrap();
+        let bob = MlsFacade::new(b"bob-device".to_vec()).unwrap();
+        let charlie = MlsFacade::new(b"charlie-device".to_vec()).unwrap();
+
+        let bob_key_package = bob.generate_key_package().unwrap();
+        let charlie_key_package = charlie.generate_key_package().unwrap();
+        let mut alice_group = alice.create_group(chat_id.0.as_bytes()).unwrap();
+
+        let add_bob_bundle = alice
+            .add_members(&mut alice_group, &[bob_key_package])
+            .unwrap();
+        let before_charlie_ciphertext = alice
+            .create_application_message(&mut alice_group, b"hello before charlie joined")
+            .unwrap();
+        let add_charlie_bundle = alice
+            .add_members(&mut alice_group, &[charlie_key_package])
+            .unwrap();
+        let after_charlie_ciphertext = alice
+            .create_application_message(&mut alice_group, b"hello after charlie joined")
+            .unwrap();
+
+        store
+            .apply_chat_history(&ChatHistoryResponse {
+                chat_id,
+                messages: vec![
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 1,
+                        sender_account_id: alice_account,
+                        sender_device_id: alice_device,
+                        epoch: add_bob_bundle.epoch,
+                        message_kind: MessageKind::Commit,
+                        content_type: ContentType::ChatEvent,
+                        ciphertext_b64: crate::encode_b64(&add_bob_bundle.commit_message),
+                        aad_json: json!({}),
+                        created_at_unix: 1,
+                    },
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 2,
+                        sender_account_id: alice_account,
+                        sender_device_id: alice_device,
+                        epoch: add_bob_bundle.epoch,
+                        message_kind: MessageKind::WelcomeRef,
+                        content_type: ContentType::ChatEvent,
+                        ciphertext_b64: crate::encode_b64(
+                            add_bob_bundle.welcome_message.as_ref().unwrap(),
+                        ),
+                        aad_json: json!({
+                            "_trix": {
+                                "ratchet_tree_b64": crate::encode_b64(
+                                    add_bob_bundle.ratchet_tree.as_ref().unwrap()
+                                )
+                            }
+                        }),
+                        created_at_unix: 2,
+                    },
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 3,
+                        sender_account_id: alice_account,
+                        sender_device_id: alice_device,
+                        epoch: add_bob_bundle.epoch,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        ciphertext_b64: crate::encode_b64(&before_charlie_ciphertext),
+                        aad_json: json!({}),
+                        created_at_unix: 3,
+                    },
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 4,
+                        sender_account_id: alice_account,
+                        sender_device_id: alice_device,
+                        epoch: add_charlie_bundle.epoch,
+                        message_kind: MessageKind::Commit,
+                        content_type: ContentType::ChatEvent,
+                        ciphertext_b64: crate::encode_b64(&add_charlie_bundle.commit_message),
+                        aad_json: json!({}),
+                        created_at_unix: 4,
+                    },
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 5,
+                        sender_account_id: alice_account,
+                        sender_device_id: alice_device,
+                        epoch: add_charlie_bundle.epoch,
+                        message_kind: MessageKind::WelcomeRef,
+                        content_type: ContentType::ChatEvent,
+                        ciphertext_b64: crate::encode_b64(
+                            add_charlie_bundle.welcome_message.as_ref().unwrap(),
+                        ),
+                        aad_json: json!({
+                            "_trix": {
+                                "ratchet_tree_b64": crate::encode_b64(
+                                    add_charlie_bundle.ratchet_tree.as_ref().unwrap()
+                                )
+                            }
+                        }),
+                        created_at_unix: 5,
+                    },
+                    MessageEnvelope {
+                        message_id: MessageId(Uuid::new_v4()),
+                        chat_id,
+                        server_seq: 6,
+                        sender_account_id: alice_account,
+                        sender_device_id: alice_device,
+                        epoch: add_charlie_bundle.epoch,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        ciphertext_b64: crate::encode_b64(&after_charlie_ciphertext),
+                        aad_json: json!({}),
+                        created_at_unix: 6,
+                    },
+                ],
+            })
+            .unwrap();
+
+        let report = store
+            .project_chat_with_facade(chat_id, &charlie, None)
+            .unwrap();
+        assert_eq!(report.processed_messages, 2);
+        assert_eq!(report.projected_messages_upserted, 2);
+        assert_eq!(report.advanced_to_server_seq, Some(6));
+        assert_eq!(store.projected_cursor(chat_id), Some(6));
+
+        let projected = store.get_projected_messages(chat_id, None, Some(10));
+        assert_eq!(projected.len(), 6);
+        assert_eq!(projected[2].server_seq, 3);
+        assert_eq!(
+            projected[2].projection_kind,
+            LocalProjectionKind::ApplicationMessage
+        );
+        assert_eq!(projected[2].payload, None);
+        assert_eq!(projected[5].server_seq, 6);
+        assert_eq!(
+            projected[5].payload.as_deref(),
+            Some(b"hello after charlie joined".as_slice())
+        );
+
+        let timeline = store.get_local_timeline_items(chat_id, None, None, Some(10));
+        let before_join = timeline
+            .iter()
+            .find(|message| message.server_seq == 3)
+            .unwrap();
+        assert_eq!(
+            before_join.preview_text,
+            "Message content is unavailable on this device."
+        );
+        assert_eq!(before_join.body, None);
+
+        let after_join = timeline
+            .iter()
+            .find(|message| message.server_seq == 6)
+            .unwrap();
+        assert_eq!(
+            after_join.body,
+            Some(MessageBody::Text(crate::TextMessageBody {
+                text: "hello after charlie joined".to_owned(),
+            }))
         );
     }
 
