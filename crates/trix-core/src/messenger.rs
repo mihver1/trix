@@ -4194,6 +4194,8 @@ mod tests {
         HistorySyncJobStatus, HistorySyncJobSummary, HistorySyncJobType, MessageEnvelope,
         MessageKind, RequestChatBackfillRequest, RequestChatBackfillResponse,
         RequestHistorySyncRepairRequest, RequestHistorySyncRepairResponse,
+        RequestMessageRepairWitnessRequest, RequestMessageRepairWitnessResponse,
+        TargetMessageRepairRequestListResponse, WitnessMessageRepairRequestListResponse,
     };
 
     #[test]
@@ -5448,6 +5450,18 @@ mod tests {
                         "/v0/history-sync/jobs:request-repair",
                         post(mock_request_history_sync_repair),
                     )
+                    .route(
+                        "/v0/message-repairs:request",
+                        post(mock_request_message_repair_witness),
+                    )
+                    .route(
+                        "/v0/message-repairs/witness",
+                        get(mock_list_witness_message_repairs),
+                    )
+                    .route(
+                        "/v0/message-repairs/target",
+                        get(mock_list_target_message_repairs),
+                    )
                     .with_state(state.clone());
                 let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
                 let base_url = format!("http://{}", listener.local_addr().unwrap());
@@ -5503,6 +5517,31 @@ mod tests {
             chunks: Vec::new(),
         })
         .into_response()
+    }
+
+    async fn mock_list_witness_message_repairs(
+        State(_state): State<Arc<Mutex<MockRepairServerState>>>,
+    ) -> impl IntoResponse {
+        Json(WitnessMessageRepairRequestListResponse {
+            requests: Vec::new(),
+        })
+        .into_response()
+    }
+
+    async fn mock_list_target_message_repairs(
+        State(_state): State<Arc<Mutex<MockRepairServerState>>>,
+    ) -> impl IntoResponse {
+        Json(TargetMessageRepairRequestListResponse {
+            requests: Vec::new(),
+        })
+        .into_response()
+    }
+
+    async fn mock_request_message_repair_witness(
+        State(_state): State<Arc<Mutex<MockRepairServerState>>>,
+        Json(_request): Json<RequestMessageRepairWitnessRequest>,
+    ) -> impl IntoResponse {
+        Json(RequestMessageRepairWitnessResponse { request: None }).into_response()
     }
 
     #[derive(Debug, Clone, Deserialize)]
@@ -5562,6 +5601,18 @@ mod tests {
                     .route(
                         "/v0/history-sync/jobs/{job_id}/chunks",
                         get(mock_send_get_history_sync_chunks),
+                    )
+                    .route(
+                        "/v0/message-repairs:request",
+                        post(mock_send_request_message_repair_witness),
+                    )
+                    .route(
+                        "/v0/message-repairs/witness",
+                        get(mock_send_list_witness_message_repairs),
+                    )
+                    .route(
+                        "/v0/message-repairs/target",
+                        get(mock_send_list_target_message_repairs),
                     )
                     .route(
                         "/v0/chats/{chat_id}/messages",
@@ -6187,6 +6238,31 @@ mod tests {
             job_id,
             role: HistorySyncJobRole::Target,
             chunks,
+        })
+        .into_response()
+    }
+
+    async fn mock_send_request_message_repair_witness(
+        State(_state): State<Arc<Mutex<MockSendServerState>>>,
+        Json(_request): Json<RequestMessageRepairWitnessRequest>,
+    ) -> impl IntoResponse {
+        Json(RequestMessageRepairWitnessResponse { request: None }).into_response()
+    }
+
+    async fn mock_send_list_witness_message_repairs(
+        State(_state): State<Arc<Mutex<MockSendServerState>>>,
+    ) -> impl IntoResponse {
+        Json(WitnessMessageRepairRequestListResponse {
+            requests: Vec::new(),
+        })
+        .into_response()
+    }
+
+    async fn mock_send_list_target_message_repairs(
+        State(_state): State<Arc<Mutex<MockSendServerState>>>,
+    ) -> impl IntoResponse {
+        Json(TargetMessageRepairRequestListResponse {
+            requests: Vec::new(),
         })
         .into_response()
     }

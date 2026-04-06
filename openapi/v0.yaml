@@ -556,6 +556,119 @@ paths:
                 $ref: '#/components/schemas/CompleteHistorySyncJobResponse'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v0/message-repairs:request:
+    post:
+      operationId: requestMessageRepairWitness
+      tags: [message_repairs]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestMessageRepairWitnessRequest'
+      responses:
+        '200':
+          description: Short-lived per-message witness repair request created or reused for the authenticated target device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestMessageRepairWitnessResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v0/message-repairs/witness:
+    get:
+      operationId: listWitnessMessageRepairs
+      tags: [message_repairs]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Pending per-message repair requests assigned to the authenticated witness device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WitnessMessageRepairRequestListResponse'
+  /v0/message-repairs/target:
+    get:
+      operationId: listTargetMessageRepairs
+      tags: [message_repairs]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Pending or completed per-message repair requests visible to the authenticated target device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TargetMessageRepairRequestListResponse'
+  /v0/message-repairs/{request_id}/submit:
+    post:
+      operationId: submitMessageRepairWitnessResult
+      tags: [message_repairs]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: request_id
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uuid'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitMessageRepairWitnessResultRequest'
+      responses:
+        '200':
+          description: Witness result accepted for the one-shot repair mailbox
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmitMessageRepairWitnessResultResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v0/message-repairs/{request_id}/complete:
+    post:
+      operationId: completeMessageRepairWitness
+      tags: [message_repairs]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: request_id
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uuid'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteMessageRepairWitnessRequest'
+      responses:
+        '200':
+          description: Target consumed the one-shot repair result and the relay mailbox entry is no longer reusable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompleteMessageRepairWitnessResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v0/key-packages:publish:
     post:
       operationId: publishKeyPackages
@@ -2175,6 +2288,165 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/HistorySyncJobSummary'
+    MessageRepairBinding:
+      type: object
+      required:
+        - chat_id
+        - message_id
+        - server_seq
+        - epoch
+        - sender_account_id
+        - sender_device_id
+        - message_kind
+        - content_type
+        - ciphertext_sha256_b64
+      properties:
+        chat_id:
+          $ref: '#/components/schemas/Uuid'
+        message_id:
+          $ref: '#/components/schemas/Uuid'
+        server_seq:
+          type: integer
+          format: int64
+          minimum: 1
+        epoch:
+          type: integer
+          format: int64
+          minimum: 0
+        sender_account_id:
+          $ref: '#/components/schemas/Uuid'
+        sender_device_id:
+          $ref: '#/components/schemas/Uuid'
+        message_kind:
+          $ref: '#/components/schemas/MessageKind'
+        content_type:
+          $ref: '#/components/schemas/ContentType'
+        ciphertext_sha256_b64:
+          type: string
+    MessageRepairRequestStatus:
+      type: string
+      enum: [pending, completed, unavailable, consumed, expired]
+    MessageRepairWitnessOutcome:
+      type: string
+      enum: [completed, unavailable]
+    MessageRepairTargetOutcome:
+      type: string
+      enum: [applied, rejected]
+    RequestMessageRepairWitnessRequest:
+      type: object
+      required: [binding]
+      properties:
+        binding:
+          $ref: '#/components/schemas/MessageRepairBinding'
+    MessageRepairWitnessRequestSummary:
+      type: object
+      required:
+        - request_id
+        - binding
+        - target_device_id
+        - witness_account_id
+        - witness_device_id
+        - status
+        - created_at_unix
+        - updated_at_unix
+        - expires_at_unix
+      properties:
+        request_id:
+          $ref: '#/components/schemas/Uuid'
+        binding:
+          $ref: '#/components/schemas/MessageRepairBinding'
+        target_device_id:
+          $ref: '#/components/schemas/Uuid'
+        witness_account_id:
+          $ref: '#/components/schemas/Uuid'
+        witness_device_id:
+          $ref: '#/components/schemas/Uuid'
+        status:
+          $ref: '#/components/schemas/MessageRepairRequestStatus'
+        target_transport_pubkey_b64:
+          type: string
+          nullable: true
+        result_payload_b64:
+          type: string
+          nullable: true
+        submitted_by_device_id:
+          $ref: '#/components/schemas/Uuid'
+          nullable: true
+        unavailable_reason:
+          type: string
+          nullable: true
+        created_at_unix:
+          type: integer
+          format: int64
+        updated_at_unix:
+          type: integer
+          format: int64
+        expires_at_unix:
+          type: integer
+          format: int64
+    RequestMessageRepairWitnessResponse:
+      type: object
+      required: [request]
+      properties:
+        request:
+          allOf:
+            - $ref: '#/components/schemas/MessageRepairWitnessRequestSummary'
+          nullable: true
+    WitnessMessageRepairRequestListResponse:
+      type: object
+      required: [requests]
+      properties:
+        requests:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessageRepairWitnessRequestSummary'
+    TargetMessageRepairRequestListResponse:
+      type: object
+      required: [requests]
+      properties:
+        requests:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessageRepairWitnessRequestSummary'
+    SubmitMessageRepairWitnessResultRequest:
+      type: object
+      required: [binding, outcome]
+      properties:
+        binding:
+          $ref: '#/components/schemas/MessageRepairBinding'
+        outcome:
+          $ref: '#/components/schemas/MessageRepairWitnessOutcome'
+        payload_b64:
+          type: string
+          nullable: true
+        unavailable_reason:
+          type: string
+          nullable: true
+    SubmitMessageRepairWitnessResultResponse:
+      type: object
+      required: [request_id, status]
+      properties:
+        request_id:
+          $ref: '#/components/schemas/Uuid'
+        status:
+          $ref: '#/components/schemas/MessageRepairRequestStatus'
+    CompleteMessageRepairWitnessRequest:
+      type: object
+      required: [outcome]
+      properties:
+        outcome:
+          $ref: '#/components/schemas/MessageRepairTargetOutcome'
+        rejection_reason:
+          type: string
+          nullable: true
+    CompleteMessageRepairWitnessResponse:
+      type: object
+      required: [request_id, status]
+      properties:
+        request_id:
+          $ref: '#/components/schemas/Uuid'
+        status:
+          $ref: '#/components/schemas/MessageRepairRequestStatus'
     AppendHistorySyncChunkRequest:
       type: object
       required: [sequence_no, payload_b64, is_final]

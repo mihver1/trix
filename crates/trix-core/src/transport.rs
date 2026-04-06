@@ -19,21 +19,26 @@ use trix_types::{
     ApplePushEnvironment, BlobMetadataResponse, BlobUploadStatus, ChatDetailResponse,
     ChatHistoryResponse, ChatId, ChatListResponse, CompleteHistorySyncJobRequest,
     CompleteHistorySyncJobResponse, CompleteLinkIntentRequest, CompleteLinkIntentResponse,
-    ControlMessageInput, CreateAccountRequest, CreateAccountResponse, CreateBlobUploadRequest,
-    CreateBlobUploadResponse, CreateChatRequest, CreateChatResponse, CreateLinkIntentResponse,
-    CreateMessageRequest, CreateMessageResponse, DeviceApprovePayloadResponse, DeviceId,
-    DeviceListResponse, DeviceStatus, DeviceTransferBundleResponse, DeviceTransportKeyResponse,
+    CompleteMessageRepairWitnessRequest, CompleteMessageRepairWitnessResponse, ControlMessageInput,
+    CreateAccountRequest, CreateAccountResponse, CreateBlobUploadRequest, CreateBlobUploadResponse,
+    CreateChatRequest, CreateChatResponse, CreateLinkIntentResponse, CreateMessageRequest,
+    CreateMessageResponse, DeviceApprovePayloadResponse, DeviceId, DeviceListResponse,
+    DeviceStatus, DeviceTransferBundleResponse, DeviceTransportKeyResponse,
     DirectoryAccountSummary, DmGlobalDeleteRequest, DmGlobalDeleteResponse, ErrorResponse,
     HealthResponse, HistorySyncChunkListResponse, HistorySyncChunkSummary,
     HistorySyncJobListResponse, HistorySyncJobRole, HistorySyncJobStatus, LeaseInboxRequest,
-    LeaseInboxResponse, LeaveChatRequest, LeaveChatResponse, MessageId, ModifyChatDevicesRequest,
-    ModifyChatDevicesResponse, ModifyChatMembersRequest, ModifyChatMembersResponse,
-    PublishKeyPackageItem, PublishKeyPackagesRequest, PublishKeyPackagesResponse,
-    RegisterApplePushTokenRequest, RegisterApplePushTokenResponse, RequestChatBackfillRequest,
-    RequestChatBackfillResponse, RequestHistorySyncRepairRequest, RequestHistorySyncRepairResponse,
+    LeaseInboxResponse, LeaveChatRequest, LeaveChatResponse, MessageId, MessageRepairBinding,
+    MessageRepairRequestStatus, ModifyChatDevicesRequest, ModifyChatDevicesResponse,
+    ModifyChatMembersRequest, ModifyChatMembersResponse, PublishKeyPackageItem,
+    PublishKeyPackagesRequest, PublishKeyPackagesResponse, RegisterApplePushTokenRequest,
+    RegisterApplePushTokenResponse, RequestChatBackfillRequest, RequestChatBackfillResponse,
+    RequestHistorySyncRepairRequest, RequestHistorySyncRepairResponse,
+    RequestMessageRepairWitnessRequest, RequestMessageRepairWitnessResponse,
     ReserveKeyPackagesRequest, ResetKeyPackagesResponse, RevokeDeviceRequest, RevokeDeviceResponse,
-    SubmitDebugMetricsRequest, UpdateAccountProfileRequest, VersionResponse, WebSocketClientFrame,
-    WebSocketServerFrame,
+    SubmitDebugMetricsRequest, SubmitMessageRepairWitnessResultRequest,
+    SubmitMessageRepairWitnessResultResponse, TargetMessageRepairRequestListResponse,
+    UpdateAccountProfileRequest, VersionResponse, WebSocketClientFrame, WebSocketServerFrame,
+    WitnessMessageRepairRequestListResponse,
 };
 
 const CONTROL_AAD_META_KEY: &str = "_trix";
@@ -149,6 +154,23 @@ pub struct DeviceTransferBundleMaterial {
     pub device_id: DeviceId,
     pub transfer_bundle: Vec<u8>,
     pub uploaded_at_unix: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct MessageRepairWitnessRequestMaterial {
+    pub request_id: String,
+    pub binding: MessageRepairBinding,
+    pub target_device_id: DeviceId,
+    pub witness_account_id: AccountId,
+    pub witness_device_id: DeviceId,
+    pub status: MessageRepairRequestStatus,
+    pub target_transport_pubkey: Option<Vec<u8>>,
+    pub result_payload: Option<Vec<u8>>,
+    pub submitted_by_device_id: Option<DeviceId>,
+    pub unavailable_reason: Option<String>,
+    pub created_at_unix: u64,
+    pub updated_at_unix: u64,
+    pub expires_at_unix: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -711,6 +733,78 @@ impl ServerApiClient {
         self.send_json(
             self.request(Method::POST, "v0/history-sync/jobs:request-repair")?
                 .json(&request),
+        )
+        .await
+    }
+
+    pub async fn request_message_repair_witness(
+        &self,
+        request: RequestMessageRepairWitnessRequest,
+    ) -> Result<Option<MessageRepairWitnessRequestMaterial>, ServerApiError> {
+        let response: RequestMessageRepairWitnessResponse = self
+            .send_json(
+                self.request(Method::POST, "v0/message-repairs:request")?
+                    .json(&request),
+            )
+            .await?;
+        response
+            .request
+            .map(decode_message_repair_request)
+            .transpose()
+    }
+
+    pub async fn list_witness_message_repairs(
+        &self,
+    ) -> Result<Vec<MessageRepairWitnessRequestMaterial>, ServerApiError> {
+        let response: WitnessMessageRepairRequestListResponse = self
+            .send_json(self.request(Method::GET, "v0/message-repairs/witness")?)
+            .await?;
+        response
+            .requests
+            .into_iter()
+            .map(decode_message_repair_request)
+            .collect()
+    }
+
+    pub async fn list_target_message_repairs(
+        &self,
+    ) -> Result<Vec<MessageRepairWitnessRequestMaterial>, ServerApiError> {
+        let response: TargetMessageRepairRequestListResponse = self
+            .send_json(self.request(Method::GET, "v0/message-repairs/target")?)
+            .await?;
+        response
+            .requests
+            .into_iter()
+            .map(decode_message_repair_request)
+            .collect()
+    }
+
+    pub async fn submit_message_repair_witness_result(
+        &self,
+        request_id: impl AsRef<str>,
+        request: SubmitMessageRepairWitnessResultRequest,
+    ) -> Result<SubmitMessageRepairWitnessResultResponse, ServerApiError> {
+        self.send_json(
+            self.request(
+                Method::POST,
+                &format!("v0/message-repairs/{}/submit", request_id.as_ref()),
+            )?
+            .json(&request),
+        )
+        .await
+    }
+
+    pub async fn complete_message_repair_witness(
+        &self,
+        request_id: impl AsRef<str>,
+        request: CompleteMessageRepairWitnessRequest,
+    ) -> Result<CompleteMessageRepairWitnessResponse, ServerApiError> {
+        self.send_json(
+            self.request(
+                Method::POST,
+                &format!("v0/message-repairs/{}/complete", request_id.as_ref()),
+            )?
+            .json(&request),
         )
         .await
     }
@@ -1350,6 +1444,34 @@ fn decode_history_sync_chunk(
         cursor_json: chunk.cursor_json,
         is_final: chunk.is_final,
         uploaded_at_unix: chunk.uploaded_at_unix,
+    })
+}
+
+fn decode_message_repair_request(
+    summary: trix_types::MessageRepairWitnessRequestSummary,
+) -> Result<MessageRepairWitnessRequestMaterial, ServerApiError> {
+    Ok(MessageRepairWitnessRequestMaterial {
+        request_id: summary.request_id,
+        binding: summary.binding,
+        target_device_id: summary.target_device_id,
+        witness_account_id: summary.witness_account_id,
+        witness_device_id: summary.witness_device_id,
+        status: summary.status,
+        target_transport_pubkey: summary
+            .target_transport_pubkey_b64
+            .as_deref()
+            .map(|value| decode_b64_field("target_transport_pubkey_b64", value))
+            .transpose()?,
+        result_payload: summary
+            .result_payload_b64
+            .as_deref()
+            .map(|value| decode_b64_field("result_payload_b64", value))
+            .transpose()?,
+        submitted_by_device_id: summary.submitted_by_device_id,
+        unavailable_reason: summary.unavailable_reason,
+        created_at_unix: summary.created_at_unix,
+        updated_at_unix: summary.updated_at_unix,
+        expires_at_unix: summary.expires_at_unix,
     })
 }
 

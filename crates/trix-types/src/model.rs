@@ -60,3 +60,27 @@ pub enum HistorySyncJobRole {
     Source,
     Target,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageRepairRequestStatus {
+    Pending,
+    Completed,
+    Unavailable,
+    Consumed,
+    Expired,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageRepairWitnessOutcome {
+    Completed,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageRepairTargetOutcome {
+    Applied,
+    Rejected,
+}
