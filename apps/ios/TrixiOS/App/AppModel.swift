@@ -2199,7 +2199,8 @@ final class AppModel {
             if let currentSnapshot = messengerSnapshot {
                 await postMessageNotificationsIfNeeded(
                     previousSnapshot: previousSnapshot,
-                    currentSnapshot: currentSnapshot
+                    currentSnapshot: currentSnapshot,
+                    events: batch.events
                 )
             }
         } catch {
@@ -2353,7 +2354,8 @@ final class AppModel {
             if postNotifications, let currentSnapshot = messengerSnapshot {
                 await postMessageNotificationsIfNeeded(
                     previousSnapshot: previousSnapshot,
-                    currentSnapshot: currentSnapshot
+                    currentSnapshot: currentSnapshot,
+                    events: batch.events
                 )
             }
             if resumeRealtimeConnection {
@@ -2380,19 +2382,60 @@ final class AppModel {
 
     private func postMessageNotificationsIfNeeded(
         previousSnapshot: SafeMessengerSnapshot?,
-        currentSnapshot: SafeMessengerSnapshot
+        currentSnapshot: SafeMessengerSnapshot,
+        events: [SafeMessengerEvent]
     ) async {
         guard let currentAccountId = currentSnapshot.accountId else {
             return
         }
 
+        let applicationIsActive = UIApplication.shared.applicationState == .active
+        let previousByChatId = Dictionary(
+            uniqueKeysWithValues: (previousSnapshot?.chatListItems ?? []).map { ($0.chatId, $0) }
+        )
         let payloads = makeMessageNotificationPayloads(
             previousItems: previousSnapshot?.chatListItems ?? [],
             currentItems: currentSnapshot.chatListItems,
             currentAccountId: currentAccountId,
-            applicationIsActive: UIApplication.shared.applicationState == .active,
+            applicationIsActive: applicationIsActive,
             visibleChatID: visibleChatID
         )
+        let messageNotificationChatIds = Set<String>(currentSnapshot.chatListItems.compactMap { item in
+            guard item.chatType != .accountSync else {
+                return nil
+            }
+            let previousServerSeq = previousByChatId[item.chatId]?.lastServerSeq ?? 0
+            guard item.lastServerSeq > previousServerSeq else {
+                return nil
+            }
+            guard item.previewSenderAccountId != currentAccountId else {
+                return nil
+            }
+            guard !applicationIsActive || visibleChatID != item.chatId else {
+                return nil
+            }
+            return item.chatId
+        })
+        let currentByChatId = Dictionary(
+            uniqueKeysWithValues: currentSnapshot.chatListItems.map { ($0.chatId, $0) }
+        )
+        var participantChangeChatIds = Set<String>()
+
+        for event in events {
+            guard let chatId = event.conversationId,
+                  let currentItem = currentByChatId[chatId],
+                  currentItem.chatType != .accountSync else {
+                continue
+            }
+
+            if event.kind == .conversationUpdated,
+               didGroupMembershipChange(
+                   previousItem: previousByChatId[chatId],
+                   currentItem: currentItem
+               ) {
+                participantChangeChatIds.insert(chatId)
+            }
+        }
 
         for payload in payloads {
             await notificationCoordinator.postMessageNotification(
@@ -2401,6 +2444,65 @@ final class AppModel {
                 body: payload.body
             )
         }
+
+        for item in currentSnapshot.chatListItems {
+            guard item.chatType != .accountSync else {
+                continue
+            }
+            guard participantChangeChatIds.contains(item.chatId),
+                  !messageNotificationChatIds.contains(item.chatId),
+                  !applicationIsActive || visibleChatID != item.chatId else {
+                continue
+            }
+            await notificationCoordinator.postMessageNotification(
+                identifier: "chat-\(item.chatId)-members-\(item.epoch)",
+                title: "\(item.displayTitle): Chat updated",
+                body: "Participants changed"
+            )
+        }
+    }
+
+    private func shouldPostBackgroundNotification(
+        for event: SafeMessengerEvent,
+        message: SafeMessengerMessage,
+        currentAccountId: String
+    ) -> Bool {
+        guard event.kind == .messageCreated else {
+            return false
+        }
+        guard !message.isOutgoing,
+              message.senderAccountId != currentAccountId,
+              message.isVisibleInTimeline else {
+            return false
+        }
+
+        switch message.contentType {
+        case .text, .attachment:
+            return true
+        case .reaction, .receipt, .chatEvent:
+            return false
+        }
+    }
+
+    private func didGroupMembershipChange(
+        previousItem: LocalChatListItemSnapshot?,
+        currentItem: LocalChatListItemSnapshot
+    ) -> Bool {
+        guard currentItem.chatType == .group else {
+            return false
+        }
+
+        let previousParticipantIds = Set((previousItem?.participantProfiles ?? []).map(\.accountId))
+        let currentParticipantIds = Set(currentItem.participantProfiles.map(\.accountId))
+        guard previousParticipantIds != currentParticipantIds else {
+            return false
+        }
+
+        if let previousItem {
+            return previousItem.epoch != currentItem.epoch
+        }
+
+        return !currentParticipantIds.isEmpty
     }
 
     private func canAccessProtectedData() -> Bool {
