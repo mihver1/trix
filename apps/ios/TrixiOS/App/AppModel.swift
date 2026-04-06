@@ -2401,17 +2401,13 @@ final class AppModel {
             visibleChatID: visibleChatID
         )
         let messageNotificationChatIds = Set<String>(currentSnapshot.chatListItems.compactMap { item in
-            guard item.chatType != .accountSync else {
-                return nil
-            }
-            let previousServerSeq = previousByChatId[item.chatId]?.lastServerSeq ?? 0
-            guard item.lastServerSeq > previousServerSeq else {
-                return nil
-            }
-            guard item.previewSenderAccountId != currentAccountId else {
-                return nil
-            }
-            guard !applicationIsActive || visibleChatID != item.chatId else {
+            guard messageNotificationPreviewServerSeq(
+                item: item,
+                previousItem: previousByChatId[item.chatId],
+                currentAccountId: currentAccountId,
+                applicationIsActive: applicationIsActive,
+                visibleChatID: visibleChatID
+            ) != nil else {
                 return nil
             }
             return item.chatId

@@ -8,6 +8,32 @@ struct MessageNotificationPayload: Equatable {
     let body: String
 }
 
+func messageNotificationPreviewServerSeq(
+    item: LocalChatListItemSnapshot,
+    previousItem: LocalChatListItemSnapshot?,
+    currentAccountId: String,
+    applicationIsActive: Bool,
+    visibleChatID: String?
+) -> UInt64? {
+    guard item.chatType != .accountSync else {
+        return nil
+    }
+
+    let currentPreviewServerSeq = item.previewServerSeq ?? 0
+    let previousPreviewServerSeq = previousItem?.previewServerSeq ?? 0
+    guard currentPreviewServerSeq > previousPreviewServerSeq else {
+        return nil
+    }
+    guard item.previewSenderAccountId != currentAccountId else {
+        return nil
+    }
+    guard !applicationIsActive || visibleChatID != item.chatId else {
+        return nil
+    }
+
+    return currentPreviewServerSeq
+}
+
 func makeMessageNotificationPayloads(
     previousItems: [LocalChatListItemSnapshot],
     currentItems: [LocalChatListItemSnapshot],
@@ -20,23 +46,18 @@ func makeMessageNotificationPayloads(
     )
 
     return currentItems.compactMap { item in
-        guard item.chatType != .accountSync else {
-            return nil
-        }
-
-        let previousServerSeq = previousByChatId[item.chatId]?.lastServerSeq ?? 0
-        guard item.lastServerSeq > previousServerSeq else {
-            return nil
-        }
-        guard item.previewSenderAccountId != currentAccountId else {
-            return nil
-        }
-        guard !applicationIsActive || visibleChatID != item.chatId else {
+        guard let previewServerSeq = messageNotificationPreviewServerSeq(
+            item: item,
+            previousItem: previousByChatId[item.chatId],
+            currentAccountId: currentAccountId,
+            applicationIsActive: applicationIsActive,
+            visibleChatID: visibleChatID
+        ) else {
             return nil
         }
 
         return MessageNotificationPayload(
-            identifier: "chat-\(item.chatId)-\(item.lastServerSeq)",
+            identifier: "chat-\(item.chatId)-\(previewServerSeq)",
             title: "\(item.displayTitle): New message",
             body: item.previewText ?? ""
         )

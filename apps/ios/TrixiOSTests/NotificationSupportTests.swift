@@ -67,6 +67,18 @@ final class NotificationSupportTests: XCTestCase {
         XCTAssertTrue(unchangedPayloads.isEmpty)
     }
 
+    func testMakeMessageNotificationPayloadsSkipsLastServerSeqBumpsWithoutNewPreview() {
+        let payloads = makeMessageNotificationPayloads(
+            previousItems: [makeChatListItem(chatId: "chat-1", lastServerSeq: 4, previewServerSeq: 4)],
+            currentItems: [makeChatListItem(chatId: "chat-1", lastServerSeq: 5, previewServerSeq: 4)],
+            currentAccountId: "self-account",
+            applicationIsActive: false,
+            visibleChatID: nil
+        )
+
+        XCTAssertTrue(payloads.isEmpty)
+    }
+
     func testMakeMessageNotificationPayloadsSkipsAccountSyncChats() {
         let payloads = makeMessageNotificationPayloads(
             previousItems: [makeChatListItem(chatId: "sync-chat", chatType: .accountSync, lastServerSeq: 4)],
@@ -83,7 +95,8 @@ final class NotificationSupportTests: XCTestCase {
         chatId: String,
         chatType: ChatType = .dm,
         lastServerSeq: UInt64,
-        previewSenderAccountId: String? = "other-account"
+        previewSenderAccountId: String? = "other-account",
+        previewServerSeq: UInt64? = nil
     ) -> LocalChatListItemSnapshot {
         LocalChatListItemSnapshot(
             chatId: chatId,
@@ -98,7 +111,7 @@ final class NotificationSupportTests: XCTestCase {
             previewSenderAccountId: previewSenderAccountId,
             previewSenderDisplayName: "Other",
             previewIsOutgoing: false,
-            previewServerSeq: lastServerSeq,
+            previewServerSeq: previewServerSeq ?? lastServerSeq,
             previewCreatedAtUnix: 1,
             participantProfiles: []
         )
