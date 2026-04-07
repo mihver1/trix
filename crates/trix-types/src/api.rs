@@ -1082,8 +1082,12 @@ pub struct AccountDirectoryQuery {
     pub q: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
-    #[serde(default)]
+    #[serde(default = "default_exclude_self")]
     pub exclude_self: bool,
+}
+
+fn default_exclude_self() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
