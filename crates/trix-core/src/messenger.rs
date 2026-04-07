@@ -2710,6 +2710,11 @@ impl FfiMessengerClient {
                             .project_chat_with_facade(*chat_id, facade, None)
                             .map_err(map_domain_error)?;
                     }
+                    Err(error) if is_missing_bootstrappable_state_projection_error(&error) => {
+                        store
+                            .project_chat_with_unavailable_projections(*chat_id, None)
+                            .map_err(map_domain_error)?;
+                    }
                     Err(error) => return Err(map_domain_error(error)),
                 }
                 if let Some(projected_cursor) = store.projected_cursor(*chat_id) {
@@ -4118,6 +4123,12 @@ fn merge_unavailable_message_server_seqs(
 
 fn is_current_device_replay_projection_error(error: &anyhow::Error) -> bool {
     crate::storage::is_current_device_replay_projection_error(error)
+}
+
+fn is_missing_bootstrappable_state_projection_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.to_string().contains("no bootstrappable MLS state"))
 }
 
 fn map_domain_error(error: impl std::fmt::Display) -> FfiMessengerError {
@@ -8520,6 +8531,137 @@ mod tests {
                 store.chat_mls_group_id(chat_id).as_deref(),
                 Some(expected_group_id.as_slice())
             );
+            assert_eq!(store.pending_history_repair_window(chat_id), None);
+        }
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.chat_detail_requests, 1);
+        assert_eq!(state.history_requests, 1);
+        assert_eq!(state.history_after_server_seq_requests, vec![None]);
+        assert_eq!(state.requested_repair_chat_ids, vec![chat_id]);
+        assert_eq!(state.requested_backfill_chat_ids, vec![chat_id]);
+        drop(state);
+
+        server.shutdown();
+        fs::remove_dir_all(root_path).ok();
+    }
+
+    #[test]
+    fn get_messages_single_device_missing_bootstrap_material_falls_back_when_repair_is_unavailable(
+    ) {
+        let root_path = env::temp_dir().join(format!(
+            "trix-messenger-get-messages-single-device-missing-bootstrap-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let chat_id = ChatId(Uuid::new_v4());
+        let alice_account = AccountId(Uuid::new_v4());
+        let alice_device = DeviceId(Uuid::new_v4());
+        let current_account = AccountId(Uuid::new_v4());
+        let current_device = DeviceId(Uuid::new_v4());
+
+        let client = FfiMessengerClient::open(FfiMessengerOpenConfig {
+            root_path: root_path.to_string_lossy().into_owned(),
+            database_key: vec![60u8; 32],
+            base_url: "http://127.0.0.1:9".to_owned(),
+            access_token: Some("test-access-token".to_owned()),
+            account_id: Some(current_account.0.to_string()),
+            device_id: Some(current_device.0.to_string()),
+            account_sync_chat_id: None,
+            device_display_name: Some("current-device".to_owned()),
+            platform: Some("ios".to_owned()),
+            credential_identity: Some(b"current-device".to_vec()),
+            account_root_private_key: None,
+            transport_private_key: Some(vec![42u8; 32]),
+        })
+        .unwrap();
+
+        let application_message = MessageEnvelope {
+            message_id: MessageId(Uuid::new_v4()),
+            chat_id,
+            server_seq: 1,
+            sender_account_id: alice_account,
+            sender_device_id: alice_device,
+            epoch: 1,
+            message_kind: MessageKind::Application,
+            content_type: ContentType::Text,
+            ciphertext_b64: encode_b64(b"opaque-ciphertext"),
+            aad_json: serde_json::json!({}),
+            created_at_unix: 1,
+        };
+
+        let chat_detail = ChatDetailResponse {
+            chat_id,
+            chat_type: ChatType::Dm,
+            title: None,
+            last_server_seq: 1,
+            pending_message_count: 0,
+            epoch: 1,
+            last_commit_message_id: None,
+            last_message: Some(application_message.clone()),
+            participant_profiles: vec![
+                ChatParticipantProfileSummary {
+                    account_id: current_account,
+                    handle: Some("current".to_owned()),
+                    profile_name: "Current".to_owned(),
+                    profile_bio: None,
+                },
+                ChatParticipantProfileSummary {
+                    account_id: alice_account,
+                    handle: Some("alice".to_owned()),
+                    profile_name: "Alice".to_owned(),
+                    profile_bio: None,
+                },
+            ],
+            members: Vec::new(),
+            device_members: Vec::new(),
+        };
+
+        let server = MockSendServer::spawn(MockSendServerState {
+            chat_detail,
+            history: vec![application_message],
+            sender_account_id: current_account,
+            sender_device_id: current_device,
+            source_jobs: Vec::new(),
+            target_jobs: Vec::new(),
+            chunks_by_job_id: BTreeMap::new(),
+            activate_target_jobs_on_repair_request: false,
+            expected_create_epoch: None,
+            create_requests: Vec::new(),
+            chat_detail_requests: 0,
+            history_requests: 0,
+            history_after_server_seq_requests: Vec::new(),
+            unavailable_repair_chat_id: Some(chat_id),
+            requested_repair_chat_ids: Vec::new(),
+            requested_backfill_chat_ids: Vec::new(),
+        });
+        {
+            let mut state = lock_state(&client.state).unwrap();
+            state.base_url = server.base_url.clone();
+            client.save_state_locked(&state).unwrap();
+        }
+        client.rebuild_client_base_url(&server.base_url).unwrap();
+
+        let page = client
+            .get_messages(chat_id.0.to_string(), None, Some(20))
+            .unwrap();
+        let replayed = page
+            .messages
+            .iter()
+            .find(|message| message.server_seq == 1)
+            .expect("missing-bootstrap message should remain in timeline");
+        assert!(replayed.body.is_none());
+        assert_eq!(
+            replayed.preview_text,
+            "Message content is unavailable on this device."
+        );
+        assert!(matches!(
+            replayed.recovery_state,
+            Some(FfiMessageRecoveryState::PendingSiblingHistory)
+        ));
+        {
+            let store = lock_history_store(&client.history_store).unwrap();
+            assert_eq!(store.chat_mls_group_id(chat_id), None);
             assert_eq!(store.pending_history_repair_window(chat_id), None);
         }
         let state = server.state.lock().unwrap();

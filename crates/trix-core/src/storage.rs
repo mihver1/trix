@@ -1622,6 +1622,83 @@ impl LocalHistoryStore {
         self.project_chat_with_facade_for_device(chat_id, facade, limit, None)
     }
 
+    pub(crate) fn project_chat_with_unavailable_projections(
+        &mut self,
+        chat_id: ChatId,
+        limit: Option<usize>,
+    ) -> Result<LocalProjectionApplyReport> {
+        let chat_key = chat_id.0.to_string();
+        let previous_chat = self.state.chats.get(&chat_key).cloned();
+        let result = (|| {
+            let chat = self
+                .state
+                .chats
+                .get_mut(&chat_key)
+                .ok_or_else(|| anyhow!("chat {} is missing from local store", chat_id.0))?;
+            let envelopes = chat
+                .messages
+                .values()
+                .filter(|message| {
+                    message.server_seq > chat.projected_cursor_server_seq
+                        && !chat.projected_messages.contains_key(&message.server_seq)
+                })
+                .take(limit.unwrap_or(usize::MAX))
+                .cloned()
+                .collect::<Vec<_>>();
+
+            let mut projected_messages_upserted = 0usize;
+            let mut advanced_to_server_seq = None;
+            let mut changed = false;
+            for envelope in envelopes {
+                let projected = fallback_projection_without_mls_from(&envelope)?;
+                let persisted = persisted_projected_message_from(projected);
+                let entry_changed = match chat.projected_messages.get(&envelope.server_seq) {
+                    Some(existing) => existing != &persisted,
+                    None => true,
+                };
+                if entry_changed {
+                    chat.projected_messages
+                        .insert(envelope.server_seq, persisted);
+                    projected_messages_upserted += 1;
+                    changed = true;
+                }
+                if advance_projected_cursor(chat) {
+                    changed = true;
+                    advanced_to_server_seq = Some(chat.projected_cursor_server_seq);
+                }
+            }
+            if reconcile_pending_history_repair_in_chat(chat)
+                || reconcile_message_repair_mailbox_in_chat(chat)
+            {
+                changed = true;
+            }
+
+            Ok::<_, anyhow::Error>((
+                LocalProjectionApplyReport {
+                    chat_id,
+                    processed_messages: projected_messages_upserted,
+                    projected_messages_upserted,
+                    advanced_to_server_seq,
+                },
+                changed,
+            ))
+        })();
+
+        match result {
+            Ok((report, changed)) => {
+                if let Err(error) = self.persist_if_needed(changed) {
+                    self.restore_chat_snapshot(&chat_key, previous_chat);
+                    return Err(error);
+                }
+                Ok(report)
+            }
+            Err(error) => {
+                self.restore_chat_snapshot(&chat_key, previous_chat);
+                Err(error)
+            }
+        }
+    }
+
     pub(crate) fn project_chat_with_facade_for_device(
         &mut self,
         chat_id: ChatId,
@@ -3387,6 +3464,39 @@ fn unavailable_application_projection_from(envelope: &MessageEnvelope) -> LocalP
         payload: None,
         merged_epoch: None,
         created_at_unix: envelope.created_at_unix,
+    }
+}
+
+fn fallback_projection_without_mls_from(envelope: &MessageEnvelope) -> Result<LocalProjectedMessage> {
+    match envelope.message_kind {
+        trix_types::MessageKind::Application => {
+            Ok(unavailable_application_projection_from(envelope))
+        }
+        trix_types::MessageKind::Commit | trix_types::MessageKind::WelcomeRef => {
+            synthetic_control_projection_from(envelope)
+        }
+        trix_types::MessageKind::System => {
+            let payload =
+                decode_b64_field("ciphertext_b64", &envelope.ciphertext_b64).map_err(|err| {
+                    anyhow!(
+                        "failed to decode system payload for {}: {err}",
+                        envelope.message_id.0
+                    )
+                })?;
+            Ok(LocalProjectedMessage {
+                server_seq: envelope.server_seq,
+                message_id: envelope.message_id,
+                sender_account_id: envelope.sender_account_id,
+                sender_device_id: envelope.sender_device_id,
+                epoch: envelope.epoch,
+                message_kind: envelope.message_kind,
+                content_type: envelope.content_type,
+                projection_kind: LocalProjectionKind::System,
+                payload: Some(payload),
+                merged_epoch: None,
+                created_at_unix: envelope.created_at_unix,
+            })
+        }
     }
 }
 
