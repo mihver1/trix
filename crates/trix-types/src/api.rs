@@ -1047,3 +1047,91 @@ pub struct AdminDebugMetricBatch {
 pub struct AdminDebugMetricBatchListResponse {
     pub batches: Vec<AdminDebugMetricBatch>,
 }
+
+// --- Query parameter types (used by QueryEndpoint contracts) ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListHistorySyncJobsQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<HistorySyncJobRole>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<HistorySyncJobStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatHistoryQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after_server_seq: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InboxQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after_inbox_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountDirectoryQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub q: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(default = "default_exclude_self")]
+    pub exclude_self: bool,
+}
+
+fn default_exclude_self() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AdminListUsersQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub q: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AdminListFlagOverridesQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flag_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<uuid::Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<uuid::Uuid>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AdminListDebugMetricSessionsQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<uuid::Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AdminListDebugMetricBatchesQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AdminListServerLogsQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}

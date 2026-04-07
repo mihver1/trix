@@ -4,38 +4,34 @@ use axum::{
     http::HeaderMap,
     routing::{get, post},
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{error::AppError, state::AppState};
 use trix_types::{
     AppendHistorySyncChunkRequest, AppendHistorySyncChunkResponse, CompleteHistorySyncJobRequest,
     CompleteHistorySyncJobResponse, HistorySyncChunkListResponse, HistorySyncChunkSummary,
-    HistorySyncJobListResponse, HistorySyncJobRole, HistorySyncJobStatus, HistorySyncJobSummary,
-    RequestChatBackfillRequest, RequestChatBackfillResponse, RequestHistorySyncRepairRequest,
-    RequestHistorySyncRepairResponse,
+    HistorySyncJobListResponse, HistorySyncJobRole, HistorySyncJobSummary,
+    ListHistorySyncJobsQuery, RequestChatBackfillRequest, RequestChatBackfillResponse,
+    RequestHistorySyncRepairRequest, RequestHistorySyncRepairResponse,
 };
 
 pub fn router() -> Router<AppState> {
+    use trix_types::contract::{self, ApiEndpoint};
     Router::new()
-        .route("/jobs", get(list_jobs))
-        .route("/jobs:request-repair", post(request_repair))
-        .route("/jobs/request", post(request_backfill))
-        .route("/jobs/{job_id}/chunks", get(list_chunks).post(append_chunk))
-        .route("/jobs/{job_id}/complete", post(complete_job))
-}
-
-#[derive(Debug, Deserialize)]
-struct ListJobsQuery {
-    role: Option<HistorySyncJobRole>,
-    status: Option<HistorySyncJobStatus>,
-    limit: Option<usize>,
+        .route(super::rel("/v0/history-sync", contract::ListHistorySyncJobs::PATH), get(list_jobs))
+        .route(super::rel("/v0/history-sync", contract::RequestHistorySyncRepair::PATH), post(request_repair))
+        .route(super::rel("/v0/history-sync", contract::RequestChatBackfill::PATH), post(request_backfill))
+        .route(
+            super::rel("/v0/history-sync", contract::ListHistorySyncChunks::PATH),
+            get(list_chunks).post(append_chunk),
+        )
+        .route(super::rel("/v0/history-sync", contract::CompleteHistorySyncJob::PATH), post(complete_job))
 }
 
 async fn list_jobs(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(query): Query<ListJobsQuery>,
+    Query(query): Query<ListHistorySyncJobsQuery>,
 ) -> Result<Json<HistorySyncJobListResponse>, AppError> {
     let principal = state.authenticate_active_headers(&headers).await?;
     let jobs = match query.role.unwrap_or(HistorySyncJobRole::Source) {

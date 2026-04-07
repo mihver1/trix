@@ -4,27 +4,24 @@ use axum::{
     http::HeaderMap,
     routing::get,
 };
-use serde::Deserialize;
-
 use crate::{error::AppError, state::AppState};
-use trix_types::AdminServerLogListResponse;
+use trix_types::{AdminListServerLogsQuery, AdminServerLogListResponse};
 
 const DEFAULT_LIMIT: usize = 200;
 const MAX_LIMIT: usize = 1_000;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/server/logs", get(list_server_logs))
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct ListServerLogsQuery {
-    limit: Option<usize>,
+    use trix_types::contract::{self, ApiEndpoint};
+    Router::new().route(
+        crate::routes::rel("/v0/admin", contract::AdminListServerLogs::PATH),
+        get(list_server_logs),
+    )
 }
 
 async fn list_server_logs(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(query): Query<ListServerLogsQuery>,
+    Query(query): Query<AdminListServerLogsQuery>,
 ) -> Result<Json<AdminServerLogListResponse>, AppError> {
     state.authenticate_admin_headers(&headers)?;
     let limit = match query.limit.unwrap_or(DEFAULT_LIMIT) {

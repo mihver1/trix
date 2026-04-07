@@ -5,7 +5,6 @@ use axum::{
     routing::{get, post},
 };
 use base64::{Engine as _, engine::general_purpose};
-use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{
@@ -17,7 +16,7 @@ use crate::{
     state::AppState,
 };
 use trix_types::{
-    ChatDetailResponse, ChatDeviceSummary, ChatHistoryResponse, ChatListResponse,
+    ChatDetailResponse, ChatDeviceSummary, ChatHistoryQuery, ChatHistoryResponse, ChatListResponse,
     ChatMemberSummary, ChatParticipantProfileSummary, ChatSummary, ControlMessageInput,
     CreateChatRequest, CreateChatResponse, CreateMessageRequest, CreateMessageResponse,
     DmGlobalDeleteRequest, DmGlobalDeleteResponse, LeaveChatRequest, LeaveChatResponse,
@@ -45,24 +44,23 @@ fn normalize_stored_aad_json(value: Value) -> Value {
 }
 
 pub fn router() -> Router<AppState> {
+    use trix_types::contract::{self, ApiEndpoint};
     Router::new()
-        .route("/", get(list_chats).post(create_chat))
-        .route("/{chat_id}", get(get_chat))
-        .route("/{chat_id}/messages", post(create_message))
-        .route("/{chat_id}/history", get(get_history))
-        .route("/{chat_id}/members:add", post(add_members))
-        .route("/{chat_id}/members:remove", post(remove_members))
-        .route("/{chat_id}/devices:add", post(add_devices))
-        .route("/{chat_id}/devices:remove", post(remove_devices))
-        .route("/{chat_id}/leave", post(leave_chat))
-        .route("/{chat_id}/dm-global-delete", post(dm_global_delete))
+        .route(
+            super::rel("/v0/chats", contract::ListChats::PATH),
+            get(list_chats).post(create_chat),
+        )
+        .route(super::rel("/v0/chats", contract::GetChat::PATH), get(get_chat))
+        .route(super::rel("/v0/chats", contract::CreateMessage::PATH), post(create_message))
+        .route(super::rel("/v0/chats", contract::GetChatHistory::PATH), get(get_history))
+        .route(super::rel("/v0/chats", contract::AddChatMembers::PATH), post(add_members))
+        .route(super::rel("/v0/chats", contract::RemoveChatMembers::PATH), post(remove_members))
+        .route(super::rel("/v0/chats", contract::AddChatDevices::PATH), post(add_devices))
+        .route(super::rel("/v0/chats", contract::RemoveChatDevices::PATH), post(remove_devices))
+        .route(super::rel("/v0/chats", contract::LeaveChat::PATH), post(leave_chat))
+        .route(super::rel("/v0/chats", contract::DmGlobalDelete::PATH), post(dm_global_delete))
 }
 
-#[derive(Debug, Deserialize)]
-struct HistoryQuery {
-    after_server_seq: Option<u64>,
-    limit: Option<usize>,
-}
 
 async fn list_chats(
     State(state): State<AppState>,
@@ -231,7 +229,7 @@ async fn get_history(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(chat_id): Path<trix_types::ChatId>,
-    Query(query): Query<HistoryQuery>,
+    Query(query): Query<ChatHistoryQuery>,
 ) -> Result<Json<ChatHistoryResponse>, AppError> {
     let principal = state.authenticate_active_headers(&headers).await?;
     let messages = state

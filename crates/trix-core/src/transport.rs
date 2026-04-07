@@ -4,7 +4,7 @@ use reqwest::{
     Client, Method, Url,
     header::{AUTHORIZATION, CONTENT_LENGTH, ETAG, HeaderMap, HeaderValue},
 };
-use serde::{Serialize, de::DeserializeOwned};
+use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 use thiserror::Error;
 use tokio::net::TcpStream;
@@ -13,32 +13,33 @@ use tokio_tungstenite::{
     tungstenite::{Message, client::IntoClientRequest},
 };
 use trix_types::{
-    AccountDebugMetricsStatusResponse, AccountDirectoryResponse, AccountFeatureFlagsResponse,
-    AccountId, AccountKeyPackagesResponse, AccountProfileResponse, AckInboxRequest,
-    AckInboxResponse, AppendHistorySyncChunkRequest, AppendHistorySyncChunkResponse,
-    ApplePushEnvironment, BlobMetadataResponse, BlobUploadStatus, ChatDetailResponse,
-    ChatHistoryResponse, ChatId, ChatListResponse, CompleteHistorySyncJobRequest,
-    CompleteHistorySyncJobResponse, CompleteLinkIntentRequest, CompleteLinkIntentResponse,
-    CompleteMessageRepairWitnessRequest, CompleteMessageRepairWitnessResponse, ControlMessageInput,
-    CreateAccountRequest, CreateAccountResponse, CreateBlobUploadRequest, CreateBlobUploadResponse,
-    CreateChatRequest, CreateChatResponse, CreateLinkIntentResponse, CreateMessageRequest,
-    CreateMessageResponse, DeviceApprovePayloadResponse, DeviceId, DeviceListResponse,
-    DeviceStatus, DeviceTransferBundleResponse, DeviceTransportKeyResponse,
-    DirectoryAccountSummary, DmGlobalDeleteRequest, DmGlobalDeleteResponse, ErrorResponse,
-    HealthResponse, HistorySyncChunkListResponse, HistorySyncChunkSummary,
-    HistorySyncJobListResponse, HistorySyncJobRole, HistorySyncJobStatus, LeaseInboxRequest,
-    LeaseInboxResponse, LeaveChatRequest, LeaveChatResponse, MessageId, MessageRepairBinding,
-    MessageRepairRequestStatus, ModifyChatDevicesRequest, ModifyChatDevicesResponse,
-    ModifyChatMembersRequest, ModifyChatMembersResponse, PublishKeyPackageItem,
-    PublishKeyPackagesRequest, PublishKeyPackagesResponse, RegisterApplePushTokenRequest,
-    RegisterApplePushTokenResponse, RequestChatBackfillRequest, RequestChatBackfillResponse,
-    RequestHistorySyncRepairRequest, RequestHistorySyncRepairResponse,
-    RequestMessageRepairWitnessRequest, RequestMessageRepairWitnessResponse,
-    ReserveKeyPackagesRequest, ResetKeyPackagesResponse, RevokeDeviceRequest, RevokeDeviceResponse,
-    SubmitDebugMetricsRequest, SubmitMessageRepairWitnessResultRequest,
-    SubmitMessageRepairWitnessResultResponse, TargetMessageRepairRequestListResponse,
-    UpdateAccountProfileRequest, VersionResponse, WebSocketClientFrame, WebSocketServerFrame,
-    WitnessMessageRepairRequestListResponse,
+    AccountDebugMetricsStatusResponse, AccountDirectoryQuery, AccountDirectoryResponse,
+    AccountFeatureFlagsResponse, AccountId, AccountKeyPackagesResponse, AccountProfileResponse,
+    AckInboxRequest, AckInboxResponse, AppendHistorySyncChunkRequest,
+    AppendHistorySyncChunkResponse, ApplePushEnvironment, BlobMetadataResponse, BlobUploadStatus,
+    ChatDetailResponse, ChatHistoryQuery, ChatHistoryResponse, ChatId, ChatListResponse,
+    CompleteHistorySyncJobRequest, CompleteHistorySyncJobResponse, CompleteLinkIntentRequest,
+    CompleteLinkIntentResponse, CompleteMessageRepairWitnessRequest,
+    CompleteMessageRepairWitnessResponse, ControlMessageInput, CreateAccountRequest,
+    CreateAccountResponse, CreateBlobUploadRequest, CreateBlobUploadResponse, CreateChatRequest,
+    CreateChatResponse, CreateLinkIntentResponse, CreateMessageRequest, CreateMessageResponse,
+    DeviceApprovePayloadResponse, DeviceId, DeviceListResponse, DeviceStatus,
+    DeviceTransferBundleResponse, DeviceTransportKeyResponse, DirectoryAccountSummary,
+    DmGlobalDeleteRequest, DmGlobalDeleteResponse, ErrorResponse, HealthResponse,
+    HistorySyncChunkListResponse, HistorySyncChunkSummary, HistorySyncJobListResponse,
+    HistorySyncJobRole, HistorySyncJobStatus, InboxQuery, LeaseInboxRequest, LeaseInboxResponse,
+    LeaveChatRequest, LeaveChatResponse, ListHistorySyncJobsQuery, MessageId,
+    MessageRepairBinding, MessageRepairRequestStatus, ModifyChatDevicesRequest,
+    ModifyChatDevicesResponse, ModifyChatMembersRequest, ModifyChatMembersResponse,
+    PublishKeyPackageItem, PublishKeyPackagesRequest, PublishKeyPackagesResponse,
+    RegisterApplePushTokenRequest, RegisterApplePushTokenResponse, RequestChatBackfillRequest,
+    RequestChatBackfillResponse, RequestHistorySyncRepairRequest,
+    RequestHistorySyncRepairResponse, RequestMessageRepairWitnessRequest,
+    RequestMessageRepairWitnessResponse, ReserveKeyPackagesRequest, ResetKeyPackagesResponse,
+    RevokeDeviceRequest, RevokeDeviceResponse, SubmitDebugMetricsRequest,
+    SubmitMessageRepairWitnessResultRequest, SubmitMessageRepairWitnessResultResponse,
+    TargetMessageRepairRequestListResponse, UpdateAccountProfileRequest, VersionResponse,
+    WebSocketClientFrame, WebSocketServerFrame, WitnessMessageRepairRequestListResponse,
 };
 
 const CONTROL_AAD_META_KEY: &str = "_trix";
@@ -221,41 +222,6 @@ pub struct ServerWebSocketClient {
     ws: WebSocketStream<MaybeTlsStream<TcpStream>>,
 }
 
-#[derive(Debug, Serialize)]
-struct ListHistorySyncJobsQuery {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    role: Option<HistorySyncJobRole>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    status: Option<HistorySyncJobStatus>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    limit: Option<usize>,
-}
-
-#[derive(Debug, Serialize)]
-struct HistoryQuery {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    after_server_seq: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    limit: Option<usize>,
-}
-
-#[derive(Debug, Serialize)]
-struct InboxQuery {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    after_inbox_id: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    limit: Option<usize>,
-}
-
-#[derive(Debug, Serialize)]
-struct AccountDirectoryQuery {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    q: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    limit: Option<usize>,
-    exclude_self: bool,
-}
-
 impl ServerApiClient {
     pub fn new(base_url: impl AsRef<str>) -> Result<Self, ServerApiError> {
         let mut normalized = base_url.as_ref().trim().trim_end_matches('/').to_owned();
@@ -309,13 +275,11 @@ impl ServerApiClient {
     }
 
     pub async fn get_health(&self) -> Result<HealthResponse, ServerApiError> {
-        self.send_json(self.request(Method::GET, "v0/system/health")?)
-            .await
+        self.call::<trix_types::contract::Health>(&()).await
     }
 
     pub async fn get_version(&self) -> Result<VersionResponse, ServerApiError> {
-        self.send_json(self.request(Method::GET, "v0/system/version")?)
-            .await
+        self.call::<trix_types::contract::Version>(&()).await
     }
 
     pub async fn create_auth_challenge(
@@ -342,13 +306,11 @@ impl ServerApiClient {
         challenge_id: impl Into<String>,
         signature: &[u8],
     ) -> Result<trix_types::AuthSessionResponse, ServerApiError> {
-        self.send_json(self.request(Method::POST, "v0/auth/session")?.json(
-            &trix_types::AuthSessionRequest {
-                device_id,
-                challenge_id: challenge_id.into(),
-                signature_b64: encode_b64(signature),
-            },
-        ))
+        self.call::<trix_types::contract::AuthSession>(&trix_types::AuthSessionRequest {
+            device_id,
+            challenge_id: challenge_id.into(),
+            signature_b64: encode_b64(signature),
+        })
         .await
     }
 
@@ -971,7 +933,7 @@ impl ServerApiClient {
     ) -> Result<ChatHistoryResponse, ServerApiError> {
         self.send_json(
             self.request(Method::GET, &format!("v0/chats/{}/history", chat_id.0))?
-                .query(&HistoryQuery {
+                .query(&ChatHistoryQuery {
                     after_server_seq,
                     limit,
                 }),
@@ -1128,6 +1090,103 @@ impl ServerApiClient {
             Some(token) => builder.bearer_auth(token),
             None => builder,
         })
+    }
+
+    // --- Generic contract-based call methods ---
+
+    /// Call a simple endpoint (no path params, no query params).
+    pub async fn call<E>(&self, request: &E::Request) -> Result<E::Response, ServerApiError>
+    where
+        E: trix_types::contract::ApiEndpoint,
+    {
+        let path = E::PATH.trim_start_matches('/');
+        let mut builder = self.request(E::METHOD.clone(), path)?;
+        if std::mem::size_of::<E::Request>() > 0 {
+            builder = builder.json(request);
+        }
+        self.send_json(builder).await
+    }
+
+    /// Call an endpoint that returns no JSON body (204 No Content).
+    pub async fn call_empty<E>(&self, request: &E::Request) -> Result<(), ServerApiError>
+    where
+        E: trix_types::contract::ApiEndpoint<Response = trix_types::contract::NoResponse>,
+    {
+        let path = E::PATH.trim_start_matches('/');
+        let mut builder = self.request(E::METHOD.clone(), path)?;
+        if std::mem::size_of::<E::Request>() > 0 {
+            builder = builder.json(request);
+        }
+        self.send_empty(builder).await
+    }
+
+    /// Call an endpoint with path parameters (no body).
+    pub async fn call_path<E>(&self, params: &E::PathParams) -> Result<E::Response, ServerApiError>
+    where
+        E: trix_types::contract::PathEndpoint<Request = trix_types::contract::NoBody>,
+    {
+        let path = E::render_path(params);
+        let path = path.trim_start_matches('/');
+        let builder = self.request(E::METHOD.clone(), path)?;
+        self.send_json(builder).await
+    }
+
+    /// Call an endpoint with path parameters and a JSON body.
+    pub async fn call_path_body<E>(
+        &self,
+        params: &E::PathParams,
+        request: &E::Request,
+    ) -> Result<E::Response, ServerApiError>
+    where
+        E: trix_types::contract::PathEndpoint,
+    {
+        let path = E::render_path(params);
+        let path = path.trim_start_matches('/');
+        let builder = self.request(E::METHOD.clone(), path)?.json(request);
+        self.send_json(builder).await
+    }
+
+    /// Call an endpoint with path parameters, returning no JSON body.
+    pub async fn call_path_empty<E>(
+        &self,
+        params: &E::PathParams,
+        request: &E::Request,
+    ) -> Result<(), ServerApiError>
+    where
+        E: trix_types::contract::PathEndpoint<Response = trix_types::contract::NoResponse>,
+    {
+        let path = E::render_path(params);
+        let path = path.trim_start_matches('/');
+        let mut builder = self.request(E::METHOD.clone(), path)?;
+        if std::mem::size_of::<E::Request>() > 0 {
+            builder = builder.json(request);
+        }
+        self.send_empty(builder).await
+    }
+
+    /// Call an endpoint with query parameters (no body, no path params).
+    pub async fn call_query<E>(&self, query: &E::Query) -> Result<E::Response, ServerApiError>
+    where
+        E: trix_types::contract::QueryEndpoint<Request = trix_types::contract::NoBody>,
+    {
+        let path = E::PATH.trim_start_matches('/');
+        let builder = self.request(E::METHOD.clone(), path)?.query(query);
+        self.send_json(builder).await
+    }
+
+    /// Call an endpoint with both path and query parameters (no body).
+    pub async fn call_path_query<E>(
+        &self,
+        params: &E::PathParams,
+        query: &E::Query,
+    ) -> Result<E::Response, ServerApiError>
+    where
+        E: trix_types::contract::PathEndpoint<Request = trix_types::contract::NoBody> + trix_types::contract::QueryEndpoint,
+    {
+        let path = E::render_path(params);
+        let path = path.trim_start_matches('/');
+        let builder = self.request(E::METHOD.clone(), path)?.query(query);
+        self.send_json(builder).await
     }
 
     fn websocket_url(&self) -> Result<Url, ServerApiError> {

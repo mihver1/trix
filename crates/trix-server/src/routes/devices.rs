@@ -27,22 +27,23 @@ use trix_types::{
 };
 
 pub fn router() -> Router<AppState> {
+    use trix_types::contract::{self, ApiEndpoint};
     Router::new()
-        .route("/", get(list_devices))
+        .route(super::rel("/v0/devices", contract::ListDevices::PATH), get(list_devices))
         .route(
-            "/push-token",
+            super::rel("/v0/devices", contract::RegisterPushToken::PATH),
             put(register_apple_push_token).delete(delete_apple_push_token),
         )
-        .route("/link-intents", post(create_link_intent))
+        .route(super::rel("/v0/devices", contract::CreateLinkIntent::PATH), post(create_link_intent))
         .route(
-            "/link-intents/{link_intent_id}/complete",
+            super::rel("/v0/devices", contract::CompleteLinkIntent::PATH),
             post(complete_link_intent),
         )
-        .route("/{device_id}/transfer-bundle", get(get_transfer_bundle))
-        .route("/{device_id}/transport-key", get(get_transport_key))
-        .route("/{device_id}/approve-payload", get(get_approve_payload))
-        .route("/{device_id}/approve", post(approve_device))
-        .route("/{device_id}/revoke", post(revoke_device))
+        .route(super::rel("/v0/devices", contract::GetTransferBundle::PATH), get(get_transfer_bundle))
+        .route(super::rel("/v0/devices", contract::GetTransportKey::PATH), get(get_transport_key))
+        .route(super::rel("/v0/devices", contract::GetApprovePayload::PATH), get(get_approve_payload))
+        .route(super::rel("/v0/devices", contract::ApproveDevice::PATH), post(approve_device))
+        .route(super::rel("/v0/devices", contract::RevokeDevice::PATH), post(revoke_device))
 }
 
 async fn list_devices(

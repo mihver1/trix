@@ -7,6 +7,10 @@ publish.workspace = true
 
 [dependencies]
 base64.workspace = true
+http.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+proptest = "1.6.0"

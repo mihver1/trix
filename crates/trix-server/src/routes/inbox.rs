@@ -4,13 +4,12 @@ use axum::{
     http::HeaderMap,
     routing::{get, post},
 };
-use serde::Deserialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 use crate::{db::InboxItemRow, error::AppError, state::AppState};
 use trix_types::{
-    AckInboxRequest, AckInboxResponse, InboxItem, InboxResponse, LeaseInboxRequest,
+    AckInboxRequest, AckInboxResponse, InboxItem, InboxQuery, InboxResponse, LeaseInboxRequest,
     LeaseInboxResponse,
 };
 
@@ -19,17 +18,12 @@ use super::chats::message_to_api;
 const DEFAULT_INBOX_LEASE_TTL_SECONDS: u64 = 30;
 const MAX_INBOX_LEASE_TTL_SECONDS: u64 = 5 * 60;
 
-#[derive(Debug, Deserialize)]
-struct InboxQuery {
-    after_inbox_id: Option<u64>,
-    limit: Option<usize>,
-}
-
 pub fn router() -> Router<AppState> {
+    use trix_types::contract::{self, ApiEndpoint};
     Router::new()
-        .route("/inbox", get(get_inbox))
-        .route("/inbox/lease", post(lease_inbox))
-        .route("/inbox/ack", post(ack_inbox))
+        .route(super::rel("/v0", contract::GetInbox::PATH), get(get_inbox))
+        .route(super::rel("/v0", contract::LeaseInbox::PATH), post(lease_inbox))
+        .route(super::rel("/v0", contract::AckInbox::PATH), post(ack_inbox))
 }
 
 async fn get_inbox(

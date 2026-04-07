@@ -6,39 +6,36 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{
     db::CreateAccountInput, error::AppError, signatures::account_bootstrap_message, state::AppState,
 };
 use trix_types::{
-    AccountDebugMetricsStatusResponse, AccountDirectoryResponse, AccountFeatureFlagsResponse,
-    AccountId, AccountKeyPackagesResponse, AccountProfileResponse, CreateAccountRequest,
-    CreateAccountResponse, DeviceId, DirectoryAccountSummary, ReservedKeyPackage,
-    SubmitDebugMetricsRequest, UpdateAccountProfileRequest,
+    AccountDebugMetricsStatusResponse, AccountDirectoryQuery, AccountDirectoryResponse,
+    AccountFeatureFlagsResponse, AccountId, AccountKeyPackagesResponse, AccountProfileResponse,
+    CreateAccountRequest, CreateAccountResponse, DeviceId, DirectoryAccountSummary,
+    ReservedKeyPackage, SubmitDebugMetricsRequest, UpdateAccountProfileRequest,
 };
 
 pub fn router() -> Router<AppState> {
+    use trix_types::contract::{self, ApiEndpoint};
     Router::new()
-        .route("/", post(create_account))
-        .route("/me", get(get_me).patch(update_me))
-        .route("/me/feature-flags", get(get_my_feature_flags))
+        .route(super::rel("/v0/accounts", contract::CreateAccount::PATH), post(create_account))
         .route(
-            "/me/debug/metrics",
+            super::rel("/v0/accounts", contract::GetMe::PATH),
+            get(get_me).patch(update_me),
+        )
+        .route(super::rel("/v0/accounts", contract::GetFeatureFlags::PATH), get(get_my_feature_flags))
+        .route(
+            super::rel("/v0/accounts", contract::GetDebugMetricsStatus::PATH),
             get(get_debug_metrics_status).post(submit_debug_metrics),
         )
-        .route("/directory", get(search_directory))
-        .route("/{account_id}", get(get_account))
-        .route("/{account_id}/key-packages", get(get_account_key_packages))
+        .route(super::rel("/v0/accounts", contract::SearchDirectory::PATH), get(search_directory))
+        .route(super::rel("/v0/accounts", contract::GetAccount::PATH), get(get_account))
+        .route(super::rel("/v0/accounts", contract::GetAccountKeyPackages::PATH), get(get_account_key_packages))
 }
 
-#[derive(Debug, Default, Deserialize)]
-struct AccountDirectoryQuery {
-    q: Option<String>,
-    limit: Option<usize>,
-    exclude_self: Option<bool>,
-}
 
 async fn create_account(
     State(state): State<AppState>,
@@ -319,7 +316,7 @@ async fn search_directory(
         .search_account_directory(
             principal.account_id,
             query.q.as_deref(),
-            query.exclude_self.unwrap_or(true),
+            query.exclude_self,
             query.limit,
         )
         .await?;

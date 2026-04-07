@@ -4,7 +4,6 @@ use axum::{
     http::HeaderMap,
     routing::{get, patch},
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{
@@ -18,38 +17,31 @@ use crate::{
 };
 use trix_types::{
     AdminFeatureFlagDefinition, AdminFeatureFlagDefinitionListResponse, AdminFeatureFlagOverride,
-    AdminFeatureFlagOverrideListResponse, CreateAdminFeatureFlagDefinitionRequest,
-    CreateAdminFeatureFlagOverrideRequest, FeatureFlagScope,
-    PatchAdminFeatureFlagDefinitionRequest, PatchAdminFeatureFlagOverrideRequest,
+    AdminFeatureFlagOverrideListResponse, AdminListFlagOverridesQuery,
+    CreateAdminFeatureFlagDefinitionRequest, CreateAdminFeatureFlagOverrideRequest,
+    FeatureFlagScope, PatchAdminFeatureFlagDefinitionRequest,
+    PatchAdminFeatureFlagOverrideRequest,
 };
 
 pub fn router() -> Router<AppState> {
+    use trix_types::contract::{self, ApiEndpoint};
     Router::new()
         .route(
-            "/feature-flags/definitions",
+            crate::routes::rel("/v0/admin", contract::AdminListFlagDefinitions::PATH),
             get(list_definitions).post(create_definition),
         )
         .route(
-            "/feature-flags/definitions/{flag_key}",
+            crate::routes::rel("/v0/admin", contract::AdminGetFlagDefinition::PATH),
             get(get_definition).patch(patch_definition),
         )
         .route(
-            "/feature-flags/overrides",
+            crate::routes::rel("/v0/admin", contract::AdminListFlagOverrides::PATH),
             get(list_overrides).post(create_override),
         )
         .route(
-            "/feature-flags/overrides/{override_id}",
+            crate::routes::rel("/v0/admin", contract::AdminPatchFlagOverride::PATH),
             patch(patch_override).delete(delete_override),
         )
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct ListOverridesQuery {
-    flag_key: Option<String>,
-    scope: Option<String>,
-    platform: Option<String>,
-    account_id: Option<Uuid>,
-    device_id: Option<Uuid>,
 }
 
 fn validate_flag_key(key: &str) -> Result<(), AppError> {
@@ -207,7 +199,7 @@ fn normalize_list_overrides_scope(raw: Option<String>) -> Result<Option<String>,
 async fn list_overrides(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(q): Query<ListOverridesQuery>,
+    Query(q): Query<AdminListFlagOverridesQuery>,
 ) -> Result<Json<AdminFeatureFlagOverrideListResponse>, AppError> {
     state.authenticate_admin_headers(&headers)?;
     let scope = normalize_list_overrides_scope(q.scope)?;

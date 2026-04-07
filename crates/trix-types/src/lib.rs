@@ -1,6 +1,8 @@
 pub mod api;
+pub mod contract;
 pub mod ids;
 pub mod model;
+pub mod ws_protocol;
 
 pub use api::{
     AccountDebugMetricsStatusResponse, AccountDirectoryResponse, AccountFeatureFlagsResponse,
@@ -43,6 +45,10 @@ pub use api::{
     SubmitMessageRepairWitnessResultResponse, TargetMessageRepairRequestListResponse,
     UpdateAccountProfileRequest, VersionResponse, WebSocketClientFrame, WebSocketServerFrame,
     WitnessMessageRepairRequestListResponse,
+    // Query parameter types
+    AccountDirectoryQuery, AdminListDebugMetricBatchesQuery, AdminListDebugMetricSessionsQuery,
+    AdminListFlagOverridesQuery, AdminListServerLogsQuery, AdminListUsersQuery, ChatHistoryQuery,
+    InboxQuery, ListHistorySyncJobsQuery,
 };
 pub use ids::{AccountId, ChatId, DeviceId, MessageId};
 pub use model::{
