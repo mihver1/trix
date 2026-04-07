@@ -2,6 +2,7 @@ pub mod api;
 pub mod contract;
 pub mod ids;
 pub mod model;
+pub mod ws_protocol;
 
 pub use api::{
     AccountDebugMetricsStatusResponse, AccountDirectoryResponse, AccountFeatureFlagsResponse,
