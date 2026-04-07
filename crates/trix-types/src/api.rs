@@ -997,7 +997,7 @@ pub struct AccountDebugMetricsStatusResponse {
     pub user_visible_message: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SubmitDebugMetricsRequest {
     pub session_id: String,
     pub payload: Value,
@@ -1034,7 +1034,7 @@ pub struct AdminDebugMetricSessionListResponse {
     pub sessions: Vec<AdminDebugMetricSession>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AdminDebugMetricBatch {
     pub batch_id: String,
     pub session_id: String,
@@ -1043,7 +1043,7 @@ pub struct AdminDebugMetricBatch {
     pub payload: Value,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AdminDebugMetricBatchListResponse {
     pub batches: Vec<AdminDebugMetricBatch>,
 }

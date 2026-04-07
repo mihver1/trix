@@ -1,8 +1,9 @@
-use std::{env, net::SocketAddr, path::PathBuf, str::FromStr};
+use std::{env, fmt, net::SocketAddr, path::PathBuf, str::FromStr};
 
 use anyhow::{Context, Result};
+use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AppConfig {
     pub bind_addr: SocketAddr,
     pub public_base_url: String,
@@ -12,7 +13,7 @@ pub struct AppConfig {
     pub log_filter: String,
     pub jwt_signing_key: String,
     pub admin_username: String,
-    pub admin_password: String,
+    pub admin_password_hash: String,
     pub admin_jwt_signing_key: String,
     pub admin_session_ttl_seconds: u64,
     pub cors_allowed_origins: Vec<String>,
@@ -35,6 +36,25 @@ pub struct AppConfig {
     pub apns_private_key_pem: Option<String>,
     /// When true, exposes debug metric ingestion and admin views (TRIX_DEBUG_METRICS_ENABLED).
     pub debug_metrics_enabled: bool,
+}
+
+impl fmt::Debug for AppConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AppConfig")
+            .field("bind_addr", &self.bind_addr)
+            .field("public_base_url", &self.public_base_url)
+            .field("database_url", &"[REDACTED]")
+            .field("blob_root", &self.blob_root)
+            .field("blob_max_upload_bytes", &self.blob_max_upload_bytes)
+            .field("log_filter", &self.log_filter)
+            .field("jwt_signing_key", &"[REDACTED]")
+            .field("admin_username", &self.admin_username)
+            .field("admin_password_hash", &"[REDACTED]")
+            .field("admin_jwt_signing_key", &"[REDACTED]")
+            .field("admin_session_ttl_seconds", &self.admin_session_ttl_seconds)
+            .field("debug_metrics_enabled", &self.debug_metrics_enabled)
+            .finish()
+    }
 }
 
 impl AppConfig {
@@ -68,7 +88,17 @@ impl AppConfig {
             log_filter: env_or("TRIX_LOG", "info,trix_server=debug")?,
             jwt_signing_key: env_required("TRIX_JWT_SIGNING_KEY")?,
             admin_username: normalize_admin_env_value(env_required("TRIX_ADMIN_USERNAME")?),
-            admin_password: normalize_admin_env_value(env_required("TRIX_ADMIN_PASSWORD")?),
+            admin_password_hash: {
+                let raw = normalize_admin_env_value(env_required("TRIX_ADMIN_PASSWORD")?);
+                if raw.is_empty() {
+                    anyhow::bail!("TRIX_ADMIN_PASSWORD must not be empty");
+                }
+                let salt = SaltString::generate(&mut OsRng);
+                argon2::Argon2::default()
+                    .hash_password(raw.as_bytes(), &salt)
+                    .map_err(|e| anyhow::anyhow!("failed to hash admin password: {e}"))?
+                    .to_string()
+            },
             admin_jwt_signing_key: normalize_admin_env_value(env_required(
                 "TRIX_ADMIN_JWT_SIGNING_KEY",
             )?),
@@ -154,9 +184,6 @@ impl AppConfig {
 
         if self.admin_username.trim().is_empty() {
             anyhow::bail!("TRIX_ADMIN_USERNAME must not be empty");
-        }
-        if self.admin_password.trim().is_empty() {
-            anyhow::bail!("TRIX_ADMIN_PASSWORD must not be empty");
         }
         let admin_jwt = self.admin_jwt_signing_key.trim();
         if admin_jwt.is_empty() {
@@ -269,6 +296,15 @@ mod tests {
 
     use super::{AppConfig, normalize_admin_env_value};
 
+    fn hash_password(password: &str) -> String {
+        use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
+        let salt = SaltString::generate(&mut OsRng);
+        argon2::Argon2::default()
+            .hash_password(password.as_bytes(), &salt)
+            .expect("hash password")
+            .to_string()
+    }
+
     fn valid_config() -> AppConfig {
         AppConfig {
             bind_addr: SocketAddr::from_str("127.0.0.1:8080").unwrap(),
@@ -279,7 +315,7 @@ mod tests {
             log_filter: "info".to_owned(),
             jwt_signing_key: "test-secret".to_owned(),
             admin_username: "admin".to_owned(),
-            admin_password: "admin-pass".to_owned(),
+            admin_password_hash: hash_password("admin-pass"),
             admin_jwt_signing_key: "admin-test-secret".to_owned(),
             admin_session_ttl_seconds: 900,
             cors_allowed_origins: Vec::new(),
@@ -322,7 +358,6 @@ mod tests {
     fn validate_requires_admin_credentials() {
         let mut config = valid_config();
         config.admin_username = "".to_owned();
-        config.admin_password = "".to_owned();
         config.admin_jwt_signing_key = "admin-test-secret".to_owned();
 
         assert!(config.validate().is_err());

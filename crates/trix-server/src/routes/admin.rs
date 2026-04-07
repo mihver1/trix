@@ -65,10 +65,12 @@ struct ListAdminUsersQuery {
 
 fn admin_credentials_match(
     expected_username: &str,
-    expected_password: &str,
+    expected_password_hash: &str,
     offered_username: &str,
     offered_password: &str,
 ) -> bool {
+    use argon2::password_hash::{PasswordHash, PasswordVerifier};
+
     fn ct_eq_bytes(left: &[u8], right: &[u8]) -> bool {
         if left.len() != right.len() {
             return false;
@@ -77,7 +79,9 @@ fn admin_credentials_match(
     }
 
     let username_ok = ct_eq_bytes(expected_username.as_bytes(), offered_username.as_bytes());
-    let password_ok = ct_eq_bytes(expected_password.as_bytes(), offered_password.as_bytes());
+    let password_ok = PasswordHash::new(expected_password_hash)
+        .and_then(|hash| argon2::Argon2::default().verify_password(offered_password.as_bytes(), &hash))
+        .is_ok();
     username_ok & password_ok
 }
 
@@ -93,7 +97,7 @@ async fn create_session(
 
     if !admin_credentials_match(
         state.config.admin_username.as_str(),
-        state.config.admin_password.as_str(),
+        state.config.admin_password_hash.as_str(),
         username,
         password,
     ) {
@@ -457,6 +461,15 @@ mod tests {
         build::BuildInfo, config::AppConfig, db::Database, test_support::POSTGRES_TEST_LOCK,
     };
 
+    fn test_hash_password(password: &str) -> String {
+        use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
+        let salt = SaltString::generate(&mut OsRng);
+        argon2::Argon2::default()
+            .hash_password(password.as_bytes(), &salt)
+            .expect("hash password")
+            .to_string()
+    }
+
     const TEST_CONSUMER_JWT_KEY: &str = "trix-admin-routes-test-consumer-jwt-key";
     const TEST_ADMIN_JWT_KEY: &str = "trix-admin-routes-test-admin-jwt-key";
     const DEFAULT_TEST_DATABASE_URL: &str = "postgres://trix:trix@localhost:5432/trix";
@@ -479,7 +492,7 @@ mod tests {
             log_filter: "error".to_owned(),
             jwt_signing_key: TEST_CONSUMER_JWT_KEY.to_owned(),
             admin_username: "ops-admin".to_owned(),
-            admin_password: "ops-admin-secret".to_owned(),
+            admin_password_hash: test_hash_password("ops-admin-secret"),
             admin_jwt_signing_key: TEST_ADMIN_JWT_KEY.to_owned(),
             admin_session_ttl_seconds: 900,
             cors_allowed_origins: Vec::new(),
@@ -551,7 +564,7 @@ mod tests {
             log_filter: "error".to_owned(),
             jwt_signing_key: TEST_CONSUMER_JWT_KEY.to_owned(),
             admin_username: "ops-admin".to_owned(),
-            admin_password: "ops-admin-secret".to_owned(),
+            admin_password_hash: test_hash_password("ops-admin-secret"),
             admin_jwt_signing_key: TEST_ADMIN_JWT_KEY.to_owned(),
             admin_session_ttl_seconds: 900,
             cors_allowed_origins: Vec::new(),

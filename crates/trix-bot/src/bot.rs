@@ -577,11 +577,8 @@ impl BotInner {
             let detail = client.get_chat(chat_id).await?;
             {
                 let mut store = self.store.lock().await;
-                store.apply_chat_detail(&detail)?;
-            }
-            {
-                let mut store = self.store.lock().await;
                 let facade = self.facade.lock().await;
+                store.apply_chat_detail(&detail)?;
                 store.project_chat_with_facade(chat_id, &facade, None)?;
             }
             self.emit_chat_events(chat_id).await?;

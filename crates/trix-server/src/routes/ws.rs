@@ -136,6 +136,13 @@ async fn handle_client_message(
 ) -> Result<ClientMessageDisposition, AppError> {
     match message {
         Message::Text(text) => {
+            const WS_MAX_TEXT_FRAME_BYTES: usize = 65_536;
+            if text.len() > WS_MAX_TEXT_FRAME_BYTES {
+                return Err(AppError::bad_request(format!(
+                    "websocket text frame exceeds maximum size of {WS_MAX_TEXT_FRAME_BYTES} bytes"
+                )));
+            }
+
             let frame: WebSocketClientFrame =
                 serde_json::from_str(text.as_ref()).map_err(|err| {
                     AppError::bad_request(format!("invalid websocket frame payload: {err}"))
