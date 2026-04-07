@@ -648,7 +648,14 @@ async fn spawn_test_server_with_cors(cors_allowed_origins: Vec<String>) -> Resul
         log_filter: "error".to_owned(),
         jwt_signing_key: "trix-core-e2e-test-key".to_owned(),
         admin_username: "trix-core-e2e-admin".to_owned(),
-        admin_password: "trix-core-e2e-admin-pass".to_owned(),
+        admin_password_hash: {
+            use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
+            let salt = SaltString::generate(&mut OsRng);
+            argon2::Argon2::default()
+                .hash_password(b"trix-core-e2e-admin-pass", &salt)
+                .expect("hash password")
+                .to_string()
+        },
         admin_jwt_signing_key: "trix-core-e2e-admin-jwt".to_owned(),
         admin_session_ttl_seconds: 900,
         cors_allowed_origins,

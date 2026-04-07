@@ -1,10 +1,12 @@
 use std::{
     env,
+    fmt,
     fs::{self, File},
     path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result, anyhow};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 use ed25519_dalek::{Signature, Signer as _, SigningKey, Verifier as _, VerifyingKey};
 use openmls::prelude::{
     BasicCredential, CredentialWithKey, GroupId, KeyPackage, KeyPackageIn, LeafNodeIndex, MlsGroup,
@@ -66,9 +68,17 @@ pub struct MlsFacadeSnapshot {
     metadata: PersistedMlsMetadata,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct AccountRootMaterial {
     private_key: [u8; 32],
+}
+
+impl fmt::Debug for AccountRootMaterial {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AccountRootMaterial")
+            .field("private_key", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl AccountRootMaterial {
@@ -103,9 +113,17 @@ impl AccountRootMaterial {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct DeviceKeyMaterial {
     private_key: [u8; 32],
+}
+
+impl fmt::Debug for DeviceKeyMaterial {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DeviceKeyMaterial")
+            .field("private_key", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl DeviceKeyMaterial {

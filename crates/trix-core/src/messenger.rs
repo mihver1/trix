@@ -8,6 +8,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use chacha20poly1305::{KeyInit, XChaCha20Poly1305, XNonce, aead::Aead};
+use zeroize::Zeroize;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -3422,18 +3423,41 @@ fn load_state_from_path(
             path.display()
         )));
     }
-    let cipher = state_cipher(database_key).map_err(messenger_error)?;
     let (nonce, ciphertext) = payload.split_at(24);
+    let xnonce = XNonce::from_slice(nonce);
+
+    // Try Argon2id-derived key first, then fall back to legacy SHA-256.
+    match state_cipher_argon2(database_key) {
+        Ok(cipher) => {
+            if let Ok(plaintext) = cipher.decrypt(xnonce, ciphertext) {
+                return serde_json::from_slice(&plaintext).map_err(|err| {
+                    FfiMessengerError::Message(format!("invalid messenger state: {err}"))
+                });
+            }
+        }
+        Err(e) => {
+            tracing::warn!("argon2 cipher construction failed, trying legacy: {e}");
+        }
+    }
+
+    let cipher = state_cipher_legacy(database_key).map_err(messenger_error)?;
     let plaintext = cipher
-        .decrypt(XNonce::from_slice(nonce), ciphertext)
+        .decrypt(xnonce, ciphertext)
         .map_err(|_| {
             FfiMessengerError::Message(format!(
                 "failed to decrypt messenger state at {}",
                 path.display()
             ))
         })?;
-    serde_json::from_slice(&plaintext)
-        .map_err(|err| FfiMessengerError::Message(format!("invalid messenger state: {err}")))
+    let state: MessengerClientState = serde_json::from_slice(&plaintext)
+        .map_err(|err| FfiMessengerError::Message(format!("invalid messenger state: {err}")))?;
+
+    // Auto-migrate: re-encrypt with Argon2id-derived key.
+    if let Err(err) = save_state_to_path(path, database_key, &state) {
+        tracing::warn!("failed to migrate state cipher to argon2id: {err}");
+    }
+
+    Ok(state)
 }
 
 fn save_state_to_path(
@@ -3446,7 +3470,7 @@ fn save_state_to_path(
     }
     let plaintext = serde_json::to_vec(state).map_err(messenger_error)?;
     let nonce = rand::random::<[u8; 24]>();
-    let cipher = state_cipher(database_key).map_err(messenger_error)?;
+    let cipher = state_cipher_argon2(database_key).map_err(messenger_error)?;
     let ciphertext = cipher
         .encrypt(XNonce::from_slice(&nonce), plaintext.as_slice())
         .map_err(|_| FfiMessengerError::Message("failed to encrypt messenger state".to_owned()))?;
@@ -3455,10 +3479,29 @@ fn save_state_to_path(
     fs::write(path, payload).map_err(messenger_error)
 }
 
-fn state_cipher(database_key: &[u8]) -> Result<XChaCha20Poly1305> {
-    let digest = Sha256::digest(database_key);
-    XChaCha20Poly1305::new_from_slice(digest.as_slice())
-        .map_err(|_| anyhow!("failed to derive messenger state cipher"))
+/// Domain separation salt for Argon2id key derivation.
+const STATE_CIPHER_SALT: &[u8] = b"trix-state-cipher-v1";
+
+fn state_cipher_argon2(database_key: &[u8]) -> Result<XChaCha20Poly1305> {
+    let params = argon2::Params::new(19456, 2, 1, Some(32))
+        .map_err(|e| anyhow!("argon2 params: {e}"))?;
+    let argon2 = argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
+    let mut key = [0u8; 32];
+    argon2
+        .hash_password_into(database_key, STATE_CIPHER_SALT, &mut key)
+        .map_err(|e| anyhow!("argon2 kdf: {e}"))?;
+    let cipher = XChaCha20Poly1305::new_from_slice(&key)
+        .map_err(|_| anyhow!("failed to derive messenger state cipher"));
+    key.zeroize();
+    cipher
+}
+
+fn state_cipher_legacy(database_key: &[u8]) -> Result<XChaCha20Poly1305> {
+    let mut digest = Sha256::digest(database_key);
+    let cipher = XChaCha20Poly1305::new_from_slice(digest.as_slice())
+        .map_err(|_| anyhow!("failed to derive legacy messenger state cipher"));
+    digest.as_mut_slice().zeroize();
+    cipher
 }
 
 fn attachment_file_path(root: &str, attachment_ref: &str, body: &AttachmentMessageBody) -> PathBuf {

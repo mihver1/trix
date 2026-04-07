@@ -3,6 +3,7 @@ use std::{sync::Arc, time::Duration};
 use anyhow::{Context, Result};
 use axum::{
     Router,
+    extract::DefaultBodyLimit,
     http::{
         HeaderValue, Method,
         header::{AUTHORIZATION, CONTENT_TYPE},
@@ -66,6 +67,7 @@ pub fn build_router(state: AppState) -> Result<Router> {
     let router = Router::new()
         .route("/", get(routes::root))
         .nest("/v0", routes::v0_router())
+        .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())
         .with_state(state.clone());
 

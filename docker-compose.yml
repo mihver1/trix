@@ -23,17 +23,19 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # SECURITY: Override secret values via .env file or shell environment for
+    # non-local deployments. The inline defaults are for local development only.
     environment:
       TRIX_BIND_ADDR: 0.0.0.0:8080
-      TRIX_PUBLIC_BASE_URL: http://localhost:8080
-      TRIX_DATABASE_URL: postgres://trix:trix@postgres:5432/trix
+      TRIX_PUBLIC_BASE_URL: ${TRIX_PUBLIC_BASE_URL:-http://localhost:8080}
+      TRIX_DATABASE_URL: ${TRIX_DATABASE_URL:-postgres://trix:trix@postgres:5432/trix}
       TRIX_BLOB_ROOT: /var/lib/trix/blobs
       TRIX_BLOB_MAX_UPLOAD_BYTES: 26214400
-      TRIX_LOG: info,trix_server=debug
-      TRIX_JWT_SIGNING_KEY: dev-compose-jwt-secret-change-me
-      TRIX_ADMIN_USERNAME: ops
-      TRIX_ADMIN_PASSWORD: dev-admin-secret-change-me
-      TRIX_ADMIN_JWT_SIGNING_KEY: dev-admin-jwt-secret-change-me
+      TRIX_LOG: ${TRIX_LOG:-info,trix_server=debug}
+      TRIX_JWT_SIGNING_KEY: ${TRIX_JWT_SIGNING_KEY:-dev-compose-jwt-secret-change-me}
+      TRIX_ADMIN_USERNAME: ${TRIX_ADMIN_USERNAME:-ops}
+      TRIX_ADMIN_PASSWORD: ${TRIX_ADMIN_PASSWORD:-dev-admin-secret-change-me}
+      TRIX_ADMIN_JWT_SIGNING_KEY: ${TRIX_ADMIN_JWT_SIGNING_KEY:-dev-admin-jwt-secret-change-me}
       TRIX_ADMIN_SESSION_TTL_SECONDS: 900
       TRIX_CORS_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
       TRIX_RATE_LIMIT_WINDOW_SECONDS: 60
