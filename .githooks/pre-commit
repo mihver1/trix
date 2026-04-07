@@ -1,0 +1,33 @@
+#!/bin/sh
+# Contract validation pre-commit hook.
+# Fast checks only — no database required.
+
+set -e
+
+echo "Running contract checks..."
+
+# 1. Compile check (catches type mismatches)
+if ! cargo check --workspace --quiet 2>&1; then
+    echo "Compilation failed"
+    exit 1
+fi
+
+# 2. Contract exhaustiveness (catches missing contracts)
+if ! cargo test -p trix-server --test openapi_v0_contract --quiet 2>&1; then
+    echo "Contract exhaustiveness test failed"
+    exit 1
+fi
+
+# 3. Serde roundtrip (catches serialization issues)
+if ! cargo test -p trix-types --test serde_roundtrip --quiet 2>&1; then
+    echo "Serde roundtrip test failed"
+    exit 1
+fi
+
+# 4. WS protocol tests
+if ! cargo test -p trix-types --test ws_protocol --quiet 2>&1; then
+    echo "WebSocket protocol test failed"
+    exit 1
+fi
+
+echo "Contract checks passed"

@@ -151,7 +151,6 @@ fn replaced_state_should_disconnect() {
 mod proptest_tests {
     use super::*;
     use proptest::prelude::*;
-    use serde_json::Value;
 
     fn arb_server_frame() -> impl Strategy<Value = WebSocketServerFrame> {
         prop_oneof![
