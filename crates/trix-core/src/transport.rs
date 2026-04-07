@@ -4,7 +4,7 @@ use reqwest::{
     Client, Method, Url,
     header::{AUTHORIZATION, CONTENT_LENGTH, ETAG, HeaderMap, HeaderValue},
 };
-use serde::{Serialize, de::DeserializeOwned};
+use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 use thiserror::Error;
 use tokio::net::TcpStream;
@@ -13,32 +13,33 @@ use tokio_tungstenite::{
     tungstenite::{Message, client::IntoClientRequest},
 };
 use trix_types::{
-    AccountDebugMetricsStatusResponse, AccountDirectoryResponse, AccountFeatureFlagsResponse,
-    AccountId, AccountKeyPackagesResponse, AccountProfileResponse, AckInboxRequest,
-    AckInboxResponse, AppendHistorySyncChunkRequest, AppendHistorySyncChunkResponse,
-    ApplePushEnvironment, BlobMetadataResponse, BlobUploadStatus, ChatDetailResponse,
-    ChatHistoryResponse, ChatId, ChatListResponse, CompleteHistorySyncJobRequest,
-    CompleteHistorySyncJobResponse, CompleteLinkIntentRequest, CompleteLinkIntentResponse,
-    CompleteMessageRepairWitnessRequest, CompleteMessageRepairWitnessResponse, ControlMessageInput,
-    CreateAccountRequest, CreateAccountResponse, CreateBlobUploadRequest, CreateBlobUploadResponse,
-    CreateChatRequest, CreateChatResponse, CreateLinkIntentResponse, CreateMessageRequest,
-    CreateMessageResponse, DeviceApprovePayloadResponse, DeviceId, DeviceListResponse,
-    DeviceStatus, DeviceTransferBundleResponse, DeviceTransportKeyResponse,
-    DirectoryAccountSummary, DmGlobalDeleteRequest, DmGlobalDeleteResponse, ErrorResponse,
-    HealthResponse, HistorySyncChunkListResponse, HistorySyncChunkSummary,
-    HistorySyncJobListResponse, HistorySyncJobRole, HistorySyncJobStatus, LeaseInboxRequest,
-    LeaseInboxResponse, LeaveChatRequest, LeaveChatResponse, MessageId, MessageRepairBinding,
-    MessageRepairRequestStatus, ModifyChatDevicesRequest, ModifyChatDevicesResponse,
-    ModifyChatMembersRequest, ModifyChatMembersResponse, PublishKeyPackageItem,
-    PublishKeyPackagesRequest, PublishKeyPackagesResponse, RegisterApplePushTokenRequest,
-    RegisterApplePushTokenResponse, RequestChatBackfillRequest, RequestChatBackfillResponse,
-    RequestHistorySyncRepairRequest, RequestHistorySyncRepairResponse,
-    RequestMessageRepairWitnessRequest, RequestMessageRepairWitnessResponse,
-    ReserveKeyPackagesRequest, ResetKeyPackagesResponse, RevokeDeviceRequest, RevokeDeviceResponse,
-    SubmitDebugMetricsRequest, SubmitMessageRepairWitnessResultRequest,
-    SubmitMessageRepairWitnessResultResponse, TargetMessageRepairRequestListResponse,
-    UpdateAccountProfileRequest, VersionResponse, WebSocketClientFrame, WebSocketServerFrame,
-    WitnessMessageRepairRequestListResponse,
+    AccountDebugMetricsStatusResponse, AccountDirectoryQuery, AccountDirectoryResponse,
+    AccountFeatureFlagsResponse, AccountId, AccountKeyPackagesResponse, AccountProfileResponse,
+    AckInboxRequest, AckInboxResponse, AppendHistorySyncChunkRequest,
+    AppendHistorySyncChunkResponse, ApplePushEnvironment, BlobMetadataResponse, BlobUploadStatus,
+    ChatDetailResponse, ChatHistoryQuery, ChatHistoryResponse, ChatId, ChatListResponse,
+    CompleteHistorySyncJobRequest, CompleteHistorySyncJobResponse, CompleteLinkIntentRequest,
+    CompleteLinkIntentResponse, CompleteMessageRepairWitnessRequest,
+    CompleteMessageRepairWitnessResponse, ControlMessageInput, CreateAccountRequest,
+    CreateAccountResponse, CreateBlobUploadRequest, CreateBlobUploadResponse, CreateChatRequest,
+    CreateChatResponse, CreateLinkIntentResponse, CreateMessageRequest, CreateMessageResponse,
+    DeviceApprovePayloadResponse, DeviceId, DeviceListResponse, DeviceStatus,
+    DeviceTransferBundleResponse, DeviceTransportKeyResponse, DirectoryAccountSummary,
+    DmGlobalDeleteRequest, DmGlobalDeleteResponse, ErrorResponse, HealthResponse,
+    HistorySyncChunkListResponse, HistorySyncChunkSummary, HistorySyncJobListResponse,
+    HistorySyncJobRole, HistorySyncJobStatus, InboxQuery, LeaseInboxRequest, LeaseInboxResponse,
+    LeaveChatRequest, LeaveChatResponse, ListHistorySyncJobsQuery, MessageId,
+    MessageRepairBinding, MessageRepairRequestStatus, ModifyChatDevicesRequest,
+    ModifyChatDevicesResponse, ModifyChatMembersRequest, ModifyChatMembersResponse,
+    PublishKeyPackageItem, PublishKeyPackagesRequest, PublishKeyPackagesResponse,
+    RegisterApplePushTokenRequest, RegisterApplePushTokenResponse, RequestChatBackfillRequest,
+    RequestChatBackfillResponse, RequestHistorySyncRepairRequest,
+    RequestHistorySyncRepairResponse, RequestMessageRepairWitnessRequest,
+    RequestMessageRepairWitnessResponse, ReserveKeyPackagesRequest, ResetKeyPackagesResponse,
+    RevokeDeviceRequest, RevokeDeviceResponse, SubmitDebugMetricsRequest,
+    SubmitMessageRepairWitnessResultRequest, SubmitMessageRepairWitnessResultResponse,
+    TargetMessageRepairRequestListResponse, UpdateAccountProfileRequest, VersionResponse,
+    WebSocketClientFrame, WebSocketServerFrame, WitnessMessageRepairRequestListResponse,
 };
 
 const CONTROL_AAD_META_KEY: &str = "_trix";
@@ -219,41 +220,6 @@ pub struct ServerApiClient {
 
 pub struct ServerWebSocketClient {
     ws: WebSocketStream<MaybeTlsStream<TcpStream>>,
-}
-
-#[derive(Debug, Serialize)]
-struct ListHistorySyncJobsQuery {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    role: Option<HistorySyncJobRole>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    status: Option<HistorySyncJobStatus>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    limit: Option<usize>,
-}
-
-#[derive(Debug, Serialize)]
-struct HistoryQuery {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    after_server_seq: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    limit: Option<usize>,
-}
-
-#[derive(Debug, Serialize)]
-struct InboxQuery {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    after_inbox_id: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    limit: Option<usize>,
-}
-
-#[derive(Debug, Serialize)]
-struct AccountDirectoryQuery {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    q: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    limit: Option<usize>,
-    exclude_self: bool,
 }
 
 impl ServerApiClient {
@@ -971,7 +937,7 @@ impl ServerApiClient {
     ) -> Result<ChatHistoryResponse, ServerApiError> {
         self.send_json(
             self.request(Method::GET, &format!("v0/chats/{}/history", chat_id.0))?
-                .query(&HistoryQuery {
+                .query(&ChatHistoryQuery {
                     after_server_seq,
                     limit,
                 }),

@@ -4,13 +4,12 @@ use axum::{
     http::HeaderMap,
     routing::{get, post},
 };
-use serde::Deserialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 use crate::{db::InboxItemRow, error::AppError, state::AppState};
 use trix_types::{
-    AckInboxRequest, AckInboxResponse, InboxItem, InboxResponse, LeaseInboxRequest,
+    AckInboxRequest, AckInboxResponse, InboxItem, InboxQuery, InboxResponse, LeaseInboxRequest,
     LeaseInboxResponse,
 };
 
@@ -18,12 +17,6 @@ use super::chats::message_to_api;
 
 const DEFAULT_INBOX_LEASE_TTL_SECONDS: u64 = 30;
 const MAX_INBOX_LEASE_TTL_SECONDS: u64 = 5 * 60;
-
-#[derive(Debug, Deserialize)]
-struct InboxQuery {
-    after_inbox_id: Option<u64>,
-    limit: Option<usize>,
-}
 
 pub fn router() -> Router<AppState> {
     Router::new()

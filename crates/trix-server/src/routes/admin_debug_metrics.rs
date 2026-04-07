@@ -4,13 +4,13 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{delete, get},
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{error::AppError, state::AppState};
 use trix_types::{
     AdminDebugMetricBatch, AdminDebugMetricBatchListResponse, AdminDebugMetricSession,
     AdminDebugMetricSessionListResponse, AdminDebugMetricSessionResponse,
+    AdminListDebugMetricBatchesQuery, AdminListDebugMetricSessionsQuery,
     CreateAdminDebugMetricSessionRequest, DeviceId,
 };
 
@@ -52,12 +52,6 @@ fn row_to_session(row: crate::db::DebugMetricSessionRow) -> AdminDebugMetricSess
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
-struct ListSessionsQuery {
-    account_id: Option<Uuid>,
-    limit: Option<i64>,
-}
-
 async fn create_session(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -96,7 +90,7 @@ async fn create_session(
 async fn list_sessions(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(q): Query<ListSessionsQuery>,
+    Query(q): Query<AdminListDebugMetricSessionsQuery>,
 ) -> Result<Json<AdminDebugMetricSessionListResponse>, AppError> {
     state.authenticate_admin_headers(&headers)?;
     ensure_debug_enabled(&state)?;
@@ -121,16 +115,11 @@ async fn revoke_session(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[derive(Debug, Default, Deserialize)]
-struct ListBatchesQuery {
-    limit: Option<i64>,
-}
-
 async fn list_batches(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(session_id): Path<Uuid>,
-    Query(q): Query<ListBatchesQuery>,
+    Query(q): Query<AdminListDebugMetricBatchesQuery>,
 ) -> Result<Json<AdminDebugMetricBatchListResponse>, AppError> {
     state.authenticate_admin_headers(&headers)?;
     ensure_debug_enabled(&state)?;

@@ -6,17 +6,16 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{
     db::CreateAccountInput, error::AppError, signatures::account_bootstrap_message, state::AppState,
 };
 use trix_types::{
-    AccountDebugMetricsStatusResponse, AccountDirectoryResponse, AccountFeatureFlagsResponse,
-    AccountId, AccountKeyPackagesResponse, AccountProfileResponse, CreateAccountRequest,
-    CreateAccountResponse, DeviceId, DirectoryAccountSummary, ReservedKeyPackage,
-    SubmitDebugMetricsRequest, UpdateAccountProfileRequest,
+    AccountDebugMetricsStatusResponse, AccountDirectoryQuery, AccountDirectoryResponse,
+    AccountFeatureFlagsResponse, AccountId, AccountKeyPackagesResponse, AccountProfileResponse,
+    CreateAccountRequest, CreateAccountResponse, DeviceId, DirectoryAccountSummary,
+    ReservedKeyPackage, SubmitDebugMetricsRequest, UpdateAccountProfileRequest,
 };
 
 pub fn router() -> Router<AppState> {
@@ -33,12 +32,6 @@ pub fn router() -> Router<AppState> {
         .route("/{account_id}/key-packages", get(get_account_key_packages))
 }
 
-#[derive(Debug, Default, Deserialize)]
-struct AccountDirectoryQuery {
-    q: Option<String>,
-    limit: Option<usize>,
-    exclude_self: Option<bool>,
-}
 
 async fn create_account(
     State(state): State<AppState>,
@@ -319,7 +312,7 @@ async fn search_directory(
         .search_account_directory(
             principal.account_id,
             query.q.as_deref(),
-            query.exclude_self.unwrap_or(true),
+            query.exclude_self,
             query.limit,
         )
         .await?;

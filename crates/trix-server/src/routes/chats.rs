@@ -5,7 +5,6 @@ use axum::{
     routing::{get, post},
 };
 use base64::{Engine as _, engine::general_purpose};
-use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{
@@ -17,7 +16,7 @@ use crate::{
     state::AppState,
 };
 use trix_types::{
-    ChatDetailResponse, ChatDeviceSummary, ChatHistoryResponse, ChatListResponse,
+    ChatDetailResponse, ChatDeviceSummary, ChatHistoryQuery, ChatHistoryResponse, ChatListResponse,
     ChatMemberSummary, ChatParticipantProfileSummary, ChatSummary, ControlMessageInput,
     CreateChatRequest, CreateChatResponse, CreateMessageRequest, CreateMessageResponse,
     DmGlobalDeleteRequest, DmGlobalDeleteResponse, LeaveChatRequest, LeaveChatResponse,
@@ -58,11 +57,6 @@ pub fn router() -> Router<AppState> {
         .route("/{chat_id}/dm-global-delete", post(dm_global_delete))
 }
 
-#[derive(Debug, Deserialize)]
-struct HistoryQuery {
-    after_server_seq: Option<u64>,
-    limit: Option<usize>,
-}
 
 async fn list_chats(
     State(state): State<AppState>,
@@ -231,7 +225,7 @@ async fn get_history(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(chat_id): Path<trix_types::ChatId>,
-    Query(query): Query<HistoryQuery>,
+    Query(query): Query<ChatHistoryQuery>,
 ) -> Result<Json<ChatHistoryResponse>, AppError> {
     let principal = state.authenticate_active_headers(&headers).await?;
     let messages = state

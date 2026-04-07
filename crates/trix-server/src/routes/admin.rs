@@ -5,7 +5,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
-use serde::Deserialize;
 use subtle::ConstantTimeEq;
 
 use crate::{
@@ -18,7 +17,7 @@ use crate::{
     state::AppState,
 };
 use trix_types::{
-    AccountId, AdminDisableAccountRequest, AdminOverviewResponse,
+    AccountId, AdminDisableAccountRequest, AdminListUsersQuery, AdminOverviewResponse,
     AdminRegistrationSettingsResponse, AdminServerSettingsResponse, AdminSessionRequest,
     AdminSessionResponse, AdminUserListResponse, AdminUserSummary, CreateAdminUserProvisionRequest,
     CreateAdminUserProvisionResponse, PatchAdminRegistrationSettingsRequest,
@@ -53,14 +52,6 @@ pub fn router() -> Router<AppState> {
             "/users/{account_id}",
             get(get_admin_user).patch(patch_admin_user),
         )
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct ListAdminUsersQuery {
-    q: Option<String>,
-    status: Option<String>,
-    cursor: Option<String>,
-    limit: Option<usize>,
 }
 
 fn admin_credentials_match(
@@ -201,7 +192,7 @@ async fn get_server_settings(
 async fn list_admin_users(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(query): Query<ListAdminUsersQuery>,
+    Query(query): Query<AdminListUsersQuery>,
 ) -> Result<Json<AdminUserListResponse>, AppError> {
     state.authenticate_admin_headers(&headers)?;
     let out = state

@@ -4147,6 +4147,7 @@ name = "trix-types"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "http",
  "serde",
  "serde_json",
  "uuid",
