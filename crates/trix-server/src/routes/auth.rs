@@ -10,9 +10,10 @@ use trix_types::{
 };
 
 pub fn router() -> Router<AppState> {
+    use trix_types::contract::{self, ApiEndpoint};
     Router::new()
-        .route("/challenge", post(challenge))
-        .route("/session", post(session))
+        .route(super::rel("/v0/auth", contract::AuthChallenge::PATH), post(challenge))
+        .route(super::rel("/v0/auth", contract::AuthSession::PATH), post(session))
 }
 
 async fn challenge(

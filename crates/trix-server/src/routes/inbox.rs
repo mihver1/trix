@@ -19,10 +19,11 @@ const DEFAULT_INBOX_LEASE_TTL_SECONDS: u64 = 30;
 const MAX_INBOX_LEASE_TTL_SECONDS: u64 = 5 * 60;
 
 pub fn router() -> Router<AppState> {
+    use trix_types::contract::{self, ApiEndpoint};
     Router::new()
-        .route("/inbox", get(get_inbox))
-        .route("/inbox/lease", post(lease_inbox))
-        .route("/inbox/ack", post(ack_inbox))
+        .route(super::rel("/v0", contract::GetInbox::PATH), get(get_inbox))
+        .route(super::rel("/v0", contract::LeaseInbox::PATH), post(lease_inbox))
+        .route(super::rel("/v0", contract::AckInbox::PATH), post(ack_inbox))
 }
 
 async fn get_inbox(

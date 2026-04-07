@@ -8,10 +8,11 @@ use trix_types::{
 };
 
 pub fn router() -> Router<AppState> {
+    use trix_types::contract::{self, ApiEndpoint};
     Router::new()
-        .route("/key-packages:publish", post(publish_key_packages))
-        .route("/key-packages:reset", post(reset_key_packages))
-        .route("/key-packages:reserve", post(reserve_key_packages))
+        .route(super::rel("/v0", contract::PublishKeyPackages::PATH), post(publish_key_packages))
+        .route(super::rel("/v0", contract::ResetKeyPackages::PATH), post(reset_key_packages))
+        .route(super::rel("/v0", contract::ReserveKeyPackages::PATH), post(reserve_key_packages))
 }
 
 async fn publish_key_packages(

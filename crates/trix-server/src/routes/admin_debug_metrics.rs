@@ -15,17 +15,18 @@ use trix_types::{
 };
 
 pub fn router() -> Router<AppState> {
+    use trix_types::contract::{self, ApiEndpoint};
     Router::new()
         .route(
-            "/debug/metric-sessions",
+            crate::routes::rel("/v0/admin", contract::AdminListDebugMetricSessions::PATH),
             get(list_sessions).post(create_session),
         )
         .route(
-            "/debug/metric-sessions/{session_id}",
+            crate::routes::rel("/v0/admin", contract::AdminRevokeDebugMetricSession::PATH),
             delete(revoke_session),
         )
         .route(
-            "/debug/metric-sessions/{session_id}/batches",
+            crate::routes::rel("/v0/admin", contract::AdminListDebugMetricBatches::PATH),
             get(list_batches),
         )
 }

@@ -25,31 +25,35 @@ use trix_types::{
 };
 
 pub fn router() -> Router<AppState> {
+    use trix_types::contract::{self, ApiEndpoint};
     Router::new()
         .merge(admin_feature_flags::router())
         .merge(admin_debug_metrics::router())
         .merge(admin_logs::router())
-        .route("/session", post(create_session).delete(delete_session))
-        .route("/overview", get(overview))
         .route(
-            "/settings/registration",
+            super::rel("/v0/admin", contract::AdminCreateSession::PATH),
+            post(create_session).delete(delete_session),
+        )
+        .route(super::rel("/v0/admin", contract::AdminOverview::PATH), get(overview))
+        .route(
+            super::rel("/v0/admin", contract::AdminGetRegistrationSettings::PATH),
             get(get_registration_settings).patch(patch_registration_settings),
         )
         .route(
-            "/settings/server",
+            super::rel("/v0/admin", contract::AdminGetServerSettings::PATH),
             get(get_server_settings).patch(patch_server_settings),
         )
         .route(
-            "/users",
+            super::rel("/v0/admin", contract::AdminListUsers::PATH),
             get(list_admin_users).post(create_admin_user_provision),
         )
-        .route("/users/{account_id}/disable", post(disable_admin_user))
+        .route(super::rel("/v0/admin", contract::AdminDisableUser::PATH), post(disable_admin_user))
         .route(
-            "/users/{account_id}/reactivate",
+            super::rel("/v0/admin", contract::AdminReactivateUser::PATH),
             post(reactivate_admin_user),
         )
         .route(
-            "/users/{account_id}",
+            super::rel("/v0/admin", contract::AdminGetUser::PATH),
             get(get_admin_user).patch(patch_admin_user),
         )
 }

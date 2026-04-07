@@ -24,21 +24,22 @@ use trix_types::{
 };
 
 pub fn router() -> Router<AppState> {
+    use trix_types::contract::{self, ApiEndpoint};
     Router::new()
         .route(
-            "/feature-flags/definitions",
+            crate::routes::rel("/v0/admin", contract::AdminListFlagDefinitions::PATH),
             get(list_definitions).post(create_definition),
         )
         .route(
-            "/feature-flags/definitions/{flag_key}",
+            crate::routes::rel("/v0/admin", contract::AdminGetFlagDefinition::PATH),
             get(get_definition).patch(patch_definition),
         )
         .route(
-            "/feature-flags/overrides",
+            crate::routes::rel("/v0/admin", contract::AdminListFlagOverrides::PATH),
             get(list_overrides).post(create_override),
         )
         .route(
-            "/feature-flags/overrides/{override_id}",
+            crate::routes::rel("/v0/admin", contract::AdminPatchFlagOverride::PATH),
             patch(patch_override).delete(delete_override),
         )
 }

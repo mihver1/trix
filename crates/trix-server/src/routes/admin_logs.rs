@@ -11,7 +11,11 @@ const DEFAULT_LIMIT: usize = 200;
 const MAX_LIMIT: usize = 1_000;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/server/logs", get(list_server_logs))
+    use trix_types::contract::{self, ApiEndpoint};
+    Router::new().route(
+        crate::routes::rel("/v0/admin", contract::AdminListServerLogs::PATH),
+        get(list_server_logs),
+    )
 }
 
 async fn list_server_logs(
