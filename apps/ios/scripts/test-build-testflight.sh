@@ -88,6 +88,10 @@ if [[ -n "$export_options" ]]; then
   cp "$export_options" "$log_dir/export-options.plist"
 fi
 
+if [[ -n "${FAKE_XCODEBUILD_STDERR:-}" ]]; then
+  printf "%s\n" "$FAKE_XCODEBUILD_STDERR" >&2
+fi
+
 if [[ -n "$export_path" ]]; then
   mkdir -p "$export_path"
   if [[ -n "$export_options" ]]; then
@@ -97,11 +101,23 @@ if [[ -n "$export_path" ]]; then
     fi
   fi
 fi
+
+if [[ -n "$export_path" && "${FAKE_XCODEBUILD_FAIL_ON_EXPORT:-0}" == "1" ]]; then
+  exit 70
+fi
 '
 
   write_fake_tool "$bin_dir/xcrun" '
 log_dir="${TEST_LOG_DIR:?}"
 printf "%s\n" "$*" >> "$log_dir/xcrun.log"
+
+if [[ -n "${FAKE_XCRUN_STDERR:-}" ]]; then
+  printf "%s\n" "$FAKE_XCRUN_STDERR" >&2
+fi
+
+if [[ "${FAKE_XCRUN_FAIL:-0}" == "1" ]]; then
+  exit 71
+fi
 '
 
   write_fake_tool "$bin_dir/cargo" ':'
@@ -227,11 +243,59 @@ test_ipa_upload_falls_back_to_altool() {
   rm -rf "$temp_root"
 }
 
+test_xcodebuild_upload_failure_captures_stderr_in_log() {
+  local temp_root
+  temp_root="$(mktemp -d)"
+
+  setup_fake_toolchain "$temp_root"
+  write_fake_bridge_script "$temp_root/fake-generate-bridge.sh"
+  mkdir -p "$temp_root/logs"
+
+  if PATH="$temp_root/bin:$PATH" \
+    TEST_LOG_DIR="$temp_root/logs" \
+    TRIX_IOS_BRIDGE_SCRIPT="$temp_root/fake-generate-bridge.sh" \
+    TRIX_IOS_BUILD_ROOT="$temp_root/build" \
+    TRIX_IOS_ALLOW_PROVISIONING_UPDATES=0 \
+    FAKE_XCODEBUILD_STDERR="simulated xcodebuild upload stderr" \
+    FAKE_XCODEBUILD_FAIL_ON_EXPORT=1 \
+    "$TARGET_SCRIPT" --upload --skip-prechecks --skip-xcodegen >/dev/null 2>&1; then
+    fail "xcodebuild upload failure should propagate"
+  fi
+
+  assert_contains "simulated xcodebuild upload stderr" "$temp_root/build/upload.log" "xcodebuild upload stderr missing from upload log"
+  rm -rf "$temp_root"
+}
+
+test_altool_upload_failure_captures_stderr_in_log() {
+  local temp_root
+  temp_root="$(mktemp -d)"
+
+  setup_fake_toolchain "$temp_root"
+  mkdir -p "$temp_root/logs"
+  : > "$temp_root/Trix.ipa"
+
+  if PATH="$temp_root/bin:$PATH" \
+    TEST_LOG_DIR="$temp_root/logs" \
+    TRIX_IOS_BUILD_ROOT="$temp_root/build" \
+    TRIX_APPLE_ID="user@example.com" \
+    TRIX_APP_SPECIFIC_PASSWORD="secret" \
+    FAKE_XCRUN_STDERR="simulated altool upload stderr" \
+    FAKE_XCRUN_FAIL=1 \
+    "$TARGET_SCRIPT" --upload --ipa "$temp_root/Trix.ipa" >/dev/null 2>&1; then
+    fail "altool upload failure should propagate"
+  fi
+
+  assert_contains "simulated altool upload stderr" "$temp_root/build/upload.log" "altool upload stderr missing from upload log"
+  rm -rf "$temp_root"
+}
+
 main() {
   run_test "upload with ASC auth uses xcodebuild" test_upload_with_asc_auth_uses_xcodebuild
   run_test "upload with Xcode account uses xcodebuild" test_upload_with_xcode_account_uses_xcodebuild
   run_test "archive upload with Apple ID uses altool" test_archive_upload_with_apple_id_uses_altool
   run_test "ipa upload falls back to altool" test_ipa_upload_falls_back_to_altool
+  run_test "xcodebuild upload failure captures stderr in log" test_xcodebuild_upload_failure_captures_stderr_in_log
+  run_test "altool upload failure captures stderr in log" test_altool_upload_failure_captures_stderr_in_log
 }
 
 main "$@"
