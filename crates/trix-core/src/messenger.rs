@@ -8,7 +8,6 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use chacha20poly1305::{KeyInit, XChaCha20Poly1305, XNonce, aead::Aead};
-use zeroize::Zeroize;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -20,6 +19,7 @@ use trix_types::{
     WebSocketServerFrame,
 };
 use uuid::Uuid;
+use zeroize::Zeroize;
 
 use crate::{
     AttachmentMessageBody, AuthChallengeMaterial, CompleteLinkIntentParams, CreateChatControlInput,
@@ -2707,11 +2707,8 @@ impl FfiMessengerClient {
                 ) {
                     Ok(_) => {}
                     Err(error) if is_current_device_replay_projection_error(&error) => {
-                        let _ = store
-                            .load_or_bootstrap_chat_mls_conversation(*chat_id, facade)
-                            .map_err(map_domain_error)?;
                         store
-                            .project_chat_with_unavailable_projections(*chat_id, None)
+                            .project_chat_with_facade(*chat_id, facade, None)
                             .map_err(map_domain_error)?;
                     }
                     Err(error) if is_missing_bootstrappable_state_projection_error(&error) => {
@@ -3444,14 +3441,12 @@ fn load_state_from_path(
     }
 
     let cipher = state_cipher_legacy(database_key).map_err(messenger_error)?;
-    let plaintext = cipher
-        .decrypt(xnonce, ciphertext)
-        .map_err(|_| {
-            FfiMessengerError::Message(format!(
-                "failed to decrypt messenger state at {}",
-                path.display()
-            ))
-        })?;
+    let plaintext = cipher.decrypt(xnonce, ciphertext).map_err(|_| {
+        FfiMessengerError::Message(format!(
+            "failed to decrypt messenger state at {}",
+            path.display()
+        ))
+    })?;
     let state: MessengerClientState = serde_json::from_slice(&plaintext)
         .map_err(|err| FfiMessengerError::Message(format!("invalid messenger state: {err}")))?;
 
@@ -3486,8 +3481,8 @@ fn save_state_to_path(
 const STATE_CIPHER_SALT: &[u8] = b"trix-state-cipher-v1";
 
 fn state_cipher_argon2(database_key: &[u8]) -> Result<XChaCha20Poly1305> {
-    let params = argon2::Params::new(19456, 2, 1, Some(32))
-        .map_err(|e| anyhow!("argon2 params: {e}"))?;
+    let params =
+        argon2::Params::new(19456, 2, 1, Some(32)).map_err(|e| anyhow!("argon2 params: {e}"))?;
     let argon2 = argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
     let mut key = [0u8; 32];
     argon2
@@ -8694,8 +8689,202 @@ mod tests {
     }
 
     #[test]
-    fn get_messages_single_device_missing_bootstrap_material_falls_back_when_repair_is_unavailable(
-    ) {
+    fn project_changed_chats_projects_readable_tail_after_current_device_replay_error() {
+        let root_path = env::temp_dir().join(format!(
+            "trix-messenger-project-readable-tail-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let chat_id = ChatId(Uuid::new_v4());
+        let alice_account = AccountId(Uuid::new_v4());
+        let alice_device = DeviceId(Uuid::new_v4());
+        let current_account = AccountId(Uuid::new_v4());
+        let current_device = DeviceId(Uuid::new_v4());
+        let current_identity = b"current-device-readable-tail".to_vec();
+        let alice = MlsFacade::new(b"alice-readable-tail".to_vec()).unwrap();
+
+        let client = FfiMessengerClient::open(FfiMessengerOpenConfig {
+            root_path: root_path.to_string_lossy().into_owned(),
+            database_key: vec![61u8; 32],
+            base_url: "http://127.0.0.1:9".to_owned(),
+            access_token: Some("test-access-token".to_owned()),
+            account_id: Some(current_account.0.to_string()),
+            device_id: Some(current_device.0.to_string()),
+            account_sync_chat_id: None,
+            device_display_name: Some("current-device".to_owned()),
+            platform: Some("ios".to_owned()),
+            credential_identity: Some(current_identity.clone()),
+            account_root_private_key: Some(vec![79u8; 32]),
+            transport_private_key: Some(vec![83u8; 32]),
+        })
+        .unwrap();
+
+        let current_member =
+            MlsFacade::new_persistent(current_identity, PathBuf::from(&client.mls_storage_root))
+                .unwrap();
+        let current_key_package = current_member.generate_key_package().unwrap();
+        let mut alice_group = alice.create_group(chat_id.0.as_bytes()).unwrap();
+        let add_bundle = alice
+            .add_members(&mut alice_group, &[current_key_package])
+            .unwrap();
+        let mut current_group = current_member
+            .join_group_from_welcome(
+                add_bundle.welcome_message.as_ref().unwrap(),
+                add_bundle.ratchet_tree.as_deref(),
+            )
+            .unwrap();
+
+        let own_ciphertext = current_member
+            .create_application_message(&mut current_group, b"hello from current device")
+            .unwrap();
+        let tail_text = "hello from alice after replay";
+        let tail_ciphertext = alice
+            .create_application_message(&mut alice_group, tail_text.as_bytes())
+            .unwrap();
+        current_member.save_state().unwrap();
+
+        let commit_message_id = MessageId(Uuid::new_v4());
+        let welcome_message_id = MessageId(Uuid::new_v4());
+        let replay_message_id = MessageId(Uuid::new_v4());
+        let tail_message_id = MessageId(Uuid::new_v4());
+        let tail_message = MessageEnvelope {
+            message_id: tail_message_id,
+            chat_id,
+            server_seq: 4,
+            sender_account_id: alice_account,
+            sender_device_id: alice_device,
+            epoch: add_bundle.epoch,
+            message_kind: MessageKind::Application,
+            content_type: ContentType::Text,
+            ciphertext_b64: encode_b64(&tail_ciphertext),
+            aad_json: serde_json::json!({}),
+            created_at_unix: 4,
+        };
+
+        {
+            let mut store = lock_history_store(&client.history_store).unwrap();
+            store
+                .apply_chat_detail(&ChatDetailResponse {
+                    chat_id,
+                    chat_type: ChatType::Dm,
+                    title: None,
+                    last_server_seq: 4,
+                    pending_message_count: 0,
+                    epoch: add_bundle.epoch,
+                    last_commit_message_id: Some(commit_message_id),
+                    last_message: Some(tail_message.clone()),
+                    participant_profiles: vec![
+                        ChatParticipantProfileSummary {
+                            account_id: current_account,
+                            handle: Some("current".to_owned()),
+                            profile_name: "Current".to_owned(),
+                            profile_bio: None,
+                        },
+                        ChatParticipantProfileSummary {
+                            account_id: alice_account,
+                            handle: Some("alice".to_owned()),
+                            profile_name: "Alice".to_owned(),
+                            profile_bio: None,
+                        },
+                    ],
+                    members: Vec::new(),
+                    device_members: Vec::new(),
+                })
+                .unwrap();
+            store
+                .apply_chat_history(&ChatHistoryResponse {
+                    chat_id,
+                    messages: vec![
+                        MessageEnvelope {
+                            message_id: commit_message_id,
+                            chat_id,
+                            server_seq: 1,
+                            sender_account_id: alice_account,
+                            sender_device_id: alice_device,
+                            epoch: add_bundle.epoch,
+                            message_kind: MessageKind::Commit,
+                            content_type: ContentType::ChatEvent,
+                            ciphertext_b64: encode_b64(&add_bundle.commit_message),
+                            aad_json: serde_json::json!({}),
+                            created_at_unix: 1,
+                        },
+                        MessageEnvelope {
+                            message_id: welcome_message_id,
+                            chat_id,
+                            server_seq: 2,
+                            sender_account_id: alice_account,
+                            sender_device_id: alice_device,
+                            epoch: add_bundle.epoch,
+                            message_kind: MessageKind::WelcomeRef,
+                            content_type: ContentType::ChatEvent,
+                            ciphertext_b64: encode_b64(
+                                add_bundle.welcome_message.as_ref().unwrap(),
+                            ),
+                            aad_json: serde_json::json!({
+                                "_trix": {
+                                    "ratchet_tree_b64": encode_b64(
+                                        add_bundle.ratchet_tree.as_ref().unwrap()
+                                    )
+                                }
+                            }),
+                            created_at_unix: 2,
+                        },
+                        MessageEnvelope {
+                            message_id: replay_message_id,
+                            chat_id,
+                            server_seq: 3,
+                            sender_account_id: current_account,
+                            sender_device_id: current_device,
+                            epoch: add_bundle.epoch,
+                            message_kind: MessageKind::Application,
+                            content_type: ContentType::Text,
+                            ciphertext_b64: encode_b64(&own_ciphertext),
+                            aad_json: serde_json::json!({}),
+                            created_at_unix: 3,
+                        },
+                        tail_message,
+                    ],
+                })
+                .unwrap();
+            store
+                .set_chat_mls_group_id(chat_id, &current_group.group_id())
+                .unwrap();
+        }
+
+        client.project_changed_chats(&[chat_id]).unwrap();
+
+        let store = lock_history_store(&client.history_store).unwrap();
+        let projected = store.get_projected_messages(chat_id, None, Some(10));
+        let replayed = projected
+            .iter()
+            .find(|message| message.server_seq == 3)
+            .expect("current-device replay should remain projected");
+        assert_eq!(replayed.parse_body().unwrap(), None);
+        let readable_tail = projected
+            .iter()
+            .find(|message| message.server_seq == 4)
+            .expect("readable tail should still project");
+        assert_eq!(
+            readable_tail.parse_body().unwrap(),
+            Some(MessageBody::Text(crate::TextMessageBody {
+                text: tail_text.to_owned(),
+            }))
+        );
+        assert_eq!(
+            store
+                .unavailable_message_server_seqs(chat_id)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![3]
+        );
+
+        fs::remove_dir_all(root_path).ok();
+    }
+
+    #[test]
+    fn get_messages_single_device_missing_bootstrap_material_falls_back_when_repair_is_unavailable()
+    {
         let root_path = env::temp_dir().join(format!(
             "trix-messenger-get-messages-single-device-missing-bootstrap-{}",
             Uuid::new_v4()
