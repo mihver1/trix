@@ -18,14 +18,26 @@ use trix_types::{
 pub fn router() -> Router<AppState> {
     use trix_types::contract::{self, ApiEndpoint};
     Router::new()
-        .route(super::rel("/v0/history-sync", contract::ListHistorySyncJobs::PATH), get(list_jobs))
-        .route(super::rel("/v0/history-sync", contract::RequestHistorySyncRepair::PATH), post(request_repair))
-        .route(super::rel("/v0/history-sync", contract::RequestChatBackfill::PATH), post(request_backfill))
+        .route(
+            super::rel("/v0/history-sync", contract::ListHistorySyncJobs::PATH),
+            get(list_jobs),
+        )
+        .route(
+            super::rel("/v0/history-sync", contract::RequestHistorySyncRepair::PATH),
+            post(request_repair),
+        )
+        .route(
+            super::rel("/v0/history-sync", contract::RequestChatBackfill::PATH),
+            post(request_backfill),
+        )
         .route(
             super::rel("/v0/history-sync", contract::ListHistorySyncChunks::PATH),
             get(list_chunks).post(append_chunk),
         )
-        .route(super::rel("/v0/history-sync", contract::CompleteHistorySyncJob::PATH), post(complete_job))
+        .route(
+            super::rel("/v0/history-sync", contract::CompleteHistorySyncJob::PATH),
+            post(complete_job),
+        )
 }
 
 async fn list_jobs(

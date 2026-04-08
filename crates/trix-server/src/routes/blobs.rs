@@ -19,7 +19,10 @@ use trix_types::{
 pub fn router() -> Router<AppState> {
     use trix_types::contract::{self, ApiEndpoint};
     Router::new()
-        .route(super::rel("/v0/blobs", contract::CreateBlobUpload::PATH), post(create_upload))
+        .route(
+            super::rel("/v0/blobs", contract::CreateBlobUpload::PATH),
+            post(create_upload),
+        )
         // Non-JSON raw-bytes endpoints: keep string literals (not in contract)
         .route("/{blob_id}", put(put_blob).get(get_blob).head(head_blob))
 }

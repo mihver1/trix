@@ -19,8 +19,7 @@ use trix_types::{
     AdminFeatureFlagDefinition, AdminFeatureFlagDefinitionListResponse, AdminFeatureFlagOverride,
     AdminFeatureFlagOverrideListResponse, AdminListFlagOverridesQuery,
     CreateAdminFeatureFlagDefinitionRequest, CreateAdminFeatureFlagOverrideRequest,
-    FeatureFlagScope, PatchAdminFeatureFlagDefinitionRequest,
-    PatchAdminFeatureFlagOverrideRequest,
+    FeatureFlagScope, PatchAdminFeatureFlagDefinitionRequest, PatchAdminFeatureFlagOverrideRequest,
 };
 
 pub fn router() -> Router<AppState> {

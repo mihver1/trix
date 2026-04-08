@@ -148,9 +148,7 @@ fn count_source_routes(module: &str, prefix: &str) -> RouteCounts {
                 ("head(", "HEAD"),
             ]
             .iter()
-            .filter_map(|(needle, method)| {
-                handler_arg.contains(needle).then(|| method.to_string())
-            })
+            .filter_map(|(needle, method)| handler_arg.contains(needle).then(|| method.to_string()))
             .collect();
 
             if methods.is_empty() {
@@ -162,9 +160,7 @@ fn count_source_routes(module: &str, prefix: &str) -> RouteCounts {
                 }
             }
         } else {
-            panic!(
-                "route() call in module `{module}` has unparseable path arg: {path_arg}"
-            );
+            panic!("route() call in module `{module}` has unparseable path arg: {path_arg}");
         }
     }
 
@@ -180,9 +176,8 @@ fn count_source_routes(module: &str, prefix: &str) -> RouteCounts {
             &first_string_literal(&args[0])
                 .unwrap_or_else(|| panic!("nest invocation missing path literal: {nest}")),
         );
-        let nested_module =
-            module_name(args.get(1).map(String::as_str).unwrap_or_default())
-                .unwrap_or_else(|| panic!("nest invocation missing module router(): {nest}"));
+        let nested_module = module_name(args.get(1).map(String::as_str).unwrap_or_default())
+            .unwrap_or_else(|| panic!("nest invocation missing module router(): {nest}"));
         let nested = count_source_routes(&nested_module, &nested_prefix);
         contract_method_pairs += nested.contract_method_pairs;
         literal_routes.extend(nested.literal_routes);
@@ -195,9 +190,8 @@ fn count_source_routes(module: &str, prefix: &str) -> RouteCounts {
             continue;
         }
         let args = split_top_level_args(&merge);
-        let merged_module =
-            module_name(args.first().map(String::as_str).unwrap_or_default())
-                .unwrap_or_else(|| panic!("merge invocation missing module router(): {merge}"));
+        let merged_module = module_name(args.first().map(String::as_str).unwrap_or_default())
+            .unwrap_or_else(|| panic!("merge invocation missing module router(): {merge}"));
         let merged = count_source_routes(&merged_module, prefix);
         contract_method_pairs += merged.contract_method_pairs;
         literal_routes.extend(merged.literal_routes);
@@ -250,8 +244,7 @@ fn all_server_routes_have_contracts() {
     }
 
     // Verify all NON_JSON_PATHS entries are covered by string-literal routes.
-    let literal_set: BTreeSet<(String, String)> =
-        counts.literal_routes.iter().cloned().collect();
+    let literal_set: BTreeSet<(String, String)> = counts.literal_routes.iter().cloned().collect();
     for (path, method) in NON_JSON_PATHS {
         let key = (path.to_string(), method.as_str().to_string());
         assert!(

@@ -1,12 +1,10 @@
 use std::{
-    env,
-    fmt,
+    env, fmt,
     fs::{self, File},
     path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result, anyhow};
-use zeroize::{Zeroize, ZeroizeOnDrop};
 use ed25519_dalek::{Signature, Signer as _, SigningKey, Verifier as _, VerifyingKey};
 use openmls::prelude::{
     BasicCredential, CredentialWithKey, GroupId, KeyPackage, KeyPackageIn, LeafNodeIndex, MlsGroup,
@@ -19,6 +17,7 @@ use openmls_rust_crypto::RustCrypto;
 use openmls_traits::{OpenMlsProvider as _, types::Ciphersuite};
 use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 use tls_codec::{Deserialize, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const DEFAULT_CIPHERSUITE: Ciphersuite =
     Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;

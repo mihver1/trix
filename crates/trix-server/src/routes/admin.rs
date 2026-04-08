@@ -34,7 +34,10 @@ pub fn router() -> Router<AppState> {
             super::rel("/v0/admin", contract::AdminCreateSession::PATH),
             post(create_session).delete(delete_session),
         )
-        .route(super::rel("/v0/admin", contract::AdminOverview::PATH), get(overview))
+        .route(
+            super::rel("/v0/admin", contract::AdminOverview::PATH),
+            get(overview),
+        )
         .route(
             super::rel("/v0/admin", contract::AdminGetRegistrationSettings::PATH),
             get(get_registration_settings).patch(patch_registration_settings),
@@ -47,7 +50,10 @@ pub fn router() -> Router<AppState> {
             super::rel("/v0/admin", contract::AdminListUsers::PATH),
             get(list_admin_users).post(create_admin_user_provision),
         )
-        .route(super::rel("/v0/admin", contract::AdminDisableUser::PATH), post(disable_admin_user))
+        .route(
+            super::rel("/v0/admin", contract::AdminDisableUser::PATH),
+            post(disable_admin_user),
+        )
         .route(
             super::rel("/v0/admin", contract::AdminReactivateUser::PATH),
             post(reactivate_admin_user),
@@ -75,7 +81,9 @@ fn admin_credentials_match(
 
     let username_ok = ct_eq_bytes(expected_username.as_bytes(), offered_username.as_bytes());
     let password_ok = PasswordHash::new(expected_password_hash)
-        .and_then(|hash| argon2::Argon2::default().verify_password(offered_password.as_bytes(), &hash))
+        .and_then(|hash| {
+            argon2::Argon2::default().verify_password(offered_password.as_bytes(), &hash)
+        })
         .is_ok();
     username_ok & password_ok
 }
