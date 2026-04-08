@@ -321,7 +321,7 @@ archive_app() {
   log "Archiving signed iOS app"
   (
     cd "$IOS_DIR"
-    xcodebuild "${archive_args[@]}" | tee "$ARCHIVE_LOG_PATH"
+    xcodebuild "${archive_args[@]}" 2>&1 | tee "$ARCHIVE_LOG_PATH"
   )
 }
 
@@ -371,7 +371,7 @@ export_archive() {
   log "$action_label"
   (
     cd "$IOS_DIR"
-    xcodebuild "${export_args[@]}" | tee "$log_path"
+    xcodebuild "${export_args[@]}" 2>&1 | tee "$log_path"
   )
 }
 
@@ -508,7 +508,7 @@ validate_ipa() {
       "${ALTOOL_AUTH_ARGS[@]}" \
       --output-format json \
       --show-progress \
-      | tee "$VALIDATE_LOG_PATH"
+      2>&1 | tee "$VALIDATE_LOG_PATH"
   )
 }
 
@@ -522,7 +522,7 @@ upload_ipa() {
       "${ALTOOL_AUTH_ARGS[@]}" \
       --output-format json \
       --show-progress \
-      | tee "$UPLOAD_LOG_PATH"
+      2>&1 | tee "$UPLOAD_LOG_PATH"
   )
 }
 
