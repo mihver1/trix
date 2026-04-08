@@ -1,10 +1,10 @@
+use crate::{error::AppError, state::AppState};
 use axum::{
     Json, Router,
     extract::{Query, State},
     http::HeaderMap,
     routing::get,
 };
-use crate::{error::AppError, state::AppState};
 use trix_types::{AdminListServerLogsQuery, AdminServerLogListResponse};
 
 const DEFAULT_LIMIT: usize = 200;

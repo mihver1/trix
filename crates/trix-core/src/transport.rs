@@ -28,19 +28,18 @@ use trix_types::{
     DmGlobalDeleteRequest, DmGlobalDeleteResponse, ErrorResponse, HealthResponse,
     HistorySyncChunkListResponse, HistorySyncChunkSummary, HistorySyncJobListResponse,
     HistorySyncJobRole, HistorySyncJobStatus, InboxQuery, LeaseInboxRequest, LeaseInboxResponse,
-    LeaveChatRequest, LeaveChatResponse, ListHistorySyncJobsQuery, MessageId,
-    MessageRepairBinding, MessageRepairRequestStatus, ModifyChatDevicesRequest,
-    ModifyChatDevicesResponse, ModifyChatMembersRequest, ModifyChatMembersResponse,
-    PublishKeyPackageItem, PublishKeyPackagesRequest, PublishKeyPackagesResponse,
-    RegisterApplePushTokenRequest, RegisterApplePushTokenResponse, RequestChatBackfillRequest,
-    RequestChatBackfillResponse, RequestHistorySyncRepairRequest,
-    RequestHistorySyncRepairResponse, RequestMessageRepairWitnessRequest,
-    RequestMessageRepairWitnessResponse, ReserveKeyPackagesRequest, ResetKeyPackagesResponse,
-    RevokeDeviceRequest, RevokeDeviceResponse, SubmitDebugMetricsRequest,
-    SubmitMessageRepairWitnessResultRequest, SubmitMessageRepairWitnessResultResponse,
-    TargetMessageRepairRequestListResponse, UpdateAccountProfileRequest, VersionResponse,
-    WebSocketClientFrame, WebSocketServerFrame, WitnessMessageRepairRequestListResponse,
-    contract,
+    LeaveChatRequest, LeaveChatResponse, ListHistorySyncJobsQuery, MessageId, MessageRepairBinding,
+    MessageRepairRequestStatus, ModifyChatDevicesRequest, ModifyChatDevicesResponse,
+    ModifyChatMembersRequest, ModifyChatMembersResponse, PublishKeyPackageItem,
+    PublishKeyPackagesRequest, PublishKeyPackagesResponse, RegisterApplePushTokenRequest,
+    RegisterApplePushTokenResponse, RequestChatBackfillRequest, RequestChatBackfillResponse,
+    RequestHistorySyncRepairRequest, RequestHistorySyncRepairResponse,
+    RequestMessageRepairWitnessRequest, RequestMessageRepairWitnessResponse,
+    ReserveKeyPackagesRequest, ResetKeyPackagesResponse, RevokeDeviceRequest, RevokeDeviceResponse,
+    SubmitDebugMetricsRequest, SubmitMessageRepairWitnessResultRequest,
+    SubmitMessageRepairWitnessResultResponse, TargetMessageRepairRequestListResponse,
+    UpdateAccountProfileRequest, VersionResponse, WebSocketClientFrame, WebSocketServerFrame,
+    WitnessMessageRepairRequestListResponse, contract,
 };
 
 const CONTROL_AAD_META_KEY: &str = "_trix";
@@ -346,9 +345,8 @@ impl ServerApiClient {
             limit,
             exclude_self,
         };
-        let response: AccountDirectoryResponse = self
-            .call_query::<contract::SearchDirectory>(&query)
-            .await?;
+        let response: AccountDirectoryResponse =
+            self.call_query::<contract::SearchDirectory>(&query).await?;
 
         Ok(response
             .accounts
@@ -361,9 +359,8 @@ impl ServerApiClient {
         &self,
         account_id: AccountId,
     ) -> Result<DirectoryAccountMaterial, ServerApiError> {
-        let response: DirectoryAccountSummary = self
-            .call_path::<contract::GetAccount>(&account_id)
-            .await?;
+        let response: DirectoryAccountSummary =
+            self.call_path::<contract::GetAccount>(&account_id).await?;
         Ok(directory_account_from_response(response))
     }
 
@@ -563,9 +560,8 @@ impl ServerApiClient {
             account_id,
             device_ids,
         };
-        let response: AccountKeyPackagesResponse = self
-            .call::<contract::ReserveKeyPackages>(&req)
-            .await?;
+        let response: AccountKeyPackagesResponse =
+            self.call::<contract::ReserveKeyPackages>(&req).await?;
 
         response
             .packages
@@ -632,11 +628,8 @@ impl ServerApiClient {
             cursor_json,
             is_final,
         };
-        self.call_path_body::<contract::AppendHistorySyncChunk>(
-            &job_id.as_ref().to_string(),
-            &req,
-        )
-        .await
+        self.call_path_body::<contract::AppendHistorySyncChunk>(&job_id.as_ref().to_string(), &req)
+            .await
     }
 
     pub async fn request_history_sync_repair(
@@ -663,9 +656,8 @@ impl ServerApiClient {
     pub async fn list_witness_message_repairs(
         &self,
     ) -> Result<Vec<MessageRepairWitnessRequestMaterial>, ServerApiError> {
-        let response: WitnessMessageRepairRequestListResponse = self
-            .call::<contract::ListWitnessRepairs>(&())
-            .await?;
+        let response: WitnessMessageRepairRequestListResponse =
+            self.call::<contract::ListWitnessRepairs>(&()).await?;
         response
             .requests
             .into_iter()
@@ -676,9 +668,8 @@ impl ServerApiClient {
     pub async fn list_target_message_repairs(
         &self,
     ) -> Result<Vec<MessageRepairWitnessRequestMaterial>, ServerApiError> {
-        let response: TargetMessageRepairRequestListResponse = self
-            .call::<contract::ListTargetRepairs>(&())
-            .await?;
+        let response: TargetMessageRepairRequestListResponse =
+            self.call::<contract::ListTargetRepairs>(&()).await?;
         response
             .requests
             .into_iter()
@@ -731,11 +722,8 @@ impl ServerApiClient {
         cursor_json: Option<Value>,
     ) -> Result<CompleteHistorySyncJobResponse, ServerApiError> {
         let req = CompleteHistorySyncJobRequest { cursor_json };
-        self.call_path_body::<contract::CompleteHistorySyncJob>(
-            &job_id.as_ref().to_string(),
-            &req,
-        )
-        .await
+        self.call_path_body::<contract::CompleteHistorySyncJob>(&job_id.as_ref().to_string(), &req)
+            .await
     }
 
     pub async fn request_chat_backfill(
@@ -1072,7 +1060,8 @@ impl ServerApiClient {
         query: &E::Query,
     ) -> Result<E::Response, ServerApiError>
     where
-        E: trix_types::contract::PathEndpoint<Request = trix_types::contract::NoBody> + trix_types::contract::QueryEndpoint,
+        E: trix_types::contract::PathEndpoint<Request = trix_types::contract::NoBody>
+            + trix_types::contract::QueryEndpoint,
     {
         let path = E::render_path(params);
         let path = path.trim_start_matches('/');

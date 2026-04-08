@@ -36,9 +36,7 @@ fn duplicate_hello_is_invalid() {
 
 #[test]
 fn client_frame_before_hello_is_invalid() {
-    let ack = WebSocketClientFrame::Ack {
-        inbox_ids: vec![1],
-    };
+    let ack = WebSocketClientFrame::Ack { inbox_ids: vec![1] };
     assert!(matches!(
         WsState::Connected.on_client_frame(&ack),
         WsTransition::Invalid(_)
@@ -67,9 +65,7 @@ fn frames_after_session_replaced_are_invalid() {
         WsTransition::Invalid(_)
     ));
 
-    let ack = WebSocketClientFrame::Ack {
-        inbox_ids: vec![1],
-    };
+    let ack = WebSocketClientFrame::Ack { inbox_ids: vec![1] };
     assert!(matches!(
         WsState::Replaced.on_client_frame(&ack),
         WsTransition::Invalid(_)
@@ -173,9 +169,7 @@ mod proptest_tests {
                 nonce: None,
                 server_unix: 0,
             }),
-            Just(WebSocketServerFrame::SessionReplaced {
-                reason: "r".into(),
-            }),
+            Just(WebSocketServerFrame::SessionReplaced { reason: "r".into() }),
             Just(WebSocketServerFrame::Error {
                 code: "e".into(),
                 message: "m".into(),
@@ -185,9 +179,7 @@ mod proptest_tests {
 
     fn arb_client_frame() -> impl Strategy<Value = WebSocketClientFrame> {
         prop_oneof![
-            Just(WebSocketClientFrame::Ack {
-                inbox_ids: vec![1],
-            }),
+            Just(WebSocketClientFrame::Ack { inbox_ids: vec![1] }),
             Just(WebSocketClientFrame::PresencePing { nonce: None }),
             Just(WebSocketClientFrame::TypingUpdate {
                 chat_id: ChatId::new(),

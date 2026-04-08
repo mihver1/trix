@@ -50,17 +50,43 @@ pub fn router() -> Router<AppState> {
             super::rel("/v0/chats", contract::ListChats::PATH),
             get(list_chats).post(create_chat),
         )
-        .route(super::rel("/v0/chats", contract::GetChat::PATH), get(get_chat))
-        .route(super::rel("/v0/chats", contract::CreateMessage::PATH), post(create_message))
-        .route(super::rel("/v0/chats", contract::GetChatHistory::PATH), get(get_history))
-        .route(super::rel("/v0/chats", contract::AddChatMembers::PATH), post(add_members))
-        .route(super::rel("/v0/chats", contract::RemoveChatMembers::PATH), post(remove_members))
-        .route(super::rel("/v0/chats", contract::AddChatDevices::PATH), post(add_devices))
-        .route(super::rel("/v0/chats", contract::RemoveChatDevices::PATH), post(remove_devices))
-        .route(super::rel("/v0/chats", contract::LeaveChat::PATH), post(leave_chat))
-        .route(super::rel("/v0/chats", contract::DmGlobalDelete::PATH), post(dm_global_delete))
+        .route(
+            super::rel("/v0/chats", contract::GetChat::PATH),
+            get(get_chat),
+        )
+        .route(
+            super::rel("/v0/chats", contract::CreateMessage::PATH),
+            post(create_message),
+        )
+        .route(
+            super::rel("/v0/chats", contract::GetChatHistory::PATH),
+            get(get_history),
+        )
+        .route(
+            super::rel("/v0/chats", contract::AddChatMembers::PATH),
+            post(add_members),
+        )
+        .route(
+            super::rel("/v0/chats", contract::RemoveChatMembers::PATH),
+            post(remove_members),
+        )
+        .route(
+            super::rel("/v0/chats", contract::AddChatDevices::PATH),
+            post(add_devices),
+        )
+        .route(
+            super::rel("/v0/chats", contract::RemoveChatDevices::PATH),
+            post(remove_devices),
+        )
+        .route(
+            super::rel("/v0/chats", contract::LeaveChat::PATH),
+            post(leave_chat),
+        )
+        .route(
+            super::rel("/v0/chats", contract::DmGlobalDelete::PATH),
+            post(dm_global_delete),
+        )
 }
-
 
 async fn list_chats(
     State(state): State<AppState>,

@@ -47,9 +47,7 @@ impl WsState {
             (WsState::Active, _) => WsTransition::Valid(WsState::Active),
 
             // Replaced: no frames are valid, must disconnect
-            (WsState::Replaced, _) => {
-                WsTransition::Invalid("session is replaced, must disconnect")
-            }
+            (WsState::Replaced, _) => WsTransition::Invalid("session is replaced, must disconnect"),
         }
     }
 
@@ -60,9 +58,7 @@ impl WsState {
                 WsTransition::Invalid("client must wait for Hello before sending frames")
             }
             WsState::Active => WsTransition::Valid(WsState::Active),
-            WsState::Replaced => {
-                WsTransition::Invalid("session is replaced, must disconnect")
-            }
+            WsState::Replaced => WsTransition::Invalid("session is replaced, must disconnect"),
         }
     }
 

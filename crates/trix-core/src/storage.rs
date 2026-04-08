@@ -1652,13 +1652,16 @@ impl LocalHistoryStore {
             for envelope in envelopes {
                 let projected = fallback_projection_without_mls_from(&envelope)?;
                 let persisted = persisted_projected_message_from(projected);
+                let merged = merge_persisted_projection_candidate(
+                    chat.projected_messages.get(&envelope.server_seq),
+                    persisted,
+                );
                 let entry_changed = match chat.projected_messages.get(&envelope.server_seq) {
-                    Some(existing) => existing != &persisted,
+                    Some(existing) => existing != &merged,
                     None => true,
                 };
                 if entry_changed {
-                    chat.projected_messages
-                        .insert(envelope.server_seq, persisted);
+                    chat.projected_messages.insert(envelope.server_seq, merged);
                     projected_messages_upserted += 1;
                     changed = true;
                 }
@@ -2365,13 +2368,16 @@ impl LocalHistoryStore {
                     .into());
                 }
                 let persisted = persisted_projected_message_from(projected);
+                let merged = merge_persisted_projection_candidate(
+                    chat.projected_messages.get(&envelope.server_seq),
+                    persisted,
+                );
                 let entry_changed = match chat.projected_messages.get(&envelope.server_seq) {
-                    Some(existing) => existing != &persisted,
+                    Some(existing) => existing != &merged,
                     None => true,
                 };
                 if entry_changed {
-                    chat.projected_messages
-                        .insert(envelope.server_seq, persisted);
+                    chat.projected_messages.insert(envelope.server_seq, merged);
                     projected_messages_upserted += 1;
                     changed = true;
                 }
@@ -2453,13 +2459,16 @@ impl LocalHistoryStore {
         for projected in projected_messages {
             ensure_application_message_is_materialized(projected)?;
             let persisted = persisted_projected_message_from(projected.clone());
+            let merged = merge_persisted_projection_candidate(
+                chat.projected_messages.get(&projected.server_seq),
+                persisted,
+            );
             let entry_changed = match chat.projected_messages.get(&projected.server_seq) {
-                Some(existing) => existing != &persisted,
+                Some(existing) => existing != &merged,
                 None => true,
             };
             if entry_changed {
-                chat.projected_messages
-                    .insert(projected.server_seq, persisted);
+                chat.projected_messages.insert(projected.server_seq, merged);
                 projected_messages_upserted += 1;
                 changed = true;
             }
@@ -3467,7 +3476,9 @@ fn unavailable_application_projection_from(envelope: &MessageEnvelope) -> LocalP
     }
 }
 
-fn fallback_projection_without_mls_from(envelope: &MessageEnvelope) -> Result<LocalProjectedMessage> {
+fn fallback_projection_without_mls_from(
+    envelope: &MessageEnvelope,
+) -> Result<LocalProjectedMessage> {
     match envelope.message_kind {
         trix_types::MessageKind::Application => {
             Ok(unavailable_application_projection_from(envelope))
@@ -3713,6 +3724,37 @@ fn current_device_replay_would_drop_body(
         && envelope.message_kind == trix_types::MessageKind::Application
         && projected.projection_kind == LocalProjectionKind::ApplicationMessage
         && projected.payload.is_none()
+}
+
+fn merge_persisted_projection_candidate(
+    existing: Option<&PersistedProjectedMessage>,
+    candidate: PersistedProjectedMessage,
+) -> PersistedProjectedMessage {
+    let Some(existing) = existing else {
+        return candidate;
+    };
+
+    if should_preserve_materialized_application_projection(existing, &candidate) {
+        return existing.clone();
+    }
+
+    candidate
+}
+
+fn should_preserve_materialized_application_projection(
+    existing: &PersistedProjectedMessage,
+    candidate: &PersistedProjectedMessage,
+) -> bool {
+    existing.message_kind == trix_types::MessageKind::Application
+        && existing.projection_kind == LocalProjectionKind::ApplicationMessage
+        && existing.materialized_body_b64.is_some()
+        && candidate.message_kind == trix_types::MessageKind::Application
+        && candidate.projection_kind == LocalProjectionKind::ApplicationMessage
+        && candidate.materialized_body_b64.is_none()
+        && existing.message_id == candidate.message_id
+        && existing.sender_account_id == candidate.sender_account_id
+        && existing.sender_device_id == candidate.sender_device_id
+        && existing.content_type == candidate.content_type
 }
 
 fn advance_projected_cursor(chat: &mut PersistedChatState) -> bool {

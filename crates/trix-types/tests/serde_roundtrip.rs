@@ -6,7 +6,7 @@
 //! - Broken custom serializers
 //! - Fields that silently disappear on roundtrip
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::fmt::Debug;
 use trix_types::*;
 
@@ -28,7 +28,8 @@ fn roundtrip_json<T: Serialize + DeserializeOwned + Debug>(value: &T) {
     let decoded: T = serde_json::from_str(&json1).expect("deserialize failed");
     let json2 = serde_json::to_string(&decoded).expect("re-serialize failed");
     assert_eq!(
-        json1, json2,
+        json1,
+        json2,
         "roundtrip JSON mismatch for {}",
         std::any::type_name::<T>()
     );

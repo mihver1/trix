@@ -22,7 +22,10 @@ pub fn router() -> Router<AppState> {
     use trix_types::contract::{self, ApiEndpoint};
     Router::new()
         .route(super::rel("/v0", contract::GetInbox::PATH), get(get_inbox))
-        .route(super::rel("/v0", contract::LeaseInbox::PATH), post(lease_inbox))
+        .route(
+            super::rel("/v0", contract::LeaseInbox::PATH),
+            post(lease_inbox),
+        )
         .route(super::rel("/v0", contract::AckInbox::PATH), post(ack_inbox))
 }
 

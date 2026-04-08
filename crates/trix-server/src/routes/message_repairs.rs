@@ -18,9 +18,18 @@ use trix_types::{
 pub fn router() -> Router<AppState> {
     use trix_types::contract::{self, ApiEndpoint};
     Router::new()
-        .route(super::rel("/v0", contract::RequestMessageRepair::PATH), post(request_message_repair))
-        .route(super::rel("/v0", contract::ListWitnessRepairs::PATH), get(list_witness_requests))
-        .route(super::rel("/v0", contract::ListTargetRepairs::PATH), get(list_target_requests))
+        .route(
+            super::rel("/v0", contract::RequestMessageRepair::PATH),
+            post(request_message_repair),
+        )
+        .route(
+            super::rel("/v0", contract::ListWitnessRepairs::PATH),
+            get(list_witness_requests),
+        )
+        .route(
+            super::rel("/v0", contract::ListTargetRepairs::PATH),
+            get(list_target_requests),
+        )
         .route(
             super::rel("/v0", contract::SubmitRepairWitness::PATH),
             post(submit_witness_result),

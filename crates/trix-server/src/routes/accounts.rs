@@ -21,21 +21,35 @@ use trix_types::{
 pub fn router() -> Router<AppState> {
     use trix_types::contract::{self, ApiEndpoint};
     Router::new()
-        .route(super::rel("/v0/accounts", contract::CreateAccount::PATH), post(create_account))
+        .route(
+            super::rel("/v0/accounts", contract::CreateAccount::PATH),
+            post(create_account),
+        )
         .route(
             super::rel("/v0/accounts", contract::GetMe::PATH),
             get(get_me).patch(update_me),
         )
-        .route(super::rel("/v0/accounts", contract::GetFeatureFlags::PATH), get(get_my_feature_flags))
+        .route(
+            super::rel("/v0/accounts", contract::GetFeatureFlags::PATH),
+            get(get_my_feature_flags),
+        )
         .route(
             super::rel("/v0/accounts", contract::GetDebugMetricsStatus::PATH),
             get(get_debug_metrics_status).post(submit_debug_metrics),
         )
-        .route(super::rel("/v0/accounts", contract::SearchDirectory::PATH), get(search_directory))
-        .route(super::rel("/v0/accounts", contract::GetAccount::PATH), get(get_account))
-        .route(super::rel("/v0/accounts", contract::GetAccountKeyPackages::PATH), get(get_account_key_packages))
+        .route(
+            super::rel("/v0/accounts", contract::SearchDirectory::PATH),
+            get(search_directory),
+        )
+        .route(
+            super::rel("/v0/accounts", contract::GetAccount::PATH),
+            get(get_account),
+        )
+        .route(
+            super::rel("/v0/accounts", contract::GetAccountKeyPackages::PATH),
+            get(get_account_key_packages),
+        )
 }
-
 
 async fn create_account(
     State(state): State<AppState>,

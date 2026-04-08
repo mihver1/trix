@@ -87,128 +87,377 @@ macro_rules! path_query_endpoint {
 // System
 // ---------------------------------------------------------------------------
 
-endpoint!(Health, GET, "/v0/system/health", NoBody, super::HealthResponse);
-endpoint!(Version, GET, "/v0/system/version", NoBody, super::VersionResponse);
+endpoint!(
+    Health,
+    GET,
+    "/v0/system/health",
+    NoBody,
+    super::HealthResponse
+);
+endpoint!(
+    Version,
+    GET,
+    "/v0/system/version",
+    NoBody,
+    super::VersionResponse
+);
 
 // ---------------------------------------------------------------------------
 // Auth
 // ---------------------------------------------------------------------------
 
-endpoint!(AuthChallenge, POST, "/v0/auth/challenge", super::AuthChallengeRequest, super::AuthChallengeResponse);
-endpoint!(AuthSession, POST, "/v0/auth/session", super::AuthSessionRequest, super::AuthSessionResponse);
+endpoint!(
+    AuthChallenge,
+    POST,
+    "/v0/auth/challenge",
+    super::AuthChallengeRequest,
+    super::AuthChallengeResponse
+);
+endpoint!(
+    AuthSession,
+    POST,
+    "/v0/auth/session",
+    super::AuthSessionRequest,
+    super::AuthSessionResponse
+);
 
 // ---------------------------------------------------------------------------
 // Accounts
 // ---------------------------------------------------------------------------
 
-endpoint!(CreateAccount, POST, "/v0/accounts", super::CreateAccountRequest, super::CreateAccountResponse);
-endpoint!(GetMe, GET, "/v0/accounts/me", NoBody, super::AccountProfileResponse);
-endpoint!(UpdateMe, PATCH, "/v0/accounts/me", super::UpdateAccountProfileRequest, super::AccountProfileResponse);
-endpoint!(GetFeatureFlags, GET, "/v0/accounts/me/feature-flags", NoBody, super::AccountFeatureFlagsResponse);
-endpoint!(GetDebugMetricsStatus, GET, "/v0/accounts/me/debug/metrics", NoBody, super::AccountDebugMetricsStatusResponse);
-endpoint!(SubmitDebugMetrics, POST, "/v0/accounts/me/debug/metrics", super::SubmitDebugMetricsRequest, NoResponse);
+endpoint!(
+    CreateAccount,
+    POST,
+    "/v0/accounts",
+    super::CreateAccountRequest,
+    super::CreateAccountResponse
+);
+endpoint!(
+    GetMe,
+    GET,
+    "/v0/accounts/me",
+    NoBody,
+    super::AccountProfileResponse
+);
+endpoint!(
+    UpdateMe,
+    PATCH,
+    "/v0/accounts/me",
+    super::UpdateAccountProfileRequest,
+    super::AccountProfileResponse
+);
+endpoint!(
+    GetFeatureFlags,
+    GET,
+    "/v0/accounts/me/feature-flags",
+    NoBody,
+    super::AccountFeatureFlagsResponse
+);
+endpoint!(
+    GetDebugMetricsStatus,
+    GET,
+    "/v0/accounts/me/debug/metrics",
+    NoBody,
+    super::AccountDebugMetricsStatusResponse
+);
+endpoint!(
+    SubmitDebugMetrics,
+    POST,
+    "/v0/accounts/me/debug/metrics",
+    super::SubmitDebugMetricsRequest,
+    NoResponse
+);
 
-query_endpoint!(SearchDirectory, GET, "/v0/accounts/directory", NoBody, super::AccountDirectoryResponse, super::AccountDirectoryQuery);
+query_endpoint!(
+    SearchDirectory,
+    GET,
+    "/v0/accounts/directory",
+    NoBody,
+    super::AccountDirectoryResponse,
+    super::AccountDirectoryQuery
+);
 
-path_endpoint!(GetAccount, GET, "/v0/accounts/{account_id}", NoBody, super::DirectoryAccountSummary,
-    AccountId, |id: &AccountId| format!("/v0/accounts/{}", id.0));
+path_endpoint!(
+    GetAccount,
+    GET,
+    "/v0/accounts/{account_id}",
+    NoBody,
+    super::DirectoryAccountSummary,
+    AccountId,
+    |id: &AccountId| format!("/v0/accounts/{}", id.0)
+);
 
-path_endpoint!(GetAccountKeyPackages, GET, "/v0/accounts/{account_id}/key-packages", NoBody, super::AccountKeyPackagesResponse,
-    AccountId, |id: &AccountId| format!("/v0/accounts/{}/key-packages", id.0));
+path_endpoint!(
+    GetAccountKeyPackages,
+    GET,
+    "/v0/accounts/{account_id}/key-packages",
+    NoBody,
+    super::AccountKeyPackagesResponse,
+    AccountId,
+    |id: &AccountId| format!("/v0/accounts/{}/key-packages", id.0)
+);
 
 // ---------------------------------------------------------------------------
 // Devices
 // ---------------------------------------------------------------------------
 
-endpoint!(ListDevices, GET, "/v0/devices", NoBody, super::DeviceListResponse);
-endpoint!(RegisterPushToken, PUT, "/v0/devices/push-token", super::RegisterApplePushTokenRequest, super::RegisterApplePushTokenResponse);
-endpoint!(DeletePushToken, DELETE, "/v0/devices/push-token", NoBody, NoResponse);
-endpoint!(CreateLinkIntent, POST, "/v0/devices/link-intents", NoBody, super::CreateLinkIntentResponse);
+endpoint!(
+    ListDevices,
+    GET,
+    "/v0/devices",
+    NoBody,
+    super::DeviceListResponse
+);
+endpoint!(
+    RegisterPushToken,
+    PUT,
+    "/v0/devices/push-token",
+    super::RegisterApplePushTokenRequest,
+    super::RegisterApplePushTokenResponse
+);
+endpoint!(
+    DeletePushToken,
+    DELETE,
+    "/v0/devices/push-token",
+    NoBody,
+    NoResponse
+);
+endpoint!(
+    CreateLinkIntent,
+    POST,
+    "/v0/devices/link-intents",
+    NoBody,
+    super::CreateLinkIntentResponse
+);
 
-path_endpoint!(CompleteLinkIntent, POST, "/v0/devices/link-intents/{link_intent_id}/complete",
-    super::CompleteLinkIntentRequest, super::CompleteLinkIntentResponse,
-    String, |id: &String| format!("/v0/devices/link-intents/{}/complete", id));
+path_endpoint!(
+    CompleteLinkIntent,
+    POST,
+    "/v0/devices/link-intents/{link_intent_id}/complete",
+    super::CompleteLinkIntentRequest,
+    super::CompleteLinkIntentResponse,
+    String,
+    |id: &String| format!("/v0/devices/link-intents/{}/complete", id)
+);
 
-path_endpoint!(GetTransferBundle, GET, "/v0/devices/{device_id}/transfer-bundle", NoBody, super::DeviceTransferBundleResponse,
-    DeviceId, |id: &DeviceId| format!("/v0/devices/{}/transfer-bundle", id.0));
+path_endpoint!(
+    GetTransferBundle,
+    GET,
+    "/v0/devices/{device_id}/transfer-bundle",
+    NoBody,
+    super::DeviceTransferBundleResponse,
+    DeviceId,
+    |id: &DeviceId| format!("/v0/devices/{}/transfer-bundle", id.0)
+);
 
-path_endpoint!(GetTransportKey, GET, "/v0/devices/{device_id}/transport-key", NoBody, super::DeviceTransportKeyResponse,
-    DeviceId, |id: &DeviceId| format!("/v0/devices/{}/transport-key", id.0));
+path_endpoint!(
+    GetTransportKey,
+    GET,
+    "/v0/devices/{device_id}/transport-key",
+    NoBody,
+    super::DeviceTransportKeyResponse,
+    DeviceId,
+    |id: &DeviceId| format!("/v0/devices/{}/transport-key", id.0)
+);
 
-path_endpoint!(GetApprovePayload, GET, "/v0/devices/{device_id}/approve-payload", NoBody, super::DeviceApprovePayloadResponse,
-    DeviceId, |id: &DeviceId| format!("/v0/devices/{}/approve-payload", id.0));
+path_endpoint!(
+    GetApprovePayload,
+    GET,
+    "/v0/devices/{device_id}/approve-payload",
+    NoBody,
+    super::DeviceApprovePayloadResponse,
+    DeviceId,
+    |id: &DeviceId| format!("/v0/devices/{}/approve-payload", id.0)
+);
 
-path_endpoint!(ApproveDevice, POST, "/v0/devices/{device_id}/approve",
-    super::ApproveDeviceRequest, super::ApproveDeviceResponse,
-    DeviceId, |id: &DeviceId| format!("/v0/devices/{}/approve", id.0));
+path_endpoint!(
+    ApproveDevice,
+    POST,
+    "/v0/devices/{device_id}/approve",
+    super::ApproveDeviceRequest,
+    super::ApproveDeviceResponse,
+    DeviceId,
+    |id: &DeviceId| format!("/v0/devices/{}/approve", id.0)
+);
 
-path_endpoint!(RevokeDevice, POST, "/v0/devices/{device_id}/revoke",
-    super::RevokeDeviceRequest, super::RevokeDeviceResponse,
-    DeviceId, |id: &DeviceId| format!("/v0/devices/{}/revoke", id.0));
+path_endpoint!(
+    RevokeDevice,
+    POST,
+    "/v0/devices/{device_id}/revoke",
+    super::RevokeDeviceRequest,
+    super::RevokeDeviceResponse,
+    DeviceId,
+    |id: &DeviceId| format!("/v0/devices/{}/revoke", id.0)
+);
 
 // ---------------------------------------------------------------------------
 // Key Packages
 // ---------------------------------------------------------------------------
 
-endpoint!(PublishKeyPackages, POST, "/v0/key-packages:publish", super::PublishKeyPackagesRequest, super::PublishKeyPackagesResponse);
-endpoint!(ResetKeyPackages, POST, "/v0/key-packages:reset", NoBody, super::ResetKeyPackagesResponse);
-endpoint!(ReserveKeyPackages, POST, "/v0/key-packages:reserve", super::ReserveKeyPackagesRequest, super::AccountKeyPackagesResponse);
+endpoint!(
+    PublishKeyPackages,
+    POST,
+    "/v0/key-packages:publish",
+    super::PublishKeyPackagesRequest,
+    super::PublishKeyPackagesResponse
+);
+endpoint!(
+    ResetKeyPackages,
+    POST,
+    "/v0/key-packages:reset",
+    NoBody,
+    super::ResetKeyPackagesResponse
+);
+endpoint!(
+    ReserveKeyPackages,
+    POST,
+    "/v0/key-packages:reserve",
+    super::ReserveKeyPackagesRequest,
+    super::AccountKeyPackagesResponse
+);
 
 // ---------------------------------------------------------------------------
 // Chats
 // ---------------------------------------------------------------------------
 
 endpoint!(ListChats, GET, "/v0/chats", NoBody, super::ChatListResponse);
-endpoint!(CreateChat, POST, "/v0/chats", super::CreateChatRequest, super::CreateChatResponse);
+endpoint!(
+    CreateChat,
+    POST,
+    "/v0/chats",
+    super::CreateChatRequest,
+    super::CreateChatResponse
+);
 
-path_endpoint!(GetChat, GET, "/v0/chats/{chat_id}", NoBody, super::ChatDetailResponse,
-    ChatId, |id: &ChatId| format!("/v0/chats/{}", id.0));
+path_endpoint!(
+    GetChat,
+    GET,
+    "/v0/chats/{chat_id}",
+    NoBody,
+    super::ChatDetailResponse,
+    ChatId,
+    |id: &ChatId| format!("/v0/chats/{}", id.0)
+);
 
-path_endpoint!(CreateMessage, POST, "/v0/chats/{chat_id}/messages",
-    super::CreateMessageRequest, super::CreateMessageResponse,
-    ChatId, |id: &ChatId| format!("/v0/chats/{}/messages", id.0));
+path_endpoint!(
+    CreateMessage,
+    POST,
+    "/v0/chats/{chat_id}/messages",
+    super::CreateMessageRequest,
+    super::CreateMessageResponse,
+    ChatId,
+    |id: &ChatId| format!("/v0/chats/{}/messages", id.0)
+);
 
-path_query_endpoint!(GetChatHistory, GET, "/v0/chats/{chat_id}/history", NoBody, super::ChatHistoryResponse,
-    ChatId, |id: &ChatId| format!("/v0/chats/{}/history", id.0),
-    super::ChatHistoryQuery);
+path_query_endpoint!(
+    GetChatHistory,
+    GET,
+    "/v0/chats/{chat_id}/history",
+    NoBody,
+    super::ChatHistoryResponse,
+    ChatId,
+    |id: &ChatId| format!("/v0/chats/{}/history", id.0),
+    super::ChatHistoryQuery
+);
 
-path_endpoint!(AddChatMembers, POST, "/v0/chats/{chat_id}/members:add",
-    super::ModifyChatMembersRequest, super::ModifyChatMembersResponse,
-    ChatId, |id: &ChatId| format!("/v0/chats/{}/members:add", id.0));
+path_endpoint!(
+    AddChatMembers,
+    POST,
+    "/v0/chats/{chat_id}/members:add",
+    super::ModifyChatMembersRequest,
+    super::ModifyChatMembersResponse,
+    ChatId,
+    |id: &ChatId| format!("/v0/chats/{}/members:add", id.0)
+);
 
-path_endpoint!(RemoveChatMembers, POST, "/v0/chats/{chat_id}/members:remove",
-    super::ModifyChatMembersRequest, super::ModifyChatMembersResponse,
-    ChatId, |id: &ChatId| format!("/v0/chats/{}/members:remove", id.0));
+path_endpoint!(
+    RemoveChatMembers,
+    POST,
+    "/v0/chats/{chat_id}/members:remove",
+    super::ModifyChatMembersRequest,
+    super::ModifyChatMembersResponse,
+    ChatId,
+    |id: &ChatId| format!("/v0/chats/{}/members:remove", id.0)
+);
 
-path_endpoint!(AddChatDevices, POST, "/v0/chats/{chat_id}/devices:add",
-    super::ModifyChatDevicesRequest, super::ModifyChatDevicesResponse,
-    ChatId, |id: &ChatId| format!("/v0/chats/{}/devices:add", id.0));
+path_endpoint!(
+    AddChatDevices,
+    POST,
+    "/v0/chats/{chat_id}/devices:add",
+    super::ModifyChatDevicesRequest,
+    super::ModifyChatDevicesResponse,
+    ChatId,
+    |id: &ChatId| format!("/v0/chats/{}/devices:add", id.0)
+);
 
-path_endpoint!(RemoveChatDevices, POST, "/v0/chats/{chat_id}/devices:remove",
-    super::ModifyChatDevicesRequest, super::ModifyChatDevicesResponse,
-    ChatId, |id: &ChatId| format!("/v0/chats/{}/devices:remove", id.0));
+path_endpoint!(
+    RemoveChatDevices,
+    POST,
+    "/v0/chats/{chat_id}/devices:remove",
+    super::ModifyChatDevicesRequest,
+    super::ModifyChatDevicesResponse,
+    ChatId,
+    |id: &ChatId| format!("/v0/chats/{}/devices:remove", id.0)
+);
 
-path_endpoint!(LeaveChat, POST, "/v0/chats/{chat_id}/leave",
-    super::LeaveChatRequest, super::LeaveChatResponse,
-    ChatId, |id: &ChatId| format!("/v0/chats/{}/leave", id.0));
+path_endpoint!(
+    LeaveChat,
+    POST,
+    "/v0/chats/{chat_id}/leave",
+    super::LeaveChatRequest,
+    super::LeaveChatResponse,
+    ChatId,
+    |id: &ChatId| format!("/v0/chats/{}/leave", id.0)
+);
 
-path_endpoint!(DmGlobalDelete, POST, "/v0/chats/{chat_id}/dm-global-delete",
-    super::DmGlobalDeleteRequest, super::DmGlobalDeleteResponse,
-    ChatId, |id: &ChatId| format!("/v0/chats/{}/dm-global-delete", id.0));
+path_endpoint!(
+    DmGlobalDelete,
+    POST,
+    "/v0/chats/{chat_id}/dm-global-delete",
+    super::DmGlobalDeleteRequest,
+    super::DmGlobalDeleteResponse,
+    ChatId,
+    |id: &ChatId| format!("/v0/chats/{}/dm-global-delete", id.0)
+);
 
 // ---------------------------------------------------------------------------
 // Inbox
 // ---------------------------------------------------------------------------
 
-query_endpoint!(GetInbox, GET, "/v0/inbox", NoBody, super::InboxResponse, super::InboxQuery);
-endpoint!(LeaseInbox, POST, "/v0/inbox/lease", super::LeaseInboxRequest, super::LeaseInboxResponse);
-endpoint!(AckInbox, POST, "/v0/inbox/ack", super::AckInboxRequest, super::AckInboxResponse);
+query_endpoint!(
+    GetInbox,
+    GET,
+    "/v0/inbox",
+    NoBody,
+    super::InboxResponse,
+    super::InboxQuery
+);
+endpoint!(
+    LeaseInbox,
+    POST,
+    "/v0/inbox/lease",
+    super::LeaseInboxRequest,
+    super::LeaseInboxResponse
+);
+endpoint!(
+    AckInbox,
+    POST,
+    "/v0/inbox/ack",
+    super::AckInboxRequest,
+    super::AckInboxResponse
+);
 
 // ---------------------------------------------------------------------------
 // Blobs (only the JSON endpoints -- upload/download are raw bytes)
 // ---------------------------------------------------------------------------
 
-endpoint!(CreateBlobUpload, POST, "/v0/blobs/uploads", super::CreateBlobUploadRequest, super::CreateBlobUploadResponse);
+endpoint!(
+    CreateBlobUpload,
+    POST,
+    "/v0/blobs/uploads",
+    super::CreateBlobUploadRequest,
+    super::CreateBlobUploadResponse
+);
 
 // Note: PUT /v0/blobs/{blob_id} (upload), GET /v0/blobs/{blob_id} (download),
 // HEAD /v0/blobs/{blob_id} are raw byte operations and are NOT ApiEndpoint contracts.
@@ -218,104 +467,334 @@ endpoint!(CreateBlobUpload, POST, "/v0/blobs/uploads", super::CreateBlobUploadRe
 // History Sync
 // ---------------------------------------------------------------------------
 
-query_endpoint!(ListHistorySyncJobs, GET, "/v0/history-sync/jobs", NoBody, super::HistorySyncJobListResponse, super::ListHistorySyncJobsQuery);
-endpoint!(RequestHistorySyncRepair, POST, "/v0/history-sync/jobs:request-repair", super::RequestHistorySyncRepairRequest, super::RequestHistorySyncRepairResponse);
-endpoint!(RequestChatBackfill, POST, "/v0/history-sync/jobs/request", super::RequestChatBackfillRequest, super::RequestChatBackfillResponse);
+query_endpoint!(
+    ListHistorySyncJobs,
+    GET,
+    "/v0/history-sync/jobs",
+    NoBody,
+    super::HistorySyncJobListResponse,
+    super::ListHistorySyncJobsQuery
+);
+endpoint!(
+    RequestHistorySyncRepair,
+    POST,
+    "/v0/history-sync/jobs:request-repair",
+    super::RequestHistorySyncRepairRequest,
+    super::RequestHistorySyncRepairResponse
+);
+endpoint!(
+    RequestChatBackfill,
+    POST,
+    "/v0/history-sync/jobs/request",
+    super::RequestChatBackfillRequest,
+    super::RequestChatBackfillResponse
+);
 
-path_endpoint!(ListHistorySyncChunks, GET, "/v0/history-sync/jobs/{job_id}/chunks", NoBody, super::HistorySyncChunkListResponse,
-    String, |id: &String| format!("/v0/history-sync/jobs/{}/chunks", id));
+path_endpoint!(
+    ListHistorySyncChunks,
+    GET,
+    "/v0/history-sync/jobs/{job_id}/chunks",
+    NoBody,
+    super::HistorySyncChunkListResponse,
+    String,
+    |id: &String| format!("/v0/history-sync/jobs/{}/chunks", id)
+);
 
-path_endpoint!(AppendHistorySyncChunk, POST, "/v0/history-sync/jobs/{job_id}/chunks",
-    super::AppendHistorySyncChunkRequest, super::AppendHistorySyncChunkResponse,
-    String, |id: &String| format!("/v0/history-sync/jobs/{}/chunks", id));
+path_endpoint!(
+    AppendHistorySyncChunk,
+    POST,
+    "/v0/history-sync/jobs/{job_id}/chunks",
+    super::AppendHistorySyncChunkRequest,
+    super::AppendHistorySyncChunkResponse,
+    String,
+    |id: &String| format!("/v0/history-sync/jobs/{}/chunks", id)
+);
 
-path_endpoint!(CompleteHistorySyncJob, POST, "/v0/history-sync/jobs/{job_id}/complete",
-    super::CompleteHistorySyncJobRequest, super::CompleteHistorySyncJobResponse,
-    String, |id: &String| format!("/v0/history-sync/jobs/{}/complete", id));
+path_endpoint!(
+    CompleteHistorySyncJob,
+    POST,
+    "/v0/history-sync/jobs/{job_id}/complete",
+    super::CompleteHistorySyncJobRequest,
+    super::CompleteHistorySyncJobResponse,
+    String,
+    |id: &String| format!("/v0/history-sync/jobs/{}/complete", id)
+);
 
 // ---------------------------------------------------------------------------
 // Message Repairs
 // ---------------------------------------------------------------------------
 
-endpoint!(RequestMessageRepair, POST, "/v0/message-repairs:request", super::RequestMessageRepairWitnessRequest, super::RequestMessageRepairWitnessResponse);
-endpoint!(ListWitnessRepairs, GET, "/v0/message-repairs/witness", NoBody, super::WitnessMessageRepairRequestListResponse);
-endpoint!(ListTargetRepairs, GET, "/v0/message-repairs/target", NoBody, super::TargetMessageRepairRequestListResponse);
+endpoint!(
+    RequestMessageRepair,
+    POST,
+    "/v0/message-repairs:request",
+    super::RequestMessageRepairWitnessRequest,
+    super::RequestMessageRepairWitnessResponse
+);
+endpoint!(
+    ListWitnessRepairs,
+    GET,
+    "/v0/message-repairs/witness",
+    NoBody,
+    super::WitnessMessageRepairRequestListResponse
+);
+endpoint!(
+    ListTargetRepairs,
+    GET,
+    "/v0/message-repairs/target",
+    NoBody,
+    super::TargetMessageRepairRequestListResponse
+);
 
-path_endpoint!(SubmitRepairWitness, POST, "/v0/message-repairs/{request_id}/submit",
-    super::SubmitMessageRepairWitnessResultRequest, super::SubmitMessageRepairWitnessResultResponse,
-    String, |id: &String| format!("/v0/message-repairs/{}/submit", id));
+path_endpoint!(
+    SubmitRepairWitness,
+    POST,
+    "/v0/message-repairs/{request_id}/submit",
+    super::SubmitMessageRepairWitnessResultRequest,
+    super::SubmitMessageRepairWitnessResultResponse,
+    String,
+    |id: &String| format!("/v0/message-repairs/{}/submit", id)
+);
 
-path_endpoint!(CompleteRepairWitness, POST, "/v0/message-repairs/{request_id}/complete",
-    super::CompleteMessageRepairWitnessRequest, super::CompleteMessageRepairWitnessResponse,
-    String, |id: &String| format!("/v0/message-repairs/{}/complete", id));
+path_endpoint!(
+    CompleteRepairWitness,
+    POST,
+    "/v0/message-repairs/{request_id}/complete",
+    super::CompleteMessageRepairWitnessRequest,
+    super::CompleteMessageRepairWitnessResponse,
+    String,
+    |id: &String| format!("/v0/message-repairs/{}/complete", id)
+);
 
 // ---------------------------------------------------------------------------
 // Admin
 // ---------------------------------------------------------------------------
 
-endpoint!(AdminCreateSession, POST, "/v0/admin/session", super::AdminSessionRequest, super::AdminSessionResponse);
-endpoint!(AdminDeleteSession, DELETE, "/v0/admin/session", NoBody, NoResponse);
-endpoint!(AdminOverview, GET, "/v0/admin/overview", NoBody, super::AdminOverviewResponse);
-endpoint!(AdminGetRegistrationSettings, GET, "/v0/admin/settings/registration", NoBody, super::AdminRegistrationSettingsResponse);
-endpoint!(AdminPatchRegistrationSettings, PATCH, "/v0/admin/settings/registration", super::PatchAdminRegistrationSettingsRequest, super::AdminRegistrationSettingsResponse);
-endpoint!(AdminGetServerSettings, GET, "/v0/admin/settings/server", NoBody, super::AdminServerSettingsResponse);
-endpoint!(AdminPatchServerSettings, PATCH, "/v0/admin/settings/server", super::PatchAdminServerSettingsRequest, super::AdminServerSettingsResponse);
+endpoint!(
+    AdminCreateSession,
+    POST,
+    "/v0/admin/session",
+    super::AdminSessionRequest,
+    super::AdminSessionResponse
+);
+endpoint!(
+    AdminDeleteSession,
+    DELETE,
+    "/v0/admin/session",
+    NoBody,
+    NoResponse
+);
+endpoint!(
+    AdminOverview,
+    GET,
+    "/v0/admin/overview",
+    NoBody,
+    super::AdminOverviewResponse
+);
+endpoint!(
+    AdminGetRegistrationSettings,
+    GET,
+    "/v0/admin/settings/registration",
+    NoBody,
+    super::AdminRegistrationSettingsResponse
+);
+endpoint!(
+    AdminPatchRegistrationSettings,
+    PATCH,
+    "/v0/admin/settings/registration",
+    super::PatchAdminRegistrationSettingsRequest,
+    super::AdminRegistrationSettingsResponse
+);
+endpoint!(
+    AdminGetServerSettings,
+    GET,
+    "/v0/admin/settings/server",
+    NoBody,
+    super::AdminServerSettingsResponse
+);
+endpoint!(
+    AdminPatchServerSettings,
+    PATCH,
+    "/v0/admin/settings/server",
+    super::PatchAdminServerSettingsRequest,
+    super::AdminServerSettingsResponse
+);
 
-query_endpoint!(AdminListUsers, GET, "/v0/admin/users", NoBody, super::AdminUserListResponse, super::AdminListUsersQuery);
-endpoint!(AdminCreateUserProvision, POST, "/v0/admin/users", super::CreateAdminUserProvisionRequest, super::CreateAdminUserProvisionResponse);
+query_endpoint!(
+    AdminListUsers,
+    GET,
+    "/v0/admin/users",
+    NoBody,
+    super::AdminUserListResponse,
+    super::AdminListUsersQuery
+);
+endpoint!(
+    AdminCreateUserProvision,
+    POST,
+    "/v0/admin/users",
+    super::CreateAdminUserProvisionRequest,
+    super::CreateAdminUserProvisionResponse
+);
 
-path_endpoint!(AdminGetUser, GET, "/v0/admin/users/{account_id}", NoBody, super::AdminUserSummary,
-    AccountId, |id: &AccountId| format!("/v0/admin/users/{}", id.0));
+path_endpoint!(
+    AdminGetUser,
+    GET,
+    "/v0/admin/users/{account_id}",
+    NoBody,
+    super::AdminUserSummary,
+    AccountId,
+    |id: &AccountId| format!("/v0/admin/users/{}", id.0)
+);
 
-path_endpoint!(AdminPatchUser, PATCH, "/v0/admin/users/{account_id}",
-    super::PatchAdminUserRequest, super::AdminUserSummary,
-    AccountId, |id: &AccountId| format!("/v0/admin/users/{}", id.0));
+path_endpoint!(
+    AdminPatchUser,
+    PATCH,
+    "/v0/admin/users/{account_id}",
+    super::PatchAdminUserRequest,
+    super::AdminUserSummary,
+    AccountId,
+    |id: &AccountId| format!("/v0/admin/users/{}", id.0)
+);
 
-path_endpoint!(AdminDisableUser, POST, "/v0/admin/users/{account_id}/disable",
-    super::AdminDisableAccountRequest, NoResponse,
-    AccountId, |id: &AccountId| format!("/v0/admin/users/{}/disable", id.0));
+path_endpoint!(
+    AdminDisableUser,
+    POST,
+    "/v0/admin/users/{account_id}/disable",
+    super::AdminDisableAccountRequest,
+    NoResponse,
+    AccountId,
+    |id: &AccountId| format!("/v0/admin/users/{}/disable", id.0)
+);
 
-path_endpoint!(AdminReactivateUser, POST, "/v0/admin/users/{account_id}/reactivate",
-    NoBody, NoResponse,
-    AccountId, |id: &AccountId| format!("/v0/admin/users/{}/reactivate", id.0));
+path_endpoint!(
+    AdminReactivateUser,
+    POST,
+    "/v0/admin/users/{account_id}/reactivate",
+    NoBody,
+    NoResponse,
+    AccountId,
+    |id: &AccountId| format!("/v0/admin/users/{}/reactivate", id.0)
+);
 
 // Admin Feature Flags
-endpoint!(AdminListFlagDefinitions, GET, "/v0/admin/feature-flags/definitions", NoBody, super::AdminFeatureFlagDefinitionListResponse);
-endpoint!(AdminCreateFlagDefinition, POST, "/v0/admin/feature-flags/definitions", super::CreateAdminFeatureFlagDefinitionRequest, super::AdminFeatureFlagDefinition);
+endpoint!(
+    AdminListFlagDefinitions,
+    GET,
+    "/v0/admin/feature-flags/definitions",
+    NoBody,
+    super::AdminFeatureFlagDefinitionListResponse
+);
+endpoint!(
+    AdminCreateFlagDefinition,
+    POST,
+    "/v0/admin/feature-flags/definitions",
+    super::CreateAdminFeatureFlagDefinitionRequest,
+    super::AdminFeatureFlagDefinition
+);
 
-path_endpoint!(AdminGetFlagDefinition, GET, "/v0/admin/feature-flags/definitions/{flag_key}", NoBody, super::AdminFeatureFlagDefinition,
-    String, |key: &String| format!("/v0/admin/feature-flags/definitions/{}", key));
+path_endpoint!(
+    AdminGetFlagDefinition,
+    GET,
+    "/v0/admin/feature-flags/definitions/{flag_key}",
+    NoBody,
+    super::AdminFeatureFlagDefinition,
+    String,
+    |key: &String| format!("/v0/admin/feature-flags/definitions/{}", key)
+);
 
-path_endpoint!(AdminPatchFlagDefinition, PATCH, "/v0/admin/feature-flags/definitions/{flag_key}",
-    super::PatchAdminFeatureFlagDefinitionRequest, super::AdminFeatureFlagDefinition,
-    String, |key: &String| format!("/v0/admin/feature-flags/definitions/{}", key));
+path_endpoint!(
+    AdminPatchFlagDefinition,
+    PATCH,
+    "/v0/admin/feature-flags/definitions/{flag_key}",
+    super::PatchAdminFeatureFlagDefinitionRequest,
+    super::AdminFeatureFlagDefinition,
+    String,
+    |key: &String| format!("/v0/admin/feature-flags/definitions/{}", key)
+);
 
-query_endpoint!(AdminListFlagOverrides, GET, "/v0/admin/feature-flags/overrides", NoBody, super::AdminFeatureFlagOverrideListResponse, super::AdminListFlagOverridesQuery);
-endpoint!(AdminCreateFlagOverride, POST, "/v0/admin/feature-flags/overrides", super::CreateAdminFeatureFlagOverrideRequest, super::AdminFeatureFlagOverride);
+query_endpoint!(
+    AdminListFlagOverrides,
+    GET,
+    "/v0/admin/feature-flags/overrides",
+    NoBody,
+    super::AdminFeatureFlagOverrideListResponse,
+    super::AdminListFlagOverridesQuery
+);
+endpoint!(
+    AdminCreateFlagOverride,
+    POST,
+    "/v0/admin/feature-flags/overrides",
+    super::CreateAdminFeatureFlagOverrideRequest,
+    super::AdminFeatureFlagOverride
+);
 
-path_endpoint!(AdminPatchFlagOverride, PATCH, "/v0/admin/feature-flags/overrides/{override_id}",
-    super::PatchAdminFeatureFlagOverrideRequest, super::AdminFeatureFlagOverride,
-    uuid::Uuid, |id: &uuid::Uuid| format!("/v0/admin/feature-flags/overrides/{}", id));
+path_endpoint!(
+    AdminPatchFlagOverride,
+    PATCH,
+    "/v0/admin/feature-flags/overrides/{override_id}",
+    super::PatchAdminFeatureFlagOverrideRequest,
+    super::AdminFeatureFlagOverride,
+    uuid::Uuid,
+    |id: &uuid::Uuid| format!("/v0/admin/feature-flags/overrides/{}", id)
+);
 
-path_endpoint!(AdminDeleteFlagOverride, DELETE, "/v0/admin/feature-flags/overrides/{override_id}",
-    NoBody, NoResponse,
-    uuid::Uuid, |id: &uuid::Uuid| format!("/v0/admin/feature-flags/overrides/{}", id));
+path_endpoint!(
+    AdminDeleteFlagOverride,
+    DELETE,
+    "/v0/admin/feature-flags/overrides/{override_id}",
+    NoBody,
+    NoResponse,
+    uuid::Uuid,
+    |id: &uuid::Uuid| format!("/v0/admin/feature-flags/overrides/{}", id)
+);
 
 // Admin Debug Metrics
-query_endpoint!(AdminListDebugMetricSessions, GET, "/v0/admin/debug/metric-sessions", NoBody, super::AdminDebugMetricSessionListResponse, super::AdminListDebugMetricSessionsQuery);
-endpoint!(AdminCreateDebugMetricSession, POST, "/v0/admin/debug/metric-sessions", super::CreateAdminDebugMetricSessionRequest, super::AdminDebugMetricSessionResponse);
+query_endpoint!(
+    AdminListDebugMetricSessions,
+    GET,
+    "/v0/admin/debug/metric-sessions",
+    NoBody,
+    super::AdminDebugMetricSessionListResponse,
+    super::AdminListDebugMetricSessionsQuery
+);
+endpoint!(
+    AdminCreateDebugMetricSession,
+    POST,
+    "/v0/admin/debug/metric-sessions",
+    super::CreateAdminDebugMetricSessionRequest,
+    super::AdminDebugMetricSessionResponse
+);
 
-path_endpoint!(AdminRevokeDebugMetricSession, DELETE, "/v0/admin/debug/metric-sessions/{session_id}",
-    NoBody, NoResponse,
-    uuid::Uuid, |id: &uuid::Uuid| format!("/v0/admin/debug/metric-sessions/{}", id));
+path_endpoint!(
+    AdminRevokeDebugMetricSession,
+    DELETE,
+    "/v0/admin/debug/metric-sessions/{session_id}",
+    NoBody,
+    NoResponse,
+    uuid::Uuid,
+    |id: &uuid::Uuid| format!("/v0/admin/debug/metric-sessions/{}", id)
+);
 
-path_query_endpoint!(AdminListDebugMetricBatches, GET, "/v0/admin/debug/metric-sessions/{session_id}/batches",
-    NoBody, super::AdminDebugMetricBatchListResponse,
-    uuid::Uuid, |id: &uuid::Uuid| format!("/v0/admin/debug/metric-sessions/{}/batches", id),
-    super::AdminListDebugMetricBatchesQuery);
+path_query_endpoint!(
+    AdminListDebugMetricBatches,
+    GET,
+    "/v0/admin/debug/metric-sessions/{session_id}/batches",
+    NoBody,
+    super::AdminDebugMetricBatchListResponse,
+    uuid::Uuid,
+    |id: &uuid::Uuid| format!("/v0/admin/debug/metric-sessions/{}/batches", id),
+    super::AdminListDebugMetricBatchesQuery
+);
 
 // Admin Logs
-query_endpoint!(AdminListServerLogs, GET, "/v0/admin/server/logs", NoBody, super::AdminServerLogListResponse, super::AdminListServerLogsQuery);
+query_endpoint!(
+    AdminListServerLogs,
+    GET,
+    "/v0/admin/server/logs",
+    NoBody,
+    super::AdminServerLogListResponse,
+    super::AdminListServerLogsQuery
+);
 
 // ---------------------------------------------------------------------------
 // Endpoint registry -- used by exhaustiveness tests
@@ -324,10 +803,10 @@ query_endpoint!(AdminListServerLogs, GET, "/v0/admin/server/logs", NoBody, super
 /// Paths for non-JSON endpoints (blob upload/download, WebSocket).
 /// These are excluded from ApiEndpoint but still tracked for exhaustiveness.
 pub const NON_JSON_PATHS: &[(&str, Method)] = &[
-    ("/v0/blobs/{blob_id}", Method::PUT),    // blob upload (raw bytes)
-    ("/v0/blobs/{blob_id}", Method::GET),    // blob download (raw bytes)
-    ("/v0/blobs/{blob_id}", Method::HEAD),   // blob head (headers only)
-    ("/v0/ws", Method::GET),                 // websocket upgrade
+    ("/v0/blobs/{blob_id}", Method::PUT),  // blob upload (raw bytes)
+    ("/v0/blobs/{blob_id}", Method::GET),  // blob download (raw bytes)
+    ("/v0/blobs/{blob_id}", Method::HEAD), // blob head (headers only)
+    ("/v0/ws", Method::GET),               // websocket upgrade
 ];
 
 /// All JSON API endpoint paths and methods, for exhaustiveness checks.
@@ -383,7 +862,10 @@ pub const ALL_ENDPOINT_PATHS: &[(&str, Method)] = &[
     (CreateBlobUpload::PATH, CreateBlobUpload::METHOD),
     // History Sync
     (ListHistorySyncJobs::PATH, ListHistorySyncJobs::METHOD),
-    (RequestHistorySyncRepair::PATH, RequestHistorySyncRepair::METHOD),
+    (
+        RequestHistorySyncRepair::PATH,
+        RequestHistorySyncRepair::METHOD,
+    ),
     (RequestChatBackfill::PATH, RequestChatBackfill::METHOD),
     (ListHistorySyncChunks::PATH, ListHistorySyncChunks::METHOD),
     (AppendHistorySyncChunk::PATH, AppendHistorySyncChunk::METHOD),
@@ -398,30 +880,69 @@ pub const ALL_ENDPOINT_PATHS: &[(&str, Method)] = &[
     (AdminCreateSession::PATH, AdminCreateSession::METHOD),
     (AdminDeleteSession::PATH, AdminDeleteSession::METHOD),
     (AdminOverview::PATH, AdminOverview::METHOD),
-    (AdminGetRegistrationSettings::PATH, AdminGetRegistrationSettings::METHOD),
-    (AdminPatchRegistrationSettings::PATH, AdminPatchRegistrationSettings::METHOD),
+    (
+        AdminGetRegistrationSettings::PATH,
+        AdminGetRegistrationSettings::METHOD,
+    ),
+    (
+        AdminPatchRegistrationSettings::PATH,
+        AdminPatchRegistrationSettings::METHOD,
+    ),
     (AdminGetServerSettings::PATH, AdminGetServerSettings::METHOD),
-    (AdminPatchServerSettings::PATH, AdminPatchServerSettings::METHOD),
+    (
+        AdminPatchServerSettings::PATH,
+        AdminPatchServerSettings::METHOD,
+    ),
     (AdminListUsers::PATH, AdminListUsers::METHOD),
-    (AdminCreateUserProvision::PATH, AdminCreateUserProvision::METHOD),
+    (
+        AdminCreateUserProvision::PATH,
+        AdminCreateUserProvision::METHOD,
+    ),
     (AdminGetUser::PATH, AdminGetUser::METHOD),
     (AdminPatchUser::PATH, AdminPatchUser::METHOD),
     (AdminDisableUser::PATH, AdminDisableUser::METHOD),
     (AdminReactivateUser::PATH, AdminReactivateUser::METHOD),
     // Admin Feature Flags
-    (AdminListFlagDefinitions::PATH, AdminListFlagDefinitions::METHOD),
-    (AdminCreateFlagDefinition::PATH, AdminCreateFlagDefinition::METHOD),
+    (
+        AdminListFlagDefinitions::PATH,
+        AdminListFlagDefinitions::METHOD,
+    ),
+    (
+        AdminCreateFlagDefinition::PATH,
+        AdminCreateFlagDefinition::METHOD,
+    ),
     (AdminGetFlagDefinition::PATH, AdminGetFlagDefinition::METHOD),
-    (AdminPatchFlagDefinition::PATH, AdminPatchFlagDefinition::METHOD),
+    (
+        AdminPatchFlagDefinition::PATH,
+        AdminPatchFlagDefinition::METHOD,
+    ),
     (AdminListFlagOverrides::PATH, AdminListFlagOverrides::METHOD),
-    (AdminCreateFlagOverride::PATH, AdminCreateFlagOverride::METHOD),
+    (
+        AdminCreateFlagOverride::PATH,
+        AdminCreateFlagOverride::METHOD,
+    ),
     (AdminPatchFlagOverride::PATH, AdminPatchFlagOverride::METHOD),
-    (AdminDeleteFlagOverride::PATH, AdminDeleteFlagOverride::METHOD),
+    (
+        AdminDeleteFlagOverride::PATH,
+        AdminDeleteFlagOverride::METHOD,
+    ),
     // Admin Debug Metrics
-    (AdminListDebugMetricSessions::PATH, AdminListDebugMetricSessions::METHOD),
-    (AdminCreateDebugMetricSession::PATH, AdminCreateDebugMetricSession::METHOD),
-    (AdminRevokeDebugMetricSession::PATH, AdminRevokeDebugMetricSession::METHOD),
-    (AdminListDebugMetricBatches::PATH, AdminListDebugMetricBatches::METHOD),
+    (
+        AdminListDebugMetricSessions::PATH,
+        AdminListDebugMetricSessions::METHOD,
+    ),
+    (
+        AdminCreateDebugMetricSession::PATH,
+        AdminCreateDebugMetricSession::METHOD,
+    ),
+    (
+        AdminRevokeDebugMetricSession::PATH,
+        AdminRevokeDebugMetricSession::METHOD,
+    ),
+    (
+        AdminListDebugMetricBatches::PATH,
+        AdminListDebugMetricBatches::METHOD,
+    ),
     // Admin Logs
     (AdminListServerLogs::PATH, AdminListServerLogs::METHOD),
 ];
