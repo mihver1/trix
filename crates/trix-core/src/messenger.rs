@@ -2707,8 +2707,11 @@ impl FfiMessengerClient {
                 ) {
                     Ok(_) => {}
                     Err(error) if is_current_device_replay_projection_error(&error) => {
+                        let _ = store
+                            .load_or_bootstrap_chat_mls_conversation(*chat_id, facade)
+                            .map_err(map_domain_error)?;
                         store
-                            .project_chat_with_facade(*chat_id, facade, None)
+                            .project_chat_with_unavailable_projections(*chat_id, None)
                             .map_err(map_domain_error)?;
                     }
                     Err(error) if is_missing_bootstrappable_state_projection_error(&error) => {
@@ -8585,6 +8588,108 @@ mod tests {
         drop(state);
 
         server.shutdown();
+        fs::remove_dir_all(root_path).ok();
+    }
+
+    #[test]
+    fn project_changed_chats_preserves_materialized_tail_after_current_device_replay_error() {
+        let root_path = env::temp_dir().join(format!(
+            "trix-messenger-preserve-materialized-tail-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let (client, chat_id) = open_client_with_current_device_replay_placeholder(&root_path);
+        let current_account = client.require_account_id().unwrap();
+        let current_device = client.require_device_id().unwrap();
+        let second_message_id = MessageId(Uuid::new_v4());
+        let second_text = "second hello from current device";
+
+        let second_ciphertext = {
+            let group_id = {
+                let store = lock_history_store(&client.history_store).unwrap();
+                store.chat_mls_group_id(chat_id).unwrap()
+            };
+            let current_member = MlsFacade::load_persistent(&client.mls_storage_root).unwrap();
+            let mut conversation = current_member.load_group(&group_id).unwrap().unwrap();
+            let ciphertext = current_member
+                .create_application_message(&mut conversation, second_text.as_bytes())
+                .unwrap();
+            current_member.save_state().unwrap();
+            ciphertext
+        };
+
+        {
+            let mut store = lock_history_store(&client.history_store).unwrap();
+            let placeholder = store
+                .get_projected_messages(chat_id, None, Some(10))
+                .into_iter()
+                .find(|message| message.server_seq == 3)
+                .unwrap();
+            let second_body = MessageBody::Text(crate::TextMessageBody {
+                text: second_text.to_owned(),
+            });
+
+            store
+                .apply_chat_history(&ChatHistoryResponse {
+                    chat_id,
+                    messages: vec![MessageEnvelope {
+                        message_id: second_message_id,
+                        chat_id,
+                        server_seq: 4,
+                        sender_account_id: current_account,
+                        sender_device_id: current_device,
+                        epoch: placeholder.epoch,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        ciphertext_b64: encode_b64(&second_ciphertext),
+                        aad_json: serde_json::json!({}),
+                        created_at_unix: 4,
+                    }],
+                })
+                .unwrap();
+            store
+                .apply_projected_messages(
+                    chat_id,
+                    &[crate::LocalProjectedMessage {
+                        server_seq: 4,
+                        message_id: second_message_id,
+                        sender_account_id: current_account,
+                        sender_device_id: current_device,
+                        epoch: placeholder.epoch,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        projection_kind: crate::LocalProjectionKind::ApplicationMessage,
+                        payload: Some(second_body.to_bytes().unwrap()),
+                        merged_epoch: None,
+                        created_at_unix: 4,
+                    }],
+                )
+                .unwrap();
+        }
+
+        client.project_changed_chats(&[chat_id]).unwrap();
+
+        let store = lock_history_store(&client.history_store).unwrap();
+        let projected = store.get_projected_messages(chat_id, None, Some(10));
+        let preserved_tail = projected
+            .iter()
+            .find(|message| message.server_seq == 4)
+            .expect("materialized tail should remain projected");
+        assert_eq!(
+            preserved_tail.parse_body().unwrap(),
+            Some(MessageBody::Text(crate::TextMessageBody {
+                text: second_text.to_owned(),
+            }))
+        );
+        assert_eq!(
+            store
+                .unavailable_message_server_seqs(chat_id)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![3]
+        );
+
         fs::remove_dir_all(root_path).ok();
     }
 
