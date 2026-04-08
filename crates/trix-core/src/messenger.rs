@@ -785,7 +785,15 @@ impl FfiMessengerClient {
         limit: Option<u32>,
     ) -> Result<FfiMessengerMessagePage, FfiMessengerError> {
         let chat_id = parse_chat_id(&conversation_id)?;
+        if page_cursor.is_none()
+            && self.should_process_pending_history_repairs_before_page_load(chat_id)?
+        {
+            let _ = self.process_pending_history_repairs_before_page_load();
+        }
         self.ensure_chat_projection_current(chat_id)?;
+        if page_cursor.is_none() && self.chat_has_pending_history_recovery(chat_id)? {
+            let _ = self.process_pending_history_repairs_before_page_load();
+        }
         let limit = limit.unwrap_or(50) as usize;
         let self_account_id = self.state_account_id().transpose()?;
         let before_server_seq = page_cursor.as_deref().map(parse_page_cursor).transpose()?;
@@ -2633,6 +2641,49 @@ impl FfiMessengerClient {
         ))
     }
 
+    fn chat_has_pending_history_recovery(
+        &self,
+        chat_id: ChatId,
+    ) -> Result<bool, FfiMessengerError> {
+        let store = lock_history_store(&self.history_store)?;
+        Ok(store
+            .get_local_chat_list_item(chat_id, None)
+            .map(|chat| chat.history_recovery_pending)
+            .unwrap_or(false))
+    }
+
+    fn should_process_pending_history_repairs_before_page_load(
+        &self,
+        chat_id: ChatId,
+    ) -> Result<bool, FfiMessengerError> {
+        let store = lock_history_store(&self.history_store)?;
+        let needs_history_refresh = store.needs_history_refresh(chat_id);
+        let needs_projection = store.needs_projection(chat_id);
+        let needs_bootstrap = store.get_chat(chat_id).is_none()
+            || (store.chat_mls_group_id(chat_id).is_none()
+                && (needs_history_refresh || needs_projection));
+        Ok(needs_bootstrap
+            || store.pending_history_repair_window(chat_id).is_some()
+            || store
+                .get_local_chat_list_item(chat_id, None)
+                .map(|chat| chat.history_recovery_pending)
+                .unwrap_or(false))
+    }
+
+    fn process_pending_history_repairs_before_page_load(&self) -> Result<(), FfiMessengerError> {
+        let mut client = self.authenticated_client()?;
+        self.maybe_import_transfer_bundle()?;
+        self.flush_pending_inbox_acks_best_effort(&client);
+        let _ = self.process_history_sync_jobs(&client)?;
+        let repair_pending_chat_ids = self.capture_chats_pending_history_repair()?;
+        self.request_backfill_for_unavailable_chats_best_effort(
+            &mut client,
+            &repair_pending_chat_ids,
+        );
+        self.prune_backfill_requested_chats();
+        Ok(())
+    }
+
     fn refresh_chat_details(
         &self,
         _client: &ServerApiClient,
@@ -2678,14 +2729,30 @@ impl FfiMessengerClient {
         store: &mut LocalHistoryStore,
         chat_id: ChatId,
     ) -> Result<(), FfiMessengerError> {
-        if store.get_chat(chat_id).is_some() && store.chat_mls_group_id(chat_id).is_some() {
+        let has_local_chat = store.get_chat(chat_id).is_some();
+        if has_local_chat && store.chat_mls_group_id(chat_id).is_some() {
             return Ok(());
         }
-        let (detail, history) = self.run_transport(|runtime, client| {
-            let detail = runtime.block_on(client.get_chat(chat_id))?;
-            let history = runtime.block_on(client.get_chat_history(chat_id, None, None))?;
-            Ok((detail, history))
+        let bootstrap_payload = self.run_transport(|runtime, client| {
+            let detail = match runtime.block_on(client.get_chat(chat_id)) {
+                Ok(detail) => detail,
+                Err(ServerApiError::Api { status: 404, .. }) => {
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
+            };
+            let history = match runtime.block_on(client.get_chat_history(chat_id, None, None)) {
+                Ok(history) => history,
+                Err(ServerApiError::Api { status: 404, .. }) => {
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
+            };
+            Ok(Some((detail, history)))
         })?;
+        let Some((detail, history)) = bootstrap_payload else {
+            return Ok(());
+        };
         store.apply_chat_detail(&detail).map_err(map_domain_error)?;
         store
             .apply_chat_history(&history)
@@ -7886,6 +7953,444 @@ mod tests {
                 .unavailable_message_server_seqs(chat_id)
                 .is_empty()
         );
+
+        server.shutdown();
+        fs::remove_dir_all(root_path).ok();
+    }
+
+    #[test]
+    fn get_messages_syncs_pending_history_repairs_before_loading_first_page() {
+        let root_path = env::temp_dir().join(format!(
+            "trix-messenger-get-messages-syncs-history-repairs-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let (client, chat_id) = open_client_with_current_device_replay_placeholder(&root_path);
+        let self_account_id = client.require_account_id().unwrap();
+        let self_device_id = client.require_device_id().unwrap();
+        let target_keys = client.require_transport_key_material().unwrap();
+        let source_keys = DeviceKeyMaterial::generate();
+        let placeholder_message = {
+            let store = lock_history_store(&client.history_store).unwrap();
+            store
+                .get_projected_messages(chat_id, None, Some(10))
+                .into_iter()
+                .find(|message| message.server_seq == 3)
+                .unwrap()
+        };
+        let recovered_text = "Recovered on first page load".to_owned();
+        let recovered_message = crate::LocalProjectedMessage {
+            server_seq: placeholder_message.server_seq,
+            message_id: placeholder_message.message_id,
+            sender_account_id: placeholder_message.sender_account_id,
+            sender_device_id: placeholder_message.sender_device_id,
+            epoch: placeholder_message.epoch,
+            message_kind: placeholder_message.message_kind,
+            content_type: placeholder_message.content_type,
+            projection_kind: placeholder_message.projection_kind,
+            payload: Some(
+                MessageBody::Text(crate::TextMessageBody {
+                    text: recovered_text.clone(),
+                })
+                .to_bytes()
+                .unwrap(),
+            ),
+            merged_epoch: placeholder_message.merged_epoch,
+            created_at_unix: placeholder_message.created_at_unix,
+        };
+        let job_id = Uuid::new_v4().to_string();
+        let payload = crate::history_sync_payload::encrypt_projected_message_chunk(
+            &job_id,
+            &chat_id.0.to_string(),
+            &[recovered_message],
+            &source_keys,
+            &target_keys.public_key_bytes(),
+        )
+        .unwrap();
+        let completed_job = HistorySyncJobSummary {
+            job_id: job_id.clone(),
+            job_type: HistorySyncJobType::TimelineRepair,
+            job_status: HistorySyncJobStatus::Completed,
+            source_device_id: DeviceId(Uuid::new_v4()),
+            target_device_id: self_device_id,
+            chat_id: Some(chat_id),
+            cursor_json: serde_json::json!({
+                "kind": "timeline_repair",
+                "chat_id": chat_id.0,
+                "repair_from_server_seq": 3,
+                "repair_through_server_seq": 3,
+                "reason": "projection_gap",
+            }),
+            created_at_unix: 1,
+            updated_at_unix: 2,
+        };
+
+        let server = MockSendServer::spawn(MockSendServerState {
+            chat_detail: ChatDetailResponse {
+                chat_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                last_server_seq: 3,
+                pending_message_count: 0,
+                epoch: placeholder_message.epoch,
+                last_commit_message_id: None,
+                last_message: None,
+                participant_profiles: Vec::new(),
+                members: Vec::new(),
+                device_members: Vec::new(),
+            },
+            history: Vec::new(),
+            sender_account_id: self_account_id,
+            sender_device_id: self_device_id,
+            source_jobs: Vec::new(),
+            target_jobs: vec![completed_job],
+            chunks_by_job_id: BTreeMap::from([(
+                job_id.clone(),
+                vec![HistorySyncChunkSummary {
+                    chunk_id: 1,
+                    sequence_no: 1,
+                    payload_b64: crate::encode_b64(&payload),
+                    cursor_json: None,
+                    is_final: true,
+                    uploaded_at_unix: 2,
+                }],
+            )]),
+            activate_target_jobs_on_repair_request: false,
+            expected_create_epoch: None,
+            create_requests: Vec::new(),
+            chat_detail_requests: 0,
+            history_requests: 0,
+            history_after_server_seq_requests: Vec::new(),
+            unavailable_repair_chat_id: None,
+            requested_repair_chat_ids: Vec::new(),
+            requested_backfill_chat_ids: Vec::new(),
+        });
+        {
+            let mut state = lock_state(&client.state).unwrap();
+            state.base_url = server.base_url.clone();
+            client.save_state_locked(&state).unwrap();
+        }
+        client.rebuild_client_base_url(&server.base_url).unwrap();
+
+        let page = client
+            .get_messages(chat_id.0.to_string(), None, Some(20))
+            .unwrap();
+        let restored = page
+            .messages
+            .iter()
+            .find(|message| message.server_seq == 3)
+            .expect("recovered message should still be present");
+        assert_eq!(restored.preview_text, recovered_text);
+        assert!(restored.body.is_some());
+        assert!(matches!(restored.recovery_state, None));
+        assert!(
+            lock_history_store(&client.history_store)
+                .unwrap()
+                .unavailable_message_server_seqs(chat_id)
+                .is_empty()
+        );
+
+        server.shutdown();
+        fs::remove_dir_all(root_path).ok();
+    }
+
+    #[test]
+    fn get_messages_keeps_locally_bootstrapped_history_sync_chat_when_server_chat_is_missing() {
+        let root_path = env::temp_dir().join(format!(
+            "trix-messenger-history-sync-chat-missing-on-server-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let chat_id = ChatId(Uuid::new_v4());
+        let sender_account_id = AccountId(Uuid::new_v4());
+        let sender_device_id = DeviceId(Uuid::new_v4());
+
+        let server = MockSendServer::spawn(MockSendServerState {
+            chat_detail: ChatDetailResponse {
+                chat_id: ChatId(Uuid::new_v4()),
+                chat_type: ChatType::Dm,
+                title: None,
+                last_server_seq: 0,
+                pending_message_count: 0,
+                epoch: 1,
+                last_commit_message_id: None,
+                last_message: None,
+                participant_profiles: Vec::new(),
+                members: Vec::new(),
+                device_members: Vec::new(),
+            },
+            history: Vec::new(),
+            sender_account_id,
+            sender_device_id,
+            source_jobs: Vec::new(),
+            target_jobs: Vec::new(),
+            chunks_by_job_id: BTreeMap::new(),
+            activate_target_jobs_on_repair_request: false,
+            expected_create_epoch: None,
+            create_requests: Vec::new(),
+            chat_detail_requests: 0,
+            history_requests: 0,
+            history_after_server_seq_requests: Vec::new(),
+            unavailable_repair_chat_id: None,
+            requested_repair_chat_ids: Vec::new(),
+            requested_backfill_chat_ids: Vec::new(),
+        });
+        let client = open_authenticated_test_client(&root_path, &server.base_url);
+
+        {
+            let mut store = lock_history_store(&client.history_store).unwrap();
+            store
+                .apply_chat_detail(&ChatDetailResponse {
+                    chat_id,
+                    chat_type: ChatType::Dm,
+                    title: None,
+                    last_server_seq: 1,
+                    pending_message_count: 0,
+                    epoch: 1,
+                    last_commit_message_id: None,
+                    last_message: None,
+                    participant_profiles: Vec::new(),
+                    members: Vec::new(),
+                    device_members: Vec::new(),
+                })
+                .unwrap();
+            store
+                .apply_projected_messages(
+                    chat_id,
+                    &[crate::LocalProjectedMessage {
+                        server_seq: 1,
+                        message_id: MessageId(Uuid::new_v4()),
+                        sender_account_id,
+                        sender_device_id,
+                        epoch: 1,
+                        message_kind: MessageKind::Application,
+                        content_type: ContentType::Text,
+                        projection_kind: crate::LocalProjectionKind::ApplicationMessage,
+                        payload: Some(
+                            MessageBody::Text(crate::TextMessageBody {
+                                text: "history sync preserved".to_owned(),
+                            })
+                            .to_bytes()
+                            .unwrap(),
+                        ),
+                        merged_epoch: None,
+                        created_at_unix: 1,
+                    }],
+                )
+                .unwrap();
+        }
+
+        let page = client
+            .get_messages(chat_id.0.to_string(), None, Some(20))
+            .unwrap();
+        assert!(page.messages.iter().any(|message| {
+            message.body.as_ref().and_then(|body| body.text.as_deref())
+                == Some("history sync preserved")
+        }));
+
+        server.shutdown();
+        fs::remove_dir_all(root_path).ok();
+    }
+
+    #[test]
+    fn get_messages_processes_target_history_sync_jobs_before_bootstrapping_missing_chat() {
+        let root_path = env::temp_dir().join(format!(
+            "trix-messenger-history-sync-job-before-bootstrap-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let chat_id = ChatId(Uuid::new_v4());
+        let client = open_authenticated_test_client(&root_path, "http://127.0.0.1:9");
+        let self_account_id = client.require_account_id().unwrap();
+        let self_device_id = client.require_device_id().unwrap();
+        let target_keys = client.require_transport_key_material().unwrap();
+        let source_keys = DeviceKeyMaterial::generate();
+        let recovered_text = "Recovered before bootstrap".to_owned();
+        let recovered_message = crate::LocalProjectedMessage {
+            server_seq: 1,
+            message_id: MessageId(Uuid::new_v4()),
+            sender_account_id: self_account_id,
+            sender_device_id: self_device_id,
+            epoch: 7,
+            message_kind: MessageKind::Application,
+            content_type: ContentType::Text,
+            projection_kind: crate::LocalProjectionKind::ApplicationMessage,
+            payload: Some(
+                MessageBody::Text(crate::TextMessageBody {
+                    text: recovered_text.clone(),
+                })
+                .to_bytes()
+                .unwrap(),
+            ),
+            merged_epoch: None,
+            created_at_unix: 1,
+        };
+        let job_id = Uuid::new_v4().to_string();
+        let payload = crate::history_sync_payload::encrypt_projected_message_chunk(
+            &job_id,
+            &chat_id.0.to_string(),
+            &[recovered_message],
+            &source_keys,
+            &target_keys.public_key_bytes(),
+        )
+        .unwrap();
+        let cursor_json = crate::history_sync_payload::with_export_metadata(
+            &crate::history_sync_payload::with_chat_metadata(
+                &serde_json::json!({
+                    "kind": "timeline_repair",
+                    "chat_id": chat_id.0,
+                    "repair_from_server_seq": 1,
+                    "repair_through_server_seq": 1,
+                    "reason": "projection_gap",
+                }),
+                &crate::history_sync_payload::HistorySyncChatMetadata {
+                    chat_type: ChatType::Dm,
+                    title: None,
+                    participant_profiles: vec![ChatParticipantProfileSummary {
+                        account_id: self_account_id,
+                        handle: Some("self".to_owned()),
+                        profile_name: "Self".to_owned(),
+                        profile_bio: None,
+                    }],
+                    epoch: 7,
+                },
+            ),
+            &crate::history_sync_payload::HistorySyncExportMetadata {
+                version: 1,
+                format: "projected_messages".to_owned(),
+                exported_through_server_seq: 1,
+                projected_message_count: 1,
+                chunk_message_limit: 100,
+            },
+        );
+        let completed_job = HistorySyncJobSummary {
+            job_id: job_id.clone(),
+            job_type: HistorySyncJobType::TimelineRepair,
+            job_status: HistorySyncJobStatus::Completed,
+            source_device_id: DeviceId(Uuid::new_v4()),
+            target_device_id: self_device_id,
+            chat_id: Some(chat_id),
+            cursor_json,
+            created_at_unix: 1,
+            updated_at_unix: 2,
+        };
+        let missing_server_chat_id = ChatId(Uuid::new_v4());
+        let server = MockSendServer::spawn(MockSendServerState {
+            chat_detail: ChatDetailResponse {
+                chat_id: missing_server_chat_id,
+                chat_type: ChatType::Dm,
+                title: None,
+                last_server_seq: 0,
+                pending_message_count: 0,
+                epoch: 7,
+                last_commit_message_id: None,
+                last_message: None,
+                participant_profiles: Vec::new(),
+                members: Vec::new(),
+                device_members: Vec::new(),
+            },
+            history: Vec::new(),
+            sender_account_id: self_account_id,
+            sender_device_id: self_device_id,
+            source_jobs: Vec::new(),
+            target_jobs: vec![completed_job],
+            chunks_by_job_id: BTreeMap::from([(
+                job_id,
+                vec![HistorySyncChunkSummary {
+                    chunk_id: 1,
+                    sequence_no: 1,
+                    payload_b64: crate::encode_b64(&payload),
+                    cursor_json: None,
+                    is_final: true,
+                    uploaded_at_unix: 2,
+                }],
+            )]),
+            activate_target_jobs_on_repair_request: false,
+            expected_create_epoch: None,
+            create_requests: Vec::new(),
+            chat_detail_requests: 0,
+            history_requests: 0,
+            history_after_server_seq_requests: Vec::new(),
+            unavailable_repair_chat_id: None,
+            requested_repair_chat_ids: Vec::new(),
+            requested_backfill_chat_ids: Vec::new(),
+        });
+        {
+            let mut state = lock_state(&client.state).unwrap();
+            state.base_url = server.base_url.clone();
+            client.save_state_locked(&state).unwrap();
+        }
+        client.rebuild_client_base_url(&server.base_url).unwrap();
+
+        let page = client
+            .get_messages(chat_id.0.to_string(), None, Some(20))
+            .unwrap();
+
+        assert!(
+            page.messages
+                .iter()
+                .any(|message| message.preview_text == recovered_text && message.body.is_some())
+        );
+
+        server.shutdown();
+        fs::remove_dir_all(root_path).ok();
+    }
+
+    #[test]
+    fn get_messages_returns_empty_page_when_chat_is_missing_everywhere_locally() {
+        let root_path = env::temp_dir().join(format!(
+            "trix-messenger-missing-chat-empty-page-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root_path).unwrap();
+
+        let chat_id = ChatId(Uuid::new_v4());
+        let client = open_authenticated_test_client(&root_path, "http://127.0.0.1:9");
+        let server = MockSendServer::spawn(MockSendServerState {
+            chat_detail: ChatDetailResponse {
+                chat_id: ChatId(Uuid::new_v4()),
+                chat_type: ChatType::Dm,
+                title: None,
+                last_server_seq: 0,
+                pending_message_count: 0,
+                epoch: 0,
+                last_commit_message_id: None,
+                last_message: None,
+                participant_profiles: Vec::new(),
+                members: Vec::new(),
+                device_members: Vec::new(),
+            },
+            history: Vec::new(),
+            sender_account_id: client.require_account_id().unwrap(),
+            sender_device_id: client.require_device_id().unwrap(),
+            source_jobs: Vec::new(),
+            target_jobs: Vec::new(),
+            chunks_by_job_id: BTreeMap::new(),
+            activate_target_jobs_on_repair_request: false,
+            expected_create_epoch: None,
+            create_requests: Vec::new(),
+            chat_detail_requests: 0,
+            history_requests: 0,
+            history_after_server_seq_requests: Vec::new(),
+            unavailable_repair_chat_id: None,
+            requested_repair_chat_ids: Vec::new(),
+            requested_backfill_chat_ids: Vec::new(),
+        });
+        {
+            let mut state = lock_state(&client.state).unwrap();
+            state.base_url = server.base_url.clone();
+            client.save_state_locked(&state).unwrap();
+        }
+        client.rebuild_client_base_url(&server.base_url).unwrap();
+
+        let page = client
+            .get_messages(chat_id.0.to_string(), None, Some(20))
+            .unwrap();
+
+        assert!(page.messages.is_empty());
 
         server.shutdown();
         fs::remove_dir_all(root_path).ok();
