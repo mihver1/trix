@@ -40,6 +40,7 @@ use trix_types::{
     SubmitMessageRepairWitnessResultRequest, SubmitMessageRepairWitnessResultResponse,
     TargetMessageRepairRequestListResponse, UpdateAccountProfileRequest, VersionResponse,
     WebSocketClientFrame, WebSocketServerFrame, WitnessMessageRepairRequestListResponse,
+    contract,
 };
 
 const CONTROL_AAD_META_KEY: &str = "_trix";
@@ -256,30 +257,27 @@ impl ServerApiClient {
         &self,
         params: CreateAccountParams,
     ) -> Result<CreateAccountResponse, ServerApiError> {
-        self.send_json(
-            self.request(Method::POST, "v0/accounts")?
-                .json(&CreateAccountRequest {
-                    handle: params.handle,
-                    profile_name: params.profile_name,
-                    profile_bio: params.profile_bio,
-                    device_display_name: params.device_display_name,
-                    platform: params.platform,
-                    credential_identity_b64: encode_b64(&params.credential_identity),
-                    account_root_pubkey_b64: encode_b64(&params.account_root_pubkey),
-                    account_root_signature_b64: encode_b64(&params.account_root_signature),
-                    transport_pubkey_b64: encode_b64(&params.transport_pubkey),
-                    provision_token: None,
-                }),
-        )
-        .await
+        let req = CreateAccountRequest {
+            handle: params.handle,
+            profile_name: params.profile_name,
+            profile_bio: params.profile_bio,
+            device_display_name: params.device_display_name,
+            platform: params.platform,
+            credential_identity_b64: encode_b64(&params.credential_identity),
+            account_root_pubkey_b64: encode_b64(&params.account_root_pubkey),
+            account_root_signature_b64: encode_b64(&params.account_root_signature),
+            transport_pubkey_b64: encode_b64(&params.transport_pubkey),
+            provision_token: None,
+        };
+        self.call::<contract::CreateAccount>(&req).await
     }
 
     pub async fn get_health(&self) -> Result<HealthResponse, ServerApiError> {
-        self.call::<trix_types::contract::Health>(&()).await
+        self.call::<contract::Health>(&()).await
     }
 
     pub async fn get_version(&self) -> Result<VersionResponse, ServerApiError> {
-        self.call::<trix_types::contract::Version>(&()).await
+        self.call::<contract::Version>(&()).await
     }
 
     pub async fn create_auth_challenge(
@@ -287,10 +285,7 @@ impl ServerApiClient {
         device_id: DeviceId,
     ) -> Result<AuthChallengeMaterial, ServerApiError> {
         let response: trix_types::AuthChallengeResponse = self
-            .send_json(
-                self.request(Method::POST, "v0/auth/challenge")?
-                    .json(&trix_types::AuthChallengeRequest { device_id }),
-            )
+            .call::<contract::AuthChallenge>(&trix_types::AuthChallengeRequest { device_id })
             .await?;
 
         Ok(AuthChallengeMaterial {
@@ -306,7 +301,7 @@ impl ServerApiClient {
         challenge_id: impl Into<String>,
         signature: &[u8],
     ) -> Result<trix_types::AuthSessionResponse, ServerApiError> {
-        self.call::<trix_types::contract::AuthSession>(&trix_types::AuthSessionRequest {
+        self.call::<contract::AuthSession>(&trix_types::AuthSessionRequest {
             device_id,
             challenge_id: challenge_id.into(),
             signature_b64: encode_b64(signature),
@@ -315,20 +310,17 @@ impl ServerApiClient {
     }
 
     pub async fn get_me(&self) -> Result<AccountProfileResponse, ServerApiError> {
-        self.send_json(self.request(Method::GET, "v0/accounts/me")?)
-            .await
+        self.call::<contract::GetMe>(&()).await
     }
 
     pub async fn get_feature_flags(&self) -> Result<AccountFeatureFlagsResponse, ServerApiError> {
-        self.send_json(self.request(Method::GET, "v0/accounts/me/feature-flags")?)
-            .await
+        self.call::<contract::GetFeatureFlags>(&()).await
     }
 
     pub async fn get_debug_metrics_status(
         &self,
     ) -> Result<AccountDebugMetricsStatusResponse, ServerApiError> {
-        self.send_json(self.request(Method::GET, "v0/accounts/me/debug/metrics")?)
-            .await
+        self.call::<contract::GetDebugMetricsStatus>(&()).await
     }
 
     pub async fn submit_debug_metrics(
@@ -336,14 +328,11 @@ impl ServerApiClient {
         session_id: impl Into<String>,
         payload: Value,
     ) -> Result<(), ServerApiError> {
-        self.send_empty(
-            self.request(Method::POST, "v0/accounts/me/debug/metrics")?
-                .json(&SubmitDebugMetricsRequest {
-                    session_id: session_id.into(),
-                    payload,
-                }),
-        )
-        .await
+        let req = SubmitDebugMetricsRequest {
+            session_id: session_id.into(),
+            payload,
+        };
+        self.call_empty::<contract::SubmitDebugMetrics>(&req).await
     }
 
     pub async fn search_account_directory(
@@ -352,14 +341,13 @@ impl ServerApiClient {
         limit: Option<usize>,
         exclude_self: bool,
     ) -> Result<Vec<DirectoryAccountMaterial>, ServerApiError> {
+        let query = AccountDirectoryQuery {
+            q: query,
+            limit,
+            exclude_self,
+        };
         let response: AccountDirectoryResponse = self
-            .send_json(self.request(Method::GET, "v0/accounts/directory")?.query(
-                &AccountDirectoryQuery {
-                    q: query,
-                    limit,
-                    exclude_self,
-                },
-            ))
+            .call_query::<contract::SearchDirectory>(&query)
             .await?;
 
         Ok(response
@@ -374,7 +362,7 @@ impl ServerApiClient {
         account_id: AccountId,
     ) -> Result<DirectoryAccountMaterial, ServerApiError> {
         let response: DirectoryAccountSummary = self
-            .send_json(self.request(Method::GET, &format!("v0/accounts/{}", account_id.0))?)
+            .call_path::<contract::GetAccount>(&account_id)
             .await?;
         Ok(directory_account_from_response(response))
     }
@@ -383,19 +371,16 @@ impl ServerApiClient {
         &self,
         params: UpdateAccountProfileParams,
     ) -> Result<AccountProfileResponse, ServerApiError> {
-        self.send_json(self.request(Method::PATCH, "v0/accounts/me")?.json(
-            &UpdateAccountProfileRequest {
-                handle: params.handle,
-                profile_name: params.profile_name,
-                profile_bio: params.profile_bio,
-            },
-        ))
-        .await
+        let req = UpdateAccountProfileRequest {
+            handle: params.handle,
+            profile_name: params.profile_name,
+            profile_bio: params.profile_bio,
+        };
+        self.call::<contract::UpdateMe>(&req).await
     }
 
     pub async fn list_devices(&self) -> Result<DeviceListResponse, ServerApiError> {
-        self.send_json(self.request(Method::GET, "v0/devices")?)
-            .await
+        self.call::<contract::ListDevices>(&()).await
     }
 
     pub async fn register_apple_push_token(
@@ -403,23 +388,19 @@ impl ServerApiClient {
         token_hex: impl Into<String>,
         environment: ApplePushEnvironment,
     ) -> Result<RegisterApplePushTokenResponse, ServerApiError> {
-        self.send_json(self.request(Method::PUT, "v0/devices/push-token")?.json(
-            &RegisterApplePushTokenRequest {
-                token_hex: token_hex.into(),
-                environment,
-            },
-        ))
-        .await
+        let req = RegisterApplePushTokenRequest {
+            token_hex: token_hex.into(),
+            environment,
+        };
+        self.call::<contract::RegisterPushToken>(&req).await
     }
 
     pub async fn delete_apple_push_token(&self) -> Result<(), ServerApiError> {
-        self.send_empty(self.request(Method::DELETE, "v0/devices/push-token")?)
-            .await
+        self.call_empty::<contract::DeletePushToken>(&()).await
     }
 
     pub async fn create_link_intent(&self) -> Result<CreateLinkIntentResponse, ServerApiError> {
-        self.send_json(self.request(Method::POST, "v0/devices/link-intents")?)
-            .await
+        self.call::<contract::CreateLinkIntent>(&()).await
     }
 
     pub async fn complete_link_intent(
@@ -427,30 +408,25 @@ impl ServerApiClient {
         link_intent_id: impl AsRef<str>,
         params: CompleteLinkIntentParams,
     ) -> Result<CompletedLinkIntentMaterial, ServerApiError> {
+        let req = CompleteLinkIntentRequest {
+            link_token: params.link_token,
+            device_display_name: params.device_display_name,
+            platform: params.platform,
+            credential_identity_b64: encode_b64(&params.credential_identity),
+            transport_pubkey_b64: encode_b64(&params.transport_pubkey),
+            key_packages: params
+                .key_packages
+                .into_iter()
+                .map(|package| PublishKeyPackageItem {
+                    cipher_suite: package.cipher_suite,
+                    key_package_b64: encode_b64(&package.key_package),
+                })
+                .collect(),
+        };
         let response: CompleteLinkIntentResponse = self
-            .send_json(
-                self.request(
-                    Method::POST,
-                    &format!(
-                        "v0/devices/link-intents/{}/complete",
-                        link_intent_id.as_ref()
-                    ),
-                )?
-                .json(&CompleteLinkIntentRequest {
-                    link_token: params.link_token,
-                    device_display_name: params.device_display_name,
-                    platform: params.platform,
-                    credential_identity_b64: encode_b64(&params.credential_identity),
-                    transport_pubkey_b64: encode_b64(&params.transport_pubkey),
-                    key_packages: params
-                        .key_packages
-                        .into_iter()
-                        .map(|package| PublishKeyPackageItem {
-                            cipher_suite: package.cipher_suite,
-                            key_package_b64: encode_b64(&package.key_package),
-                        })
-                        .collect(),
-                }),
+            .call_path_body::<contract::CompleteLinkIntent>(
+                &link_intent_id.as_ref().to_string(),
+                &req,
             )
             .await?;
 
@@ -470,10 +446,7 @@ impl ServerApiClient {
         device_id: DeviceId,
     ) -> Result<DeviceApprovePayloadMaterial, ServerApiError> {
         let response: DeviceApprovePayloadResponse = self
-            .send_json(self.request(
-                Method::GET,
-                &format!("v0/devices/{}/approve-payload", device_id.0),
-            )?)
+            .call_path::<contract::GetApprovePayload>(&device_id)
             .await?;
 
         Ok(DeviceApprovePayloadMaterial {
@@ -503,14 +476,12 @@ impl ServerApiClient {
         account_root_signature: &[u8],
         transfer_bundle: Option<&[u8]>,
     ) -> Result<trix_types::ApproveDeviceResponse, ServerApiError> {
-        self.send_json(
-            self.request(Method::POST, &format!("v0/devices/{}/approve", device_id.0))?
-                .json(&trix_types::ApproveDeviceRequest {
-                    account_root_signature_b64: encode_b64(account_root_signature),
-                    transfer_bundle_b64: transfer_bundle.map(encode_b64),
-                }),
-        )
-        .await
+        let req = trix_types::ApproveDeviceRequest {
+            account_root_signature_b64: encode_b64(account_root_signature),
+            transfer_bundle_b64: transfer_bundle.map(encode_b64),
+        };
+        self.call_path_body::<contract::ApproveDevice>(&device_id, &req)
+            .await
     }
 
     pub async fn get_device_transport_key(
@@ -518,10 +489,7 @@ impl ServerApiClient {
         device_id: DeviceId,
     ) -> Result<DeviceTransportKeyMaterial, ServerApiError> {
         let response: DeviceTransportKeyResponse = self
-            .send_json(self.request(
-                Method::GET,
-                &format!("v0/devices/{}/transport-key", device_id.0),
-            )?)
+            .call_path::<contract::GetTransportKey>(&device_id)
             .await?;
         Ok(DeviceTransportKeyMaterial {
             device_id: response.device_id,
@@ -538,10 +506,7 @@ impl ServerApiClient {
         device_id: DeviceId,
     ) -> Result<DeviceTransferBundleMaterial, ServerApiError> {
         let response: DeviceTransferBundleResponse = self
-            .send_json(self.request(
-                Method::GET,
-                &format!("v0/devices/{}/transfer-bundle", device_id.0),
-            )?)
+            .call_path::<contract::GetTransferBundle>(&device_id)
             .await?;
 
         Ok(DeviceTransferBundleMaterial {
@@ -561,39 +526,32 @@ impl ServerApiClient {
         reason: impl Into<String>,
         account_root_signature: &[u8],
     ) -> Result<RevokeDeviceResponse, ServerApiError> {
-        self.send_json(
-            self.request(Method::POST, &format!("v0/devices/{}/revoke", device_id.0))?
-                .json(&RevokeDeviceRequest {
-                    reason: reason.into(),
-                    account_root_signature_b64: encode_b64(account_root_signature),
-                }),
-        )
-        .await
+        let req = RevokeDeviceRequest {
+            reason: reason.into(),
+            account_root_signature_b64: encode_b64(account_root_signature),
+        };
+        self.call_path_body::<contract::RevokeDevice>(&device_id, &req)
+            .await
     }
 
     pub async fn publish_key_packages(
         &self,
         packages: Vec<PublishKeyPackageMaterial>,
     ) -> Result<PublishKeyPackagesResponse, ServerApiError> {
-        self.send_json(
-            self.request(Method::POST, "v0/key-packages:publish")?.json(
-                &PublishKeyPackagesRequest {
-                    packages: packages
-                        .into_iter()
-                        .map(|package| PublishKeyPackageItem {
-                            cipher_suite: package.cipher_suite,
-                            key_package_b64: encode_b64(&package.key_package),
-                        })
-                        .collect(),
-                },
-            ),
-        )
-        .await
+        let req = PublishKeyPackagesRequest {
+            packages: packages
+                .into_iter()
+                .map(|package| PublishKeyPackageItem {
+                    cipher_suite: package.cipher_suite,
+                    key_package_b64: encode_b64(&package.key_package),
+                })
+                .collect(),
+        };
+        self.call::<contract::PublishKeyPackages>(&req).await
     }
 
     pub async fn reset_key_packages(&self) -> Result<ResetKeyPackagesResponse, ServerApiError> {
-        self.send_json(self.request(Method::POST, "v0/key-packages:reset")?)
-            .await
+        self.call::<contract::ResetKeyPackages>(&()).await
     }
 
     pub async fn reserve_key_packages(
@@ -601,13 +559,12 @@ impl ServerApiClient {
         account_id: AccountId,
         device_ids: Vec<DeviceId>,
     ) -> Result<Vec<ReservedKeyPackageMaterial>, ServerApiError> {
+        let req = ReserveKeyPackagesRequest {
+            account_id,
+            device_ids,
+        };
         let response: AccountKeyPackagesResponse = self
-            .send_json(self.request(Method::POST, "v0/key-packages:reserve")?.json(
-                &ReserveKeyPackagesRequest {
-                    account_id,
-                    device_ids,
-                },
-            ))
+            .call::<contract::ReserveKeyPackages>(&req)
             .await?;
 
         response
@@ -629,10 +586,7 @@ impl ServerApiClient {
         account_id: AccountId,
     ) -> Result<Vec<ReservedKeyPackageMaterial>, ServerApiError> {
         let response: AccountKeyPackagesResponse = self
-            .send_json(self.request(
-                Method::GET,
-                &format!("v0/accounts/{}/key-packages", account_id.0),
-            )?)
+            .call_path::<contract::GetAccountKeyPackages>(&account_id)
             .await?;
 
         response
@@ -655,14 +609,13 @@ impl ServerApiClient {
         status: Option<HistorySyncJobStatus>,
         limit: Option<usize>,
     ) -> Result<HistorySyncJobListResponse, ServerApiError> {
-        self.send_json(self.request(Method::GET, "v0/history-sync/jobs")?.query(
-            &ListHistorySyncJobsQuery {
-                role,
-                status,
-                limit,
-            },
-        ))
-        .await
+        let query = ListHistorySyncJobsQuery {
+            role,
+            status,
+            limit,
+        };
+        self.call_query::<contract::ListHistorySyncJobs>(&query)
+            .await
     }
 
     pub async fn append_history_sync_chunk(
@@ -673,17 +626,15 @@ impl ServerApiClient {
         cursor_json: Option<Value>,
         is_final: bool,
     ) -> Result<AppendHistorySyncChunkResponse, ServerApiError> {
-        self.send_json(
-            self.request(
-                Method::POST,
-                &format!("v0/history-sync/jobs/{}/chunks", job_id.as_ref()),
-            )?
-            .json(&AppendHistorySyncChunkRequest {
-                sequence_no,
-                payload_b64: encode_b64(payload),
-                cursor_json,
-                is_final,
-            }),
+        let req = AppendHistorySyncChunkRequest {
+            sequence_no,
+            payload_b64: encode_b64(payload),
+            cursor_json,
+            is_final,
+        };
+        self.call_path_body::<contract::AppendHistorySyncChunk>(
+            &job_id.as_ref().to_string(),
+            &req,
         )
         .await
     }
@@ -692,11 +643,8 @@ impl ServerApiClient {
         &self,
         request: RequestHistorySyncRepairRequest,
     ) -> Result<RequestHistorySyncRepairResponse, ServerApiError> {
-        self.send_json(
-            self.request(Method::POST, "v0/history-sync/jobs:request-repair")?
-                .json(&request),
-        )
-        .await
+        self.call::<contract::RequestHistorySyncRepair>(&request)
+            .await
     }
 
     pub async fn request_message_repair_witness(
@@ -704,10 +652,7 @@ impl ServerApiClient {
         request: RequestMessageRepairWitnessRequest,
     ) -> Result<Option<MessageRepairWitnessRequestMaterial>, ServerApiError> {
         let response: RequestMessageRepairWitnessResponse = self
-            .send_json(
-                self.request(Method::POST, "v0/message-repairs:request")?
-                    .json(&request),
-            )
+            .call::<contract::RequestMessageRepair>(&request)
             .await?;
         response
             .request
@@ -719,7 +664,7 @@ impl ServerApiClient {
         &self,
     ) -> Result<Vec<MessageRepairWitnessRequestMaterial>, ServerApiError> {
         let response: WitnessMessageRepairRequestListResponse = self
-            .send_json(self.request(Method::GET, "v0/message-repairs/witness")?)
+            .call::<contract::ListWitnessRepairs>(&())
             .await?;
         response
             .requests
@@ -732,7 +677,7 @@ impl ServerApiClient {
         &self,
     ) -> Result<Vec<MessageRepairWitnessRequestMaterial>, ServerApiError> {
         let response: TargetMessageRepairRequestListResponse = self
-            .send_json(self.request(Method::GET, "v0/message-repairs/target")?)
+            .call::<contract::ListTargetRepairs>(&())
             .await?;
         response
             .requests
@@ -746,12 +691,9 @@ impl ServerApiClient {
         request_id: impl AsRef<str>,
         request: SubmitMessageRepairWitnessResultRequest,
     ) -> Result<SubmitMessageRepairWitnessResultResponse, ServerApiError> {
-        self.send_json(
-            self.request(
-                Method::POST,
-                &format!("v0/message-repairs/{}/submit", request_id.as_ref()),
-            )?
-            .json(&request),
+        self.call_path_body::<contract::SubmitRepairWitness>(
+            &request_id.as_ref().to_string(),
+            &request,
         )
         .await
     }
@@ -761,12 +703,9 @@ impl ServerApiClient {
         request_id: impl AsRef<str>,
         request: CompleteMessageRepairWitnessRequest,
     ) -> Result<CompleteMessageRepairWitnessResponse, ServerApiError> {
-        self.send_json(
-            self.request(
-                Method::POST,
-                &format!("v0/message-repairs/{}/complete", request_id.as_ref()),
-            )?
-            .json(&request),
+        self.call_path_body::<contract::CompleteRepairWitness>(
+            &request_id.as_ref().to_string(),
+            &request,
         )
         .await
     }
@@ -776,10 +715,7 @@ impl ServerApiClient {
         job_id: impl AsRef<str>,
     ) -> Result<Vec<HistorySyncChunkMaterial>, ServerApiError> {
         let response: HistorySyncChunkListResponse = self
-            .send_json(self.request(
-                Method::GET,
-                &format!("v0/history-sync/jobs/{}/chunks", job_id.as_ref()),
-            )?)
+            .call_path::<contract::ListHistorySyncChunks>(&job_id.as_ref().to_string())
             .await?;
 
         response
@@ -794,12 +730,10 @@ impl ServerApiClient {
         job_id: impl AsRef<str>,
         cursor_json: Option<Value>,
     ) -> Result<CompleteHistorySyncJobResponse, ServerApiError> {
-        self.send_json(
-            self.request(
-                Method::POST,
-                &format!("v0/history-sync/jobs/{}/complete", job_id.as_ref()),
-            )?
-            .json(&CompleteHistorySyncJobRequest { cursor_json }),
+        let req = CompleteHistorySyncJobRequest { cursor_json };
+        self.call_path_body::<contract::CompleteHistorySyncJob>(
+            &job_id.as_ref().to_string(),
+            &req,
         )
         .await
     }
@@ -808,28 +742,23 @@ impl ServerApiClient {
         &self,
         chat_id: ChatId,
     ) -> Result<RequestChatBackfillResponse, ServerApiError> {
-        self.send_json(
-            self.request(Method::POST, "v0/history-sync/jobs/request")?
-                .json(&RequestChatBackfillRequest { chat_id }),
-        )
-        .await
+        let req = RequestChatBackfillRequest { chat_id };
+        self.call::<contract::RequestChatBackfill>(&req).await
     }
 
     pub async fn list_chats(&self) -> Result<ChatListResponse, ServerApiError> {
-        self.send_json(self.request(Method::GET, "v0/chats")?).await
+        self.call::<contract::ListChats>(&()).await
     }
 
     pub async fn get_chat(&self, chat_id: ChatId) -> Result<ChatDetailResponse, ServerApiError> {
-        self.send_json(self.request(Method::GET, &format!("v0/chats/{}", chat_id.0))?)
-            .await
+        self.call_path::<contract::GetChat>(&chat_id).await
     }
 
     pub async fn create_chat(
         &self,
         request: CreateChatRequest,
     ) -> Result<CreateChatResponse, ServerApiError> {
-        self.send_json(self.request(Method::POST, "v0/chats")?.json(&request))
-            .await
+        self.call::<contract::CreateChat>(&request).await
     }
 
     pub async fn create_message(
@@ -837,11 +766,8 @@ impl ServerApiClient {
         chat_id: ChatId,
         request: CreateMessageRequest,
     ) -> Result<CreateMessageResponse, ServerApiError> {
-        self.send_json(
-            self.request(Method::POST, &format!("v0/chats/{}/messages", chat_id.0))?
-                .json(&request),
-        )
-        .await
+        self.call_path_body::<contract::CreateMessage>(&chat_id, &request)
+            .await
     }
 
     pub async fn add_chat_members(
@@ -849,11 +775,8 @@ impl ServerApiClient {
         chat_id: ChatId,
         request: ModifyChatMembersRequest,
     ) -> Result<ModifyChatMembersResponse, ServerApiError> {
-        self.send_json(
-            self.request(Method::POST, &format!("v0/chats/{}/members:add", chat_id.0))?
-                .json(&request),
-        )
-        .await
+        self.call_path_body::<contract::AddChatMembers>(&chat_id, &request)
+            .await
     }
 
     pub async fn remove_chat_members(
@@ -861,14 +784,8 @@ impl ServerApiClient {
         chat_id: ChatId,
         request: ModifyChatMembersRequest,
     ) -> Result<ModifyChatMembersResponse, ServerApiError> {
-        self.send_json(
-            self.request(
-                Method::POST,
-                &format!("v0/chats/{}/members:remove", chat_id.0),
-            )?
-            .json(&request),
-        )
-        .await
+        self.call_path_body::<contract::RemoveChatMembers>(&chat_id, &request)
+            .await
     }
 
     pub async fn add_chat_devices(
@@ -876,11 +793,8 @@ impl ServerApiClient {
         chat_id: ChatId,
         request: ModifyChatDevicesRequest,
     ) -> Result<ModifyChatDevicesResponse, ServerApiError> {
-        self.send_json(
-            self.request(Method::POST, &format!("v0/chats/{}/devices:add", chat_id.0))?
-                .json(&request),
-        )
-        .await
+        self.call_path_body::<contract::AddChatDevices>(&chat_id, &request)
+            .await
     }
 
     pub async fn remove_chat_devices(
@@ -888,14 +802,8 @@ impl ServerApiClient {
         chat_id: ChatId,
         request: ModifyChatDevicesRequest,
     ) -> Result<ModifyChatDevicesResponse, ServerApiError> {
-        self.send_json(
-            self.request(
-                Method::POST,
-                &format!("v0/chats/{}/devices:remove", chat_id.0),
-            )?
-            .json(&request),
-        )
-        .await
+        self.call_path_body::<contract::RemoveChatDevices>(&chat_id, &request)
+            .await
     }
 
     pub async fn leave_chat(
@@ -903,11 +811,8 @@ impl ServerApiClient {
         chat_id: ChatId,
         request: LeaveChatRequest,
     ) -> Result<LeaveChatResponse, ServerApiError> {
-        self.send_json(
-            self.request(Method::POST, &format!("v0/chats/{}/leave", chat_id.0))?
-                .json(&request),
-        )
-        .await
+        self.call_path_body::<contract::LeaveChat>(&chat_id, &request)
+            .await
     }
 
     pub async fn dm_global_delete(
@@ -915,14 +820,8 @@ impl ServerApiClient {
         chat_id: ChatId,
         request: DmGlobalDeleteRequest,
     ) -> Result<DmGlobalDeleteResponse, ServerApiError> {
-        self.send_json(
-            self.request(
-                Method::POST,
-                &format!("v0/chats/{}/dm-global-delete", chat_id.0),
-            )?
-            .json(&request),
-        )
-        .await
+        self.call_path_body::<contract::DmGlobalDelete>(&chat_id, &request)
+            .await
     }
 
     pub async fn get_chat_history(
@@ -931,14 +830,12 @@ impl ServerApiClient {
         after_server_seq: Option<u64>,
         limit: Option<usize>,
     ) -> Result<ChatHistoryResponse, ServerApiError> {
-        self.send_json(
-            self.request(Method::GET, &format!("v0/chats/{}/history", chat_id.0))?
-                .query(&ChatHistoryQuery {
-                    after_server_seq,
-                    limit,
-                }),
-        )
-        .await
+        let query = ChatHistoryQuery {
+            after_server_seq,
+            limit,
+        };
+        self.call_path_query::<contract::GetChatHistory>(&chat_id, &query)
+            .await
     }
 
     pub async fn get_inbox(
@@ -946,27 +843,23 @@ impl ServerApiClient {
         after_inbox_id: Option<u64>,
         limit: Option<usize>,
     ) -> Result<trix_types::InboxResponse, ServerApiError> {
-        self.send_json(self.request(Method::GET, "v0/inbox")?.query(&InboxQuery {
+        let query = InboxQuery {
             after_inbox_id,
             limit,
-        }))
-        .await
+        };
+        self.call_query::<contract::GetInbox>(&query).await
     }
 
     pub async fn lease_inbox(
         &self,
         request: LeaseInboxRequest,
     ) -> Result<LeaseInboxResponse, ServerApiError> {
-        self.send_json(self.request(Method::POST, "v0/inbox/lease")?.json(&request))
-            .await
+        self.call::<contract::LeaseInbox>(&request).await
     }
 
     pub async fn ack_inbox(&self, inbox_ids: Vec<u64>) -> Result<AckInboxResponse, ServerApiError> {
-        self.send_json(
-            self.request(Method::POST, "v0/inbox/ack")?
-                .json(&AckInboxRequest { inbox_ids }),
-        )
-        .await
+        let req = AckInboxRequest { inbox_ids };
+        self.call::<contract::AckInbox>(&req).await
     }
 
     pub async fn create_blob_upload(
@@ -976,15 +869,13 @@ impl ServerApiClient {
         size_bytes: u64,
         sha256: &[u8],
     ) -> Result<CreateBlobUploadResponse, ServerApiError> {
-        self.send_json(self.request(Method::POST, "v0/blobs/uploads")?.json(
-            &CreateBlobUploadRequest {
-                chat_id,
-                mime_type: mime_type.into(),
-                size_bytes,
-                sha256_b64: encode_b64(sha256),
-            },
-        ))
-        .await
+        let req = CreateBlobUploadRequest {
+            chat_id,
+            mime_type: mime_type.into(),
+            size_bytes,
+            sha256_b64: encode_b64(sha256),
+        };
+        self.call::<contract::CreateBlobUpload>(&req).await
     }
 
     pub async fn upload_blob(
