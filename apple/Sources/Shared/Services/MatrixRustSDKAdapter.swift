@@ -152,6 +152,29 @@ actor MatrixRustSDKAdapter: MatrixService {
         )
     }
 
+    func deviceVerificationStatus(session: MatrixSession) async throws -> MatrixDeviceVerificationStatus {
+        let client = try await resolvedClient(session: session)
+        let encryption = client.encryption()
+        await encryption.waitForE2eeInitializationTasks()
+
+        let verificationState = Self.deviceVerificationState(from: encryption.verificationState())
+        let hasDevicesToVerifyAgainst = try await encryption.hasDevicesToVerifyAgainst()
+        let isLastDevice = try await encryption.isLastDevice()
+        let ed25519Fingerprint = await encryption.ed25519Key()
+        let curve25519IdentityKey = await encryption.curve25519Key()
+
+        return MatrixDeviceVerificationStatus(
+            userID: session.userID,
+            deviceID: session.deviceID,
+            state: verificationState,
+            hasDevicesToVerifyAgainst: hasDevicesToVerifyAgainst,
+            isLastDevice: isLastDevice,
+            ed25519Fingerprint: ed25519Fingerprint,
+            curve25519IdentityKey: curve25519IdentityKey,
+            updatedAt: Date()
+        )
+    }
+
     func createEncryptedDirectRoom(
         inviteeUserID: String,
         name: String,
@@ -669,6 +692,19 @@ private extension MatrixRustSDKAdapter {
             return "Message deleted"
         default:
             return nil
+        }
+    }
+
+    static func deviceVerificationState(from sdkState: VerificationState) -> MatrixDeviceVerificationState {
+        switch sdkState {
+        case .unknown:
+            return .unknown
+        case .verified:
+            return .verified
+        case .unverified:
+            return .unverified
+        @unknown default:
+            return .unknown
         }
     }
 }

@@ -54,8 +54,9 @@ xcodebuild \
 - Plain text send goes through the Matrix SDK timeline send API.
 - Encrypted rooms are handled by Matrix SDK E2EE; no custom crypto is
   implemented here.
-- Device verification is still surfaced as a limitation; the app does not
-  silently trust all devices as final UX.
+- Device verification state is read from the Matrix SDK and surfaced in the
+  account UI; the app does not silently trust devices or auto-approve
+  verification.
 - DEBUG builds include a live smoke runner, enabled only with
   `TRIX_MATRIX_LIVE_SMOKE=1`, for validating login, restore, encrypted DM
   creation, encrypted send/receive, and cleanup against the live homeserver.
@@ -91,7 +92,7 @@ The remaining production tasks are:
 
 1. Decide whether a dev-only homeserver URL override is allowed for local
    testing before DNS/TLS is live.
-2. Add device verification state and UX.
+2. Finish interactive device verification confirmation UX.
 3. Add key backup/recovery state and UX.
 4. Keep tokens and decrypted message bodies out of logs.
 5. Add production group room creation and group invite UX.

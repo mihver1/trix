@@ -113,6 +113,19 @@ actor MockMatrixService: MatrixService {
         }
     }
 
+    func deviceVerificationStatus(session: MatrixSession) async throws -> MatrixDeviceVerificationStatus {
+        MatrixDeviceVerificationStatus(
+            userID: session.userID,
+            deviceID: session.deviceID,
+            state: .unverified,
+            hasDevicesToVerifyAgainst: true,
+            isLastDevice: false,
+            ed25519Fingerprint: "MOCKED25519FINGERPRINT",
+            curve25519IdentityKey: "MOCKCURVE25519IDENTITYKEY",
+            updatedAt: Date()
+        )
+    }
+
     func timeline(roomID: String, session: MatrixSession) async throws -> [MatrixTimelineItem] {
         timelines[roomID, default: []].sorted { lhs, rhs in
             lhs.timestamp < rhs.timestamp

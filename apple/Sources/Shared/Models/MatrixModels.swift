@@ -17,6 +17,61 @@ struct MatrixAccount: Equatable, Sendable {
     let deviceID: String
 }
 
+enum MatrixDeviceVerificationState: String, Codable, Sendable {
+    case unknown
+    case verified
+    case unverified
+
+    var label: String {
+        switch self {
+        case .unknown:
+            return "Unknown"
+        case .verified:
+            return "Verified"
+        case .unverified:
+            return "Unverified"
+        }
+    }
+}
+
+struct MatrixDeviceVerificationStatus: Equatable, Sendable {
+    let userID: String
+    let deviceID: String
+    let state: MatrixDeviceVerificationState
+    let hasDevicesToVerifyAgainst: Bool
+    let isLastDevice: Bool
+    let ed25519Fingerprint: String?
+    let curve25519IdentityKey: String?
+    let updatedAt: Date
+
+    var needsUserConfirmation: Bool {
+        state != .verified
+    }
+
+    var deviceAvailabilityLabel: String {
+        if hasDevicesToVerifyAgainst {
+            return "Existing device available"
+        }
+
+        return isLastDevice ? "Only device" : "No eligible device"
+    }
+
+    var explanation: String {
+        switch state {
+        case .verified:
+            return "Matrix SDK reports this device as verified."
+        case .unverified:
+            if hasDevicesToVerifyAgainst {
+                return "Confirm this device from an existing verified Matrix session before treating encrypted chats as production-ready."
+            }
+
+            return "This device is not verified yet, and the SDK did not find an eligible existing device to verify against."
+        case .unknown:
+            return "Matrix SDK has not reported a stable verification state for this device yet."
+        }
+    }
+}
+
 enum MatrixRoomKind: String, Codable, Sendable {
     case direct
     case group

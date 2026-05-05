@@ -3,11 +3,13 @@ import SwiftUI
 struct MatrixRoomListView: View {
     @ObservedObject var model: MatrixAppModel
     @ObservedObject private var roomListViewModel: RoomListViewModel
+    @ObservedObject private var deviceVerificationViewModel: DeviceVerificationViewModel
     @State private var isShowingNewDirectMessage = false
 
     init(model: MatrixAppModel) {
         self.model = model
         self._roomListViewModel = ObservedObject(wrappedValue: model.roomListViewModel)
+        self._deviceVerificationViewModel = ObservedObject(wrappedValue: model.deviceVerificationViewModel)
     }
 
     var body: some View {
@@ -85,6 +87,19 @@ struct MatrixRoomListView: View {
                     Label(model.isLoggingOut ? "Logging Out" : "Log Out", systemImage: "rectangle.portrait.and.arrow.right")
                 }
                 .disabled(model.isLoggingOut)
+            }
+
+            Section("Device Verification") {
+                MatrixDeviceVerificationStatusView(viewModel: deviceVerificationViewModel)
+
+                Button {
+                    Task {
+                        await model.reloadDeviceVerificationStatus()
+                    }
+                } label: {
+                    Label("Refresh Verification", systemImage: "arrow.clockwise")
+                }
+                .disabled(deviceVerificationViewModel.isLoading)
             }
 
             Section {

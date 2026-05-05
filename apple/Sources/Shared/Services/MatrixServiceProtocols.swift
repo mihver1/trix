@@ -34,4 +34,8 @@ protocol MatrixRoomBootstrapService: Sendable {
     func joinInvitedRooms(session: MatrixSession) async throws -> [MatrixRoomSummary]
 }
 
-typealias MatrixService = MatrixAuthService & MatrixSyncService & MatrixRoomService & MatrixRoomBootstrapService
+protocol MatrixDeviceVerificationService: Sendable {
+    func deviceVerificationStatus(session: MatrixSession) async throws -> MatrixDeviceVerificationStatus
+}
+
+typealias MatrixService = MatrixAuthService & MatrixSyncService & MatrixRoomService & MatrixRoomBootstrapService & MatrixDeviceVerificationService

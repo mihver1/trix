@@ -17,7 +17,7 @@ struct MatrixNewDirectMessageView: View {
                 }
 
                 Section {
-                    MatrixDeviceVerificationNoticeView()
+                    MatrixDeviceVerificationNoticeView(status: model.deviceVerificationViewModel.status)
                 }
 
                 if let errorMessage = model.roomListViewModel.errorMessage {

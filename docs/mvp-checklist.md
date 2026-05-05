@@ -53,6 +53,7 @@ messages.
 - [ ] Send and receive an encrypted group message.
 - [x] Confirm Conduit stores encrypted event content, not plaintext.
 - [x] Confirm device verification limitation is visible in the app.
+- [x] Surface Matrix SDK device verification state in the Apple UI.
 - [ ] Add a second device and verify it through the Matrix SDK flow.
 - [ ] Confirm unverified device behavior is understandable.
 
@@ -86,6 +87,8 @@ messages.
       `https://trix.selfhost.ru`.
 - [x] SwiftUI Apple client has production controls for encrypted DM creation
       and pending invite accept/decline. This slice has not re-run live smoke.
+- [x] SwiftUI Apple client shows read-only Matrix SDK device verification
+      state without silently trusting devices.
 
 ## Live Validation Notes
 

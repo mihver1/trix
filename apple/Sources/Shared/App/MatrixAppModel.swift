@@ -12,6 +12,7 @@ final class MatrixAppModel: ObservableObject {
 
     let roomListViewModel: RoomListViewModel
     let timelineViewModel: TimelineViewModel
+    let deviceVerificationViewModel: DeviceVerificationViewModel
 
     private let sessionStore: MatrixSessionStore
     private let matrixService: MatrixService
@@ -25,6 +26,7 @@ final class MatrixAppModel: ObservableObject {
         self.matrixService = matrixService
         self.roomListViewModel = RoomListViewModel()
         self.timelineViewModel = TimelineViewModel()
+        self.deviceVerificationViewModel = DeviceVerificationViewModel()
     }
 
     var isAuthenticated: Bool {
@@ -56,12 +58,14 @@ final class MatrixAppModel: ObservableObject {
             session = restoredSession
             account = try await matrixService.restore(session: restoredSession)
             await reloadRooms()
+            await reloadDeviceVerificationStatus()
         } catch {
             self.session = nil
             self.account = nil
             self.selectedRoomID = nil
             self.roomListViewModel.clear()
             self.timelineViewModel.clear()
+            self.deviceVerificationViewModel.clear()
             try? sessionStore.clearSession()
             errorMessage = error.matrixUserFacingMessage
         }
@@ -86,6 +90,7 @@ final class MatrixAppModel: ObservableObject {
             session = newSession
             account = try await matrixService.restore(session: newSession)
             await reloadRooms()
+            await reloadDeviceVerificationStatus()
         } catch {
             errorMessage = error.matrixUserFacingMessage
         }
@@ -112,6 +117,7 @@ final class MatrixAppModel: ObservableObject {
         self.selectedRoomID = nil
         self.roomListViewModel.clear()
         self.timelineViewModel.clear()
+        self.deviceVerificationViewModel.clear()
     }
 
     func reloadRooms() async {
@@ -177,6 +183,15 @@ final class MatrixAppModel: ObservableObject {
         selectedRoomID = room.id
         await loadTimeline(roomID: room.id)
         return true
+    }
+
+    func reloadDeviceVerificationStatus() async {
+        guard let session else {
+            deviceVerificationViewModel.clear()
+            return
+        }
+
+        await deviceVerificationViewModel.reload(session: session, service: matrixService)
     }
 
     func acceptInvitation(_ invitation: MatrixRoomInvite) async {

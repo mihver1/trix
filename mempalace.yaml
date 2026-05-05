@@ -1,0 +1,32 @@
+wing: trix
+rooms:
+- name: migrations
+  description: Files from migrations/
+- name: crates
+  description: Files from crates/
+- name: target
+  description: Files from target/
+- name: configuration
+  description: Files from deploy/
+- name: contracts
+  description: Files from contracts/
+- name: documentation
+  description: Files from docs/
+- name: openapi
+  description: Files from openapi/
+- name: blobs
+  description: Files from blobs/
+- name: examples
+  description: Files from examples/
+- name: scripts
+  description: Files from scripts/
+- name: bindings
+  description: Files from bindings/
+- name: design
+  description: Files from assets/
+- name: apps
+  description: Files from apps/
+- name: testing
+  description: Files from tests/
+- name: general
+  description: Files that don't fit other rooms
