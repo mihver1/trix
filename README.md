@@ -1,119 +1,154 @@
 # Trix
 
-`Trix` is an experimental native-first end-to-end encrypted messenger workspace. The repository currently combines a Rust backend (`trixd`), a shared Rust core (`trix-core`), a headless bot runtime, a separate macOS admin control app, and native clients for Android, iOS, and macOS.
+Trix is being pivoted into a small private Matrix-based end-to-end encrypted
+messenger for a closed group of friends.
 
-Confirmed components in the repo today:
+The new MVP direction is:
 
-- single-binary `Axum` backend with `PostgreSQL`, automatic `sqlx` migrations, local blob storage, rate limiting, cleanup jobs, websocket inbox delivery, a separate `/v0/admin/*` control surface, and optional APNs-backed background inbox wake-up pushes for iOS and macOS devices
-- `v0` API surface for auth, accounts, directory search, device linking and approval, transfer bundles, device revoke, key packages, chats, message history, inbox lease and ack, history sync backfill and repair, blob upload and download, and operator admin/session/settings/users flows
-- shared `trix-core` library with `OpenMLS` group state, encrypted local stores, attachment helpers, device-transfer helpers, safe messenger snapshots/timelines, realtime and sync runtime, and `UniFFI` bindings
-- shared `strings.yaml` catalog plus `scripts/generate_strings.rb` for repo-wide user-facing chat strings, generating Android XML resources and iOS/macOS Swift lookup code for `en` and `ru`
-- Android, iOS, and macOS consumer clients now share the task-first create/link onboarding model, stored-session recovery that keeps reconnect vs approval/relink states explicit, projected timelines with outgoing delivery/read ticks, attachment send/download, and inline previews for common image types; macOS also ships the beta client and a separate macOS admin app
-- `trix-bot` and `trix-botd` for headless encrypted bot accounts, plus Rust, Python, and Go echo-bot examples
+- Homeserver: Conduit.
+- Federation: disabled.
+- Apple client: native SwiftUI for iOS and macOS.
+- Protocol and E2EE: Matrix through the Matrix Rust SDK, using the official
+  Swift components where practical.
+- Deployment model: a tiny self-hosted server, not a public federated service.
 
-This is still a development prototype, not a production deployment.
+This project is not a custom cryptography project, not a custom messaging
+protocol, and not an Electron, React Native, Flutter, or web client project.
 
-## Repository Layout
+## Current Repository Shape
 
-- `apps/trixd` backend binary entrypoint
-- `apps/trix-botd` bot CLI and `JSON-RPC 2.0` stdio daemon
-- `apps/android` Android client project
-- `apps/ios` iOS client project
-- `apps/macos` macOS client project
-- `apps/macos-admin` macOS admin control app project
-- `crates/trix-server` backend server library
-- `crates/trix-core` shared client core, storage, MLS, realtime, and FFI surface
-- `crates/trix-bot` headless bot runtime
-- `crates/trix-types` shared API and domain types
-- `docs/` project documentation
-- `deploy/public-test/` ingress and TLS overlay for `trix.artelproject.tech`
-- `examples/bots/` Rust, Python, and Go bot examples
-- `migrations/` SQL migrations applied by the server on startup
-- `openapi/v0.yaml` current HTTP API contract
+The Matrix pivot is added next to the existing prototype so the current Apple
+apps and TestFlight tooling stay available while the protocol layer changes.
 
-## Local Backend Quick Start
+- `server/` contains the Conduit Docker Compose setup, example `conduit.toml`,
+  Caddy reverse proxy example, and server run notes.
+- `apple/` contains a buildable SwiftUI Matrix client scaffold for iOS and
+  macOS. It has service protocols, Keychain session storage, room list and
+  timeline UI, and a mock Matrix service for local UI development.
+- `docs/architecture.md` explains the Conduit plus Matrix Rust SDK direction.
+- `docs/security.md` captures the small private deployment threat model.
+- `docs/mvp-checklist.md` lists the validation work still needed before real
+  use.
+- `apps/ios` and `apps/macos` are the existing native clients backed by the
+  legacy `trix-core`/OpenMLS stack.
+- `apps/ios/scripts/build-testflight.sh` and
+  `apps/macos/scripts/archive-testflight.sh` remain the current TestFlight
+  publication paths.
 
-`trixd` reads process environment directly. Copying `.env.example` to `.env` is useful, but the file is not auto-loaded by the binary. The example file includes both consumer auth config and the admin control-plane credentials required by the current backend startup path.
+The legacy Rust backend, OpenMLS client core, Android client, bot runtime, and
+interop harnesses are still present. They are kept so existing build and release
+workflows remain inspectable during the pivot, but new protocol work should
+prefer the Matrix structure above.
 
-1. Prepare local environment variables:
+## Run The Conduit Server
+
+For local development:
 
 ```bash
+cd server
+docker compose up -d conduit
+curl http://127.0.0.1:6167/_matrix/client/versions
+```
+
+`podman compose` can be used instead of `docker compose` on hosts where Docker
+is not installed.
+
+For a small VPS with TLS via Caddy:
+
+```bash
+cd server
 cp .env.example .env
-set -a
-source .env
-set +a
+# Edit .env and conduit.toml before first boot.
+docker compose --profile caddy up -d
 ```
 
-2. Start the bundled local `PostgreSQL` service:
+Read [server/README.md](server/README.md) before choosing `server_name`.
+For the intended deployment, `server_name` is `trix.selfhost.ru` and should be
+treated as permanent once real accounts exist.
+
+## Run The Apple Client
+
+The first Matrix Apple scaffold is under `apple/`.
 
 ```bash
-docker compose up -d postgres
+cd apple
+xcodegen generate
+xcodebuild \
+  -project TrixMatrix.xcodeproj \
+  -scheme TrixMatrixMac \
+  -destination 'platform=macOS' \
+  build CODE_SIGNING_ALLOWED=NO
 ```
 
-3. Run the server:
+For iOS simulator builds:
 
 ```bash
-cargo run -p trixd
+cd apple
+xcodegen generate
+xcodebuild \
+  -project TrixMatrix.xcodeproj \
+  -scheme TrixMatrixiOS \
+  -destination 'platform=iOS Simulator,name=iPhone 17' \
+  build CODE_SIGNING_ALLOWED=NO
 ```
 
-4. Check the health endpoint:
+The scaffold hardcodes `https://trix.selfhost.ru` as the Matrix homeserver URL.
+It uses the pinned `matrix-rust-components-swift` package through
+`MatrixRustSDKAdapter`; a mock service remains available for local UI previews
+and tests. The adapter boundary is documented in [apple/README.md](apple/README.md).
+
+## MVP Status
+
+Working in this first pivot slice:
+
+- Conduit server files exist and can be run with Docker Compose after local
+  configuration review.
+- Caddy and Nginx reverse proxy examples are included.
+- The live VPS deployment at `https://trix.selfhost.ru` responds on the Matrix
+  client API and `.well-known` client discovery endpoint.
+- SwiftUI Apple client scaffold builds with the pinned Matrix Rust SDK Swift
+  package.
+- The Apple scaffold has a pinned Matrix Rust SDK Swift dependency and a real
+  adapter for password login, session restore, room list, timeline, and text
+  send calls.
+- Login form, Keychain-backed session persistence, room list, and timeline UI
+  are present.
+- A DEBUG-only live iOS smoke path validates login, session restore, encrypted
+  DM creation, encrypted send, encrypted receive, and logout cleanup against
+  `trix.selfhost.ru`.
+- Unimplemented security-sensitive features are visible in the UI and tracked
+  in docs.
+
+Not yet working:
+
+- Device verification.
+- Key backup and recovery.
+- Push notifications through a Matrix push gateway and APNs.
+- Media upload/download, production invite handling, and production room
+  creation UI.
+- TestFlight scripts for the new `apple/` Matrix app. Existing TestFlight
+  scripts for `apps/ios` and `apps/macos` are preserved.
+
+## Documentation
+
+- [docs/architecture.md](docs/architecture.md)
+- [docs/security.md](docs/security.md)
+- [docs/mvp-checklist.md](docs/mvp-checklist.md)
+- [docs/development-setup.md](docs/development-setup.md)
+- [server/README.md](server/README.md)
+- [apple/README.md](apple/README.md)
+
+## Legacy Commands
+
+The old prototype commands are still useful when touching legacy files:
 
 ```bash
-curl http://127.0.0.1:8080/v0/system/health
-```
-
-The repo also includes a `Dockerfile` for `trixd` and a `docker-compose.yml` with `postgres` and `app` services.
-
-For environment variable meanings, admin credentials, retention knobs, and rollout notes, see [docs/server-config.md](docs/server-config.md).
-
-For APNs key placement and device lifecycle operations, see [docs/server-operations.md](docs/server-operations.md). `trixd` sends only safe wake-up pushes (`content-available` plus a `trix.event=inbox_update` marker), so notification text stays derived on-device from synced encrypted state.
-
-## Common Commands
-
-```bash
-make check
-make contract-check
-make run-server
-make strings-generate
 cargo check -p trix-core
 cargo test -p trix-core
-make ffi-bindings
-make ffi-bindings-swift
-make ffi-bindings-kotlin
-make ffi-parity-audit
-cargo test --workspace
 swift test --package-path apps/macos
-swift build --package-path apps/macos-admin
-swift run --package-path apps/macos-admin
-swift test --package-path apps/macos-admin
 ./scripts/client-smoke-harness.sh --list-suites
-./scripts/client-smoke-harness.sh --suite macos --no-postgres
-./scripts/client-smoke-harness.sh --suite macos-admin --no-postgres
 ./scripts/client-smoke-harness.sh --suite ios-unit --no-postgres
-./scripts/client-smoke-harness.sh --suite ios-server --stop-postgres
-./scripts/client-smoke-harness.sh --suite ios-ui --stop-postgres
-cargo run -q -p trix-botd -- stdio
 ```
 
-## Clients And Bots
-
-- Android details: [apps/android/README.md](apps/android/README.md)
-- iOS details: [apps/ios/README.md](apps/ios/README.md)
-- macOS details: [apps/macos/README.md](apps/macos/README.md)
-- macOS admin details: [apps/macos-admin/README.md](apps/macos-admin/README.md)
-- Bot harness: [docs/bot-harness.md](docs/bot-harness.md)
-- Shared client string catalog and generation: [docs/client-localization.md](docs/client-localization.md)
-- FFI surface and binding generation: [docs/ffi-bindings.md](docs/ffi-bindings.md)
-- Bot examples: [examples/bots/README.md](examples/bots/README.md)
-
-## Additional Docs
-
-- Server config and admin/runtime knobs: [docs/server-config.md](docs/server-config.md)
-- Release/pilot contract gates: [docs/contracts.md](docs/contracts.md)
-- Client smoke harness: [docs/client-smoke-harness.md](docs/client-smoke-harness.md)
-- Manual client QA checklist: [docs/client-test-checklist.md](docs/client-test-checklist.md)
-- Onboarding simplification rationale: [docs/onboarding-simplification-review.md](docs/onboarding-simplification-review.md)
-- Product and architecture spec: [docs/v0-spec.md](docs/v0-spec.md)
-- Server setup, APNs, and device lifecycle: [docs/server-operations.md](docs/server-operations.md)
-- HTTP API contract: [openapi/v0.yaml](openapi/v0.yaml)
-- Public test ingress and TLS overlay: [deploy/public-test/README.md](deploy/public-test/README.md)
+Do not hand-edit generated UniFFI outputs. Do not remove TestFlight scripts
+unless a replacement release path for the Matrix app exists.
