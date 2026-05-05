@@ -246,6 +246,22 @@ final class MatrixAppModel: ObservableObject {
         await deviceVerificationViewModel.cancel(session: session, service: matrixService)
     }
 
+    func setUpRecovery() async {
+        guard let session else {
+            return
+        }
+
+        await deviceVerificationViewModel.setUpRecovery(session: session, service: matrixService)
+    }
+
+    func confirmRecoveryKey() async {
+        guard let session else {
+            return
+        }
+
+        await deviceVerificationViewModel.confirmRecoveryKey(session: session, service: matrixService)
+    }
+
     func acceptInvitation(_ invitation: MatrixRoomInvite) async {
         guard let session else {
             return

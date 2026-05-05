@@ -56,8 +56,11 @@ sensitive secret and UX path. A weak recovery phrase, unclear backup state, or
 server-side recovery misunderstanding can lead to either message loss or
 unexpected access.
 
-For the first pass, key backup/recovery is a documented TODO. Do not store
-recovery secrets in the repo or logs.
+The first pass uses Matrix SDK recovery APIs only. When no verified session is
+available for interactive device verification, the Apple UI may set up recovery
+with `enableRecovery` or confirm an existing recovery key with
+`recoverAndFixBackup`. It must not call `resetIdentity`, silently trust devices,
+or store recovery secrets in the repo or logs.
 
 ## Push Notification Risk
 

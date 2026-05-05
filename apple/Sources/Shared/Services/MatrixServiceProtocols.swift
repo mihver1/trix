@@ -46,6 +46,8 @@ protocol MatrixDeviceVerificationService: Sendable {
     func approveDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow
     func declineDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow
     func cancelDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow
+    func setUpRecovery(session: MatrixSession) async throws -> String
+    func confirmRecoveryKey(_ recoveryKey: String, session: MatrixSession) async throws -> MatrixDeviceVerificationStatus
 }
 
 typealias MatrixService = MatrixAuthService & MatrixSyncService & MatrixRoomService & MatrixRoomBootstrapService & MatrixDeviceVerificationService

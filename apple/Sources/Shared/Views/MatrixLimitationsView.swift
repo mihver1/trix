@@ -2,8 +2,8 @@ import SwiftUI
 
 struct MatrixLimitationsView: View {
     private let pendingItems = [
-        "device verification",
-        "key backup and recovery",
+        "verified-state validation",
+        "recovery live validation",
         "push notifications",
         "media",
         "group room creation",
@@ -63,6 +63,9 @@ struct MatrixDeviceVerificationStatusView: View {
     let approve: () -> Void
     let decline: () -> Void
     let cancel: () -> Void
+    let setUpRecovery: () -> Void
+    let confirmRecoveryKey: () -> Void
+    let dismissRecoveryKey: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -87,6 +90,25 @@ struct MatrixDeviceVerificationStatusView: View {
 
                 LabeledContent("Current device", value: status.deviceID)
                 LabeledContent("Other device", value: status.deviceAvailabilityLabel)
+                LabeledContent("Recovery", value: status.recoveryState.label)
+                LabeledContent("Key backup", value: status.backupState.label)
+                LabeledContent("Remote backup", value: status.backupAvailabilityLabel)
+
+                if status.lacksEligibleVerificationDevice {
+                    Label {
+                        Text("No verified session is available for interactive SAS. Use Matrix recovery if it is already set up, or set up recovery for this account.")
+                            .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "key.horizontal")
+                    }
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+
+                    Text(status.recoveryExplanation)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 if let fingerprint = status.ed25519Fingerprint {
                     LabeledContent {
@@ -114,8 +136,11 @@ struct MatrixDeviceVerificationStatusView: View {
 
             Divider()
 
-            MatrixDeviceVerificationFlowView(flow: viewModel.flow)
+            if !(viewModel.status?.lacksEligibleVerificationDevice == true && viewModel.flow.phase == .idle) {
+                MatrixDeviceVerificationFlowView(flow: viewModel.flow)
+            }
             actionButtons
+            recoveryControls
 
             if let errorMessage = viewModel.errorMessage {
                 Text(errorMessage)
@@ -154,6 +179,61 @@ struct MatrixDeviceVerificationStatusView: View {
         }
 
         return "\(key.prefix(8))...\(key.suffix(8))"
+    }
+
+    @ViewBuilder
+    private var recoveryControls: some View {
+        if let status = viewModel.status, status.lacksEligibleVerificationDevice {
+            let isBusy = viewModel.actionInFlight != nil
+
+            VStack(alignment: .leading, spacing: 8) {
+                if status.canSetUpRecovery {
+                    Button {
+                        setUpRecovery()
+                    } label: {
+                        actionLabel("Set Up Recovery", systemImage: "key")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isBusy)
+                }
+
+                if let recoveryKey = viewModel.displayedRecoveryKey {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Save this recovery key before continuing. It will not be shown in logs.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Text(recoveryKey)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+
+                        Button {
+                            dismissRecoveryKey()
+                        } label: {
+                            actionLabel("I've Saved This Key", systemImage: "checkmark")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+
+                if status.canConfirmRecovery && viewModel.displayedRecoveryKey == nil {
+                    SecureField("Recovery key", text: $viewModel.recoveryKeyConfirmation)
+                        .textFieldStyle(.roundedBorder)
+
+                    Button {
+                        confirmRecoveryKey()
+                    } label: {
+                        actionLabel("Confirm Recovery Key", systemImage: "key.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isBusy || viewModel.recoveryKeyConfirmation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
     }
 
     @ViewBuilder

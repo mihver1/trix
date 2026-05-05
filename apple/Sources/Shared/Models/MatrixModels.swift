@@ -34,18 +34,82 @@ enum MatrixDeviceVerificationState: String, Codable, Sendable {
     }
 }
 
+enum MatrixRecoveryState: String, Codable, Sendable {
+    case unknown
+    case disabled
+    case enabled
+    case incomplete
+
+    var label: String {
+        switch self {
+        case .unknown:
+            return "Unknown"
+        case .disabled:
+            return "Not Set Up"
+        case .enabled:
+            return "Set Up"
+        case .incomplete:
+            return "Needs Recovery Key"
+        }
+    }
+}
+
+enum MatrixBackupState: String, Codable, Sendable {
+    case unknown
+    case creating
+    case enabling
+    case resuming
+    case enabled
+    case downloading
+    case disabling
+
+    var label: String {
+        switch self {
+        case .unknown:
+            return "Unknown"
+        case .creating:
+            return "Creating"
+        case .enabling:
+            return "Enabling"
+        case .resuming:
+            return "Resuming"
+        case .enabled:
+            return "Enabled"
+        case .downloading:
+            return "Downloading"
+        case .disabling:
+            return "Disabling"
+        }
+    }
+}
+
 struct MatrixDeviceVerificationStatus: Equatable, Sendable {
     let userID: String
     let deviceID: String
     let state: MatrixDeviceVerificationState
     let hasDevicesToVerifyAgainst: Bool
     let isLastDevice: Bool
+    let recoveryState: MatrixRecoveryState
+    let backupState: MatrixBackupState
+    let backupExistsOnServer: Bool?
     let ed25519Fingerprint: String?
     let curve25519IdentityKey: String?
     let updatedAt: Date
 
     var needsUserConfirmation: Bool {
         state != .verified
+    }
+
+    var lacksEligibleVerificationDevice: Bool {
+        needsUserConfirmation && !hasDevicesToVerifyAgainst
+    }
+
+    var canSetUpRecovery: Bool {
+        lacksEligibleVerificationDevice && recoveryState == .disabled
+    }
+
+    var canConfirmRecovery: Bool {
+        lacksEligibleVerificationDevice && (recoveryState == .enabled || recoveryState == .incomplete)
     }
 
     var deviceAvailabilityLabel: String {
@@ -69,6 +133,27 @@ struct MatrixDeviceVerificationStatus: Equatable, Sendable {
         case .unknown:
             return "Matrix SDK has not reported a stable verification state for this device yet."
         }
+    }
+
+    var recoveryExplanation: String {
+        switch recoveryState {
+        case .enabled:
+            return "Enter the recovery key to confirm this session through Matrix SDK recovery when no verified session is available."
+        case .incomplete:
+            return "Matrix SDK reports recovery is incomplete. Enter the recovery key to repair recovery and key backup metadata."
+        case .disabled:
+            return "Set up Matrix recovery to create a recovery key and server-side key backup metadata for this account."
+        case .unknown:
+            return "Matrix SDK has not reported recovery state yet."
+        }
+    }
+
+    var backupAvailabilityLabel: String {
+        guard let backupExistsOnServer else {
+            return "Unknown"
+        }
+
+        return backupExistsOnServer ? "Exists" : "Not Found"
     }
 }
 
@@ -277,6 +362,10 @@ enum MatrixClientError: LocalizedError {
     case roomUnavailable
     case inviteUnavailable
     case noEligibleDeviceForVerification
+    case recoverySetupUnavailable
+    case recoveryKeyRequired
+    case recoveryKeySetupFailed
+    case recoveryKeyConfirmationFailed
     case keychainFailure(String)
     case sdkAdapterUnavailable
 
@@ -298,6 +387,14 @@ enum MatrixClientError: LocalizedError {
             return "The Matrix invite is no longer available."
         case .noEligibleDeviceForVerification:
             return "No verified Matrix session is available to verify this device."
+        case .recoverySetupUnavailable:
+            return "Matrix recovery can only be set up when SDK recovery is disabled."
+        case .recoveryKeyRequired:
+            return "Enter the Matrix recovery key."
+        case .recoveryKeySetupFailed:
+            return "Matrix recovery setup failed."
+        case .recoveryKeyConfirmationFailed:
+            return "Matrix recovery key confirmation failed."
         case .keychainFailure(let detail):
             return "Keychain operation failed: \(detail)"
         case .sdkAdapterUnavailable:

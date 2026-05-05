@@ -7,6 +7,8 @@ final class DeviceVerificationViewModel: ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var actionInFlight: MatrixDeviceVerificationAction?
     @Published private(set) var errorMessage: String?
+    @Published private(set) var displayedRecoveryKey: String?
+    @Published var recoveryKeyConfirmation = ""
 
     func reload(session: MatrixSession, service: MatrixDeviceVerificationService) async {
         isLoading = true
@@ -62,12 +64,32 @@ final class DeviceVerificationViewModel: ObservableObject {
         }
     }
 
+    func setUpRecovery(session: MatrixSession, service: MatrixDeviceVerificationService) async {
+        await perform(.setUpRecovery) {
+            displayedRecoveryKey = try await service.setUpRecovery(session: session)
+            status = try await service.deviceVerificationStatus(session: session)
+        }
+    }
+
+    func confirmRecoveryKey(session: MatrixSession, service: MatrixDeviceVerificationService) async {
+        await perform(.confirmRecoveryKey) {
+            status = try await service.confirmRecoveryKey(recoveryKeyConfirmation, session: session)
+            recoveryKeyConfirmation = ""
+        }
+    }
+
+    func dismissRecoveryKey() {
+        displayedRecoveryKey = nil
+    }
+
     func clear() {
         status = nil
         flow = .idle
         isLoading = false
         actionInFlight = nil
         errorMessage = nil
+        displayedRecoveryKey = nil
+        recoveryKeyConfirmation = ""
     }
 
     private func perform(
@@ -97,4 +119,6 @@ enum MatrixDeviceVerificationAction: Equatable {
     case approve
     case decline
     case cancel
+    case setUpRecovery
+    case confirmRecoveryKey
 }

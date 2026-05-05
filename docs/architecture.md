@@ -87,8 +87,10 @@ For Trix MVP this means:
 - Users need visible recovery/verification states.
 - Key backup is a separate feature from login and must be treated carefully.
 
-The first UI may leave verification and recovery as TODO screens, but it must
-not pretend they are solved.
+The first UI exposes SDK verification/recovery state directly. If the SDK
+reports no eligible verified session for interactive SAS, the app must show that
+blocked state and use Matrix SDK recovery APIs rather than inventing a local
+trust override.
 
 ## Legacy Code
 

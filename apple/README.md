@@ -65,12 +65,20 @@ xcodebuild \
   decline, and cancel.
 - The UI starts SAS from the requesting device after the existing device
   accepts the request, matching the live SDK behavior observed on Conduit.
+- When the Matrix SDK reports no eligible device for interactive SAS, the UI
+  shows an explicit blocked state and exposes Matrix SDK recovery actions
+  instead: set up recovery through `enableRecovery` when recovery is disabled,
+  or confirm an existing recovery key through `recoverAndFixBackup` when
+  recovery is enabled or incomplete.
+- Generated recovery keys are shown only in the UI for the user to save; the
+  app does not log recovery keys, recovery confirmations, SAS values, access
+  tokens, or decrypted message bodies.
 - DEBUG builds include a live smoke runner, enabled only with
   `TRIX_MATRIX_LIVE_SMOKE=1`, for validating login, restore, encrypted DM
   creation, encrypted send/receive, device verification flow, and cleanup
   against the live homeserver.
-- Device verification, key backup/recovery, push, media, and group room
-  creation are visible as TODO items.
+- Device verification production validation, full recovery live validation,
+  push, media, and group room creation are visible as TODO items.
 
 ## Service Boundary
 
@@ -82,8 +90,9 @@ The SwiftUI views depend on view models, not SDK calls.
 - `MatrixRoomService`: room timeline and text send.
 - `MatrixRoomBootstrapService`: encrypted DM creation, invite list, invite
   accept/decline, and live validation join helpers.
-- `MatrixDeviceVerificationService`: read-only verification state plus
-  explicit Matrix SDK session verification actions.
+- `MatrixDeviceVerificationService`: read-only verification/recovery state,
+  explicit Matrix SDK session verification actions, and Matrix SDK recovery
+  setup/confirmation actions.
 - `RoomListViewModel`: room list state.
 - `TimelineViewModel`: timeline state.
 - `DeviceVerificationViewModel`: device verification state and action state.
@@ -105,11 +114,12 @@ The remaining production tasks are:
 1. Decide whether a dev-only homeserver URL override is allowed for local
    testing before DNS/TLS is live.
 2. Finish production gating for device verification state after SAS completes.
-3. Add key backup/recovery state and UX.
+3. Live-validate Matrix recovery setup/confirmation without printing recovery
+   keys or passwords.
 4. Keep tokens and decrypted message bodies out of logs.
 5. Add production group room creation and group invite UX.
 6. Add persistent tests around encrypted room sync, invite handling, device
-   verification state, and logout cleanup.
+   verification/recovery state, and logout cleanup.
 
 Do not add custom cryptography while implementing the adapter.
 
@@ -120,19 +130,21 @@ from environment variables, stores the admin session in a dedicated Keychain
 service, and prints only `TRIX_LIVE_SMOKE ...` status lines. Do not paste
 passwords, access tokens, or decrypted message bodies into logs.
 
-As of May 5, 2026, the live iOS device verification smoke against
-`https://trix.selfhost.ru` reaches request, accept, SAS start, matching
-challenge, and `SessionVerificationController` `didFinish`. The Matrix SDK did
-not report `verificationState == verified` within the smoke timeout. DEBUG
-diagnostics on both sessions reported `hasDevicesToVerifyAgainst=false` with an
-own user identity present, `hasMasterKey=true`, `backupExistsOnServer=false`,
-and `recoveryState=disabled`, so the app still treats SDK verified-state as the
-production gate rather than replacing it with a local flag. Element X gates
-interactive device verification on `hasDevicesToVerifyAgainst`; Trix now does
-the same in both the UI and SDK adapter. When live diagnostics report no
-eligible device, the smoke exits after confirming that blocked state instead of
-forcing an interactive SAS flow. Recovery/key backup remains an explicit missing
-MVP path.
+As of May 5, 2026, an earlier live iOS device verification smoke against
+`https://trix.selfhost.ru` reached request, accept, SAS start, matching
+challenge, and `SessionVerificationController` `didFinish`, but the Matrix SDK
+did not report `verificationState == verified` within the smoke timeout. A
+later signed-simulator rerun after the recovery UI slice reported
+`verificationState=unverified`, `hasDevicesToVerifyAgainst=false`,
+`isLastDevice=false`, `backupState=unknown`, `backupExistsOnServer=false`,
+`recoveryState=disabled`, and an own user identity present with
+`hasMasterKey=true`. Element X gates interactive device verification on
+`hasDevicesToVerifyAgainst`; Trix now does the same in both the UI and SDK
+adapter. When live diagnostics report no eligible device, the smoke exits after
+confirming that blocked state instead of forcing an interactive SAS flow.
+Recovery/key backup remains an explicit live-validation path, but the
+production UI now surfaces the safe SDK-backed recovery setup/confirmation path
+for that blocked state.
 
 Modes:
 

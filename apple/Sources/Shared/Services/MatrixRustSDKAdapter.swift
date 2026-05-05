@@ -164,6 +164,9 @@ actor MatrixRustSDKAdapter: MatrixService {
         let verificationState = Self.deviceVerificationState(from: encryption.verificationState())
         let hasDevicesToVerifyAgainst = try await encryption.hasDevicesToVerifyAgainst()
         let isLastDevice = try await encryption.isLastDevice()
+        let recoveryState = Self.recoveryState(from: encryption.recoveryState())
+        let backupState = Self.backupState(from: encryption.backupState())
+        let backupExistsOnServer = try? await encryption.backupExistsOnServer()
         let ed25519Fingerprint = await encryption.ed25519Key()
         let curve25519IdentityKey = await encryption.curve25519Key()
 
@@ -173,6 +176,9 @@ actor MatrixRustSDKAdapter: MatrixService {
             state: verificationState,
             hasDevicesToVerifyAgainst: hasDevicesToVerifyAgainst,
             isLastDevice: isLastDevice,
+            recoveryState: recoveryState,
+            backupState: backupState,
+            backupExistsOnServer: backupExistsOnServer,
             ed25519Fingerprint: ed25519Fingerprint,
             curve25519IdentityKey: curve25519IdentityKey,
             updatedAt: Date()
@@ -286,6 +292,52 @@ actor MatrixRustSDKAdapter: MatrixService {
         try await controller.cancelVerification()
         setVerificationFlow(phase: .cancelled)
         return verificationFlow
+    }
+
+    func setUpRecovery(session: MatrixSession) async throws -> String {
+        let client = try await resolvedClient(session: session)
+        let encryption = client.encryption()
+        await encryption.waitForE2eeInitializationTasks()
+
+        guard encryption.recoveryState() == .disabled else {
+            throw MatrixClientError.recoverySetupUnavailable
+        }
+
+        let listener = SDKRecoveryProgressListener()
+
+        do {
+            let recoveryKey = try await encryption.enableRecovery(
+                waitForBackupsToUpload: false,
+                passphrase: nil,
+                progressListener: listener
+            )
+            if listener.uploadFailed {
+                throw MatrixClientError.recoveryKeySetupFailed
+            }
+            return recoveryKey
+        } catch let error as MatrixClientError {
+            throw error
+        } catch {
+            throw MatrixClientError.recoveryKeySetupFailed
+        }
+    }
+
+    func confirmRecoveryKey(_ recoveryKey: String, session: MatrixSession) async throws -> MatrixDeviceVerificationStatus {
+        let trimmedKey = recoveryKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedKey.isEmpty else {
+            throw MatrixClientError.recoveryKeyRequired
+        }
+
+        let client = try await resolvedClient(session: session)
+        let encryption = client.encryption()
+        await encryption.waitForE2eeInitializationTasks()
+
+        do {
+            try await encryption.recoverAndFixBackup(recoveryKey: trimmedKey)
+            return try await deviceVerificationStatus(session: session)
+        } catch {
+            throw MatrixClientError.recoveryKeyConfirmationFailed
+        }
     }
 
     func createEncryptedDirectRoom(
@@ -819,6 +871,25 @@ private final class SDKSessionVerificationDelegate: SessionVerificationControlle
     }
 }
 
+private final class SDKRecoveryProgressListener: EnableRecoveryProgressListener, @unchecked Sendable {
+    private let lock = NSLock()
+    private var hasUploadFailed = false
+
+    var uploadFailed: Bool {
+        lock.withLock {
+            hasUploadFailed
+        }
+    }
+
+    func onUpdate(status: EnableRecoveryProgress) {
+        if status == .roomKeyUploadError {
+            lock.withLock {
+                hasUploadFailed = true
+            }
+        }
+    }
+}
+
 private extension MatrixRustSDKAdapter {
     static var defaultDeviceName: String {
         #if os(iOS)
@@ -1029,6 +1100,42 @@ private extension MatrixRustSDKAdapter {
             return .verified
         case .unverified:
             return .unverified
+        @unknown default:
+            return .unknown
+        }
+    }
+
+    static func recoveryState(from sdkState: RecoveryState) -> MatrixRecoveryState {
+        switch sdkState {
+        case .unknown:
+            return .unknown
+        case .enabled:
+            return .enabled
+        case .disabled:
+            return .disabled
+        case .incomplete:
+            return .incomplete
+        @unknown default:
+            return .unknown
+        }
+    }
+
+    static func backupState(from sdkState: BackupState) -> MatrixBackupState {
+        switch sdkState {
+        case .unknown:
+            return .unknown
+        case .creating:
+            return .creating
+        case .enabling:
+            return .enabling
+        case .resuming:
+            return .resuming
+        case .enabled:
+            return .enabled
+        case .downloading:
+            return .downloading
+        case .disabling:
+            return .disabling
         @unknown default:
             return .unknown
         }

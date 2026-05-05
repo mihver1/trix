@@ -57,14 +57,17 @@ messages.
 - [x] Wire explicit Matrix SDK device verification actions in the Apple UI.
 - [x] Add a second device and complete the Matrix SDK SAS verification flow.
 - [ ] Confirm Matrix SDK verified-state flips after the SAS flow completes.
-- [ ] Confirm unverified device behavior is understandable.
+- [x] Confirm unverified device behavior is understandable.
+- [x] Show a no-eligible-device blocked state when Matrix SDK cannot start
+      interactive SAS.
+- [x] Add SDK-backed recovery setup/confirmation UI for that blocked state.
+- [ ] Live-validate recovery setup/confirmation without printing recovery keys.
 
 ## Deferred MVP Items
 
 - [ ] Device verification production UX, pending SDK verified-state validation
       after live SAS completion.
-- [ ] Key backup.
-- [ ] Key recovery.
+- [ ] Key backup/recovery live validation and persistence tests.
 - [ ] Push notifications through Matrix push gateway and APNs.
 - [ ] Media upload.
 - [ ] Media download.
@@ -89,7 +92,7 @@ messages.
       encrypted send, encrypted receive, and cleanup against
       `https://trix.selfhost.ru`.
 - [x] SwiftUI Apple client has production controls for encrypted DM creation
-      and pending invite accept/decline. This slice has not re-run live smoke.
+      and pending invite accept/decline.
 - [x] SwiftUI Apple client shows read-only Matrix SDK device verification
       state without silently trusting devices.
 - [x] SwiftUI Apple client can request, accept, start SAS, approve, decline,
@@ -105,6 +108,17 @@ messages.
       session verification when `hasDevicesToVerifyAgainst=true`; Trix follows
       that SDK gate in the UI, adapter, and live smoke, and does not treat SAS
       completion as a local verified flag.
+- [x] SwiftUI Apple client shows a no-eligible-device blocked state and exposes
+      Matrix SDK recovery instead of forcing SAS: `enableRecovery` is available
+      only when SDK recovery is disabled, and `recoverAndFixBackup` is available
+      only when SDK recovery is enabled or incomplete. Recovery keys are shown
+      only in UI state for the user to save or enter, not in logs or live smoke
+      output.
+- [x] Signed-simulator live iOS device verification smoke was re-run after the
+      recovery UI slice on May 5, 2026. It exited successfully in the expected
+      blocked state with `verificationState=unverified`,
+      `hasDevicesToVerifyAgainst=false`, `backupState=unknown`,
+      `backupExistsOnServer=false`, `recoveryState=disabled`, and no SAS forcing.
 
 ## Live Validation Notes
 

@@ -121,6 +121,19 @@ struct MatrixRoomListView: View {
                         Task {
                             await model.cancelDeviceVerification()
                         }
+                    },
+                    setUpRecovery: {
+                        Task {
+                            await model.setUpRecovery()
+                        }
+                    },
+                    confirmRecoveryKey: {
+                        Task {
+                            await model.confirmRecoveryKey()
+                        }
+                    },
+                    dismissRecoveryKey: {
+                        deviceVerificationViewModel.dismissRecoveryKey()
                     }
                 )
 

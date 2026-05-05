@@ -6,6 +6,9 @@ actor MockMatrixService: MatrixService {
     private var timelines: [String: [MatrixTimelineItem]]
     private var verificationState: MatrixDeviceVerificationState
     private var verificationFlow: MatrixDeviceVerificationFlow
+    private var recoveryState: MatrixRecoveryState
+    private var backupState: MatrixBackupState
+    private var backupExistsOnServer: Bool
 
     init(now: Date = Date()) {
         let directRoom = MatrixRoomSummary(
@@ -40,6 +43,9 @@ actor MockMatrixService: MatrixService {
         self.roomInvites = [invite]
         self.verificationState = .unverified
         self.verificationFlow = .idle
+        self.recoveryState = .disabled
+        self.backupState = .unknown
+        self.backupExistsOnServer = false
         self.timelines = [
             directRoom.id: [
                 MatrixTimelineItem(
@@ -124,6 +130,9 @@ actor MockMatrixService: MatrixService {
             state: verificationState,
             hasDevicesToVerifyAgainst: true,
             isLastDevice: false,
+            recoveryState: recoveryState,
+            backupState: backupState,
+            backupExistsOnServer: backupExistsOnServer,
             ed25519Fingerprint: "MOCKED25519FINGERPRINT",
             curve25519IdentityKey: "MOCKCURVE25519IDENTITYKEY",
             updatedAt: Date()
@@ -195,6 +204,28 @@ actor MockMatrixService: MatrixService {
             updatedAt: Date()
         )
         return verificationFlow
+    }
+
+    func setUpRecovery(session: MatrixSession) async throws -> String {
+        guard recoveryState == .disabled else {
+            throw MatrixClientError.recoverySetupUnavailable
+        }
+
+        recoveryState = .enabled
+        backupState = .enabled
+        backupExistsOnServer = true
+        return "MOCK-RECOVERY-KEY"
+    }
+
+    func confirmRecoveryKey(_ recoveryKey: String, session: MatrixSession) async throws -> MatrixDeviceVerificationStatus {
+        guard !recoveryKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw MatrixClientError.recoveryKeyRequired
+        }
+
+        recoveryState = .enabled
+        backupState = .enabled
+        backupExistsOnServer = true
+        return try await deviceVerificationStatus(session: session)
     }
 
     func timeline(roomID: String, session: MatrixSession) async throws -> [MatrixTimelineItem] {
