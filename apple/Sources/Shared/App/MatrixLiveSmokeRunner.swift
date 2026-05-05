@@ -149,7 +149,7 @@ enum MatrixLiveSmokeRunner {
             _ = try await existingService.rooms(session: firstSession)
             _ = try await existingService.deviceVerificationStatus(session: firstSession)
             _ = try await existingService.deviceVerificationFlow(session: firstSession)
-            try await emitVerificationSnapshot(
+            _ = try await emitVerificationSnapshot(
                 "existing initial",
                 service: existingService,
                 session: firstSession
@@ -164,13 +164,19 @@ enum MatrixLiveSmokeRunner {
             _ = try await newDeviceService.rooms(session: secondSession)
             _ = try await newDeviceService.deviceVerificationStatus(session: secondSession)
             _ = try await newDeviceService.deviceVerificationFlow(session: secondSession)
-            try await emitVerificationSnapshot(
+            let newDeviceSnapshot = try await emitVerificationSnapshot(
                 "new-device initial",
                 service: newDeviceService,
                 session: secondSession
             )
 
             emit("device-verification-sessions ok user=\(admin.userID)")
+
+            guard newDeviceSnapshot.hasDevicesToVerifyAgainst else {
+                emit("device-verification-state blocked reason=no-eligible-device \(newDeviceSnapshot.liveSmokeDescription)")
+                await cleanup()
+                return
+            }
 
             _ = try await newDeviceService.requestDeviceVerification(session: secondSession)
             emit("device-verification-request ok")
@@ -362,13 +368,15 @@ enum MatrixLiveSmokeRunner {
         throw MatrixLiveSmokeError.verificationStateNotVerified
     }
 
+    @discardableResult
     private static func emitVerificationSnapshot(
         _ label: String,
         service: MatrixRustSDKAdapter,
         session: MatrixSession
-    ) async throws {
+    ) async throws -> MatrixDeviceVerificationDebugSnapshot {
         let snapshot = try await service.debugDeviceVerificationSnapshot(session: session)
         emit("device-verification-debug \(label) \(snapshot.liveSmokeDescription)")
+        return snapshot
     }
 
     private static func adminStore() -> KeychainMatrixSessionStore {

@@ -231,6 +231,13 @@ actor MatrixRustSDKAdapter: MatrixService {
     }
 
     func requestDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
+        let client = try await resolvedClient(session: session)
+        let encryption = client.encryption()
+        await encryption.waitForE2eeInitializationTasks()
+        guard try await encryption.hasDevicesToVerifyAgainst() else {
+            throw MatrixClientError.noEligibleDeviceForVerification
+        }
+
         let controller = try await sessionVerificationController(session: session)
         try await controller.requestDeviceVerification()
         setVerificationFlow(phase: .requestSent)

@@ -129,7 +129,10 @@ own user identity present, `hasMasterKey=true`, `backupExistsOnServer=false`,
 and `recoveryState=disabled`, so the app still treats SDK verified-state as the
 production gate rather than replacing it with a local flag. Element X gates
 interactive device verification on `hasDevicesToVerifyAgainst`; Trix now does
-the same and leaves recovery/key backup as an explicit missing MVP path.
+the same in both the UI and SDK adapter. When live diagnostics report no
+eligible device, the smoke exits after confirming that blocked state instead of
+forcing an interactive SAS flow. Recovery/key backup remains an explicit missing
+MVP path.
 
 Modes:
 

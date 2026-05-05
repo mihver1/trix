@@ -276,6 +276,7 @@ enum MatrixClientError: LocalizedError {
     case missingSession
     case roomUnavailable
     case inviteUnavailable
+    case noEligibleDeviceForVerification
     case keychainFailure(String)
     case sdkAdapterUnavailable
 
@@ -295,6 +296,8 @@ enum MatrixClientError: LocalizedError {
             return "The selected Matrix room is not available yet."
         case .inviteUnavailable:
             return "The Matrix invite is no longer available."
+        case .noEligibleDeviceForVerification:
+            return "No verified Matrix session is available to verify this device."
         case .keychainFailure(let detail):
             return "Keychain operation failed: \(detail)"
         case .sdkAdapterUnavailable:

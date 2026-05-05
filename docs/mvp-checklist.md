@@ -103,7 +103,8 @@ messages.
       `recoveryState=disabled`, and an own user identity present with
       `hasMasterKey=true` but not verified. Element X only offers interactive
       session verification when `hasDevicesToVerifyAgainst=true`; Trix follows
-      that SDK gate and does not treat SAS completion as a local verified flag.
+      that SDK gate in the UI, adapter, and live smoke, and does not treat SAS
+      completion as a local verified flag.
 
 ## Live Validation Notes
 
