@@ -179,6 +179,52 @@ actor MatrixRustSDKAdapter: MatrixService {
         )
     }
 
+    #if DEBUG
+    func debugDeviceVerificationSnapshot(session: MatrixSession) async throws -> MatrixDeviceVerificationDebugSnapshot {
+        let client = try await resolvedClient(session: session)
+        let encryption = client.encryption()
+        await encryption.waitForE2eeInitializationTasks()
+
+        let state = Self.deviceVerificationState(from: encryption.verificationState())
+        let hasDevicesToVerifyAgainst = try await encryption.hasDevicesToVerifyAgainst()
+        let isLastDevice = try await encryption.isLastDevice()
+        let sdkDeviceMatchesSession = Self.debugBool {
+            try client.deviceId() == session.deviceID
+        }
+        let backupState = Self.debugBackupState(from: encryption.backupState())
+        let backupExistsOnServer = await Self.debugAsyncBool {
+            try await encryption.backupExistsOnServer()
+        }
+        let recoveryState = Self.debugRecoveryState(from: encryption.recoveryState())
+        let userIdentity: MatrixUserIdentityDebugState
+        do {
+            if let identity = try await encryption.userIdentity(userId: session.userID, fallbackToServer: true) {
+                userIdentity = .present(
+                    isVerified: identity.isVerified(),
+                    wasPreviouslyVerified: identity.wasPreviouslyVerified(),
+                    hasVerificationViolation: identity.hasVerificationViolation(),
+                    hasMasterKey: identity.masterKey() != nil
+                )
+            } else {
+                userIdentity = .missing
+            }
+        } catch {
+            userIdentity = .lookupFailed
+        }
+
+        return MatrixDeviceVerificationDebugSnapshot(
+            state: state,
+            hasDevicesToVerifyAgainst: hasDevicesToVerifyAgainst,
+            isLastDevice: isLastDevice,
+            sdkDeviceMatchesSession: sdkDeviceMatchesSession,
+            backupState: backupState,
+            backupExistsOnServer: backupExistsOnServer,
+            recoveryState: recoveryState,
+            userIdentity: userIdentity
+        )
+    }
+    #endif
+
     func deviceVerificationFlow(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
         _ = try await sessionVerificationController(session: session)
         return verificationFlow
@@ -215,7 +261,9 @@ actor MatrixRustSDKAdapter: MatrixService {
     func approveDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
         let controller = try await sessionVerificationController(session: session)
         try await controller.approveVerification()
-        setVerificationFlow(phase: .finished)
+        if verificationFlow.phase != .finished {
+            setVerificationFlow(phase: .approved)
+        }
         return verificationFlow
     }
 
@@ -435,7 +483,7 @@ actor MatrixRustSDKAdapter: MatrixService {
         switch phase {
         case .accepted, .sasStarted, .challengeReceived:
             shouldPreserveRequest = true
-        case .idle, .requestSent, .incomingRequest, .finished, .cancelled, .failed:
+        case .idle, .requestSent, .incomingRequest, .approved, .finished, .cancelled, .failed:
             shouldPreserveRequest = false
         }
 
@@ -499,6 +547,74 @@ private struct SDKSessionPaths {
     let data: URL
     let cache: URL
 }
+
+#if DEBUG
+struct MatrixDeviceVerificationDebugSnapshot: Equatable, Sendable {
+    let state: MatrixDeviceVerificationState
+    let hasDevicesToVerifyAgainst: Bool
+    let isLastDevice: Bool
+    let sdkDeviceMatchesSession: MatrixDebugBool
+    let backupState: String
+    let backupExistsOnServer: MatrixDebugBool
+    let recoveryState: String
+    let userIdentity: MatrixUserIdentityDebugState
+
+    var liveSmokeDescription: String {
+        [
+            "verificationState=\(state.rawValue)",
+            "hasDevicesToVerifyAgainst=\(hasDevicesToVerifyAgainst)",
+            "isLastDevice=\(isLastDevice)",
+            "sdkDeviceMatchesSession=\(sdkDeviceMatchesSession.liveSmokeDescription)",
+            "backupState=\(backupState)",
+            "backupExistsOnServer=\(backupExistsOnServer.liveSmokeDescription)",
+            "recoveryState=\(recoveryState)",
+            "userIdentity=\(userIdentity.liveSmokeDescription)",
+        ].joined(separator: " ")
+    }
+}
+
+enum MatrixDebugBool: Equatable, Sendable {
+    case value(Bool)
+    case lookupFailed
+
+    var liveSmokeDescription: String {
+        switch self {
+        case .value(let value):
+            return "\(value)"
+        case .lookupFailed:
+            return "lookupFailed"
+        }
+    }
+}
+
+enum MatrixUserIdentityDebugState: Equatable, Sendable {
+    case present(
+        isVerified: Bool,
+        wasPreviouslyVerified: Bool,
+        hasVerificationViolation: Bool,
+        hasMasterKey: Bool
+    )
+    case missing
+    case lookupFailed
+
+    var liveSmokeDescription: String {
+        switch self {
+        case .present(let isVerified, let wasPreviouslyVerified, let hasVerificationViolation, let hasMasterKey):
+            return [
+                "present",
+                "isVerified=\(isVerified)",
+                "wasPreviouslyVerified=\(wasPreviouslyVerified)",
+                "hasVerificationViolation=\(hasVerificationViolation)",
+                "hasMasterKey=\(hasMasterKey)",
+            ].joined(separator: ",")
+        case .missing:
+            return "missing"
+        case .lookupFailed:
+            return "lookupFailed"
+        }
+    }
+}
+#endif
 
 private struct SDKTimelineState {
     let timeline: Timeline
@@ -910,6 +1026,60 @@ private extension MatrixRustSDKAdapter {
             return .unknown
         }
     }
+
+    #if DEBUG
+    static func debugBool(_ load: () throws -> Bool) -> MatrixDebugBool {
+        do {
+            return .value(try load())
+        } catch {
+            return .lookupFailed
+        }
+    }
+
+    static func debugAsyncBool(_ load: () async throws -> Bool) async -> MatrixDebugBool {
+        do {
+            return .value(try await load())
+        } catch {
+            return .lookupFailed
+        }
+    }
+
+    static func debugBackupState(from state: BackupState) -> String {
+        switch state {
+        case .unknown:
+            return "unknown"
+        case .creating:
+            return "creating"
+        case .enabling:
+            return "enabling"
+        case .resuming:
+            return "resuming"
+        case .enabled:
+            return "enabled"
+        case .downloading:
+            return "downloading"
+        case .disabling:
+            return "disabling"
+        @unknown default:
+            return "unknown"
+        }
+    }
+
+    static func debugRecoveryState(from state: RecoveryState) -> String {
+        switch state {
+        case .unknown:
+            return "unknown"
+        case .enabled:
+            return "enabled"
+        case .disabled:
+            return "disabled"
+        case .incomplete:
+            return "incomplete"
+        @unknown default:
+            return "unknown"
+        }
+    }
+    #endif
 }
 
 private extension MatrixSession {

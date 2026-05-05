@@ -5,7 +5,7 @@ messages.
 
 ## Server
 
-- [ ] Choose final `server_name`.
+- [x] Choose final `server_name`: trix.selfhost.ru
 - [x] Confirm `server_name` is `trix.selfhost.ru` or intentionally changed
       before real users exist.
 - [ ] Replace the sample registration token.
@@ -94,9 +94,16 @@ messages.
       state without silently trusting devices.
 - [x] SwiftUI Apple client can request, accept, start SAS, approve, decline,
       and cancel Matrix SDK device verification. Live iOS smoke on May 5, 2026
-      reached request, accept, SAS start, matching challenge, and finish against
+      reached request, accept, SAS start, matching challenge, and
+      `SessionVerificationController` `didFinish` against
       `https://trix.selfhost.ru`; Matrix SDK verified-state did not flip within
-      the smoke timeout.
+      the smoke timeout. DEBUG diagnostics on both sessions reported
+      `verificationState=unverified`, `hasDevicesToVerifyAgainst=false`,
+      `isLastDevice=false`, `backupExistsOnServer=false`,
+      `recoveryState=disabled`, and an own user identity present with
+      `hasMasterKey=true` but not verified. Element X only offers interactive
+      session verification when `hasDevicesToVerifyAgainst=true`; Trix follows
+      that SDK gate and does not treat SAS completion as a local verified flag.
 
 ## Live Validation Notes
 
@@ -108,5 +115,6 @@ messages.
 - The live smoke runner uses a signed iOS simulator build because unsigned
   simulator builds cannot access Keychain reliably.
 - Device verification live smoke does not print SAS values; it only reports
-  phase completion and whether the SDK verified-state gate passed.
+  phase completion, SDK verified-state, eligible-device flags, backup/recovery
+  state, and own user identity status.
 - Several smoke-created encrypted DM rooms may exist on the live server.

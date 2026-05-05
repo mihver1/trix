@@ -149,6 +149,11 @@ enum MatrixLiveSmokeRunner {
             _ = try await existingService.rooms(session: firstSession)
             _ = try await existingService.deviceVerificationStatus(session: firstSession)
             _ = try await existingService.deviceVerificationFlow(session: firstSession)
+            try await emitVerificationSnapshot(
+                "existing initial",
+                service: existingService,
+                session: firstSession
+            )
 
             let secondSession = try await newDeviceService.login(
                 userID: admin.userID,
@@ -159,6 +164,11 @@ enum MatrixLiveSmokeRunner {
             _ = try await newDeviceService.rooms(session: secondSession)
             _ = try await newDeviceService.deviceVerificationStatus(session: secondSession)
             _ = try await newDeviceService.deviceVerificationFlow(session: secondSession)
+            try await emitVerificationSnapshot(
+                "new-device initial",
+                service: newDeviceService,
+                session: secondSession
+            )
 
             emit("device-verification-sessions ok user=\(admin.userID)")
 
@@ -166,6 +176,7 @@ enum MatrixLiveSmokeRunner {
             emit("device-verification-request ok")
 
             let incomingRequest = try await waitForFlow(
+                label: "existing incoming-request",
                 service: existingService,
                 session: firstSession,
                 phases: [.incomingRequest],
@@ -183,6 +194,7 @@ enum MatrixLiveSmokeRunner {
             emit("device-verification-accept ok")
 
             _ = try await waitForFlow(
+                label: "new-device accepted",
                 service: newDeviceService,
                 session: secondSession,
                 phases: [.accepted, .sasStarted, .challengeReceived],
@@ -192,36 +204,27 @@ enum MatrixLiveSmokeRunner {
             _ = try await newDeviceService.startSasDeviceVerification(session: secondSession)
             emit("device-verification-sas-start ok")
 
-            let requestingChallenge = try await waitForFlow(
-                service: newDeviceService,
-                session: secondSession,
-                phases: [.challengeReceived],
+            try await waitForMatchingChallenges(
+                requestingService: newDeviceService,
+                requestingSession: secondSession,
+                acceptingService: existingService,
+                acceptingSession: firstSession,
                 timeoutSeconds: 45
-            ).challenge
-            let acceptingChallenge = try await waitForFlow(
-                service: existingService,
-                session: firstSession,
-                phases: [.challengeReceived],
-                timeoutSeconds: 45
-            ).challenge
-
-            guard let requestingChallenge,
-                  let acceptingChallenge,
-                  requestingChallenge == acceptingChallenge else {
-                throw MatrixLiveSmokeError.verificationChallengeMismatch
-            }
+            )
             emit("device-verification-challenge ok")
 
             _ = try await newDeviceService.approveDeviceVerification(session: secondSession)
             _ = try await existingService.approveDeviceVerification(session: firstSession)
 
             _ = try await waitForFlow(
+                label: "new-device finish",
                 service: newDeviceService,
                 session: secondSession,
                 phases: [.finished],
                 timeoutSeconds: 45
             )
             _ = try await waitForFlow(
+                label: "existing finish",
                 service: existingService,
                 session: firstSession,
                 phases: [.finished],
@@ -229,8 +232,20 @@ enum MatrixLiveSmokeRunner {
             )
             emit("device-verification-finish ok")
 
-            _ = try await waitForVerified(service: newDeviceService, session: secondSession)
-            _ = try await waitForVerified(service: existingService, session: firstSession)
+            var verificationError: Error?
+            do {
+                try await waitForVerified(label: "new-device", service: newDeviceService, session: secondSession)
+            } catch {
+                verificationError = error
+            }
+            do {
+                try await waitForVerified(label: "existing", service: existingService, session: firstSession)
+            } catch {
+                verificationError = verificationError ?? error
+            }
+            if let verificationError {
+                throw verificationError
+            }
             emit("device-verification-state ok")
             await cleanup()
         } catch {
@@ -258,15 +273,19 @@ enum MatrixLiveSmokeRunner {
     }
 
     private static func waitForFlow(
+        label: String,
         service: MatrixRustSDKAdapter,
         session: MatrixSession,
         phases: Set<MatrixDeviceVerificationFlowPhase>,
         timeoutSeconds: Int
     ) async throws -> MatrixDeviceVerificationFlow {
-        for _ in 0..<timeoutSeconds {
+        for attempt in 0..<timeoutSeconds {
             let flow = try await service.deviceVerificationFlow(session: session)
             if phases.contains(flow.phase) {
                 return flow
+            }
+            if attempt == 0 || (attempt + 1).isMultiple(of: 10) {
+                emit("device-verification-flow \(label) waitSeconds=\(attempt + 1) phase=\(flow.phase.rawValue)")
             }
             if flow.phase == .failed {
                 throw MatrixLiveSmokeError.verificationFailed
@@ -280,19 +299,76 @@ enum MatrixLiveSmokeRunner {
         throw MatrixLiveSmokeError.verificationTimedOut
     }
 
+    private static func waitForMatchingChallenges(
+        requestingService: MatrixRustSDKAdapter,
+        requestingSession: MatrixSession,
+        acceptingService: MatrixRustSDKAdapter,
+        acceptingSession: MatrixSession,
+        timeoutSeconds: Int
+    ) async throws {
+        for attempt in 0..<timeoutSeconds {
+            let requestingFlow = try await requestingService.deviceVerificationFlow(session: requestingSession)
+            let acceptingFlow = try await acceptingService.deviceVerificationFlow(session: acceptingSession)
+
+            if attempt == 0 || (attempt + 1).isMultiple(of: 10) {
+                emit(
+                    "device-verification-flow challenge waitSeconds=\(attempt + 1) " +
+                    "requestingPhase=\(requestingFlow.phase.rawValue) " +
+                    "acceptingPhase=\(acceptingFlow.phase.rawValue) " +
+                    "requestingHasChallenge=\(requestingFlow.challenge != nil) " +
+                    "acceptingHasChallenge=\(acceptingFlow.challenge != nil)"
+                )
+            }
+
+            if requestingFlow.phase == .failed || acceptingFlow.phase == .failed {
+                throw MatrixLiveSmokeError.verificationFailed
+            }
+            if requestingFlow.phase == .cancelled || acceptingFlow.phase == .cancelled {
+                throw MatrixLiveSmokeError.verificationCancelled
+            }
+
+            if let requestingChallenge = requestingFlow.challenge,
+               let acceptingChallenge = acceptingFlow.challenge {
+                guard requestingChallenge == acceptingChallenge else {
+                    throw MatrixLiveSmokeError.verificationChallengeMismatch
+                }
+                return
+            }
+
+            try? await Task.sleep(for: .seconds(1))
+        }
+
+        throw MatrixLiveSmokeError.verificationTimedOut
+    }
+
     private static func waitForVerified(
+        label: String,
         service: MatrixRustSDKAdapter,
         session: MatrixSession
-    ) async throws -> MatrixDeviceVerificationStatus {
-        for _ in 0..<60 {
-            let status = try await service.deviceVerificationStatus(session: session)
-            if status.state == .verified {
-                return status
+    ) async throws {
+        for attempt in 0..<60 {
+            let snapshot = try await service.debugDeviceVerificationSnapshot(session: session)
+            if snapshot.state == .verified {
+                emit("device-verification-debug \(label) verified \(snapshot.liveSmokeDescription)")
+                return
+            }
+
+            if attempt == 0 || (attempt + 1).isMultiple(of: 10) {
+                emit("device-verification-debug \(label) waitSeconds=\(attempt + 1) \(snapshot.liveSmokeDescription)")
             }
             try? await Task.sleep(for: .seconds(1))
         }
 
         throw MatrixLiveSmokeError.verificationStateNotVerified
+    }
+
+    private static func emitVerificationSnapshot(
+        _ label: String,
+        service: MatrixRustSDKAdapter,
+        session: MatrixSession
+    ) async throws {
+        let snapshot = try await service.debugDeviceVerificationSnapshot(session: session)
+        emit("device-verification-debug \(label) \(snapshot.liveSmokeDescription)")
     }
 
     private static func adminStore() -> KeychainMatrixSessionStore {

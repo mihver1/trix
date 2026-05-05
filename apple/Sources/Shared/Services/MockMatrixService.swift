@@ -168,7 +168,6 @@ actor MockMatrixService: MatrixService {
     }
 
     func approveDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
-        verificationState = .verified
         verificationFlow = MatrixDeviceVerificationFlow(
             phase: .finished,
             request: nil,

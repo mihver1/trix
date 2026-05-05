@@ -162,7 +162,9 @@ struct MatrixDeviceVerificationStatusView: View {
 
         switch viewModel.flow.phase {
         case .idle, .cancelled, .failed:
-            if viewModel.status?.needsUserConfirmation != false {
+            if let status = viewModel.status,
+               status.needsUserConfirmation,
+               status.hasDevicesToVerifyAgainst {
                 Button {
                     requestVerification()
                 } label: {
@@ -198,7 +200,7 @@ struct MatrixDeviceVerificationStatusView: View {
 
             cancelButton(isBusy: isBusy)
 
-        case .requestSent, .sasStarted:
+        case .requestSent, .sasStarted, .approved:
             cancelButton(isBusy: isBusy)
 
         case .challengeReceived:
@@ -288,6 +290,8 @@ private struct MatrixDeviceVerificationFlowView: View {
             return "number"
         case .challengeReceived:
             return "checklist"
+        case .approved:
+            return "hourglass"
         case .finished:
             return "checkmark.shield.fill"
         case .cancelled:
@@ -305,7 +309,7 @@ private struct MatrixDeviceVerificationFlowView: View {
             return .orange
         case .idle:
             return .secondary
-        case .requestSent, .incomingRequest, .accepted, .sasStarted, .challengeReceived:
+        case .requestSent, .incomingRequest, .accepted, .sasStarted, .challengeReceived, .approved:
             return .blue
         }
     }

@@ -122,6 +122,7 @@ enum MatrixDeviceVerificationFlowPhase: String, Codable, Sendable {
     case accepted
     case sasStarted
     case challengeReceived
+    case approved
     case finished
     case cancelled
     case failed
@@ -140,6 +141,8 @@ enum MatrixDeviceVerificationFlowPhase: String, Codable, Sendable {
             return "SAS verification started"
         case .challengeReceived:
             return "Compare verification codes"
+        case .approved:
+            return "Verification approved"
         case .finished:
             return "Verification complete"
         case .cancelled:
@@ -169,7 +172,7 @@ struct MatrixDeviceVerificationFlow: Equatable, Sendable {
         switch phase {
         case .idle, .cancelled, .failed:
             return true
-        case .requestSent, .incomingRequest, .accepted, .sasStarted, .challengeReceived, .finished:
+        case .requestSent, .incomingRequest, .accepted, .sasStarted, .challengeReceived, .approved, .finished:
             return false
         }
     }
@@ -192,6 +195,8 @@ struct MatrixDeviceVerificationFlow: Equatable, Sendable {
             return "Waiting for Matrix SDK to provide comparison codes."
         case .challengeReceived:
             return "Compare these codes with the other device before approving."
+        case .approved:
+            return "Codes approved. Waiting for Matrix SDK to finish verification."
         case .finished:
             return "Matrix SDK finished the verification flow. Refresh the device state."
         case .cancelled:

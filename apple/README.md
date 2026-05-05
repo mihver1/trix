@@ -122,19 +122,28 @@ passwords, access tokens, or decrypted message bodies into logs.
 
 As of May 5, 2026, the live iOS device verification smoke against
 `https://trix.selfhost.ru` reaches request, accept, SAS start, matching
-challenge, and finish. The Matrix SDK did not report `verificationState ==
-verified` within the smoke timeout, so the app still treats SDK verified-state
-as the production gate rather than replacing it with a local flag.
+challenge, and `SessionVerificationController` `didFinish`. The Matrix SDK did
+not report `verificationState == verified` within the smoke timeout. DEBUG
+diagnostics on both sessions reported `hasDevicesToVerifyAgainst=false` with an
+own user identity present, `hasMasterKey=true`, `backupExistsOnServer=false`,
+and `recoveryState=disabled`, so the app still treats SDK verified-state as the
+production gate rather than replacing it with a local flag. Element X gates
+interactive device verification on `hasDevicesToVerifyAgainst`; Trix now does
+the same and leaves recovery/key backup as an explicit missing MVP path.
 
 Modes:
 
 - `TRIX_MATRIX_LIVE_SMOKE_MODE=login`
 - `TRIX_MATRIX_LIVE_SMOKE_MODE=restore`
 - `TRIX_MATRIX_LIVE_SMOKE_MODE=encrypted-dm`
+- `TRIX_MATRIX_LIVE_SMOKE_MODE=device-verification`
 - `TRIX_MATRIX_LIVE_SMOKE_MODE=cleanup`
 
 Use a signed simulator build for this path. `CODE_SIGNING_ALLOWED=NO` is fine
 as a compile check, but the unsigned simulator app can fail Keychain operations.
+The device verification mode prints non-secret diagnostics for SDK
+`verificationState`, eligible-device flags, backup/recovery state, and own-user
+identity state.
 
 ## Known Build Note
 
