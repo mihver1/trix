@@ -4,6 +4,8 @@ actor MockMatrixService: MatrixService {
     private var roomSummaries: [MatrixRoomSummary]
     private var roomInvites: [MatrixRoomInvite]
     private var timelines: [String: [MatrixTimelineItem]]
+    private var verificationState: MatrixDeviceVerificationState
+    private var verificationFlow: MatrixDeviceVerificationFlow
 
     init(now: Date = Date()) {
         let directRoom = MatrixRoomSummary(
@@ -36,6 +38,8 @@ actor MockMatrixService: MatrixService {
 
         self.roomSummaries = [directRoom, groupRoom]
         self.roomInvites = [invite]
+        self.verificationState = .unverified
+        self.verificationFlow = .idle
         self.timelines = [
             directRoom.id: [
                 MatrixTimelineItem(
@@ -117,13 +121,81 @@ actor MockMatrixService: MatrixService {
         MatrixDeviceVerificationStatus(
             userID: session.userID,
             deviceID: session.deviceID,
-            state: .unverified,
+            state: verificationState,
             hasDevicesToVerifyAgainst: true,
             isLastDevice: false,
             ed25519Fingerprint: "MOCKED25519FINGERPRINT",
             curve25519IdentityKey: "MOCKCURVE25519IDENTITYKEY",
             updatedAt: Date()
         )
+    }
+
+    func deviceVerificationFlow(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
+        verificationFlow
+    }
+
+    func requestDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
+        verificationFlow = MatrixDeviceVerificationFlow(
+            phase: .requestSent,
+            request: nil,
+            challenge: nil,
+            updatedAt: Date()
+        )
+        return verificationFlow
+    }
+
+    func acceptDeviceVerificationRequest(
+        _ request: MatrixDeviceVerificationRequest,
+        session: MatrixSession
+    ) async throws -> MatrixDeviceVerificationFlow {
+        verificationFlow = MatrixDeviceVerificationFlow(
+            phase: .accepted,
+            request: request,
+            challenge: nil,
+            updatedAt: Date()
+        )
+        return verificationFlow
+    }
+
+    func startSasDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
+        verificationFlow = MatrixDeviceVerificationFlow(
+            phase: .challengeReceived,
+            request: verificationFlow.request,
+            challenge: .decimals(["1812", "5821", "9197"]),
+            updatedAt: Date()
+        )
+        return verificationFlow
+    }
+
+    func approveDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
+        verificationState = .verified
+        verificationFlow = MatrixDeviceVerificationFlow(
+            phase: .finished,
+            request: nil,
+            challenge: nil,
+            updatedAt: Date()
+        )
+        return verificationFlow
+    }
+
+    func declineDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
+        verificationFlow = MatrixDeviceVerificationFlow(
+            phase: .cancelled,
+            request: nil,
+            challenge: nil,
+            updatedAt: Date()
+        )
+        return verificationFlow
+    }
+
+    func cancelDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
+        verificationFlow = MatrixDeviceVerificationFlow(
+            phase: .cancelled,
+            request: nil,
+            challenge: nil,
+            updatedAt: Date()
+        )
+        return verificationFlow
     }
 
     func timeline(roomID: String, session: MatrixSession) async throws -> [MatrixTimelineItem] {

@@ -27,6 +27,8 @@ enum MatrixLiveSmokeRunner {
                 try await runRestore()
             case "encrypted-dm":
                 try await runEncryptedDM()
+            case "device-verification":
+                try await runDeviceVerification()
             case "cleanup":
                 try await runCleanup()
             default:
@@ -119,6 +121,124 @@ enum MatrixLiveSmokeRunner {
         try? await testService.logout(session: testSession)
     }
 
+    private static func runDeviceVerification() async throws {
+        let admin = try credentials(prefix: "ADMIN")
+        let existingService = MatrixRustSDKAdapter()
+        let newDeviceService = MatrixRustSDKAdapter()
+        var existingSession: MatrixSession?
+        var newDeviceSession: MatrixSession?
+
+        func cleanup() async {
+            if let existingSession {
+                _ = try? await existingService.cancelDeviceVerification(session: existingSession)
+                try? await existingService.logout(session: existingSession)
+            }
+            if let newDeviceSession {
+                _ = try? await newDeviceService.cancelDeviceVerification(session: newDeviceSession)
+                try? await newDeviceService.logout(session: newDeviceSession)
+            }
+        }
+
+        do {
+            let firstSession = try await existingService.login(
+                userID: admin.userID,
+                password: admin.password,
+                serverURL: MatrixClientConfiguration.homeserverURL
+            )
+            existingSession = firstSession
+            _ = try await existingService.rooms(session: firstSession)
+            _ = try await existingService.deviceVerificationStatus(session: firstSession)
+            _ = try await existingService.deviceVerificationFlow(session: firstSession)
+
+            let secondSession = try await newDeviceService.login(
+                userID: admin.userID,
+                password: admin.password,
+                serverURL: MatrixClientConfiguration.homeserverURL
+            )
+            newDeviceSession = secondSession
+            _ = try await newDeviceService.rooms(session: secondSession)
+            _ = try await newDeviceService.deviceVerificationStatus(session: secondSession)
+            _ = try await newDeviceService.deviceVerificationFlow(session: secondSession)
+
+            emit("device-verification-sessions ok user=\(admin.userID)")
+
+            _ = try await newDeviceService.requestDeviceVerification(session: secondSession)
+            emit("device-verification-request ok")
+
+            let incomingRequest = try await waitForFlow(
+                service: existingService,
+                session: firstSession,
+                phases: [.incomingRequest],
+                timeoutSeconds: 45
+            ).request
+
+            guard let incomingRequest else {
+                throw MatrixLiveSmokeError.verificationRequestNotReceived
+            }
+
+            _ = try await existingService.acceptDeviceVerificationRequest(
+                incomingRequest,
+                session: firstSession
+            )
+            emit("device-verification-accept ok")
+
+            _ = try await waitForFlow(
+                service: newDeviceService,
+                session: secondSession,
+                phases: [.accepted, .sasStarted, .challengeReceived],
+                timeoutSeconds: 45
+            )
+
+            _ = try await newDeviceService.startSasDeviceVerification(session: secondSession)
+            emit("device-verification-sas-start ok")
+
+            let requestingChallenge = try await waitForFlow(
+                service: newDeviceService,
+                session: secondSession,
+                phases: [.challengeReceived],
+                timeoutSeconds: 45
+            ).challenge
+            let acceptingChallenge = try await waitForFlow(
+                service: existingService,
+                session: firstSession,
+                phases: [.challengeReceived],
+                timeoutSeconds: 45
+            ).challenge
+
+            guard let requestingChallenge,
+                  let acceptingChallenge,
+                  requestingChallenge == acceptingChallenge else {
+                throw MatrixLiveSmokeError.verificationChallengeMismatch
+            }
+            emit("device-verification-challenge ok")
+
+            _ = try await newDeviceService.approveDeviceVerification(session: secondSession)
+            _ = try await existingService.approveDeviceVerification(session: firstSession)
+
+            _ = try await waitForFlow(
+                service: newDeviceService,
+                session: secondSession,
+                phases: [.finished],
+                timeoutSeconds: 45
+            )
+            _ = try await waitForFlow(
+                service: existingService,
+                session: firstSession,
+                phases: [.finished],
+                timeoutSeconds: 45
+            )
+            emit("device-verification-finish ok")
+
+            _ = try await waitForVerified(service: newDeviceService, session: secondSession)
+            _ = try await waitForVerified(service: existingService, session: firstSession)
+            emit("device-verification-state ok")
+            await cleanup()
+        } catch {
+            await cleanup()
+            throw error
+        }
+    }
+
     private static func runCleanup() async throws {
         let store = adminStore()
         if let session = try store.loadSession() {
@@ -135,6 +255,44 @@ enum MatrixLiveSmokeRunner {
             throw MatrixClientError.missingSession
         }
         return session
+    }
+
+    private static func waitForFlow(
+        service: MatrixRustSDKAdapter,
+        session: MatrixSession,
+        phases: Set<MatrixDeviceVerificationFlowPhase>,
+        timeoutSeconds: Int
+    ) async throws -> MatrixDeviceVerificationFlow {
+        for _ in 0..<timeoutSeconds {
+            let flow = try await service.deviceVerificationFlow(session: session)
+            if phases.contains(flow.phase) {
+                return flow
+            }
+            if flow.phase == .failed {
+                throw MatrixLiveSmokeError.verificationFailed
+            }
+            if flow.phase == .cancelled {
+                throw MatrixLiveSmokeError.verificationCancelled
+            }
+            try? await Task.sleep(for: .seconds(1))
+        }
+
+        throw MatrixLiveSmokeError.verificationTimedOut
+    }
+
+    private static func waitForVerified(
+        service: MatrixRustSDKAdapter,
+        session: MatrixSession
+    ) async throws -> MatrixDeviceVerificationStatus {
+        for _ in 0..<60 {
+            let status = try await service.deviceVerificationStatus(session: session)
+            if status.state == .verified {
+                return status
+            }
+            try? await Task.sleep(for: .seconds(1))
+        }
+
+        throw MatrixLiveSmokeError.verificationStateNotVerified
     }
 
     private static func adminStore() -> KeychainMatrixSessionStore {
@@ -181,6 +339,12 @@ private enum MatrixLiveSmokeError: LocalizedError {
     case roomNotEncrypted
     case inviteNotJoined
     case messageNotReceived
+    case verificationRequestNotReceived
+    case verificationChallengeMismatch
+    case verificationFailed
+    case verificationCancelled
+    case verificationTimedOut
+    case verificationStateNotVerified
 
     var errorDescription: String? {
         switch self {
@@ -194,6 +358,18 @@ private enum MatrixLiveSmokeError: LocalizedError {
             return "The test user did not join the encrypted room invite."
         case .messageNotReceived:
             return "The encrypted smoke message was not received by the test user."
+        case .verificationRequestNotReceived:
+            return "The second Matrix session did not receive the device verification request."
+        case .verificationChallengeMismatch:
+            return "The Matrix device verification SAS challenges did not match."
+        case .verificationFailed:
+            return "The Matrix device verification flow failed."
+        case .verificationCancelled:
+            return "The Matrix device verification flow was cancelled."
+        case .verificationTimedOut:
+            return "Timed out waiting for Matrix device verification progress."
+        case .verificationStateNotVerified:
+            return "The Matrix SDK did not report the device as verified after verification finished."
         }
     }
 }

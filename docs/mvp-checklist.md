@@ -54,12 +54,15 @@ messages.
 - [x] Confirm Conduit stores encrypted event content, not plaintext.
 - [x] Confirm device verification limitation is visible in the app.
 - [x] Surface Matrix SDK device verification state in the Apple UI.
-- [ ] Add a second device and verify it through the Matrix SDK flow.
+- [x] Wire explicit Matrix SDK device verification actions in the Apple UI.
+- [x] Add a second device and complete the Matrix SDK SAS verification flow.
+- [ ] Confirm Matrix SDK verified-state flips after the SAS flow completes.
 - [ ] Confirm unverified device behavior is understandable.
 
 ## Deferred MVP Items
 
-- [ ] Device verification production UX.
+- [ ] Device verification production UX, pending SDK verified-state validation
+      after live SAS completion.
 - [ ] Key backup.
 - [ ] Key recovery.
 - [ ] Push notifications through Matrix push gateway and APNs.
@@ -89,6 +92,11 @@ messages.
       and pending invite accept/decline. This slice has not re-run live smoke.
 - [x] SwiftUI Apple client shows read-only Matrix SDK device verification
       state without silently trusting devices.
+- [x] SwiftUI Apple client can request, accept, start SAS, approve, decline,
+      and cancel Matrix SDK device verification. Live iOS smoke on May 5, 2026
+      reached request, accept, SAS start, matching challenge, and finish against
+      `https://trix.selfhost.ru`; Matrix SDK verified-state did not flip within
+      the smoke timeout.
 
 ## Live Validation Notes
 
@@ -99,4 +107,6 @@ messages.
   `/root/trix-matrix-admin.bootstrap` and `/root/trix-matrix-test.bootstrap`.
 - The live smoke runner uses a signed iOS simulator build because unsigned
   simulator builds cannot access Keychain reliably.
+- Device verification live smoke does not print SAS values; it only reports
+  phase completion and whether the SDK verified-state gate passed.
 - Several smoke-created encrypted DM rooms may exist on the live server.

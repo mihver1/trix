@@ -57,9 +57,15 @@ struct MatrixDeviceVerificationNoticeView: View {
 
 struct MatrixDeviceVerificationStatusView: View {
     @ObservedObject var viewModel: DeviceVerificationViewModel
+    let requestVerification: () -> Void
+    let acceptRequest: (MatrixDeviceVerificationRequest) -> Void
+    let startSas: () -> Void
+    let approve: () -> Void
+    let decline: () -> Void
+    let cancel: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             if viewModel.isLoading, viewModel.status == nil {
                 HStack(spacing: 8) {
                     ProgressView()
@@ -106,6 +112,11 @@ struct MatrixDeviceVerificationStatusView: View {
                 MatrixDeviceVerificationNoticeView()
             }
 
+            Divider()
+
+            MatrixDeviceVerificationFlowView(flow: viewModel.flow)
+            actionButtons
+
             if let errorMessage = viewModel.errorMessage {
                 Text(errorMessage)
                     .font(.callout)
@@ -143,5 +154,191 @@ struct MatrixDeviceVerificationStatusView: View {
         }
 
         return "\(key.prefix(8))...\(key.suffix(8))"
+    }
+
+    @ViewBuilder
+    private var actionButtons: some View {
+        let isBusy = viewModel.actionInFlight != nil
+
+        switch viewModel.flow.phase {
+        case .idle, .cancelled, .failed:
+            if viewModel.status?.needsUserConfirmation != false {
+                Button {
+                    requestVerification()
+                } label: {
+                    actionLabel("Request Verification", systemImage: "checkmark.shield")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isBusy)
+            }
+
+        case .incomingRequest:
+            if let request = viewModel.flow.request {
+                Button {
+                    acceptRequest(request)
+                } label: {
+                    actionLabel("Accept Request", systemImage: "checkmark")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isBusy)
+            }
+
+            cancelButton(isBusy: isBusy)
+
+        case .accepted:
+            if viewModel.flow.request == nil {
+                Button {
+                    startSas()
+                } label: {
+                    actionLabel("Start SAS", systemImage: "number")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isBusy)
+            }
+
+            cancelButton(isBusy: isBusy)
+
+        case .requestSent, .sasStarted:
+            cancelButton(isBusy: isBusy)
+
+        case .challengeReceived:
+            HStack(spacing: 8) {
+                Button {
+                    approve()
+                } label: {
+                    actionLabel("Codes Match", systemImage: "checkmark")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isBusy)
+
+                Button(role: .destructive) {
+                    decline()
+                } label: {
+                    actionLabel("No Match", systemImage: "xmark")
+                }
+                .buttonStyle(.bordered)
+                .disabled(isBusy)
+            }
+
+        case .finished:
+            EmptyView()
+        }
+
+        if isBusy {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Working")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func cancelButton(isBusy: Bool) -> some View {
+        Button(role: .destructive) {
+            cancel()
+        } label: {
+            actionLabel("Cancel Verification", systemImage: "xmark")
+        }
+        .buttonStyle(.bordered)
+        .disabled(isBusy)
+    }
+
+    private func actionLabel(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .lineLimit(1)
+    }
+}
+
+private struct MatrixDeviceVerificationFlowView: View {
+    let flow: MatrixDeviceVerificationFlow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(flow.phase.label, systemImage: iconName)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(tint)
+
+            Text(flow.summary)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let request = flow.request {
+                LabeledContent("Requester", value: request.senderLabel)
+                LabeledContent("Request device", value: request.deviceLabel)
+                LabeledContent("First seen", value: request.firstSeenAt.formatted(date: .abbreviated, time: .shortened))
+            }
+
+            if let challenge = flow.challenge {
+                MatrixDeviceVerificationChallengeView(challenge: challenge)
+            }
+        }
+    }
+
+    private var iconName: String {
+        switch flow.phase {
+        case .idle:
+            return "shield"
+        case .requestSent:
+            return "paperplane"
+        case .incomingRequest:
+            return "person.badge.key"
+        case .accepted, .sasStarted:
+            return "number"
+        case .challengeReceived:
+            return "checklist"
+        case .finished:
+            return "checkmark.shield.fill"
+        case .cancelled:
+            return "xmark.shield"
+        case .failed:
+            return "exclamationmark.shield"
+        }
+    }
+
+    private var tint: Color {
+        switch flow.phase {
+        case .finished:
+            return .green
+        case .cancelled, .failed:
+            return .orange
+        case .idle:
+            return .secondary
+        case .requestSent, .incomingRequest, .accepted, .sasStarted, .challengeReceived:
+            return .blue
+        }
+    }
+}
+
+private struct MatrixDeviceVerificationChallengeView: View {
+    let challenge: MatrixDeviceVerificationChallenge
+
+    var body: some View {
+        switch challenge {
+        case .emojis(let emojis):
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(emojis) { emoji in
+                    HStack(spacing: 8) {
+                        Text(emoji.symbol)
+                            .font(.title3)
+                            .frame(width: 28)
+                        Text(emoji.description.capitalized)
+                            .font(.callout)
+                    }
+                }
+            }
+
+        case .decimals(let values):
+            HStack(spacing: 8) {
+                ForEach(values, id: \.self) { value in
+                    Text(value)
+                        .font(.callout.monospacedDigit())
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.secondary.opacity(0.12), in: Capsule())
+                }
+            }
+        }
     }
 }

@@ -194,6 +194,58 @@ final class MatrixAppModel: ObservableObject {
         await deviceVerificationViewModel.reload(session: session, service: matrixService)
     }
 
+    func requestDeviceVerification() async {
+        guard let session else {
+            return
+        }
+
+        await deviceVerificationViewModel.requestVerification(session: session, service: matrixService)
+    }
+
+    func acceptDeviceVerificationRequest(_ request: MatrixDeviceVerificationRequest) async {
+        guard let session else {
+            return
+        }
+
+        await deviceVerificationViewModel.acceptRequest(
+            request,
+            session: session,
+            service: matrixService
+        )
+    }
+
+    func startSasDeviceVerification() async {
+        guard let session else {
+            return
+        }
+
+        await deviceVerificationViewModel.startSas(session: session, service: matrixService)
+    }
+
+    func approveDeviceVerification() async {
+        guard let session else {
+            return
+        }
+
+        await deviceVerificationViewModel.approve(session: session, service: matrixService)
+    }
+
+    func declineDeviceVerification() async {
+        guard let session else {
+            return
+        }
+
+        await deviceVerificationViewModel.decline(session: session, service: matrixService)
+    }
+
+    func cancelDeviceVerification() async {
+        guard let session else {
+            return
+        }
+
+        await deviceVerificationViewModel.cancel(session: session, service: matrixService)
+    }
+
     func acceptInvitation(_ invitation: MatrixRoomInvite) async {
         guard let session else {
             return

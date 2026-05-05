@@ -12,6 +12,9 @@ actor MatrixRustSDKAdapter: MatrixService {
     private var roomListHandle: RoomListEntriesWithDynamicAdaptersResult?
     private var roomsByID: [String: Room] = [:]
     private var timelineStateByRoomID: [String: SDKTimelineState] = [:]
+    private var verificationController: SessionVerificationController?
+    private var verificationDelegate: SDKSessionVerificationDelegate?
+    private var verificationFlow: MatrixDeviceVerificationFlow = .idle
 
     func login(userID: String, password: String, serverURL: URL) async throws -> MatrixSession {
         let localpart = try Self.localpart(from: userID)
@@ -27,22 +30,20 @@ actor MatrixRustSDKAdapter: MatrixService {
         )
 
         self.client = client
+        resetVerificationFlow()
         let sdkSession = try client.session()
         return MatrixSession(sdkSession: sdkSession, sdkStoreID: storeID)
     }
 
     func restore(session: MatrixSession) async throws -> MatrixAccount {
         let paths = try Self.paths(for: session.sdkStoreID)
-        let client = try await ClientBuilder()
-            .sessionPaths(
-                dataPath: paths.data.path(percentEncoded: false),
-                cachePath: paths.cache.path(percentEncoded: false)
-            )
+        let client = try await Self.clientBuilder(paths: paths)
             .homeserverUrl(url: session.homeserverURL.absoluteString)
             .build()
 
         try await client.restoreSession(session: session.sdkSession)
         self.client = client
+        resetVerificationFlow()
 
         return MatrixAccount(
             userID: session.userID,
@@ -68,6 +69,9 @@ actor MatrixRustSDKAdapter: MatrixService {
         roomListListener = nil
         roomsByID = [:]
         timelineStateByRoomID = [:]
+        verificationController = nil
+        verificationDelegate = nil
+        verificationFlow = .idle
         client = nil
 
         try? FileManager.default.removeItem(at: Self.dataRoot(for: session.sdkStoreID))
@@ -173,6 +177,60 @@ actor MatrixRustSDKAdapter: MatrixService {
             curve25519IdentityKey: curve25519IdentityKey,
             updatedAt: Date()
         )
+    }
+
+    func deviceVerificationFlow(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
+        _ = try await sessionVerificationController(session: session)
+        return verificationFlow
+    }
+
+    func requestDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
+        let controller = try await sessionVerificationController(session: session)
+        try await controller.requestDeviceVerification()
+        setVerificationFlow(phase: .requestSent)
+        return verificationFlow
+    }
+
+    func acceptDeviceVerificationRequest(
+        _ request: MatrixDeviceVerificationRequest,
+        session: MatrixSession
+    ) async throws -> MatrixDeviceVerificationFlow {
+        let controller = try await sessionVerificationController(session: session)
+        try await controller.acknowledgeVerificationRequest(
+            senderId: request.senderUserID,
+            flowId: request.flowID
+        )
+        try await controller.acceptVerificationRequest()
+        setVerificationFlow(phase: .accepted, request: request)
+        return verificationFlow
+    }
+
+    func startSasDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
+        let controller = try await sessionVerificationController(session: session)
+        try await controller.startSasVerification()
+        setVerificationFlow(phase: .sasStarted)
+        return verificationFlow
+    }
+
+    func approveDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
+        let controller = try await sessionVerificationController(session: session)
+        try await controller.approveVerification()
+        setVerificationFlow(phase: .finished)
+        return verificationFlow
+    }
+
+    func declineDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
+        let controller = try await sessionVerificationController(session: session)
+        try await controller.declineVerification()
+        setVerificationFlow(phase: .cancelled)
+        return verificationFlow
+    }
+
+    func cancelDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
+        let controller = try await sessionVerificationController(session: session)
+        try await controller.cancelVerification()
+        setVerificationFlow(phase: .cancelled)
+        return verificationFlow
     }
 
     func createEncryptedDirectRoom(
@@ -333,6 +391,62 @@ actor MatrixRustSDKAdapter: MatrixService {
         throw MatrixClientError.inviteUnavailable
     }
 
+    private func sessionVerificationController(session: MatrixSession) async throws -> SessionVerificationController {
+        if let verificationController {
+            return verificationController
+        }
+
+        let client = try await resolvedClient(session: session)
+        await client.encryption().waitForE2eeInitializationTasks()
+        let controller = try await client.getSessionVerificationController()
+        let delegate = SDKSessionVerificationDelegate { [weak self] flow in
+            Task {
+                await self?.applyVerificationFlow(flow)
+            }
+        }
+        controller.setDelegate(delegate: delegate)
+        verificationController = controller
+        verificationDelegate = delegate
+        return controller
+    }
+
+    private func resetVerificationFlow() {
+        verificationController = nil
+        verificationDelegate = nil
+        verificationFlow = .idle
+    }
+
+    private func applyVerificationFlow(_ flow: MatrixDeviceVerificationFlow) {
+        setVerificationFlow(
+            phase: flow.phase,
+            request: flow.request,
+            challenge: flow.challenge,
+            updatedAt: flow.updatedAt
+        )
+    }
+
+    private func setVerificationFlow(
+        phase: MatrixDeviceVerificationFlowPhase,
+        request: MatrixDeviceVerificationRequest? = nil,
+        challenge: MatrixDeviceVerificationChallenge? = nil,
+        updatedAt: Date = Date()
+    ) {
+        let shouldPreserveRequest: Bool
+        switch phase {
+        case .accepted, .sasStarted, .challengeReceived:
+            shouldPreserveRequest = true
+        case .idle, .requestSent, .incomingRequest, .finished, .cancelled, .failed:
+            shouldPreserveRequest = false
+        }
+
+        verificationFlow = MatrixDeviceVerificationFlow(
+            phase: phase,
+            request: request ?? (shouldPreserveRequest ? verificationFlow.request : nil),
+            challenge: challenge,
+            updatedAt: updatedAt
+        )
+    }
+
     private func cachedRooms(client: Client) -> [Room] {
         var roomsByID: [String: Room] = Dictionary(uniqueKeysWithValues: client.rooms().map { ($0.id(), $0) })
         for room in roomListListener?.snapshot() ?? [] {
@@ -342,14 +456,19 @@ actor MatrixRustSDKAdapter: MatrixService {
     }
 
     private func makeClient(serverURL: URL, paths: SDKSessionPaths) async throws -> Client {
-        try await ClientBuilder()
+        try await Self.clientBuilder(paths: paths)
             .serverNameOrHomeserverUrl(serverNameOrUrl: serverURL.absoluteString)
+            .slidingSyncVersionBuilder(versionBuilder: .discoverNative)
+            .build()
+    }
+
+    private static func clientBuilder(paths: SDKSessionPaths) -> ClientBuilder {
+        ClientBuilder()
+            .autoEnableCrossSigning(autoEnableCrossSigning: true)
             .sessionPaths(
                 dataPath: paths.data.path(percentEncoded: false),
                 cachePath: paths.cache.path(percentEncoded: false)
             )
-            .slidingSyncVersionBuilder(versionBuilder: .discoverNative)
-            .build()
     }
 
     private func ensureSyncStarted(client: Client) async throws {
@@ -489,6 +608,90 @@ private final class SDKTimelineListener: TimelineListener, @unchecked Sendable {
     func snapshot() -> [TimelineItem] {
         lock.withLock {
             items
+        }
+    }
+}
+
+private final class SDKSessionVerificationDelegate: SessionVerificationControllerDelegate, @unchecked Sendable {
+    private let onUpdate: @Sendable (MatrixDeviceVerificationFlow) -> Void
+
+    init(onUpdate: @escaping @Sendable (MatrixDeviceVerificationFlow) -> Void) {
+        self.onUpdate = onUpdate
+    }
+
+    func didReceiveVerificationRequest(details: SessionVerificationRequestDetails) {
+        onUpdate(
+            MatrixDeviceVerificationFlow(
+                phase: .incomingRequest,
+                request: MatrixDeviceVerificationRequest(
+                    flowID: details.flowId,
+                    senderUserID: details.senderProfile.userId,
+                    senderDisplayName: details.senderProfile.displayName,
+                    deviceID: details.deviceId,
+                    deviceDisplayName: details.deviceDisplayName,
+                    firstSeenAt: Date(timeIntervalSince1970: TimeInterval(details.firstSeenTimestamp) / 1_000)
+                ),
+                challenge: nil,
+                updatedAt: Date()
+            )
+        )
+    }
+
+    func didAcceptVerificationRequest() {
+        emit(phase: .accepted)
+    }
+
+    func didStartSasVerification() {
+        emit(phase: .sasStarted)
+    }
+
+    func didReceiveVerificationData(data: SessionVerificationData) {
+        onUpdate(
+            MatrixDeviceVerificationFlow(
+                phase: .challengeReceived,
+                request: nil,
+                challenge: Self.challenge(from: data),
+                updatedAt: Date()
+            )
+        )
+    }
+
+    func didFail() {
+        emit(phase: .failed)
+    }
+
+    func didCancel() {
+        emit(phase: .cancelled)
+    }
+
+    func didFinish() {
+        emit(phase: .finished)
+    }
+
+    private func emit(phase: MatrixDeviceVerificationFlowPhase) {
+        onUpdate(
+            MatrixDeviceVerificationFlow(
+                phase: phase,
+                request: nil,
+                challenge: nil,
+                updatedAt: Date()
+            )
+        )
+    }
+
+    private static func challenge(from data: SessionVerificationData) -> MatrixDeviceVerificationChallenge {
+        switch data {
+        case .emojis(let emojis, _):
+            return .emojis(
+                emojis.map {
+                    MatrixDeviceVerificationEmoji(
+                        symbol: $0.symbol(),
+                        description: $0.description()
+                    )
+                }
+            )
+        case .decimals(let values):
+            return .decimals(values.map(String.init))
         }
     }
 }

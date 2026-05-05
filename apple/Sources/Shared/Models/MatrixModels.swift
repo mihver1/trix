@@ -72,6 +72,136 @@ struct MatrixDeviceVerificationStatus: Equatable, Sendable {
     }
 }
 
+struct MatrixDeviceVerificationRequest: Identifiable, Equatable, Sendable {
+    let flowID: String
+    let senderUserID: String
+    let senderDisplayName: String?
+    let deviceID: String
+    let deviceDisplayName: String?
+    let firstSeenAt: Date
+
+    var id: String {
+        flowID
+    }
+
+    var senderLabel: String {
+        if let senderDisplayName, !senderDisplayName.isEmpty {
+            return senderDisplayName
+        }
+
+        return senderUserID
+    }
+
+    var deviceLabel: String {
+        if let deviceDisplayName, !deviceDisplayName.isEmpty {
+            return "\(deviceDisplayName) (\(deviceID))"
+        }
+
+        return deviceID
+    }
+}
+
+struct MatrixDeviceVerificationEmoji: Identifiable, Equatable, Sendable {
+    let symbol: String
+    let description: String
+
+    var id: String {
+        "\(symbol)-\(description)"
+    }
+}
+
+enum MatrixDeviceVerificationChallenge: Equatable, Sendable {
+    case emojis([MatrixDeviceVerificationEmoji])
+    case decimals([String])
+}
+
+enum MatrixDeviceVerificationFlowPhase: String, Codable, Sendable {
+    case idle
+    case requestSent
+    case incomingRequest
+    case accepted
+    case sasStarted
+    case challengeReceived
+    case finished
+    case cancelled
+    case failed
+
+    var label: String {
+        switch self {
+        case .idle:
+            return "No active verification"
+        case .requestSent:
+            return "Verification requested"
+        case .incomingRequest:
+            return "Incoming request"
+        case .accepted:
+            return "Request accepted"
+        case .sasStarted:
+            return "SAS verification started"
+        case .challengeReceived:
+            return "Compare verification codes"
+        case .finished:
+            return "Verification complete"
+        case .cancelled:
+            return "Verification cancelled"
+        case .failed:
+            return "Verification failed"
+        }
+    }
+}
+
+struct MatrixDeviceVerificationFlow: Equatable, Sendable {
+    let phase: MatrixDeviceVerificationFlowPhase
+    let request: MatrixDeviceVerificationRequest?
+    let challenge: MatrixDeviceVerificationChallenge?
+    let updatedAt: Date
+
+    static var idle: MatrixDeviceVerificationFlow {
+        MatrixDeviceVerificationFlow(
+            phase: .idle,
+            request: nil,
+            challenge: nil,
+            updatedAt: Date()
+        )
+    }
+
+    var canRequestVerification: Bool {
+        switch phase {
+        case .idle, .cancelled, .failed:
+            return true
+        case .requestSent, .incomingRequest, .accepted, .sasStarted, .challengeReceived, .finished:
+            return false
+        }
+    }
+
+    var summary: String {
+        switch phase {
+        case .idle:
+            return "Start verification from this device, or refresh after requesting it from another Matrix session."
+        case .requestSent:
+            return "Open an existing Matrix session and accept the verification request."
+        case .incomingRequest:
+            return "A Matrix session is asking to verify this device. Accept only if you initiated this."
+        case .accepted:
+            if request != nil {
+                return "Waiting for the requesting device to start SAS verification."
+            }
+
+            return "Start SAS verification and compare the codes on both devices."
+        case .sasStarted:
+            return "Waiting for Matrix SDK to provide comparison codes."
+        case .challengeReceived:
+            return "Compare these codes with the other device before approving."
+        case .finished:
+            return "Matrix SDK finished the verification flow. Refresh the device state."
+        case .cancelled:
+            return "The active verification flow was cancelled."
+        case .failed:
+            return "The active verification flow failed. Start a new request when ready."
+        }
+    }
+}
+
 enum MatrixRoomKind: String, Codable, Sendable {
     case direct
     case group

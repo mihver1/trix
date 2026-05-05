@@ -36,6 +36,16 @@ protocol MatrixRoomBootstrapService: Sendable {
 
 protocol MatrixDeviceVerificationService: Sendable {
     func deviceVerificationStatus(session: MatrixSession) async throws -> MatrixDeviceVerificationStatus
+    func deviceVerificationFlow(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow
+    func requestDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow
+    func acceptDeviceVerificationRequest(
+        _ request: MatrixDeviceVerificationRequest,
+        session: MatrixSession
+    ) async throws -> MatrixDeviceVerificationFlow
+    func startSasDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow
+    func approveDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow
+    func declineDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow
+    func cancelDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow
 }
 
 typealias MatrixService = MatrixAuthService & MatrixSyncService & MatrixRoomService & MatrixRoomBootstrapService & MatrixDeviceVerificationService

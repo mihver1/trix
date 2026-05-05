@@ -90,7 +90,39 @@ struct MatrixRoomListView: View {
             }
 
             Section("Device Verification") {
-                MatrixDeviceVerificationStatusView(viewModel: deviceVerificationViewModel)
+                MatrixDeviceVerificationStatusView(
+                    viewModel: deviceVerificationViewModel,
+                    requestVerification: {
+                        Task {
+                            await model.requestDeviceVerification()
+                        }
+                    },
+                    acceptRequest: { request in
+                        Task {
+                            await model.acceptDeviceVerificationRequest(request)
+                        }
+                    },
+                    startSas: {
+                        Task {
+                            await model.startSasDeviceVerification()
+                        }
+                    },
+                    approve: {
+                        Task {
+                            await model.approveDeviceVerification()
+                        }
+                    },
+                    decline: {
+                        Task {
+                            await model.declineDeviceVerification()
+                        }
+                    },
+                    cancel: {
+                        Task {
+                            await model.cancelDeviceVerification()
+                        }
+                    }
+                )
 
                 Button {
                     Task {
