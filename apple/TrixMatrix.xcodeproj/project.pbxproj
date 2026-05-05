@@ -1,0 +1,587 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		01DD84A806E5A3D66513361E /* TimelineViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEB0655E233DAB56B8623281 /* TimelineViewModel.swift */; };
+		11CD3E2905AB63A6371B5D02 /* MatrixNewDirectMessageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E50393EF7A1C2412ACB17A82 /* MatrixNewDirectMessageView.swift */; };
+		129D050CD8E0E36C143E4C91 /* MatrixRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 632A14FCA910449A99CB3132 /* MatrixRootView.swift */; };
+		1A126D27830FDBAD15EB30F2 /* MatrixRustSDKAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 152545F011E983A56EC13722 /* MatrixRustSDKAdapter.swift */; };
+		1C9E1EDBEAB90A539AEBFC5D /* KeychainMatrixSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 831A6F1FA84E9BEF5A5E3FD7 /* KeychainMatrixSessionStore.swift */; };
+		1CB2DBE5F2BA7679A5E11FA0 /* MatrixTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3994463199103D5DCCB714F /* MatrixTimelineView.swift */; };
+		2E9A9F2489C6C51CEC397E34 /* MatrixModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2F1BA65FBB9F5DB455C6ABA /* MatrixModels.swift */; };
+		3CF1C2D9A8A70489F7233F4A /* KeychainMatrixSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 831A6F1FA84E9BEF5A5E3FD7 /* KeychainMatrixSessionStore.swift */; };
+		3F50C8F99C45346D75E88255 /* MatrixAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7414A93ADB01BA6187C24360 /* MatrixAppModel.swift */; };
+		40E18B91AD4DE99B3B3182DC /* TimelineViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEB0655E233DAB56B8623281 /* TimelineViewModel.swift */; };
+		4E7FEC4719061BC1283D447C /* MatrixServiceProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8009529B31B45E9E0A2125F4 /* MatrixServiceProtocols.swift */; };
+		537309E828290708DF967EEB /* MatrixRustSDK in Frameworks */ = {isa = PBXBuildFile; productRef = A2CA52A979635D4628DFE4D0 /* MatrixRustSDK */; };
+		566C48B8FDC47A38721C859D /* MatrixRustSDKAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 152545F011E983A56EC13722 /* MatrixRustSDKAdapter.swift */; };
+		59A16A64148E87EC05620941 /* MatrixRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 632A14FCA910449A99CB3132 /* MatrixRootView.swift */; };
+		646ED38194100D5107D0AD8D /* MatrixLiveSmokeRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCA53B0F5BE71CF78081C121 /* MatrixLiveSmokeRunner.swift */; };
+		67CC33870704986A5164F9A2 /* RoomListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CB4DE535EF97BB0D0B809CB /* RoomListViewModel.swift */; };
+		68B55DEFF7F78A71B40CBA94 /* MatrixServiceProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8009529B31B45E9E0A2125F4 /* MatrixServiceProtocols.swift */; };
+		6DFEC60E40B44022B4CF2C9E /* MatrixNewDirectMessageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E50393EF7A1C2412ACB17A82 /* MatrixNewDirectMessageView.swift */; };
+		6EE3D12CA0D4D43D6F4FE819 /* TrixMatrixMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C3BB1BD649928661E930244 /* TrixMatrixMacApp.swift */; };
+		7381AAE6D833620E65DD6B59 /* MatrixLiveSmokeRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCA53B0F5BE71CF78081C121 /* MatrixLiveSmokeRunner.swift */; };
+		752F6D2418E15CD41405F54F /* MatrixLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72C3FB45F6FDCA6D503C3351 /* MatrixLoginView.swift */; };
+		7A0BB8C6FA185C51228D3210 /* MatrixRoomListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C18C0C9013562CEEAD1B29C /* MatrixRoomListView.swift */; };
+		807543063C7A8EC6639E1D70 /* MatrixRustSDK in Frameworks */ = {isa = PBXBuildFile; productRef = DA55075EDDBDF755C1F0AA70 /* MatrixRustSDK */; };
+		80831FD7D8F0F88410A2B18B /* TrixMatrixiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73F55FBC6BCC6ECECCABE24B /* TrixMatrixiOSApp.swift */; };
+		8C6169B957900216C4377471 /* RoomListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CB4DE535EF97BB0D0B809CB /* RoomListViewModel.swift */; };
+		8E422235178CC0EAD831BBD2 /* MatrixTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3994463199103D5DCCB714F /* MatrixTimelineView.swift */; };
+		8FB1488F05EDACC73DFBA8F8 /* MatrixLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72C3FB45F6FDCA6D503C3351 /* MatrixLoginView.swift */; };
+		8FF46CC7E0D56527216F46F1 /* MockMatrixService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1944705328595182A450E300 /* MockMatrixService.swift */; };
+		961996EF252E8B8B019FC565 /* MatrixAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7414A93ADB01BA6187C24360 /* MatrixAppModel.swift */; };
+		9DC61ADC1BDF43C957BB1A70 /* MatrixClientConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC3FB0C0DAF30452F9A3BC0 /* MatrixClientConfiguration.swift */; };
+		BED1A8B28AD498D9473ACF25 /* MockMatrixService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1944705328595182A450E300 /* MockMatrixService.swift */; };
+		D4D5448BEB00C50FE1200B85 /* MatrixLimitationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7531B7FD31F543B78E5C0C7 /* MatrixLimitationsView.swift */; };
+		D7D2D4E2E82CFBD41923A1F3 /* MatrixClientConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC3FB0C0DAF30452F9A3BC0 /* MatrixClientConfiguration.swift */; };
+		D94575291CBE299E704B0BAB /* MatrixRoomListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C18C0C9013562CEEAD1B29C /* MatrixRoomListView.swift */; };
+		F2ED7FD339DB2EACA668FEA2 /* MatrixLimitationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7531B7FD31F543B78E5C0C7 /* MatrixLimitationsView.swift */; };
+		F9EED89BD979F652A771C274 /* MatrixModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2F1BA65FBB9F5DB455C6ABA /* MatrixModels.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		152545F011E983A56EC13722 /* MatrixRustSDKAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixRustSDKAdapter.swift; sourceTree = "<group>"; };
+		1944705328595182A450E300 /* MockMatrixService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockMatrixService.swift; sourceTree = "<group>"; };
+		4DC3FB0C0DAF30452F9A3BC0 /* MatrixClientConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixClientConfiguration.swift; sourceTree = "<group>"; };
+		508D5313FCF6542829A02D00 /* TrixMatrixMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TrixMatrixMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		632A14FCA910449A99CB3132 /* MatrixRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixRootView.swift; sourceTree = "<group>"; };
+		6C18C0C9013562CEEAD1B29C /* MatrixRoomListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixRoomListView.swift; sourceTree = "<group>"; };
+		72C3FB45F6FDCA6D503C3351 /* MatrixLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixLoginView.swift; sourceTree = "<group>"; };
+		73F55FBC6BCC6ECECCABE24B /* TrixMatrixiOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMatrixiOSApp.swift; sourceTree = "<group>"; };
+		7414A93ADB01BA6187C24360 /* MatrixAppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixAppModel.swift; sourceTree = "<group>"; };
+		7C3BB1BD649928661E930244 /* TrixMatrixMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMatrixMacApp.swift; sourceTree = "<group>"; };
+		8009529B31B45E9E0A2125F4 /* MatrixServiceProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixServiceProtocols.swift; sourceTree = "<group>"; };
+		831A6F1FA84E9BEF5A5E3FD7 /* KeychainMatrixSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainMatrixSessionStore.swift; sourceTree = "<group>"; };
+		8682262FABE4A23051A6161F /* TrixMatrixiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TrixMatrixiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8CB4DE535EF97BB0D0B809CB /* RoomListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomListViewModel.swift; sourceTree = "<group>"; };
+		A3994463199103D5DCCB714F /* MatrixTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixTimelineView.swift; sourceTree = "<group>"; };
+		C2F1BA65FBB9F5DB455C6ABA /* MatrixModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixModels.swift; sourceTree = "<group>"; };
+		D7531B7FD31F543B78E5C0C7 /* MatrixLimitationsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixLimitationsView.swift; sourceTree = "<group>"; };
+		DCA53B0F5BE71CF78081C121 /* MatrixLiveSmokeRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixLiveSmokeRunner.swift; sourceTree = "<group>"; };
+		E50393EF7A1C2412ACB17A82 /* MatrixNewDirectMessageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixNewDirectMessageView.swift; sourceTree = "<group>"; };
+		EEB0655E233DAB56B8623281 /* TimelineViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineViewModel.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		7CF0A5EB5F09CC3B3B06A028 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				807543063C7A8EC6639E1D70 /* MatrixRustSDK in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8B9E4F9D64BE1D73888F2EF3 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				537309E828290708DF967EEB /* MatrixRustSDK in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0CFC0196CD51203AE7CB57E2 /* macOS */ = {
+			isa = PBXGroup;
+			children = (
+				7C3BB1BD649928661E930244 /* TrixMatrixMacApp.swift */,
+			);
+			name = macOS;
+			path = Sources/macOS;
+			sourceTree = "<group>";
+		};
+		25FE97757ABAA8D70924A157 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				8682262FABE4A23051A6161F /* TrixMatrixiOS.app */,
+				508D5313FCF6542829A02D00 /* TrixMatrixMac.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		266DB1B97162D76D1791A6EC /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				C2F1BA65FBB9F5DB455C6ABA /* MatrixModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		270641E14C6A7ABCC5C3969D = {
+			isa = PBXGroup;
+			children = (
+				E1614ACD5BF88F040D145BF4 /* iOS */,
+				0CFC0196CD51203AE7CB57E2 /* macOS */,
+				7DE6BC0DF99035EE8E0C7787 /* Shared */,
+				25FE97757ABAA8D70924A157 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		3C3D6A2CC3483E3B08B2801D /* App */ = {
+			isa = PBXGroup;
+			children = (
+				7414A93ADB01BA6187C24360 /* MatrixAppModel.swift */,
+				4DC3FB0C0DAF30452F9A3BC0 /* MatrixClientConfiguration.swift */,
+				DCA53B0F5BE71CF78081C121 /* MatrixLiveSmokeRunner.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		7DE6BC0DF99035EE8E0C7787 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				3C3D6A2CC3483E3B08B2801D /* App */,
+				266DB1B97162D76D1791A6EC /* Models */,
+				824EBE369DDA37C5B37DA6E2 /* Services */,
+				81BBD7219AAC39F303DE9FFD /* ViewModels */,
+				CF903727AFAF907857D6F0FA /* Views */,
+			);
+			name = Shared;
+			path = Sources/Shared;
+			sourceTree = "<group>";
+		};
+		81BBD7219AAC39F303DE9FFD /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				8CB4DE535EF97BB0D0B809CB /* RoomListViewModel.swift */,
+				EEB0655E233DAB56B8623281 /* TimelineViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		824EBE369DDA37C5B37DA6E2 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				831A6F1FA84E9BEF5A5E3FD7 /* KeychainMatrixSessionStore.swift */,
+				152545F011E983A56EC13722 /* MatrixRustSDKAdapter.swift */,
+				8009529B31B45E9E0A2125F4 /* MatrixServiceProtocols.swift */,
+				1944705328595182A450E300 /* MockMatrixService.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		CF903727AFAF907857D6F0FA /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				D7531B7FD31F543B78E5C0C7 /* MatrixLimitationsView.swift */,
+				72C3FB45F6FDCA6D503C3351 /* MatrixLoginView.swift */,
+				E50393EF7A1C2412ACB17A82 /* MatrixNewDirectMessageView.swift */,
+				6C18C0C9013562CEEAD1B29C /* MatrixRoomListView.swift */,
+				632A14FCA910449A99CB3132 /* MatrixRootView.swift */,
+				A3994463199103D5DCCB714F /* MatrixTimelineView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		E1614ACD5BF88F040D145BF4 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				73F55FBC6BCC6ECECCABE24B /* TrixMatrixiOSApp.swift */,
+			);
+			name = iOS;
+			path = Sources/iOS;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		ACF6312FAACCD1BC6923563C /* TrixMatrixiOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 26F4A14AB66F259065D8BA44 /* Build configuration list for PBXNativeTarget "TrixMatrixiOS" */;
+			buildPhases = (
+				61CA8187F7B281FBD49A924E /* Sources */,
+				7CF0A5EB5F09CC3B3B06A028 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TrixMatrixiOS;
+			packageProductDependencies = (
+				DA55075EDDBDF755C1F0AA70 /* MatrixRustSDK */,
+			);
+			productName = TrixMatrixiOS;
+			productReference = 8682262FABE4A23051A6161F /* TrixMatrixiOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+		F80150C1565CC5EBAFD2BBA8 /* TrixMatrixMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 08A261F21E09604E0CBA19CE /* Build configuration list for PBXNativeTarget "TrixMatrixMac" */;
+			buildPhases = (
+				3F615A0B80C76355D35FE151 /* Sources */,
+				8B9E4F9D64BE1D73888F2EF3 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TrixMatrixMac;
+			packageProductDependencies = (
+				A2CA52A979635D4628DFE4D0 /* MatrixRustSDK */,
+			);
+			productName = TrixMatrixMac;
+			productReference = 508D5313FCF6542829A02D00 /* TrixMatrixMac.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		C42489216D0F0EFFD398C791 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					ACF6312FAACCD1BC6923563C = {
+						ProvisioningStyle = Automatic;
+					};
+					F80150C1565CC5EBAFD2BBA8 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 6FE070F481D0D9825B63C260 /* Build configuration list for PBXProject "TrixMatrix" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 270641E14C6A7ABCC5C3969D;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				1F56A979979F342FC1F09463 /* XCRemoteSwiftPackageReference "matrix-rust-components-swift" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 25FE97757ABAA8D70924A157 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				F80150C1565CC5EBAFD2BBA8 /* TrixMatrixMac */,
+				ACF6312FAACCD1BC6923563C /* TrixMatrixiOS */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		3F615A0B80C76355D35FE151 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1C9E1EDBEAB90A539AEBFC5D /* KeychainMatrixSessionStore.swift in Sources */,
+				3F50C8F99C45346D75E88255 /* MatrixAppModel.swift in Sources */,
+				9DC61ADC1BDF43C957BB1A70 /* MatrixClientConfiguration.swift in Sources */,
+				F2ED7FD339DB2EACA668FEA2 /* MatrixLimitationsView.swift in Sources */,
+				646ED38194100D5107D0AD8D /* MatrixLiveSmokeRunner.swift in Sources */,
+				752F6D2418E15CD41405F54F /* MatrixLoginView.swift in Sources */,
+				2E9A9F2489C6C51CEC397E34 /* MatrixModels.swift in Sources */,
+				11CD3E2905AB63A6371B5D02 /* MatrixNewDirectMessageView.swift in Sources */,
+				D94575291CBE299E704B0BAB /* MatrixRoomListView.swift in Sources */,
+				59A16A64148E87EC05620941 /* MatrixRootView.swift in Sources */,
+				566C48B8FDC47A38721C859D /* MatrixRustSDKAdapter.swift in Sources */,
+				4E7FEC4719061BC1283D447C /* MatrixServiceProtocols.swift in Sources */,
+				1CB2DBE5F2BA7679A5E11FA0 /* MatrixTimelineView.swift in Sources */,
+				BED1A8B28AD498D9473ACF25 /* MockMatrixService.swift in Sources */,
+				8C6169B957900216C4377471 /* RoomListViewModel.swift in Sources */,
+				01DD84A806E5A3D66513361E /* TimelineViewModel.swift in Sources */,
+				6EE3D12CA0D4D43D6F4FE819 /* TrixMatrixMacApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		61CA8187F7B281FBD49A924E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3CF1C2D9A8A70489F7233F4A /* KeychainMatrixSessionStore.swift in Sources */,
+				961996EF252E8B8B019FC565 /* MatrixAppModel.swift in Sources */,
+				D7D2D4E2E82CFBD41923A1F3 /* MatrixClientConfiguration.swift in Sources */,
+				D4D5448BEB00C50FE1200B85 /* MatrixLimitationsView.swift in Sources */,
+				7381AAE6D833620E65DD6B59 /* MatrixLiveSmokeRunner.swift in Sources */,
+				8FB1488F05EDACC73DFBA8F8 /* MatrixLoginView.swift in Sources */,
+				F9EED89BD979F652A771C274 /* MatrixModels.swift in Sources */,
+				6DFEC60E40B44022B4CF2C9E /* MatrixNewDirectMessageView.swift in Sources */,
+				7A0BB8C6FA185C51228D3210 /* MatrixRoomListView.swift in Sources */,
+				129D050CD8E0E36C143E4C91 /* MatrixRootView.swift in Sources */,
+				1A126D27830FDBAD15EB30F2 /* MatrixRustSDKAdapter.swift in Sources */,
+				68B55DEFF7F78A71B40CBA94 /* MatrixServiceProtocols.swift in Sources */,
+				8E422235178CC0EAD831BBD2 /* MatrixTimelineView.swift in Sources */,
+				8FF46CC7E0D56527216F46F1 /* MockMatrixService.swift in Sources */,
+				67CC33870704986A5164F9A2 /* RoomListViewModel.swift in Sources */,
+				40E18B91AD4DE99B3B3182DC /* TimelineViewModel.swift in Sources */,
+				80831FD7D8F0F88410A2B18B /* TrixMatrixiOSApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		26AAA4643A954762B28ACB83 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		45F099C27C9AAC1BA3098098 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		908BFA39998A9BA419BABA62 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixmatrix.ios;
+				PRODUCT_NAME = Trix;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		B9901A57C0A57E00030AEF71 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixmatrix.ios;
+				PRODUCT_NAME = Trix;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		C3FED80EDAB145A54AC7B489 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixmatrix.macos;
+				PRODUCT_NAME = Trix;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		CD76E3B5A89975791929099F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixmatrix.macos;
+				PRODUCT_NAME = Trix;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		08A261F21E09604E0CBA19CE /* Build configuration list for PBXNativeTarget "TrixMatrixMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CD76E3B5A89975791929099F /* Debug */,
+				C3FED80EDAB145A54AC7B489 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		26F4A14AB66F259065D8BA44 /* Build configuration list for PBXNativeTarget "TrixMatrixiOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B9901A57C0A57E00030AEF71 /* Debug */,
+				908BFA39998A9BA419BABA62 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		6FE070F481D0D9825B63C260 /* Build configuration list for PBXProject "TrixMatrix" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				26AAA4643A954762B28ACB83 /* Debug */,
+				45F099C27C9AAC1BA3098098 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		1F56A979979F342FC1F09463 /* XCRemoteSwiftPackageReference "matrix-rust-components-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/matrix-org/matrix-rust-components-swift";
+			requirement = {
+				kind = exactVersion;
+				version = 26.04.01;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A2CA52A979635D4628DFE4D0 /* MatrixRustSDK */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1F56A979979F342FC1F09463 /* XCRemoteSwiftPackageReference "matrix-rust-components-swift" */;
+			productName = MatrixRustSDK;
+		};
+		DA55075EDDBDF755C1F0AA70 /* MatrixRustSDK */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1F56A979979F342FC1F09463 /* XCRemoteSwiftPackageReference "matrix-rust-components-swift" */;
+			productName = MatrixRustSDK;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = C42489216D0F0EFFD398C791 /* Project object */;
+}
