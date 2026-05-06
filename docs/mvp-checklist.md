@@ -64,6 +64,7 @@ legacy implementation details.
 - [x] Receive a plain text message.
 - [x] Send a file or image attachment from the SwiftUI timeline composer.
 - [x] Download timeline file/image attachments and preview images in app.
+- [x] Open, share, or export downloaded attachments through OS controls.
 - [x] Show sender, timestamp, and body in the SwiftUI timeline model.
 - [x] Auto-refresh the room list, invites, and selected timeline while the app
       scene is active.
@@ -125,8 +126,9 @@ legacy implementation details.
 - [x] SwiftUI Apple client can attach files/images from the timeline composer,
       send them through Matrix SDK timeline attachment APIs, render file/image
       timeline events, download them through Matrix SDK media APIs, and preview
-      downloaded images in app. Live encrypted attachment round-trip validation
-      and OS share/export are still open.
+      downloaded images in app. Downloaded attachments can be opened, shared,
+      or exported through OS controls. Live encrypted attachment round-trip
+      validation is still open.
 - [x] SwiftUI Apple client runs a foreground auto-refresh loop while the app
       scene is active. It silently refreshes rooms, pending invites, and the
       selected timeline through the existing Matrix service/view-model boundary,

@@ -58,7 +58,8 @@ xcodebuild \
 - Plain text send goes through the Matrix SDK timeline send API.
 - File and image attachments can be picked from the timeline composer and sent
   through Matrix SDK timeline attachment APIs. Timeline file/image events can be
-  downloaded through Matrix SDK media APIs, with image preview shown in app.
+  downloaded through Matrix SDK media APIs, with image preview plus OS
+  open/share/export actions shown in app.
 - While the app scene is active, a foreground refresh loop periodically reloads
   rooms, pending invites, and the selected timeline through the Matrix service
   boundary.

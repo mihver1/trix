@@ -116,7 +116,8 @@ Working in this first pivot slice:
 - Production SwiftUI flows exist for encrypted DM creation, private encrypted
   group room creation, and invite accept/decline.
 - File/image attachment send and download are wired through Matrix SDK timeline
-  and media APIs, with in-app image preview.
+  and media APIs, with in-app image preview plus OS open/share/export actions
+  for downloaded files.
 - Foreground room, invite, and selected timeline refresh is wired while the app
   scene is active.
 - Matrix SDK device verification and recovery state are visible in the UI;
@@ -132,8 +133,8 @@ Not yet production-ready:
 - Device verification verified-state validation after live SAS completion.
 - Recovery/key backup persistence tests.
 - Push notifications through a Matrix push gateway and APNs.
-- Attachment live round-trip validation, OS open/share/export, group message
-  live validation, and TestFlight scripts for the new Matrix app.
+- Attachment live round-trip validation, group message live validation, and
+  TestFlight scripts for the new Matrix app.
 - Existing TestFlight scripts for `apps/ios` and `apps/macos` are preserved.
 
 ## Documentation

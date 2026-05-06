@@ -281,6 +281,11 @@ private struct MatrixAttachmentRow: View {
 private struct MatrixAttachmentPreviewView: View {
     let attachment: MatrixAttachmentDownload
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+    @State private var isExporting = false
+    @State private var temporaryFileURL: URL?
+    @State private var temporaryDirectoryURL: URL?
+    @State private var attachmentActionError: String?
 
     var body: some View {
         NavigationStack {
@@ -305,6 +310,42 @@ private struct MatrixAttachmentPreviewView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                HStack(spacing: 10) {
+                    Button {
+                        if let temporaryFileURL {
+                            openURL(temporaryFileURL)
+                        }
+                    } label: {
+                        Label("Open", systemImage: "arrow.up.right.square")
+                    }
+                    .disabled(temporaryFileURL == nil)
+
+                    if let temporaryFileURL {
+                        ShareLink(
+                            item: temporaryFileURL,
+                            preview: SharePreview(attachment.safeFilename)
+                        ) {
+                            Label("Share", systemImage: "square.and.arrow.up")
+                        }
+                    } else {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Button {
+                        isExporting = true
+                    } label: {
+                        Label("Export", systemImage: "square.and.arrow.down")
+                    }
+                }
+                .labelStyle(.titleAndIcon)
+
+                if let attachmentActionError {
+                    Text(attachmentActionError)
+                        .font(.callout)
+                        .foregroundStyle(.red)
+                }
+
                 Spacer()
             }
             .padding(20)
@@ -318,6 +359,22 @@ private struct MatrixAttachmentPreviewView: View {
             }
         }
         .frame(minWidth: 420, minHeight: 320)
+        .task(id: attachment.id) {
+            prepareTemporaryFile()
+        }
+        .onDisappear {
+            removeTemporaryFile()
+        }
+        .fileExporter(
+            isPresented: $isExporting,
+            document: MatrixAttachmentFileDocument(data: attachment.data),
+            contentType: .data,
+            defaultFilename: attachment.safeFilename
+        ) { result in
+            if case .failure(let error) = result {
+                attachmentActionError = error.matrixUserFacingMessage
+            }
+        }
     }
 
     private func platformImage(from data: Data) -> Image? {
@@ -334,5 +391,73 @@ private struct MatrixAttachmentPreviewView: View {
         #else
         return nil
         #endif
+    }
+
+    private func prepareTemporaryFile() {
+        removeTemporaryFile()
+        attachmentActionError = nil
+
+        do {
+            let directoryURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("TrixMatrix-\(attachment.id.uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+            let fileURL = directoryURL.appendingPathComponent(attachment.safeFilename, isDirectory: false)
+            try attachment.data.write(to: fileURL, options: [.atomic])
+            temporaryDirectoryURL = directoryURL
+            temporaryFileURL = fileURL
+        } catch {
+            attachmentActionError = error.matrixUserFacingMessage
+        }
+    }
+
+    private func removeTemporaryFile() {
+        guard let temporaryDirectoryURL else {
+            temporaryFileURL = nil
+            return
+        }
+
+        try? FileManager.default.removeItem(at: temporaryDirectoryURL)
+        self.temporaryDirectoryURL = nil
+        temporaryFileURL = nil
+    }
+}
+
+private struct MatrixAttachmentFileDocument: FileDocument {
+    static var readableContentTypes: [UTType] {
+        [.data]
+    }
+
+    let data: Data
+
+    init(data: Data) {
+        self.data = data
+    }
+
+    init(configuration: ReadConfiguration) throws {
+        data = configuration.file.regularFileContents ?? Data()
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
+    }
+}
+
+private extension MatrixAttachmentDownload {
+    var safeFilename: String {
+        let trimmed = filename.trimmingCharacters(in: .whitespacesAndNewlines)
+        var blockedCharacters = CharacterSet(charactersIn: "/\\:")
+        blockedCharacters.formUnion(.controlCharacters)
+
+        let cleaned = trimmed
+            .components(separatedBy: blockedCharacters)
+            .filter { !$0.isEmpty }
+            .joined(separator: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if cleaned.isEmpty || cleaned == "." || cleaned == ".." {
+            return isImage ? "attachment-image" : "attachment"
+        }
+
+        return cleaned
     }
 }
