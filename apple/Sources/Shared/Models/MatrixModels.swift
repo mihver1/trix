@@ -1,4 +1,6 @@
 import Foundation
+import CoreGraphics
+import ImageIO
 
 struct MatrixSession: Codable, Equatable, Sendable {
     let userID: String
@@ -473,9 +475,110 @@ struct MatrixAttachmentUpload: Equatable, Sendable {
     let filename: String
     let mimeType: String
     let data: Data
+    let imageDimensions: MatrixAttachmentImageDimensions?
+    let imageBlurhash: String?
 
     var isImage: Bool {
         mimeType.hasPrefix("image/")
+    }
+
+    var canSendAsImage: Bool {
+        isImage && imageDimensions != nil && imageBlurhash != nil
+    }
+
+    init(
+        filename: String,
+        mimeType: String,
+        data: Data,
+        imageDimensions: MatrixAttachmentImageDimensions? = nil,
+        imageBlurhash: String? = nil
+    ) {
+        self.filename = filename
+        self.mimeType = mimeType
+        self.data = data
+        self.imageDimensions = imageDimensions ?? Self.imageDimensions(from: data, mimeType: mimeType)
+        self.imageBlurhash = imageBlurhash ?? Self.averageBlurhash(from: data, mimeType: mimeType)
+    }
+
+    init(fileURL: URL, fallbackFilename: String? = nil) throws {
+        let resourceValues = try fileURL.resourceValues(forKeys: [.contentTypeKey])
+        let filename = fallbackFilename?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedFilename: String
+        if let filename, !filename.isEmpty {
+            resolvedFilename = filename
+        } else {
+            resolvedFilename = fileURL.lastPathComponent
+        }
+
+        self.init(
+            filename: resolvedFilename,
+            mimeType: resourceValues.contentType?.preferredMIMEType ?? "application/octet-stream",
+            data: try Data(contentsOf: fileURL)
+        )
+    }
+
+    private static func imageDimensions(from data: Data, mimeType: String) -> MatrixAttachmentImageDimensions? {
+        guard mimeType.hasPrefix("image/"),
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+              let height = properties[kCGImagePropertyPixelHeight] as? NSNumber
+        else {
+            return nil
+        }
+
+        let pixelWidth = width.uint64Value
+        let pixelHeight = height.uint64Value
+        guard pixelWidth > 0, pixelHeight > 0 else {
+            return nil
+        }
+
+        return MatrixAttachmentImageDimensions(width: pixelWidth, height: pixelHeight)
+    }
+
+    private static func averageBlurhash(from data: Data, mimeType: String) -> String? {
+        guard mimeType.hasPrefix("image/"),
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+              let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)
+        else {
+            return nil
+        }
+
+        var pixel = [UInt8](repeating: 0, count: 4)
+        let bitmapInfo = CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.noneSkipLast.rawValue
+        guard let context = CGContext(
+            data: &pixel,
+            width: 1,
+            height: 1,
+            bitsPerComponent: 8,
+            bytesPerRow: 4,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        ) else {
+            return nil
+        }
+
+        context.interpolationQuality = .medium
+        context.draw(image, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+
+        let dc = (Int(pixel[0]) << 16) + (Int(pixel[1]) << 8) + Int(pixel[2])
+        return encodeBlurhash(0, length: 1)
+            + encodeBlurhash(0, length: 1)
+            + encodeBlurhash(dc, length: 4)
+    }
+
+    private static func encodeBlurhash(_ value: Int, length: Int) -> String {
+        let alphabet = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~")
+        var remaining = value
+        var characters = Array(repeating: alphabet[0], count: length)
+
+        for index in stride(from: length - 1, through: 0, by: -1) {
+            characters[index] = alphabet[remaining % alphabet.count]
+            remaining /= alphabet.count
+        }
+
+        return String(characters)
     }
 }
 
@@ -492,6 +595,11 @@ struct MatrixAttachmentDownload: Identifiable, Equatable, Sendable {
     var formattedSize: String {
         ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
     }
+}
+
+struct MatrixAttachmentImageDimensions: Equatable, Sendable {
+    let width: UInt64
+    let height: UInt64
 }
 
 enum MatrixClientError: LocalizedError {

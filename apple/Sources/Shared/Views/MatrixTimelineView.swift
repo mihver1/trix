@@ -207,21 +207,7 @@ struct MatrixTimelineView: View {
                 return
             }
 
-            let canAccess = url.startAccessingSecurityScopedResource()
-            defer {
-                if canAccess {
-                    url.stopAccessingSecurityScopedResource()
-                }
-            }
-
-            let resourceValues = try url.resourceValues(forKeys: [.contentTypeKey])
-            let data = try Data(contentsOf: url)
-            let mimeType = resourceValues.contentType?.preferredMIMEType ?? "application/octet-stream"
-            let upload = MatrixAttachmentUpload(
-                filename: url.lastPathComponent,
-                mimeType: mimeType,
-                data: data
-            )
+            let upload = try readAttachmentUpload(from: url)
 
             Task {
                 await model.sendAttachment(upload)
@@ -229,6 +215,42 @@ struct MatrixTimelineView: View {
         } catch {
             fileImportError = error.matrixUserFacingMessage
         }
+    }
+
+    private func readAttachmentUpload(from url: URL) throws -> MatrixAttachmentUpload {
+        let canAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if canAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        #if os(macOS)
+        var coordinatedResult: Result<MatrixAttachmentUpload, Error>?
+        var coordinationError: NSError?
+        NSFileCoordinator().coordinate(
+            readingItemAt: url,
+            options: [],
+            error: &coordinationError
+        ) { readableURL in
+            coordinatedResult = Result {
+                try MatrixAttachmentUpload(
+                    fileURL: readableURL,
+                    fallbackFilename: url.lastPathComponent
+                )
+            }
+        }
+
+        if let coordinatedResult {
+            return try coordinatedResult.get()
+        }
+        if let coordinationError {
+            throw coordinationError
+        }
+        throw MatrixClientError.attachmentTransferFailed
+        #else
+        return try MatrixAttachmentUpload(fileURL: url)
+        #endif
     }
 }
 

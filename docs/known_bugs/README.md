@@ -25,7 +25,7 @@ explicitly reopens that scope.
 
 ## macOS
 
-- [macOS attachment transfer fails](macos-attachment-transfer-failed.md)
+- [macOS attachment transfer needs manual picker/open release revalidation](macos-attachment-transfer-failed.md)
 - [macOS recovery key view has no copy action](macos-recovery-key-copy-action.md)
 - [macOS Matrix UI lacks legacy product parity](macos-legacy-parity-ui.md)
 - [macOS navigation and settings structure is wrong](macos-three-column-settings.md)

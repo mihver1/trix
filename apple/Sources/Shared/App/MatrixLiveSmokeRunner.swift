@@ -1,5 +1,8 @@
 import Darwin
+import CoreGraphics
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 #if DEBUG
 enum MatrixLiveSmokeRunner {
@@ -288,51 +291,137 @@ enum MatrixLiveSmokeRunner {
             for _ in 0..<8 {
                 _ = try await adminService.rooms(session: adminSession)
                 _ = try? await adminService.timeline(roomID: room.id, session: adminSession)
-                try? await Task.sleep(for: .seconds(1))
-            }
-
-            let filename = "trix-live-attachment-\(UUID().uuidString).txt"
-            let payload = Data("trix-live-attachment-payload-\(UUID().uuidString)".utf8)
-            let upload = MatrixAttachmentUpload(
-                filename: filename,
-                mimeType: "text/plain",
-                data: payload
-            )
-            _ = try await adminService.sendAttachment(upload, roomID: room.id, session: adminSession)
-            emit("encrypted-attachment-send ok bytes=\(payload.count)")
-
-            var receivedAttachment: MatrixTimelineAttachment?
-            for _ in 0..<30 {
                 _ = try await testService.rooms(session: loggedInTestSession)
-                let timeline = try await testService.timeline(roomID: room.id, session: loggedInTestSession)
-                receivedAttachment = timeline
-                    .compactMap(\.attachment)
-                    .first { $0.filename == filename }
-                if receivedAttachment != nil {
-                    break
-                }
+                _ = try? await testService.timeline(roomID: room.id, session: loggedInTestSession)
                 try? await Task.sleep(for: .seconds(1))
             }
 
-            guard let receivedAttachment else {
-                throw MatrixLiveSmokeError.attachmentNotReceived
-            }
-            emit("encrypted-attachment-receive ok bytes=\(receivedAttachment.sizeBytes ?? 0)")
-
-            let download = try await testService.downloadAttachment(
-                receivedAttachment,
-                session: loggedInTestSession
+            let textPayload = Data("trix-live-attachment-payload-\(UUID().uuidString)".utf8)
+            try await sendAndVerifyAttachment(
+                label: "file",
+                upload: MatrixAttachmentUpload(
+                    filename: "trix-live-attachment-\(UUID().uuidString).txt",
+                    mimeType: "text/plain",
+                    data: textPayload
+                ),
+                expectedPayload: textPayload,
+                roomID: room.id,
+                adminService: adminService,
+                adminSession: adminSession,
+                testService: testService,
+                testSession: loggedInTestSession
             )
-            guard download.data == payload else {
-                throw MatrixLiveSmokeError.attachmentDownloadMismatch
-            }
-            emit("encrypted-attachment-download ok bytes=\(download.data.count)")
+
+            let imagePayload = try liveSmokePNGData()
+            try await sendAndVerifyAttachment(
+                label: "image",
+                upload: MatrixAttachmentUpload(
+                    filename: "trix-live-attachment-\(UUID().uuidString).png",
+                    mimeType: "image/png",
+                    data: imagePayload
+                ),
+                expectedPayload: imagePayload,
+                roomID: room.id,
+                adminService: adminService,
+                adminSession: adminSession,
+                testService: testService,
+                testSession: loggedInTestSession
+            )
 
             await cleanup()
         } catch {
             await cleanup()
             throw error
         }
+    }
+
+    private static func sendAndVerifyAttachment(
+        label: String,
+        upload: MatrixAttachmentUpload,
+        expectedPayload: Data,
+        roomID: String,
+        adminService: MatrixRustSDKAdapter,
+        adminSession: MatrixSession,
+        testService: MatrixRustSDKAdapter,
+        testSession: MatrixSession
+    ) async throws {
+        let prefix = label == "file" ? "encrypted-attachment" : "encrypted-attachment-\(label)"
+        _ = try await adminService.sendAttachment(upload, roomID: roomID, session: adminSession)
+        emit("\(prefix)-send ok bytes=\(expectedPayload.count)")
+
+        var receivedAttachment: MatrixTimelineAttachment?
+        for _ in 0..<90 {
+            _ = try await testService.rooms(session: testSession)
+            let timeline = try await testService.timeline(roomID: roomID, session: testSession)
+            receivedAttachment = timeline
+                .compactMap(\.attachment)
+                .first { $0.filename == upload.filename }
+            if receivedAttachment != nil {
+                break
+            }
+            try? await Task.sleep(for: .seconds(1))
+        }
+
+        guard let receivedAttachment else {
+            throw MatrixLiveSmokeError.attachmentNotReceived
+        }
+        emit("\(prefix)-receive ok bytes=\(receivedAttachment.sizeBytes ?? 0)")
+
+        let download = try await testService.downloadAttachment(
+            receivedAttachment,
+            session: testSession
+        )
+        guard download.data == expectedPayload else {
+            throw MatrixLiveSmokeError.attachmentDownloadMismatch
+        }
+        emit("\(prefix)-download ok bytes=\(download.data.count)")
+    }
+
+    private static func liveSmokePNGData() throws -> Data {
+        let width = 2
+        let height = 2
+        let pixels: [UInt8] = [
+            0xF5, 0x4E, 0x42, 0xFF,
+            0x2F, 0x80, 0xED, 0xFF,
+            0x22, 0xC5, 0x5E, 0xFF,
+            0xF9, 0xC7, 0x4F, 0xFF
+        ]
+        let pixelData = Data(pixels)
+        guard let provider = CGDataProvider(data: pixelData as CFData),
+              let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let image = CGImage(
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bitsPerPixel: 32,
+                bytesPerRow: width * 4,
+                space: colorSpace,
+                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
+                provider: provider,
+                decode: nil,
+                shouldInterpolate: false,
+                intent: .defaultIntent
+              )
+        else {
+            throw MatrixLiveSmokeError.attachmentPayloadUnavailable
+        }
+
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            output,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else {
+            throw MatrixLiveSmokeError.attachmentPayloadUnavailable
+        }
+
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw MatrixLiveSmokeError.attachmentPayloadUnavailable
+        }
+
+        return output as Data
     }
 
     private static func runDeviceVerification() async throws {
@@ -834,6 +923,7 @@ private enum MatrixLiveSmokeError: LocalizedError {
     case messageNotReceived
     case attachmentNotReceived
     case attachmentDownloadMismatch
+    case attachmentPayloadUnavailable
     case verificationRequestNotReceived
     case verificationChallengeMismatch
     case verificationFailed
@@ -862,6 +952,8 @@ private enum MatrixLiveSmokeError: LocalizedError {
             return "The encrypted smoke attachment was not received by the test user."
         case .attachmentDownloadMismatch:
             return "The downloaded encrypted smoke attachment did not match the sent payload."
+        case .attachmentPayloadUnavailable:
+            return "The generated encrypted smoke attachment payload is unavailable."
         case .verificationRequestNotReceived:
             return "The second Matrix session did not receive the device verification request."
         case .verificationChallengeMismatch:

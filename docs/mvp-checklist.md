@@ -20,7 +20,9 @@ legacy implementation details.
 - [x] Live-validate E2EE group send/receive with at least three accounts.
 - [ ] Timeline refresh after app restart.
 - [ ] Unread/read/delivery decorations.
-- [x] Live-validate E2EE attachment round-trip and add OS open/share flow.
+- [x] Live-validate E2EE attachment round-trip for generated text and PNG image
+      payloads; downloaded bytes match through Matrix SDK media APIs.
+- [ ] Manually revalidate macOS picker/open/share/export release flow.
 - [x] Foreground room/invite/timeline polling while the app scene is active.
 - [ ] APNs-backed notifications through a Matrix push gateway.
 - [ ] Basic profile, notification, and device-management surfaces.

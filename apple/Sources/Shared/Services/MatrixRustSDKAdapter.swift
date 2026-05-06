@@ -169,8 +169,18 @@ actor MatrixRustSDKAdapter: MatrixService {
             throw MatrixClientError.missingSession
         }
 
+        let uploadSource: SDKAttachmentUploadSource
+        do {
+            uploadSource = try Self.uploadSource(for: attachment, session: session)
+        } catch {
+            throw MatrixClientError.attachmentTransferFailed
+        }
+        defer {
+            uploadSource.removeTemporaryFiles()
+        }
+
         let parameters = UploadParameters(
-            source: .data(bytes: attachment.data, filename: attachment.filename),
+            source: uploadSource.source,
             caption: nil,
             formattedCaption: nil,
             mentions: nil,
@@ -180,18 +190,18 @@ actor MatrixRustSDKAdapter: MatrixService {
 
         do {
             let handle: SendAttachmentJoinHandle
-            if attachment.isImage {
+            if attachment.canSendAsImage {
                 handle = try state.timeline.sendImage(
                     params: parameters,
                     thumbnailSource: nil,
                     imageInfo: ImageInfo(
-                        height: nil,
-                        width: nil,
+                        height: attachment.imageDimensions?.height,
+                        width: attachment.imageDimensions?.width,
                         mimetype: attachment.mimeType,
                         size: size,
                         thumbnailInfo: nil,
                         thumbnailSource: nil,
-                        blurhash: nil,
+                        blurhash: attachment.imageBlurhash,
                         isAnimated: nil
                     )
                 )
@@ -208,6 +218,7 @@ actor MatrixRustSDKAdapter: MatrixService {
             }
             try await handle.join()
         } catch {
+            Self.emitLiveSmokeAttachmentDiagnostic(error)
             throw MatrixClientError.attachmentTransferFailed
         }
 
@@ -219,7 +230,7 @@ actor MatrixRustSDKAdapter: MatrixService {
             body: attachment.filename,
             isLocalEcho: true,
             attachment: MatrixTimelineAttachment(
-                kind: attachment.isImage ? .image : .file,
+                kind: attachment.canSendAsImage ? .image : .file,
                 filename: attachment.filename,
                 mimeType: attachment.mimeType,
                 sizeBytes: attachment.data.count,
@@ -236,7 +247,12 @@ actor MatrixRustSDKAdapter: MatrixService {
         let client = try await resolvedClient(session: session)
         do {
             let mediaSource = try MediaSource.fromJson(json: sourceJSON)
-            let data = try await client.getMediaContent(mediaSource: mediaSource)
+            let data = try await Self.downloadedAttachmentData(
+                mediaSource: mediaSource,
+                attachment: attachment,
+                session: session,
+                client: client
+            )
             return MatrixAttachmentDownload(
                 filename: attachment.filename,
                 mimeType: attachment.mimeType,
@@ -822,6 +838,19 @@ private struct SDKSessionPaths {
     let cache: URL
 }
 
+private struct SDKAttachmentUploadSource {
+    let source: UploadSource
+    let temporaryDirectory: URL?
+
+    func removeTemporaryFiles() {
+        guard let temporaryDirectory else {
+            return
+        }
+
+        try? FileManager.default.removeItem(at: temporaryDirectory)
+    }
+}
+
 #if DEBUG
 struct MatrixDeviceVerificationDebugSnapshot: Equatable, Sendable {
     let state: MatrixDeviceVerificationState
@@ -1141,6 +1170,90 @@ private extension MatrixRustSDKAdapter {
         return SDKSessionPaths(data: data, cache: cache)
     }
 
+    static func uploadSource(
+        for attachment: MatrixAttachmentUpload,
+        session: MatrixSession
+    ) throws -> SDKAttachmentUploadSource {
+        #if os(macOS)
+        if attachment.isImage {
+            return SDKAttachmentUploadSource(
+                source: .data(bytes: attachment.data, filename: attachment.filename),
+                temporaryDirectory: nil
+            )
+        }
+
+        let directory = cacheRoot(for: session.sdkStoreID)
+            .appendingPathComponent("attachment-uploads", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileURL = directory.appendingPathComponent(
+            safeAttachmentFilename(attachment.filename),
+            isDirectory: false
+        )
+        try attachment.data.write(to: fileURL, options: [.atomic])
+        return SDKAttachmentUploadSource(
+            source: .file(filename: fileURL.path(percentEncoded: false)),
+            temporaryDirectory: directory
+        )
+        #else
+        return SDKAttachmentUploadSource(
+            source: .data(bytes: attachment.data, filename: attachment.filename),
+            temporaryDirectory: nil
+        )
+        #endif
+    }
+
+    static func downloadedAttachmentData(
+        mediaSource: MediaSource,
+        attachment: MatrixTimelineAttachment,
+        session: MatrixSession,
+        client: Client
+    ) async throws -> Data {
+        #if os(macOS)
+        let directory = cacheRoot(for: session.sdkStoreID)
+            .appendingPathComponent("attachment-downloads", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let handle = try await client.getMediaFile(
+            mediaSource: mediaSource,
+            filename: safeAttachmentFilename(attachment.filename),
+            mimeType: attachment.mimeType ?? "application/octet-stream",
+            useCache: false,
+            tempDir: directory.path(percentEncoded: false)
+        )
+        return try Data(contentsOf: URL(fileURLWithPath: try handle.path()))
+        #else
+        return try await client.getMediaContent(mediaSource: mediaSource)
+        #endif
+    }
+
+    static func emitLiveSmokeAttachmentDiagnostic(_ error: Error) {
+        #if DEBUG
+        guard ProcessInfo.processInfo.environment["TRIX_MATRIX_LIVE_SMOKE"] == "1" else {
+            return
+        }
+
+        let reason = redactedLiveSmokeDiagnostic(String(reflecting: error))
+        FileHandle.standardError.write(Data("TRIX_LIVE_SMOKE attachment-send-sdk-error \(reason)\n".utf8))
+        #endif
+    }
+
+    static func redactedLiveSmokeDiagnostic(_ value: String) -> String {
+        var result = value
+        let patterns = [
+            #"(?i)(access[_-]?token=)[^&\s]+"#,
+            #"(?i)(refresh[_-]?token=)[^&\s]+"#,
+            #"(?i)(Bearer\s+)[A-Za-z0-9._~+/\-=]+"#
+        ]
+        for pattern in patterns {
+            result = result.replacingOccurrences(
+                of: pattern,
+                with: "$1[redacted]",
+                options: .regularExpression
+            )
+        }
+        return result
+    }
+
     static func dataRoot(for storeID: String) -> URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("TrixMatrix", isDirectory: true)
@@ -1153,6 +1266,20 @@ private extension MatrixRustSDKAdapter {
             .appendingPathComponent("TrixMatrix", isDirectory: true)
             .appendingPathComponent(storeID, isDirectory: true)
             .appendingPathComponent("cache", isDirectory: true)
+    }
+
+    static func safeAttachmentFilename(_ filename: String) -> String {
+        let trimmed = filename.trimmingCharacters(in: .whitespacesAndNewlines)
+        var blockedCharacters = CharacterSet(charactersIn: "/\\:")
+        blockedCharacters.formUnion(.controlCharacters)
+
+        let cleaned = trimmed
+            .components(separatedBy: blockedCharacters)
+            .filter { !$0.isEmpty }
+            .joined(separator: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return cleaned.isEmpty ? "Attachment" : cleaned
     }
 
     static func displayName(from userID: String) -> String {

@@ -205,11 +205,12 @@ The encrypted group mode requires `ADMIN`, `TEST`, and `FRIEND` credentials. It
 creates an encrypted private group, waits for both invited accounts to join,
 sends generated messages from two participants, and checks receive on the other
 participants without printing message bodies or credentials.
-The encrypted attachment mode creates an encrypted DM, sends a generated
-attachment through the Matrix SDK timeline API, waits for the test account to
-see the file event, downloads it through the SDK media API, and compares bytes
-without printing filenames, payloads, passwords, access tokens, registration
-tokens, SAS values, recovery keys, or decrypted message bodies.
+The encrypted attachment mode creates an encrypted DM, sends generated text and
+PNG image attachments through the Matrix SDK timeline API, waits for the test
+account to see both attachment events, downloads them through the SDK media API,
+and compares bytes without printing filenames, payloads, passwords, access
+tokens, registration tokens, SAS values, recovery keys, or decrypted message
+bodies.
 The device verification mode prints non-secret diagnostics for SDK
 `verificationState`, eligible-device flags, backup/recovery state, and own-user
 identity state.
