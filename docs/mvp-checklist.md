@@ -128,7 +128,11 @@ legacy implementation details.
       timeline events, download them through Matrix SDK media APIs, and preview
       downloaded images in app. Downloaded attachments can be opened, shared,
       or exported through OS controls. Live encrypted attachment round-trip
-      validation is still open.
+      smoke on May 6, 2026 created an encrypted DM, joined the test account,
+      sent a generated attachment, received the file event, downloaded it, and
+      matched bytes without printing filenames, payloads, passwords, access
+      tokens, registration tokens, SAS values, recovery keys, or decrypted
+      message bodies.
 - [x] SwiftUI Apple client runs a foreground auto-refresh loop while the app
       scene is active. It silently refreshes rooms, pending invites, and the
       selected timeline through the existing Matrix service/view-model boundary,
