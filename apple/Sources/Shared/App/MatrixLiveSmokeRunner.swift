@@ -29,6 +29,8 @@ enum MatrixLiveSmokeRunner {
                 try await runEncryptedDM()
             case "device-verification":
                 try await runDeviceVerification()
+            case "recovery":
+                try await runRecoverySetupConfirmation()
             case "cleanup":
                 try await runCleanup()
             default:
@@ -260,6 +262,92 @@ enum MatrixLiveSmokeRunner {
         }
     }
 
+    private static func runRecoverySetupConfirmation() async throws {
+        guard ProcessInfo.processInfo.environment["TRIX_MATRIX_LIVE_SMOKE_ALLOW_RECOVERY_MUTATION"] == "1" else {
+            throw MatrixLiveSmokeError.missingRecoveryMutationOptIn
+        }
+
+        let account = try credentials(prefix: "RECOVERY")
+        try validateRecoverySmokeAccount(account)
+
+        let setupService = MatrixRustSDKAdapter()
+        let confirmationService = MatrixRustSDKAdapter()
+        var setupSession: MatrixSession?
+        var confirmationSession: MatrixSession?
+
+        func cleanup() async {
+            if let confirmationSession {
+                try? await confirmationService.logout(session: confirmationSession)
+            }
+            if let setupSession {
+                try? await setupService.logout(session: setupSession)
+            }
+        }
+
+        do {
+            let setupSessionValue = try await setupService.login(
+                userID: account.userID,
+                password: account.password,
+                serverURL: MatrixClientConfiguration.homeserverURL
+            )
+            setupSession = setupSessionValue
+            _ = try await setupService.rooms(session: setupSessionValue)
+
+            let setupInitialSnapshot = try await emitRecoverySnapshot(
+                "setup initial",
+                service: setupService,
+                session: setupSessionValue
+            )
+            guard setupInitialSnapshot.recoveryState == "disabled" else {
+                emit("recovery blocked reason=initial-recovery-not-disabled \(setupInitialSnapshot.liveSmokeDescription)")
+                throw MatrixLiveSmokeError.recoveryInitialStateNotSetupEligible
+            }
+
+            let recoveryKey = try await setupService.setUpRecovery(session: setupSessionValue)
+            emit("recovery-setup ok")
+
+            _ = try await waitForRecoveryReady(
+                label: "setup",
+                service: setupService,
+                session: setupSessionValue,
+                timeoutSeconds: 60
+            )
+
+            let confirmationSessionValue = try await confirmationService.login(
+                userID: account.userID,
+                password: account.password,
+                serverURL: MatrixClientConfiguration.homeserverURL
+            )
+            confirmationSession = confirmationSessionValue
+            _ = try await confirmationService.rooms(session: confirmationSessionValue)
+
+            let confirmationInitialSnapshot = try await emitRecoverySnapshot(
+                "confirmation initial",
+                service: confirmationService,
+                session: confirmationSessionValue
+            )
+            guard recoveryConfirmationAvailable(confirmationInitialSnapshot) else {
+                emit("recovery blocked reason=confirmation-unavailable \(confirmationInitialSnapshot.liveSmokeDescription)")
+                throw MatrixLiveSmokeError.recoveryConfirmationStateUnavailable
+            }
+
+            _ = try await confirmationService.confirmRecoveryKey(recoveryKey, session: confirmationSessionValue)
+            emit("recovery-confirmation ok")
+
+            let finalSnapshot = try await waitForRecoveryReady(
+                label: "confirmation",
+                service: confirmationService,
+                session: confirmationSessionValue,
+                timeoutSeconds: 60
+            )
+            emit("recovery-state ok \(finalSnapshot.liveSmokeDescription)")
+            await cleanup()
+        } catch {
+            await cleanup()
+            throw error
+        }
+    }
+
     private static func runCleanup() async throws {
         let store = adminStore()
         if let session = try store.loadSession() {
@@ -368,6 +456,28 @@ enum MatrixLiveSmokeRunner {
         throw MatrixLiveSmokeError.verificationStateNotVerified
     }
 
+    private static func waitForRecoveryReady(
+        label: String,
+        service: MatrixRustSDKAdapter,
+        session: MatrixSession,
+        timeoutSeconds: Int
+    ) async throws -> MatrixDeviceVerificationDebugSnapshot {
+        for attempt in 0..<timeoutSeconds {
+            let snapshot = try await service.debugDeviceVerificationSnapshot(session: session)
+            if recoveryReady(snapshot) {
+                emit("recovery-debug \(label) ready \(snapshot.liveSmokeDescription)")
+                return snapshot
+            }
+
+            if attempt == 0 || (attempt + 1).isMultiple(of: 10) {
+                emit("recovery-debug \(label) waitSeconds=\(attempt + 1) \(snapshot.liveSmokeDescription)")
+            }
+            try? await Task.sleep(for: .seconds(1))
+        }
+
+        throw MatrixLiveSmokeError.recoveryStateTimedOut
+    }
+
     @discardableResult
     private static func emitVerificationSnapshot(
         _ label: String,
@@ -379,8 +489,44 @@ enum MatrixLiveSmokeRunner {
         return snapshot
     }
 
+    @discardableResult
+    private static func emitRecoverySnapshot(
+        _ label: String,
+        service: MatrixRustSDKAdapter,
+        session: MatrixSession
+    ) async throws -> MatrixDeviceVerificationDebugSnapshot {
+        let snapshot = try await service.debugDeviceVerificationSnapshot(session: session)
+        emit("recovery-debug \(label) \(snapshot.liveSmokeDescription)")
+        return snapshot
+    }
+
     private static func adminStore() -> KeychainMatrixSessionStore {
         KeychainMatrixSessionStore(service: serviceName, account: adminAccount)
+    }
+
+    private static func validateRecoverySmokeAccount(_ credentials: MatrixLiveSmokeCredentials) throws {
+        let userID = credentials.userID.lowercased()
+        if userID == "@admin:trix.selfhost.ru" {
+            throw MatrixLiveSmokeError.recoverySmokeAdminAccountForbidden
+        }
+
+        if let adminUserID = ProcessInfo.processInfo.environment["TRIX_MATRIX_LIVE_SMOKE_ADMIN_USER_ID"],
+           !adminUserID.isEmpty,
+           userID == adminUserID.lowercased() {
+            throw MatrixLiveSmokeError.recoverySmokeAdminAccountForbidden
+        }
+    }
+
+    private static func recoveryConfirmationAvailable(_ snapshot: MatrixDeviceVerificationDebugSnapshot) -> Bool {
+        snapshot.recoveryState == "enabled" || snapshot.recoveryState == "incomplete"
+    }
+
+    private static func recoveryReady(_ snapshot: MatrixDeviceVerificationDebugSnapshot) -> Bool {
+        snapshot.recoveryState == "enabled" && hasBackupEvidence(snapshot)
+    }
+
+    private static func hasBackupEvidence(_ snapshot: MatrixDeviceVerificationDebugSnapshot) -> Bool {
+        snapshot.backupState == "enabled" || snapshot.backupExistsOnServer == .value(true)
     }
 
     private static func credentials(prefix: String) throws -> MatrixLiveSmokeCredentials {
@@ -404,6 +550,7 @@ enum MatrixLiveSmokeRunner {
         let redactedTerms = [
             ProcessInfo.processInfo.environment["TRIX_MATRIX_LIVE_SMOKE_ADMIN_PASSWORD"],
             ProcessInfo.processInfo.environment["TRIX_MATRIX_LIVE_SMOKE_TEST_PASSWORD"],
+            ProcessInfo.processInfo.environment["TRIX_MATRIX_LIVE_SMOKE_RECOVERY_PASSWORD"],
         ].compactMap { $0 }.filter { !$0.isEmpty }
 
         return redactedTerms.reduce(message) { partial, secret in
@@ -429,6 +576,11 @@ private enum MatrixLiveSmokeError: LocalizedError {
     case verificationCancelled
     case verificationTimedOut
     case verificationStateNotVerified
+    case missingRecoveryMutationOptIn
+    case recoverySmokeAdminAccountForbidden
+    case recoveryInitialStateNotSetupEligible
+    case recoveryConfirmationStateUnavailable
+    case recoveryStateTimedOut
 
     var errorDescription: String? {
         switch self {
@@ -454,6 +606,16 @@ private enum MatrixLiveSmokeError: LocalizedError {
             return "Timed out waiting for Matrix device verification progress."
         case .verificationStateNotVerified:
             return "The Matrix SDK did not report the device as verified after verification finished."
+        case .missingRecoveryMutationOptIn:
+            return "Recovery live smoke requires TRIX_MATRIX_LIVE_SMOKE_ALLOW_RECOVERY_MUTATION=1 and RECOVERY credentials."
+        case .recoverySmokeAdminAccountForbidden:
+            return "Recovery live smoke refuses to mutate the admin Matrix account."
+        case .recoveryInitialStateNotSetupEligible:
+            return "Recovery live smoke account is not in disabled recovery state."
+        case .recoveryConfirmationStateUnavailable:
+            return "Recovery live smoke confirmation is available only when recovery is enabled or incomplete."
+        case .recoveryStateTimedOut:
+            return "Timed out waiting for Matrix recovery and key backup state."
         }
     }
 }

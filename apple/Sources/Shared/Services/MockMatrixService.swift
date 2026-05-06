@@ -221,6 +221,9 @@ actor MockMatrixService: MatrixService {
         guard !recoveryKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw MatrixClientError.recoveryKeyRequired
         }
+        guard recoveryState == .enabled || recoveryState == .incomplete else {
+            throw MatrixClientError.recoveryKeyConfirmationUnavailable
+        }
 
         recoveryState = .enabled
         backupState = .enabled

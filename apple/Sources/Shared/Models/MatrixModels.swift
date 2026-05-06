@@ -363,6 +363,7 @@ enum MatrixClientError: LocalizedError {
     case inviteUnavailable
     case noEligibleDeviceForVerification
     case recoverySetupUnavailable
+    case recoveryKeyConfirmationUnavailable
     case recoveryKeyRequired
     case recoveryKeySetupFailed
     case recoveryKeyConfirmationFailed
@@ -389,6 +390,8 @@ enum MatrixClientError: LocalizedError {
             return "No verified Matrix session is available to verify this device."
         case .recoverySetupUnavailable:
             return "Matrix recovery can only be set up when SDK recovery is disabled."
+        case .recoveryKeyConfirmationUnavailable:
+            return "Matrix recovery key confirmation is available only when SDK recovery is set up or incomplete."
         case .recoveryKeyRequired:
             return "Enter the Matrix recovery key."
         case .recoveryKeySetupFailed:

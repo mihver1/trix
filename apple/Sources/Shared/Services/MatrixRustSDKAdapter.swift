@@ -331,6 +331,10 @@ actor MatrixRustSDKAdapter: MatrixService {
         let client = try await resolvedClient(session: session)
         let encryption = client.encryption()
         await encryption.waitForE2eeInitializationTasks()
+        let recoveryState = encryption.recoveryState()
+        guard recoveryState == .enabled || recoveryState == .incomplete else {
+            throw MatrixClientError.recoveryKeyConfirmationUnavailable
+        }
 
         do {
             try await encryption.recoverAndFixBackup(recoveryKey: trimmedKey)

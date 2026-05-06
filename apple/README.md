@@ -114,8 +114,7 @@ The remaining production tasks are:
 1. Decide whether a dev-only homeserver URL override is allowed for local
    testing before DNS/TLS is live.
 2. Finish production gating for device verification state after SAS completes.
-3. Live-validate Matrix recovery setup/confirmation without printing recovery
-   keys or passwords.
+3. Add persistent tests around recovery/key backup state.
 4. Keep tokens and decrypted message bodies out of logs.
 5. Add production group room creation and group invite UX.
 6. Add persistent tests around encrypted room sync, invite handling, device
@@ -152,6 +151,7 @@ Modes:
 - `TRIX_MATRIX_LIVE_SMOKE_MODE=restore`
 - `TRIX_MATRIX_LIVE_SMOKE_MODE=encrypted-dm`
 - `TRIX_MATRIX_LIVE_SMOKE_MODE=device-verification`
+- `TRIX_MATRIX_LIVE_SMOKE_MODE=recovery`
 - `TRIX_MATRIX_LIVE_SMOKE_MODE=cleanup`
 
 Use a signed simulator build for this path. `CODE_SIGNING_ALLOWED=NO` is fine
@@ -159,6 +159,40 @@ as a compile check, but the unsigned simulator app can fail Keychain operations.
 The device verification mode prints non-secret diagnostics for SDK
 `verificationState`, eligible-device flags, backup/recovery state, and own-user
 identity state.
+
+The recovery mode is DEBUG-only and intentionally mutates recovery/key backup
+state. It refuses to run unless all of these are set through the environment:
+
+- `TRIX_MATRIX_LIVE_SMOKE_RECOVERY_USER_ID`
+- `TRIX_MATRIX_LIVE_SMOKE_RECOVERY_PASSWORD`
+- `TRIX_MATRIX_LIVE_SMOKE_ALLOW_RECOVERY_MUTATION=1`
+
+It also refuses `@admin:trix.selfhost.ru` and any account matching
+`TRIX_MATRIX_LIVE_SMOKE_ADMIN_USER_ID`. When allowed, it logs in with the
+dedicated recovery account, requires initial SDK `recoveryState=disabled`, calls
+`enableRecovery`, keeps the generated recovery key only in process memory, logs
+only non-secret recovery/backup snapshots, logs in a second session, calls
+`recoverAndFixBackup` with the in-memory key, and reports the final
+recovery/backup snapshot. It must not print recovery keys, passwords, access
+tokens, SAS values, registration tokens, or decrypted message bodies.
+
+On May 6, 2026, the recovery live smoke created and consumed
+`@recovery-smoke-20260506092649-7c56b1:trix.selfhost.ru` for validation. Recovery
+setup smoke accounts are one-shot because a successful run leaves SDK recovery
+enabled. A fresh next-run account,
+`@recovery-smoke-20260506093024-d2736f:trix.selfhost.ru`, is stored as the active
+recovery smoke account in the local Keychain under
+`com.softgrid.trixmatrix.live-smoke` / `recovery-user-id`; its password is stored
+under `com.softgrid.trixmatrix.live-smoke.recovery-password`.
+
+The signed iOS simulator recovery smoke succeeded with only non-secret
+`TRIX_LIVE_SMOKE` lines. The setup session started with `recoveryState=disabled`,
+called `enableRecovery`, and reached `verificationState=verified`,
+`backupState=enabled`, `backupExistsOnServer=true`, and `recoveryState=enabled`.
+The confirmation session started with `recoveryState=incomplete` and
+`backupExistsOnServer=true`, called `recoverAndFixBackup` with the in-memory key,
+and finished with `verificationState=verified`, `backupState=enabled`,
+`backupExistsOnServer=true`, and `recoveryState=enabled`.
 
 ## Known Build Note
 

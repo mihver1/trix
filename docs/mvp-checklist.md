@@ -61,13 +61,14 @@ messages.
 - [x] Show a no-eligible-device blocked state when Matrix SDK cannot start
       interactive SAS.
 - [x] Add SDK-backed recovery setup/confirmation UI for that blocked state.
-- [ ] Live-validate recovery setup/confirmation without printing recovery keys.
+- [x] Live-validate recovery setup/confirmation without printing recovery keys.
 
 ## Deferred MVP Items
 
 - [ ] Device verification production UX, pending SDK verified-state validation
       after live SAS completion.
-- [ ] Key backup/recovery live validation and persistence tests.
+- [x] Key backup/recovery live validation.
+- [ ] Key backup/recovery persistence tests.
 - [ ] Push notifications through Matrix push gateway and APNs.
 - [ ] Media upload.
 - [ ] Media download.
@@ -119,11 +120,41 @@ messages.
       blocked state with `verificationState=unverified`,
       `hasDevicesToVerifyAgainst=false`, `backupState=unknown`,
       `backupExistsOnServer=false`, `recoveryState=disabled`, and no SAS forcing.
+- [x] DEBUG live iOS smoke has a safe `recovery` mode for a dedicated disposable
+      account. It refuses to run without `TRIX_MATRIX_LIVE_SMOKE_RECOVERY_USER_ID`,
+      `TRIX_MATRIX_LIVE_SMOKE_RECOVERY_PASSWORD`, and
+      `TRIX_MATRIX_LIVE_SMOKE_ALLOW_RECOVERY_MUTATION=1`; refuses
+      `@admin:trix.selfhost.ru`; calls `enableRecovery` only from
+      `recoveryState=disabled`; keeps the generated recovery key in process
+      memory only; then calls `recoverAndFixBackup` from a second session and
+      reports only non-secret `TRIX_LIVE_SMOKE` state lines.
+- [x] Live-validated Matrix recovery/key backup setup and confirmation against
+      `@recovery-smoke-20260506092649-7c56b1:trix.selfhost.ru` on May 6, 2026.
+      The signed iOS simulator smoke printed only non-secret `TRIX_LIVE_SMOKE`
+      lines. Setup started at `verificationState=unverified`,
+      `isLastDevice=true`, `backupState=unknown`, `backupExistsOnServer=false`,
+      `recoveryState=disabled`, then `enableRecovery` reached
+      `verificationState=verified`, `backupState=enabled`,
+      `backupExistsOnServer=true`, and `recoveryState=enabled`. Confirmation
+      started from a second session with `verificationState=unverified`,
+      `isLastDevice=false`, `backupState=unknown`, `backupExistsOnServer=true`,
+      `recoveryState=incomplete`, then `recoverAndFixBackup` reached
+      `verificationState=verified`, `backupState=enabled`,
+      `backupExistsOnServer=true`, and `recoveryState=enabled`.
 
 ## Live Validation Notes
 
 - `@admin:trix.selfhost.ru` exists and can login/logout through the Matrix API.
 - `@test:trix.selfhost.ru` exists and can login/logout through the Matrix API.
+- `@recovery-smoke-20260506092649-7c56b1:trix.selfhost.ru` exists for recovery
+  smoke validation and was consumed by the successful May 6, 2026 run. Recovery
+  setup smoke accounts are one-shot because a successful run leaves SDK recovery
+  enabled.
+- `@recovery-smoke-20260506093024-d2736f:trix.selfhost.ru` exists as the fresh
+  next-run recovery smoke account. Its password is stored in the local Keychain
+  service `com.softgrid.trixmatrix.live-smoke.recovery-password`; the active
+  smoke user id is stored in `com.softgrid.trixmatrix.live-smoke` /
+  `recovery-user-id`.
 - Admin and test credentials are stored in the user's password manager.
 - Bootstrap credential files have been removed from the VPS:
   `/root/trix-matrix-admin.bootstrap` and `/root/trix-matrix-test.bootstrap`.
@@ -132,4 +163,7 @@ messages.
 - Device verification live smoke does not print SAS values; it only reports
   phase completion, SDK verified-state, eligible-device flags, backup/recovery
   state, and own user identity status.
+- Recovery live smoke must use a dedicated disposable account plus
+  `TRIX_MATRIX_LIVE_SMOKE_ALLOW_RECOVERY_MUTATION=1`; it must not run against
+  `@admin:trix.selfhost.ru` without explicit approval.
 - Several smoke-created encrypted DM rooms may exist on the live server.
