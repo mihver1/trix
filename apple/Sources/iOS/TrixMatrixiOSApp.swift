@@ -2,7 +2,7 @@ import SwiftUI
 
 @main
 struct TrixMatrixiOSApp: App {
-    @StateObject private var model = MatrixAppModel()
+    @StateObject private var model = MatrixAppModel.makeDefault()
 
     init() {
         MatrixLiveSmokeRunner.installIfRequested()

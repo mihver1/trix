@@ -1,7 +1,7 @@
 # Trix Matrix Apple Client
 
-This is the first Apple client scaffold for the Matrix pivot. It is a native
-SwiftUI project with iOS and macOS targets.
+This is the native Apple client for the Matrix pivot. It is a SwiftUI project
+with iOS and macOS targets.
 
 The app now builds against a pinned `matrix-rust-components-swift` release and
 uses a small adapter boundary around the SDK. A mock service remains available
@@ -79,8 +79,12 @@ xcodebuild \
   verification; this does not silently trust devices.
 - Room list and room timeline are shown through view models backed by Matrix
   SDK sync/timeline APIs.
-- The room list has a production SwiftUI flow for creating encrypted DMs and
-  private encrypted group rooms with two or more invitees.
+- The iOS target now uses a phone-appropriate product shell: Chats and Settings
+  tabs, a dense inbox with account state, visible invite actions, and a
+  composer/timeline style aligned with the legacy Trix messenger instead of the
+  early scaffold UI.
+- The room list has a production SwiftUI flow for creating E2EE DMs and
+  private E2EE group rooms with two or more invitees.
 - Pending Matrix invites are listed separately and can be accepted or declined.
 - Plain text send goes through the Matrix SDK timeline send API.
 - File and image attachments can be picked from the timeline composer and sent
@@ -90,8 +94,8 @@ xcodebuild \
 - While the app scene is active, a foreground refresh loop periodically reloads
   rooms, pending invites, and the selected timeline through the Matrix service
   boundary.
-- Encrypted rooms are handled by Matrix SDK E2EE; no custom crypto is
-  implemented here.
+- Room privacy is handled by Matrix SDK E2EE; no custom crypto is implemented
+  here.
 - Device verification state is read from the Matrix SDK and surfaced in the
   account UI; the app does not silently trust devices or auto-approve
   verification.

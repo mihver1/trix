@@ -245,6 +245,36 @@ actor MatrixRustSDKAdapter: MatrixService {
         }
     }
 
+    func members(roomID: String, session: MatrixSession) async throws -> [MatrixRoomMember] {
+        let room = try await room(for: roomID, session: session)
+        let iterator = try await room.members()
+        var members: [MatrixRoomMember] = []
+
+        while let chunk = iterator.nextChunk(chunkSize: 64), !chunk.isEmpty {
+            members.append(contentsOf: chunk.map { MatrixRustSDKAdapter.roomMember(from: $0) })
+        }
+
+        return members.sorted { lhs, rhs in
+            if lhs.membership != rhs.membership {
+                return lhs.membership.sortOrder < rhs.membership.sortOrder
+            }
+
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        }
+    }
+
+    func inviteUser(_ userID: String, roomID: String, session: MatrixSession) async throws {
+        let normalizedUserID = try MatrixRustSDKAdapter.normalizedMatrixUserID(userID)
+        let room = try await room(for: roomID, session: session)
+        try await room.inviteUserById(userId: normalizedUserID)
+    }
+
+    func removeUser(_ userID: String, roomID: String, session: MatrixSession) async throws {
+        let normalizedUserID = try MatrixRustSDKAdapter.normalizedMatrixUserID(userID)
+        let room = try await room(for: roomID, session: session)
+        try await room.kickUser(userId: normalizedUserID, reason: nil)
+    }
+
     func deviceVerificationStatus(session: MatrixSession) async throws -> MatrixDeviceVerificationStatus {
         let client = try await resolvedClient(session: session)
         let encryption = client.encryption()
@@ -1067,6 +1097,45 @@ private extension MatrixRustSDKAdapter {
         return localpart.capitalized
     }
 
+    static func normalizedMatrixUserID(_ userID: String) throws -> String {
+        let trimmed = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("@"),
+              let separator = trimmed.firstIndex(of: ":"),
+              separator != trimmed.index(after: trimmed.startIndex) else {
+            throw MatrixClientError.invalidMatrixUserID
+        }
+
+        let serverName = String(trimmed[trimmed.index(after: separator)...])
+        guard serverName == MatrixClientConfiguration.serverName else {
+            throw MatrixClientError.invalidMatrixUserID
+        }
+
+        return trimmed
+    }
+
+    static func roomMember(from member: RoomMember) -> MatrixRoomMember {
+        MatrixRoomMember(
+            userID: member.userId,
+            displayName: member.displayName,
+            membership: membership(from: member.membership)
+        )
+    }
+
+    static func membership(from state: MembershipState) -> MatrixRoomMembership {
+        switch state {
+        case .join:
+            return .joined
+        case .invite:
+            return .invited
+        case .leave:
+            return .left
+        case .ban:
+            return .banned
+        case .knock, .custom:
+            return .unknown
+        }
+    }
+
     static func summary(from room: Room) async -> MatrixRoomSummary {
         let info = try? await room.roomInfo()
         let latestEvent = await room.latestEvent()
@@ -1241,7 +1310,7 @@ private extension MatrixRustSDKAdapter {
         case .sticker(let body, _, _):
             return body
         case .unableToDecrypt:
-            return "Encrypted message unavailable"
+            return "Message unavailable"
         case .redacted:
             return "Message deleted"
         default:

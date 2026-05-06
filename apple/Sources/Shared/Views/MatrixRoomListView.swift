@@ -1,74 +1,242 @@
 import SwiftUI
 
+enum MatrixRoomListMode {
+    case sidebar
+    case phoneInbox
+}
+
 struct MatrixRoomListView: View {
     @ObservedObject var model: MatrixAppModel
     @ObservedObject private var roomListViewModel: RoomListViewModel
-    @ObservedObject private var deviceVerificationViewModel: DeviceVerificationViewModel
     @State private var isShowingNewRoom = false
+    @State private var phoneSelectedRoomID: String?
+    let mode: MatrixRoomListMode
+
+    init(model: MatrixAppModel, mode: MatrixRoomListMode = .sidebar) {
+        self.model = model
+        self.mode = mode
+        self._roomListViewModel = ObservedObject(wrappedValue: model.roomListViewModel)
+    }
+
+    var body: some View {
+        styledList
+            .toolbar {
+                Button {
+                    isShowingNewRoom = true
+                } label: {
+                    Label("New Room", systemImage: "square.and.pencil")
+                }
+                .help("New room")
+            }
+            .sheet(isPresented: $isShowingNewRoom) {
+                MatrixNewRoomView(model: model)
+            }
+            .navigationDestination(isPresented: phoneRoomIsPresented) {
+                phoneTimelineDestination
+            }
+    }
+
+    @ViewBuilder
+    private var styledList: some View {
+        switch mode {
+        case .sidebar:
+            roomList
+                .listStyle(.sidebar)
+                .refreshable {
+                    await model.reloadRooms()
+                }
+        case .phoneInbox:
+            #if os(iOS)
+            VStack(spacing: 0) {
+                if let account = model.account {
+                    MatrixInboxAccountHeader(
+                        account: account,
+                        isLoading: roomListViewModel.isLoading,
+                        refresh: {
+                            Task {
+                                await model.reloadRooms()
+                            }
+                        }
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(.regularMaterial)
+                }
+
+                roomList
+                    .listStyle(.plain)
+                    .refreshable {
+                        await model.reloadRooms()
+                    }
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        Color.clear.frame(height: 86)
+                    }
+                    .matrixScrollContentBackgroundHidden()
+            }
+            .background(MatrixDesign.screenBackground)
+            #else
+            roomList
+                .listStyle(.sidebar)
+                .refreshable {
+                    await model.reloadRooms()
+                }
+            #endif
+        }
+    }
+
+    @ViewBuilder
+    private var roomList: some View {
+        switch mode {
+        case .phoneInbox:
+            List {
+                roomListContent
+            }
+        case .sidebar:
+            List(selection: $model.selectedRoomID) {
+                roomListContent
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var roomListContent: some View {
+        Section {
+            if roomListViewModel.rooms.isEmpty {
+                MatrixEmptyStateView(
+                    title: "No Rooms",
+                    systemImage: "bubble.left",
+                    message: "Create a room or accept an invite."
+                )
+            } else {
+                ForEach(roomListViewModel.rooms) { room in
+                    roomRow(room)
+                }
+            }
+        } header: {
+            HStack {
+                Text(mode == .phoneInbox ? "Recent" : "Rooms")
+                Spacer()
+                if roomListViewModel.isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+        }
+
+        if !roomListViewModel.invitations.isEmpty {
+            Section("Invites") {
+                ForEach(roomListViewModel.invitations) { invitation in
+                    MatrixInviteRow(
+                        invitation: invitation,
+                        isWorking: roomListViewModel.invitationActionRoomID == invitation.id,
+                        accept: {
+                            Task {
+                                await model.acceptInvitation(invitation)
+                            }
+                        },
+                        decline: {
+                            Task {
+                                await model.declineInvitation(invitation)
+                            }
+                        }
+                    )
+                }
+            }
+        }
+
+        if let errorMessage = roomListViewModel.errorMessage ?? model.errorMessage {
+            Section {
+                MatrixBannerView(
+                    text: errorMessage,
+                    systemImage: "exclamationmark.triangle",
+                    tint: .red
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func roomRow(_ room: MatrixRoomSummary) -> some View {
+        if mode == .phoneInbox {
+            Button {
+                openPhoneRoom(room)
+            } label: {
+                MatrixRoomRow(room: room, mode: mode)
+            }
+            .buttonStyle(.plain)
+            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            .listRowSeparator(.visible)
+        } else {
+            MatrixRoomRow(room: room, mode: mode)
+                .tag(room.id as String?)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    Task {
+                        await model.selectRoom(room)
+                    }
+                }
+        }
+    }
+
+    private func openPhoneRoom(_ room: MatrixRoomSummary) {
+        model.selectedRoomID = room.id
+        phoneSelectedRoomID = room.id
+    }
+
+    private var phoneRoomIsPresented: Binding<Bool> {
+        Binding(
+            get: { phoneSelectedRoomID != nil },
+            set: { isPresented in
+                if !isPresented {
+                    phoneSelectedRoomID = nil
+                }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private var phoneTimelineDestination: some View {
+        if let roomID = phoneSelectedRoomID,
+           let room = roomListViewModel.rooms.first(where: { $0.id == roomID }) {
+            MatrixTimelineView(model: model, room: room)
+        } else {
+            MatrixEmptyStateView(
+                title: "Room unavailable",
+                systemImage: "exclamationmark.bubble",
+                message: "The room is no longer present in the latest Matrix sync."
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(MatrixDesign.screenBackground)
+        }
+    }
+}
+
+struct MatrixSettingsView: View {
+    @ObservedObject var model: MatrixAppModel
+    @ObservedObject private var deviceVerificationViewModel: DeviceVerificationViewModel
 
     init(model: MatrixAppModel) {
         self.model = model
-        self._roomListViewModel = ObservedObject(wrappedValue: model.roomListViewModel)
         self._deviceVerificationViewModel = ObservedObject(wrappedValue: model.deviceVerificationViewModel)
     }
 
     var body: some View {
-        List(selection: $model.selectedRoomID) {
-            Section {
-                if roomListViewModel.rooms.isEmpty {
-                    ContentUnavailableView(
-                        "No Rooms",
-                        systemImage: "bubble.left",
-                        description: Text("Create an encrypted room or accept an invite.")
-                    )
-                } else {
-                    ForEach(roomListViewModel.rooms) { room in
-                        MatrixRoomRow(room: room)
-                            .tag(room.id as String?)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                Task {
-                                    await model.selectRoom(room)
-                                }
-                            }
-                    }
-                }
-            } header: {
-                HStack {
-                    Text("Rooms")
-                    Spacer()
-                    if roomListViewModel.isLoading {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
-                }
-            }
-
-            if !roomListViewModel.invitations.isEmpty {
-                Section("Invites") {
-                    ForEach(roomListViewModel.invitations) { invitation in
-                        MatrixInviteRow(
-                            invitation: invitation,
-                            isWorking: roomListViewModel.invitationActionRoomID == invitation.id,
-                            accept: {
-                                Task {
-                                    await model.acceptInvitation(invitation)
-                                }
-                            },
-                            decline: {
-                                Task {
-                                    await model.declineInvitation(invitation)
-                                }
-                            }
-                        )
-                    }
-                }
-            }
-
+        Form {
             Section("Account") {
                 if let account = model.account {
                     LabeledContent("User", value: account.userID)
+                    LabeledContent("Display name", value: account.displayName.isEmpty ? "Not set" : account.displayName)
                     LabeledContent("Device", value: account.deviceID)
+                } else {
+                    MatrixEmptyStateView(
+                        title: "Not Signed In",
+                        systemImage: "person.crop.circle.badge.exclamationmark",
+                        message: "Sign in before managing account settings."
+                    )
+                }
+
+                if let homeserverURL = model.session?.homeserverURL.absoluteString {
+                    LabeledContent("Homeserver", value: homeserverURL)
                 }
 
                 Button {
@@ -76,8 +244,9 @@ struct MatrixRoomListView: View {
                         await model.reloadRooms()
                     }
                 } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                    Label("Refresh Rooms", systemImage: "arrow.clockwise")
                 }
+                .disabled(!model.isAuthenticated)
 
                 Button(role: .destructive) {
                     Task {
@@ -86,10 +255,10 @@ struct MatrixRoomListView: View {
                 } label: {
                     Label(model.isLoggingOut ? "Logging Out" : "Log Out", systemImage: "rectangle.portrait.and.arrow.right")
                 }
-                .disabled(model.isLoggingOut)
+                .disabled(!model.isAuthenticated || model.isLoggingOut)
             }
 
-            Section("Device Verification") {
+            Section("Device Verification And Recovery") {
                 MatrixDeviceVerificationStatusView(
                     viewModel: deviceVerificationViewModel,
                     requestVerification: {
@@ -144,71 +313,130 @@ struct MatrixRoomListView: View {
                 } label: {
                     Label("Refresh Verification", systemImage: "arrow.clockwise")
                 }
-                .disabled(deviceVerificationViewModel.isLoading)
+                .disabled(!model.isAuthenticated || deviceVerificationViewModel.isLoading)
             }
 
             Section {
                 MatrixLimitationsView()
             }
         }
-        .toolbar {
-            Button {
-                isShowingNewRoom = true
-            } label: {
-                Label("New Room", systemImage: "square.and.pencil")
+        .matrixScrollContentBackgroundHidden()
+        .background(MatrixDesign.screenBackground)
+        .task {
+            guard model.isAuthenticated else {
+                return
             }
-            .help("New encrypted room")
+
+            await model.reloadDeviceVerificationStatus()
         }
-        .sheet(isPresented: $isShowingNewRoom) {
-            MatrixNewRoomView(model: model)
+    }
+}
+
+private struct MatrixInboxAccountHeader: View {
+    let account: MatrixAccount
+    let isLoading: Bool
+    let refresh: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            MatrixAvatarView(
+                title: account.displayName.isEmpty ? account.userID : account.displayName,
+                systemImage: "person.crop.circle",
+                size: 32
+            )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(account.displayName.isEmpty ? "Trix" : account.displayName)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+
+                Text(account.userID)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer()
+
+            Button(action: refresh) {
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                }
+            }
+            .buttonStyle(.borderless)
+            .disabled(isLoading)
+            .accessibilityLabel("Refresh rooms")
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
 private struct MatrixRoomRow: View {
     let room: MatrixRoomSummary
+    let mode: MatrixRoomListMode
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: room.kind == .direct ? "person.crop.circle" : "person.2.circle")
-                .font(.title2)
-                .foregroundStyle(.secondary)
-                .frame(width: 28)
+        HStack(alignment: .center, spacing: 12) {
+            MatrixAvatarView(
+                title: room.name,
+                systemImage: room.kind.systemImage,
+                size: mode == .phoneInbox ? 50 : 34,
+                tint: room.kind.tint
+            )
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    MatrixRoomKindMark(kind: room.kind, size: 20)
+
                     Text(room.name)
                         .font(.headline)
                         .lineLimit(1)
-                    if room.isEncrypted {
-                        Image(systemName: "lock.fill")
+
+                    MatrixRoomSecurityMark(isEncrypted: room.isEncrypted, size: 20)
+
+                    Spacer(minLength: 8)
+
+                    if mode == .phoneInbox {
+                        Text(room.lastActivityAt.formatted(date: .omitted, time: .shortened))
                             .font(.caption)
-                            .foregroundStyle(.green)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
                     }
                 }
 
-                Text(room.subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(room.lastMessagePreview)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(mode == .phoneInbox ? 2 : 1)
 
-                Text(room.lastMessagePreview)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    Spacer(minLength: 8)
+
+                    if room.unreadCount > 0 {
+                        Text(room.unreadCount > 99 ? "99+" : "\(room.unreadCount)")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(MatrixDesign.accent, in: Capsule())
+                            .foregroundStyle(.white)
+                    }
+                }
+
+                if mode != .phoneInbox {
+                    Text(room.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
-            Spacer()
-
-            if room.unreadCount > 0 {
-                Text("\(room.unreadCount)")
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(.blue, in: Capsule())
-                    .foregroundStyle(.white)
-            }
+            Spacer(minLength: 8)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, mode == .phoneInbox ? 10 : 4)
+        .padding(.horizontal, mode == .phoneInbox ? 4 : 0)
     }
 }
 
@@ -220,22 +448,23 @@ private struct MatrixInviteRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: invitation.kind == .direct ? "person.crop.circle.badge.plus" : "person.2.badge.plus")
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 28)
+            HStack(alignment: .top, spacing: 12) {
+                MatrixAvatarView(
+                    title: invitation.title,
+                    systemImage: invitation.kind.systemImage,
+                    size: 36,
+                    tint: invitation.kind.tint
+                )
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
+                        MatrixRoomKindMark(kind: invitation.kind, size: 20)
+
                         Text(invitation.title)
                             .font(.headline)
                             .lineLimit(1)
-                        if invitation.isEncrypted {
-                            Image(systemName: "lock.fill")
-                                .font(.caption)
-                                .foregroundStyle(.green)
-                        }
+
+                        MatrixRoomSecurityMark(isEncrypted: invitation.isEncrypted, size: 20)
                     }
 
                     Text(invitation.subtitle)

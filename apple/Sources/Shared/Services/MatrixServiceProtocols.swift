@@ -23,6 +23,12 @@ protocol MatrixRoomService: Sendable {
     func downloadAttachment(_ attachment: MatrixTimelineAttachment, session: MatrixSession) async throws -> MatrixAttachmentDownload
 }
 
+protocol MatrixRoomMembershipService: Sendable {
+    func members(roomID: String, session: MatrixSession) async throws -> [MatrixRoomMember]
+    func inviteUser(_ userID: String, roomID: String, session: MatrixSession) async throws
+    func removeUser(_ userID: String, roomID: String, session: MatrixSession) async throws
+}
+
 protocol MatrixRoomBootstrapService: Sendable {
     func createEncryptedDirectRoom(
         inviteeUserID: String,
@@ -57,4 +63,4 @@ protocol MatrixDeviceVerificationService: Sendable {
     func confirmRecoveryKey(_ recoveryKey: String, session: MatrixSession) async throws -> MatrixDeviceVerificationStatus
 }
 
-typealias MatrixService = MatrixAuthService & MatrixSyncService & MatrixRoomService & MatrixRoomBootstrapService & MatrixDeviceVerificationService
+typealias MatrixService = MatrixAuthService & MatrixSyncService & MatrixRoomService & MatrixRoomMembershipService & MatrixRoomBootstrapService & MatrixDeviceVerificationService

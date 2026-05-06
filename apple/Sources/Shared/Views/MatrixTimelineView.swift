@@ -24,18 +24,24 @@ struct MatrixTimelineView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-                .padding(16)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
                 .background(.regularMaterial)
-
-            Divider()
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        if timelineViewModel.isLoading {
+                    LazyVStack(spacing: 0) {
+                        if timelineViewModel.isLoading && timelineViewModel.items.isEmpty {
                             ProgressView("Loading timeline")
                                 .frame(maxWidth: .infinity, alignment: .center)
-                                .padding(.top, 32)
+                                .padding(.top, 54)
+                        } else if timelineViewModel.items.isEmpty {
+                            MatrixEmptyStateView(
+                                title: "No messages",
+                                systemImage: "bubble.left.and.text.bubble.right",
+                                message: "Messages will appear here after sync."
+                            )
+                            .padding(.top, 54)
                         }
 
                         ForEach(timelineViewModel.items) { item in
@@ -48,28 +54,33 @@ struct MatrixTimelineView: View {
                                     }
                                 }
                             )
-                                .id(item.id)
+                            .id(item.id)
                         }
                     }
-                    .padding(16)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 10)
+                    .padding(.bottom, 12)
                 }
+                .matrixScrollDismissesKeyboard()
                 .onChange(of: timelineViewModel.items) { _, items in
                     guard let last = items.last else {
                         return
                     }
-                    proxy.scrollTo(last.id, anchor: .bottom)
+                    withAnimation(.snappy(duration: 0.24)) {
+                        proxy.scrollTo(last.id, anchor: .bottom)
+                    }
                 }
             }
 
             if let errorMessage = timelineViewModel.errorMessage ?? fileImportError {
-                Text(errorMessage)
-                    .font(.callout)
-                    .foregroundStyle(.red)
+                MatrixBannerView(
+                    text: errorMessage,
+                    systemImage: "exclamationmark.triangle.fill",
+                    tint: .red
+                )
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
             }
-
-            Divider()
 
             HStack(spacing: 10) {
                 Button {
@@ -80,15 +91,24 @@ struct MatrixTimelineView: View {
                         ProgressView()
                     } else {
                         Image(systemName: "paperclip")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(MatrixDesign.accent)
+                            .frame(width: 38, height: 38)
                     }
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderless)
                 .disabled(timelineViewModel.isSendingAttachment)
                 .help("Attach file")
 
                 TextField("Message", text: $draft, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                    .lineLimit(1...4)
+                    .lineLimit(1...5)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(MatrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(MatrixDesign.surfaceStroke, lineWidth: 1)
+                    }
 
                 Button {
                     let text = draft
@@ -100,19 +120,26 @@ struct MatrixTimelineView: View {
                     if timelineViewModel.isSending {
                         ProgressView()
                     } else {
-                        Image(systemName: "paperplane.fill")
+                        Image(systemName: draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "arrow.up.circle" : "arrow.up.circle.fill")
+                            .font(.system(size: 32, weight: .semibold))
+                            .foregroundStyle(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : MatrixDesign.accent)
                     }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.borderless)
                 .disabled(timelineViewModel.isSending || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .help("Send message")
             }
-            .padding(16)
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 12)
+            .background(.ultraThinMaterial)
         }
+        .background(MatrixDesign.screenBackground.ignoresSafeArea())
         .navigationTitle(room.name)
+        .matrixInlineNavigationTitle()
         .fileImporter(
             isPresented: $isShowingFileImporter,
-            allowedContentTypes: [.data],
+            allowedContentTypes: [.item],
             allowsMultipleSelection: false
         ) { result in
             importAttachment(from: result)
@@ -132,24 +159,33 @@ struct MatrixTimelineView: View {
             }
         }
         .task(id: room.id) {
-            await model.loadTimeline(roomID: room.id)
+            await model.selectRoom(room)
         }
     }
 
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
+            MatrixAvatarView(
+                title: room.name,
+                systemImage: room.kind.systemImage,
+                size: 44,
+                tint: room.kind.tint
+            )
+
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
+                    MatrixRoomKindMark(kind: room.kind, size: 20)
+
                     Text(room.name)
-                        .font(.title2.weight(.semibold))
-                    if room.isEncrypted {
-                        Label("Encrypted", systemImage: "lock.fill")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.green)
-                    }
+                        .font(.headline)
+                        .lineLimit(1)
+
+                    MatrixRoomSecurityMark(isEncrypted: room.isEncrypted, size: 20)
                 }
                 Text(room.subtitle)
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
 
             Spacer()
@@ -202,61 +238,130 @@ private struct MatrixTimelineRow: View {
     let downloadAttachment: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 8) {
-                Text(item.sender)
-                    .font(.caption.weight(.semibold))
-                Text(item.timestamp, style: .time)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if item.isLocalEcho {
-                    Text("sent")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.secondary)
-                }
+        HStack {
+            if item.isLocalEcho {
+                Spacer(minLength: 54)
             }
 
-            if let attachment = item.attachment {
-                MatrixAttachmentRow(
-                    attachment: attachment,
-                    isDownloading: isDownloadingAttachment,
-                    download: downloadAttachment
+            VStack(alignment: item.isLocalEcho ? .trailing : .leading, spacing: 4) {
+                if !item.isLocalEcho {
+                    Text(displaySender)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(MatrixDesign.accent.opacity(0.88))
+                        .padding(.horizontal, 8)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    if let attachment = item.attachment {
+                        MatrixAttachmentRow(
+                            attachment: attachment,
+                            isOutgoing: item.isLocalEcho,
+                            isDownloading: isDownloadingAttachment,
+                            download: downloadAttachment
+                        )
+                    } else {
+                        Text(item.body)
+                            .font(.body)
+                            .foregroundStyle(item.isLocalEcho ? .white : .primary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    HStack {
+                        Spacer(minLength: 0)
+                        HStack(spacing: 4) {
+                            if item.isLocalEcho {
+                                Image(systemName: "checkmark")
+                                    .font(.caption2.weight(.semibold))
+                            }
+
+                            Text(item.timestamp, style: .time)
+                                .font(.caption2.weight(.medium))
+                                .monospacedDigit()
+                        }
+                        .foregroundStyle(item.isLocalEcho ? .white.opacity(0.82) : .secondary)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .frame(maxWidth: bubbleMaxWidth, alignment: item.isLocalEcho ? .trailing : .leading)
+                .background(item.isLocalEcho ? MatrixDesign.accent : MatrixDesign.incomingBubbleSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(item.isLocalEcho ? .clear : MatrixDesign.surfaceStroke, lineWidth: 1)
+                }
+                .shadow(
+                    color: item.isLocalEcho ? MatrixDesign.accent.opacity(0.18) : MatrixDesign.softShadow,
+                    radius: item.isLocalEcho ? 12 : 8,
+                    y: item.isLocalEcho ? 6 : 4
                 )
-            } else {
-                Text(item.body)
-                    .font(.body)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: item.isLocalEcho ? .trailing : .leading)
+
+            if !item.isLocalEcho {
+                Spacer(minLength: 54)
             }
         }
-        .padding(10)
-        .background(item.isLocalEcho ? Color.blue.opacity(0.10) : Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
-        .frame(maxWidth: 680, alignment: .leading)
+        .padding(.top, 8)
+    }
+
+    private var displaySender: String {
+        let localpart = item.sender
+            .replacingOccurrences(of: "@", with: "")
+            .split(separator: ":")
+            .first
+            .map(String.init)
+
+        guard let localpart, !localpart.isEmpty else {
+            return item.sender
+        }
+
+        return localpart.capitalized
+    }
+
+    private var bubbleMaxWidth: CGFloat {
+        #if os(macOS)
+        return 520
+        #else
+        return 330
+        #endif
     }
 }
 
 private struct MatrixAttachmentRow: View {
     let attachment: MatrixTimelineAttachment
+    let isOutgoing: Bool
     let isDownloading: Bool
     let download: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
-            Image(systemName: attachment.isImage ? "photo" : "doc")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-                .frame(width: 28)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isOutgoing ? Color.white.opacity(0.18) : MatrixDesign.accent.opacity(0.12))
+                .frame(width: 42, height: 42)
+                .overlay {
+                    if isDownloading {
+                        ProgressView()
+                            .tint(isOutgoing ? .white : MatrixDesign.accent)
+                    } else {
+                        Image(systemName: attachment.isImage ? "photo" : "doc")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(isOutgoing ? .white : MatrixDesign.accent)
+                    }
+                }
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(attachment.filename)
                     .font(.body.weight(.medium))
+                    .foregroundStyle(isOutgoing ? .white : .primary)
                     .lineLimit(2)
                     .textSelection(.enabled)
 
                 if !attachment.subtitle.isEmpty {
                     Text(attachment.subtitle)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(isOutgoing ? .white.opacity(0.82) : .secondary)
                 }
             }
 
@@ -265,15 +370,14 @@ private struct MatrixAttachmentRow: View {
             Button {
                 download()
             } label: {
-                if isDownloading {
-                    ProgressView()
-                } else {
-                    Image(systemName: "arrow.down.circle")
-                }
+                Image(systemName: isDownloading ? "hourglass" : "arrow.down.circle.fill")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(isOutgoing ? .white : MatrixDesign.accent)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.borderless)
             .disabled(isDownloading || !attachment.isDownloadable)
             .help("Download attachment")
+            .accessibilityLabel("Download attachment")
         }
     }
 }
@@ -295,7 +399,7 @@ private struct MatrixAttachmentPreviewView: View {
                         .resizable()
                         .scaledToFit()
                         .frame(maxWidth: .infinity, maxHeight: 420)
-                        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                        .background(MatrixDesign.secondarySurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 } else {
                     Label(attachment.filename, systemImage: "doc")
                         .font(.headline)
@@ -350,6 +454,7 @@ private struct MatrixAttachmentPreviewView: View {
             }
             .padding(20)
             .navigationTitle("Attachment")
+            .matrixInlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
@@ -358,7 +463,7 @@ private struct MatrixAttachmentPreviewView: View {
                 }
             }
         }
-        .frame(minWidth: 420, minHeight: 320)
+        .matrixAttachmentPreviewFrame()
         .task(id: attachment.id) {
             prepareTemporaryFile()
         }
@@ -459,5 +564,16 @@ private extension MatrixAttachmentDownload {
         }
 
         return cleaned
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func matrixAttachmentPreviewFrame() -> some View {
+        #if os(macOS)
+        self.frame(minWidth: 420, minHeight: 320)
+        #else
+        self
+        #endif
     }
 }

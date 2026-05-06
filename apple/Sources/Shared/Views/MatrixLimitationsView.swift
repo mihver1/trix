@@ -4,14 +4,15 @@ struct MatrixLimitationsView: View {
     private let pendingItems = [
         "verified-state validation",
         "push notifications",
-        "media",
-        "group message live validation",
+        "timeline restart refresh",
+        "TestFlight packaging",
     ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("MVP limitations", systemImage: "exclamationmark.triangle")
                 .font(.headline)
+                .foregroundStyle(.orange)
 
             Text(pendingItems.joined(separator: ", "))
                 .font(.callout)
@@ -19,7 +20,11 @@ struct MatrixLimitationsView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(12)
-        .background(Color.yellow.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+        .background(MatrixDesign.warningSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.orange.opacity(0.22), lineWidth: 1)
+        }
     }
 }
 
@@ -43,7 +48,7 @@ struct MatrixDeviceVerificationNoticeView: View {
 
     private var message: String {
         guard let status else {
-            return "Device verification is not production-ready yet. Encrypted DMs use Matrix SDK E2EE, but new devices are not silently trusted."
+            return "Device verification is not production-ready yet. Private rooms use Matrix SDK E2EE, but new devices are not silently trusted."
         }
 
         if status.state == .verified {

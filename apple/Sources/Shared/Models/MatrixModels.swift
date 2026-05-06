@@ -126,7 +126,7 @@ struct MatrixDeviceVerificationStatus: Equatable, Sendable {
             return "Matrix SDK reports this device as verified."
         case .unverified:
             if hasDevicesToVerifyAgainst {
-                return "Confirm this device from an existing verified Matrix session before treating encrypted chats as production-ready."
+                return "Confirm this device from an existing verified Matrix session before treating private rooms as production-ready."
             }
 
             return "This device is not verified yet, and the SDK did not find an eligible existing device to verify against."
@@ -295,6 +295,24 @@ struct MatrixDeviceVerificationFlow: Equatable, Sendable {
 enum MatrixRoomKind: String, Codable, Sendable {
     case direct
     case group
+
+    var label: String {
+        switch self {
+        case .direct:
+            return "DM"
+        case .group:
+            return "Group"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .direct:
+            return "person.fill"
+        case .group:
+            return "person.2.fill"
+        }
+    }
 }
 
 struct MatrixRoomSummary: Identifiable, Equatable, Sendable {
@@ -307,12 +325,7 @@ struct MatrixRoomSummary: Identifiable, Equatable, Sendable {
     let lastActivityAt: Date
 
     var subtitle: String {
-        switch kind {
-        case .direct:
-            return isEncrypted ? "Encrypted DM" : "DM"
-        case .group:
-            return isEncrypted ? "Encrypted group" : "Group"
-        }
+        kind.label
     }
 }
 
@@ -339,8 +352,77 @@ struct MatrixRoomInvite: Identifiable, Equatable, Sendable {
 
     var subtitle: String {
         let roomType = kind == .direct ? "DM invite" : "Room invite"
-        let encryption = isEncrypted ? "encrypted" : "unencrypted"
-        return "\(roomType) from \(inviterLabel) - \(encryption)"
+        return "\(roomType) from \(inviterLabel)"
+    }
+}
+
+enum MatrixRoomMembership: String, Codable, Sendable {
+    case joined
+    case invited
+    case left
+    case banned
+    case unknown
+
+    var label: String {
+        switch self {
+        case .joined:
+            return "Joined"
+        case .invited:
+            return "Invited"
+        case .left:
+            return "Left"
+        case .banned:
+            return "Banned"
+        case .unknown:
+            return "Unknown"
+        }
+    }
+
+    var isActive: Bool {
+        self == .joined || self == .invited
+    }
+
+    var sortOrder: Int {
+        switch self {
+        case .joined:
+            return 0
+        case .invited:
+            return 1
+        case .unknown:
+            return 2
+        case .left:
+            return 3
+        case .banned:
+            return 4
+        }
+    }
+}
+
+struct MatrixRoomMember: Identifiable, Equatable, Sendable {
+    let userID: String
+    let displayName: String?
+    let membership: MatrixRoomMembership
+
+    var id: String {
+        userID
+    }
+
+    var title: String {
+        if let displayName, !displayName.isEmpty {
+            return displayName
+        }
+
+        return Self.displayName(from: userID)
+    }
+
+    private static func displayName(from userID: String) -> String {
+        let localpart = userID
+            .dropFirst()
+            .split(separator: ":")
+            .first
+            .map(String.init)
+
+        return localpart?.capitalized ?? userID
     }
 }
 

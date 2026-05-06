@@ -2,7 +2,7 @@ import SwiftUI
 
 @main
 struct TrixMatrixMacApp: App {
-    @StateObject private var model = MatrixAppModel()
+    @StateObject private var model = MatrixAppModel.makeDefault()
 
     init() {
         MatrixLiveSmokeRunner.installIfRequested()
@@ -10,9 +10,14 @@ struct TrixMatrixMacApp: App {
 
     var body: some Scene {
         WindowGroup {
-            MatrixRootView(model: model)
-                .frame(minWidth: 920, minHeight: 620)
+            MatrixMacRootView(model: model)
+                .frame(minWidth: 1120, minHeight: 680)
         }
-        .defaultSize(width: 1100, height: 720)
+        .defaultSize(width: 1240, height: 760)
+
+        Settings {
+            MatrixMacSettingsView(model: model)
+        }
+        .defaultSize(width: 760, height: 620)
     }
 }

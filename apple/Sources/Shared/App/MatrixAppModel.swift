@@ -226,6 +226,32 @@ final class MatrixAppModel: ObservableObject {
         )
     }
 
+    func members(roomID: String) async throws -> [MatrixRoomMember] {
+        guard let session else {
+            throw MatrixClientError.missingSession
+        }
+
+        return try await matrixService.members(roomID: roomID, session: session)
+    }
+
+    func inviteUser(_ userID: String, to roomID: String) async throws {
+        guard let session else {
+            throw MatrixClientError.missingSession
+        }
+
+        try await matrixService.inviteUser(userID, roomID: roomID, session: session)
+        await reloadRooms()
+    }
+
+    func removeUser(_ userID: String, from roomID: String) async throws {
+        guard let session else {
+            throw MatrixClientError.missingSession
+        }
+
+        try await matrixService.removeUser(userID, roomID: roomID, session: session)
+        await reloadRooms()
+    }
+
     func createEncryptedDirectRoom(inviteeUserID: String, roomName: String) async -> Bool {
         guard let session else {
             return false
@@ -386,3 +412,41 @@ final class MatrixAppModel: ObservableObject {
         selectedRoomID = roomListViewModel.rooms.first?.id
     }
 }
+
+extension MatrixAppModel {
+    static func makeDefault() -> MatrixAppModel {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["TRIX_MATRIX_USE_MOCK_SERVICE"] == "1" {
+            return MatrixAppModel(
+                sessionStore: MatrixMockSessionStore(),
+                matrixService: MockMatrixService()
+            )
+        }
+        #endif
+
+        return MatrixAppModel()
+    }
+}
+
+#if DEBUG
+private struct MatrixMockSessionStore: MatrixSessionStore {
+    func loadSession() throws -> MatrixSession? {
+        MatrixSession(
+            userID: "@me:trix.selfhost.ru",
+            deviceID: "MOCK-IPHONE",
+            homeserverURL: MatrixClientConfiguration.homeserverURL,
+            accessToken: "debug-placeholder-session",
+            refreshToken: nil,
+            oidcData: nil,
+            sdkStoreID: "mock-ui-demo",
+            createdAt: Date()
+        )
+    }
+
+    func saveSession(_ session: MatrixSession) throws {
+    }
+
+    func clearSession() throws {
+    }
+}
+#endif

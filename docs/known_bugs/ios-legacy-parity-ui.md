@@ -70,3 +70,30 @@ experience that feels like Trix, not like a scaffold.
   expectations without copying legacy code.
 - UI changes do not regress Matrix room sync, invite handling, attachments, or
   recovery/device verification visibility.
+
+## Fix status
+
+First iOS parity slice applied on May 6, 2026:
+
+- iOS uses a phone-native Chats/Settings tab shell instead of the shared desktop
+  split-view surface.
+- The inbox shows account state, dense room rows, unread badges, room security
+  markers, pending invite actions, pull-to-refresh, and a compose affordance.
+- The timeline uses native chat bubbles, a compact room header, styled composer,
+  and explicit attachment download/open/share/export flow.
+- Device verification and recovery remain visible in Settings; Matrix SDK calls
+  remain behind service/view-model boundaries.
+
+Remaining polish should be tracked as narrower follow-up bugs rather than
+reopening a scaffold-level UI rewrite.
+
+Second iOS parity polish slice applied on May 6, 2026:
+
+- Chat rows open timelines through programmatic phone navigation instead of a
+  value-link row, so tapping the room list no longer depends on the visible
+  navigation affordance.
+- The account card was reduced to a fixed top inbox header.
+- Room-list chevrons were removed from the iOS inbox rows.
+- DM/group state is marked with person/person.2 symbols, and room E2EE state is
+  marked with a green closed lock or yellow open lock instead of repeated text
+  labels.

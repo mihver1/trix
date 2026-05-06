@@ -3,6 +3,7 @@ import Foundation
 actor MockMatrixService: MatrixService {
     private var roomSummaries: [MatrixRoomSummary]
     private var roomInvites: [MatrixRoomInvite]
+    private var membersByRoomID: [String: [MatrixRoomMember]]
     private var timelines: [String: [MatrixTimelineItem]]
     private var verificationState: MatrixDeviceVerificationState
     private var verificationFlow: MatrixDeviceVerificationFlow
@@ -18,7 +19,7 @@ actor MockMatrixService: MatrixService {
             kind: .direct,
             isEncrypted: true,
             unreadCount: 1,
-            lastMessagePreview: "Mock encrypted DM preview",
+            lastMessagePreview: "Mock DM preview",
             lastActivityAt: now.addingTimeInterval(-240)
         )
         let groupRoom = MatrixRoomSummary(
@@ -42,12 +43,25 @@ actor MockMatrixService: MatrixService {
 
         self.roomSummaries = [directRoom, groupRoom]
         self.roomInvites = [invite]
+        self.membersByRoomID = [
+            directRoom.id: [
+                MatrixRoomMember(userID: "@me:trix.selfhost.ru", displayName: "Me", membership: .joined),
+                MatrixRoomMember(userID: "@alice:trix.selfhost.ru", displayName: "Alice", membership: .joined),
+            ],
+            groupRoom.id: [
+                MatrixRoomMember(userID: "@me:trix.selfhost.ru", displayName: "Me", membership: .joined),
+                MatrixRoomMember(userID: "@alice:trix.selfhost.ru", displayName: "Alice", membership: .joined),
+                MatrixRoomMember(userID: "@bob:trix.selfhost.ru", displayName: "Bob", membership: .joined),
+            ],
+        ]
         self.verificationState = .unverified
         self.verificationFlow = .idle
         self.recoveryState = .disabled
         self.backupState = .unknown
         self.backupExistsOnServer = false
-        self.attachmentDataBySourceJSON = [:]
+        self.attachmentDataBySourceJSON = [
+            "mock://attachment/brief": Data("Mock Matrix attachment bytes".utf8),
+        ]
         self.timelines = [
             directRoom.id: [
                 MatrixTimelineItem(
@@ -67,6 +81,21 @@ actor MockMatrixService: MatrixService {
                     body: "The session and room UI are ready for adapter wiring.",
                     isLocalEcho: true,
                     attachment: nil
+                ),
+                MatrixTimelineItem(
+                    id: "$mock-dm-3",
+                    roomID: directRoom.id,
+                    sender: "@alice:trix.selfhost.ru",
+                    timestamp: now.addingTimeInterval(-120),
+                    body: "release-brief.pdf",
+                    isLocalEcho: false,
+                    attachment: MatrixTimelineAttachment(
+                        kind: .file,
+                        filename: "release-brief.pdf",
+                        mimeType: "application/pdf",
+                        sizeBytes: 28,
+                        sourceJSON: "mock://attachment/brief"
+                    )
                 ),
             ],
             groupRoom.id: [
@@ -305,6 +334,41 @@ actor MockMatrixService: MatrixService {
         )
     }
 
+    func members(roomID: String, session: MatrixSession) async throws -> [MatrixRoomMember] {
+        guard roomSummaries.contains(where: { $0.id == roomID }) else {
+            throw MatrixClientError.roomUnavailable
+        }
+
+        return membersByRoomID[roomID, default: []]
+    }
+
+    func inviteUser(_ userID: String, roomID: String, session: MatrixSession) async throws {
+        guard roomSummaries.contains(where: { $0.id == roomID }) else {
+            throw MatrixClientError.roomUnavailable
+        }
+
+        let normalizedUserID = try Self.normalizedMatrixUserID(userID)
+        var members = membersByRoomID[roomID, default: []]
+        members.removeAll { $0.userID.lowercased() == normalizedUserID.lowercased() }
+        members.append(
+            MatrixRoomMember(
+                userID: normalizedUserID,
+                displayName: displayName(from: normalizedUserID),
+                membership: .invited
+            )
+        )
+        membersByRoomID[roomID] = members
+    }
+
+    func removeUser(_ userID: String, roomID: String, session: MatrixSession) async throws {
+        guard roomSummaries.contains(where: { $0.id == roomID }) else {
+            throw MatrixClientError.roomUnavailable
+        }
+
+        let normalizedUserID = try Self.normalizedMatrixUserID(userID)
+        membersByRoomID[roomID, default: []].removeAll { $0.userID.lowercased() == normalizedUserID.lowercased() }
+    }
+
     func createEncryptedDirectRoom(
         inviteeUserID: String,
         name: String,
@@ -321,6 +385,10 @@ actor MockMatrixService: MatrixService {
         )
         roomSummaries.insert(room, at: 0)
         timelines[room.id] = []
+        membersByRoomID[room.id] = [
+            MatrixRoomMember(userID: session.userID, displayName: displayName(from: session.userID), membership: .joined),
+            MatrixRoomMember(userID: inviteeUserID, displayName: displayName(from: inviteeUserID), membership: .invited),
+        ]
         return room
     }
 
@@ -340,6 +408,11 @@ actor MockMatrixService: MatrixService {
         )
         roomSummaries.insert(room, at: 0)
         timelines[room.id] = []
+        membersByRoomID[room.id] = [
+            MatrixRoomMember(userID: session.userID, displayName: displayName(from: session.userID), membership: .joined),
+        ] + inviteeUserIDs.map { userID in
+            MatrixRoomMember(userID: userID, displayName: displayName(from: userID), membership: .invited)
+        }
         return room
     }
 
@@ -366,6 +439,12 @@ actor MockMatrixService: MatrixService {
         )
         roomSummaries.insert(room, at: 0)
         timelines[room.id] = []
+        if let inviterUserID = invite.inviterUserID {
+            membersByRoomID[room.id] = [
+                MatrixRoomMember(userID: session.userID, displayName: displayName(from: session.userID), membership: .joined),
+                MatrixRoomMember(userID: inviterUserID, displayName: invite.inviterDisplayName, membership: .joined),
+            ]
+        }
         return room
     }
 
@@ -415,5 +494,21 @@ actor MockMatrixService: MatrixService {
         let withoutAt = userID.dropFirst()
         let localpart = withoutAt.split(separator: ":").first.map(String.init) ?? String(withoutAt)
         return localpart.capitalized
+    }
+
+    private static func normalizedMatrixUserID(_ userID: String) throws -> String {
+        let trimmed = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("@"),
+              let separator = trimmed.firstIndex(of: ":"),
+              separator != trimmed.index(after: trimmed.startIndex) else {
+            throw MatrixClientError.invalidMatrixUserID
+        }
+
+        let serverName = String(trimmed[trimmed.index(after: separator)...])
+        guard serverName == MatrixClientConfiguration.serverName else {
+            throw MatrixClientError.invalidMatrixUserID
+        }
+
+        return trimmed
     }
 }

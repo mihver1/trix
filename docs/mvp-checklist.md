@@ -10,14 +10,17 @@ legacy implementation details.
 
 - [x] Login, logout, and session restore.
 - [x] Room list, DM timeline, group timeline, and text composer.
-- [x] Encrypted DM creation, invite accept/decline, and text send/receive.
-- [x] Encrypted group creation and generic group invite accept/decline.
+- [x] E2EE DM creation, invite accept/decline, and text send/receive.
+- [x] E2EE group creation and generic group invite accept/decline.
 - [x] Attachment send/download with in-app image preview through Matrix SDK
       media/timeline APIs.
-- [x] Live-validate encrypted group send/receive with at least three accounts.
+- [x] iOS Matrix UI product-parity pass: Chats/Settings tabs, dense inbox,
+      visible invite actions, account state, chat bubbles, composer, and
+      attachment download affordances aligned with the legacy Trix client.
+- [x] Live-validate E2EE group send/receive with at least three accounts.
 - [ ] Timeline refresh after app restart.
 - [ ] Unread/read/delivery decorations.
-- [x] Live-validate encrypted attachment round-trip and add OS open/share flow.
+- [x] Live-validate E2EE attachment round-trip and add OS open/share flow.
 - [x] Foreground room/invite/timeline polling while the app scene is active.
 - [ ] APNs-backed notifications through a Matrix push gateway.
 - [ ] Basic profile, notification, and device-management surfaces.
@@ -147,6 +150,11 @@ legacy implementation details.
       scene is active. It silently refreshes rooms, pending invites, and the
       selected timeline through the existing Matrix service/view-model boundary,
       and reconciles the selected room if sync removes it.
+- [x] SwiftUI iOS client no longer presents the Matrix path as a scaffold:
+      login, room list, invite list, timeline rows, composer, attachment rows,
+      settings, and verification/recovery surfaces use the legacy native
+      messenger shape while Matrix SDK calls remain behind service/view-model
+      boundaries.
 - [x] SwiftUI Apple client shows read-only Matrix SDK device verification
       state without silently trusting devices.
 - [x] SwiftUI Apple client can request, accept, start SAS, approve, decline,
