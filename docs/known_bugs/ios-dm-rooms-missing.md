@@ -5,6 +5,14 @@
 On iOS, direct-message rooms do not appear in the room list while group chats do.
 This is a functional blocker: users cannot reliably find or open DMs.
 
+## Current status
+
+2026-05-06: A Matrix SDK adapter fix has been implemented. Room discovery now
+merges SDK room-list snapshots for all rooms plus people/group/invite
+categories, the current SDK room cache, and Matrix `m.direct` account data
+before applying membership filters. iOS and macOS build checks pass. Live
+account verification from the plan below is still pending.
+
 ## User-visible symptom
 
 - User has one or more encrypted DM rooms.

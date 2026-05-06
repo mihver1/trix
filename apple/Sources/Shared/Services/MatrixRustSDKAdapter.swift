@@ -8,8 +8,9 @@ actor MatrixRustSDKAdapter: MatrixService {
     private var client: Client?
     private var syncService: SyncService?
     private var syncTask: Task<Void, Never>?
-    private var roomListListener: SDKRoomListListener?
-    private var roomListHandle: RoomListEntriesWithDynamicAdaptersResult?
+    private var roomListService: RoomListService?
+    private var roomListListeners: [SDKRoomListListener] = []
+    private var roomListHandles: [RoomListEntriesWithDynamicAdaptersResult] = []
     private var roomsByID: [String: Room] = [:]
     private var timelineStateByRoomID: [String: SDKTimelineState] = [:]
     private var verificationController: SessionVerificationController?
@@ -65,8 +66,9 @@ actor MatrixRustSDKAdapter: MatrixService {
         syncTask?.cancel()
         syncTask = nil
         syncService = nil
-        roomListHandle = nil
-        roomListListener = nil
+        roomListService = nil
+        roomListHandles = []
+        roomListListeners = []
         roomsByID = [:]
         timelineStateByRoomID = [:]
         verificationController = nil
@@ -86,7 +88,7 @@ actor MatrixRustSDKAdapter: MatrixService {
         let client = try await resolvedClient(session: session)
         try await ensureSyncStarted(client: client)
 
-        let sdkRooms = cachedRooms(client: client)
+        let sdkRooms = await cachedRooms(client: client)
         roomsByID = Dictionary(uniqueKeysWithValues: sdkRooms.map { ($0.id(), $0) })
 
         let joinedRooms = await Self.joinedRooms(from: sdkRooms)
@@ -523,7 +525,7 @@ actor MatrixRustSDKAdapter: MatrixService {
         let client = try await resolvedClient(session: session)
         try await ensureSyncStarted(client: client)
 
-        let sdkRooms = cachedRooms(client: client)
+        let sdkRooms = await cachedRooms(client: client)
         roomsByID = Dictionary(uniqueKeysWithValues: sdkRooms.map { ($0.id(), $0) })
 
         var invitations: [MatrixRoomInvite] = []
@@ -558,7 +560,8 @@ actor MatrixRustSDKAdapter: MatrixService {
 
         var joinedRooms: [MatrixRoomSummary] = []
         for _ in 0..<10 {
-            let invitedRooms = await Self.invitedRooms(from: cachedRooms(client: client))
+            let currentRooms = await cachedRooms(client: client)
+            let invitedRooms = await Self.invitedRooms(from: currentRooms)
             if invitedRooms.isEmpty {
                 try? await Task.sleep(for: .seconds(1))
                 continue
@@ -637,7 +640,7 @@ actor MatrixRustSDKAdapter: MatrixService {
                 return room
             }
 
-            let rooms = cachedRooms(client: client)
+            let rooms = await cachedRooms(client: client)
             roomsByID = Dictionary(uniqueKeysWithValues: rooms.map { ($0.id(), $0) })
             if let room = rooms.first(where: { $0.id() == roomID }), await Self.isInvited(room) {
                 return room
@@ -705,12 +708,57 @@ actor MatrixRustSDKAdapter: MatrixService {
         )
     }
 
-    private func cachedRooms(client: Client) -> [Room] {
-        var roomsByID: [String: Room] = Dictionary(uniqueKeysWithValues: client.rooms().map { ($0.id(), $0) })
-        for room in roomListListener?.snapshot() ?? [] {
-            roomsByID[room.id()] = room
+    private func cachedRooms(client: Client) async -> [Room] {
+        var mergedRooms = roomsByID
+
+        for room in client.rooms() {
+            mergedRooms[room.id()] = room
         }
-        return Array(roomsByID.values)
+
+        for listener in roomListListeners {
+            for room in listener.snapshot() {
+                mergedRooms[room.id()] = room
+            }
+        }
+
+        for room in await directRooms(client: client) {
+            mergedRooms[room.id()] = room
+        }
+
+        return Array(mergedRooms.values)
+    }
+
+    private func directRooms(client: Client) async -> [Room] {
+        guard let directAccountData = try? await client.accountData(eventType: "m.direct"),
+              let data = directAccountData.data(using: .utf8),
+              let roomIDsByUser = try? JSONDecoder().decode([String: [String]].self, from: data) else {
+            return []
+        }
+
+        var directRooms: [Room] = []
+        var seenRoomIDs = Set<String>()
+        for roomID in roomIDsByUser.values.flatMap({ $0 }) where seenRoomIDs.insert(roomID).inserted {
+            if let room = sdkRoom(roomID: roomID, client: client) {
+                directRooms.append(room)
+            }
+        }
+        return directRooms
+    }
+
+    private func sdkRoom(roomID: String, client: Client) -> Room? {
+        if let room = roomsByID[roomID] {
+            return room
+        }
+
+        if let room = try? client.getRoom(roomId: roomID) {
+            return room
+        }
+
+        if let room = try? roomListService?.room(roomId: roomID) {
+            return room
+        }
+
+        return nil
     }
 
     private func makeClient(serverURL: URL, paths: SDKSessionPaths) async throws -> Client {
@@ -735,16 +783,32 @@ actor MatrixRustSDKAdapter: MatrixService {
         }
 
         let syncService = try await client.syncService().finish()
-        let listener = SDKRoomListListener()
         let roomListService = syncService.roomListService()
-        let handle = try await roomListService
-            .allRooms()
-            .entriesWithDynamicAdapters(pageSize: 100, listener: listener)
-        _ = handle.controller().setFilter(kind: .all(filters: []))
+        let roomListFilters: [RoomListEntriesDynamicFilterKind] = [
+            .all(filters: []),
+            .any(filters: [
+                .category(expect: .people),
+                .category(expect: .group),
+                .invite,
+            ]),
+        ]
+        var listeners: [SDKRoomListListener] = []
+        var handles: [RoomListEntriesWithDynamicAdaptersResult] = []
+
+        for filter in roomListFilters {
+            let listener = SDKRoomListListener()
+            let handle = try await roomListService
+                .allRooms()
+                .entriesWithDynamicAdapters(pageSize: 100, listener: listener)
+            _ = handle.controller().setFilter(kind: filter)
+            listeners.append(listener)
+            handles.append(handle)
+        }
 
         self.syncService = syncService
-        self.roomListListener = listener
-        self.roomListHandle = handle
+        self.roomListService = roomListService
+        self.roomListListeners = listeners
+        self.roomListHandles = handles
         self.syncTask = Task {
             await syncService.start()
         }
@@ -1149,10 +1213,11 @@ private extension MatrixRustSDKAdapter {
         } else {
             isDirect = await room.isDirect()
         }
+        let name = roomDisplayName(room: room, info: info, isDirect: isDirect)
 
         return MatrixRoomSummary(
             id: room.id(),
-            name: info?.displayName ?? room.displayName() ?? room.id(),
+            name: name,
             kind: isDirect ? .direct : .group,
             isEncrypted: isEncrypted,
             unreadCount: Int(info?.numUnreadNotifications ?? info?.numUnreadMessages ?? 0),
@@ -1198,10 +1263,11 @@ private extension MatrixRustSDKAdapter {
         } else {
             isDirect = await room.isDirect()
         }
+        let name = roomDisplayName(room: room, info: info, isDirect: isDirect)
 
         return MatrixRoomInvite(
             id: room.id(),
-            roomName: info?.displayName ?? room.displayName() ?? room.id(),
+            roomName: name,
             kind: isDirect ? .direct : .group,
             isEncrypted: isEncrypted,
             inviterUserID: inviter?.userId,
@@ -1218,6 +1284,42 @@ private extension MatrixRustSDKAdapter {
     static func isInvited(_ room: Room) async -> Bool {
         let info = try? await room.roomInfo()
         return info?.membership == .invited || room.membership() == .invited
+    }
+
+    static func roomDisplayName(room: Room, info: RoomInfo?, isDirect: Bool) -> String {
+        if let displayName = nonEmpty(info?.displayName) {
+            return displayName
+        }
+
+        if let displayName = nonEmpty(room.displayName()) {
+            return displayName
+        }
+
+        if isDirect,
+           let heroName = directHeroName(room: room, info: info) {
+            return heroName
+        }
+
+        return room.id()
+    }
+
+    static func directHeroName(room: Room, info: RoomInfo?) -> String? {
+        let ownUserID = room.ownUserId()
+        let infoHeroes = info?.heroes ?? []
+        let heroes = infoHeroes.isEmpty ? room.heroes() : infoHeroes
+        guard let hero = heroes.first(where: { $0.userId != ownUserID }) ?? heroes.first else {
+            return nil
+        }
+
+        return nonEmpty(hero.displayName) ?? nonEmpty(hero.userId)
+    }
+
+    static func nonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
     }
 
     static func timelineItem(from sdkItem: TimelineItem, roomID: String) -> MatrixTimelineItem? {
