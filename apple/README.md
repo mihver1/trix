@@ -109,9 +109,10 @@ xcodebuild \
   instead: set up recovery through `enableRecovery` when recovery is disabled,
   or confirm an existing recovery key through `recoverAndFixBackup` when
   recovery is enabled or incomplete.
-- Generated recovery keys are shown only in the UI for the user to save; the
-  app does not log recovery keys, recovery confirmations, SAS values, access
-  tokens, or decrypted message bodies.
+- Generated recovery keys are shown only in the UI for the user to save or copy
+  through an explicit platform pasteboard action; the app does not log recovery
+  keys, recovery confirmations, SAS values, access tokens, or decrypted message
+  bodies.
 - DEBUG builds include a live smoke runner, enabled only with
   `TRIX_MATRIX_LIVE_SMOKE=1`, for validating login, restore, encrypted DM
   creation, encrypted send/receive, encrypted group send/receive across three

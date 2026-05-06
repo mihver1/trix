@@ -18,7 +18,6 @@ explicitly reopens that scope.
 ## iOS
 
 - [iOS opens the first dialog automatically](ios-auto-opens-first-dialog.md)
-- [iOS recovery key view has no copy action](ios-recovery-key-copy-action.md)
 - [iOS attachment rows skip the explicit download/open flow](ios-attachment-download-flow.md)
 - [iOS Matrix UI lacks legacy product parity](ios-legacy-parity-ui.md)
 - [iOS DM rooms are missing from the room list](ios-dm-rooms-missing.md)
@@ -26,6 +25,5 @@ explicitly reopens that scope.
 ## macOS
 
 - [macOS attachment transfer needs manual picker/open release revalidation](macos-attachment-transfer-failed.md)
-- [macOS recovery key view has no copy action](macos-recovery-key-copy-action.md)
 - [macOS Matrix UI lacks legacy product parity](macos-legacy-parity-ui.md)
 - [macOS navigation and settings structure is wrong](macos-three-column-settings.md)

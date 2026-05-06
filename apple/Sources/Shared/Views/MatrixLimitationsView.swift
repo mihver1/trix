@@ -61,6 +61,8 @@ struct MatrixDeviceVerificationNoticeView: View {
 
 struct MatrixDeviceVerificationStatusView: View {
     @ObservedObject var viewModel: DeviceVerificationViewModel
+    @State private var hasCopiedRecoveryKey = false
+
     let requestVerification: () -> Void
     let acceptRequest: (MatrixDeviceVerificationRequest) -> Void
     let startSas: () -> Void
@@ -215,12 +217,20 @@ struct MatrixDeviceVerificationStatusView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
 
-                        Button {
-                            dismissRecoveryKey()
-                        } label: {
-                            actionLabel("I've Saved This Key", systemImage: "checkmark")
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 8) {
+                                recoveryKeyCopyButton(recoveryKey)
+                                savedRecoveryKeyButton
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                recoveryKeyCopyButton(recoveryKey)
+                                savedRecoveryKeyButton
+                            }
                         }
-                        .buttonStyle(.bordered)
+                    }
+                    .onChange(of: viewModel.displayedRecoveryKey) {
+                        hasCopiedRecoveryKey = false
                     }
                 }
 
@@ -328,6 +338,29 @@ struct MatrixDeviceVerificationStatusView: View {
         }
         .buttonStyle(.bordered)
         .disabled(isBusy)
+    }
+
+    private func recoveryKeyCopyButton(_ recoveryKey: String) -> some View {
+        Button {
+            MatrixPasteboard.copy(recoveryKey)
+            hasCopiedRecoveryKey = true
+        } label: {
+            actionLabel(
+                hasCopiedRecoveryKey ? "Copied" : "Copy Recovery Key",
+                systemImage: hasCopiedRecoveryKey ? "checkmark" : "doc.on.doc"
+            )
+        }
+        .buttonStyle(.bordered)
+    }
+
+    private var savedRecoveryKeyButton: some View {
+        Button {
+            hasCopiedRecoveryKey = false
+            dismissRecoveryKey()
+        } label: {
+            actionLabel("I've Saved This Key", systemImage: "checkmark")
+        }
+        .buttonStyle(.bordered)
     }
 
     private func actionLabel(_ title: String, systemImage: String) -> some View {

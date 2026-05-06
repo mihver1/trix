@@ -1,12 +1,14 @@
-# iOS: Recovery Key View Has No Copy Action
+# iOS: Recovery Key View Has Copy Action
+
+Status: Fixed.
 
 ## Summary
 
-The iOS recovery setup/confirmation UI displays a recovery key but does not
-provide a copy action. Recovery keys are long and error-prone to transcribe; the
-user needs an explicit, safe copy button.
+The iOS recovery setup/confirmation UI previously displayed a recovery key but
+did not provide a copy action. Recovery keys are long and error-prone to
+transcribe; the user needs an explicit, safe copy button.
 
-## User-visible symptom
+## Original user-visible symptom
 
 - User starts Matrix SDK recovery setup on iOS.
 - The generated recovery key is shown.
@@ -57,3 +59,12 @@ user needs an explicit, safe copy button.
 - iOS recovery key UI has an explicit copy button.
 - Copy feedback is visible.
 - Recovery key is not logged, persisted, or printed by live smoke output.
+
+## Resolution
+
+- The shared Matrix recovery key surface now exposes a `Copy Recovery Key`
+  action when a generated key is displayed.
+- The button uses the iOS pasteboard through a small shared platform helper and
+  switches to `Copied` after the user taps it.
+- The copy path does not log the key, write it to Keychain, write it to
+  UserDefaults, or touch Matrix SDK recovery state.

@@ -1,12 +1,14 @@
-# macOS: Recovery Key View Has No Copy Action
+# macOS: Recovery Key View Has Copy Action
+
+Status: Fixed.
 
 ## Summary
 
-The macOS recovery UI displays or asks for recovery keys but does not provide a
-copy action for generated keys. Desktop users need a direct copy button that
-uses the macOS pasteboard without logging or persisting the key.
+The macOS recovery UI previously displayed or asked for recovery keys but did
+not provide a copy action for generated keys. Desktop users need a direct copy
+button that uses the macOS pasteboard without logging or persisting the key.
 
-## User-visible symptom
+## Original user-visible symptom
 
 - User starts Matrix SDK recovery setup on macOS.
 - A generated recovery key is shown.
@@ -50,3 +52,12 @@ uses the macOS pasteboard without logging or persisting the key.
 - macOS recovery key UI has a copy button with feedback.
 - The key is copied only to pasteboard at user request.
 - No secret logging or unsupported recovery shortcuts are introduced.
+
+## Resolution
+
+- The shared Matrix recovery key surface now exposes a `Copy Recovery Key`
+  action when a generated key is displayed.
+- The button uses the macOS pasteboard through a small shared platform helper
+  and switches to `Copied` after the user clicks it.
+- The copy path does not log the key, write it to Keychain, write it to
+  UserDefaults, or touch Matrix SDK recovery state.
