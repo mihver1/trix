@@ -162,12 +162,18 @@ Modes:
 - `TRIX_MATRIX_LIVE_SMOKE_MODE=login`
 - `TRIX_MATRIX_LIVE_SMOKE_MODE=restore`
 - `TRIX_MATRIX_LIVE_SMOKE_MODE=encrypted-dm`
+- `TRIX_MATRIX_LIVE_SMOKE_MODE=encrypted-attachment`
 - `TRIX_MATRIX_LIVE_SMOKE_MODE=device-verification`
 - `TRIX_MATRIX_LIVE_SMOKE_MODE=recovery`
 - `TRIX_MATRIX_LIVE_SMOKE_MODE=cleanup`
 
 Use a signed simulator build for this path. `CODE_SIGNING_ALLOWED=NO` is fine
 as a compile check, but the unsigned simulator app can fail Keychain operations.
+The encrypted attachment mode creates an encrypted DM, sends a generated
+attachment through the Matrix SDK timeline API, waits for the test account to
+see the file event, downloads it through the SDK media API, and compares bytes
+without printing filenames, payloads, passwords, access tokens, registration
+tokens, SAS values, recovery keys, or decrypted message bodies.
 The device verification mode prints non-secret diagnostics for SDK
 `verificationState`, eligible-device flags, backup/recovery state, and own-user
 identity state.

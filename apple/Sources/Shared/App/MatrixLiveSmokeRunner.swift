@@ -27,6 +27,8 @@ enum MatrixLiveSmokeRunner {
                 try await runRestore()
             case "encrypted-dm":
                 try await runEncryptedDM()
+            case "encrypted-attachment":
+                try await runEncryptedAttachment()
             case "device-verification":
                 try await runDeviceVerification()
             case "recovery":
@@ -121,6 +123,93 @@ enum MatrixLiveSmokeRunner {
         emit("encrypted-dm-receive ok")
 
         try? await testService.logout(session: testSession)
+    }
+
+    private static func runEncryptedAttachment() async throws {
+        let adminSession = try requireSession()
+        let test = try credentials(prefix: "TEST")
+        let adminService = MatrixRustSDKAdapter()
+        _ = try await adminService.restore(session: adminSession)
+
+        let testService = MatrixRustSDKAdapter()
+        var testSession: MatrixSession?
+
+        func cleanup() async {
+            if let testSession {
+                try? await testService.logout(session: testSession)
+            }
+        }
+
+        do {
+            let loggedInTestSession = try await testService.login(
+                userID: test.userID,
+                password: test.password,
+                serverURL: MatrixClientConfiguration.homeserverURL
+            )
+            testSession = loggedInTestSession
+            _ = try await testService.rooms(session: loggedInTestSession)
+
+            let room = try await adminService.createEncryptedDirectRoom(
+                inviteeUserID: test.userID,
+                name: "Trix live attachment smoke",
+                session: adminSession
+            )
+            guard room.isEncrypted else {
+                throw MatrixLiveSmokeError.roomNotEncrypted
+            }
+            emit("encrypted-attachment-create ok room=\(room.id)")
+
+            _ = try await testService.joinRoom(roomID: room.id, session: loggedInTestSession)
+            emit("encrypted-attachment-join ok")
+
+            for _ in 0..<8 {
+                _ = try await adminService.rooms(session: adminSession)
+                _ = try? await adminService.timeline(roomID: room.id, session: adminSession)
+                try? await Task.sleep(for: .seconds(1))
+            }
+
+            let filename = "trix-live-attachment-\(UUID().uuidString).txt"
+            let payload = Data("trix-live-attachment-payload-\(UUID().uuidString)".utf8)
+            let upload = MatrixAttachmentUpload(
+                filename: filename,
+                mimeType: "text/plain",
+                data: payload
+            )
+            _ = try await adminService.sendAttachment(upload, roomID: room.id, session: adminSession)
+            emit("encrypted-attachment-send ok bytes=\(payload.count)")
+
+            var receivedAttachment: MatrixTimelineAttachment?
+            for _ in 0..<30 {
+                _ = try await testService.rooms(session: loggedInTestSession)
+                let timeline = try await testService.timeline(roomID: room.id, session: loggedInTestSession)
+                receivedAttachment = timeline
+                    .compactMap(\.attachment)
+                    .first { $0.filename == filename }
+                if receivedAttachment != nil {
+                    break
+                }
+                try? await Task.sleep(for: .seconds(1))
+            }
+
+            guard let receivedAttachment else {
+                throw MatrixLiveSmokeError.attachmentNotReceived
+            }
+            emit("encrypted-attachment-receive ok bytes=\(receivedAttachment.sizeBytes ?? 0)")
+
+            let download = try await testService.downloadAttachment(
+                receivedAttachment,
+                session: loggedInTestSession
+            )
+            guard download.data == payload else {
+                throw MatrixLiveSmokeError.attachmentDownloadMismatch
+            }
+            emit("encrypted-attachment-download ok bytes=\(download.data.count)")
+
+            await cleanup()
+        } catch {
+            await cleanup()
+            throw error
+        }
     }
 
     private static func runDeviceVerification() async throws {
@@ -570,6 +659,8 @@ private enum MatrixLiveSmokeError: LocalizedError {
     case roomNotEncrypted
     case inviteNotJoined
     case messageNotReceived
+    case attachmentNotReceived
+    case attachmentDownloadMismatch
     case verificationRequestNotReceived
     case verificationChallengeMismatch
     case verificationFailed
@@ -594,6 +685,10 @@ private enum MatrixLiveSmokeError: LocalizedError {
             return "The test user did not join the encrypted room invite."
         case .messageNotReceived:
             return "The encrypted smoke message was not received by the test user."
+        case .attachmentNotReceived:
+            return "The encrypted smoke attachment was not received by the test user."
+        case .attachmentDownloadMismatch:
+            return "The downloaded encrypted smoke attachment did not match the sent payload."
         case .verificationRequestNotReceived:
             return "The second Matrix session did not receive the device verification request."
         case .verificationChallengeMismatch:
