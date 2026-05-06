@@ -123,7 +123,8 @@ Working in this first pivot slice:
 - Matrix SDK device verification and recovery state are visible in the UI;
   recovery setup/confirmation is wired through SDK APIs.
 - A DEBUG-only live iOS smoke path validates login, session restore, encrypted
-  DM creation, encrypted send, encrypted receive, and logout cleanup against
+  DM creation, encrypted send/receive, encrypted group send/receive across
+  three accounts, encrypted attachment round trips, and logout cleanup against
   `trix.selfhost.ru`.
 - Unimplemented security-sensitive features are visible in the UI and tracked
   in docs.
@@ -133,8 +134,8 @@ Not yet production-ready:
 - Device verification verified-state validation after live SAS completion.
 - Recovery/key backup persistence tests.
 - Push notifications through a Matrix push gateway and APNs.
-- Attachment live round-trip validation, group message live validation, and
-  TestFlight scripts for the new Matrix app.
+- Timeline refresh after app restart and TestFlight scripts for the new Matrix
+  app.
 - Existing TestFlight scripts for `apps/ios` and `apps/macos` are preserved.
 
 ## Documentation

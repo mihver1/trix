@@ -14,10 +14,10 @@ legacy implementation details.
 - [x] Encrypted group creation and generic group invite accept/decline.
 - [x] Attachment send/download with in-app image preview through Matrix SDK
       media/timeline APIs.
-- [ ] Live-validate encrypted group send/receive with at least three accounts.
+- [x] Live-validate encrypted group send/receive with at least three accounts.
 - [ ] Timeline refresh after app restart.
 - [ ] Unread/read/delivery decorations.
-- [ ] Live-validate encrypted attachment round-trip and add OS open/share flow.
+- [x] Live-validate encrypted attachment round-trip and add OS open/share flow.
 - [x] Foreground room/invite/timeline polling while the app scene is active.
 - [ ] APNs-backed notifications through a Matrix push gateway.
 - [ ] Basic profile, notification, and device-management surfaces.
@@ -36,7 +36,7 @@ legacy implementation details.
 - [x] Verify `https://trix.selfhost.ru/.well-known/matrix/client`.
 - [x] Create the first admin user.
 - [x] Create a live test user.
-- [ ] Create the friend group accounts.
+- [x] Create the friend group accounts.
 - [ ] Disable registration after bootstrap if no new users are needed.
 - [ ] Back up the Conduit database volume.
 - [ ] Back up the media directory or confirm media is intentionally disposable.
@@ -75,7 +75,7 @@ legacy implementation details.
 - [x] Create or join an encrypted DM.
 - [x] Send and receive an encrypted DM message.
 - [x] Create or join an encrypted group room.
-- [ ] Send and receive an encrypted group message.
+- [x] Send and receive an encrypted group message.
 - [x] Confirm Conduit stores encrypted event content, not plaintext.
 - [x] Confirm device verification limitation is visible in the app.
 - [x] Surface Matrix SDK device verification state in the Apple UI.
@@ -96,7 +96,7 @@ legacy implementation details.
 - [ ] Key backup/recovery persistence tests.
 - [ ] Push notifications through Matrix push gateway and APNs.
 - [x] SDK-backed media upload/download path in the Apple UI.
-- [ ] Live attachment round-trip validation and OS open/share/export flow.
+- [x] Live attachment round-trip validation and OS open/share/export flow.
 - [x] Production encrypted DM creation flow.
 - [x] Production invite accept/decline flow.
 - [x] Production group room creation.
@@ -121,8 +121,13 @@ legacy implementation details.
       and pending invite accept/decline.
 - [x] SwiftUI Apple client has production controls for private encrypted group
       room creation with at least two invitees, through Matrix SDK `createRoom`
-      and the same generic invite accept/decline flow used for DMs. Group
-      message send/receive still needs live validation.
+      and the same generic invite accept/decline flow used for DMs. Live
+      encrypted group smoke on May 6, 2026 created a private encrypted group
+      with admin, test, and friend accounts, accepted both invites, sent
+      generated messages from two participants, and verified receipt by the
+      other participants without printing passwords, access tokens,
+      registration tokens, SAS values, recovery keys, or decrypted message
+      bodies.
 - [x] SwiftUI Apple client can attach files/images from the timeline composer,
       send them through Matrix SDK timeline attachment APIs, render file/image
       timeline events, download them through Matrix SDK media APIs, and preview
@@ -189,6 +194,8 @@ legacy implementation details.
 
 - `@admin:trix.selfhost.ru` exists and can login/logout through the Matrix API.
 - `@test:trix.selfhost.ru` exists and can login/logout through the Matrix API.
+- A third friend smoke account exists for encrypted group validation; its
+  credentials are stored only in the local ignored `dev-credentials.txt`.
 - `@recovery-smoke-20260506092649-7c56b1:trix.selfhost.ru` exists for recovery
   smoke validation and was consumed by the successful May 6, 2026 run. Recovery
   setup smoke accounts are one-shot because a successful run leaves SDK recovery

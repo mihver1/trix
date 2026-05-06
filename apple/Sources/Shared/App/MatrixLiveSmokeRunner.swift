@@ -27,6 +27,8 @@ enum MatrixLiveSmokeRunner {
                 try await runRestore()
             case "encrypted-dm":
                 try await runEncryptedDM()
+            case "encrypted-group":
+                try await runEncryptedGroup()
             case "encrypted-attachment":
                 try await runEncryptedAttachment()
             case "device-verification":
@@ -123,6 +125,127 @@ enum MatrixLiveSmokeRunner {
         emit("encrypted-dm-receive ok")
 
         try? await testService.logout(session: testSession)
+    }
+
+    private static func runEncryptedGroup() async throws {
+        let adminSession = try requireSession()
+        let test = try credentials(prefix: "TEST")
+        let friend = try credentials(prefix: "FRIEND")
+        let adminService = MatrixRustSDKAdapter()
+        _ = try await adminService.restore(session: adminSession)
+
+        let testService = MatrixRustSDKAdapter()
+        let friendService = MatrixRustSDKAdapter()
+        var testSession: MatrixSession?
+        var friendSession: MatrixSession?
+
+        func cleanup() async {
+            if let testSession {
+                try? await testService.logout(session: testSession)
+            }
+            if let friendSession {
+                try? await friendService.logout(session: friendSession)
+            }
+        }
+
+        do {
+            let loggedInTestSession = try await testService.login(
+                userID: test.userID,
+                password: test.password,
+                serverURL: MatrixClientConfiguration.homeserverURL
+            )
+            testSession = loggedInTestSession
+            _ = try await testService.rooms(session: loggedInTestSession)
+
+            let loggedInFriendSession = try await friendService.login(
+                userID: friend.userID,
+                password: friend.password,
+                serverURL: MatrixClientConfiguration.homeserverURL
+            )
+            friendSession = loggedInFriendSession
+            _ = try await friendService.rooms(session: loggedInFriendSession)
+
+            let room = try await adminService.createEncryptedGroupRoom(
+                name: "Trix live group smoke",
+                inviteeUserIDs: [test.userID, friend.userID],
+                session: adminSession
+            )
+            guard room.isEncrypted else {
+                throw MatrixLiveSmokeError.roomNotEncrypted
+            }
+            emit("encrypted-group-create ok room=\(room.id)")
+
+            _ = try await joinRoomWhenReady(
+                label: "test",
+                roomID: room.id,
+                service: testService,
+                session: loggedInTestSession
+            )
+            emit("encrypted-group-test-join ok")
+
+            _ = try await joinRoomWhenReady(
+                label: "friend",
+                roomID: room.id,
+                service: friendService,
+                session: loggedInFriendSession
+            )
+            emit("encrypted-group-friend-join ok")
+
+            for _ in 0..<8 {
+                _ = try await adminService.rooms(session: adminSession)
+                _ = try? await adminService.timeline(roomID: room.id, session: adminSession)
+                try? await Task.sleep(for: .seconds(1))
+            }
+
+            let adminBody = "trix-live-group-admin-\(UUID().uuidString)"
+            _ = try await adminService.sendText(adminBody, roomID: room.id, session: adminSession)
+            emit("encrypted-group-admin-send ok")
+
+            try await waitForMessage(
+                label: "test-admin",
+                body: adminBody,
+                roomID: room.id,
+                service: testService,
+                session: loggedInTestSession
+            )
+            emit("encrypted-group-test-receive-admin ok")
+
+            try await waitForMessage(
+                label: "friend-admin",
+                body: adminBody,
+                roomID: room.id,
+                service: friendService,
+                session: loggedInFriendSession
+            )
+            emit("encrypted-group-friend-receive-admin ok")
+
+            let friendBody = "trix-live-group-friend-\(UUID().uuidString)"
+            _ = try await friendService.sendText(friendBody, roomID: room.id, session: loggedInFriendSession)
+            emit("encrypted-group-friend-send ok")
+
+            try await waitForMessage(
+                label: "admin-friend",
+                body: friendBody,
+                roomID: room.id,
+                service: adminService,
+                session: adminSession
+            )
+            emit("encrypted-group-admin-receive-friend ok")
+
+            try await waitForMessage(
+                label: "test-friend",
+                body: friendBody,
+                roomID: room.id,
+                service: testService,
+                session: loggedInTestSession
+            )
+            emit("encrypted-group-test-receive-friend ok")
+
+            await cleanup()
+        } catch {
+            await cleanup()
+            throw error
+        }
     }
 
     private static func runEncryptedAttachment() async throws {
@@ -453,6 +576,56 @@ enum MatrixLiveSmokeRunner {
             throw MatrixClientError.missingSession
         }
         return session
+    }
+
+    private static func joinRoomWhenReady(
+        label: String,
+        roomID: String,
+        service: MatrixRustSDKAdapter,
+        session: MatrixSession
+    ) async throws -> MatrixRoomSummary {
+        var lastError: Error?
+        for attempt in 0..<45 {
+            _ = try? await service.rooms(session: session)
+            do {
+                return try await service.joinRoom(roomID: roomID, session: session)
+            } catch {
+                lastError = error
+            }
+
+            if attempt == 0 || (attempt + 1).isMultiple(of: 10) {
+                emit("encrypted-group-\(label)-join waitSeconds=\(attempt + 1)")
+            }
+            try? await Task.sleep(for: .seconds(1))
+        }
+
+        if let lastError {
+            emit("encrypted-group-\(label)-join failed \(redacted(lastError))")
+        }
+        throw MatrixLiveSmokeError.inviteNotJoined
+    }
+
+    private static func waitForMessage(
+        label: String,
+        body: String,
+        roomID: String,
+        service: MatrixRustSDKAdapter,
+        session: MatrixSession
+    ) async throws {
+        for attempt in 0..<45 {
+            _ = try await service.rooms(session: session)
+            let timeline = try await service.timeline(roomID: roomID, session: session)
+            if timeline.contains(where: { $0.body == body }) {
+                return
+            }
+
+            if attempt == 0 || (attempt + 1).isMultiple(of: 10) {
+                emit("message-receive \(label) waitSeconds=\(attempt + 1)")
+            }
+            try? await Task.sleep(for: .seconds(1))
+        }
+
+        throw MatrixLiveSmokeError.messageNotReceived
     }
 
     private static func waitForFlow(

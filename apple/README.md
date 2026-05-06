@@ -83,11 +83,12 @@ xcodebuild \
   tokens, or decrypted message bodies.
 - DEBUG builds include a live smoke runner, enabled only with
   `TRIX_MATRIX_LIVE_SMOKE=1`, for validating login, restore, encrypted DM
-  creation, encrypted send/receive, device verification flow, and cleanup
-  against the live homeserver.
-- Device verification production validation, group-message live validation,
-  attachment live validation/open-share polish, APNs notifications, and
-  TestFlight packaging are visible as TODO items.
+  creation, encrypted send/receive, encrypted group send/receive across three
+  accounts, encrypted attachment round trips, device verification flow, and
+  cleanup against the live homeserver.
+- Device verification production validation, timeline refresh after app
+  restart, APNs notifications, and TestFlight packaging are visible as TODO
+  items.
 
 ## Service Boundary
 
@@ -126,10 +127,9 @@ The remaining production tasks are:
 2. Finish production gating for device verification state after SAS completes.
 3. Add persistent tests around recovery/key backup state.
 4. Keep tokens and decrypted message bodies out of logs.
-5. Live-validate encrypted group room messaging and invite acceptance.
-6. Live-validate encrypted attachment round trips and add OS share/export.
-7. Add APNs notifications through a Matrix push gateway.
-8. Add persistent tests around encrypted room sync, invite handling, device
+5. Validate timeline refresh after app restart.
+6. Add APNs notifications through a Matrix push gateway.
+7. Add persistent tests around encrypted room sync, invite handling, device
    verification/recovery state, and logout cleanup.
 
 Do not add custom cryptography while implementing the adapter.
@@ -162,6 +162,7 @@ Modes:
 - `TRIX_MATRIX_LIVE_SMOKE_MODE=login`
 - `TRIX_MATRIX_LIVE_SMOKE_MODE=restore`
 - `TRIX_MATRIX_LIVE_SMOKE_MODE=encrypted-dm`
+- `TRIX_MATRIX_LIVE_SMOKE_MODE=encrypted-group`
 - `TRIX_MATRIX_LIVE_SMOKE_MODE=encrypted-attachment`
 - `TRIX_MATRIX_LIVE_SMOKE_MODE=device-verification`
 - `TRIX_MATRIX_LIVE_SMOKE_MODE=recovery`
@@ -169,6 +170,10 @@ Modes:
 
 Use a signed simulator build for this path. `CODE_SIGNING_ALLOWED=NO` is fine
 as a compile check, but the unsigned simulator app can fail Keychain operations.
+The encrypted group mode requires `ADMIN`, `TEST`, and `FRIEND` credentials. It
+creates an encrypted private group, waits for both invited accounts to join,
+sends generated messages from two participants, and checks receive on the other
+participants without printing message bodies or credentials.
 The encrypted attachment mode creates an encrypted DM, sends a generated
 attachment through the Matrix SDK timeline API, waits for the test account to
 see the file event, downloads it through the SDK media API, and compares bytes
