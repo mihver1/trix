@@ -29,6 +29,33 @@ xcodebuild \
   build CODE_SIGNING_ALLOWED=NO
 ```
 
+From the repository root, the Matrix Apple lanes are also available through:
+
+- `just matrix-ios-build`
+- `just matrix-ios-run`
+- `just matrix-macos-build`
+- `just matrix-macos-run`
+
+The iOS run recipe builds, installs, and launches the app in the `iPhone 17`
+simulator by default. Pass another simulator name as the second argument, for
+example `just matrix-ios-run automatic "iPhone 17 Pro"`. Pass `unsigned` as the
+first build recipe argument for compile-only local checks.
+
+The Matrix iOS and macOS targets intentionally reuse the existing Trix signing
+lane:
+
+- Bundle identifier: `com.softgrid.trixapp`
+- Apple team: `HGY33KYKQ2`
+- iOS entitlement: APNs environment expansion through
+  `TRIX_APNS_ENTITLEMENT_ENVIRONMENT`
+- macOS entitlements: app sandbox, network client, user-selected file read
+  access, and APNs environment expansion through
+  `TRIX_APNS_ENTITLEMENT_ENVIRONMENT`
+
+`Debug` expands the APNs entitlement to `development`; `Release` expands it to
+`production`. The legacy `apps/ios` and `apps/macos` projects and their
+TestFlight scripts remain untouched.
+
 Build iOS:
 
 ```bash

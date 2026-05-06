@@ -9,6 +9,10 @@ version := `cat VERSION | tr -d '[:space:]'`
 ios_dir := repo_root / "apps/ios"
 macos_dir := repo_root / "apps/macos"
 macos_admin_dir := repo_root / "apps/macos-admin"
+matrix_apple_dir := repo_root / "apple"
+matrix_ios_derived_data := "/tmp/trixmatrix-ios-dd"
+matrix_macos_derived_data := "/tmp/trixmatrix-macos-dd"
+matrix_app_bundle_id := "com.softgrid.trixapp"
 android_gradle := repo_root / "apps/android/app/build.gradle.kts"
 
 # ── Versioning ────────────────────────────────────────────────
@@ -140,6 +144,79 @@ build-core-universal:
 run-server:
     cargo run -p trixd
 
+# Build the Matrix iOS app for a simulator; signing: automatic|unsigned
+matrix-ios-build signing="automatic" simulator="iPhone 17": xcodegen-matrix-apple
+    #!/usr/bin/env bash
+    set -euo pipefail
+    signing="{{ signing }}"
+    simulator="{{ simulator }}"
+    build_args=(
+      -project "{{ matrix_apple_dir }}/TrixMatrix.xcodeproj"
+      -scheme TrixMatrixiOS
+      -destination "platform=iOS Simulator,name=$simulator"
+      -derivedDataPath "{{ matrix_ios_derived_data }}"
+      build
+    )
+    case "$signing" in
+      automatic) ;;
+      unsigned) build_args+=(CODE_SIGNING_ALLOWED=NO) ;;
+      *) echo "error: signing must be automatic or unsigned" >&2; exit 1 ;;
+    esac
+    echo "==> building Matrix iOS app for $simulator (signing=$signing)"
+    xcodebuild "${build_args[@]}"
+
+# Build, install, and launch the Matrix iOS app in a simulator; signing: automatic|unsigned
+matrix-ios-run signing="automatic" simulator="iPhone 17":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    simulator="{{ simulator }}"
+    just --justfile "{{ repo_root }}/justfile" matrix-ios-build "{{ signing }}" "$simulator"
+    app="{{ matrix_ios_derived_data }}/Build/Products/Debug-iphonesimulator/Trix.app"
+    if [[ ! -d "$app" ]]; then
+      echo "error: built app not found at $app" >&2
+      exit 1
+    fi
+    echo "==> booting $simulator"
+    xcrun simctl boot "$simulator" >/dev/null 2>&1 || true
+    xcrun simctl bootstatus "$simulator" -b
+    echo "==> installing $app"
+    xcrun simctl install "$simulator" "$app"
+    echo "==> launching {{ matrix_app_bundle_id }} on $simulator"
+    xcrun simctl launch --terminate-running-process "$simulator" "{{ matrix_app_bundle_id }}"
+
+# Build the Matrix macOS app; signing: automatic|unsigned
+matrix-macos-build signing="automatic": xcodegen-matrix-apple
+    #!/usr/bin/env bash
+    set -euo pipefail
+    signing="{{ signing }}"
+    build_args=(
+      -project "{{ matrix_apple_dir }}/TrixMatrix.xcodeproj"
+      -scheme TrixMatrixMac
+      -destination 'platform=macOS'
+      -derivedDataPath "{{ matrix_macos_derived_data }}"
+      build
+    )
+    case "$signing" in
+      automatic) ;;
+      unsigned) build_args+=(CODE_SIGNING_ALLOWED=NO) ;;
+      *) echo "error: signing must be automatic or unsigned" >&2; exit 1 ;;
+    esac
+    echo "==> building Matrix macOS app (signing=$signing)"
+    xcodebuild "${build_args[@]}"
+
+# Build and launch the Matrix macOS app; signing: automatic|unsigned
+matrix-macos-run signing="automatic":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just --justfile "{{ repo_root }}/justfile" matrix-macos-build "{{ signing }}"
+    app="{{ matrix_macos_derived_data }}/Build/Products/Debug/Trix.app"
+    if [[ ! -d "$app" ]]; then
+      echo "error: built app not found at $app" >&2
+      exit 1
+    fi
+    echo "==> launching $app"
+    open "$app"
+
 # ── Code generation ───────────────────────────────────────────
 
 # Generate UniFFI Swift + Kotlin bindings
@@ -169,7 +246,7 @@ strings:
 # ── Xcode project generation ─────────────────────────────────
 
 # Regenerate all Xcode projects via XcodeGen
-xcodegen-all: xcodegen-ios xcodegen-macos xcodegen-macos-admin
+xcodegen-all: xcodegen-ios xcodegen-macos xcodegen-macos-admin xcodegen-matrix-apple
 
 # Regenerate iOS Xcode project
 xcodegen-ios:
@@ -182,6 +259,10 @@ xcodegen-macos:
 # Regenerate macOS Admin Xcode project
 xcodegen-macos-admin:
     cd "{{ macos_admin_dir }}" && xcodegen generate
+
+# Regenerate Matrix Apple Xcode project
+xcodegen-matrix-apple:
+    cd "{{ matrix_apple_dir }}" && xcodegen generate
 
 # ── Formatting & linting ─────────────────────────────────────
 

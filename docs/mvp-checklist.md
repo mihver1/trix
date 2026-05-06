@@ -46,6 +46,11 @@ legacy implementation details.
 
 - [x] Build the iOS Matrix app target.
 - [x] Build the macOS Matrix app target.
+- [x] Reuse the existing iOS app identifier, Apple team, and APNs entitlement
+      environment settings for the Matrix iOS target.
+- [x] Reuse the existing macOS app identifier, Apple team, sandbox/network/file
+      access entitlements, and APNs entitlement environment settings for the
+      Matrix macOS target.
 - [x] Log in with a Matrix user ID and password.
 - [x] Confirm access tokens are not printed in live smoke logs.
 - [x] Quit and relaunch the app.

@@ -111,6 +111,10 @@ Working in this first pivot slice:
 - The Apple scaffold has a pinned Matrix Rust SDK Swift dependency and a real
   adapter for password login, session restore, room list, timeline, and text
   send calls.
+- The Matrix iOS and macOS targets reuse the existing app identifier
+  `com.softgrid.trixapp`, Apple team `HGY33KYKQ2`, and APNs entitlement
+  environment settings. The macOS target also reuses the existing sandbox,
+  network, and user-selected file entitlements.
 - Login form, Keychain-backed session persistence, room list, and timeline UI
   are present.
 - Production SwiftUI flows exist for encrypted DM creation, private encrypted

@@ -30,13 +30,20 @@ targets:
         product: MatrixRustSDK
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trixmatrix.ios
+        PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trixapp
         PRODUCT_NAME: Trix
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: TrixMatrixiOS.entitlements
+        DEVELOPMENT_TEAM: HGY33KYKQ2
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         TARGETED_DEVICE_FAMILY: "1,2"
+      configs:
+        Debug:
+          TRIX_APNS_ENTITLEMENT_ENVIRONMENT: development
+        Release:
+          TRIX_APNS_ENTITLEMENT_ENVIRONMENT: production
 
   TrixMatrixMac:
     type: application
@@ -50,9 +57,16 @@ targets:
         product: MatrixRustSDK
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trixmatrix.macos
+        PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trixapp
         PRODUCT_NAME: Trix
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: TrixMatrixMac.entitlements
+        DEVELOPMENT_TEAM: HGY33KYKQ2
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.social-networking
+      configs:
+        Debug:
+          TRIX_APNS_ENTITLEMENT_ENVIRONMENT: development
+        Release:
+          TRIX_APNS_ENTITLEMENT_ENVIRONMENT: production

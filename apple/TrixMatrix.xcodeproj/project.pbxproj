@@ -244,9 +244,11 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					ACF6312FAACCD1BC6923563C = {
+						DevelopmentTeam = HGY33KYKQ2;
 						ProvisioningStyle = Automatic;
 					};
 					F80150C1565CC5EBAFD2BBA8 = {
+						DevelopmentTeam = HGY33KYKQ2;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -455,8 +457,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = TrixMatrixiOS.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = HGY33KYKQ2;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -465,10 +469,11 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixmatrix.ios;
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixapp;
 				PRODUCT_NAME = Trix;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
+				TRIX_APNS_ENTITLEMENT_ENVIRONMENT = production;
 			};
 			name = Release;
 		};
@@ -476,8 +481,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = TrixMatrixiOS.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = HGY33KYKQ2;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -486,10 +493,11 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixmatrix.ios;
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixapp;
 				PRODUCT_NAME = Trix;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
+				TRIX_APNS_ENTITLEMENT_ENVIRONMENT = development;
 			};
 			name = Debug;
 		};
@@ -497,8 +505,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = TrixMatrixMac.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = HGY33KYKQ2;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
@@ -507,9 +517,10 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixmatrix.macos;
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixapp;
 				PRODUCT_NAME = Trix;
 				SDKROOT = macosx;
+				TRIX_APNS_ENTITLEMENT_ENVIRONMENT = production;
 			};
 			name = Release;
 		};
@@ -517,8 +528,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = TrixMatrixMac.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = HGY33KYKQ2;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
@@ -527,9 +540,10 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixmatrix.macos;
+				PRODUCT_BUNDLE_IDENTIFIER = com.softgrid.trixapp;
 				PRODUCT_NAME = Trix;
 				SDKROOT = macosx;
+				TRIX_APNS_ENTITLEMENT_ENVIRONMENT = development;
 			};
 			name = Debug;
 		};
