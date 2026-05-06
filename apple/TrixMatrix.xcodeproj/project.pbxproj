@@ -8,7 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		01DD84A806E5A3D66513361E /* TimelineViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEB0655E233DAB56B8623281 /* TimelineViewModel.swift */; };
-		11CD3E2905AB63A6371B5D02 /* MatrixNewDirectMessageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E50393EF7A1C2412ACB17A82 /* MatrixNewDirectMessageView.swift */; };
+		03C101F98756ECC874E5A3BB /* MatrixNewRoomView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E47471C8DE36B7FE656737F /* MatrixNewRoomView.swift */; };
 		129D050CD8E0E36C143E4C91 /* MatrixRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 632A14FCA910449A99CB3132 /* MatrixRootView.swift */; };
 		1A126D27830FDBAD15EB30F2 /* MatrixRustSDKAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 152545F011E983A56EC13722 /* MatrixRustSDKAdapter.swift */; };
 		1C9E1EDBEAB90A539AEBFC5D /* KeychainMatrixSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 831A6F1FA84E9BEF5A5E3FD7 /* KeychainMatrixSessionStore.swift */; };
@@ -25,7 +25,6 @@
 		646ED38194100D5107D0AD8D /* MatrixLiveSmokeRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCA53B0F5BE71CF78081C121 /* MatrixLiveSmokeRunner.swift */; };
 		67CC33870704986A5164F9A2 /* RoomListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CB4DE535EF97BB0D0B809CB /* RoomListViewModel.swift */; };
 		68B55DEFF7F78A71B40CBA94 /* MatrixServiceProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8009529B31B45E9E0A2125F4 /* MatrixServiceProtocols.swift */; };
-		6DFEC60E40B44022B4CF2C9E /* MatrixNewDirectMessageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E50393EF7A1C2412ACB17A82 /* MatrixNewDirectMessageView.swift */; };
 		6EE3D12CA0D4D43D6F4FE819 /* TrixMatrixMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C3BB1BD649928661E930244 /* TrixMatrixMacApp.swift */; };
 		7381AAE6D833620E65DD6B59 /* MatrixLiveSmokeRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCA53B0F5BE71CF78081C121 /* MatrixLiveSmokeRunner.swift */; };
 		752F6D2418E15CD41405F54F /* MatrixLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72C3FB45F6FDCA6D503C3351 /* MatrixLoginView.swift */; };
@@ -40,6 +39,7 @@
 		9DC61ADC1BDF43C957BB1A70 /* MatrixClientConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC3FB0C0DAF30452F9A3BC0 /* MatrixClientConfiguration.swift */; };
 		BED1A8B28AD498D9473ACF25 /* MockMatrixService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1944705328595182A450E300 /* MockMatrixService.swift */; };
 		CE7C59BA16D194F84A8F1B9E /* DeviceVerificationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A728389B09D31A93D5D10AF3 /* DeviceVerificationViewModel.swift */; };
+		D36BCC7661E588FF60E05B62 /* MatrixNewRoomView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E47471C8DE36B7FE656737F /* MatrixNewRoomView.swift */; };
 		D4D5448BEB00C50FE1200B85 /* MatrixLimitationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7531B7FD31F543B78E5C0C7 /* MatrixLimitationsView.swift */; };
 		D7D2D4E2E82CFBD41923A1F3 /* MatrixClientConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC3FB0C0DAF30452F9A3BC0 /* MatrixClientConfiguration.swift */; };
 		D94575291CBE299E704B0BAB /* MatrixRoomListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C18C0C9013562CEEAD1B29C /* MatrixRoomListView.swift */; };
@@ -62,12 +62,12 @@
 		831A6F1FA84E9BEF5A5E3FD7 /* KeychainMatrixSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainMatrixSessionStore.swift; sourceTree = "<group>"; };
 		8682262FABE4A23051A6161F /* TrixMatrixiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TrixMatrixiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8CB4DE535EF97BB0D0B809CB /* RoomListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomListViewModel.swift; sourceTree = "<group>"; };
+		8E47471C8DE36B7FE656737F /* MatrixNewRoomView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixNewRoomView.swift; sourceTree = "<group>"; };
 		A3994463199103D5DCCB714F /* MatrixTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixTimelineView.swift; sourceTree = "<group>"; };
 		A728389B09D31A93D5D10AF3 /* DeviceVerificationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceVerificationViewModel.swift; sourceTree = "<group>"; };
 		C2F1BA65FBB9F5DB455C6ABA /* MatrixModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixModels.swift; sourceTree = "<group>"; };
 		D7531B7FD31F543B78E5C0C7 /* MatrixLimitationsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixLimitationsView.swift; sourceTree = "<group>"; };
 		DCA53B0F5BE71CF78081C121 /* MatrixLiveSmokeRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixLiveSmokeRunner.swift; sourceTree = "<group>"; };
-		E50393EF7A1C2412ACB17A82 /* MatrixNewDirectMessageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixNewDirectMessageView.swift; sourceTree = "<group>"; };
 		EEB0655E233DAB56B8623281 /* TimelineViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineViewModel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -176,7 +176,7 @@
 			children = (
 				D7531B7FD31F543B78E5C0C7 /* MatrixLimitationsView.swift */,
 				72C3FB45F6FDCA6D503C3351 /* MatrixLoginView.swift */,
-				E50393EF7A1C2412ACB17A82 /* MatrixNewDirectMessageView.swift */,
+				8E47471C8DE36B7FE656737F /* MatrixNewRoomView.swift */,
 				6C18C0C9013562CEEAD1B29C /* MatrixRoomListView.swift */,
 				632A14FCA910449A99CB3132 /* MatrixRootView.swift */,
 				A3994463199103D5DCCB714F /* MatrixTimelineView.swift */,
@@ -287,7 +287,7 @@
 				646ED38194100D5107D0AD8D /* MatrixLiveSmokeRunner.swift in Sources */,
 				752F6D2418E15CD41405F54F /* MatrixLoginView.swift in Sources */,
 				2E9A9F2489C6C51CEC397E34 /* MatrixModels.swift in Sources */,
-				11CD3E2905AB63A6371B5D02 /* MatrixNewDirectMessageView.swift in Sources */,
+				03C101F98756ECC874E5A3BB /* MatrixNewRoomView.swift in Sources */,
 				D94575291CBE299E704B0BAB /* MatrixRoomListView.swift in Sources */,
 				59A16A64148E87EC05620941 /* MatrixRootView.swift in Sources */,
 				566C48B8FDC47A38721C859D /* MatrixRustSDKAdapter.swift in Sources */,
@@ -312,7 +312,7 @@
 				7381AAE6D833620E65DD6B59 /* MatrixLiveSmokeRunner.swift in Sources */,
 				8FB1488F05EDACC73DFBA8F8 /* MatrixLoginView.swift in Sources */,
 				F9EED89BD979F652A771C274 /* MatrixModels.swift in Sources */,
-				6DFEC60E40B44022B4CF2C9E /* MatrixNewDirectMessageView.swift in Sources */,
+				D36BCC7661E588FF60E05B62 /* MatrixNewRoomView.swift in Sources */,
 				7A0BB8C6FA185C51228D3210 /* MatrixRoomListView.swift in Sources */,
 				129D050CD8E0E36C143E4C91 /* MatrixRootView.swift in Sources */,
 				1A126D27830FDBAD15EB30F2 /* MatrixRustSDKAdapter.swift in Sources */,

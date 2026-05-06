@@ -357,6 +357,8 @@ enum MatrixClientError: LocalizedError {
     case invalidHomeserver
     case invalidCredentials
     case invalidMatrixUserID
+    case groupRoomNameRequired
+    case groupInviteesRequired
     case emptyMessage
     case missingSession
     case roomUnavailable
@@ -378,6 +380,10 @@ enum MatrixClientError: LocalizedError {
             return "Enter a Matrix user ID and password."
         case .invalidMatrixUserID:
             return "Enter a Matrix user ID on trix.selfhost.ru."
+        case .groupRoomNameRequired:
+            return "Enter a group name."
+        case .groupInviteesRequired:
+            return "Invite at least two people to create a group."
         case .emptyMessage:
             return "Enter a message before sending."
         case .missingSession:

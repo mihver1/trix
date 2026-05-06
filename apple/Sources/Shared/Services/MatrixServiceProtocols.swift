@@ -27,6 +27,11 @@ protocol MatrixRoomBootstrapService: Sendable {
         name: String,
         session: MatrixSession
     ) async throws -> MatrixRoomSummary
+    func createEncryptedGroupRoom(
+        name: String,
+        inviteeUserIDs: [String],
+        session: MatrixSession
+    ) async throws -> MatrixRoomSummary
     func invitations(session: MatrixSession) async throws -> [MatrixRoomInvite]
     func acceptInvitation(roomID: String, session: MatrixSession) async throws -> MatrixRoomSummary
     func declineInvitation(roomID: String, session: MatrixSession) async throws

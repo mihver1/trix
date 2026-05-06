@@ -185,6 +185,26 @@ final class MatrixAppModel: ObservableObject {
         return true
     }
 
+    func createEncryptedGroupRoom(name: String, inviteeUserIDs: String) async -> Bool {
+        guard let session else {
+            return false
+        }
+
+        guard let room = await roomListViewModel.createEncryptedGroupRoom(
+            name: name,
+            inviteeUserIDs: inviteeUserIDs,
+            session: session,
+            service: matrixService
+        ) else {
+            return false
+        }
+
+        await reloadRooms()
+        selectedRoomID = room.id
+        await loadTimeline(roomID: room.id)
+        return true
+    }
+
     func reloadDeviceVerificationStatus() async {
         guard let session else {
             deviceVerificationViewModel.clear()

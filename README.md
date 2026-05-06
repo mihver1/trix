@@ -113,21 +113,24 @@ Working in this first pivot slice:
   send calls.
 - Login form, Keychain-backed session persistence, room list, and timeline UI
   are present.
+- Production SwiftUI flows exist for encrypted DM creation, private encrypted
+  group room creation, and invite accept/decline.
+- Matrix SDK device verification and recovery state are visible in the UI;
+  recovery setup/confirmation is wired through SDK APIs.
 - A DEBUG-only live iOS smoke path validates login, session restore, encrypted
   DM creation, encrypted send, encrypted receive, and logout cleanup against
   `trix.selfhost.ru`.
 - Unimplemented security-sensitive features are visible in the UI and tracked
   in docs.
 
-Not yet working:
+Not yet production-ready:
 
-- Device verification.
-- Key backup and recovery.
+- Device verification verified-state validation after live SAS completion.
+- Recovery/key backup persistence tests.
 - Push notifications through a Matrix push gateway and APNs.
-- Media upload/download, production invite handling, and production room
-  creation UI.
-- TestFlight scripts for the new `apple/` Matrix app. Existing TestFlight
-  scripts for `apps/ios` and `apps/macos` are preserved.
+- Media upload/download, group message live validation, and TestFlight scripts
+  for the new Matrix app.
+- Existing TestFlight scripts for `apps/ios` and `apps/macos` are preserved.
 
 ## Documentation
 

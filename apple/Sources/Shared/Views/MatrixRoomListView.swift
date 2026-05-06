@@ -4,7 +4,7 @@ struct MatrixRoomListView: View {
     @ObservedObject var model: MatrixAppModel
     @ObservedObject private var roomListViewModel: RoomListViewModel
     @ObservedObject private var deviceVerificationViewModel: DeviceVerificationViewModel
-    @State private var isShowingNewDirectMessage = false
+    @State private var isShowingNewRoom = false
 
     init(model: MatrixAppModel) {
         self.model = model
@@ -19,7 +19,7 @@ struct MatrixRoomListView: View {
                     ContentUnavailableView(
                         "No Rooms",
                         systemImage: "bubble.left",
-                        description: Text("Start an encrypted DM or accept an invite.")
+                        description: Text("Create an encrypted room or accept an invite.")
                     )
                 } else {
                     ForEach(roomListViewModel.rooms) { room in
@@ -153,14 +153,14 @@ struct MatrixRoomListView: View {
         }
         .toolbar {
             Button {
-                isShowingNewDirectMessage = true
+                isShowingNewRoom = true
             } label: {
-                Label("New DM", systemImage: "square.and.pencil")
+                Label("New Room", systemImage: "square.and.pencil")
             }
-            .help("New encrypted DM")
+            .help("New encrypted room")
         }
-        .sheet(isPresented: $isShowingNewDirectMessage) {
-            MatrixNewDirectMessageView(model: model)
+        .sheet(isPresented: $isShowingNewRoom) {
+            MatrixNewRoomView(model: model)
         }
     }
 }

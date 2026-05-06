@@ -372,6 +372,34 @@ actor MatrixRustSDKAdapter: MatrixService {
         return await Self.summary(from: room)
     }
 
+    func createEncryptedGroupRoom(
+        name: String,
+        inviteeUserIDs: [String],
+        session: MatrixSession
+    ) async throws -> MatrixRoomSummary {
+        let client = try await resolvedClient(session: session)
+        let roomID = try await client.createRoom(
+            request: CreateRoomParameters(
+                name: name,
+                isEncrypted: true,
+                isDirect: false,
+                visibility: .private,
+                preset: .privateChat,
+                invite: inviteeUserIDs
+            )
+        )
+
+        try await ensureSyncStarted(client: client)
+        try? await Task.sleep(for: .seconds(1))
+
+        guard let room = try client.getRoom(roomId: roomID) else {
+            throw MatrixClientError.roomUnavailable
+        }
+
+        roomsByID[roomID] = room
+        return await Self.summary(from: room)
+    }
+
     func invitations(session: MatrixSession) async throws -> [MatrixRoomInvite] {
         let client = try await resolvedClient(session: session)
         try await ensureSyncStarted(client: client)

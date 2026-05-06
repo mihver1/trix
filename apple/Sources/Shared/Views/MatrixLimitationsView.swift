@@ -3,10 +3,9 @@ import SwiftUI
 struct MatrixLimitationsView: View {
     private let pendingItems = [
         "verified-state validation",
-        "recovery live validation",
         "push notifications",
         "media",
-        "group room creation",
+        "group message live validation",
     ]
 
     var body: some View {

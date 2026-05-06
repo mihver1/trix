@@ -52,7 +52,8 @@ xcodebuild \
   verification; this does not silently trust devices.
 - Room list and room timeline are shown through view models backed by Matrix
   SDK sync/timeline APIs.
-- The room list has a production SwiftUI flow for creating encrypted DMs.
+- The room list has a production SwiftUI flow for creating encrypted DMs and
+  private encrypted group rooms with two or more invitees.
 - Pending Matrix invites are listed separately and can be accepted or declined.
 - Plain text send goes through the Matrix SDK timeline send API.
 - Encrypted rooms are handled by Matrix SDK E2EE; no custom crypto is
@@ -77,8 +78,8 @@ xcodebuild \
   `TRIX_MATRIX_LIVE_SMOKE=1`, for validating login, restore, encrypted DM
   creation, encrypted send/receive, device verification flow, and cleanup
   against the live homeserver.
-- Device verification production validation, full recovery live validation,
-  push, media, and group room creation are visible as TODO items.
+- Device verification production validation, group-message live validation,
+  push, media, and TestFlight packaging are visible as TODO items.
 
 ## Service Boundary
 
@@ -116,7 +117,7 @@ The remaining production tasks are:
 2. Finish production gating for device verification state after SAS completes.
 3. Add persistent tests around recovery/key backup state.
 4. Keep tokens and decrypted message bodies out of logs.
-5. Add production group room creation and group invite UX.
+5. Live-validate encrypted group room messaging and invite acceptance.
 6. Add persistent tests around encrypted room sync, invite handling, device
    verification/recovery state, and logout cleanup.
 

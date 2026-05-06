@@ -3,6 +3,23 @@
 Use this checklist before treating the Matrix pivot as usable for real private
 messages.
 
+## Legacy Product Parity Target
+
+Validated from the legacy client READMEs and client checklist, not by copying
+legacy implementation details.
+
+- [x] Login, logout, and session restore.
+- [x] Room list, DM timeline, group timeline, and text composer.
+- [x] Encrypted DM creation, invite accept/decline, and text send/receive.
+- [x] Encrypted group creation and generic group invite accept/decline.
+- [ ] Live-validate encrypted group send/receive with at least three accounts.
+- [ ] Timeline refresh after app restart.
+- [ ] Unread/read/delivery decorations.
+- [ ] Attachment send/download plus inline image preview/open-share flow.
+- [ ] Foreground realtime/polling recovery and APNs-backed notifications.
+- [ ] Basic profile, notification, and device-management surfaces.
+- [ ] TestFlight archive path for the new Matrix Apple app.
+
 ## Server
 
 - [x] Choose final `server_name`: trix.selfhost.ru
@@ -39,9 +56,9 @@ messages.
 - [x] Open a DM room through the Matrix service layer.
 - [x] Create an encrypted DM through the SwiftUI Apple client flow.
 - [x] Accept or decline pending invites through the SwiftUI Apple client flow.
-- [ ] Open a group room.
-- [ ] Send a plain text message.
-- [ ] Receive a plain text message.
+- [x] Open a group room.
+- [x] Send a plain text message.
+- [x] Receive a plain text message.
 - [x] Show sender, timestamp, and body in the SwiftUI timeline model.
 - [ ] Confirm timeline refresh after app restart.
 
@@ -49,7 +66,7 @@ messages.
 
 - [x] Create or join an encrypted DM.
 - [x] Send and receive an encrypted DM message.
-- [ ] Create or join an encrypted group room.
+- [x] Create or join an encrypted group room.
 - [ ] Send and receive an encrypted group message.
 - [x] Confirm Conduit stores encrypted event content, not plaintext.
 - [x] Confirm device verification limitation is visible in the app.
@@ -74,8 +91,8 @@ messages.
 - [ ] Media download.
 - [x] Production encrypted DM creation flow.
 - [x] Production invite accept/decline flow.
-- [ ] Production group room creation.
-- [ ] Production group invite handling.
+- [x] Production group room creation.
+- [x] Production group invite handling.
 - [ ] TestFlight archive path for the new `apple/` Matrix app.
 
 ## Current First-Slice Status
@@ -94,6 +111,10 @@ messages.
       `https://trix.selfhost.ru`.
 - [x] SwiftUI Apple client has production controls for encrypted DM creation
       and pending invite accept/decline.
+- [x] SwiftUI Apple client has production controls for private encrypted group
+      room creation with at least two invitees, through Matrix SDK `createRoom`
+      and the same generic invite accept/decline flow used for DMs. Group
+      message send/receive still needs live validation.
 - [x] SwiftUI Apple client shows read-only Matrix SDK device verification
       state without silently trusting devices.
 - [x] SwiftUI Apple client can request, accept, start SAS, approve, decline,

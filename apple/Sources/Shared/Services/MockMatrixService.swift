@@ -276,6 +276,25 @@ actor MockMatrixService: MatrixService {
         return room
     }
 
+    func createEncryptedGroupRoom(
+        name: String,
+        inviteeUserIDs: [String],
+        session: MatrixSession
+    ) async throws -> MatrixRoomSummary {
+        let room = MatrixRoomSummary(
+            id: "!mock-encrypted-group-\(UUID().uuidString):\(MatrixClientConfiguration.serverName)",
+            name: name,
+            kind: .group,
+            isEncrypted: true,
+            unreadCount: 0,
+            lastMessagePreview: "No messages yet",
+            lastActivityAt: Date()
+        )
+        roomSummaries.insert(room, at: 0)
+        timelines[room.id] = []
+        return room
+    }
+
     func invitations(session: MatrixSession) async throws -> [MatrixRoomInvite] {
         roomInvites.sorted { lhs, rhs in
             lhs.receivedAt > rhs.receivedAt
