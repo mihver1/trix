@@ -56,6 +56,12 @@ xcodebuild \
   private encrypted group rooms with two or more invitees.
 - Pending Matrix invites are listed separately and can be accepted or declined.
 - Plain text send goes through the Matrix SDK timeline send API.
+- File and image attachments can be picked from the timeline composer and sent
+  through Matrix SDK timeline attachment APIs. Timeline file/image events can be
+  downloaded through Matrix SDK media APIs, with image preview shown in app.
+- While the app scene is active, a foreground refresh loop periodically reloads
+  rooms, pending invites, and the selected timeline through the Matrix service
+  boundary.
 - Encrypted rooms are handled by Matrix SDK E2EE; no custom crypto is
   implemented here.
 - Device verification state is read from the Matrix SDK and surfaced in the
@@ -79,7 +85,8 @@ xcodebuild \
   creation, encrypted send/receive, device verification flow, and cleanup
   against the live homeserver.
 - Device verification production validation, group-message live validation,
-  push, media, and TestFlight packaging are visible as TODO items.
+  attachment live validation/open-share polish, APNs notifications, and
+  TestFlight packaging are visible as TODO items.
 
 ## Service Boundary
 
@@ -88,7 +95,8 @@ The SwiftUI views depend on view models, not SDK calls.
 - `MatrixSessionStore`: secure session persistence.
 - `MatrixAuthService`: login/logout/session restore.
 - `MatrixSyncService`: room list.
-- `MatrixRoomService`: room timeline and text send.
+- `MatrixRoomService`: room timeline, text send, attachment send, and
+  attachment download.
 - `MatrixRoomBootstrapService`: encrypted DM creation, invite list, invite
   accept/decline, and live validation join helpers.
 - `MatrixDeviceVerificationService`: read-only verification/recovery state,
@@ -118,7 +126,9 @@ The remaining production tasks are:
 3. Add persistent tests around recovery/key backup state.
 4. Keep tokens and decrypted message bodies out of logs.
 5. Live-validate encrypted group room messaging and invite acceptance.
-6. Add persistent tests around encrypted room sync, invite handling, device
+6. Live-validate encrypted attachment round trips and add OS share/export.
+7. Add APNs notifications through a Matrix push gateway.
+8. Add persistent tests around encrypted room sync, invite handling, device
    verification/recovery state, and logout cleanup.
 
 Do not add custom cryptography while implementing the adapter.

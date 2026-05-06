@@ -9,6 +9,7 @@ actor MockMatrixService: MatrixService {
     private var recoveryState: MatrixRecoveryState
     private var backupState: MatrixBackupState
     private var backupExistsOnServer: Bool
+    private var attachmentDataBySourceJSON: [String: Data]
 
     init(now: Date = Date()) {
         let directRoom = MatrixRoomSummary(
@@ -46,6 +47,7 @@ actor MockMatrixService: MatrixService {
         self.recoveryState = .disabled
         self.backupState = .unknown
         self.backupExistsOnServer = false
+        self.attachmentDataBySourceJSON = [:]
         self.timelines = [
             directRoom.id: [
                 MatrixTimelineItem(
@@ -54,7 +56,8 @@ actor MockMatrixService: MatrixService {
                     sender: "@alice:trix.selfhost.ru",
                     timestamp: now.addingTimeInterval(-300),
                     body: "This is mock UI data. Real E2EE arrives with the Matrix SDK adapter.",
-                    isLocalEcho: false
+                    isLocalEcho: false,
+                    attachment: nil
                 ),
                 MatrixTimelineItem(
                     id: "$mock-dm-2",
@@ -62,7 +65,8 @@ actor MockMatrixService: MatrixService {
                     sender: "@me:trix.selfhost.ru",
                     timestamp: now.addingTimeInterval(-240),
                     body: "The session and room UI are ready for adapter wiring.",
-                    isLocalEcho: true
+                    isLocalEcho: true,
+                    attachment: nil
                 ),
             ],
             groupRoom.id: [
@@ -72,7 +76,8 @@ actor MockMatrixService: MatrixService {
                     sender: "@bob:trix.selfhost.ru",
                     timestamp: now.addingTimeInterval(-2_400),
                     body: "Group rooms are normal Matrix rooms in this model.",
-                    isLocalEcho: false
+                    isLocalEcho: false,
+                    attachment: nil
                 ),
                 MatrixTimelineItem(
                     id: "$mock-group-2",
@@ -80,7 +85,8 @@ actor MockMatrixService: MatrixService {
                     sender: "@alice:trix.selfhost.ru",
                     timestamp: now.addingTimeInterval(-1_800),
                     body: "Weekend plans",
-                    isLocalEcho: false
+                    isLocalEcho: false,
+                    attachment: nil
                 ),
             ],
         ]
@@ -249,12 +255,54 @@ actor MockMatrixService: MatrixService {
             sender: session.userID,
             timestamp: Date(),
             body: body,
-            isLocalEcho: true
+            isLocalEcho: true,
+            attachment: nil
         )
 
         timelines[roomID, default: []].append(item)
         updateRoomPreview(roomID: roomID, body: body, date: item.timestamp)
         return item
+    }
+
+    func sendAttachment(_ attachment: MatrixAttachmentUpload, roomID: String, session: MatrixSession) async throws -> MatrixTimelineItem {
+        guard !attachment.data.isEmpty else {
+            throw MatrixClientError.emptyAttachment
+        }
+
+        let sourceJSON = "mock://attachment/\(UUID().uuidString)"
+        attachmentDataBySourceJSON[sourceJSON] = attachment.data
+
+        let item = MatrixTimelineItem(
+            id: "$local-attachment-\(UUID().uuidString)",
+            roomID: roomID,
+            sender: session.userID,
+            timestamp: Date(),
+            body: attachment.filename,
+            isLocalEcho: true,
+            attachment: MatrixTimelineAttachment(
+                kind: attachment.isImage ? .image : .file,
+                filename: attachment.filename,
+                mimeType: attachment.mimeType,
+                sizeBytes: attachment.data.count,
+                sourceJSON: sourceJSON
+            )
+        )
+
+        timelines[roomID, default: []].append(item)
+        updateRoomPreview(roomID: roomID, body: "Attachment: \(attachment.filename)", date: item.timestamp)
+        return item
+    }
+
+    func downloadAttachment(_ attachment: MatrixTimelineAttachment, session: MatrixSession) async throws -> MatrixAttachmentDownload {
+        guard let sourceJSON = attachment.sourceJSON else {
+            throw MatrixClientError.attachmentDownloadUnavailable
+        }
+
+        return MatrixAttachmentDownload(
+            filename: attachment.filename,
+            mimeType: attachment.mimeType,
+            data: attachmentDataBySourceJSON[sourceJSON] ?? Data("Mock attachment: \(attachment.filename)".utf8)
+        )
     }
 
     func createEncryptedDirectRoom(

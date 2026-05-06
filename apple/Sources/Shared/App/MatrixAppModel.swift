@@ -17,6 +17,7 @@ final class MatrixAppModel: ObservableObject {
     private let sessionStore: MatrixSessionStore
     private let matrixService: MatrixService
     private var hasStarted = false
+    private let foregroundRefreshInterval: Duration = .seconds(10)
 
     init(
         sessionStore: MatrixSessionStore = KeychainMatrixSessionStore(),
@@ -127,13 +128,47 @@ final class MatrixAppModel: ObservableObject {
         }
 
         await roomListViewModel.reload(session: session, service: matrixService)
-
-        if selectedRoomID == nil {
-            selectedRoomID = roomListViewModel.rooms.first?.id
-        }
+        reconcileSelectedRoom()
 
         if let selectedRoomID {
             await loadTimeline(roomID: selectedRoomID)
+        }
+    }
+
+    func refreshForeground() async {
+        guard let session, !isLoggingOut else {
+            return
+        }
+
+        await roomListViewModel.reload(
+            session: session,
+            service: matrixService,
+            showsLoading: false
+        )
+        reconcileSelectedRoom()
+
+        if let selectedRoomID {
+            await timelineViewModel.load(
+                roomID: selectedRoomID,
+                session: session,
+                service: matrixService,
+                showsLoading: false
+            )
+        }
+    }
+
+    func runForegroundRefreshLoop() async {
+        guard isAuthenticated else {
+            return
+        }
+
+        while !Task.isCancelled && isAuthenticated {
+            try? await Task.sleep(for: foregroundRefreshInterval)
+            guard !Task.isCancelled else {
+                return
+            }
+
+            await refreshForeground()
         }
     }
 
@@ -163,6 +198,32 @@ final class MatrixAppModel: ObservableObject {
             service: matrixService
         )
         await roomListViewModel.reload(session: session, service: matrixService)
+    }
+
+    func sendAttachment(_ attachment: MatrixAttachmentUpload) async {
+        guard let session, let selectedRoomID else {
+            return
+        }
+
+        await timelineViewModel.sendAttachment(
+            attachment,
+            roomID: selectedRoomID,
+            session: session,
+            service: matrixService
+        )
+        await roomListViewModel.reload(session: session, service: matrixService)
+    }
+
+    func downloadAttachment(for item: MatrixTimelineItem) async {
+        guard let session else {
+            return
+        }
+
+        await timelineViewModel.downloadAttachment(
+            for: item,
+            session: session,
+            service: matrixService
+        )
     }
 
     func createEncryptedDirectRoom(inviteeUserID: String, roomName: String) async -> Bool {
@@ -314,5 +375,14 @@ final class MatrixAppModel: ObservableObject {
         if didDecline {
             await reloadRooms()
         }
+    }
+
+    private func reconcileSelectedRoom() {
+        if let selectedRoomID,
+           roomListViewModel.rooms.contains(where: { $0.id == selectedRoomID }) {
+            return
+        }
+
+        selectedRoomID = roomListViewModel.rooms.first?.id
     }
 }

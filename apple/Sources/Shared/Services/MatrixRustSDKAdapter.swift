@@ -152,8 +152,97 @@ actor MatrixRustSDKAdapter: MatrixService {
             sender: session.userID,
             timestamp: Date(),
             body: body,
-            isLocalEcho: true
+            isLocalEcho: true,
+            attachment: nil
         )
+    }
+
+    func sendAttachment(_ attachment: MatrixAttachmentUpload, roomID: String, session: MatrixSession) async throws -> MatrixTimelineItem {
+        guard !attachment.data.isEmpty else {
+            throw MatrixClientError.emptyAttachment
+        }
+
+        _ = try await timeline(roomID: roomID, session: session)
+        guard let state = timelineStateByRoomID[roomID] else {
+            throw MatrixClientError.missingSession
+        }
+
+        let parameters = UploadParameters(
+            source: .data(bytes: attachment.data, filename: attachment.filename),
+            caption: nil,
+            formattedCaption: nil,
+            mentions: nil,
+            inReplyTo: nil
+        )
+        let size = UInt64(attachment.data.count)
+
+        do {
+            let handle: SendAttachmentJoinHandle
+            if attachment.isImage {
+                handle = try state.timeline.sendImage(
+                    params: parameters,
+                    thumbnailSource: nil,
+                    imageInfo: ImageInfo(
+                        height: nil,
+                        width: nil,
+                        mimetype: attachment.mimeType,
+                        size: size,
+                        thumbnailInfo: nil,
+                        thumbnailSource: nil,
+                        blurhash: nil,
+                        isAnimated: nil
+                    )
+                )
+            } else {
+                handle = try state.timeline.sendFile(
+                    params: parameters,
+                    fileInfo: FileInfo(
+                        mimetype: attachment.mimeType,
+                        size: size,
+                        thumbnailInfo: nil,
+                        thumbnailSource: nil
+                    )
+                )
+            }
+            try await handle.join()
+        } catch {
+            throw MatrixClientError.attachmentTransferFailed
+        }
+
+        return MatrixTimelineItem(
+            id: "$local-attachment-\(UUID().uuidString)",
+            roomID: roomID,
+            sender: session.userID,
+            timestamp: Date(),
+            body: attachment.filename,
+            isLocalEcho: true,
+            attachment: MatrixTimelineAttachment(
+                kind: attachment.isImage ? .image : .file,
+                filename: attachment.filename,
+                mimeType: attachment.mimeType,
+                sizeBytes: attachment.data.count,
+                sourceJSON: nil
+            )
+        )
+    }
+
+    func downloadAttachment(_ attachment: MatrixTimelineAttachment, session: MatrixSession) async throws -> MatrixAttachmentDownload {
+        guard let sourceJSON = attachment.sourceJSON else {
+            throw MatrixClientError.attachmentDownloadUnavailable
+        }
+
+        let client = try await resolvedClient(session: session)
+        do {
+            let mediaSource = try MediaSource.fromJson(json: sourceJSON)
+            let data = try await client.getMediaContent(mediaSource: mediaSource)
+            return MatrixAttachmentDownload(
+                filename: attachment.filename,
+                mimeType: attachment.mimeType,
+                data: data
+            )
+        } catch {
+            throw MatrixClientError.attachmentTransferFailed
+        }
     }
 
     func deviceVerificationStatus(session: MatrixSession) async throws -> MatrixDeviceVerificationStatus {
@@ -1069,14 +1158,50 @@ private extension MatrixRustSDKAdapter {
             return nil
         }
 
+        let attachment = Self.timelineAttachment(from: messageContent.msgType)
+        let body = attachment?.filename ?? messageContent.body
+
         return MatrixTimelineItem(
             id: sdkItem.uniqueId().id,
             roomID: roomID,
             sender: event.sender,
             timestamp: Date(timeIntervalSince1970: TimeInterval(event.timestamp) / 1_000),
-            body: messageContent.body,
-            isLocalEcho: event.isOwn
+            body: body,
+            isLocalEcho: event.isOwn,
+            attachment: attachment
         )
+    }
+
+    static func timelineAttachment(from messageType: MessageType) -> MatrixTimelineAttachment? {
+        switch messageType {
+        case .image(let content):
+            return MatrixTimelineAttachment(
+                kind: .image,
+                filename: content.filename,
+                mimeType: content.info?.mimetype,
+                sizeBytes: intSize(from: content.info?.size),
+                sourceJSON: content.source.toJson()
+            )
+        case .file(let content):
+            return MatrixTimelineAttachment(
+                kind: .file,
+                filename: content.filename,
+                mimeType: content.info?.mimetype,
+                sizeBytes: intSize(from: content.info?.size),
+                sourceJSON: content.source.toJson()
+            )
+        default:
+            return nil
+        }
+    }
+
+    static func intSize(from size: UInt64?) -> Int? {
+        guard let size,
+              size <= UInt64(Int.max) else {
+            return nil
+        }
+
+        return Int(size)
     }
 
     static func latestTimestamp(from latestEvent: LatestEventValue) -> Date {

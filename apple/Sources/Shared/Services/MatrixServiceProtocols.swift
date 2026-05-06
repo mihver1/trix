@@ -19,6 +19,8 @@ protocol MatrixSyncService: Sendable {
 protocol MatrixRoomService: Sendable {
     func timeline(roomID: String, session: MatrixSession) async throws -> [MatrixTimelineItem]
     func sendText(_ text: String, roomID: String, session: MatrixSession) async throws -> MatrixTimelineItem
+    func sendAttachment(_ attachment: MatrixAttachmentUpload, roomID: String, session: MatrixSession) async throws -> MatrixTimelineItem
+    func downloadAttachment(_ attachment: MatrixTimelineAttachment, session: MatrixSession) async throws -> MatrixAttachmentDownload
 }
 
 protocol MatrixRoomBootstrapService: Sendable {

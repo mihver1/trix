@@ -12,11 +12,14 @@ legacy implementation details.
 - [x] Room list, DM timeline, group timeline, and text composer.
 - [x] Encrypted DM creation, invite accept/decline, and text send/receive.
 - [x] Encrypted group creation and generic group invite accept/decline.
+- [x] Attachment send/download with in-app image preview through Matrix SDK
+      media/timeline APIs.
 - [ ] Live-validate encrypted group send/receive with at least three accounts.
 - [ ] Timeline refresh after app restart.
 - [ ] Unread/read/delivery decorations.
-- [ ] Attachment send/download plus inline image preview/open-share flow.
-- [ ] Foreground realtime/polling recovery and APNs-backed notifications.
+- [ ] Live-validate encrypted attachment round-trip and add OS open/share flow.
+- [x] Foreground room/invite/timeline polling while the app scene is active.
+- [ ] APNs-backed notifications through a Matrix push gateway.
 - [ ] Basic profile, notification, and device-management surfaces.
 - [ ] TestFlight archive path for the new Matrix Apple app.
 
@@ -59,7 +62,11 @@ legacy implementation details.
 - [x] Open a group room.
 - [x] Send a plain text message.
 - [x] Receive a plain text message.
+- [x] Send a file or image attachment from the SwiftUI timeline composer.
+- [x] Download timeline file/image attachments and preview images in app.
 - [x] Show sender, timestamp, and body in the SwiftUI timeline model.
+- [x] Auto-refresh the room list, invites, and selected timeline while the app
+      scene is active.
 - [ ] Confirm timeline refresh after app restart.
 
 ## E2EE
@@ -87,8 +94,8 @@ legacy implementation details.
 - [x] Key backup/recovery live validation.
 - [ ] Key backup/recovery persistence tests.
 - [ ] Push notifications through Matrix push gateway and APNs.
-- [ ] Media upload.
-- [ ] Media download.
+- [x] SDK-backed media upload/download path in the Apple UI.
+- [ ] Live attachment round-trip validation and OS open/share/export flow.
 - [x] Production encrypted DM creation flow.
 - [x] Production invite accept/decline flow.
 - [x] Production group room creation.
@@ -115,6 +122,15 @@ legacy implementation details.
       room creation with at least two invitees, through Matrix SDK `createRoom`
       and the same generic invite accept/decline flow used for DMs. Group
       message send/receive still needs live validation.
+- [x] SwiftUI Apple client can attach files/images from the timeline composer,
+      send them through Matrix SDK timeline attachment APIs, render file/image
+      timeline events, download them through Matrix SDK media APIs, and preview
+      downloaded images in app. Live encrypted attachment round-trip validation
+      and OS share/export are still open.
+- [x] SwiftUI Apple client runs a foreground auto-refresh loop while the app
+      scene is active. It silently refreshes rooms, pending invites, and the
+      selected timeline through the existing Matrix service/view-model boundary,
+      and reconciles the selected room if sync removes it.
 - [x] SwiftUI Apple client shows read-only Matrix SDK device verification
       state without silently trusting devices.
 - [x] SwiftUI Apple client can request, accept, start SAS, approve, decline,

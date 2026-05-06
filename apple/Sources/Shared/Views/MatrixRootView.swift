@@ -22,6 +22,7 @@ struct MatrixRootView: View {
 
 private struct MatrixWorkspaceView: View {
     @ObservedObject var model: MatrixAppModel
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationSplitView {
@@ -37,6 +38,13 @@ private struct MatrixWorkspaceView: View {
                     description: Text("Select a Matrix room from the list.")
                 )
             }
+        }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else {
+                return
+            }
+
+            await model.runForegroundRefreshLoop()
         }
     }
 }

@@ -351,6 +351,65 @@ struct MatrixTimelineItem: Identifiable, Equatable, Sendable {
     let timestamp: Date
     let body: String
     let isLocalEcho: Bool
+    let attachment: MatrixTimelineAttachment?
+}
+
+enum MatrixTimelineAttachmentKind: String, Codable, Sendable {
+    case file
+    case image
+}
+
+struct MatrixTimelineAttachment: Equatable, Sendable {
+    let kind: MatrixTimelineAttachmentKind
+    let filename: String
+    let mimeType: String?
+    let sizeBytes: Int?
+    let sourceJSON: String?
+
+    var isDownloadable: Bool {
+        sourceJSON != nil
+    }
+
+    var isImage: Bool {
+        kind == .image || mimeType?.hasPrefix("image/") == true
+    }
+
+    var subtitle: String {
+        [mimeType, formattedSize].compactMap { $0 }.joined(separator: " - ")
+    }
+
+    private var formattedSize: String? {
+        guard let sizeBytes else {
+            return nil
+        }
+
+        return ByteCountFormatter.string(fromByteCount: Int64(sizeBytes), countStyle: .file)
+    }
+}
+
+struct MatrixAttachmentUpload: Equatable, Sendable {
+    let filename: String
+    let mimeType: String
+    let data: Data
+
+    var isImage: Bool {
+        mimeType.hasPrefix("image/")
+    }
+}
+
+struct MatrixAttachmentDownload: Identifiable, Equatable, Sendable {
+    let id = UUID()
+    let filename: String
+    let mimeType: String?
+    let data: Data
+
+    var isImage: Bool {
+        mimeType?.hasPrefix("image/") == true
+    }
+
+    var formattedSize: String {
+        ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
+    }
 }
 
 enum MatrixClientError: LocalizedError {
@@ -360,6 +419,9 @@ enum MatrixClientError: LocalizedError {
     case groupRoomNameRequired
     case groupInviteesRequired
     case emptyMessage
+    case emptyAttachment
+    case attachmentDownloadUnavailable
+    case attachmentTransferFailed
     case missingSession
     case roomUnavailable
     case inviteUnavailable
@@ -386,6 +448,12 @@ enum MatrixClientError: LocalizedError {
             return "Invite at least two people to create a group."
         case .emptyMessage:
             return "Enter a message before sending."
+        case .emptyAttachment:
+            return "Choose a non-empty attachment."
+        case .attachmentDownloadUnavailable:
+            return "This attachment is not available for download yet."
+        case .attachmentTransferFailed:
+            return "Attachment transfer failed."
         case .missingSession:
             return "No saved Matrix session is available."
         case .roomUnavailable:

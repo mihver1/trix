@@ -10,10 +10,20 @@ final class RoomListViewModel: ObservableObject {
     @Published private(set) var invitationActionRoomID: String?
     @Published private(set) var errorMessage: String?
 
-    func reload(session: MatrixSession, service: MatrixSyncService & MatrixRoomBootstrapService) async {
-        isLoading = true
+    func reload(
+        session: MatrixSession,
+        service: MatrixSyncService & MatrixRoomBootstrapService,
+        showsLoading: Bool = true
+    ) async {
+        if showsLoading {
+            isLoading = true
+        }
         errorMessage = nil
-        defer { isLoading = false }
+        defer {
+            if showsLoading {
+                isLoading = false
+            }
+        }
 
         do {
             rooms = try await service.rooms(session: session)
