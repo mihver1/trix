@@ -42,6 +42,14 @@ legacy implementation details.
 - [x] Create the first admin user.
 - [x] Create a live test user.
 - [x] Create the friend group accounts.
+- [x] Choose the MVP provisioning model: short operator-controlled Conduit
+      registration windows with a rotated static token.
+- [x] Document how to add a private user after registration is disabled:
+      temporarily enable token registration, have the user register through a
+      Matrix client that supports registration tokens, then disable registration
+      again.
+- [x] Keep the Matrix Apple client login-only for MVP; no self-registration UI
+      is claimed.
 - [ ] Disable registration after bootstrap if no new users are needed.
 - [ ] Back up the Conduit database volume.
 - [ ] Back up the media directory or confirm media is intentionally disposable.

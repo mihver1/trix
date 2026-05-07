@@ -9,6 +9,8 @@ This directory contains the Conduit homeserver scaffold for the Matrix pivot.
 - `Caddyfile`: preferred reverse proxy example.
 - `nginx/matrix.conf`: alternative reverse proxy example.
 - `.env.example`: placeholder environment values for a VPS deployment.
+- `provisioning.md`: private-user account creation and registration window
+  runbook.
 
 ## Choose `server_name`
 
@@ -87,6 +89,11 @@ boot:
 3. Confirm the account can log in.
 4. Create the remaining friend accounts.
 5. Disable registration when bootstrap is complete.
+
+The MVP provisioning model is documented in
+[`provisioning.md`](provisioning.md). Trix uses short operator-controlled
+Conduit registration windows with a rotated token, then keeps the Apple client
+login-only after accounts exist.
 
 ## Enable Or Disable Registration
 

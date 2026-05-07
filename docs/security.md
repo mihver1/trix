@@ -80,6 +80,13 @@ The first created Conduit user is expected to be the admin. Create that user
 immediately after first server start, then disable registration if no more
 accounts are needed.
 
+After bootstrap, new private users should be added through short registration
+windows only: generate a fresh token, enable Conduit registration, let the
+intended user register through a Matrix client that supports registration
+tokens, then disable registration and rotate the token again. The Trix Apple
+client is login-only for the MVP and should not receive or store registration
+tokens after an account has been created.
+
 ## Logging Rules
 
 - Do not log access tokens.

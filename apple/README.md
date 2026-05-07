@@ -70,6 +70,10 @@ xcodebuild \
 
 - Hardcoded homeserver URL: `https://trix.selfhost.ru`.
 - Login form accepts Matrix user ID and password.
+- The Apple client is login-only for the MVP. Private user creation is handled
+  by the operator-controlled Conduit registration window documented in
+  `../server/provisioning.md`, using an external Matrix client that supports
+  registration tokens.
 - Matrix Rust SDK password login is wired through `MatrixRustSDKAdapter`.
 - Session restore runs on app launch.
 - Matrix SDK session data is stored under Application Support/Caches with the

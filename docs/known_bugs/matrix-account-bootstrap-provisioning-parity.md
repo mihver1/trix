@@ -1,13 +1,14 @@
 # Matrix: Account Bootstrap And Provisioning Parity
 
-Status: Open.
+Status: Fixed in current docs; keep as regression guard.
 
 ## Summary
 
 Legacy Trix has explicit first-device account bootstrap, admin provisioning
 tokens, account linking, and server-side user management. Matrix deployment now
-relies on Conduit registration/admin behavior and manual bootstrap docs. The
-product needs a clear Matrix-native provisioning story before parity is claimed.
+uses a smaller Matrix-native MVP model: short operator-controlled Conduit
+registration windows protected by a rotated static token, followed by login in
+the Trix Apple client.
 
 ## Legacy behavior to match
 
@@ -27,21 +28,25 @@ Relevant legacy entry points:
 ## Current Matrix state
 
 - Conduit config has registration bootstrap settings and a registration token.
-- Docs say the first Conduit user becomes admin, create friend accounts, then
-  disable registration.
-- No Matrix operator app or provisioning UI is documented.
-- Matrix Apple app has login/restore/logout only.
+- `server/provisioning.md` documents the exact operator flow for creating new
+  private users after registration has been disabled.
+- `server/README.md`, `docs/security.md`, `docs/mvp-checklist.md`, and
+  `apple/README.md` agree that the MVP Apple client is login-only.
+- No Matrix operator app or Trix-specific Conduit admin wrapper is implemented
+  for this slice.
 
 ## Required implementation
 
-- Decide the MVP provisioning model: manual Conduit admin, Matrix registration
-  token, admin API wrapper, or a small Trix-specific operator script.
-- Document the exact account creation flow for real users after registration is
-  disabled.
-- If client registration is required, add Matrix auth service support and UI.
-- If admin-only provisioning is chosen, add a documented command/operator flow
-  and keep the client login-only.
-- Keep server scope aligned with Conduit; do not rebuild legacy `trixd`.
+- MVP decision: use Conduit token registration windows, not a custom Trix
+  account protocol or a resurrected `trixd` control plane.
+- Account creation after registration is disabled is documented as: generate a
+  fresh token, temporarily set `allow_registration = true`, restart Conduit,
+  have the intended user register with an external Matrix client that supports
+  registration tokens, set `allow_registration = false`, rotate the token, and
+  restart Conduit.
+- Client registration is not part of the MVP. The Apple client stays login-only.
+- Full admin-app parity, including listing users and disable/reactivate flows,
+  remains tracked in `matrix-admin-control-plane-parity.md`.
 
 ## Boundaries
 
@@ -51,14 +56,16 @@ Relevant legacy entry points:
 
 ## Acceptance criteria
 
-- Docs state exactly how a new private user is created.
-- Docs state when and how registration is disabled.
-- Client UI and docs agree on whether self-registration exists.
-- The flow works with `trix.selfhost.ru` without exposing secrets.
+- [x] Docs state exactly how a new private user is created.
+- [x] Docs state when and how registration is disabled.
+- [x] Client UI and docs agree that self-registration does not exist in the
+      Apple MVP.
+- [x] The flow is written for `trix.selfhost.ru` without committing secrets.
 
 ## Verification plan
 
-- Run the documented provisioning flow with disposable accounts only.
+- Run the documented provisioning flow with disposable accounts only before
+  claiming live provisioning validation.
 - Verify the new user can log in to the Matrix Apple app.
 - Verify registration can be disabled after bootstrap.
 - Confirm no secrets are committed.
