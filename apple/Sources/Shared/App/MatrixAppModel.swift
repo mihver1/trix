@@ -21,7 +21,7 @@ final class MatrixAppModel: ObservableObject {
 
     init(
         sessionStore: MatrixSessionStore = KeychainMatrixSessionStore(),
-        matrixService: MatrixService = MatrixRustSDKAdapter()
+        matrixService: MatrixService = XMPPMartinService()
     ) {
         self.sessionStore = sessionStore
         self.matrixService = matrixService
@@ -85,7 +85,7 @@ final class MatrixAppModel: ObservableObject {
             let newSession = try await matrixService.login(
                 userID: userID,
                 password: password,
-                serverURL: MatrixClientConfiguration.homeserverURL
+                serverURL: XMPPClientConfiguration.connectionURL
             )
             try sessionStore.saveSession(newSession)
             session = newSession
@@ -234,6 +234,28 @@ final class MatrixAppModel: ObservableObject {
         return try await matrixService.members(roomID: roomID, session: session)
     }
 
+    func peerDeviceIdentities(for userID: String, refresh: Bool = false) async throws -> [MatrixPeerDeviceIdentity] {
+        guard let session else {
+            throw MatrixClientError.missingSession
+        }
+
+        if refresh {
+            return try await matrixService.refreshPeerDeviceIdentities(userID: userID, session: session)
+        }
+
+        return try await matrixService.peerDeviceIdentities(userID: userID, session: session)
+    }
+
+    func trustPeerDevice(userID: String, deviceID: String) async throws -> [MatrixPeerDeviceIdentity] {
+        guard let session else {
+            throw MatrixClientError.missingSession
+        }
+
+        let devices = try await matrixService.trustPeerDevice(userID: userID, deviceID: deviceID, session: session)
+        await roomListViewModel.reload(session: session, service: matrixService)
+        return devices
+    }
+
     func inviteUser(_ userID: String, to roomID: String) async throws {
         guard let session else {
             throw MatrixClientError.missingSession
@@ -250,6 +272,50 @@ final class MatrixAppModel: ObservableObject {
 
         try await matrixService.removeUser(userID, roomID: roomID, session: session)
         await reloadRooms()
+    }
+
+    func searchUsers(_ searchTerm: String, limit: Int = 20) async throws -> MatrixUserSearchResult {
+        guard let session else {
+            throw MatrixClientError.missingSession
+        }
+
+        return try await matrixService.searchUsers(searchTerm, limit: limit, session: session)
+    }
+
+    func profile(userID: String? = nil) async throws -> MatrixUserProfile {
+        guard let session else {
+            throw MatrixClientError.missingSession
+        }
+
+        return try await matrixService.profile(userID: userID ?? session.userID, session: session)
+    }
+
+    func updateDisplayName(_ displayName: String) async throws -> MatrixUserProfile {
+        guard let session else {
+            throw MatrixClientError.missingSession
+        }
+
+        let profile = try await matrixService.updateDisplayName(displayName, session: session)
+        account = MatrixAccount(
+            userID: profile.userID,
+            displayName: profile.displayName ?? "",
+            deviceID: session.deviceID
+        )
+        return profile
+    }
+
+    func updateProfile(_ update: MatrixUserProfileUpdate) async throws -> MatrixUserProfile {
+        guard let session else {
+            throw MatrixClientError.missingSession
+        }
+
+        let profile = try await matrixService.updateProfile(update, session: session)
+        account = MatrixAccount(
+            userID: profile.userID,
+            displayName: profile.displayName ?? "",
+            deviceID: session.deviceID
+        )
+        return profile
     }
 
     func createEncryptedDirectRoom(inviteeUserID: String, roomName: String) async -> Bool {
@@ -272,7 +338,7 @@ final class MatrixAppModel: ObservableObject {
         return true
     }
 
-    func createEncryptedGroupRoom(name: String, inviteeUserIDs: String) async -> Bool {
+    func createEncryptedGroupRoom(name: String, inviteeUserIDs: [String]) async -> Bool {
         guard let session else {
             return false
         }
@@ -434,7 +500,7 @@ private struct MatrixMockSessionStore: MatrixSessionStore {
         MatrixSession(
             userID: "@me:trix.selfhost.ru",
             deviceID: "MOCK-IPHONE",
-            homeserverURL: MatrixClientConfiguration.homeserverURL,
+            homeserverURL: XMPPClientConfiguration.connectionURL,
             accessToken: "debug-placeholder-session",
             refreshToken: nil,
             oidcData: nil,

@@ -44,7 +44,7 @@ final class RoomListViewModel: ObservableObject {
         defer { isCreatingDirectRoom = false }
 
         do {
-            let normalizedInvitee = try Self.normalizedMatrixUserID(inviteeUserID)
+            let normalizedInvitee = try Self.normalizedTrixUserID(inviteeUserID)
             let normalizedName = roomName.trimmingCharacters(in: .whitespacesAndNewlines)
             let finalName = normalizedName.isEmpty ? Self.displayName(from: normalizedInvitee) : normalizedName
             let room = try await service.createEncryptedDirectRoom(
@@ -63,7 +63,7 @@ final class RoomListViewModel: ObservableObject {
 
     func createEncryptedGroupRoom(
         name: String,
-        inviteeUserIDs: String,
+        inviteeUserIDs: [String],
         session: MatrixSession,
         service: MatrixRoomBootstrapService
     ) async -> MatrixRoomSummary? {
@@ -77,7 +77,7 @@ final class RoomListViewModel: ObservableObject {
                 throw MatrixClientError.groupRoomNameRequired
             }
 
-            let normalizedInvitees = try Self.normalizedMatrixUserIDs(
+            let normalizedInvitees = try Self.normalizedTrixUserIDs(
                 inviteeUserIDs,
                 excluding: session.userID
             )
@@ -145,33 +145,40 @@ final class RoomListViewModel: ObservableObject {
         errorMessage = nil
     }
 
-    private static func normalizedMatrixUserID(_ userID: String) throws -> String {
-        let trimmed = userID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("@"),
-              let separator = trimmed.firstIndex(of: ":"),
-              separator != trimmed.index(after: trimmed.startIndex) else {
-            throw MatrixClientError.invalidMatrixUserID
+    private static func normalizedTrixUserID(_ userID: String) throws -> String {
+        let trimmed = userID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if trimmed.hasPrefix("@"), let separator = trimmed.firstIndex(of: ":") {
+            let localpart = String(trimmed[trimmed.index(after: trimmed.startIndex)..<separator])
+            let serverName = String(trimmed[trimmed.index(after: separator)...])
+            guard !localpart.isEmpty, serverName == XMPPClientConfiguration.serverName else {
+                throw MatrixClientError.invalidMatrixUserID
+            }
+
+            return "\(localpart)@\(serverName)"
         }
 
-        let serverName = String(trimmed[trimmed.index(after: separator)...])
-        guard serverName == MatrixClientConfiguration.serverName else {
+        let parts = trimmed.split(separator: "@", omittingEmptySubsequences: false)
+        guard parts.count == 2,
+              let localpart = parts.first,
+              let serverName = parts.last,
+              !localpart.isEmpty,
+              serverName == XMPPClientConfiguration.serverName,
+              trimmed.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else {
             throw MatrixClientError.invalidMatrixUserID
         }
 
         return trimmed
     }
 
-    private static func normalizedMatrixUserIDs(_ userIDs: String, excluding currentUserID: String) throws -> [String] {
+    private static func normalizedTrixUserIDs(_ userIDs: [String], excluding currentUserID: String) throws -> [String] {
         var seenUserIDs = Set<String>()
         var normalizedUserIDs: [String] = []
-        let candidates = userIDs.split { character in
-            character == "," || character == ";" || character.isWhitespace
-        }
+        let normalizedCurrentUserID = try? normalizedTrixUserID(currentUserID)
 
-        for candidate in candidates {
-            let normalized = try normalizedMatrixUserID(String(candidate))
+        for userID in userIDs {
+            let normalized = try normalizedTrixUserID(userID)
             let lookupKey = normalized.lowercased()
-            guard lookupKey != currentUserID.lowercased(),
+            guard lookupKey != (normalizedCurrentUserID ?? currentUserID).lowercased(),
                   seenUserIDs.insert(lookupKey).inserted else {
                 continue
             }
@@ -186,12 +193,17 @@ final class RoomListViewModel: ObservableObject {
     }
 
     private static func displayName(from userID: String) -> String {
-        let localpart = userID
-            .dropFirst()
-            .split(separator: ":")
-            .first
-            .map(String.init)
+        if userID.hasPrefix("@") {
+            return userID
+                .dropFirst()
+                .split(separator: ":")
+                .first
+                .map { String($0).capitalized } ?? userID
+        }
 
-        return localpart?.capitalized ?? userID
+        return userID
+            .split(separator: "@")
+            .first
+            .map { String($0).capitalized } ?? userID
     }
 }

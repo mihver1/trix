@@ -10,6 +10,7 @@ final class TimelineViewModel: ObservableObject {
     @Published private(set) var downloadingAttachmentID: String?
     @Published private(set) var downloadedAttachment: MatrixAttachmentDownload?
     @Published private(set) var errorMessage: String?
+    private var cachedItemsByRoomID: [String: [MatrixTimelineItem]] = [:]
 
     func load(
         roomID: String,
@@ -29,8 +30,25 @@ final class TimelineViewModel: ObservableObject {
         }
 
         do {
-            items = try await service.timeline(roomID: roomID, session: session)
+            let loadedItems = try await service.timeline(roomID: roomID, session: session)
+            guard self.roomID == roomID else {
+                return
+            }
+
+            let mergedItems = Self.mergedTimelineItems(
+                loadedItems,
+                cachedItemsByRoomID[roomID] ?? []
+            )
+            cachedItemsByRoomID[roomID] = mergedItems
+            items = mergedItems
         } catch {
+            guard self.roomID == roomID else {
+                return
+            }
+
+            if let cachedItems = cachedItemsByRoomID[roomID] {
+                items = cachedItems
+            }
             errorMessage = error.matrixUserFacingMessage
         }
     }
@@ -46,10 +64,12 @@ final class TimelineViewModel: ObservableObject {
         defer { isSending = false }
 
         do {
-            _ = try await service.sendText(text, roomID: roomID, session: session)
-            items = try await service.timeline(roomID: roomID, session: session)
+            let item = try await service.sendText(text, roomID: roomID, session: session)
+            store(item, for: roomID)
         } catch {
-            errorMessage = error.matrixUserFacingMessage
+            if self.roomID == roomID {
+                errorMessage = error.matrixUserFacingMessage
+            }
         }
     }
 
@@ -64,10 +84,12 @@ final class TimelineViewModel: ObservableObject {
         defer { isSendingAttachment = false }
 
         do {
-            _ = try await service.sendAttachment(attachment, roomID: roomID, session: session)
-            items = try await service.timeline(roomID: roomID, session: session)
+            let item = try await service.sendAttachment(attachment, roomID: roomID, session: session)
+            store(item, for: roomID)
         } catch {
-            errorMessage = error.matrixUserFacingMessage
+            if self.roomID == roomID {
+                errorMessage = error.matrixUserFacingMessage
+            }
         }
     }
 
@@ -104,5 +126,39 @@ final class TimelineViewModel: ObservableObject {
         downloadingAttachmentID = nil
         downloadedAttachment = nil
         errorMessage = nil
+        cachedItemsByRoomID = [:]
+    }
+
+    private func store(_ item: MatrixTimelineItem, for roomID: String) {
+        let mergedItems = Self.mergedTimelineItems(
+            cachedItemsByRoomID[roomID] ?? [],
+            [item]
+        )
+        cachedItemsByRoomID[roomID] = mergedItems
+
+        if self.roomID == roomID {
+            items = mergedItems
+        }
+    }
+
+    private static func mergedTimelineItems(
+        _ lhs: [MatrixTimelineItem],
+        _ rhs: [MatrixTimelineItem]
+    ) -> [MatrixTimelineItem] {
+        var byID: [String: MatrixTimelineItem] = [:]
+        for item in lhs {
+            byID[item.id] = item
+        }
+        for item in rhs {
+            byID[item.id] = item
+        }
+
+        return byID.values.sorted { first, second in
+            if first.timestamp != second.timestamp {
+                return first.timestamp < second.timestamp
+            }
+
+            return first.id < second.id
+        }
     }
 }

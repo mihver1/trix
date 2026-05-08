@@ -19,6 +19,123 @@ struct MatrixAccount: Equatable, Sendable {
     let deviceID: String
 }
 
+struct MatrixUserProfile: Identifiable, Equatable, Sendable {
+    let userID: String
+    let displayName: String?
+    let avatarURL: String?
+    let metadata: MatrixUserMetadata
+
+    init(
+        userID: String,
+        displayName: String?,
+        avatarURL: String?,
+        metadata: MatrixUserMetadata = .empty
+    ) {
+        self.userID = userID
+        self.displayName = displayName
+        self.avatarURL = avatarURL
+        self.metadata = metadata
+    }
+
+    var id: String {
+        userID.lowercased()
+    }
+
+    var title: String {
+        if let displayName, !displayName.isEmpty {
+            return displayName
+        }
+
+        return Self.displayName(from: userID)
+    }
+
+    var subtitle: String {
+        userID
+    }
+
+    private static func displayName(from userID: String) -> String {
+        if userID.hasPrefix("@") {
+            let localpart = userID
+                .dropFirst()
+                .split(separator: ":")
+                .first
+                .map(String.init)
+
+            return localpart?.capitalized ?? userID
+        }
+
+        let localpart = userID
+            .split(separator: "@")
+            .first
+            .map(String.init)
+
+        return localpart?.capitalized ?? userID
+    }
+}
+
+struct MatrixUserMetadata: Codable, Equatable, Sendable {
+    static let empty = MatrixUserMetadata()
+
+    let bio: String?
+    let statusMessage: String?
+    let website: String?
+
+    init(
+        bio: String? = nil,
+        statusMessage: String? = nil,
+        website: String? = nil
+    ) {
+        self.bio = Self.nonEmpty(bio)
+        self.statusMessage = Self.nonEmpty(statusMessage)
+        self.website = Self.nonEmpty(website)
+    }
+
+    var isEmpty: Bool {
+        bio == nil && statusMessage == nil && website == nil
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else {
+            return nil
+        }
+
+        return trimmed
+    }
+}
+
+struct MatrixUserProfileUpdate: Equatable, Sendable {
+    let displayName: String
+    let bio: String
+    let statusMessage: String
+    let website: String
+
+    init(
+        displayName: String,
+        bio: String,
+        statusMessage: String,
+        website: String
+    ) {
+        self.displayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.bio = bio.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.statusMessage = statusMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.website = website.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var metadata: MatrixUserMetadata {
+        MatrixUserMetadata(
+            bio: bio,
+            statusMessage: statusMessage,
+            website: website
+        )
+    }
+}
+
+struct MatrixUserSearchResult: Equatable, Sendable {
+    let users: [MatrixUserProfile]
+    let limited: Bool
+}
+
 enum MatrixDeviceVerificationState: String, Codable, Sendable {
     case unknown
     case verified
@@ -125,28 +242,28 @@ struct MatrixDeviceVerificationStatus: Equatable, Sendable {
     var explanation: String {
         switch state {
         case .verified:
-            return "Matrix SDK reports this device as verified."
+            return "OMEMO reports this device as trusted."
         case .unverified:
             if hasDevicesToVerifyAgainst {
-                return "Confirm this device from an existing verified Matrix session before treating private rooms as production-ready."
+                return "Confirm this device from an existing trusted OMEMO session before treating private chats as production-ready."
             }
 
-            return "This device is not verified yet, and the SDK did not find an eligible existing device to verify against."
+            return "This device is not trusted yet, and the client did not find an eligible existing OMEMO device to verify against."
         case .unknown:
-            return "Matrix SDK has not reported a stable verification state for this device yet."
+            return "The client has not reported a stable OMEMO trust state for this device yet."
         }
     }
 
     var recoveryExplanation: String {
         switch recoveryState {
         case .enabled:
-            return "Enter the recovery key to confirm this session through Matrix SDK recovery when no verified session is available."
+            return "Enter the recovery key to confirm this session when no trusted device is available."
         case .incomplete:
-            return "Matrix SDK reports recovery is incomplete. Enter the recovery key to repair recovery and key backup metadata."
+            return "Recovery is incomplete. Enter the recovery key to repair recovery metadata."
         case .disabled:
-            return "Set up Matrix recovery to create a recovery key and server-side key backup metadata for this account."
+            return "Set up recovery to create a recovery key for this account."
         case .unknown:
-            return "Matrix SDK has not reported recovery state yet."
+            return "The client has not reported recovery state yet."
         }
     }
 
@@ -156,6 +273,55 @@ struct MatrixDeviceVerificationStatus: Equatable, Sendable {
         }
 
         return backupExistsOnServer ? "Exists" : "Not Found"
+    }
+}
+
+enum MatrixPeerDeviceTrustState: String, Codable, Sendable {
+    case undecided
+    case trusted
+    case verified
+    case compromised
+
+    var label: String {
+        switch self {
+        case .undecided:
+            return "Needs Trust"
+        case .trusted:
+            return "Trusted"
+        case .verified:
+            return "Verified"
+        case .compromised:
+            return "Blocked"
+        }
+    }
+
+    var allowsEncryptedSend: Bool {
+        self == .trusted || self == .verified
+    }
+}
+
+struct MatrixPeerDeviceIdentity: Identifiable, Equatable, Sendable {
+    let userID: String
+    let deviceID: String
+    let fingerprint: String
+    let trustState: MatrixPeerDeviceTrustState
+    let isActive: Bool
+    let isLocalDevice: Bool
+
+    var id: String {
+        "\(userID.lowercased())|\(deviceID)"
+    }
+
+    var canSendEncrypted: Bool {
+        isActive && trustState.allowsEncryptedSend
+    }
+
+    var shortFingerprint: String {
+        guard fingerprint.count > 19 else {
+            return fingerprint
+        }
+
+        return "\(fingerprint.prefix(8))...\(fingerprint.suffix(8))"
     }
 }
 
@@ -267,11 +433,11 @@ struct MatrixDeviceVerificationFlow: Equatable, Sendable {
     var summary: String {
         switch phase {
         case .idle:
-            return "Start verification from this device, or refresh after requesting it from another Matrix session."
+            return "Start verification from this device, or refresh after requesting it from another trusted session."
         case .requestSent:
-            return "Open an existing Matrix session and accept the verification request."
+            return "Open an existing trusted session and accept the verification request."
         case .incomingRequest:
-            return "A Matrix session is asking to verify this device. Accept only if you initiated this."
+            return "Another session is asking to verify this device. Accept only if you initiated this."
         case .accepted:
             if request != nil {
                 return "Waiting for the requesting device to start SAS verification."
@@ -279,13 +445,13 @@ struct MatrixDeviceVerificationFlow: Equatable, Sendable {
 
             return "Start SAS verification and compare the codes on both devices."
         case .sasStarted:
-            return "Waiting for Matrix SDK to provide comparison codes."
+            return "Waiting for OMEMO to provide comparison codes."
         case .challengeReceived:
             return "Compare these codes with the other device before approving."
         case .approved:
-            return "Codes approved. Waiting for Matrix SDK to finish verification."
+            return "Codes approved. Waiting for OMEMO to finish verification."
         case .finished:
-            return "Matrix SDK finished the verification flow. Refresh the device state."
+            return "OMEMO finished the verification flow. Refresh the device state."
         case .cancelled:
             return "The active verification flow was cancelled."
         case .failed:
@@ -418,9 +584,18 @@ struct MatrixRoomMember: Identifiable, Equatable, Sendable {
     }
 
     private static func displayName(from userID: String) -> String {
+        if userID.hasPrefix("@") {
+            let localpart = userID
+                .dropFirst()
+                .split(separator: ":")
+                .first
+                .map(String.init)
+
+            return localpart?.capitalized ?? userID
+        }
+
         let localpart = userID
-            .dropFirst()
-            .split(separator: ":")
+            .split(separator: "@")
             .first
             .map(String.init)
 
@@ -428,7 +603,7 @@ struct MatrixRoomMember: Identifiable, Equatable, Sendable {
     }
 }
 
-struct MatrixTimelineItem: Identifiable, Equatable, Sendable {
+struct MatrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
     let id: String
     let roomID: String
     let sender: String
@@ -443,7 +618,7 @@ enum MatrixTimelineAttachmentKind: String, Codable, Sendable {
     case image
 }
 
-struct MatrixTimelineAttachment: Equatable, Sendable {
+struct MatrixTimelineAttachment: Codable, Equatable, Sendable {
     let kind: MatrixTimelineAttachmentKind
     let filename: String
     let mimeType: String?
@@ -597,7 +772,7 @@ struct MatrixAttachmentDownload: Identifiable, Equatable, Sendable {
     }
 }
 
-struct MatrixAttachmentImageDimensions: Equatable, Sendable {
+struct MatrixAttachmentImageDimensions: Codable, Equatable, Sendable {
     let width: UInt64
     let height: UInt64
 }
@@ -621,17 +796,22 @@ enum MatrixClientError: LocalizedError {
     case recoveryKeyRequired
     case recoveryKeySetupFailed
     case recoveryKeyConfirmationFailed
+    case profileMetadataEncodingFailed
     case keychainFailure(String)
     case sdkAdapterUnavailable
+    case e2eeUnavailable
+    case omemoDeviceTrustRequired
+    case omemoEncryptionFailed
+    case xmppConnectionFailed
 
     var errorDescription: String? {
         switch self {
         case .invalidHomeserver:
-            return "The Matrix homeserver URL is invalid."
+            return "The server address is invalid."
         case .invalidCredentials:
-            return "Enter a Matrix user ID and password."
+            return "Enter an XMPP JID and password."
         case .invalidMatrixUserID:
-            return "Enter a Matrix user ID on trix.selfhost.ru."
+            return "Enter an XMPP JID on trix.selfhost.ru."
         case .groupRoomNameRequired:
             return "Enter a group name."
         case .groupInviteesRequired:
@@ -645,27 +825,37 @@ enum MatrixClientError: LocalizedError {
         case .attachmentTransferFailed:
             return "Attachment transfer failed."
         case .missingSession:
-            return "No saved Matrix session is available."
+            return "No saved Trix session is available."
         case .roomUnavailable:
-            return "The selected Matrix room is not available yet."
+            return "The selected room is not available yet."
         case .inviteUnavailable:
-            return "The Matrix invite is no longer available."
+            return "The invite is no longer available."
         case .noEligibleDeviceForVerification:
-            return "No verified Matrix session is available to verify this device."
+            return "No trusted OMEMO device is available to verify this device."
         case .recoverySetupUnavailable:
-            return "Matrix recovery can only be set up when SDK recovery is disabled."
+            return "OMEMO recovery is not available in this client slice yet."
         case .recoveryKeyConfirmationUnavailable:
-            return "Matrix recovery key confirmation is available only when SDK recovery is set up or incomplete."
+            return "OMEMO recovery key confirmation is not available in this client slice yet."
         case .recoveryKeyRequired:
-            return "Enter the Matrix recovery key."
+            return "Enter the recovery key."
         case .recoveryKeySetupFailed:
-            return "Matrix recovery setup failed."
+            return "Recovery setup failed."
         case .recoveryKeyConfirmationFailed:
-            return "Matrix recovery key confirmation failed."
+            return "Recovery key confirmation failed."
+        case .profileMetadataEncodingFailed:
+            return "Profile metadata could not be encoded."
         case .keychainFailure(let detail):
             return "Keychain operation failed: \(detail)"
         case .sdkAdapterUnavailable:
-            return "The Matrix SDK adapter is not wired yet."
+            return "The protocol adapter is not wired yet."
+        case .e2eeUnavailable:
+            return "OMEMO is required before sending."
+        case .omemoDeviceTrustRequired:
+            return "Trust at least one active OMEMO device for this contact before sending."
+        case .omemoEncryptionFailed:
+            return "OMEMO encryption failed. Refresh the contact devices and try again."
+        case .xmppConnectionFailed:
+            return "Could not connect to the XMPP server."
         }
     }
 }

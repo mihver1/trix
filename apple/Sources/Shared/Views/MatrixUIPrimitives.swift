@@ -173,6 +173,7 @@ struct MatrixEmptyStateView: View {
             VStack(spacing: 4) {
                 Text(title)
                     .font(.headline)
+                    .foregroundStyle(.primary)
                 Text(message)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -212,5 +213,12 @@ extension View {
         #else
         self
         #endif
+    }
+
+    func matrixDialogSurface(minWidth: CGFloat? = nil, minHeight: CGFloat? = nil) -> some View {
+        self
+            .tint(MatrixDesign.accent)
+            .frame(minWidth: minWidth, minHeight: minHeight)
+            .background(MatrixDesign.screenBackground.ignoresSafeArea())
     }
 }

@@ -13,9 +13,12 @@ settings:
     MARKETING_VERSION: 0.1.0
 
 packages:
-  matrix-rust-components-swift:
-    url: https://github.com/matrix-org/matrix-rust-components-swift
-    exactVersion: 26.04.01
+  Martin:
+    url: https://github.com/tigase/Martin
+    exactVersion: 3.2.4
+  MartinOMEMO:
+    url: https://github.com/tigase/MartinOMEMO
+    exactVersion: 2.2.3
 
 targets:
   TrixMatrixiOS:
@@ -26,8 +29,10 @@ targets:
       - path: Sources/Shared
       - path: Sources/iOS
     dependencies:
-      - package: matrix-rust-components-swift
-        product: MatrixRustSDK
+      - package: Martin
+        product: Martin
+      - package: MartinOMEMO
+        product: MartinOMEMO
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trixapp
@@ -53,8 +58,10 @@ targets:
       - path: Sources/Shared
       - path: Sources/macOS
     dependencies:
-      - package: matrix-rust-components-swift
-        product: MatrixRustSDK
+      - package: Martin
+        product: Martin
+      - package: MartinOMEMO
+        product: MartinOMEMO
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trixapp

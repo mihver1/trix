@@ -2,7 +2,7 @@ import SwiftUI
 
 struct MatrixLoginView: View {
     @ObservedObject var model: MatrixAppModel
-    @State private var userID = "@me:trix.selfhost.ru"
+    @State private var userID = "friend@trix.selfhost.ru"
     @State private var password = ""
 
     var body: some View {
@@ -41,7 +41,7 @@ struct MatrixLoginView: View {
                     .lineLimit(1)
 
                 MatrixStatusPill(
-                    title: MatrixClientConfiguration.serverName,
+                    title: XMPPClientConfiguration.serverName,
                     systemImage: "server.rack"
                 )
             }
@@ -51,10 +51,10 @@ struct MatrixLoginView: View {
     private var form: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Matrix user")
+                Text("XMPP account")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                TextField("Matrix user ID", text: $userID)
+                TextField("user@trix.selfhost.ru", text: $userID)
                     .matrixUserIDTextField()
                     .textFieldStyle(.roundedBorder)
             }

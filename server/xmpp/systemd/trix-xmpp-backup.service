@@ -1,0 +1,8 @@
+[Unit]
+Description=Trix XMPP cold backup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/trix-xmpp/scripts/backup.sh

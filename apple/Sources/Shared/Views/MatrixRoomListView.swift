@@ -225,7 +225,6 @@ struct MatrixSettingsView: View {
             Section("Account") {
                 if let account = model.account {
                     LabeledContent("User", value: account.userID)
-                    LabeledContent("Display name", value: account.displayName.isEmpty ? "Not set" : account.displayName)
                     LabeledContent("Device", value: account.deviceID)
                 } else {
                     MatrixEmptyStateView(
@@ -236,7 +235,7 @@ struct MatrixSettingsView: View {
                 }
 
                 if let homeserverURL = model.session?.homeserverURL.absoluteString {
-                    LabeledContent("Homeserver", value: homeserverURL)
+                    LabeledContent("Server", value: homeserverURL)
                 }
 
                 Button {
@@ -256,6 +255,10 @@ struct MatrixSettingsView: View {
                     Label(model.isLoggingOut ? "Logging Out" : "Log Out", systemImage: "rectangle.portrait.and.arrow.right")
                 }
                 .disabled(!model.isAuthenticated || model.isLoggingOut)
+            }
+
+            Section("Profile") {
+                MatrixProfileSettingsView(model: model)
             }
 
             Section("Device Verification And Recovery") {

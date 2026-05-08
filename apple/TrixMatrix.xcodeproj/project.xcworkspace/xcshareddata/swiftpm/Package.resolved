@@ -1,13 +1,40 @@
 {
-  "originHash" : "a231b60343b71b2e02a71c29f07bea97a8a5d94f94b3ef193f18fbf94a69c1c4",
+  "originHash" : "34c90a43d79c0da28ae388d0e3546c5002ff9bfb81fbb8a1d8621cf9f7ff17c2",
   "pins" : [
     {
-      "identity" : "matrix-rust-components-swift",
+      "identity" : "libsignal",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/matrix-org/matrix-rust-components-swift",
+      "location" : "https://github.com/tigase/libsignal",
       "state" : {
-        "revision" : "2916f3f9cc2aea86ba3a820cb6a8389e13e0284a",
-        "version" : "26.4.1"
+        "revision" : "d23d5af0d729cf66b93cea607f3f84a34b9fddfd",
+        "version" : "1.0.0"
+      }
+    },
+    {
+      "identity" : "martin",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tigase/Martin",
+      "state" : {
+        "revision" : "1d70e9e7eb51a7faa500832be6400a39f86083f7",
+        "version" : "3.2.4"
+      }
+    },
+    {
+      "identity" : "martinomemo",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tigase/MartinOMEMO",
+      "state" : {
+        "revision" : "3c162154d646aa258c9a86c0a07655a536e55a94",
+        "version" : "2.2.3"
+      }
+    },
+    {
+      "identity" : "tigase-logging.swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tigase/tigase-logging.swift",
+      "state" : {
+        "revision" : "382e2e85e64f8b1e3fcb71a996a030bf1b62ecb3",
+        "version" : "1.0.0"
       }
     }
   ],

@@ -1,34 +1,45 @@
 # Trix
 
-Trix is being pivoted into a small private Matrix-based end-to-end encrypted
+Trix is being pivoted into a small private XMPP + OMEMO end-to-end encrypted
 messenger for a closed group of friends.
 
-The new MVP direction is:
+The MVP direction is:
 
-- Homeserver: Conduit.
+- Server: private XMPP, with ejabberd as the first product candidate because the
+  MVP needs centralized account, group, push, and diagnostics control. Prosody
+  remains a lightweight fallback for shell-managed spike deployments.
 - Federation: disabled.
-- Apple client: native SwiftUI for iOS and macOS.
-- Protocol and E2EE: Matrix through the Matrix Rust SDK, using the official
-  Swift components where practical.
+- Apple clients: native SwiftUI for iOS and macOS.
+- Protocol and E2EE: XMPP transport with mandatory OMEMO encryption for DMs and
+  group chats.
+- Apple OMEMO spike: Tigase Martin plus MartinOMEMO first, with GPL/AGPL
+  obligations explicitly accepted or rejected for this non-commercial friends app.
+- Control plane: Trix-owned operator APIs/scripts for users, directory, profiles,
+  groups, diagnostics, and server operations.
 - Deployment model: a tiny self-hosted server, not a public federated service.
 
 This project is not a custom cryptography project, not a custom messaging
 protocol, and not an Electron, React Native, Flutter, or web client project.
 
+There are no live Matrix users to preserve. The Matrix experiment may remain in
+the tree temporarily as implementation reference, but the target MVP does not
+need a Matrix bridge, Matrix data migration, or parallel Matrix operation.
+
 ## Current Repository Shape
 
-The Matrix pivot is added next to the existing prototype so the current Apple
-apps and TestFlight tooling stay available while the protocol layer changes.
-
-- `server/` contains the Conduit Docker Compose setup, example `conduit.toml`,
-  Caddy reverse proxy example, and server run notes.
-- `apple/` contains a buildable SwiftUI Matrix client scaffold for iOS and
-  macOS. It has service protocols, Keychain session storage, room list and
-  timeline UI, and a mock Matrix service for local UI development.
-- `docs/architecture.md` explains the Conduit plus Matrix Rust SDK direction.
-- `docs/security.md` captures the small private deployment threat model.
-- `docs/mvp-checklist.md` lists the validation work still needed before real
-  use.
+- `server/xmpp/` is the target location for the private XMPP server scaffold,
+  deployment notes, and smoke checklist.
+- `server/` still contains older Conduit/Matrix files while the XMPP path is
+  being brought up. Treat them as temporary experiment artifacts.
+- `apple/` contains the current SwiftUI Apple client scaffold for iOS and macOS.
+  It still has Matrix-named targets and types until the protocol-neutral rename
+  lands. New protocol work should keep calls behind service protocols and view
+  models.
+- `docs/architecture.md` explains the XMPP + OMEMO direction.
+- `docs/security.md` captures the private deployment threat model.
+- `docs/mvp-checklist.md` lists the validation work needed before real use.
+- `docs/xmpp-migration/` tracks the migration plan, parity checklist, spike
+  checklist, and risk register.
 - `apps/ios` and `apps/macos` are the existing native clients backed by the
   legacy `trix-core`/OpenMLS stack.
 - `apps/ios/scripts/build-testflight.sh` and
@@ -37,38 +48,49 @@ apps and TestFlight tooling stay available while the protocol layer changes.
 
 The legacy Rust backend, OpenMLS client core, Android client, bot runtime, and
 interop harnesses are still present. They are kept so existing build and release
-workflows remain inspectable during the pivot, but new protocol work should
-prefer the Matrix structure above.
+workflows remain inspectable during the pivot.
 
-## Run The Conduit Server
+## XMPP Spike
 
-For local development:
+Do not start a full Apple rewrite until the XMPP/OMEMO spike proves:
+
+- an Apple-safe OMEMO implementation path exists for both iOS and macOS;
+- encrypted DMs work across at least two devices;
+- encrypted group chats work through members-only, non-anonymous MUC rooms;
+- MAM can restore encrypted history after restart;
+- HTTP upload plus encrypted media round-trips without plaintext server storage;
+- federation is disabled and verified.
+
+The first smoke should use disposable local accounts only.
+
+## Run The XMPP Server
+
+After the XMPP scaffold is present:
 
 ```bash
-cd server
-docker compose up -d conduit
-curl http://127.0.0.1:6167/_matrix/client/versions
-```
-
-`podman compose` can be used instead of `docker compose` on hosts where Docker
-is not installed.
-
-For a small VPS with TLS via Caddy:
-
-```bash
-cd server
+cd server/xmpp
 cp .env.example .env
-# Edit .env and conduit.toml before first boot.
-docker compose --profile caddy up -d
+docker compose up -d
+docker compose logs -f
 ```
 
-Read [server/README.md](server/README.md) before choosing `server_name`.
-For the intended deployment, `server_name` is `trix.selfhost.ru` and should be
-treated as permanent once real accounts exist.
+Use `podman compose` instead of `docker compose` on hosts where Docker is not
+installed.
+
+Production federation checks:
+
+```bash
+nc -vz trix.selfhost.ru 5222
+nc -vz trix.selfhost.ru 5269
+```
+
+Port `5222` should be reachable for client-to-server traffic. Port `5269` should
+not be reachable for server-to-server federation.
 
 ## Run The Apple Client
 
-The first Matrix Apple scaffold is under `apple/`.
+The current Apple project is still Matrix-named until the protocol-neutral rename
+lands:
 
 ```bash
 cd apple
@@ -92,55 +114,31 @@ xcodebuild \
   build CODE_SIGNING_ALLOWED=NO
 ```
 
-The scaffold hardcodes `https://trix.selfhost.ru` as the Matrix homeserver URL.
-It uses the pinned `matrix-rust-components-swift` package through
-`MatrixRustSDKAdapter`; a mock service remains available for local UI previews
-and tests. The adapter boundary is documented in [apple/README.md](apple/README.md).
+The next Apple milestone is to rename the service boundary from `Matrix*` to
+protocol-neutral `Trix*`, keep the mock service, then add an `XMPPAdapter` after
+the OMEMO spike passes.
 
 ## MVP Status
 
-Working in this first pivot slice:
+Current target work:
 
-- Conduit server files exist and can be run with Docker Compose after local
-  configuration review.
-- Caddy and Nginx reverse proxy examples are included.
-- The live VPS deployment at `https://trix.selfhost.ru` responds on the Matrix
-  client API and `.well-known` client discovery endpoint.
-- SwiftUI Apple client scaffold builds with the pinned Matrix Rust SDK Swift
-  package.
-- The Apple scaffold has a pinned Matrix Rust SDK Swift dependency and a real
-  adapter for password login, session restore, room list, timeline, and text
-  send calls.
-- The Matrix iOS and macOS targets reuse the existing app identifier
-  `com.softgrid.trixapp`, Apple team `HGY33KYKQ2`, and APNs entitlement
-  environment settings. The macOS target also reuses the existing sandbox,
-  network, and user-selected file entitlements.
-- Login form, Keychain-backed session persistence, room list, and timeline UI
-  are present.
-- Production SwiftUI flows exist for encrypted DM creation, private encrypted
-  group room creation, and invite accept/decline.
-- File/image attachment send and download are wired through Matrix SDK timeline
-  and media APIs, with in-app image preview plus OS open/share/export actions
-  for downloaded files.
-- Foreground room, invite, and selected timeline refresh is wired while the app
-  scene is active.
-- Matrix SDK device verification and recovery state are visible in the UI;
-  recovery setup/confirmation is wired through SDK APIs.
-- A DEBUG-only live iOS smoke path validates login, session restore, encrypted
-  DM creation, encrypted send/receive, encrypted group send/receive across
-  three accounts, encrypted attachment round trips, and logout cleanup against
-  `trix.selfhost.ru`.
-- Unimplemented security-sensitive features are visible in the UI and tracked
-  in docs.
+- XMPP server scaffold and local smoke environment.
+- Apple OMEMO feasibility spike.
+- Protocol-neutral Apple service boundary.
+- Mandatory encrypted DM send/receive.
+- Mandatory encrypted group send/receive.
+- Directory-backed DM/group creation.
+- Centralized operator control plane.
+- Push notifications through APNs without plaintext payloads.
+- TestFlight archive path for the new iOS and macOS clients.
 
-Not yet production-ready:
+Not production-ready:
 
-- Device verification verified-state validation after live SAS completion.
-- Recovery/key backup persistence tests.
-- Push notifications through a Matrix push gateway and APNs.
-- Timeline refresh after app restart and TestFlight scripts for the new Matrix
-  app.
-- Existing TestFlight scripts for `apps/ios` and `apps/macos` are preserved.
+- Apple OMEMO implementation path is not yet validated.
+- Group OMEMO over MUC is not yet validated.
+- Federation-off deployment checks are not yet automated.
+- Push, directory/control-plane, and TestFlight paths are not yet rebuilt for
+  XMPP.
 
 ## Documentation
 
@@ -148,7 +146,8 @@ Not yet production-ready:
 - [docs/security.md](docs/security.md)
 - [docs/mvp-checklist.md](docs/mvp-checklist.md)
 - [docs/development-setup.md](docs/development-setup.md)
-- [server/README.md](server/README.md)
+- [docs/xmpp-migration/](docs/xmpp-migration/)
+- [server/xmpp/](server/xmpp/)
 - [apple/README.md](apple/README.md)
 
 ## Legacy Commands
@@ -163,5 +162,5 @@ swift test --package-path apps/macos
 ./scripts/client-smoke-harness.sh --suite ios-unit --no-postgres
 ```
 
-Do not hand-edit generated UniFFI outputs. Do not remove TestFlight scripts
-unless a replacement release path for the Matrix app exists.
+Do not hand-edit generated UniFFI outputs. Do not remove existing TestFlight
+scripts unless a replacement release path exists.

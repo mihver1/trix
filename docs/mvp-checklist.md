@@ -1,242 +1,193 @@
 # MVP Checklist
 
-Use this checklist before treating the Matrix pivot as usable for real private
-messages.
+Use this checklist before treating the XMPP + OMEMO pivot as usable for real
+private messages.
+
+There are no live Matrix users to preserve. Do not build a Matrix bridge,
+parallel Matrix service, or Matrix data migration path for this MVP.
 
 ## Legacy Product Parity Target
 
-Validated from the legacy client READMEs and client checklist, not by copying
-legacy implementation details.
+Validated from the legacy client READMEs, known-bugs backlog, and client
+checklist, not by copying legacy implementation details.
 
-- [x] Login, logout, and session restore.
-- [x] Room list, DM timeline, group timeline, and text composer.
-- [x] E2EE DM creation, invite accept/decline, and text send/receive.
-- [x] E2EE group creation and generic group invite accept/decline.
-- [x] Attachment send/download with in-app image preview through Matrix SDK
-      media/timeline APIs.
-- [x] iOS Matrix UI product-parity pass: Chats/Settings tabs, dense inbox,
-      visible invite actions, account state, chat bubbles, composer, and
-      attachment download affordances aligned with the legacy Trix client.
-- [x] Live-validate E2EE group send/receive with at least three accounts.
-- [ ] Timeline refresh after app restart.
+- [ ] Login, logout, and session restore.
+- [ ] Room list with DMs and groups.
+- [ ] DM timeline, group timeline, and text composer.
+- [ ] Mandatory OMEMO DM creation and text send/receive.
+- [ ] Mandatory OMEMO group creation and text send/receive.
+- [ ] Attachment send/download with encrypted media and in-app image preview.
+- [ ] iOS product-parity pass: Chats/Settings tabs, dense inbox, visible invite
+      actions, account state, chat bubbles, composer, and attachment download
+      affordances aligned with the legacy Trix client.
+- [ ] macOS product-parity pass: multi-column workspace, room inspector, member
+      management, and attachment open/share/export flow.
+- [ ] Live-validate E2EE group send/receive with at least three accounts.
+- [ ] Timeline refresh after app restart through MAM and local cache.
 - [ ] Unread/read/delivery decorations.
-- [x] Live-validate E2EE attachment round-trip for generated text and PNG image
-      payloads; downloaded bytes match through Matrix SDK media APIs.
-- [ ] Manually revalidate macOS picker/open/share/export release flow.
-- [x] Foreground room/invite/timeline polling while the app scene is active.
-- [ ] APNs-backed notifications through a Matrix push gateway.
-- [ ] Basic profile, notification, and device-management surfaces.
-- [ ] TestFlight archive path for the new Matrix Apple app.
+- [ ] Typing indicators.
+- [ ] Message reactions.
+- [ ] Foreground room/invite/timeline refresh while the app scene is active.
+- [ ] APNs-backed notifications without plaintext payloads.
+- [ ] Trix user directory search for new DM/group creation and add-member flows.
+- [ ] Basic profile and Trix metadata view/edit surface.
+- [ ] Device trust and broader device-management surfaces.
+- [ ] TestFlight archive path for the new XMPP Apple app.
 
 ## Server
 
-- [x] Choose final `server_name`: trix.selfhost.ru
-- [x] Confirm `server_name` is `trix.selfhost.ru` or intentionally changed
-      before real users exist.
-- [ ] Replace the sample registration token.
-- [ ] Start Conduit locally with `cd server && docker compose up -d conduit`.
-- [ ] Verify `/_matrix/client/versions` responds locally.
-- [x] Start the VPS deployment through Caddy or another TLS reverse proxy.
-- [x] Verify `https://trix.selfhost.ru/_matrix/client/versions`.
-- [x] Verify `https://trix.selfhost.ru/.well-known/matrix/client`.
-- [x] Create the first admin user.
-- [x] Create a live test user.
-- [x] Create the friend group accounts.
-- [x] Choose the MVP provisioning model: short operator-controlled Conduit
-      registration windows with a rotated static token.
-- [x] Document how to add a private user after registration is disabled:
-      temporarily enable token registration, have the user register through a
-      Matrix client that supports registration tokens, then disable registration
-      again.
-- [x] Keep the Matrix Apple client login-only for MVP; no self-registration UI
-      is claimed.
-- [ ] Disable registration after bootstrap if no new users are needed.
-- [ ] Back up the Conduit database volume.
-- [ ] Back up the media directory or confirm media is intentionally disposable.
-- [ ] Restore the backup into a fresh Conduit instance.
+- [x] Choose final XMPP domain: `trix.selfhost.ru`.
+- [x] Confirm no live Matrix users or rooms need preservation.
+- [x] Add private XMPP server scaffold under `server/xmpp/`.
+- [ ] Start the local XMPP server.
+- [ ] Verify client-to-server login locally.
+- [x] Verify server-to-server federation is disabled in config.
+- [x] Verify port `5269` is not externally reachable in production.
+- [x] Enable private MUC service for `conference.trix.selfhost.ru`.
+- [x] Enforce or document members-only, non-anonymous, persistent group-room
+      defaults.
+- [x] Enable SQL-backed MAM for encrypted stanza replay.
+- [x] Enable HTTP file sharing/upload for encrypted attachments.
+- [x] Disable public registration.
+- [ ] Create disposable local test users.
+- [ ] Create the friend group accounts through an operator-controlled flow.
+- [x] Back up server state.
+- [x] Back up uploaded encrypted media or confirm media is intentionally
+      disposable.
+- [ ] Restore backup into a fresh server instance.
 
 ## Apple Login And Session
 
-- [x] Build the iOS Matrix app target.
-- [x] Build the macOS Matrix app target.
-- [x] Reuse the existing iOS app identifier, Apple team, and APNs entitlement
-      environment settings for the Matrix iOS target.
-- [x] Reuse the existing macOS app identifier, Apple team, sandbox/network/file
-      access entitlements, and APNs entitlement environment settings for the
-      Matrix macOS target.
-- [x] Log in with a Matrix user ID and password.
-- [x] Confirm access tokens are not printed in live smoke logs.
-- [x] Quit and relaunch the app.
-- [x] Confirm the session restores without retyping the password.
-- [x] Log out.
-- [x] Confirm local session material is removed.
+- [ ] Rename service/model boundary from `Matrix*` to protocol-neutral `Trix*`.
+- [x] Keep SwiftUI views dependent on view models, not XMPP or OMEMO APIs.
+- [x] Build the iOS Apple target with the first XMPP adapter slice.
+- [x] Build the macOS Apple target with the first XMPP adapter slice.
+- [x] Remove Matrix Rust SDK and Matrix live smoke code from the new Apple
+      targets.
+- [x] Add scrubbed XMPP live smoke hooks for login, roster, and plaintext-send
+      blocking checks.
+- [x] Persist local OMEMO registration id, identity key pair, prekeys, signed
+      prekeys, session records, identities, and sender keys in Keychain.
+- [x] Register MartinOMEMO with a CryptoKit AES-GCM engine.
+- [ ] Reuse the existing iOS app identifier, Apple team, and APNs entitlement
+      environment settings.
+- [ ] Reuse the existing macOS app identifier, Apple team, sandbox/network/file
+      access entitlements, and APNs entitlement environment settings.
+- [ ] Log in with a local XMPP JID and password.
+- [ ] Confirm auth material is not printed in logs.
+- [ ] Quit and relaunch the app.
+- [ ] Confirm the session restores without retyping the password.
+- [ ] Log out.
+- [ ] Confirm local session and OMEMO state cleanup behavior is explicit and safe.
 
 ## Messaging
 
-- [x] Show room list after sync.
-- [x] Open a DM room through the Matrix service layer.
-- [x] Create an encrypted DM through the SwiftUI Apple client flow.
-- [x] Accept or decline pending invites through the SwiftUI Apple client flow.
-- [x] Open a group room.
-- [x] Send a plain text message.
-- [x] Receive a plain text message.
-- [x] Send a file or image attachment from the SwiftUI timeline composer.
-- [x] Download timeline file/image attachments and preview images in app.
-- [x] Open, share, or export downloaded attachments through OS controls.
-- [x] Show sender, timestamp, and body in the SwiftUI timeline model.
-- [x] Auto-refresh the room list, invites, and selected timeline while the app
+- [ ] Show room list after sync.
+- [ ] Open a DM through the service layer.
+- [ ] Create an encrypted DM through the SwiftUI Apple client flow.
+- [ ] Create a private encrypted MUC group through the SwiftUI Apple client flow.
+- [ ] Accept or decline pending invites where supported by the chosen XMPP stack.
+- [ ] Open a group room.
+- [x] Wire DM text send through MartinOMEMO only after explicit peer-device
+      trust.
+- [x] Live-validate DM text send between two accounts.
+- [x] Receive and decrypt an OMEMO DM message.
+- [ ] Receive and decrypt an OMEMO group message.
+- [x] Block plaintext send in product DM/group flows.
+- [ ] Send a file or image attachment from the SwiftUI timeline composer.
+- [ ] Download timeline file/image attachments and preview images in app.
+- [ ] Open, share, or export downloaded attachments through OS controls.
+- [ ] Show sender, timestamp, and body in the SwiftUI timeline model.
+- [ ] Auto-refresh the room list, invites, and selected timeline while the app
       scene is active.
-- [ ] Confirm timeline refresh after app restart.
+- [ ] Select DM, group invitees, and group add-member users from Trix directory
+      search results instead of raw JID-only entry.
+- [x] Keep newly decrypted or locally sent DM timeline items visible after app
+      restart through the local Keychain-backed timeline cache.
+- [ ] Restore sender-side OMEMO self-history from MAM after restart; encrypted
+      server archives are ciphertext-only and old messages that were not
+      encrypted for the sender's current device cannot be reconstructed.
 
 ## E2EE
 
-- [x] Create or join an encrypted DM.
-- [x] Send and receive an encrypted DM message.
-- [x] Create or join an encrypted group room.
-- [x] Send and receive an encrypted group message.
-- [x] Confirm Conduit stores encrypted event content, not plaintext.
-- [x] Confirm device verification limitation is visible in the app.
-- [x] Surface Matrix SDK device verification state in the Apple UI.
-- [x] Wire explicit Matrix SDK device verification actions in the Apple UI.
-- [x] Add a second device and complete the Matrix SDK SAS verification flow.
-- [ ] Confirm Matrix SDK verified-state flips after the SAS flow completes.
-- [x] Confirm unverified device behavior is understandable.
-- [x] Show a no-eligible-device blocked state when Matrix SDK cannot start
-      interactive SAS.
-- [x] Add SDK-backed recovery setup/confirmation UI for that blocked state.
-- [x] Live-validate recovery setup/confirmation without printing recovery keys.
+- [x] Validate that MartinOMEMO/libsignal resolves and builds for iOS and
+      macOS targets.
+- [x] Wire persistent local OMEMO state and module registration into the XMPP
+      connection.
+- [ ] Spike Tigase Martin plus MartinOMEMO first, with GPL/AGPL obligations
+      explicitly accepted or rejected for the non-commercial friends app.
+- [ ] Create or join an encrypted DM.
+- [ ] Send and receive an encrypted DM message.
+- [ ] Create or join an encrypted group room.
+- [ ] Send and receive an encrypted group message.
+- [x] Confirm server MAM stores encrypted stanza content, not plaintext.
+- [ ] Confirm uploaded media is encrypted before the server receives it.
+- [ ] Add a second device and confirm device list/fingerprint state is visible.
+- [x] Show peer OMEMO device fingerprints and manual trust controls for DMs.
+- [x] Confirm untrusted or unknown device behavior is understandable.
+- [x] Confirm the app does not silently trust all devices.
+- [x] Confirm the composer blocks sending when required OMEMO state is missing.
+- [ ] Confirm recovery or reinstall limitations are visible and documented.
+
+## Control Plane
+
+- [ ] Validate ejabberd admin API as the first control-plane candidate.
+- [ ] Decide whether any operations still require a small Trix control-plane
+      service in front of ejabberd.
+- [ ] Create user.
+- [ ] Disable user.
+- [ ] Reset password.
+- [ ] Search directory by handle/name.
+- [ ] View and edit profile metadata.
+- [ ] Create group.
+- [ ] Add group member.
+- [ ] Remove group member.
+- [ ] List group members.
+- [ ] View server health.
+- [ ] View archive/upload/push health.
+- [ ] Keep admin credentials out of logs and repo files.
 
 ## Deferred MVP Items
 
-- [ ] Device verification production UX, pending SDK verified-state validation
-      after live SAS completion.
-- [x] Key backup/recovery live validation.
-- [ ] Key backup/recovery persistence tests.
-- [ ] Push notifications through Matrix push gateway and APNs.
-- [x] SDK-backed media upload/download path in the Apple UI.
-- [x] Live attachment round-trip validation and OS open/share/export flow.
-- [x] Production encrypted DM creation flow.
-- [x] Production invite accept/decline flow.
-- [x] Production group room creation.
-- [x] Production group invite handling.
-- [ ] TestFlight archive path for the new `apple/` Matrix app.
+- [ ] Production device trust UX.
+- [ ] Account recovery/reinstall UX.
+- [ ] Push notifications through APNs.
+- [ ] Persistent tests around encrypted DM/group sync.
+- [ ] Persistent tests around directory/profile/control-plane flows.
+- [ ] TestFlight archive path for the new XMPP `apple/` app.
 
 ## Current First-Slice Status
 
-- [x] Server/client/docs structure exists.
-- [x] Conduit scaffold exists.
-- [x] SwiftUI Apple scaffold exists.
-- [x] Matrix service protocols exist.
-- [x] Mock Matrix service exists for local UI development.
-- [x] Real Matrix Rust SDK Swift adapter is wired.
-- [x] Matrix SDK Swift package is pinned.
-- [x] Real Conduit login is validated with a live account.
-- [x] Real encrypted message sync is validated end to end.
-- [x] Live iOS smoke validates login, session restore, encrypted DM creation,
-      encrypted send, encrypted receive, and cleanup against
-      `https://trix.selfhost.ru`.
-- [x] SwiftUI Apple client has production controls for encrypted DM creation
-      and pending invite accept/decline.
-- [x] SwiftUI Apple client has production controls for private encrypted group
-      room creation with at least two invitees, through Matrix SDK `createRoom`
-      and the same generic invite accept/decline flow used for DMs. Live
-      encrypted group smoke on May 6, 2026 created a private encrypted group
-      with admin, test, and friend accounts, accepted both invites, sent
-      generated messages from two participants, and verified receipt by the
-      other participants without printing passwords, access tokens,
-      registration tokens, SAS values, recovery keys, or decrypted message
-      bodies.
-- [x] SwiftUI Apple client can attach files/images from the timeline composer,
-      send them through Matrix SDK timeline attachment APIs, render file/image
-      timeline events, download them through Matrix SDK media APIs, and preview
-      downloaded images in app. Downloaded attachments can be opened, shared,
-      or exported through OS controls. Live encrypted attachment round-trip
-      smoke on May 6, 2026 created an encrypted DM, joined the test account,
-      sent a generated attachment, received the file event, downloaded it, and
-      matched bytes without printing filenames, payloads, passwords, access
-      tokens, registration tokens, SAS values, recovery keys, or decrypted
-      message bodies.
-- [x] SwiftUI Apple client runs a foreground auto-refresh loop while the app
-      scene is active. It silently refreshes rooms, pending invites, and the
-      selected timeline through the existing Matrix service/view-model boundary,
-      and reconciles the selected room if sync removes it.
-- [x] SwiftUI iOS client no longer presents the Matrix path as a scaffold:
-      login, room list, invite list, timeline rows, composer, attachment rows,
-      settings, and verification/recovery surfaces use the legacy native
-      messenger shape while Matrix SDK calls remain behind service/view-model
-      boundaries.
-- [x] SwiftUI Apple client shows read-only Matrix SDK device verification
-      state without silently trusting devices.
-- [x] SwiftUI Apple client can request, accept, start SAS, approve, decline,
-      and cancel Matrix SDK device verification. Live iOS smoke on May 5, 2026
-      reached request, accept, SAS start, matching challenge, and
-      `SessionVerificationController` `didFinish` against
-      `https://trix.selfhost.ru`; Matrix SDK verified-state did not flip within
-      the smoke timeout. DEBUG diagnostics on both sessions reported
-      `verificationState=unverified`, `hasDevicesToVerifyAgainst=false`,
-      `isLastDevice=false`, `backupExistsOnServer=false`,
-      `recoveryState=disabled`, and an own user identity present with
-      `hasMasterKey=true` but not verified. Element X only offers interactive
-      session verification when `hasDevicesToVerifyAgainst=true`; Trix follows
-      that SDK gate in the UI, adapter, and live smoke, and does not treat SAS
-      completion as a local verified flag.
-- [x] SwiftUI Apple client shows a no-eligible-device blocked state and exposes
-      Matrix SDK recovery instead of forcing SAS: `enableRecovery` is available
-      only when SDK recovery is disabled, and `recoverAndFixBackup` is available
-      only when SDK recovery is enabled or incomplete. Recovery keys are shown
-      only in UI state for the user to save or enter, not in logs or live smoke
-      output.
-- [x] Signed-simulator live iOS device verification smoke was re-run after the
-      recovery UI slice on May 5, 2026. It exited successfully in the expected
-      blocked state with `verificationState=unverified`,
-      `hasDevicesToVerifyAgainst=false`, `backupState=unknown`,
-      `backupExistsOnServer=false`, `recoveryState=disabled`, and no SAS forcing.
-- [x] DEBUG live iOS smoke has a safe `recovery` mode for a dedicated disposable
-      account. It refuses to run without `TRIX_MATRIX_LIVE_SMOKE_RECOVERY_USER_ID`,
-      `TRIX_MATRIX_LIVE_SMOKE_RECOVERY_PASSWORD`, and
-      `TRIX_MATRIX_LIVE_SMOKE_ALLOW_RECOVERY_MUTATION=1`; refuses
-      `@admin:trix.selfhost.ru`; calls `enableRecovery` only from
-      `recoveryState=disabled`; keeps the generated recovery key in process
-      memory only; then calls `recoverAndFixBackup` from a second session and
-      reports only non-secret `TRIX_LIVE_SMOKE` state lines.
-- [x] Live-validated Matrix recovery/key backup setup and confirmation against
-      `@recovery-smoke-20260506092649-7c56b1:trix.selfhost.ru` on May 6, 2026.
-      The signed iOS simulator smoke printed only non-secret `TRIX_LIVE_SMOKE`
-      lines. Setup started at `verificationState=unverified`,
-      `isLastDevice=true`, `backupState=unknown`, `backupExistsOnServer=false`,
-      `recoveryState=disabled`, then `enableRecovery` reached
-      `verificationState=verified`, `backupState=enabled`,
-      `backupExistsOnServer=true`, and `recoveryState=enabled`. Confirmation
-      started from a second session with `verificationState=unverified`,
-      `isLastDevice=false`, `backupState=unknown`, `backupExistsOnServer=true`,
-      `recoveryState=incomplete`, then `recoverAndFixBackup` reached
-      `verificationState=verified`, `backupState=enabled`,
-      `backupExistsOnServer=true`, and `recoveryState=enabled`.
+- [x] XMPP-only product direction is documented.
+- [x] Matrix data migration is explicitly out of scope because there are no live
+      Matrix users.
+- [x] XMPP server scaffold exists.
+- [x] Production ejabberd is deployed at `trix.selfhost.ru`.
+- [x] SQL-backed MAM is enabled.
+- [x] Daily root-only XMPP backup timer is installed.
+- [x] Apple OMEMO dependency candidate builds: Martin `3.2.4`, MartinOMEMO
+      `2.2.3`, libsignal `1.0.0`.
+- [ ] OMEMO DM live smoke is validated.
+- [ ] OMEMO group live smoke is validated.
+- [ ] Protocol-neutral Apple service boundary exists.
+- [x] First XMPP adapter is wired for login, restore, and roster-backed room
+      list.
+- [x] Persistent local OMEMO store is wired.
+- [x] Product composer blocks plaintext sending while OMEMO state or peer trust
+      is missing.
+- [x] Manual peer-device trust UI is wired for DMs.
+- [x] DM text send uses MartinOMEMO encode/write after peer trust.
+- [x] Matrix Rust SDK adapter and live smoke runner are removed from the new
+      Apple target.
+- [ ] Trix control-plane model is selected.
+- [ ] No custom crypto is added.
 
-## Live Validation Notes
+## Notes
 
-- `@admin:trix.selfhost.ru` exists and can login/logout through the Matrix API.
-- `@test:trix.selfhost.ru` exists and can login/logout through the Matrix API.
-- A third friend smoke account exists for encrypted group validation; its
-  credentials are stored only in the local ignored `dev-credentials.txt`.
-- `@recovery-smoke-20260506092649-7c56b1:trix.selfhost.ru` exists for recovery
-  smoke validation and was consumed by the successful May 6, 2026 run. Recovery
-  setup smoke accounts are one-shot because a successful run leaves SDK recovery
-  enabled.
-- `@recovery-smoke-20260506093024-d2736f:trix.selfhost.ru` exists as the fresh
-  next-run recovery smoke account. Its password is stored in the local Keychain
-  service `com.softgrid.trixmatrix.live-smoke.recovery-password`; the active
-  smoke user id is stored in `com.softgrid.trixmatrix.live-smoke` /
-  `recovery-user-id`.
-- Admin and test credentials are stored in the user's password manager.
-- Bootstrap credential files have been removed from the VPS:
-  `/root/trix-matrix-admin.bootstrap` and `/root/trix-matrix-test.bootstrap`.
-- The live smoke runner uses a signed iOS simulator build because unsigned
-  simulator builds cannot access Keychain reliably.
-- Device verification live smoke does not print SAS values; it only reports
-  phase completion, SDK verified-state, eligible-device flags, backup/recovery
-  state, and own user identity status.
-- Recovery live smoke must use a dedicated disposable account plus
-  `TRIX_MATRIX_LIVE_SMOKE_ALLOW_RECOVERY_MUTATION=1`; it must not run against
-  `@admin:trix.selfhost.ru` without explicit approval.
-- Several smoke-created encrypted DM rooms may exist on the live server.
+- Matrix-named Apple targets and files may remain during the transition. Treat
+  them as temporary scaffolding until the protocol-neutral rename lands.
+- Existing legacy TestFlight scripts remain the current release reference until
+  the XMPP Apple app has its own archive/upload path.
+- Live smoke must print only scrubbed status lines. It must not print passwords,
+  auth tokens, OMEMO secrets, APNs tokens, decrypted message bodies, or decrypted
+  attachment contents.

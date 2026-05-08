@@ -1,0 +1,35 @@
+name: trix-xmpp
+
+services:
+  ejabberd:
+    image: ${TRIX_XMPP_EJABBERD_IMAGE:-ghcr.io/processone/ejabberd:latest}
+    hostname: ejabberd
+    environment:
+      ERLANG_NODE_ARG: ejabberd@ejabberd
+    restart: unless-stopped
+    ports:
+      - "${TRIX_XMPP_C2S_BIND:-127.0.0.1}:5222:5222"
+      - "${TRIX_XMPP_HTTP_BIND:-127.0.0.1}:5280:5280"
+    volumes:
+      - ./ejabberd.yml:/opt/ejabberd/conf/ejabberd.yml:ro
+      - ./certs:/opt/ejabberd/conf/certs:ro
+      - ejabberd-database:/opt/ejabberd/database
+      - ejabberd-upload:/opt/ejabberd/upload
+
+  prosody:
+    profiles:
+      - prosody-fallback
+    image: ${TRIX_XMPP_IMAGE:-docker.io/prosody/prosody:latest}
+    restart: unless-stopped
+    ports:
+      - "${TRIX_XMPP_PROSODY_C2S_BIND:-127.0.0.1}:5222:5222"
+      - "${TRIX_XMPP_PROSODY_HTTP_BIND:-127.0.0.1}:5280:5280"
+    volumes:
+      - ./prosody.cfg.lua:/etc/prosody/prosody.cfg.lua:ro
+      - ./certs:/etc/prosody/certs:ro
+      - prosody-data:/var/lib/prosody
+
+volumes:
+  ejabberd-database:
+  ejabberd-upload:
+  prosody-data:

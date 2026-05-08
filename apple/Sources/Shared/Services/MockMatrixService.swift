@@ -11,6 +11,7 @@ actor MockMatrixService: MatrixService {
     private var backupState: MatrixBackupState
     private var backupExistsOnServer: Bool
     private var attachmentDataBySourceJSON: [String: Data]
+    private var profilesByUserID: [String: MatrixUserProfile]
 
     init(now: Date = Date()) {
         let directRoom = MatrixRoomSummary(
@@ -62,6 +63,13 @@ actor MockMatrixService: MatrixService {
         self.attachmentDataBySourceJSON = [
             "mock://attachment/brief": Data("Mock Matrix attachment bytes".utf8),
         ]
+        self.profilesByUserID = [
+            "@me:trix.selfhost.ru": MatrixUserProfile(userID: "@me:trix.selfhost.ru", displayName: "Me", avatarURL: nil),
+            "@alice:trix.selfhost.ru": MatrixUserProfile(userID: "@alice:trix.selfhost.ru", displayName: "Alice", avatarURL: nil),
+            "@bob:trix.selfhost.ru": MatrixUserProfile(userID: "@bob:trix.selfhost.ru", displayName: "Bob", avatarURL: nil),
+            "@carol:trix.selfhost.ru": MatrixUserProfile(userID: "@carol:trix.selfhost.ru", displayName: "Carol", avatarURL: nil),
+            "@dora:trix.selfhost.ru": MatrixUserProfile(userID: "@dora:trix.selfhost.ru", displayName: "Dora", avatarURL: nil),
+        ]
         self.timelines = [
             directRoom.id: [
                 MatrixTimelineItem(
@@ -69,7 +77,7 @@ actor MockMatrixService: MatrixService {
                     roomID: directRoom.id,
                     sender: "@alice:trix.selfhost.ru",
                     timestamp: now.addingTimeInterval(-300),
-                    body: "This is mock UI data. Real E2EE arrives with the Matrix SDK adapter.",
+                    body: "This is mock UI data. Real E2EE is handled by the XMPP OMEMO adapter.",
                     isLocalEcho: false,
                     attachment: nil
                 ),
@@ -129,6 +137,13 @@ actor MockMatrixService: MatrixService {
             throw MatrixClientError.invalidCredentials
         }
 
+        let profile = MatrixUserProfile(
+            userID: normalizedUserID,
+            displayName: displayName(from: normalizedUserID),
+            avatarURL: nil
+        )
+        profilesByUserID[normalizedUserID.lowercased()] = profile
+
         return MatrixSession(
             userID: normalizedUserID,
             deviceID: "MOCK-\(UUID().uuidString.prefix(8))",
@@ -142,14 +157,77 @@ actor MockMatrixService: MatrixService {
     }
 
     func restore(session: MatrixSession) async throws -> MatrixAccount {
-        MatrixAccount(
+        let profile = profilesByUserID[session.userID.lowercased()]
+        return MatrixAccount(
             userID: session.userID,
-            displayName: displayName(from: session.userID),
+            displayName: profile?.displayName ?? displayName(from: session.userID),
             deviceID: session.deviceID
         )
     }
 
     func logout(session: MatrixSession) async throws {
+    }
+
+    func searchUsers(
+        _ searchTerm: String,
+        limit: Int,
+        session: MatrixSession
+    ) async throws -> MatrixUserSearchResult {
+        let query = searchTerm.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            return MatrixUserSearchResult(users: [], limited: false)
+        }
+
+        let ownUserID = session.userID.lowercased()
+        let matches = profilesByUserID.values
+            .filter { profile in
+                profile.userID.lowercased() != ownUserID &&
+                    (profile.userID.localizedCaseInsensitiveContains(query) ||
+                     profile.title.localizedCaseInsensitiveContains(query))
+            }
+            .sorted { lhs, rhs in
+                lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            }
+
+        let resultLimit = max(1, limit)
+        return MatrixUserSearchResult(
+            users: Array(matches.prefix(resultLimit)),
+            limited: matches.count > resultLimit
+        )
+    }
+
+    func profile(userID: String, session: MatrixSession) async throws -> MatrixUserProfile {
+        let normalizedUserID = try Self.normalizedMatrixUserID(userID)
+        return profilesByUserID[normalizedUserID.lowercased()] ?? MatrixUserProfile(
+            userID: normalizedUserID,
+            displayName: displayName(from: normalizedUserID),
+            avatarURL: nil
+        )
+    }
+
+    func updateDisplayName(_ displayName: String, session: MatrixSession) async throws -> MatrixUserProfile {
+        let normalizedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let existing = profilesByUserID[session.userID.lowercased()]
+        let profile = MatrixUserProfile(
+            userID: session.userID,
+            displayName: normalizedDisplayName.isEmpty ? nil : normalizedDisplayName,
+            avatarURL: existing?.avatarURL,
+            metadata: existing?.metadata ?? .empty
+        )
+        profilesByUserID[session.userID.lowercased()] = profile
+        return profile
+    }
+
+    func updateProfile(_ update: MatrixUserProfileUpdate, session: MatrixSession) async throws -> MatrixUserProfile {
+        let existing = profilesByUserID[session.userID.lowercased()]
+        let profile = MatrixUserProfile(
+            userID: session.userID,
+            displayName: update.displayName.isEmpty ? nil : update.displayName,
+            avatarURL: existing?.avatarURL,
+            metadata: update.metadata
+        )
+        profilesByUserID[session.userID.lowercased()] = profile
+        return profile
     }
 
     func rooms(session: MatrixSession) async throws -> [MatrixRoomSummary] {
@@ -176,6 +254,18 @@ actor MockMatrixService: MatrixService {
 
     func deviceVerificationFlow(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
         verificationFlow
+    }
+
+    func peerDeviceIdentities(userID: String, session: MatrixSession) async throws -> [MatrixPeerDeviceIdentity] {
+        [mockPeerDevice(for: userID)]
+    }
+
+    func refreshPeerDeviceIdentities(userID: String, session: MatrixSession) async throws -> [MatrixPeerDeviceIdentity] {
+        [mockPeerDevice(for: userID)]
+    }
+
+    func trustPeerDevice(userID: String, deviceID: String, session: MatrixSession) async throws -> [MatrixPeerDeviceIdentity] {
+        [mockPeerDevice(for: userID, deviceID: deviceID)]
     }
 
     func requestDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
@@ -491,9 +581,25 @@ actor MockMatrixService: MatrixService {
     }
 
     private func displayName(from userID: String) -> String {
-        let withoutAt = userID.dropFirst()
-        let localpart = withoutAt.split(separator: ":").first.map(String.init) ?? String(withoutAt)
+        let localpart: String
+        if userID.hasPrefix("@") {
+            let withoutAt = userID.dropFirst()
+            localpart = withoutAt.split(separator: ":").first.map(String.init) ?? String(withoutAt)
+        } else {
+            localpart = userID.split(separator: "@").first.map(String.init) ?? userID
+        }
         return localpart.capitalized
+    }
+
+    private func mockPeerDevice(for userID: String, deviceID: String = "1001") -> MatrixPeerDeviceIdentity {
+        MatrixPeerDeviceIdentity(
+            userID: userID,
+            deviceID: deviceID,
+            fingerprint: "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99",
+            trustState: .trusted,
+            isActive: true,
+            isLocalDevice: false
+        )
     }
 
     private static func normalizedMatrixUserID(_ userID: String) throws -> String {

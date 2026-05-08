@@ -2,100 +2,156 @@
 
 ## Goal
 
-Trix is moving to Matrix so the project can use a real, reviewed protocol and
-an existing E2EE implementation instead of carrying custom messaging and
-OpenMLS orchestration.
+Trix is moving to XMPP + OMEMO so the project can use a mature messaging
+transport and an existing end-to-end encryption protocol instead of carrying a
+custom application protocol or custom cryptography.
 
 The MVP architecture is intentionally small:
 
-- One Conduit homeserver.
+- One private XMPP server.
 - Federation disabled.
-- Native SwiftUI Apple clients.
-- Matrix Rust SDK Swift components for protocol, sync, room state, and E2EE.
-- Local secure session storage on device.
+- Native SwiftUI Apple clients for iOS and macOS.
+- Mandatory OMEMO encryption for direct messages and group chats.
+- Members-only, non-anonymous MUC rooms for groups.
+- A Trix-owned control plane for users, directory, profiles, groups, diagnostics,
+  and operations.
+- Local secure session and OMEMO state storage on device.
+
+There are no live Matrix users to preserve, so the target architecture does not
+include a Matrix bridge, Matrix room migration, or a parallel Matrix service.
 
 ## Components
 
-### Server
+### XMPP Server
 
-Conduit is the homeserver. It owns Matrix account registration, login, room
-state, sync, media metadata, and server-side persistence. It does not decrypt
-encrypted room messages.
+ejabberd is the first product server candidate because the MVP needs centralized
+account, group, push, diagnostics, and backup/restore operations. Prosody remains
+a useful lightweight fallback for a shell-managed spike, but it should not be
+treated as the product default unless the control-plane requirement is reduced.
 
-The first deployment uses `trix.selfhost.ru` as the Matrix `server_name`.
-Changing `server_name` after users exist changes Matrix user IDs and room IDs,
-so it should be treated as permanent.
+The intended domain is `trix.selfhost.ru`. The same domain can be reused because
+the Matrix path has no live users.
 
-Federation is disabled because the product is a private messenger for a tiny
-group. That removes a large operational surface: remote server trust,
-federation signing, moderation of external users, and cross-server abuse. It
-does not remove the need for TLS, backups, device verification, or careful
-account recovery.
+The server is responsible for:
 
-### Apple Client
+- XMPP client-to-server sessions.
+- Local account authentication.
+- Message routing.
+- MUC group rooms.
+- SQLite-backed Message Archive Management for encrypted stanzas.
+- HTTP file sharing/upload for encrypted media payloads.
+- Push integration hooks.
 
-The Apple client is SwiftUI and keeps SDK/session logic out of views.
+The server must not decrypt Trix message content. For product DM and group chats,
+stored messages and uploaded media are expected to be encrypted by the client
+before they reach the server.
 
-The service boundary is:
+### Federation Boundary
 
-- `MatrixSessionStore`: secure session persistence.
-- `MatrixAuthService`: login, logout, session restore.
-- `MatrixSyncService`: room list and sync lifecycle.
-- `MatrixRoomService`: room timeline and text send operations.
-- `RoomListViewModel`: room list presentation state.
-- `TimelineViewModel`: timeline presentation state.
+Federation is disabled because Trix is a private messenger for a small known
+group. That removes server-to-server trust, public registration pressure,
+cross-domain moderation, and external abuse handling from the MVP.
 
-The checked-in `apple/` implementation now pins `matrix-rust-components-swift`
-and uses `MatrixRustSDKAdapter` behind these protocols. A mock service remains
-available for local UI development through dependency injection.
+Disabling federation requires both application config and deployment checks:
 
-### Matrix Rust SDK
+- Do not load the XMPP server-to-server module.
+- Do not expose port `5269`.
+- Do not document DNS SRV records for server-to-server federation.
+- Verify from outside the host that client-to-server traffic works and
+  server-to-server traffic does not.
 
-The Matrix Rust SDK is the intended source of truth for:
+This does not remove the need for TLS, backups, device trust UX, push hygiene, or
+careful account recovery.
 
-- Matrix client-server protocol calls.
-- Sync.
-- Room timeline handling.
-- Olm/Megolm E2EE.
-- Device identity and verification APIs.
-- Key backup and recovery APIs.
+### Apple Clients
 
-Trix code should not manually parse or manipulate E2EE key material. If a
-feature needs encryption behavior, it should be built through Matrix SDK APIs.
+The Apple clients are SwiftUI and keep protocol/session logic out of views.
 
-## Why No Custom Crypto
+The target service boundary is protocol-neutral:
 
-The old prototype carried custom application protocol and OpenMLS integration
-work. That makes every client, storage, and recovery flow security-sensitive.
-For this product, that is unnecessary risk.
+- `TrixSessionStore`: secure session persistence.
+- `TrixAuthService`: login, logout, session restore.
+- `TrixSyncService`: room list, account state, and sync lifecycle.
+- `TrixRoomService`: timeline, send, attachments, reactions, typing, and
+  read/delivery state.
+- `TrixRoomMembershipService`: group member list, invite/add, remove, leave.
+- `TrixDirectoryService`: directory search and profile lookup/update through the
+  Trix control plane.
+- `TrixDeviceTrustService`: OMEMO device inventory, trust state, and fingerprint
+  presentation.
+- `TrixPushRegistrationService`: APNs token registration and unregister.
 
-Matrix already defines interoperable encrypted rooms, device identity,
-verification, and recovery concepts. The MVP should spend effort on correct
-integration and a clear UX instead of inventing cryptographic behavior.
+The checked-in `apple/` project still contains Matrix-named types until the
+rename lands. New work should move toward the service boundary above before
+binding SwiftUI to XMPP-specific APIs.
+
+### OMEMO
+
+OMEMO is the mandatory E2EE layer for product chats.
+
+Trix must use an existing reviewed implementation where practical. The project
+must not implement its own Double Ratchet, X3DH, OMEMO bundle handling, or manual
+key manipulation. If a usable Apple OMEMO implementation cannot be validated for
+DMs and group chats, that is a product blocker.
+
+For direct messages, the sender encrypts to the recipient's devices and the
+sender's other devices. For groups, the sender encrypts to devices belonging to
+all current joined members of the members-only, non-anonymous MUC room.
+
+Plaintext sending in product DM/group flows is not allowed. If the client cannot
+build the required OMEMO payload, the composer must block sending and explain the
+device/trust problem.
+
+### Groups
+
+Group chats use XMPP Multi-User Chat rooms with a strict Trix profile:
+
+- persistent;
+- members-only;
+- non-anonymous, so clients can map room occupants to real JIDs for OMEMO;
+- local-domain members only for the MVP;
+- room creation and membership controlled by Trix flows, not arbitrary public
+  room creation.
+
+The OMEMO group-chat spike must prove member discovery, device fetching, invite
+or membership changes, and encrypted history replay before group chat is treated
+as production-ready.
+
+### Control Plane
+
+XMPP is the transport, not the whole product backend. Trix still needs a
+centralized operator control plane for:
+
+- create, disable, and reset users;
+- directory search by name/handle;
+- profile metadata;
+- group creation;
+- group add/remove/list members;
+- server status, queue/archive/upload diagnostics;
+- push gateway configuration and health.
+
+This control plane should use server-supported APIs, admin commands, or a small
+Trix service. It must not become a second messaging protocol or a parallel
+plaintext chat backend.
 
 ## Multidevice Model
 
-In Matrix, a user can have multiple devices. Encrypted rooms distribute message
-keys to verified or otherwise trusted devices according to Matrix SDK behavior
-and room encryption policy. Each device has its own identity and local crypto
-store.
+A user may have multiple devices. Each device has its own OMEMO identity and
+local encryption state.
 
 For Trix MVP this means:
 
 - Logging in on a new device is not equivalent to silently trusting that device.
-- Existing devices may need to verify the new device.
-- Users need visible recovery/verification states.
-- Key backup is a separate feature from login and must be treated carefully.
-
-The first UI exposes SDK verification/recovery state directly. If the SDK
-reports no eligible verified session for interactive SAS, the app must show that
-blocked state and use Matrix SDK recovery APIs rather than inventing a local
-trust override.
+- New or changed devices must be visible in the UI.
+- The user needs understandable fingerprint/trust state before treating private
+  chats as production-ready.
+- Account recovery and device replacement must be documented as separate flows
+  from login.
 
 ## Legacy Code
 
-The existing `apps/ios`, `apps/macos`, `crates/trix-core`, and `apps/trixd`
-paths remain in the repository during the pivot. They preserve UI history,
-release tooling, and test references. New Matrix protocol work should avoid
-expanding the legacy OpenMLS/UniFFI surface unless the task explicitly concerns
-legacy maintenance.
+The existing `apps/ios`, `apps/macos`, `crates/trix-core`, and `apps/trixd` paths
+remain in the repository during the pivot. They preserve UI history, release
+tooling, and test references. New XMPP protocol work should avoid expanding the
+legacy OpenMLS/UniFFI surface unless the task explicitly concerns legacy
+maintenance.

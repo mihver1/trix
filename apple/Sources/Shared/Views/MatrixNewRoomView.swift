@@ -4,8 +4,7 @@ struct MatrixNewRoomView: View {
     @ObservedObject var model: MatrixAppModel
     @Environment(\.dismiss) private var dismiss
     @State private var mode = MatrixNewRoomMode.direct
-    @State private var inviteeUserID = ""
-    @State private var inviteeUserIDs = ""
+    @State private var selectedUsers: [MatrixUserProfile] = []
     @State private var roomName = ""
 
     var body: some View {
@@ -22,17 +21,17 @@ struct MatrixNewRoomView: View {
                 }
 
                 Section(mode.inviteSectionTitle) {
-                    if mode == .direct {
-                        TextField("@user:trix.selfhost.ru", text: $inviteeUserID)
-                            .matrixUserIDInput()
+                    MatrixUserDirectoryPickerView(
+                        model: model,
+                        selection: $selectedUsers,
+                        mode: mode == .direct ? .single : .multiple,
+                        excludedUserIDs: excludedUserIDs
+                    )
 
-                        TextField("Room name", text: $roomName)
+                    if mode == .direct {
+                        TextField("Chat name", text: $roomName)
                     } else {
                         TextField("Name", text: $roomName)
-
-                        TextField("@alice:trix.selfhost.ru, @bob:trix.selfhost.ru", text: $inviteeUserIDs, axis: .vertical)
-                            .matrixUserIDInput()
-                            .lineLimit(2...5)
                     }
                 }
 
@@ -48,7 +47,9 @@ struct MatrixNewRoomView: View {
                     }
                 }
             }
-            .navigationTitle("New Room")
+            .matrixScrollContentBackgroundHidden()
+            .background(MatrixDesign.screenBackground)
+            .navigationTitle("New Chat")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -61,8 +62,11 @@ struct MatrixNewRoomView: View {
                         Task {
                             switch mode {
                             case .direct:
+                                guard let invitee = selectedUsers.first else {
+                                    return
+                                }
                                 let didCreate = await model.createEncryptedDirectRoom(
-                                    inviteeUserID: inviteeUserID,
+                                    inviteeUserID: invitee.userID,
                                     roomName: roomName
                                 )
                                 if didCreate {
@@ -71,7 +75,7 @@ struct MatrixNewRoomView: View {
                             case .group:
                                 let didCreate = await model.createEncryptedGroupRoom(
                                     name: roomName,
-                                    inviteeUserIDs: inviteeUserIDs
+                                    inviteeUserIDs: selectedUsers.map(\.userID)
                                 )
                                 if didCreate {
                                     dismiss()
@@ -89,7 +93,12 @@ struct MatrixNewRoomView: View {
                 }
             }
         }
-        .frame(minWidth: 440, minHeight: 340)
+        .matrixDialogSurface(minWidth: 440, minHeight: 340)
+        .onChange(of: mode) { _, newMode in
+            if newMode == .direct, selectedUsers.count > 1 {
+                selectedUsers = Array(selectedUsers.prefix(1))
+            }
+        }
     }
 
     private var isCreatingRoom: Bool {
@@ -99,11 +108,19 @@ struct MatrixNewRoomView: View {
     private var isCreateDisabled: Bool {
         switch mode {
         case .direct:
-            return inviteeUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return selectedUsers.isEmpty
         case .group:
             return roomName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                inviteeUserIDs.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                selectedUsers.count < 2
         }
+    }
+
+    private var excludedUserIDs: Set<String> {
+        if let currentUserID = model.session?.userID {
+            return [currentUserID]
+        }
+
+        return []
     }
 }
 
@@ -149,21 +166,5 @@ private enum MatrixNewRoomMode: String, CaseIterable, Identifiable {
         case .group:
             return "Group"
         }
-    }
-}
-
-private extension View {
-    @ViewBuilder
-    func matrixUserIDInput() -> some View {
-        #if os(iOS)
-        self
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .textContentType(.username)
-        #else
-        self
-            .autocorrectionDisabled()
-            .textContentType(.username)
-        #endif
     }
 }

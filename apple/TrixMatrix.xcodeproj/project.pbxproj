@@ -7,16 +7,21 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		018963E0097AF7D5ADFE41C1 /* MartinOMEMO in Frameworks */ = {isa = PBXBuildFile; productRef = E747E1A70FF2F8B54BE3EA20 /* MartinOMEMO */; };
+		01BBAA0E7289756B55DD7988 /* MatrixProfileViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FC318B17D029526011DE13A /* MatrixProfileViewModel.swift */; };
 		01DD84A806E5A3D66513361E /* TimelineViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEB0655E233DAB56B8623281 /* TimelineViewModel.swift */; };
 		03C101F98756ECC874E5A3BB /* MatrixNewRoomView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E47471C8DE36B7FE656737F /* MatrixNewRoomView.swift */; };
 		0A58FB3930E4A47D04EB0D32 /* MatrixPasteboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A6190472959AB9926C1E529 /* MatrixPasteboard.swift */; };
 		129D050CD8E0E36C143E4C91 /* MatrixRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 632A14FCA910449A99CB3132 /* MatrixRootView.swift */; };
+		131FC21259AD7F53F20E7C52 /* MatrixProfileViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FC318B17D029526011DE13A /* MatrixProfileViewModel.swift */; };
 		188C03E7F4CF4914B1E32FA3 /* MatrixMacRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EEE9E9C023F5DC00ABC3623 /* MatrixMacRootView.swift */; };
-		1A126D27830FDBAD15EB30F2 /* MatrixRustSDKAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 152545F011E983A56EC13722 /* MatrixRustSDKAdapter.swift */; };
 		1C9E1EDBEAB90A539AEBFC5D /* KeychainMatrixSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 831A6F1FA84E9BEF5A5E3FD7 /* KeychainMatrixSessionStore.swift */; };
 		1CB2DBE5F2BA7679A5E11FA0 /* MatrixTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3994463199103D5DCCB714F /* MatrixTimelineView.swift */; };
 		2335DD0745FF9DB8B5C88FA3 /* MatrixUIPrimitives.swift in Sources */ = {isa = PBXBuildFile; fileRef = 894C910221D0CD5B95F0C6B1 /* MatrixUIPrimitives.swift */; };
+		23B642ECEC77A35A182C1774 /* XMPPLiveSmokeRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61B76AE4B7FE38684FD69E3F /* XMPPLiveSmokeRunner.swift */; };
+		27EDB3D051D4B1207655C141 /* MatrixProfileSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D419211152338C774C4E5C65 /* MatrixProfileSettingsView.swift */; };
 		2E9A9F2489C6C51CEC397E34 /* MatrixModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2F1BA65FBB9F5DB455C6ABA /* MatrixModels.swift */; };
+		34553562AB89EF56C3ECFD76 /* TrixTimelineCacheStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5360313E1D5D743FBD43BF62 /* TrixTimelineCacheStore.swift */; };
 		3CF1C2D9A8A70489F7233F4A /* KeychainMatrixSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 831A6F1FA84E9BEF5A5E3FD7 /* KeychainMatrixSessionStore.swift */; };
 		3F50C8F99C45346D75E88255 /* MatrixAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7414A93ADB01BA6187C24360 /* MatrixAppModel.swift */; };
 		4045AFBF57F71D0CBDA102AE /* DeviceVerificationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A728389B09D31A93D5D10AF3 /* DeviceVerificationViewModel.swift */; };
@@ -24,40 +29,54 @@
 		416EABCD0C587A59F475336D /* MatrixPasteboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A6190472959AB9926C1E529 /* MatrixPasteboard.swift */; };
 		48222F75D75561C3C22CA69F /* MatrixUIPrimitives.swift in Sources */ = {isa = PBXBuildFile; fileRef = 894C910221D0CD5B95F0C6B1 /* MatrixUIPrimitives.swift */; };
 		4E7FEC4719061BC1283D447C /* MatrixServiceProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8009529B31B45E9E0A2125F4 /* MatrixServiceProtocols.swift */; };
-		537309E828290708DF967EEB /* MatrixRustSDK in Frameworks */ = {isa = PBXBuildFile; productRef = A2CA52A979635D4628DFE4D0 /* MatrixRustSDK */; };
-		566C48B8FDC47A38721C859D /* MatrixRustSDKAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 152545F011E983A56EC13722 /* MatrixRustSDKAdapter.swift */; };
+		537309E828290708DF967EEB /* Martin in Frameworks */ = {isa = PBXBuildFile; productRef = A2688357F9AFCAC4CD829C06 /* Martin */; };
 		59A16A64148E87EC05620941 /* MatrixRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 632A14FCA910449A99CB3132 /* MatrixRootView.swift */; };
-		646ED38194100D5107D0AD8D /* MatrixLiveSmokeRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCA53B0F5BE71CF78081C121 /* MatrixLiveSmokeRunner.swift */; };
+		59E30FC7B539EF6E0F1DD295 /* TrixTimelineCacheStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5360313E1D5D743FBD43BF62 /* TrixTimelineCacheStore.swift */; };
+		5BCD889F6C600AFC151E706F /* MartinOMEMO in Frameworks */ = {isa = PBXBuildFile; productRef = 7BF98DD511834ED334A9B210 /* MartinOMEMO */; };
 		67CC33870704986A5164F9A2 /* RoomListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CB4DE535EF97BB0D0B809CB /* RoomListViewModel.swift */; };
 		68B55DEFF7F78A71B40CBA94 /* MatrixServiceProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8009529B31B45E9E0A2125F4 /* MatrixServiceProtocols.swift */; };
 		6EE3D12CA0D4D43D6F4FE819 /* TrixMatrixMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C3BB1BD649928661E930244 /* TrixMatrixMacApp.swift */; };
-		7381AAE6D833620E65DD6B59 /* MatrixLiveSmokeRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCA53B0F5BE71CF78081C121 /* MatrixLiveSmokeRunner.swift */; };
 		752F6D2418E15CD41405F54F /* MatrixLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72C3FB45F6FDCA6D503C3351 /* MatrixLoginView.swift */; };
 		7A0BB8C6FA185C51228D3210 /* MatrixRoomListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C18C0C9013562CEEAD1B29C /* MatrixRoomListView.swift */; };
-		807543063C7A8EC6639E1D70 /* MatrixRustSDK in Frameworks */ = {isa = PBXBuildFile; productRef = DA55075EDDBDF755C1F0AA70 /* MatrixRustSDK */; };
+		807543063C7A8EC6639E1D70 /* Martin in Frameworks */ = {isa = PBXBuildFile; productRef = AF0FA74A744B2E98E20D8738 /* Martin */; };
 		80831FD7D8F0F88410A2B18B /* TrixMatrixiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73F55FBC6BCC6ECECCABE24B /* TrixMatrixiOSApp.swift */; };
 		8C6169B957900216C4377471 /* RoomListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CB4DE535EF97BB0D0B809CB /* RoomListViewModel.swift */; };
 		8E422235178CC0EAD831BBD2 /* MatrixTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3994463199103D5DCCB714F /* MatrixTimelineView.swift */; };
 		8FB1488F05EDACC73DFBA8F8 /* MatrixLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72C3FB45F6FDCA6D503C3351 /* MatrixLoginView.swift */; };
 		8FF46CC7E0D56527216F46F1 /* MockMatrixService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1944705328595182A450E300 /* MockMatrixService.swift */; };
+		907B1EA79B4C0EF1F64763FD /* XMPPMartinService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 521137CC0E9C946883248810 /* XMPPMartinService.swift */; };
+		94167CF0D71BCB8668840906 /* MatrixUserDirectorySearchViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A45E9EA8447D4749FDAF70 /* MatrixUserDirectorySearchViewModel.swift */; };
 		961996EF252E8B8B019FC565 /* MatrixAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7414A93ADB01BA6187C24360 /* MatrixAppModel.swift */; };
+		9CF86CCF23BF9B4B7989489F /* TrixOMEMOStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3B9CAC73BB4D740C2F79B3D /* TrixOMEMOStore.swift */; };
 		9DC61ADC1BDF43C957BB1A70 /* MatrixClientConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC3FB0C0DAF30452F9A3BC0 /* MatrixClientConfiguration.swift */; };
+		A179442085DDBCCEDBF6EF9A /* MatrixUserDirectoryPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5714E1B2DEE631DB6C209BC1 /* MatrixUserDirectoryPickerView.swift */; };
+		A9CCBF62507C1B789E7B4D12 /* XMPPLiveSmokeRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61B76AE4B7FE38684FD69E3F /* XMPPLiveSmokeRunner.swift */; };
 		BED1A8B28AD498D9473ACF25 /* MockMatrixService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1944705328595182A450E300 /* MockMatrixService.swift */; };
+		C0321B0AA2AF1594299CF647 /* MatrixProfileSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D419211152338C774C4E5C65 /* MatrixProfileSettingsView.swift */; };
 		CE7C59BA16D194F84A8F1B9E /* DeviceVerificationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A728389B09D31A93D5D10AF3 /* DeviceVerificationViewModel.swift */; };
 		D36BCC7661E588FF60E05B62 /* MatrixNewRoomView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E47471C8DE36B7FE656737F /* MatrixNewRoomView.swift */; };
+		D3EFAE1C80717ADAF66B9804 /* TrixOMEMOStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3B9CAC73BB4D740C2F79B3D /* TrixOMEMOStore.swift */; };
 		D4D5448BEB00C50FE1200B85 /* MatrixLimitationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7531B7FD31F543B78E5C0C7 /* MatrixLimitationsView.swift */; };
 		D7D2D4E2E82CFBD41923A1F3 /* MatrixClientConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC3FB0C0DAF30452F9A3BC0 /* MatrixClientConfiguration.swift */; };
 		D94575291CBE299E704B0BAB /* MatrixRoomListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C18C0C9013562CEEAD1B29C /* MatrixRoomListView.swift */; };
 		F2ED7FD339DB2EACA668FEA2 /* MatrixLimitationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7531B7FD31F543B78E5C0C7 /* MatrixLimitationsView.swift */; };
+		F3F274998D0C678FF257685F /* XMPPMartinService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 521137CC0E9C946883248810 /* XMPPMartinService.swift */; };
+		F7F6F95DCE2B1BFDE9153886 /* MatrixUserDirectoryPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5714E1B2DEE631DB6C209BC1 /* MatrixUserDirectoryPickerView.swift */; };
 		F9EED89BD979F652A771C274 /* MatrixModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2F1BA65FBB9F5DB455C6ABA /* MatrixModels.swift */; };
+		FAB773A92347919DEDDBC138 /* MatrixUserDirectorySearchViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A45E9EA8447D4749FDAF70 /* MatrixUserDirectorySearchViewModel.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		152545F011E983A56EC13722 /* MatrixRustSDKAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixRustSDKAdapter.swift; sourceTree = "<group>"; };
 		1944705328595182A450E300 /* MockMatrixService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockMatrixService.swift; sourceTree = "<group>"; };
+		21A45E9EA8447D4749FDAF70 /* MatrixUserDirectorySearchViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixUserDirectorySearchViewModel.swift; sourceTree = "<group>"; };
 		4DC3FB0C0DAF30452F9A3BC0 /* MatrixClientConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixClientConfiguration.swift; sourceTree = "<group>"; };
 		508D5313FCF6542829A02D00 /* TrixMatrixMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TrixMatrixMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		521137CC0E9C946883248810 /* XMPPMartinService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XMPPMartinService.swift; sourceTree = "<group>"; };
+		5360313E1D5D743FBD43BF62 /* TrixTimelineCacheStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixTimelineCacheStore.swift; sourceTree = "<group>"; };
+		5714E1B2DEE631DB6C209BC1 /* MatrixUserDirectoryPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixUserDirectoryPickerView.swift; sourceTree = "<group>"; };
 		5EEE9E9C023F5DC00ABC3623 /* MatrixMacRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixMacRootView.swift; sourceTree = "<group>"; };
+		5FC318B17D029526011DE13A /* MatrixProfileViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixProfileViewModel.swift; sourceTree = "<group>"; };
+		61B76AE4B7FE38684FD69E3F /* XMPPLiveSmokeRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XMPPLiveSmokeRunner.swift; sourceTree = "<group>"; };
 		632A14FCA910449A99CB3132 /* MatrixRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixRootView.swift; sourceTree = "<group>"; };
 		6C18C0C9013562CEEAD1B29C /* MatrixRoomListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixRoomListView.swift; sourceTree = "<group>"; };
 		72C3FB45F6FDCA6D503C3351 /* MatrixLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixLoginView.swift; sourceTree = "<group>"; };
@@ -74,8 +93,9 @@
 		A3994463199103D5DCCB714F /* MatrixTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixTimelineView.swift; sourceTree = "<group>"; };
 		A728389B09D31A93D5D10AF3 /* DeviceVerificationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceVerificationViewModel.swift; sourceTree = "<group>"; };
 		C2F1BA65FBB9F5DB455C6ABA /* MatrixModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixModels.swift; sourceTree = "<group>"; };
+		C3B9CAC73BB4D740C2F79B3D /* TrixOMEMOStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixOMEMOStore.swift; sourceTree = "<group>"; };
+		D419211152338C774C4E5C65 /* MatrixProfileSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixProfileSettingsView.swift; sourceTree = "<group>"; };
 		D7531B7FD31F543B78E5C0C7 /* MatrixLimitationsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixLimitationsView.swift; sourceTree = "<group>"; };
-		DCA53B0F5BE71CF78081C121 /* MatrixLiveSmokeRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixLiveSmokeRunner.swift; sourceTree = "<group>"; };
 		EEB0655E233DAB56B8623281 /* TimelineViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineViewModel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -84,7 +104,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				807543063C7A8EC6639E1D70 /* MatrixRustSDK in Frameworks */,
+				807543063C7A8EC6639E1D70 /* Martin in Frameworks */,
+				5BCD889F6C600AFC151E706F /* MartinOMEMO in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -92,7 +113,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				537309E828290708DF967EEB /* MatrixRustSDK in Frameworks */,
+				537309E828290708DF967EEB /* Martin in Frameworks */,
+				018963E0097AF7D5ADFE41C1 /* MartinOMEMO in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -141,7 +163,7 @@
 			children = (
 				7414A93ADB01BA6187C24360 /* MatrixAppModel.swift */,
 				4DC3FB0C0DAF30452F9A3BC0 /* MatrixClientConfiguration.swift */,
-				DCA53B0F5BE71CF78081C121 /* MatrixLiveSmokeRunner.swift */,
+				61B76AE4B7FE38684FD69E3F /* XMPPLiveSmokeRunner.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -163,6 +185,8 @@
 			isa = PBXGroup;
 			children = (
 				A728389B09D31A93D5D10AF3 /* DeviceVerificationViewModel.swift */,
+				5FC318B17D029526011DE13A /* MatrixProfileViewModel.swift */,
+				21A45E9EA8447D4749FDAF70 /* MatrixUserDirectorySearchViewModel.swift */,
 				8CB4DE535EF97BB0D0B809CB /* RoomListViewModel.swift */,
 				EEB0655E233DAB56B8623281 /* TimelineViewModel.swift */,
 			);
@@ -174,9 +198,11 @@
 			children = (
 				831A6F1FA84E9BEF5A5E3FD7 /* KeychainMatrixSessionStore.swift */,
 				9A6190472959AB9926C1E529 /* MatrixPasteboard.swift */,
-				152545F011E983A56EC13722 /* MatrixRustSDKAdapter.swift */,
 				8009529B31B45E9E0A2125F4 /* MatrixServiceProtocols.swift */,
 				1944705328595182A450E300 /* MockMatrixService.swift */,
+				C3B9CAC73BB4D740C2F79B3D /* TrixOMEMOStore.swift */,
+				5360313E1D5D743FBD43BF62 /* TrixTimelineCacheStore.swift */,
+				521137CC0E9C946883248810 /* XMPPMartinService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -187,10 +213,12 @@
 				D7531B7FD31F543B78E5C0C7 /* MatrixLimitationsView.swift */,
 				72C3FB45F6FDCA6D503C3351 /* MatrixLoginView.swift */,
 				8E47471C8DE36B7FE656737F /* MatrixNewRoomView.swift */,
+				D419211152338C774C4E5C65 /* MatrixProfileSettingsView.swift */,
 				6C18C0C9013562CEEAD1B29C /* MatrixRoomListView.swift */,
 				632A14FCA910449A99CB3132 /* MatrixRootView.swift */,
 				A3994463199103D5DCCB714F /* MatrixTimelineView.swift */,
 				894C910221D0CD5B95F0C6B1 /* MatrixUIPrimitives.swift */,
+				5714E1B2DEE631DB6C209BC1 /* MatrixUserDirectoryPickerView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -220,7 +248,8 @@
 			);
 			name = TrixMatrixiOS;
 			packageProductDependencies = (
-				DA55075EDDBDF755C1F0AA70 /* MatrixRustSDK */,
+				AF0FA74A744B2E98E20D8738 /* Martin */,
+				7BF98DD511834ED334A9B210 /* MartinOMEMO */,
 			);
 			productName = TrixMatrixiOS;
 			productReference = 8682262FABE4A23051A6161F /* TrixMatrixiOS.app */;
@@ -239,7 +268,8 @@
 			);
 			name = TrixMatrixMac;
 			packageProductDependencies = (
-				A2CA52A979635D4628DFE4D0 /* MatrixRustSDK */,
+				A2688357F9AFCAC4CD829C06 /* Martin */,
+				E747E1A70FF2F8B54BE3EA20 /* MartinOMEMO */,
 			);
 			productName = TrixMatrixMac;
 			productReference = 508D5313FCF6542829A02D00 /* TrixMatrixMac.app */;
@@ -274,7 +304,8 @@
 			mainGroup = 270641E14C6A7ABCC5C3969D;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				1F56A979979F342FC1F09463 /* XCRemoteSwiftPackageReference "matrix-rust-components-swift" */,
+				1089CF65FF55602059AC9BE6 /* XCRemoteSwiftPackageReference "Martin" */,
+				1CAAABECCC18B71A7A213F54 /* XCRemoteSwiftPackageReference "MartinOMEMO" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 25FE97757ABAA8D70924A157 /* Products */;
@@ -297,22 +328,28 @@
 				3F50C8F99C45346D75E88255 /* MatrixAppModel.swift in Sources */,
 				9DC61ADC1BDF43C957BB1A70 /* MatrixClientConfiguration.swift in Sources */,
 				F2ED7FD339DB2EACA668FEA2 /* MatrixLimitationsView.swift in Sources */,
-				646ED38194100D5107D0AD8D /* MatrixLiveSmokeRunner.swift in Sources */,
 				752F6D2418E15CD41405F54F /* MatrixLoginView.swift in Sources */,
 				188C03E7F4CF4914B1E32FA3 /* MatrixMacRootView.swift in Sources */,
 				2E9A9F2489C6C51CEC397E34 /* MatrixModels.swift in Sources */,
 				03C101F98756ECC874E5A3BB /* MatrixNewRoomView.swift in Sources */,
 				416EABCD0C587A59F475336D /* MatrixPasteboard.swift in Sources */,
+				27EDB3D051D4B1207655C141 /* MatrixProfileSettingsView.swift in Sources */,
+				131FC21259AD7F53F20E7C52 /* MatrixProfileViewModel.swift in Sources */,
 				D94575291CBE299E704B0BAB /* MatrixRoomListView.swift in Sources */,
 				59A16A64148E87EC05620941 /* MatrixRootView.swift in Sources */,
-				566C48B8FDC47A38721C859D /* MatrixRustSDKAdapter.swift in Sources */,
 				4E7FEC4719061BC1283D447C /* MatrixServiceProtocols.swift in Sources */,
 				1CB2DBE5F2BA7679A5E11FA0 /* MatrixTimelineView.swift in Sources */,
 				48222F75D75561C3C22CA69F /* MatrixUIPrimitives.swift in Sources */,
+				A179442085DDBCCEDBF6EF9A /* MatrixUserDirectoryPickerView.swift in Sources */,
+				FAB773A92347919DEDDBC138 /* MatrixUserDirectorySearchViewModel.swift in Sources */,
 				BED1A8B28AD498D9473ACF25 /* MockMatrixService.swift in Sources */,
 				8C6169B957900216C4377471 /* RoomListViewModel.swift in Sources */,
 				01DD84A806E5A3D66513361E /* TimelineViewModel.swift in Sources */,
 				6EE3D12CA0D4D43D6F4FE819 /* TrixMatrixMacApp.swift in Sources */,
+				D3EFAE1C80717ADAF66B9804 /* TrixOMEMOStore.swift in Sources */,
+				34553562AB89EF56C3ECFD76 /* TrixTimelineCacheStore.swift in Sources */,
+				A9CCBF62507C1B789E7B4D12 /* XMPPLiveSmokeRunner.swift in Sources */,
+				907B1EA79B4C0EF1F64763FD /* XMPPMartinService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -325,21 +362,27 @@
 				961996EF252E8B8B019FC565 /* MatrixAppModel.swift in Sources */,
 				D7D2D4E2E82CFBD41923A1F3 /* MatrixClientConfiguration.swift in Sources */,
 				D4D5448BEB00C50FE1200B85 /* MatrixLimitationsView.swift in Sources */,
-				7381AAE6D833620E65DD6B59 /* MatrixLiveSmokeRunner.swift in Sources */,
 				8FB1488F05EDACC73DFBA8F8 /* MatrixLoginView.swift in Sources */,
 				F9EED89BD979F652A771C274 /* MatrixModels.swift in Sources */,
 				D36BCC7661E588FF60E05B62 /* MatrixNewRoomView.swift in Sources */,
 				0A58FB3930E4A47D04EB0D32 /* MatrixPasteboard.swift in Sources */,
+				C0321B0AA2AF1594299CF647 /* MatrixProfileSettingsView.swift in Sources */,
+				01BBAA0E7289756B55DD7988 /* MatrixProfileViewModel.swift in Sources */,
 				7A0BB8C6FA185C51228D3210 /* MatrixRoomListView.swift in Sources */,
 				129D050CD8E0E36C143E4C91 /* MatrixRootView.swift in Sources */,
-				1A126D27830FDBAD15EB30F2 /* MatrixRustSDKAdapter.swift in Sources */,
 				68B55DEFF7F78A71B40CBA94 /* MatrixServiceProtocols.swift in Sources */,
 				8E422235178CC0EAD831BBD2 /* MatrixTimelineView.swift in Sources */,
 				2335DD0745FF9DB8B5C88FA3 /* MatrixUIPrimitives.swift in Sources */,
+				F7F6F95DCE2B1BFDE9153886 /* MatrixUserDirectoryPickerView.swift in Sources */,
+				94167CF0D71BCB8668840906 /* MatrixUserDirectorySearchViewModel.swift in Sources */,
 				8FF46CC7E0D56527216F46F1 /* MockMatrixService.swift in Sources */,
 				67CC33870704986A5164F9A2 /* RoomListViewModel.swift in Sources */,
 				40E18B91AD4DE99B3B3182DC /* TimelineViewModel.swift in Sources */,
 				80831FD7D8F0F88410A2B18B /* TrixMatrixiOSApp.swift in Sources */,
+				9CF86CCF23BF9B4B7989489F /* TrixOMEMOStore.swift in Sources */,
+				59E30FC7B539EF6E0F1DD295 /* TrixTimelineCacheStore.swift in Sources */,
+				23B642ECEC77A35A182C1774 /* XMPPLiveSmokeRunner.swift in Sources */,
+				F3F274998D0C678FF257685F /* XMPPMartinService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -596,26 +639,44 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		1F56A979979F342FC1F09463 /* XCRemoteSwiftPackageReference "matrix-rust-components-swift" */ = {
+		1089CF65FF55602059AC9BE6 /* XCRemoteSwiftPackageReference "Martin" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/matrix-org/matrix-rust-components-swift";
+			repositoryURL = "https://github.com/tigase/Martin";
 			requirement = {
 				kind = exactVersion;
-				version = 26.04.01;
+				version = 3.2.4;
+			};
+		};
+		1CAAABECCC18B71A7A213F54 /* XCRemoteSwiftPackageReference "MartinOMEMO" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/tigase/MartinOMEMO";
+			requirement = {
+				kind = exactVersion;
+				version = 2.2.3;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		A2CA52A979635D4628DFE4D0 /* MatrixRustSDK */ = {
+		7BF98DD511834ED334A9B210 /* MartinOMEMO */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 1F56A979979F342FC1F09463 /* XCRemoteSwiftPackageReference "matrix-rust-components-swift" */;
-			productName = MatrixRustSDK;
+			package = 1CAAABECCC18B71A7A213F54 /* XCRemoteSwiftPackageReference "MartinOMEMO" */;
+			productName = MartinOMEMO;
 		};
-		DA55075EDDBDF755C1F0AA70 /* MatrixRustSDK */ = {
+		A2688357F9AFCAC4CD829C06 /* Martin */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 1F56A979979F342FC1F09463 /* XCRemoteSwiftPackageReference "matrix-rust-components-swift" */;
-			productName = MatrixRustSDK;
+			package = 1089CF65FF55602059AC9BE6 /* XCRemoteSwiftPackageReference "Martin" */;
+			productName = Martin;
+		};
+		AF0FA74A744B2E98E20D8738 /* Martin */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1089CF65FF55602059AC9BE6 /* XCRemoteSwiftPackageReference "Martin" */;
+			productName = Martin;
+		};
+		E747E1A70FF2F8B54BE3EA20 /* MartinOMEMO */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1CAAABECCC18B71A7A213F54 /* XCRemoteSwiftPackageReference "MartinOMEMO" */;
+			productName = MartinOMEMO;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -50,6 +50,9 @@ protocol MatrixRoomBootstrapService: Sendable {
 protocol MatrixDeviceVerificationService: Sendable {
     func deviceVerificationStatus(session: MatrixSession) async throws -> MatrixDeviceVerificationStatus
     func deviceVerificationFlow(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow
+    func peerDeviceIdentities(userID: String, session: MatrixSession) async throws -> [MatrixPeerDeviceIdentity]
+    func refreshPeerDeviceIdentities(userID: String, session: MatrixSession) async throws -> [MatrixPeerDeviceIdentity]
+    func trustPeerDevice(userID: String, deviceID: String, session: MatrixSession) async throws -> [MatrixPeerDeviceIdentity]
     func requestDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow
     func acceptDeviceVerificationRequest(
         _ request: MatrixDeviceVerificationRequest,
@@ -63,4 +66,15 @@ protocol MatrixDeviceVerificationService: Sendable {
     func confirmRecoveryKey(_ recoveryKey: String, session: MatrixSession) async throws -> MatrixDeviceVerificationStatus
 }
 
-typealias MatrixService = MatrixAuthService & MatrixSyncService & MatrixRoomService & MatrixRoomMembershipService & MatrixRoomBootstrapService & MatrixDeviceVerificationService
+protocol MatrixUserDirectoryService: Sendable {
+    func searchUsers(
+        _ searchTerm: String,
+        limit: Int,
+        session: MatrixSession
+    ) async throws -> MatrixUserSearchResult
+    func profile(userID: String, session: MatrixSession) async throws -> MatrixUserProfile
+    func updateDisplayName(_ displayName: String, session: MatrixSession) async throws -> MatrixUserProfile
+    func updateProfile(_ update: MatrixUserProfileUpdate, session: MatrixSession) async throws -> MatrixUserProfile
+}
+
+typealias MatrixService = MatrixAuthService & MatrixSyncService & MatrixRoomService & MatrixRoomMembershipService & MatrixRoomBootstrapService & MatrixDeviceVerificationService & MatrixUserDirectoryService

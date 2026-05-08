@@ -2,36 +2,36 @@
 
 ## Threat Model
 
-The MVP is for a small private group on a self-hosted server. The main risks
-are:
+The MVP is for a small private group on a self-hosted server. The main risks are:
 
 - Server compromise or VPS operator access.
 - Account password compromise.
 - Device loss or malware on a client device.
-- Unverified new devices joining encrypted rooms.
-- Broken backups or unrecoverable encryption keys.
+- Unknown or untrusted devices receiving future encrypted messages.
+- Broken backups or unrecoverable OMEMO state.
 - Push notification metadata exposure.
-- Accidental public registration.
+- Accidental public registration or accidental federation.
 
 The MVP does not try to protect against compromised endpoints. If a phone or Mac
 is compromised, decrypted messages on that device are exposed.
 
 ## What E2EE Covers
 
-Matrix encrypted rooms protect message content from the homeserver when the
-client and room are correctly configured. Conduit should store encrypted event
-payloads for encrypted rooms, not plaintext message bodies.
+OMEMO should protect product DM and group message content from the XMPP server
+when the client, room, and device state are correctly configured. The server may
+store archived stanzas and uploaded media, but those payloads must be encrypted
+before they reach the server.
 
-Trix must rely on Matrix SDK E2EE. Do not implement custom cryptography or
-manual key handling.
+Trix must rely on a reviewed OMEMO implementation. Do not implement custom
+cryptography, custom key exchange, or manual key handling in the app.
 
 ## Metadata Still Visible To The Server
 
-Even with encrypted rooms, the homeserver can still observe metadata, including:
+Even with OMEMO, the server can still observe metadata, including:
 
-- Account IDs and device IDs.
-- Room membership.
-- Event timing and event sizes.
+- Account JIDs and resource/device activity.
+- MUC room membership.
+- Message timing and approximate sizes.
 - IP addresses and user agents.
 - Media upload/download timing and sizes.
 - Push gateway interactions if push is enabled.
@@ -39,58 +39,82 @@ Even with encrypted rooms, the homeserver can still observe metadata, including:
 This is acceptable for a tiny trusted private server, but it should be clearly
 understood.
 
-## Device Verification Risk
+## Federation Risk
 
-If new devices are trusted silently, an attacker with account credentials can
-add a device and receive future encrypted room keys according to SDK and room
-policy. The MVP may ship without a full verification UX only if the limitation
-is visible and tracked.
+The MVP is private and non-federated. Accidental server-to-server federation would
+expand the trust and abuse surface beyond the product scope.
 
-The app should eventually support Matrix device verification flows instead of
-inventing its own trust model.
+Production deployment must:
 
-## Key Backup And Recovery Risk
+- disable the server-to-server module;
+- keep port `5269` closed;
+- avoid publishing server-to-server DNS records;
+- verify from outside the host that federation is unreachable.
 
-Key backup improves recovery from lost devices, but it introduces another
-sensitive secret and UX path. A weak recovery phrase, unclear backup state, or
-server-side recovery misunderstanding can lead to either message loss or
-unexpected access.
+## Device Trust Risk
 
-The first pass uses Matrix SDK recovery APIs only. When no verified session is
-available for interactive device verification, the Apple UI may set up recovery
-with `enableRecovery` or confirm an existing recovery key with
-`recoverAndFixBackup`. It must not call `resetIdentity`, silently trust devices,
-or store recovery secrets in the repo or logs.
+If new devices are trusted silently, an attacker with account credentials can add
+a device and receive future encrypted messages. The MVP may ship with limited
+trust UX only if the limitation is visible and tracked.
+
+The app should surface OMEMO device identity and trust state. It must not mark all
+devices trusted locally just to make encrypted sending easier.
+
+## Group E2EE Risk
+
+OMEMO group chat depends on correctly mapping room occupants to real JIDs and
+encrypting to the devices of every current member. Anonymous or public MUC rooms
+do not satisfy the Trix group-chat requirement.
+
+Trix group rooms must be members-only and non-anonymous. If the client cannot
+retrieve the member list or device bundles required for OMEMO, sending must be
+blocked instead of falling back to plaintext.
+
+## Attachment Risk
+
+Uploaded files must be encrypted before upload. The server may store encrypted
+media blobs and metadata, but it must not receive plaintext file contents from
+product chat flows.
+
+Do not log filenames, local paths, media keys, decrypted media bytes, or
+decrypted previews in production paths.
+
+## Backup Risk
+
+Server backups include account metadata, rosters, MUC state, SQL-backed MAM
+archives, and uploaded media blobs. Product message and attachment payloads are
+expected to be OMEMO/client-encrypted before they reach the server, but backups
+still expose metadata and encrypted ciphertext history to whoever can read them.
+
+Production backups must be root-only, must not include TLS private keys,
+bootstrap passwords, `.env`, shell history, APNs credentials, or OMEMO local
+device secrets, and must be periodically restored into a clean instance before
+being treated as reliable.
 
 ## Push Notification Risk
 
-Push notifications should not include decrypted message bodies. If APNs is
-added through a Matrix push gateway, the payload should be wake-up or minimal
-metadata only, with message text resolved locally after sync.
+Push notifications should not include decrypted message bodies. The APNs payload
+should be a wake-up or minimal metadata signal, with message text resolved locally
+after sync and decryption.
 
 APNs keys, gateway tokens, and signing credentials must never be committed.
 
-## Registration Risk
+## Registration And Provisioning Risk
 
-Conduit registration should be token-based for bootstrap and disabled after the
-friend group is created. The registration token in the repo is a placeholder and
-must be changed before any reachable deployment.
+Public registration is out of scope. Users should be created by the operator
+through the Trix control plane, a server admin API, or a documented one-off admin
+command. Any temporary registration window must be short-lived and closed after
+use.
 
-The first created Conduit user is expected to be the admin. Create that user
-immediately after first server start, then disable registration if no more
-accounts are needed.
-
-After bootstrap, new private users should be added through short registration
-windows only: generate a fresh token, enable Conduit registration, let the
-intended user register through a Matrix client that supports registration
-tokens, then disable registration and rotate the token again. The Trix Apple
-client is login-only for the MVP and should not receive or store registration
-tokens after an account has been created.
+The control plane must not expose secrets in logs and must not create accounts
+with committed default passwords.
 
 ## Logging Rules
 
-- Do not log access tokens.
 - Do not log passwords.
+- Do not log auth tokens or SASL material.
+- Do not log OMEMO private keys, bundles with private material, or trust secrets.
 - Do not log decrypted message bodies in production paths.
-- Do not log recovery secrets or registration tokens.
+- Do not log decrypted attachment contents.
+- Do not log APNs tokens or admin credentials.
 - Keep debug logs local and scrubbed.

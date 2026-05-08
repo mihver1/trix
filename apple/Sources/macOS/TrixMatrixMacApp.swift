@@ -5,7 +5,7 @@ struct TrixMatrixMacApp: App {
     @StateObject private var model = MatrixAppModel.makeDefault()
 
     init() {
-        MatrixLiveSmokeRunner.installIfRequested()
+        XMPPLiveSmokeRunner.installIfRequested()
     }
 
     var body: some Scene {

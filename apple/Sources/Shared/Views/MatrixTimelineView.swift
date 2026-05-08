@@ -13,6 +13,10 @@ struct MatrixTimelineView: View {
     @ObservedObject private var timelineViewModel: TimelineViewModel
     @State private var draft = ""
     @State private var isShowingFileImporter = false
+    @State private var isShowingPeerDevices = false
+    @State private var isLoadingPeerDevices = false
+    @State private var peerDevices: [MatrixPeerDeviceIdentity] = []
+    @State private var peerDeviceError: String?
     @State private var fileImportError: String?
 
     init(model: MatrixAppModel, room: MatrixRoomSummary) {
@@ -82,6 +86,26 @@ struct MatrixTimelineView: View {
                     .padding(.bottom, 8)
             }
 
+            if !canSendEncrypted {
+                HStack(spacing: 10) {
+                    MatrixBannerView(
+                        text: "OMEMO is required for Trix chats. Trust a contact device before sending.",
+                        systemImage: "lock.slash.fill",
+                        tint: .orange
+                    )
+
+                    Button {
+                        showPeerDevices()
+                    } label: {
+                        Image(systemName: "checkmark.shield")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Review OMEMO devices")
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            }
+
             HStack(spacing: 10) {
                 Button {
                     fileImportError = nil
@@ -97,10 +121,10 @@ struct MatrixTimelineView: View {
                     }
                 }
                 .buttonStyle(.borderless)
-                .disabled(timelineViewModel.isSendingAttachment)
-                .help("Attach file")
+                .disabled(timelineViewModel.isSendingAttachment || !canSendEncryptedAttachments)
+                .help("Encrypted attachments")
 
-                TextField("Message", text: $draft, axis: .vertical)
+                TextField(canSendEncrypted ? "Message" : "OMEMO required", text: $draft, axis: .vertical)
                     .lineLimit(1...5)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
@@ -126,7 +150,7 @@ struct MatrixTimelineView: View {
                     }
                 }
                 .buttonStyle(.borderless)
-                .disabled(timelineViewModel.isSending || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(timelineViewModel.isSending || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !canSendEncrypted)
                 .help("Send message")
             }
             .padding(.horizontal, 12)
@@ -158,9 +182,36 @@ struct MatrixTimelineView: View {
                 MatrixAttachmentPreviewView(attachment: attachment)
             }
         }
+        .sheet(isPresented: $isShowingPeerDevices) {
+            MatrixPeerDeviceTrustView(
+                roomName: room.name,
+                devices: peerDevices,
+                isLoading: isLoadingPeerDevices,
+                errorMessage: peerDeviceError,
+                refresh: {
+                    Task {
+                        await loadPeerDevices(refresh: true)
+                    }
+                },
+                trust: { device in
+                    Task {
+                        await trustPeerDevice(device)
+                    }
+                }
+            )
+        }
         .task(id: room.id) {
             await model.selectRoom(room)
+            await loadPeerDevices(refresh: false)
         }
+    }
+
+    private var canSendEncrypted: Bool {
+        room.isEncrypted || peerDevices.contains(where: \.canSendEncrypted)
+    }
+
+    private var canSendEncryptedAttachments: Bool {
+        false
     }
 
     private var header: some View {
@@ -180,7 +231,7 @@ struct MatrixTimelineView: View {
                         .font(.headline)
                         .lineLimit(1)
 
-                    MatrixRoomSecurityMark(isEncrypted: room.isEncrypted, size: 20)
+                    MatrixRoomSecurityMark(isEncrypted: canSendEncrypted, size: 20)
                 }
                 Text(room.subtitle)
                     .font(.subheadline)
@@ -190,6 +241,15 @@ struct MatrixTimelineView: View {
 
             Spacer()
 
+            if room.kind == .direct {
+                Button {
+                    showPeerDevices()
+                } label: {
+                    Image(systemName: "checkmark.shield")
+                }
+                .help("OMEMO devices")
+            }
+
             Button {
                 Task {
                     await model.loadTimeline(roomID: room.id)
@@ -198,6 +258,13 @@ struct MatrixTimelineView: View {
                 Image(systemName: "arrow.clockwise")
             }
             .help("Refresh timeline")
+        }
+    }
+
+    private func showPeerDevices() {
+        isShowingPeerDevices = true
+        Task {
+            await loadPeerDevices(refresh: true)
         }
     }
 
@@ -251,6 +318,144 @@ struct MatrixTimelineView: View {
         #else
         return try MatrixAttachmentUpload(fileURL: url)
         #endif
+    }
+
+    private func loadPeerDevices(refresh: Bool) async {
+        guard room.kind == .direct else {
+            return
+        }
+
+        isLoadingPeerDevices = true
+        peerDeviceError = nil
+        defer { isLoadingPeerDevices = false }
+
+        do {
+            peerDevices = try await model.peerDeviceIdentities(for: room.id, refresh: refresh)
+        } catch {
+            peerDeviceError = error.matrixUserFacingMessage
+        }
+    }
+
+    private func trustPeerDevice(_ device: MatrixPeerDeviceIdentity) async {
+        isLoadingPeerDevices = true
+        peerDeviceError = nil
+        defer { isLoadingPeerDevices = false }
+
+        do {
+            peerDevices = try await model.trustPeerDevice(userID: device.userID, deviceID: device.deviceID)
+        } catch {
+            peerDeviceError = error.matrixUserFacingMessage
+        }
+    }
+}
+
+private struct MatrixPeerDeviceTrustView: View {
+    let roomName: String
+    let devices: [MatrixPeerDeviceIdentity]
+    let isLoading: Bool
+    let errorMessage: String?
+    let refresh: () -> Void
+    let trust: (MatrixPeerDeviceIdentity) -> Void
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 16) {
+                if isLoading && devices.isEmpty {
+                    ProgressView("Loading OMEMO devices")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if devices.isEmpty {
+                    MatrixEmptyStateView(
+                        title: "No OMEMO Devices",
+                        systemImage: "checkmark.shield",
+                        message: "No published OMEMO devices were found for this contact yet."
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    Button {
+                        refresh()
+                    } label: {
+                        Label("Refresh Devices", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isLoading)
+                    .frame(maxWidth: .infinity)
+                } else {
+                    ScrollView {
+                        VStack(spacing: 10) {
+                            ForEach(devices) { device in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Label(device.trustState.label, systemImage: device.canSendEncrypted ? "checkmark.shield.fill" : "exclamationmark.shield")
+                                            .font(.headline)
+                                            .foregroundStyle(device.canSendEncrypted ? .green : .orange)
+
+                                        Spacer()
+
+                                        Text(device.deviceID)
+                                            .font(.caption.monospaced())
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    Text(device.shortFingerprint)
+                                        .font(.caption.monospaced())
+                                        .foregroundStyle(.primary)
+                                        .textSelection(.enabled)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+
+                                    if !device.canSendEncrypted && device.isActive {
+                                        Button {
+                                            trust(device)
+                                        } label: {
+                                            Label("Trust Device", systemImage: "checkmark.shield")
+                                        }
+                                        .buttonStyle(.borderedProminent)
+                                        .disabled(isLoading)
+                                    }
+                                }
+                                .padding(12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(MatrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .stroke(MatrixDesign.surfaceStroke, lineWidth: 1)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if let errorMessage {
+                    MatrixBannerView(
+                        text: errorMessage,
+                        systemImage: "exclamationmark.triangle",
+                        tint: .red
+                    )
+                }
+
+                Text("Trust only after comparing this fingerprint with the contact over an independent channel.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(20)
+            .navigationTitle("Trust \(roomName)")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        refresh()
+                    } label: {
+                        if isLoading {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                    .disabled(isLoading)
+                    .help("Refresh devices")
+                }
+            }
+        }
+        .matrixDialogSurface(minWidth: 520, minHeight: 360)
     }
 }
 
@@ -593,9 +798,9 @@ private extension View {
     @ViewBuilder
     func matrixAttachmentPreviewFrame() -> some View {
         #if os(macOS)
-        self.frame(minWidth: 420, minHeight: 320)
+        self.matrixDialogSurface(minWidth: 420, minHeight: 320)
         #else
-        self
+        self.matrixDialogSurface()
         #endif
     }
 }

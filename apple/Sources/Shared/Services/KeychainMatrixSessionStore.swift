@@ -46,7 +46,9 @@ final class KeychainMatrixSessionStore: MatrixSessionStore {
 
         var item = baseQuery()
         item[kSecValueData as String] = data
+#if os(iOS)
         item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+#endif
 
         let status = SecItemAdd(item as CFDictionary, nil)
         guard status == errSecSuccess else {

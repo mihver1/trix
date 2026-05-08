@@ -151,7 +151,7 @@ private struct MatrixMacTimelineColumn: View {
             ContentUnavailableView(
                 "No Room Selected",
                 systemImage: "bubble.left.and.bubble.right",
-                description: Text("Select a Matrix room from the sidebar.")
+                description: Text("Select a Trix chat from the sidebar.")
             )
             .navigationTitle("Messages")
         }
@@ -162,7 +162,7 @@ private struct MatrixMacRoomContextView: View {
     @ObservedObject var model: MatrixAppModel
     @ObservedObject private var timelineViewModel: TimelineViewModel
     let room: MatrixRoomSummary?
-    @State private var inviteeUserID = ""
+    @State private var selectedInvitees: [MatrixUserProfile] = []
     @State private var members: [MatrixRoomMember] = []
     @State private var commonRooms: [MatrixRoomSummary] = []
     @State private var membersRoomID: String?
@@ -285,19 +285,21 @@ private struct MatrixMacRoomContextView: View {
                     }
                 }
 
-                HStack(spacing: 8) {
-                    TextField("@user:trix.selfhost.ru", text: $inviteeUserID)
-                        .textFieldStyle(.roundedBorder)
+                MatrixUserDirectoryPickerView(
+                    model: model,
+                    selection: $selectedInvitees,
+                    mode: .single,
+                    excludedUserIDs: memberUserIDs(for: room)
+                )
 
-                    Button {
-                        Task {
-                            await inviteUser(to: room)
-                        }
-                    } label: {
-                        Label("Add", systemImage: "person.badge.plus")
+                Button {
+                    Task {
+                        await inviteUser(to: room)
                     }
-                    .disabled(inviteeUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isUpdatingMembership)
+                } label: {
+                    Label("Add", systemImage: "person.badge.plus")
                 }
+                .disabled(selectedInvitees.isEmpty || isUpdatingMembership)
 
                 if let membershipErrorMessage {
                     Text(membershipErrorMessage)
@@ -411,6 +413,7 @@ private struct MatrixMacRoomContextView: View {
         membersRoomID = room.id
         members = []
         commonRooms = []
+        selectedInvitees = []
         membershipErrorMessage = nil
         isLoadingMembers = true
         defer {
@@ -462,8 +465,7 @@ private struct MatrixMacRoomContextView: View {
     }
 
     private func inviteUser(to room: MatrixRoomSummary) async {
-        let normalizedUserID = inviteeUserID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedUserID.isEmpty else {
+        guard let selectedInvitee = selectedInvitees.first else {
             return
         }
 
@@ -474,8 +476,8 @@ private struct MatrixMacRoomContextView: View {
         }
 
         do {
-            try await model.inviteUser(normalizedUserID, to: room.id)
-            inviteeUserID = ""
+            try await model.inviteUser(selectedInvitee.userID, to: room.id)
+            selectedInvitees = []
             await loadInspector(room: room)
         } catch {
             membershipErrorMessage = error.matrixUserFacingMessage
@@ -509,6 +511,21 @@ private struct MatrixMacRoomContextView: View {
         }
 
         return room.kind == .direct ? "Direct message" : "Group chat"
+    }
+
+    private func memberUserIDs(for room: MatrixRoomSummary) -> Set<String> {
+        var userIDs = Set<String>()
+        if let currentUserID = model.account?.userID ?? model.session?.userID {
+            userIDs.insert(currentUserID)
+        }
+
+        if membersRoomID == room.id {
+            for member in members where member.membership.isActive {
+                userIDs.insert(member.userID)
+            }
+        }
+
+        return userIDs
     }
 
     private func participants(for room: MatrixRoomSummary) -> [MatrixMacParticipant] {
@@ -889,6 +906,7 @@ struct MatrixMacSettingsView: View {
         switch activeTab {
         case .account:
             accountSettings
+            profileSettings
         case .security:
             securitySettings
         case .mvp:
@@ -901,7 +919,6 @@ struct MatrixMacSettingsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 if let account = model.account {
                     LabeledContent("User", value: account.userID)
-                    LabeledContent("Display name", value: account.displayName)
                     LabeledContent("Device", value: account.deviceID)
                 } else {
                     ContentUnavailableView(
@@ -912,7 +929,7 @@ struct MatrixMacSettingsView: View {
                 }
 
                 if let homeserverURL = model.session?.homeserverURL.absoluteString {
-                    LabeledContent("Homeserver", value: homeserverURL)
+                    LabeledContent("Server", value: homeserverURL)
                 }
 
                 Divider()
@@ -939,6 +956,13 @@ struct MatrixMacSettingsView: View {
                 .buttonStyle(.bordered)
             }
             .padding(.vertical, 4)
+        }
+    }
+
+    private var profileSettings: some View {
+        GroupBox("Profile") {
+            MatrixProfileSettingsView(model: model)
+                .padding(.vertical, 4)
         }
     }
 

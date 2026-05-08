@@ -2,7 +2,8 @@ import SwiftUI
 
 struct MatrixLimitationsView: View {
     private let pendingItems = [
-        "verified-state validation",
+        "group OMEMO",
+        "encrypted attachments",
         "push notifications",
         "timeline restart refresh",
         "TestFlight packaging",
@@ -48,14 +49,14 @@ struct MatrixDeviceVerificationNoticeView: View {
 
     private var message: String {
         guard let status else {
-            return "Device verification is not production-ready yet. Private rooms use Matrix SDK E2EE, but new devices are not silently trusted."
+            return "Device verification is not production-ready yet. Trix requires OMEMO, and new devices are not silently trusted."
         }
 
         if status.state == .verified {
-            return "Matrix SDK reports this device as verified. New devices still require explicit confirmation; the app does not silently trust them."
+            return "OMEMO local identity is available. New devices still require explicit confirmation; the app does not silently trust them."
         }
 
-        return "\(status.explanation) The app does not silently trust Matrix devices."
+        return "\(status.explanation) The app does not silently trust OMEMO devices."
     }
 }
 
@@ -102,7 +103,7 @@ struct MatrixDeviceVerificationStatusView: View {
 
                 if status.lacksEligibleVerificationDevice {
                     Label {
-                        Text("No verified session is available for interactive SAS. Use Matrix recovery if it is already set up, or set up recovery for this account.")
+                        Text("No trusted session is available for interactive SAS. Recovery and account-level verification are still blocked in this client slice.")
                             .fixedSize(horizontal: false, vertical: true)
                     } icon: {
                         Image(systemName: "key.horizontal")
