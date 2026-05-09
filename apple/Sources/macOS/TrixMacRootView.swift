@@ -1,7 +1,7 @@
 import SwiftUI
 
-struct MatrixMacRootView: View {
-    @ObservedObject var model: MatrixAppModel
+struct TrixMacRootView: View {
+    @ObservedObject var model: TrixAppModel
 
     var body: some View {
         Group {
@@ -9,9 +9,9 @@ struct MatrixMacRootView: View {
                 ProgressView("Restoring session")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if model.isAuthenticated {
-                MatrixMacWorkspaceView(model: model)
+                TrixMacWorkspaceView(model: model)
             } else {
-                MatrixLoginView(model: model)
+                TrixLoginView(model: model)
                     .frame(minWidth: 520, minHeight: 520)
             }
         }
@@ -21,21 +21,21 @@ struct MatrixMacRootView: View {
     }
 }
 
-private struct MatrixMacWorkspaceView: View {
-    @ObservedObject var model: MatrixAppModel
+private struct TrixMacWorkspaceView: View {
+    @ObservedObject var model: TrixAppModel
     @Environment(\.scenePhase) private var scenePhase
     @State private var isShowingNewRoom = false
 
     var body: some View {
         NavigationSplitView {
-            MatrixMacRoomListView(model: model)
+            TrixMacRoomListView(model: model)
                 .navigationTitle("Trix")
                 .navigationSplitViewColumnWidth(min: 250, ideal: 300, max: 360)
         } content: {
-            MatrixMacTimelineColumn(model: model)
+            TrixMacTimelineColumn(model: model)
                 .navigationSplitViewColumnWidth(min: 480, ideal: 640)
         } detail: {
-            MatrixMacRoomContextView(model: model, room: model.selectedRoom)
+            TrixMacRoomContextView(model: model, room: model.selectedRoom)
                 .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 380)
         }
         .toolbar {
@@ -54,7 +54,7 @@ private struct MatrixMacWorkspaceView: View {
             }
         }
         .sheet(isPresented: $isShowingNewRoom) {
-            MatrixNewRoomView(model: model)
+            TrixNewRoomView(model: model)
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else {
@@ -66,11 +66,11 @@ private struct MatrixMacWorkspaceView: View {
     }
 }
 
-private struct MatrixMacRoomListView: View {
-    @ObservedObject var model: MatrixAppModel
+private struct TrixMacRoomListView: View {
+    @ObservedObject var model: TrixAppModel
     @ObservedObject private var roomListViewModel: RoomListViewModel
 
-    init(model: MatrixAppModel) {
+    init(model: TrixAppModel) {
         self.model = model
         self._roomListViewModel = ObservedObject(wrappedValue: model.roomListViewModel)
     }
@@ -86,7 +86,7 @@ private struct MatrixMacRoomListView: View {
                     )
                 } else {
                     ForEach(roomListViewModel.rooms) { room in
-                        MatrixMacRoomRow(room: room)
+                        TrixMacRoomRow(room: room)
                             .tag(room.id as String?)
                             .contentShape(Rectangle())
                             .onTapGesture {
@@ -110,7 +110,7 @@ private struct MatrixMacRoomListView: View {
             if !roomListViewModel.invitations.isEmpty {
                 Section("Invites") {
                     ForEach(roomListViewModel.invitations) { invitation in
-                        MatrixMacInviteRow(
+                        TrixMacInviteRow(
                             invitation: invitation,
                             isWorking: roomListViewModel.invitationActionRoomID == invitation.id,
                             accept: {
@@ -141,12 +141,12 @@ private struct MatrixMacRoomListView: View {
     }
 }
 
-private struct MatrixMacTimelineColumn: View {
-    @ObservedObject var model: MatrixAppModel
+private struct TrixMacTimelineColumn: View {
+    @ObservedObject var model: TrixAppModel
 
     var body: some View {
         if let selectedRoom = model.selectedRoom {
-            MatrixTimelineView(model: model, room: selectedRoom)
+            TrixTimelineView(model: model, room: selectedRoom)
         } else {
             ContentUnavailableView(
                 "No Room Selected",
@@ -158,20 +158,20 @@ private struct MatrixMacTimelineColumn: View {
     }
 }
 
-private struct MatrixMacRoomContextView: View {
-    @ObservedObject var model: MatrixAppModel
+private struct TrixMacRoomContextView: View {
+    @ObservedObject var model: TrixAppModel
     @ObservedObject private var timelineViewModel: TimelineViewModel
-    let room: MatrixRoomSummary?
-    @State private var selectedInvitees: [MatrixUserProfile] = []
-    @State private var members: [MatrixRoomMember] = []
-    @State private var commonRooms: [MatrixRoomSummary] = []
+    let room: TrixRoomSummary?
+    @State private var selectedInvitees: [TrixUserProfile] = []
+    @State private var members: [TrixRoomMember] = []
+    @State private var commonRooms: [TrixRoomSummary] = []
     @State private var membersRoomID: String?
     @State private var membershipErrorMessage: String?
     @State private var isLoadingMembers = false
     @State private var isLoadingCommonRooms = false
     @State private var isUpdatingMembership = false
 
-    init(model: MatrixAppModel, room: MatrixRoomSummary?) {
+    init(model: TrixAppModel, room: TrixRoomSummary?) {
         self.model = model
         self.room = room
         self._timelineViewModel = ObservedObject(wrappedValue: model.timelineViewModel)
@@ -208,7 +208,7 @@ private struct MatrixMacRoomContextView: View {
                 .padding(18)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .background(MatrixDesign.screenBackground)
+            .background(TrixDesign.screenBackground)
             .navigationTitle(room.kind == .direct ? "Contact" : "Room")
             .task(id: room.id) {
                 await loadInspector(room: room)
@@ -223,9 +223,9 @@ private struct MatrixMacRoomContextView: View {
         }
     }
 
-    private func roomHeader(_ room: MatrixRoomSummary) -> some View {
+    private func roomHeader(_ room: TrixRoomSummary) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            MatrixAvatarView(
+            TrixAvatarView(
                 title: room.name,
                 systemImage: room.kind.systemImage,
                 size: 54,
@@ -244,12 +244,12 @@ private struct MatrixMacRoomContextView: View {
                     .textSelection(.enabled)
 
                 HStack(spacing: 6) {
-                    MatrixStatusPill(
+                    TrixStatusPill(
                         title: room.kind == .direct ? "DM" : "Group",
                         systemImage: room.kind.systemImage,
                         tint: room.kind.tint
                     )
-                    MatrixStatusPill(
+                    TrixStatusPill(
                         title: room.isEncrypted ? "Encrypted" : "Unencrypted",
                         systemImage: room.isEncrypted ? "lock.fill" : "lock.open.fill",
                         tint: room.isEncrypted ? .green : .orange
@@ -259,7 +259,7 @@ private struct MatrixMacRoomContextView: View {
         }
     }
 
-    private func groupPeopleSection(_ room: MatrixRoomSummary) -> some View {
+    private func groupPeopleSection(_ room: TrixRoomSummary) -> some View {
         inspectorSection(title: "People", systemImage: "person.2") {
             VStack(alignment: .leading, spacing: 10) {
                 if isLoadingMembers {
@@ -268,7 +268,7 @@ private struct MatrixMacRoomContextView: View {
                 }
 
                 ForEach(participants(for: room)) { participant in
-                    MatrixMacParticipantRow(participant: participant) {
+                    TrixMacParticipantRow(participant: participant) {
                         if participant.canRemove {
                             Button(role: .destructive) {
                                 Task {
@@ -285,7 +285,7 @@ private struct MatrixMacRoomContextView: View {
                     }
                 }
 
-                MatrixUserDirectoryPickerView(
+                TrixUserDirectoryPickerView(
                     model: model,
                     selection: $selectedInvitees,
                     mode: .single,
@@ -311,11 +311,11 @@ private struct MatrixMacRoomContextView: View {
         }
     }
 
-    private func directContactSection(_ room: MatrixRoomSummary) -> some View {
+    private func directContactSection(_ room: TrixRoomSummary) -> some View {
         inspectorSection(title: "Contact", systemImage: "person.crop.circle") {
             VStack(alignment: .leading, spacing: 10) {
                 if let participant = counterparty(for: room) {
-                    MatrixMacParticipantRow(participant: participant)
+                    TrixMacParticipantRow(participant: participant)
                 } else {
                     Text("No contact details in the loaded timeline.")
                         .font(.callout)
@@ -347,7 +347,7 @@ private struct MatrixMacRoomContextView: View {
                 } else {
                     ForEach(commonRooms) { room in
                         HStack(spacing: 10) {
-                            MatrixRoomKindMark(kind: room.kind, size: 28)
+                            TrixRoomKindMark(kind: room.kind, size: 28)
 
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(room.name)
@@ -365,30 +365,30 @@ private struct MatrixMacRoomContextView: View {
         }
     }
 
-    private func sharedMediaSection(_ items: [MatrixTimelineItem]) -> some View {
+    private func sharedMediaSection(_ items: [TrixTimelineItem]) -> some View {
         inspectorSection(title: "Shared Media", systemImage: "photo.on.rectangle") {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(items) { item in
                     if let attachment = item.attachment {
-                        MatrixMacSharedMediaRow(item: item, attachment: attachment)
+                        TrixMacSharedMediaRow(item: item, attachment: attachment)
                     }
                 }
             }
         }
     }
 
-    private func roomMetadata(_ room: MatrixRoomSummary) -> some View {
+    private func roomMetadata(_ room: TrixRoomSummary) -> some View {
         inspectorSection(title: "Metadata", systemImage: "info.circle") {
             VStack(alignment: .leading, spacing: 9) {
-                MatrixMacMetadataRow(title: "Room ID", value: room.id, isMonospaced: true)
-                MatrixMacMetadataRow(
+                TrixMacMetadataRow(title: "Room ID", value: room.id, isMonospaced: true)
+                TrixMacMetadataRow(
                     title: "Last Activity",
                     value: room.lastActivityAt.formatted(date: .abbreviated, time: .shortened)
                 )
-                MatrixMacMetadataRow(title: "Unread", value: "\(room.unreadCount)")
+                TrixMacMetadataRow(title: "Unread", value: "\(room.unreadCount)")
 
                 if !room.lastMessagePreview.isEmpty {
-                    MatrixMacMetadataRow(title: "Latest", value: room.lastMessagePreview)
+                    TrixMacMetadataRow(title: "Latest", value: room.lastMessagePreview)
                 }
             }
         }
@@ -409,7 +409,7 @@ private struct MatrixMacRoomContextView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func loadInspector(room: MatrixRoomSummary) async {
+    private func loadInspector(room: TrixRoomSummary) async {
         membersRoomID = room.id
         members = []
         commonRooms = []
@@ -433,7 +433,7 @@ private struct MatrixMacRoomContextView: View {
                 await loadCommonRooms(with: counterparty.userID, excluding: room.id)
             }
         } catch {
-            membershipErrorMessage = error.matrixUserFacingMessage
+            membershipErrorMessage = error.trixUserFacingMessage
         }
     }
 
@@ -443,7 +443,7 @@ private struct MatrixMacRoomContextView: View {
             isLoadingCommonRooms = false
         }
 
-        var matches: [MatrixRoomSummary] = []
+        var matches: [TrixRoomSummary] = []
         for candidate in model.roomListViewModel.rooms where candidate.id != roomID && candidate.kind == .group {
             do {
                 let candidateMembers = try await model.members(roomID: candidate.id)
@@ -464,7 +464,7 @@ private struct MatrixMacRoomContextView: View {
         commonRooms = matches
     }
 
-    private func inviteUser(to room: MatrixRoomSummary) async {
+    private func inviteUser(to room: TrixRoomSummary) async {
         guard let selectedInvitee = selectedInvitees.first else {
             return
         }
@@ -480,11 +480,11 @@ private struct MatrixMacRoomContextView: View {
             selectedInvitees = []
             await loadInspector(room: room)
         } catch {
-            membershipErrorMessage = error.matrixUserFacingMessage
+            membershipErrorMessage = error.trixUserFacingMessage
         }
     }
 
-    private func removeUser(_ userID: String, from room: MatrixRoomSummary) async {
+    private func removeUser(_ userID: String, from room: TrixRoomSummary) async {
         isUpdatingMembership = true
         membershipErrorMessage = nil
         defer {
@@ -495,11 +495,11 @@ private struct MatrixMacRoomContextView: View {
             try await model.removeUser(userID, from: room.id)
             await loadInspector(room: room)
         } catch {
-            membershipErrorMessage = error.matrixUserFacingMessage
+            membershipErrorMessage = error.trixUserFacingMessage
         }
     }
 
-    private func conversationSubtitle(for room: MatrixRoomSummary) -> String {
+    private func conversationSubtitle(for room: TrixRoomSummary) -> String {
         if room.kind == .direct,
            let participant = counterparty(for: room) {
             return participant.userID
@@ -513,7 +513,7 @@ private struct MatrixMacRoomContextView: View {
         return room.kind == .direct ? "Direct message" : "Group chat"
     }
 
-    private func memberUserIDs(for room: MatrixRoomSummary) -> Set<String> {
+    private func memberUserIDs(for room: TrixRoomSummary) -> Set<String> {
         var userIDs = Set<String>()
         if let currentUserID = model.account?.userID ?? model.session?.userID {
             userIDs.insert(currentUserID)
@@ -528,12 +528,12 @@ private struct MatrixMacRoomContextView: View {
         return userIDs
     }
 
-    private func participants(for room: MatrixRoomSummary) -> [MatrixMacParticipant] {
+    private func participants(for room: TrixRoomSummary) -> [TrixMacParticipant] {
         let currentUserID = model.account?.userID ?? model.session?.userID
         let activeMembers = membersRoomID == room.id ? members.filter(\.membership.isActive) : []
         if !activeMembers.isEmpty {
             return activeMembers.map { member in
-                MatrixMacParticipant(
+                TrixMacParticipant(
                     userID: member.userID,
                     displayName: member.displayName,
                     membership: member.membership,
@@ -542,10 +542,10 @@ private struct MatrixMacRoomContextView: View {
             }
         }
 
-        var participants: [MatrixMacParticipant] = []
+        var participants: [TrixMacParticipant] = []
         if let currentUserID {
             participants.append(
-                MatrixMacParticipant(
+                TrixMacParticipant(
                     userID: currentUserID,
                     displayName: model.account?.displayName,
                     membership: .joined,
@@ -560,7 +560,7 @@ private struct MatrixMacRoomContextView: View {
             }
 
             participants.append(
-                MatrixMacParticipant(
+                TrixMacParticipant(
                     userID: item.sender,
                     displayName: nil,
                     membership: nil,
@@ -573,16 +573,16 @@ private struct MatrixMacRoomContextView: View {
     }
 
     private func counterparty(
-        for room: MatrixRoomSummary,
-        members loadedMembers: [MatrixRoomMember]? = nil
-    ) -> MatrixMacParticipant? {
+        for room: TrixRoomSummary,
+        members loadedMembers: [TrixRoomMember]? = nil
+    ) -> TrixMacParticipant? {
         let currentUserID = model.account?.userID ?? model.session?.userID
         let sourceMembers = loadedMembers ?? (membersRoomID == room.id ? members : [])
 
         if let member = sourceMembers.first(where: { member in
             member.membership.isActive && member.userID.caseInsensitiveCompare(currentUserID ?? "") != .orderedSame
         }) {
-            return MatrixMacParticipant(
+            return TrixMacParticipant(
                 userID: member.userID,
                 displayName: member.displayName,
                 membership: member.membership,
@@ -593,7 +593,7 @@ private struct MatrixMacRoomContextView: View {
         if let item = timelineItems(for: room).first(where: { item in
             item.sender.caseInsensitiveCompare(currentUserID ?? "") != .orderedSame
         }) {
-            return MatrixMacParticipant(
+            return TrixMacParticipant(
                 userID: item.sender,
                 displayName: nil,
                 membership: nil,
@@ -602,7 +602,7 @@ private struct MatrixMacRoomContextView: View {
         }
 
         if room.kind == .direct {
-            return MatrixMacParticipant(
+            return TrixMacParticipant(
                 userID: room.id,
                 displayName: room.name,
                 membership: nil,
@@ -613,11 +613,11 @@ private struct MatrixMacRoomContextView: View {
         return nil
     }
 
-    private func sharedMediaItems(for room: MatrixRoomSummary) -> [MatrixTimelineItem] {
+    private func sharedMediaItems(for room: TrixRoomSummary) -> [TrixTimelineItem] {
         timelineItems(for: room).filter { $0.attachment != nil }
     }
 
-    private func timelineItems(for room: MatrixRoomSummary) -> [MatrixTimelineItem] {
+    private func timelineItems(for room: TrixRoomSummary) -> [TrixTimelineItem] {
         guard timelineViewModel.roomID == room.id else {
             return []
         }
@@ -626,10 +626,10 @@ private struct MatrixMacRoomContextView: View {
     }
 }
 
-private struct MatrixMacParticipant: Identifiable {
+private struct TrixMacParticipant: Identifiable {
     let userID: String
     let displayName: String?
-    let membership: MatrixRoomMembership?
+    let membership: TrixRoomMembership?
     let isCurrentUser: Bool
 
     var id: String {
@@ -663,12 +663,12 @@ private struct MatrixMacParticipant: Identifiable {
     }
 }
 
-private struct MatrixMacParticipantRow<Action: View>: View {
-    let participant: MatrixMacParticipant
+private struct TrixMacParticipantRow<Action: View>: View {
+    let participant: TrixMacParticipant
     @ViewBuilder let action: () -> Action
 
     init(
-        participant: MatrixMacParticipant,
+        participant: TrixMacParticipant,
         @ViewBuilder action: @escaping () -> Action = { EmptyView() }
     ) {
         self.participant = participant
@@ -677,11 +677,11 @@ private struct MatrixMacParticipantRow<Action: View>: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            MatrixAvatarView(
+            TrixAvatarView(
                 title: participant.title,
                 systemImage: "person.fill",
                 size: 34,
-                tint: participant.isCurrentUser ? .secondary : MatrixDesign.accent
+                tint: participant.isCurrentUser ? .secondary : TrixDesign.accent
             )
 
             VStack(alignment: .leading, spacing: 2) {
@@ -710,17 +710,17 @@ private struct MatrixMacParticipantRow<Action: View>: View {
     }
 }
 
-private struct MatrixMacSharedMediaRow: View {
-    let item: MatrixTimelineItem
-    let attachment: MatrixTimelineAttachment
+private struct TrixMacSharedMediaRow: View {
+    let item: TrixTimelineItem
+    let attachment: TrixTimelineAttachment
 
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: attachment.isImage ? "photo" : "doc")
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(MatrixDesign.accent)
+                .foregroundStyle(TrixDesign.accent)
                 .frame(width: 32, height: 32)
-                .background(MatrixDesign.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(TrixDesign.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(attachment.filename)
@@ -737,7 +737,7 @@ private struct MatrixMacSharedMediaRow: View {
     }
 
     private var mediaSubtitle: String {
-        let sender = MatrixMacParticipant(
+        let sender = TrixMacParticipant(
             userID: item.sender,
             displayName: nil,
             membership: nil,
@@ -748,7 +748,7 @@ private struct MatrixMacSharedMediaRow: View {
     }
 }
 
-private struct MatrixMacMetadataRow: View {
+private struct TrixMacMetadataRow: View {
     let title: String
     let value: String
     var isMonospaced = false
@@ -768,19 +768,19 @@ private struct MatrixMacMetadataRow: View {
     }
 }
 
-private struct MatrixMacRoomRow: View {
-    let room: MatrixRoomSummary
+private struct TrixMacRoomRow: View {
+    let room: TrixRoomSummary
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            MatrixRoomKindMark(kind: room.kind, size: 28)
+            TrixRoomKindMark(kind: room.kind, size: 28)
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(room.name)
                         .font(.headline)
                         .lineLimit(1)
-                    MatrixRoomSecurityMark(isEncrypted: room.isEncrypted, size: 20)
+                    TrixRoomSecurityMark(isEncrypted: room.isEncrypted, size: 20)
                 }
 
                 Text(room.subtitle)
@@ -808,8 +808,8 @@ private struct MatrixMacRoomRow: View {
     }
 }
 
-private struct MatrixMacInviteRow: View {
-    let invitation: MatrixRoomInvite
+private struct TrixMacInviteRow: View {
+    let invitation: TrixRoomInvite
     let isWorking: Bool
     let accept: () -> Void
     let decline: () -> Void
@@ -817,14 +817,14 @@ private struct MatrixMacInviteRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
-                MatrixRoomKindMark(kind: invitation.kind, size: 28)
+                TrixRoomKindMark(kind: invitation.kind, size: 28)
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
                         Text(invitation.title)
                             .font(.headline)
                             .lineLimit(1)
-                        MatrixRoomSecurityMark(isEncrypted: invitation.isEncrypted, size: 20)
+                        TrixRoomSecurityMark(isEncrypted: invitation.isEncrypted, size: 20)
                     }
 
                     Text(invitation.subtitle)
@@ -863,19 +863,19 @@ private struct MatrixMacInviteRow: View {
     }
 }
 
-struct MatrixMacSettingsView: View {
-    @ObservedObject var model: MatrixAppModel
+struct TrixMacSettingsView: View {
+    @ObservedObject var model: TrixAppModel
     @ObservedObject private var deviceVerificationViewModel: DeviceVerificationViewModel
-    @State private var activeTab: MatrixMacSettingsTab = .account
+    @State private var activeTab: TrixMacSettingsTab = .account
 
-    init(model: MatrixAppModel) {
+    init(model: TrixAppModel) {
         self.model = model
         self._deviceVerificationViewModel = ObservedObject(wrappedValue: model.deviceVerificationViewModel)
     }
 
     var body: some View {
         NavigationSplitView {
-            List(MatrixMacSettingsTab.allCases, selection: $activeTab) { tab in
+            List(TrixMacSettingsTab.allCases, selection: $activeTab) { tab in
                 Label(tab.title, systemImage: tab.systemImage)
                     .tag(tab)
             }
@@ -910,7 +910,7 @@ struct MatrixMacSettingsView: View {
         case .security:
             securitySettings
         case .mvp:
-            MatrixLimitationsView()
+            TrixLimitationsView()
         }
     }
 
@@ -961,7 +961,7 @@ struct MatrixMacSettingsView: View {
 
     private var profileSettings: some View {
         GroupBox("Profile") {
-            MatrixProfileSettingsView(model: model)
+            TrixProfileSettingsView(model: model)
                 .padding(.vertical, 4)
         }
     }
@@ -969,7 +969,7 @@ struct MatrixMacSettingsView: View {
     private var securitySettings: some View {
         GroupBox("Device Verification And Recovery") {
             VStack(alignment: .leading, spacing: 12) {
-                MatrixDeviceVerificationStatusView(
+                TrixDeviceVerificationStatusView(
                     viewModel: deviceVerificationViewModel,
                     requestVerification: {
                         Task {
@@ -1031,7 +1031,7 @@ struct MatrixMacSettingsView: View {
     }
 }
 
-private enum MatrixMacSettingsTab: String, CaseIterable, Identifiable {
+private enum TrixMacSettingsTab: String, CaseIterable, Identifiable {
     case account
     case security
     case mvp

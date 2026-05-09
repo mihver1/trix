@@ -39,9 +39,10 @@ targets:
         PRODUCT_NAME: Trix
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Automatic
-        CODE_SIGN_ENTITLEMENTS: TrixMatrixiOS.entitlements
+        CODE_SIGN_ENTITLEMENTS: TrixiOS.entitlements
         DEVELOPMENT_TEAM: HGY33KYKQ2
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIBackgroundModes: remote-notification
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         TARGETED_DEVICE_FAMILY: "1,2"
       configs:
@@ -68,7 +69,7 @@ targets:
         PRODUCT_NAME: Trix
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Automatic
-        CODE_SIGN_ENTITLEMENTS: TrixMatrixMac.entitlements
+        CODE_SIGN_ENTITLEMENTS: TrixMac.entitlements
         DEVELOPMENT_TEAM: HGY33KYKQ2
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.social-networking

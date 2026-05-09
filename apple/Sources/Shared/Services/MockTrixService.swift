@@ -1,20 +1,21 @@
 import Foundation
 
-actor MockMatrixService: MatrixService {
-    private var roomSummaries: [MatrixRoomSummary]
-    private var roomInvites: [MatrixRoomInvite]
-    private var membersByRoomID: [String: [MatrixRoomMember]]
-    private var timelines: [String: [MatrixTimelineItem]]
-    private var verificationState: MatrixDeviceVerificationState
-    private var verificationFlow: MatrixDeviceVerificationFlow
-    private var recoveryState: MatrixRecoveryState
-    private var backupState: MatrixBackupState
+actor MockTrixService: TrixService {
+    private var roomSummaries: [TrixRoomSummary]
+    private var roomInvites: [TrixRoomInvite]
+    private var membersByRoomID: [String: [TrixRoomMember]]
+    private var timelines: [String: [TrixTimelineItem]]
+    private var verificationState: TrixDeviceVerificationState
+    private var verificationFlow: TrixDeviceVerificationFlow
+    private var recoveryState: TrixRecoveryState
+    private var backupState: TrixBackupState
     private var backupExistsOnServer: Bool
     private var attachmentDataBySourceJSON: [String: Data]
-    private var profilesByUserID: [String: MatrixUserProfile]
+    private var profilesByUserID: [String: TrixUserProfile]
+    private var typingUserIDsByRoomID: [String: [String]]
 
     init(now: Date = Date()) {
-        let directRoom = MatrixRoomSummary(
+        let directRoom = TrixRoomSummary(
             id: "!dm-alice:trix.selfhost.ru",
             name: "Alice",
             kind: .direct,
@@ -23,7 +24,7 @@ actor MockMatrixService: MatrixService {
             lastMessagePreview: "Mock DM preview",
             lastActivityAt: now.addingTimeInterval(-240)
         )
-        let groupRoom = MatrixRoomSummary(
+        let groupRoom = TrixRoomSummary(
             id: "!friends:trix.selfhost.ru",
             name: "Friends",
             kind: .group,
@@ -32,7 +33,7 @@ actor MockMatrixService: MatrixService {
             lastMessagePreview: "Weekend plans",
             lastActivityAt: now.addingTimeInterval(-1_800)
         )
-        let invite = MatrixRoomInvite(
+        let invite = TrixRoomInvite(
             id: "!invite-carol:trix.selfhost.ru",
             roomName: "Carol",
             kind: .direct,
@@ -46,13 +47,13 @@ actor MockMatrixService: MatrixService {
         self.roomInvites = [invite]
         self.membersByRoomID = [
             directRoom.id: [
-                MatrixRoomMember(userID: "@me:trix.selfhost.ru", displayName: "Me", membership: .joined),
-                MatrixRoomMember(userID: "@alice:trix.selfhost.ru", displayName: "Alice", membership: .joined),
+                TrixRoomMember(userID: "@me:trix.selfhost.ru", displayName: "Me", membership: .joined),
+                TrixRoomMember(userID: "@alice:trix.selfhost.ru", displayName: "Alice", membership: .joined),
             ],
             groupRoom.id: [
-                MatrixRoomMember(userID: "@me:trix.selfhost.ru", displayName: "Me", membership: .joined),
-                MatrixRoomMember(userID: "@alice:trix.selfhost.ru", displayName: "Alice", membership: .joined),
-                MatrixRoomMember(userID: "@bob:trix.selfhost.ru", displayName: "Bob", membership: .joined),
+                TrixRoomMember(userID: "@me:trix.selfhost.ru", displayName: "Me", membership: .joined),
+                TrixRoomMember(userID: "@alice:trix.selfhost.ru", displayName: "Alice", membership: .joined),
+                TrixRoomMember(userID: "@bob:trix.selfhost.ru", displayName: "Bob", membership: .joined),
             ],
         ]
         self.verificationState = .unverified
@@ -61,18 +62,19 @@ actor MockMatrixService: MatrixService {
         self.backupState = .unknown
         self.backupExistsOnServer = false
         self.attachmentDataBySourceJSON = [
-            "mock://attachment/brief": Data("Mock Matrix attachment bytes".utf8),
+            "mock://attachment/brief": Data("Mock Trix attachment bytes".utf8),
         ]
+        self.typingUserIDsByRoomID = [:]
         self.profilesByUserID = [
-            "@me:trix.selfhost.ru": MatrixUserProfile(userID: "@me:trix.selfhost.ru", displayName: "Me", avatarURL: nil),
-            "@alice:trix.selfhost.ru": MatrixUserProfile(userID: "@alice:trix.selfhost.ru", displayName: "Alice", avatarURL: nil),
-            "@bob:trix.selfhost.ru": MatrixUserProfile(userID: "@bob:trix.selfhost.ru", displayName: "Bob", avatarURL: nil),
-            "@carol:trix.selfhost.ru": MatrixUserProfile(userID: "@carol:trix.selfhost.ru", displayName: "Carol", avatarURL: nil),
-            "@dora:trix.selfhost.ru": MatrixUserProfile(userID: "@dora:trix.selfhost.ru", displayName: "Dora", avatarURL: nil),
+            "@me:trix.selfhost.ru": TrixUserProfile(userID: "@me:trix.selfhost.ru", displayName: "Me", avatarURL: nil),
+            "@alice:trix.selfhost.ru": TrixUserProfile(userID: "@alice:trix.selfhost.ru", displayName: "Alice", avatarURL: nil),
+            "@bob:trix.selfhost.ru": TrixUserProfile(userID: "@bob:trix.selfhost.ru", displayName: "Bob", avatarURL: nil),
+            "@carol:trix.selfhost.ru": TrixUserProfile(userID: "@carol:trix.selfhost.ru", displayName: "Carol", avatarURL: nil),
+            "@dora:trix.selfhost.ru": TrixUserProfile(userID: "@dora:trix.selfhost.ru", displayName: "Dora", avatarURL: nil),
         ]
         self.timelines = [
             directRoom.id: [
-                MatrixTimelineItem(
+                TrixTimelineItem(
                     id: "$mock-dm-1",
                     roomID: directRoom.id,
                     sender: "@alice:trix.selfhost.ru",
@@ -81,23 +83,24 @@ actor MockMatrixService: MatrixService {
                     isLocalEcho: false,
                     attachment: nil
                 ),
-                MatrixTimelineItem(
+                TrixTimelineItem(
                     id: "$mock-dm-2",
                     roomID: directRoom.id,
                     sender: "@me:trix.selfhost.ru",
                     timestamp: now.addingTimeInterval(-240),
                     body: "The session and room UI are ready for adapter wiring.",
                     isLocalEcho: true,
-                    attachment: nil
+                    attachment: nil,
+                    deliveryState: .delivered
                 ),
-                MatrixTimelineItem(
+                TrixTimelineItem(
                     id: "$mock-dm-3",
                     roomID: directRoom.id,
                     sender: "@alice:trix.selfhost.ru",
                     timestamp: now.addingTimeInterval(-120),
                     body: "release-brief.pdf",
                     isLocalEcho: false,
-                    attachment: MatrixTimelineAttachment(
+                    attachment: TrixTimelineAttachment(
                         kind: .file,
                         filename: "release-brief.pdf",
                         mimeType: "application/pdf",
@@ -107,16 +110,16 @@ actor MockMatrixService: MatrixService {
                 ),
             ],
             groupRoom.id: [
-                MatrixTimelineItem(
+                TrixTimelineItem(
                     id: "$mock-group-1",
                     roomID: groupRoom.id,
                     sender: "@bob:trix.selfhost.ru",
                     timestamp: now.addingTimeInterval(-2_400),
-                    body: "Group rooms are normal Matrix rooms in this model.",
+                    body: "Group rooms are normal Trix rooms in this model.",
                     isLocalEcho: false,
                     attachment: nil
                 ),
-                MatrixTimelineItem(
+                TrixTimelineItem(
                     id: "$mock-group-2",
                     roomID: groupRoom.id,
                     sender: "@alice:trix.selfhost.ru",
@@ -129,22 +132,22 @@ actor MockMatrixService: MatrixService {
         ]
     }
 
-    func login(userID: String, password: String, serverURL: URL) async throws -> MatrixSession {
+    func login(userID: String, password: String, serverURL: URL) async throws -> TrixSession {
         let normalizedUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard normalizedUserID.hasPrefix("@"),
-              normalizedUserID.contains(":\(MatrixClientConfiguration.serverName)"),
+              normalizedUserID.contains(":\(TrixClientConfiguration.serverName)"),
               !password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw MatrixClientError.invalidCredentials
+            throw TrixClientError.invalidCredentials
         }
 
-        let profile = MatrixUserProfile(
+        let profile = TrixUserProfile(
             userID: normalizedUserID,
             displayName: displayName(from: normalizedUserID),
             avatarURL: nil
         )
         profilesByUserID[normalizedUserID.lowercased()] = profile
 
-        return MatrixSession(
+        return TrixSession(
             userID: normalizedUserID,
             deviceID: "MOCK-\(UUID().uuidString.prefix(8))",
             homeserverURL: serverURL,
@@ -156,26 +159,43 @@ actor MockMatrixService: MatrixService {
         )
     }
 
-    func restore(session: MatrixSession) async throws -> MatrixAccount {
+    func restore(session: TrixSession) async throws -> TrixAccount {
         let profile = profilesByUserID[session.userID.lowercased()]
-        return MatrixAccount(
+        return TrixAccount(
             userID: session.userID,
             displayName: profile?.displayName ?? displayName(from: session.userID),
             deviceID: session.deviceID
         )
     }
 
-    func logout(session: MatrixSession) async throws {
+    func logout(session: TrixSession) async throws {
+    }
+
+    func registerAPNsToken(_ token: TrixAPNsDeviceToken, session: TrixSession) async throws -> TrixPushRegistration {
+        TrixPushRegistration(
+            environment: token.environment,
+            provider: token.environment.xmppPushProvider,
+            gatewayJID: "push.trix.selfhost.ru",
+            node: "mock-\(session.deviceID)",
+            registeredAt: Date()
+        )
+    }
+
+    func unregisterAPNsToken(
+        _ token: TrixAPNsDeviceToken,
+        registration: TrixPushRegistration?,
+        session: TrixSession
+    ) async throws {
     }
 
     func searchUsers(
         _ searchTerm: String,
         limit: Int,
-        session: MatrixSession
-    ) async throws -> MatrixUserSearchResult {
+        session: TrixSession
+    ) async throws -> TrixUserSearchResult {
         let query = searchTerm.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
-            return MatrixUserSearchResult(users: [], limited: false)
+            return TrixUserSearchResult(users: [], limited: false)
         }
 
         let ownUserID = session.userID.lowercased()
@@ -190,25 +210,25 @@ actor MockMatrixService: MatrixService {
             }
 
         let resultLimit = max(1, limit)
-        return MatrixUserSearchResult(
+        return TrixUserSearchResult(
             users: Array(matches.prefix(resultLimit)),
             limited: matches.count > resultLimit
         )
     }
 
-    func profile(userID: String, session: MatrixSession) async throws -> MatrixUserProfile {
-        let normalizedUserID = try Self.normalizedMatrixUserID(userID)
-        return profilesByUserID[normalizedUserID.lowercased()] ?? MatrixUserProfile(
+    func profile(userID: String, session: TrixSession) async throws -> TrixUserProfile {
+        let normalizedUserID = try Self.normalizedTrixUserID(userID)
+        return profilesByUserID[normalizedUserID.lowercased()] ?? TrixUserProfile(
             userID: normalizedUserID,
             displayName: displayName(from: normalizedUserID),
             avatarURL: nil
         )
     }
 
-    func updateDisplayName(_ displayName: String, session: MatrixSession) async throws -> MatrixUserProfile {
+    func updateDisplayName(_ displayName: String, session: TrixSession) async throws -> TrixUserProfile {
         let normalizedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let existing = profilesByUserID[session.userID.lowercased()]
-        let profile = MatrixUserProfile(
+        let profile = TrixUserProfile(
             userID: session.userID,
             displayName: normalizedDisplayName.isEmpty ? nil : normalizedDisplayName,
             avatarURL: existing?.avatarURL,
@@ -218,9 +238,9 @@ actor MockMatrixService: MatrixService {
         return profile
     }
 
-    func updateProfile(_ update: MatrixUserProfileUpdate, session: MatrixSession) async throws -> MatrixUserProfile {
+    func updateProfile(_ update: TrixUserProfileUpdate, session: TrixSession) async throws -> TrixUserProfile {
         let existing = profilesByUserID[session.userID.lowercased()]
-        let profile = MatrixUserProfile(
+        let profile = TrixUserProfile(
             userID: session.userID,
             displayName: update.displayName.isEmpty ? nil : update.displayName,
             avatarURL: existing?.avatarURL,
@@ -230,14 +250,14 @@ actor MockMatrixService: MatrixService {
         return profile
     }
 
-    func rooms(session: MatrixSession) async throws -> [MatrixRoomSummary] {
+    func rooms(session: TrixSession) async throws -> [TrixRoomSummary] {
         roomSummaries.sorted { lhs, rhs in
             lhs.lastActivityAt > rhs.lastActivityAt
         }
     }
 
-    func deviceVerificationStatus(session: MatrixSession) async throws -> MatrixDeviceVerificationStatus {
-        MatrixDeviceVerificationStatus(
+    func deviceVerificationStatus(session: TrixSession) async throws -> TrixDeviceVerificationStatus {
+        TrixDeviceVerificationStatus(
             userID: session.userID,
             deviceID: session.deviceID,
             state: verificationState,
@@ -252,24 +272,24 @@ actor MockMatrixService: MatrixService {
         )
     }
 
-    func deviceVerificationFlow(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
+    func deviceVerificationFlow(session: TrixSession) async throws -> TrixDeviceVerificationFlow {
         verificationFlow
     }
 
-    func peerDeviceIdentities(userID: String, session: MatrixSession) async throws -> [MatrixPeerDeviceIdentity] {
+    func peerDeviceIdentities(userID: String, session: TrixSession) async throws -> [TrixPeerDeviceIdentity] {
         [mockPeerDevice(for: userID)]
     }
 
-    func refreshPeerDeviceIdentities(userID: String, session: MatrixSession) async throws -> [MatrixPeerDeviceIdentity] {
+    func refreshPeerDeviceIdentities(userID: String, session: TrixSession) async throws -> [TrixPeerDeviceIdentity] {
         [mockPeerDevice(for: userID)]
     }
 
-    func trustPeerDevice(userID: String, deviceID: String, session: MatrixSession) async throws -> [MatrixPeerDeviceIdentity] {
+    func trustPeerDevice(userID: String, deviceID: String, session: TrixSession) async throws -> [TrixPeerDeviceIdentity] {
         [mockPeerDevice(for: userID, deviceID: deviceID)]
     }
 
-    func requestDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
-        verificationFlow = MatrixDeviceVerificationFlow(
+    func requestDeviceVerification(session: TrixSession) async throws -> TrixDeviceVerificationFlow {
+        verificationFlow = TrixDeviceVerificationFlow(
             phase: .requestSent,
             request: nil,
             challenge: nil,
@@ -279,10 +299,10 @@ actor MockMatrixService: MatrixService {
     }
 
     func acceptDeviceVerificationRequest(
-        _ request: MatrixDeviceVerificationRequest,
-        session: MatrixSession
-    ) async throws -> MatrixDeviceVerificationFlow {
-        verificationFlow = MatrixDeviceVerificationFlow(
+        _ request: TrixDeviceVerificationRequest,
+        session: TrixSession
+    ) async throws -> TrixDeviceVerificationFlow {
+        verificationFlow = TrixDeviceVerificationFlow(
             phase: .accepted,
             request: request,
             challenge: nil,
@@ -291,8 +311,8 @@ actor MockMatrixService: MatrixService {
         return verificationFlow
     }
 
-    func startSasDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
-        verificationFlow = MatrixDeviceVerificationFlow(
+    func startSasDeviceVerification(session: TrixSession) async throws -> TrixDeviceVerificationFlow {
+        verificationFlow = TrixDeviceVerificationFlow(
             phase: .challengeReceived,
             request: verificationFlow.request,
             challenge: .decimals(["1812", "5821", "9197"]),
@@ -301,8 +321,8 @@ actor MockMatrixService: MatrixService {
         return verificationFlow
     }
 
-    func approveDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
-        verificationFlow = MatrixDeviceVerificationFlow(
+    func approveDeviceVerification(session: TrixSession) async throws -> TrixDeviceVerificationFlow {
+        verificationFlow = TrixDeviceVerificationFlow(
             phase: .finished,
             request: nil,
             challenge: nil,
@@ -311,8 +331,8 @@ actor MockMatrixService: MatrixService {
         return verificationFlow
     }
 
-    func declineDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
-        verificationFlow = MatrixDeviceVerificationFlow(
+    func declineDeviceVerification(session: TrixSession) async throws -> TrixDeviceVerificationFlow {
+        verificationFlow = TrixDeviceVerificationFlow(
             phase: .cancelled,
             request: nil,
             challenge: nil,
@@ -321,8 +341,8 @@ actor MockMatrixService: MatrixService {
         return verificationFlow
     }
 
-    func cancelDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
-        verificationFlow = MatrixDeviceVerificationFlow(
+    func cancelDeviceVerification(session: TrixSession) async throws -> TrixDeviceVerificationFlow {
+        verificationFlow = TrixDeviceVerificationFlow(
             phase: .cancelled,
             request: nil,
             challenge: nil,
@@ -331,9 +351,9 @@ actor MockMatrixService: MatrixService {
         return verificationFlow
     }
 
-    func setUpRecovery(session: MatrixSession) async throws -> String {
+    func setUpRecovery(session: TrixSession) async throws -> String {
         guard recoveryState == .disabled else {
-            throw MatrixClientError.recoverySetupUnavailable
+            throw TrixClientError.recoverySetupUnavailable
         }
 
         recoveryState = .enabled
@@ -342,12 +362,12 @@ actor MockMatrixService: MatrixService {
         return "MOCK-RECOVERY-KEY"
     }
 
-    func confirmRecoveryKey(_ recoveryKey: String, session: MatrixSession) async throws -> MatrixDeviceVerificationStatus {
+    func confirmRecoveryKey(_ recoveryKey: String, session: TrixSession) async throws -> TrixDeviceVerificationStatus {
         guard !recoveryKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw MatrixClientError.recoveryKeyRequired
+            throw TrixClientError.recoveryKeyRequired
         }
         guard recoveryState == .enabled || recoveryState == .incomplete else {
-            throw MatrixClientError.recoveryKeyConfirmationUnavailable
+            throw TrixClientError.recoveryKeyConfirmationUnavailable
         }
 
         recoveryState = .enabled
@@ -356,26 +376,27 @@ actor MockMatrixService: MatrixService {
         return try await deviceVerificationStatus(session: session)
     }
 
-    func timeline(roomID: String, session: MatrixSession) async throws -> [MatrixTimelineItem] {
+    func timeline(roomID: String, session: TrixSession) async throws -> [TrixTimelineItem] {
         timelines[roomID, default: []].sorted { lhs, rhs in
             lhs.timestamp < rhs.timestamp
         }
     }
 
-    func sendText(_ text: String, roomID: String, session: MatrixSession) async throws -> MatrixTimelineItem {
+    func sendText(_ text: String, roomID: String, session: TrixSession) async throws -> TrixTimelineItem {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else {
-            throw MatrixClientError.emptyMessage
+            throw TrixClientError.emptyMessage
         }
 
-        let item = MatrixTimelineItem(
+        let item = TrixTimelineItem(
             id: "$local-\(UUID().uuidString)",
             roomID: roomID,
             sender: session.userID,
             timestamp: Date(),
             body: body,
             isLocalEcho: true,
-            attachment: nil
+            attachment: nil,
+            deliveryState: .sent
         )
 
         timelines[roomID, default: []].append(item)
@@ -383,28 +404,45 @@ actor MockMatrixService: MatrixService {
         return item
     }
 
-    func sendAttachment(_ attachment: MatrixAttachmentUpload, roomID: String, session: MatrixSession) async throws -> MatrixTimelineItem {
+    func attachmentSendAvailability(roomID: String, session: TrixSession) async throws -> TrixAttachmentSendAvailability {
+        guard let room = roomSummaries.first(where: { $0.id == roomID }) else {
+            return .blocked(roomID: roomID, reason: .unavailable)
+        }
+
+        let recipients = membersByRoomID[roomID, default: []]
+            .map(\.userID)
+            .filter { $0.caseInsensitiveCompare(session.userID) != .orderedSame }
+            .sorted()
+        if room.kind == .group, recipients.isEmpty {
+            return .blocked(roomID: roomID, reason: .groupRecipientSetUnavailable)
+        }
+
+        return .allowed(roomID: roomID, recipientUserIDs: recipients)
+    }
+
+    func sendAttachment(_ attachment: TrixAttachmentUpload, roomID: String, session: TrixSession) async throws -> TrixTimelineItem {
         guard !attachment.data.isEmpty else {
-            throw MatrixClientError.emptyAttachment
+            throw TrixClientError.emptyAttachment
         }
 
         let sourceJSON = "mock://attachment/\(UUID().uuidString)"
         attachmentDataBySourceJSON[sourceJSON] = attachment.data
 
-        let item = MatrixTimelineItem(
+        let item = TrixTimelineItem(
             id: "$local-attachment-\(UUID().uuidString)",
             roomID: roomID,
             sender: session.userID,
             timestamp: Date(),
             body: attachment.filename,
             isLocalEcho: true,
-            attachment: MatrixTimelineAttachment(
+            attachment: TrixTimelineAttachment(
                 kind: attachment.isImage ? .image : .file,
                 filename: attachment.filename,
                 mimeType: attachment.mimeType,
                 sizeBytes: attachment.data.count,
                 sourceJSON: sourceJSON
-            )
+            ),
+            deliveryState: .sent
         )
 
         timelines[roomID, default: []].append(item)
@@ -412,36 +450,51 @@ actor MockMatrixService: MatrixService {
         return item
     }
 
-    func downloadAttachment(_ attachment: MatrixTimelineAttachment, session: MatrixSession) async throws -> MatrixAttachmentDownload {
+    func downloadAttachment(_ attachment: TrixTimelineAttachment, session: TrixSession) async throws -> TrixAttachmentDownload {
         guard let sourceJSON = attachment.sourceJSON else {
-            throw MatrixClientError.attachmentDownloadUnavailable
+            throw TrixClientError.attachmentDownloadUnavailable
         }
 
-        return MatrixAttachmentDownload(
+        return TrixAttachmentDownload(
             filename: attachment.filename,
             mimeType: attachment.mimeType,
             data: attachmentDataBySourceJSON[sourceJSON] ?? Data("Mock attachment: \(attachment.filename)".utf8)
         )
     }
 
-    func members(roomID: String, session: MatrixSession) async throws -> [MatrixRoomMember] {
+    func typingState(roomID: String, session: TrixSession) async throws -> TrixRoomTypingState {
+        TrixRoomTypingState(
+            roomID: roomID,
+            typingUserIDs: typingUserIDsByRoomID[roomID] ?? [],
+            updatedAt: Date()
+        )
+    }
+
+    func sendTypingState(_ state: TrixTypingState, roomID: String, session: TrixSession) async throws {
+        switch state {
+        case .idle, .paused, .composing:
+            typingUserIDsByRoomID[roomID] = []
+        }
+    }
+
+    func members(roomID: String, session: TrixSession) async throws -> [TrixRoomMember] {
         guard roomSummaries.contains(where: { $0.id == roomID }) else {
-            throw MatrixClientError.roomUnavailable
+            throw TrixClientError.roomUnavailable
         }
 
         return membersByRoomID[roomID, default: []]
     }
 
-    func inviteUser(_ userID: String, roomID: String, session: MatrixSession) async throws {
+    func inviteUser(_ userID: String, roomID: String, session: TrixSession) async throws {
         guard roomSummaries.contains(where: { $0.id == roomID }) else {
-            throw MatrixClientError.roomUnavailable
+            throw TrixClientError.roomUnavailable
         }
 
-        let normalizedUserID = try Self.normalizedMatrixUserID(userID)
+        let normalizedUserID = try Self.normalizedTrixUserID(userID)
         var members = membersByRoomID[roomID, default: []]
         members.removeAll { $0.userID.lowercased() == normalizedUserID.lowercased() }
         members.append(
-            MatrixRoomMember(
+            TrixRoomMember(
                 userID: normalizedUserID,
                 displayName: displayName(from: normalizedUserID),
                 membership: .invited
@@ -450,22 +503,22 @@ actor MockMatrixService: MatrixService {
         membersByRoomID[roomID] = members
     }
 
-    func removeUser(_ userID: String, roomID: String, session: MatrixSession) async throws {
+    func removeUser(_ userID: String, roomID: String, session: TrixSession) async throws {
         guard roomSummaries.contains(where: { $0.id == roomID }) else {
-            throw MatrixClientError.roomUnavailable
+            throw TrixClientError.roomUnavailable
         }
 
-        let normalizedUserID = try Self.normalizedMatrixUserID(userID)
+        let normalizedUserID = try Self.normalizedTrixUserID(userID)
         membersByRoomID[roomID, default: []].removeAll { $0.userID.lowercased() == normalizedUserID.lowercased() }
     }
 
     func createEncryptedDirectRoom(
         inviteeUserID: String,
         name: String,
-        session: MatrixSession
-    ) async throws -> MatrixRoomSummary {
-        let room = MatrixRoomSummary(
-            id: "!mock-encrypted-dm-\(UUID().uuidString):\(MatrixClientConfiguration.serverName)",
+        session: TrixSession
+    ) async throws -> TrixRoomSummary {
+        let room = TrixRoomSummary(
+            id: "!mock-encrypted-dm-\(UUID().uuidString):\(TrixClientConfiguration.serverName)",
             name: name,
             kind: .direct,
             isEncrypted: true,
@@ -476,8 +529,8 @@ actor MockMatrixService: MatrixService {
         roomSummaries.insert(room, at: 0)
         timelines[room.id] = []
         membersByRoomID[room.id] = [
-            MatrixRoomMember(userID: session.userID, displayName: displayName(from: session.userID), membership: .joined),
-            MatrixRoomMember(userID: inviteeUserID, displayName: displayName(from: inviteeUserID), membership: .invited),
+            TrixRoomMember(userID: session.userID, displayName: displayName(from: session.userID), membership: .joined),
+            TrixRoomMember(userID: inviteeUserID, displayName: displayName(from: inviteeUserID), membership: .invited),
         ]
         return room
     }
@@ -485,10 +538,10 @@ actor MockMatrixService: MatrixService {
     func createEncryptedGroupRoom(
         name: String,
         inviteeUserIDs: [String],
-        session: MatrixSession
-    ) async throws -> MatrixRoomSummary {
-        let room = MatrixRoomSummary(
-            id: "!mock-encrypted-group-\(UUID().uuidString):\(MatrixClientConfiguration.serverName)",
+        session: TrixSession
+    ) async throws -> TrixRoomSummary {
+        let room = TrixRoomSummary(
+            id: "!mock-encrypted-group-\(UUID().uuidString):\(TrixClientConfiguration.serverName)",
             name: name,
             kind: .group,
             isEncrypted: true,
@@ -499,26 +552,26 @@ actor MockMatrixService: MatrixService {
         roomSummaries.insert(room, at: 0)
         timelines[room.id] = []
         membersByRoomID[room.id] = [
-            MatrixRoomMember(userID: session.userID, displayName: displayName(from: session.userID), membership: .joined),
+            TrixRoomMember(userID: session.userID, displayName: displayName(from: session.userID), membership: .joined),
         ] + inviteeUserIDs.map { userID in
-            MatrixRoomMember(userID: userID, displayName: displayName(from: userID), membership: .invited)
+            TrixRoomMember(userID: userID, displayName: displayName(from: userID), membership: .invited)
         }
         return room
     }
 
-    func invitations(session: MatrixSession) async throws -> [MatrixRoomInvite] {
+    func invitations(session: TrixSession) async throws -> [TrixRoomInvite] {
         roomInvites.sorted { lhs, rhs in
             lhs.receivedAt > rhs.receivedAt
         }
     }
 
-    func acceptInvitation(roomID: String, session: MatrixSession) async throws -> MatrixRoomSummary {
+    func acceptInvitation(roomID: String, session: TrixSession) async throws -> TrixRoomSummary {
         guard let invite = roomInvites.first(where: { $0.id == roomID }) else {
-            throw MatrixClientError.inviteUnavailable
+            throw TrixClientError.inviteUnavailable
         }
 
         roomInvites.removeAll { $0.id == roomID }
-        let room = MatrixRoomSummary(
+        let room = TrixRoomSummary(
             id: invite.id,
             name: invite.title,
             kind: invite.kind,
@@ -531,23 +584,23 @@ actor MockMatrixService: MatrixService {
         timelines[room.id] = []
         if let inviterUserID = invite.inviterUserID {
             membersByRoomID[room.id] = [
-                MatrixRoomMember(userID: session.userID, displayName: displayName(from: session.userID), membership: .joined),
-                MatrixRoomMember(userID: inviterUserID, displayName: invite.inviterDisplayName, membership: .joined),
+                TrixRoomMember(userID: session.userID, displayName: displayName(from: session.userID), membership: .joined),
+                TrixRoomMember(userID: inviterUserID, displayName: invite.inviterDisplayName, membership: .joined),
             ]
         }
         return room
     }
 
-    func declineInvitation(roomID: String, session: MatrixSession) async throws {
+    func declineInvitation(roomID: String, session: TrixSession) async throws {
         guard roomInvites.contains(where: { $0.id == roomID }) else {
-            throw MatrixClientError.inviteUnavailable
+            throw TrixClientError.inviteUnavailable
         }
 
         roomInvites.removeAll { $0.id == roomID }
     }
 
-    func joinInvitedRooms(session: MatrixSession) async throws -> [MatrixRoomSummary] {
-        var joinedRooms: [MatrixRoomSummary] = []
+    func joinInvitedRooms(session: TrixSession) async throws -> [TrixRoomSummary] {
+        var joinedRooms: [TrixRoomSummary] = []
         let pendingInvites = roomInvites
         for invite in pendingInvites {
             joinedRooms.append(try await acceptInvitation(roomID: invite.id, session: session))
@@ -555,9 +608,9 @@ actor MockMatrixService: MatrixService {
         return joinedRooms
     }
 
-    func joinRoom(roomID: String, session: MatrixSession) async throws -> MatrixRoomSummary {
+    func joinRoom(roomID: String, session: TrixSession) async throws -> TrixRoomSummary {
         guard let room = roomSummaries.first(where: { $0.id == roomID }) else {
-            throw MatrixClientError.roomUnavailable
+            throw TrixClientError.roomUnavailable
         }
         return room
     }
@@ -568,7 +621,7 @@ actor MockMatrixService: MatrixService {
                 return room
             }
 
-            return MatrixRoomSummary(
+            return TrixRoomSummary(
                 id: room.id,
                 name: room.name,
                 kind: room.kind,
@@ -591,8 +644,8 @@ actor MockMatrixService: MatrixService {
         return localpart.capitalized
     }
 
-    private func mockPeerDevice(for userID: String, deviceID: String = "1001") -> MatrixPeerDeviceIdentity {
-        MatrixPeerDeviceIdentity(
+    private func mockPeerDevice(for userID: String, deviceID: String = "1001") -> TrixPeerDeviceIdentity {
+        TrixPeerDeviceIdentity(
             userID: userID,
             deviceID: deviceID,
             fingerprint: "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99",
@@ -602,17 +655,17 @@ actor MockMatrixService: MatrixService {
         )
     }
 
-    private static func normalizedMatrixUserID(_ userID: String) throws -> String {
+    private static func normalizedTrixUserID(_ userID: String) throws -> String {
         let trimmed = userID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("@"),
               let separator = trimmed.firstIndex(of: ":"),
               separator != trimmed.index(after: trimmed.startIndex) else {
-            throw MatrixClientError.invalidMatrixUserID
+            throw TrixClientError.invalidTrixUserID
         }
 
         let serverName = String(trimmed[trimmed.index(after: separator)...])
-        guard serverName == MatrixClientConfiguration.serverName else {
-            throw MatrixClientError.invalidMatrixUserID
+        guard serverName == TrixClientConfiguration.serverName else {
+            throw TrixClientError.invalidTrixUserID
         }
 
         return trimmed

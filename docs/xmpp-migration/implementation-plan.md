@@ -66,8 +66,9 @@ Both clients should use shared protocol-neutral service protocols where practica
   sync.
 - `TrixRoomService`: DMs, groups, timelines, sends, reactions, receipts, and
   attachments.
-- `TrixDeviceTrustService`: OMEMO capability checks, device lists, bundle handling,
-  trust state, recovery/import flows if supported, and encrypted send gates.
+- `TrixDeviceVerificationService`: OMEMO capability checks, device lists, bundle
+  handling, trust state, recovery/import flows if supported, and encrypted send
+  gates.
 - `TrixControlPlaneService`: account bootstrap, invites, profile, group policy,
   and admin operations.
 
@@ -149,8 +150,10 @@ xcodebuild \
   build CODE_SIGNING_ALLOWED=NO
 ```
 
-These commands are placeholders until the XMPP Apple target names are finalized.
-Update them when the XMPP targets exist.
+The old `matrix-*` just lanes are compatibility aliases; use `trix-*` lanes for
+new Apple work. The current Xcode project and schemes still keep `TrixMatrix*`
+names for command compatibility while the source, service, model, and view
+surface uses `Trix*`.
 
 ### Phase 3: Real XMPP Login And Sync
 

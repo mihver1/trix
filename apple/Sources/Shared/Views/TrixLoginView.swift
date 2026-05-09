@@ -1,7 +1,7 @@
 import SwiftUI
 
-struct MatrixLoginView: View {
-    @ObservedObject var model: MatrixAppModel
+struct TrixLoginView: View {
+    @ObservedObject var model: TrixAppModel
     @State private var userID = "friend@trix.selfhost.ru"
     @State private var password = ""
 
@@ -10,13 +10,21 @@ struct MatrixLoginView: View {
             VStack(alignment: .leading, spacing: 20) {
                 header
                 form
-                MatrixLimitationsView()
+                TrixLimitationsView()
 
                 if let errorMessage = model.errorMessage {
-                    MatrixBannerView(
+                    TrixBannerView(
                         text: errorMessage,
                         systemImage: "exclamationmark.triangle.fill",
                         tint: .red
+                    )
+                }
+
+                if let sessionCleanupMessage = model.sessionCleanupMessage {
+                    TrixBannerView(
+                        text: sessionCleanupMessage,
+                        systemImage: "checkmark.shield.fill",
+                        tint: .green
                     )
                 }
             }
@@ -24,12 +32,12 @@ struct MatrixLoginView: View {
             .frame(maxWidth: 560, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(MatrixDesign.screenBackground)
+        .background(TrixDesign.screenBackground)
     }
 
     private var header: some View {
         HStack(alignment: .center, spacing: 14) {
-            MatrixAvatarView(
+            TrixAvatarView(
                 title: "Trix",
                 systemImage: "bubble.left.and.bubble.right.fill",
                 size: 58
@@ -40,7 +48,7 @@ struct MatrixLoginView: View {
                     .font(.largeTitle.weight(.semibold))
                     .lineLimit(1)
 
-                MatrixStatusPill(
+                TrixStatusPill(
                     title: XMPPClientConfiguration.serverName,
                     systemImage: "server.rack"
                 )
@@ -55,7 +63,7 @@ struct MatrixLoginView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 TextField("user@trix.selfhost.ru", text: $userID)
-                    .matrixUserIDTextField()
+                    .trixUserIDTextField()
                     .textFieldStyle(.roundedBorder)
             }
 
@@ -87,17 +95,17 @@ struct MatrixLoginView: View {
             .disabled(model.isLoggingIn)
         }
         .padding(16)
-        .background(MatrixDesign.primarySurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(TrixDesign.primarySurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(MatrixDesign.surfaceStroke, lineWidth: 1)
+                .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
         }
     }
 }
 
 private extension View {
     @ViewBuilder
-    func matrixUserIDTextField() -> some View {
+    func trixUserIDTextField() -> some View {
         #if os(iOS)
         self
             .textInputAutocapitalization(.never)

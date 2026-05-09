@@ -1,13 +1,13 @@
 import SwiftUI
 
-struct MatrixRootView: View {
-    @ObservedObject var model: MatrixAppModel
+struct TrixRootView: View {
+    @ObservedObject var model: TrixAppModel
 
     var body: some View {
         Group {
             if model.isStarting {
                 VStack(spacing: 14) {
-                    MatrixAvatarView(
+                    TrixAvatarView(
                         title: "Trix",
                         systemImage: "bubble.left.and.bubble.right.fill",
                         size: 58
@@ -16,11 +16,11 @@ struct MatrixRootView: View {
                         .controlSize(.regular)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(MatrixDesign.screenBackground)
+                .background(TrixDesign.screenBackground)
             } else if model.isAuthenticated {
-                MatrixWorkspaceView(model: model)
+                TrixWorkspaceView(model: model)
             } else {
-                MatrixLoginView(model: model)
+                TrixLoginView(model: model)
             }
         }
         .task {
@@ -30,14 +30,14 @@ struct MatrixRootView: View {
 }
 
 #if os(iOS)
-private struct MatrixWorkspaceView: View {
-    @ObservedObject var model: MatrixAppModel
+private struct TrixWorkspaceView: View {
+    @ObservedObject var model: TrixAppModel
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         TabView {
             NavigationStack {
-                MatrixRoomListView(model: model, mode: .phoneInbox)
+                TrixRoomListView(model: model, mode: .phoneInbox)
                     .navigationTitle("Chats")
             }
             .tabItem {
@@ -45,14 +45,14 @@ private struct MatrixWorkspaceView: View {
             }
 
             NavigationStack {
-                MatrixSettingsView(model: model)
+                TrixSettingsView(model: model)
                     .navigationTitle("Settings")
             }
             .tabItem {
                 Label("Settings", systemImage: "gearshape.fill")
             }
         }
-        .tint(MatrixDesign.accent)
+        .tint(TrixDesign.accent)
         .task(id: scenePhase) {
             guard scenePhase == .active else {
                 return
@@ -63,18 +63,18 @@ private struct MatrixWorkspaceView: View {
     }
 }
 #else
-private struct MatrixWorkspaceView: View {
-    @ObservedObject var model: MatrixAppModel
+private struct TrixWorkspaceView: View {
+    @ObservedObject var model: TrixAppModel
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationSplitView {
-            MatrixRoomListView(model: model, mode: .sidebar)
+            TrixRoomListView(model: model, mode: .sidebar)
                 .navigationTitle("Trix")
         } detail: {
-            MatrixWorkspaceDetailView(model: model)
+            TrixWorkspaceDetailView(model: model)
         }
-        .tint(MatrixDesign.accent)
+        .tint(TrixDesign.accent)
         .task(id: scenePhase) {
             guard scenePhase == .active else {
                 return
@@ -85,20 +85,20 @@ private struct MatrixWorkspaceView: View {
     }
 }
 
-private struct MatrixWorkspaceDetailView: View {
-    @ObservedObject var model: MatrixAppModel
+private struct TrixWorkspaceDetailView: View {
+    @ObservedObject var model: TrixAppModel
 
     var body: some View {
         if let selectedRoom = model.selectedRoom {
-            MatrixTimelineView(model: model, room: selectedRoom)
+            TrixTimelineView(model: model, room: selectedRoom)
         } else {
-            MatrixEmptyStateView(
+            TrixEmptyStateView(
                 title: "Choose a room",
                 systemImage: "bubble.left.and.bubble.right",
-                message: "Matrix rooms appear in the sidebar after sync."
+                message: "Trix rooms appear in the sidebar after sync."
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(MatrixDesign.screenBackground)
+            .background(TrixDesign.screenBackground)
         }
     }
 }

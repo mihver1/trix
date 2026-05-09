@@ -1,9 +1,9 @@
 import Foundation
 
 @MainActor
-final class MatrixUserDirectorySearchViewModel: ObservableObject {
+final class TrixUserDirectorySearchViewModel: ObservableObject {
     @Published var query = ""
-    @Published private(set) var results: [MatrixUserProfile] = []
+    @Published private(set) var results: [TrixUserProfile] = []
     @Published private(set) var isSearching = false
     @Published private(set) var isLimited = false
     @Published private(set) var errorMessage: String?
@@ -11,7 +11,7 @@ final class MatrixUserDirectorySearchViewModel: ObservableObject {
     func search(
         excluding excludedUserIDs: Set<String>,
         limit: Int = 20,
-        searchUsers: (String, Int) async throws -> MatrixUserSearchResult
+        searchUsers: (String, Int) async throws -> TrixUserSearchResult
     ) async {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedQuery.isEmpty else {
@@ -41,7 +41,7 @@ final class MatrixUserDirectorySearchViewModel: ObservableObject {
 
             results = []
             isLimited = false
-            errorMessage = error.matrixUserFacingMessage
+            errorMessage = error.trixUserFacingMessage
         }
     }
 

@@ -6,15 +6,46 @@ services:
     hostname: ejabberd
     environment:
       ERLANG_NODE_ARG: ejabberd@ejabberd
+      EJABBERD_MACRO_PUSH_COMPONENT_SECRET: ${TRIX_XMPP_PUSH_COMPONENT_SECRET:-dev-local-push-component-secret-change-me}
     restart: unless-stopped
     ports:
-      - "${TRIX_XMPP_C2S_BIND:-127.0.0.1}:5222:5222"
-      - "${TRIX_XMPP_HTTP_BIND:-127.0.0.1}:5280:5280"
+      - "${TRIX_XMPP_C2S_BIND:-127.0.0.1}:${TRIX_XMPP_C2S_PORT:-5222}:5222"
+      - "${TRIX_XMPP_HTTP_BIND:-127.0.0.1}:${TRIX_XMPP_HTTP_PORT:-5280}:5280"
     volumes:
       - ./ejabberd.yml:/opt/ejabberd/conf/ejabberd.yml:ro
       - ./certs:/opt/ejabberd/conf/certs:ro
       - ejabberd-database:/opt/ejabberd/database
       - ejabberd-upload:/opt/ejabberd/upload
+
+  push-gateway:
+    profiles:
+      - push-gateway
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        TRIX_BIN: trix-push-gateway
+    depends_on:
+      - ejabberd
+    restart: unless-stopped
+    environment:
+      TRIX_PUSH_BIND_ADDR: 0.0.0.0:8090
+      TRIX_HEALTHCHECK_URL: http://localhost:8090/v0/system/health
+      TRIX_PUSH_LOG: ${TRIX_PUSH_LOG:-info,trix_push_gateway=debug,trix_push=debug}
+      TRIX_PUSH_GATEWAY_TOKEN: ${TRIX_PUSH_GATEWAY_TOKEN:-dev-local-push-gateway-token-change-me}
+      TRIX_PUSH_STORE_PATH: /var/lib/trix-push-gateway/registrations.json
+      TRIX_XMPP_COMPONENT_ENABLED: "1"
+      TRIX_XMPP_COMPONENT_HOST: ejabberd
+      TRIX_XMPP_COMPONENT_PORT: 5347
+      TRIX_XMPP_COMPONENT_JID: ${TRIX_XMPP_COMPONENT_JID:-push.trix.selfhost.ru}
+      TRIX_XMPP_COMPONENT_SECRET: ${TRIX_XMPP_PUSH_COMPONENT_SECRET:-dev-local-push-component-secret-change-me}
+      TRIX_APNS_TEAM_ID: ${TRIX_APNS_TEAM_ID:-}
+      TRIX_APNS_KEY_ID: ${TRIX_APNS_KEY_ID:-}
+      TRIX_APNS_TOPIC: ${TRIX_APNS_TOPIC:-com.softgrid.trixapp}
+      TRIX_APNS_PRIVATE_KEY_PATH: ${TRIX_APNS_PRIVATE_KEY_PATH:-/run/secrets/apns/AuthKey.p8}
+    volumes:
+      - push-gateway-data:/var/lib/trix-push-gateway
+      - ${TRIX_APNS_KEY_DIR:-./certs/apns}:/run/secrets/apns:ro
 
   prosody:
     profiles:
@@ -22,8 +53,8 @@ services:
     image: ${TRIX_XMPP_IMAGE:-docker.io/prosody/prosody:latest}
     restart: unless-stopped
     ports:
-      - "${TRIX_XMPP_PROSODY_C2S_BIND:-127.0.0.1}:5222:5222"
-      - "${TRIX_XMPP_PROSODY_HTTP_BIND:-127.0.0.1}:5280:5280"
+      - "${TRIX_XMPP_PROSODY_C2S_BIND:-127.0.0.1}:${TRIX_XMPP_PROSODY_C2S_PORT:-5222}:5222"
+      - "${TRIX_XMPP_PROSODY_HTTP_BIND:-127.0.0.1}:${TRIX_XMPP_PROSODY_HTTP_PORT:-5280}:5280"
     volumes:
       - ./prosody.cfg.lua:/etc/prosody/prosody.cfg.lua:ro
       - ./certs:/etc/prosody/certs:ro
@@ -32,4 +63,5 @@ services:
 volumes:
   ejabberd-database:
   ejabberd-upload:
+  push-gateway-data:
   prosody-data:

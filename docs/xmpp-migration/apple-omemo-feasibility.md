@@ -70,8 +70,8 @@ license review.
   prekey/session behavior.
 - HTTP upload URLs are bearer-style; encrypted media requires client-side media
   wrapping and an explicit metadata exposure policy.
-- APNs needs a Trix push service behind XMPP push semantics. Server modules do
-  not send APNs directly.
+- APNs uses `trix-push-gateway` behind XMPP push semantics. Server modules do
+  not send APNs directly; signed-device delivery smoke is still pending.
 
 ## Required Smoke Tests
 

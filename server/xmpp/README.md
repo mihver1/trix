@@ -25,6 +25,13 @@ is disabled, registration is closed by default, and no secrets are committed.
 - `prosody.cfg.lua`: lightweight fallback/spike config, not the recommended
   default.
 - `.env.example`: non-secret local overrides for image tags and bind addresses.
+- `scripts/local-smoke.sh`: bounded local ejabberd start plus STARTTLS/SASL
+  login smoke with generated disposable credentials.
+- `scripts/operator-api-smoke.sh`: localhost `mod_http_api` status,
+  register, and unregister smoke with generated disposable credentials.
+- `scripts/restore-verify.sh`: fresh-instance restore verifier using
+  ejabberd-native Mnesia backup/restore for account state plus a compose-scoped
+  upload-volume archive.
 
 ## Default: ejabberd
 
@@ -99,6 +106,18 @@ podman compose config
 
 Use `docker compose` for the same commands when Docker is available.
 
+Run the bounded local start/login smoke without committing credentials:
+
+```bash
+cd server/xmpp
+./scripts/local-smoke.sh
+```
+
+The script creates a temporary Compose project, generates a one-day local
+self-signed certificate, creates one disposable account, verifies STARTTLS and
+SASL login over XMPP, then removes the temporary containers and volumes. It uses
+random host ports by default so it can run beside an existing local ejabberd.
+
 Check that ejabberd can boot with this config:
 
 ```bash
@@ -153,6 +172,21 @@ curl -sS -X POST \
 Authentication and exact command authorization need a live admin account before
 this is a finished control-plane contract.
 
+Run the bounded localhost operator API smoke against an already-running local
+ejabberd:
+
+```bash
+cd server/xmpp
+./scripts/operator-api-smoke.sh
+```
+
+Current decision: ejabberd `mod_http_api` is viable as the low-level
+operator/backend API for health and account lifecycle operations when it remains
+bound to loopback. It is not the finished product control plane by itself:
+Trix still needs a small authenticated and audited operator wrapper before any
+non-local caller can create users, reset passwords, change group membership, or
+inspect diagnostics. Do not expose `5280` publicly.
+
 ## Deployment Notes
 
 1. Copy `.env.example` to `.env`.
@@ -166,10 +200,38 @@ cd server/xmpp
 podman compose up -d ejabberd
 ```
 
-5. Add users through `ejabberdctl` or the localhost-only control plane after
+5. To enable APNs wake pushes, set deployment-local APNs variables plus
+   `TRIX_XMPP_PUSH_COMPONENT_SECRET`, mount the `.p8` key through
+   `TRIX_APNS_KEY_DIR`, and start the private component profile:
+
+```bash
+cd server/xmpp
+podman compose --profile push-gateway up -d ejabberd push-gateway
+```
+
+6. Add users through `ejabberdctl` or the localhost-only control plane after
    admin authentication is validated.
-6. Open only the required public ports. For this private non-federated target,
+7. Open only the required public ports. For this private non-federated target,
    do not open `5269`.
+
+## APNs Push Status
+
+ejabberd `mod_push` is enabled for XMPP push semantics, but ejabberd is not an
+APNs provider by itself. Trix provides `trix-push-gateway` as a private APNs
+sender plus XEP-0114 component for Martin/Tigase registration.
+
+APNs signing material has been verified on the legacy `trix-server` deployment,
+outside this repository. The gateway loads APNs credentials from environment or
+a mounted `.p8` file, accepts only wake-only requests, advertises
+`pubsub/push`, handles Martin's `register-device` command, stores the returned
+XEP-0357 node mapping locally, and sends only `aps.content-available=1` plus
+`trix.type=sync` notifications.
+
+Do not commit the `.p8` key or related credentials. The XEP-0114 component port
+`5347` must stay private to the host or Docker network and must not be published
+through Compose. `iNPUTmice/up` was reviewed as a possible component reference,
+but it is a UnifiedPush provider for XMPP distributors and does not implement
+APNs provider delivery or the Martin/Tigase registration flow Trix uses.
 
 ## Backup
 
@@ -218,41 +280,50 @@ systemctl list-timers trix-xmpp-backup.timer
 Default schedule is daily at `03:20` local server time with up to ten minutes of
 randomized delay.
 
-Manual local cold backup, if systemd is unavailable:
+Manual local native Mnesia backup plus upload archive, if systemd is unavailable:
 
 ```bash
 cd server/xmpp
 mkdir -p backups
+podman compose exec ejabberd \
+  ejabberdctl backup /opt/ejabberd/database/trix-mnesia.backup
 podman compose stop ejabberd
-podman run --rm \
-  -v trix-xmpp_ejabberd-database:/database:ro \
-  -v trix-xmpp_ejabberd-upload:/upload:ro \
+podman compose run --rm --no-deps \
   -v "$PWD/backups:/backup" \
-  alpine \
-  sh -c 'tar czf /backup/ejabberd-database.tgz -C /database . && tar czf /backup/ejabberd-upload.tgz -C /upload .'
+  --entrypoint sh \
+  ejabberd \
+  -lc 'set -e
+cp /opt/ejabberd/database/trix-mnesia.backup /backup/trix-mnesia.backup
+if [ -f /opt/ejabberd/database/ejabberd-mam.sqlite ]; then
+  cp /opt/ejabberd/database/ejabberd-mam.sqlite /backup/ejabberd-mam.sqlite
+fi
+tar czf /backup/ejabberd-upload.tgz -C /opt/ejabberd/upload .
+rm -f /opt/ejabberd/database/trix-mnesia.backup'
 podman compose start ejabberd
 ```
 
-Restore into fresh volumes:
+Fresh-instance restore verifier:
 
 ```bash
 cd server/xmpp
-podman compose down
-podman volume rm trix-xmpp_ejabberd-database trix-xmpp_ejabberd-upload
-podman volume create trix-xmpp_ejabberd-database
-podman volume create trix-xmpp_ejabberd-upload
-podman run --rm \
-  -v trix-xmpp_ejabberd-database:/database \
-  -v trix-xmpp_ejabberd-upload:/upload \
-  -v "$PWD/backups:/backup:ro" \
-  alpine \
-  sh -c 'cd /database && tar xzf /backup/ejabberd-database.tgz && cd /upload && tar xzf /backup/ejabberd-upload.tgz'
-podman compose up -d ejabberd
+./scripts/restore-verify.sh
 ```
 
-Spike required: ejabberd has native backup/restore commands for Mnesia and node
-name changes. Use them before relying on tar-only volume backups for production
-migration or host rename scenarios.
+Account and control-plane state must be restored through ejabberd-native Mnesia
+backup/restore, not tar-only fresh-volume restore. The verifier creates a
+disposable account, runs `ejabberdctl backup`, archives the upload volume through
+the same Compose backend, destroys the temporary volumes, restores into a fresh
+instance with `ejabberdctl restore`, confirms the account is registered, confirms
+the upload archive sentinel, and completes STARTTLS/SASL login.
+
+Current local result: passed on 2026-05-09 with `podman compose`. The script
+intentionally avoids mixing `podman compose` with plain `podman run` or
+`podman volume`, because delegated Compose providers can use a different volume
+namespace.
+
+Production backup scripts still need to follow the same native-Mnesia restore
+requirement before tar-only volume backups are accepted for production migration
+or host rename scenarios.
 
 ## OMEMO Smoke Checklist
 
@@ -279,8 +350,8 @@ trust devices silently.
 
 - Production reverse proxy config for `https://trix.selfhost.ru/upload` and
   ejabberd HTTP on `5280`.
-- Final control-plane authentication and authorization shape around
-  `mod_http_api`.
+- Trix operator wrapper authentication, authorization, and audit logging around
+  the localhost-only `mod_http_api` backend.
 - Whether internal Mnesia storage is sufficient for the expected private user
   set, or whether SQL-backed archive storage should be introduced.
 - Exact mobile-client behavior for OMEMO in MUC and encrypted file transfer.

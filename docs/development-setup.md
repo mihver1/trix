@@ -35,8 +35,8 @@ passwords, admin tokens, APNs keys, private keys, or real user data.
 
 ## Apple
 
-The current Apple project is still Matrix-named until the protocol-neutral rename
-lands. Generate the project:
+The current Apple project uses protocol-neutral `Trix*` names. Generate the
+project:
 
 ```bash
 cd apple
@@ -63,9 +63,9 @@ xcodebuild \
   build CODE_SIGNING_ALLOWED=NO
 ```
 
-The next Apple implementation step is to rename the service/model boundary from
-`Matrix*` to `Trix*`, keep the mock service for local UI development, and add an
-`XMPPAdapter` only after the OMEMO spike proves the Apple stack.
+The Apple service/model/view boundary now uses protocol-neutral `Trix*` names.
+Keep the mock service for local UI development, and keep XMPP/OMEMO calls behind
+service and view-model layers.
 
 ## XMPP/OMEMO Spike
 

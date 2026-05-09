@@ -75,15 +75,15 @@ The target service boundary is protocol-neutral:
 - `TrixRoomService`: timeline, send, attachments, reactions, typing, and
   read/delivery state.
 - `TrixRoomMembershipService`: group member list, invite/add, remove, leave.
-- `TrixDirectoryService`: directory search and profile lookup/update through the
-  Trix control plane.
-- `TrixDeviceTrustService`: OMEMO device inventory, trust state, and fingerprint
-  presentation.
+- `TrixUserDirectoryService`: directory search and profile lookup/update through
+  the Trix control plane.
+- `TrixDeviceVerificationService`: OMEMO device inventory, trust state, and
+  fingerprint presentation.
 - `TrixPushRegistrationService`: APNs token registration and unregister.
 
-The checked-in `apple/` project still contains Matrix-named types until the
-rename lands. New work should move toward the service boundary above before
-binding SwiftUI to XMPP-specific APIs.
+The checked-in `apple/` project now exposes the active target, service, model,
+and view boundary with protocol-neutral `Trix*` names. New work should keep that
+boundary intact before binding SwiftUI to XMPP-specific APIs.
 
 ### OMEMO
 

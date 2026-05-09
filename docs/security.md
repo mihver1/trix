@@ -70,11 +70,30 @@ Trix group rooms must be members-only and non-anonymous. If the client cannot
 retrieve the member list or device bundles required for OMEMO, sending must be
 blocked instead of falling back to plaintext.
 
+The Apple client caches known MUC members in Keychain and merges that cache with
+live occupants and affiliation queries. This cache is used for display and
+recipient validation continuity after reconnect; it is not a server-side
+authorization source. New Apple-created MVP groups make invited members MUC
+admins so the current member-management UI can list and change room affiliations.
+
+The macOS `group-e2ee` live smoke passed with three accounts on 2026-05-09:
+private MUC create, invite/join, owner/peer/third member-list visibility,
+explicit device trust, encrypted group send, and decrypt on both peers completed
+without printing message bodies or OMEMO secrets.
+
 ## Attachment Risk
 
 Uploaded files must be encrypted before upload. The server may store encrypted
 media blobs and metadata, but it must not receive plaintext file contents from
 product chat flows.
+
+The Apple XMPP DM attachment MVP uses MartinOMEMO file encryption before
+requesting an HTTP upload, then sends the download URL, media decryption
+fragment, filename, MIME type, size, and image dimensions inside an
+OMEMO-encrypted message descriptor. HTTP upload requests use a generic encrypted
+filename and `application/octet-stream` so the upload service does not receive
+the original filename or MIME type. Group attachments remain blocked until group
+OMEMO is validated.
 
 Do not log filenames, local paths, media keys, decrypted media bytes, or
 decrypted previews in production paths.
@@ -91,6 +110,12 @@ bootstrap passwords, `.env`, shell history, APNs credentials, or OMEMO local
 device secrets, and must be periodically restored into a clean instance before
 being treated as reliable.
 
+As of the current XMPP server/control-plane slice,
+`server/xmpp/scripts/restore-verify.sh` is the local restore gate. It now uses
+ejabberd-native Mnesia backup/restore for account state plus a scoped upload
+archive, and passed locally on 2026-05-09. Do not treat tar-only fresh-volume
+archives as production-ready restore for account state.
+
 ## Push Notification Risk
 
 Push notifications should not include decrypted message bodies. The APNs payload
@@ -98,6 +123,21 @@ should be a wake-up or minimal metadata signal, with message text resolved local
 after sync and decryption.
 
 APNs keys, gateway tokens, and signing credentials must never be committed.
+
+The current Apple XMPP path accepts only wake-only pushes with
+`aps.content-available=1` and `trix.type=sync`. Optional account, room, and badge
+metadata is allowed. Alert, sound, plaintext/body, decrypted, filename, and
+attachment-name payload fields are rejected by the app handler, and the app does
+not create local notifications containing decrypted message or attachment text.
+
+ejabberd `mod_push` only exposes XMPP push semantics; it does not sign or send
+APNs requests by itself. APNs signing material has been verified on the legacy
+`trix-server` deployment, and the APNs sender code is extracted into the
+standalone `trix-push-gateway` binary. The gateway also has an XEP-0114
+component mode that accepts Martin/Tigase `register-device`, stores XEP-0357
+node mappings outside the repo, and emits only the wake contract above. APNs
+delivery is not launch-ready until this component is deployed with real
+credentials and passes signed-device smoke plus log/payload audit.
 
 ## Registration And Provisioning Risk
 
@@ -108,6 +148,11 @@ use.
 
 The control plane must not expose secrets in logs and must not create accounts
 with committed default passwords.
+
+The current ejabberd `mod_http_api` path is acceptable only as a localhost-bound
+backend for a trusted operator wrapper or local scripts. Its loopback API can
+perform health and disposable account lifecycle operations, but it is not a
+public or client-facing API and must not be exposed directly outside the host.
 
 ## Logging Rules
 

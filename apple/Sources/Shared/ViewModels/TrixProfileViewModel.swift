@@ -1,8 +1,8 @@
 import Foundation
 
 @MainActor
-final class MatrixProfileViewModel: ObservableObject {
-    @Published private(set) var profile: MatrixUserProfile?
+final class TrixProfileViewModel: ObservableObject {
+    @Published private(set) var profile: TrixUserProfile?
     @Published var draftDisplayName = ""
     @Published var draftBio = ""
     @Published var draftStatusMessage = ""
@@ -27,7 +27,7 @@ final class MatrixProfileViewModel: ObservableObject {
             draftWebsite.trimmingCharacters(in: .whitespacesAndNewlines) != currentWebsite
     }
 
-    func load(profile loadProfile: () async throws -> MatrixUserProfile) async {
+    func load(profile loadProfile: () async throws -> TrixUserProfile) async {
         guard !isLoading else {
             return
         }
@@ -40,11 +40,11 @@ final class MatrixProfileViewModel: ObservableObject {
         do {
             apply(try await loadProfile())
         } catch {
-            errorMessage = error.matrixUserFacingMessage
+            errorMessage = error.trixUserFacingMessage
         }
     }
 
-    func save(updateProfile: (MatrixUserProfileUpdate) async throws -> MatrixUserProfile) async {
+    func save(updateProfile: (TrixUserProfileUpdate) async throws -> TrixUserProfile) async {
         guard canSave else {
             return
         }
@@ -55,7 +55,7 @@ final class MatrixProfileViewModel: ObservableObject {
         defer { isSaving = false }
 
         do {
-            apply(try await updateProfile(MatrixUserProfileUpdate(
+            apply(try await updateProfile(TrixUserProfileUpdate(
                 displayName: draftDisplayName,
                 bio: draftBio,
                 statusMessage: draftStatusMessage,
@@ -63,7 +63,7 @@ final class MatrixProfileViewModel: ObservableObject {
             )))
             didSave = true
         } catch {
-            errorMessage = error.matrixUserFacingMessage
+            errorMessage = error.trixUserFacingMessage
         }
     }
 
@@ -71,7 +71,7 @@ final class MatrixProfileViewModel: ObservableObject {
         didSave = false
     }
 
-    private func apply(_ profile: MatrixUserProfile) {
+    private func apply(_ profile: TrixUserProfile) {
         self.profile = profile
         self.draftDisplayName = profile.displayName ?? ""
         self.draftBio = profile.metadata.bio ?? ""

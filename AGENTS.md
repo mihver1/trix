@@ -38,9 +38,10 @@ writing crypto in the app.
   checklist.
 - `server/`: older Conduit/Matrix server files may remain while the XMPP spike is
   in flight. Treat them as temporary experiment artifacts, not the target MVP.
-- `apple/`: current SwiftUI Apple client scaffold. It still contains Matrix-named
-  types until the protocol-neutral rename lands. Keep SDK/protocol calls behind
-  service protocols and view models.
+- `apple/`: current SwiftUI Apple client scaffold. Source files, service
+  protocols, models, and views use protocol-neutral `Trix*` names. The generated
+  Xcode project and schemes still keep `TrixMatrix*` compatibility names for
+  this slice. Keep SDK/protocol calls behind service protocols and view models.
 - `docs/architecture.md`: XMPP + OMEMO target architecture.
 - `docs/security.md`: private deployment threat model and E2EE caveats.
 - `docs/mvp-checklist.md`: concrete XMPP/OMEMO validation checklist.
@@ -115,8 +116,8 @@ xcodebuild \
   build CODE_SIGNING_ALLOWED=NO
 ```
 
-These target names are still Matrix-named until the protocol-neutral Apple rename
-lands. Do not treat that naming as the product direction.
+These target names are still Matrix-named until the protocol-neutral Apple
+project/scheme rename lands. Do not treat that naming as the product direction.
 
 ## Legacy Commands
 

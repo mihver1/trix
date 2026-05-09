@@ -1,16 +1,16 @@
 import SwiftUI
 
-enum MatrixUserDirectorySelectionMode {
+enum TrixUserDirectorySelectionMode {
     case single
     case multiple
 }
 
-struct MatrixUserDirectoryPickerView: View {
-    @ObservedObject var model: MatrixAppModel
-    @Binding var selection: [MatrixUserProfile]
-    let mode: MatrixUserDirectorySelectionMode
+struct TrixUserDirectoryPickerView: View {
+    @ObservedObject var model: TrixAppModel
+    @Binding var selection: [TrixUserProfile]
+    let mode: TrixUserDirectorySelectionMode
     var excludedUserIDs: Set<String> = []
-    @StateObject private var searchViewModel = MatrixUserDirectorySearchViewModel()
+    @StateObject private var searchViewModel = TrixUserDirectorySearchViewModel()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -19,20 +19,20 @@ struct MatrixUserDirectoryPickerView: View {
                     .foregroundStyle(.secondary)
 
                 TextField("Search people or enter JID", text: $searchViewModel.query)
-                    .matrixDirectorySearchInput()
+                    .trixDirectorySearchInput()
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            .background(MatrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(TrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(MatrixDesign.surfaceStroke, lineWidth: 1)
+                    .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
             }
 
             if !selection.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(selection) { profile in
-                        MatrixSelectedDirectoryUserRow(profile: profile) {
+                        TrixSelectedDirectoryUserRow(profile: profile) {
                             remove(profile)
                         }
                     }
@@ -48,7 +48,7 @@ struct MatrixUserDirectoryPickerView: View {
                 Button {
                     select(profile)
                 } label: {
-                    MatrixDirectoryUserRow(profile: profile, systemImage: "plus.circle.fill")
+                    TrixDirectoryUserRow(profile: profile, systemImage: "plus.circle.fill")
                 }
                 .buttonStyle(.plain)
             }
@@ -78,7 +78,7 @@ struct MatrixUserDirectoryPickerView: View {
         }
     }
 
-    private var availableResults: [MatrixUserProfile] {
+    private var availableResults: [TrixUserProfile] {
         let excluded = Set(excludedUserIDs.union(selection.map(\.userID)).map { $0.lowercased() })
         return searchViewModel.results.filter { profile in
             !excluded.contains(profile.userID.lowercased())
@@ -93,7 +93,7 @@ struct MatrixUserDirectoryPickerView: View {
             searchViewModel.errorMessage == nil
     }
 
-    private func select(_ profile: MatrixUserProfile) {
+    private func select(_ profile: TrixUserProfile) {
         switch mode {
         case .single:
             selection = [profile]
@@ -105,18 +105,18 @@ struct MatrixUserDirectoryPickerView: View {
         }
     }
 
-    private func remove(_ profile: MatrixUserProfile) {
+    private func remove(_ profile: TrixUserProfile) {
         selection.removeAll { $0.userID.caseInsensitiveCompare(profile.userID) == .orderedSame }
     }
 }
 
-private struct MatrixDirectoryUserRow: View {
-    let profile: MatrixUserProfile
+private struct TrixDirectoryUserRow: View {
+    let profile: TrixUserProfile
     let systemImage: String
 
     var body: some View {
         HStack(spacing: 10) {
-            MatrixAvatarView(
+            TrixAvatarView(
                 title: profile.title,
                 systemImage: "person.fill",
                 size: 32
@@ -146,20 +146,20 @@ private struct MatrixDirectoryUserRow: View {
 
             Image(systemName: systemImage)
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(MatrixDesign.accent)
+                .foregroundStyle(TrixDesign.accent)
         }
         .contentShape(Rectangle())
         .padding(.vertical, 4)
     }
 }
 
-private struct MatrixSelectedDirectoryUserRow: View {
-    let profile: MatrixUserProfile
+private struct TrixSelectedDirectoryUserRow: View {
+    let profile: TrixUserProfile
     let remove: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
-            MatrixDirectoryUserRow(profile: profile, systemImage: "checkmark.circle.fill")
+            TrixDirectoryUserRow(profile: profile, systemImage: "checkmark.circle.fill")
 
             Button {
                 remove()
@@ -175,7 +175,7 @@ private struct MatrixSelectedDirectoryUserRow: View {
 
 private extension View {
     @ViewBuilder
-    func matrixDirectorySearchInput() -> some View {
+    func trixDirectorySearchInput() -> some View {
         #if os(iOS)
         self
             .textInputAutocapitalization(.never)

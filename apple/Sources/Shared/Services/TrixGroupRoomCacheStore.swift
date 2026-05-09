@@ -1,23 +1,34 @@
 import Foundation
 import Security
 
-final class TrixTimelineCacheStore: @unchecked Sendable {
-    private struct CachedTimeline: Codable {
+struct TrixCachedGroupRoom: Equatable, Sendable {
+    let roomID: String
+    var name: String
+    var memberUserIDs: Set<String>
+    var lastActivityAt: Date
+}
+
+final class TrixGroupRoomCacheStore: @unchecked Sendable {
+    private struct StoredGroupRoom: Codable {
         let version: Int
-        let items: [TrixTimelineItem]
+        let roomID: String
+        let name: String
+        let memberUserIDs: [String]
+        let lastActivityAt: Date
     }
 
     private let service: String
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
-    init(service: String = "com.softgrid.trix.xmpp.timeline") {
+    init(service: String = "com.softgrid.trix.xmpp.group-members") {
         self.service = service
         encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
         decoder.dateDecodingStrategy = .iso8601
     }
 
-    func load(accountJID: String, roomID: String) throws -> [TrixTimelineItem] {
+    func load(accountJID: String, roomID: String) throws -> TrixCachedGroupRoom? {
         var query = baseQuery(accountJID: accountJID, roomID: roomID)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -25,22 +36,35 @@ final class TrixTimelineCacheStore: @unchecked Sendable {
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound {
-            return []
+            return nil
         }
 
         guard status == errSecSuccess else {
             throw TrixClientError.keychainFailure(status.description)
         }
         guard let data = result as? Data else {
-            throw TrixClientError.keychainFailure("stored timeline has unexpected format")
+            throw TrixClientError.keychainFailure("stored group members have unexpected format")
         }
 
-        return try decoder.decode(CachedTimeline.self, from: data).items
+        let stored = try decoder.decode(StoredGroupRoom.self, from: data)
+        return TrixCachedGroupRoom(
+            roomID: stored.roomID,
+            name: stored.name,
+            memberUserIDs: Set(stored.memberUserIDs.map { $0.lowercased() }),
+            lastActivityAt: stored.lastActivityAt
+        )
     }
 
-    func save(_ items: [TrixTimelineItem], accountJID: String, roomID: String) throws {
-        let data = try encoder.encode(CachedTimeline(version: 1, items: items))
-        let query = baseQuery(accountJID: accountJID, roomID: roomID)
+    func save(_ group: TrixCachedGroupRoom, accountJID: String) throws {
+        let stored = StoredGroupRoom(
+            version: 1,
+            roomID: group.roomID,
+            name: group.name,
+            memberUserIDs: group.memberUserIDs.map { $0.lowercased() }.sorted(),
+            lastActivityAt: group.lastActivityAt
+        )
+        let data = try encoder.encode(stored)
+        let query = baseQuery(accountJID: accountJID, roomID: group.roomID)
         let attributes = [kSecValueData as String: data]
         let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if updateStatus == errSecSuccess {
@@ -81,6 +105,6 @@ final class TrixTimelineCacheStore: @unchecked Sendable {
     private func keychainAccount(accountJID: String, roomID: String) -> String {
         let account = accountJID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let room = roomID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return "timeline:\(account)|\(room)"
+        return "group-members:\(account)|\(room)"
     }
 }

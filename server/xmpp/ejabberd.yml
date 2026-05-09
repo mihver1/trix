@@ -3,7 +3,9 @@ define_macro:
   ADMIN: admin@trix.selfhost.ru
   PORT_C2S: 5222
   PORT_HTTP: 5280
+  PORT_COMPONENT: 5347
   STARTTLS_REQUIRED: true
+  PUSH_COMPONENT_SECRET: dev-local-push-component-secret-change-me
 
 hosts:
   - HOST
@@ -35,6 +37,17 @@ listen:
     request_handlers:
       /api: mod_http_api
       /upload: mod_http_upload
+  -
+    port: PORT_COMPONENT
+    ip: "0.0.0.0"
+    module: ejabberd_service
+    check_from: true
+    global_routes: false
+    shaper_rule: fast
+    max_stanza_size: 65536
+    hosts:
+      "push.@HOST@":
+        password: PUSH_COMPONENT_SECRET
 
 # No ejabberd_s2s_in listener is configured, and outgoing S2S is denied.
 s2s_access: none
@@ -146,7 +159,10 @@ modules:
     force_node_config:
       storage:bookmarks:
         access_model: whitelist
-  mod_push: {}
+  mod_push:
+    include_body: false
+    include_sender: false
+    notify_on: messages
   mod_roster:
     versioning: true
   mod_stream_mgmt:

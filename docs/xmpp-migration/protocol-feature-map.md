@@ -2,15 +2,16 @@
 
 This map ties legacy Trix behavior to the XMPP primitive, Trix control-plane
 owner, Apple implementation surface, and verification path. It is not a claim
-that every XEP is production-ready in the chosen Apple stack. OMEMO and message
-reactions are still spike gates, and push needs a Trix APNs gateway policy.
+that every XEP is production-ready in the chosen Apple stack. OMEMO group live
+validation, message reactions, and signed-device APNs delivery are still spike
+gates.
 
 | Legacy feature | XMPP or control-plane primitive | Apple implementation surface | Verification |
 |---|---|---|---|
 | Private single-server deployment, no federation | ejabberd or Prosody with server-to-server disabled; no public `5269`; no s2s DNS records | No federation UI; fixed Trix account domain from config | Server config check, external `5222` positive check, external `5269` negative check |
 | Operator account lifecycle | ejabberd admin API or Trix control-plane wrapper; public registration disabled | Login-only clients, disabled-account state | Create user, log in both platforms, disable user, verify new sessions fail |
 | Login, logout, restore | SASL/TLS, resource binding, XEP-0198 stream management, secure local session store | `TrixSessionStore`, `TrixAuthService`, Keychain-backed iOS/macOS state | Fresh login, quit/relaunch restore, logout cleanup, secret-redacted logs |
-| Mandatory E2EE | OMEMO XEP-0384, PEP/PubSub device bundles, fail-closed send policy | `TrixDeviceTrustService` gate before create/send; visible blocked state | Two-account encrypted DM, three-account encrypted group, server archive plaintext check |
+| Mandatory E2EE | OMEMO XEP-0384, PEP/PubSub device bundles, fail-closed send policy | `TrixDeviceVerificationService` gate before create/send; visible blocked state | Two-account encrypted DM, three-account encrypted group, server archive plaintext check |
 | DM creation and duplicate prevention | Bare-JID messaging plus Trix DM registry or deterministic merge rule; MAM and carbons for continuity | Directory result to DM in the new-room flow | Create the same pair twice, verify one conversation or documented merge behavior |
 | Private groups | Members-only, non-anonymous MUC rooms plus OMEMO group support after spike | Shared group create/invite view model; iOS participants sheet; macOS inspector | Three-account private group, invite/accept/decline, OMEMO send/receive, restart reload |
 | Group membership management | MUC affiliations/roles plus Trix control-plane membership policy | Shared membership service; iOS participants UI; macOS inspector add/remove | Add/remove from both platforms, refresh member list, show permission failures |

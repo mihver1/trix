@@ -1,10 +1,10 @@
 import SwiftUI
 
-struct MatrixNewRoomView: View {
-    @ObservedObject var model: MatrixAppModel
+struct TrixNewRoomView: View {
+    @ObservedObject var model: TrixAppModel
     @Environment(\.dismiss) private var dismiss
-    @State private var mode = MatrixNewRoomMode.direct
-    @State private var selectedUsers: [MatrixUserProfile] = []
+    @State private var mode = TrixNewRoomMode.direct
+    @State private var selectedUsers: [TrixUserProfile] = []
     @State private var roomName = ""
 
     var body: some View {
@@ -12,7 +12,7 @@ struct MatrixNewRoomView: View {
             Form {
                 Section {
                     Picker("Kind", selection: $mode) {
-                        ForEach(MatrixNewRoomMode.allCases) { mode in
+                        ForEach(TrixNewRoomMode.allCases) { mode in
                             Label(mode.label, systemImage: mode.systemImage)
                                 .tag(mode)
                         }
@@ -21,7 +21,7 @@ struct MatrixNewRoomView: View {
                 }
 
                 Section(mode.inviteSectionTitle) {
-                    MatrixUserDirectoryPickerView(
+                    TrixUserDirectoryPickerView(
                         model: model,
                         selection: $selectedUsers,
                         mode: mode == .direct ? .single : .multiple,
@@ -36,7 +36,7 @@ struct MatrixNewRoomView: View {
                 }
 
                 Section {
-                    MatrixDeviceVerificationNoticeView(status: model.deviceVerificationViewModel.status)
+                    TrixDeviceVerificationNoticeView(status: model.deviceVerificationViewModel.status)
                 }
 
                 if let errorMessage = model.roomListViewModel.errorMessage {
@@ -47,8 +47,8 @@ struct MatrixNewRoomView: View {
                     }
                 }
             }
-            .matrixScrollContentBackgroundHidden()
-            .background(MatrixDesign.screenBackground)
+            .trixScrollContentBackgroundHidden()
+            .background(TrixDesign.screenBackground)
             .navigationTitle("New Chat")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -93,7 +93,7 @@ struct MatrixNewRoomView: View {
                 }
             }
         }
-        .matrixDialogSurface(minWidth: 440, minHeight: 340)
+        .trixDialogSurface(minWidth: 440, minHeight: 340)
         .onChange(of: mode) { _, newMode in
             if newMode == .direct, selectedUsers.count > 1 {
                 selectedUsers = Array(selectedUsers.prefix(1))
@@ -124,7 +124,7 @@ struct MatrixNewRoomView: View {
     }
 }
 
-private enum MatrixNewRoomMode: String, CaseIterable, Identifiable {
+private enum TrixNewRoomMode: String, CaseIterable, Identifiable {
     case direct
     case group
 

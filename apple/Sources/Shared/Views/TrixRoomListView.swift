@@ -1,18 +1,18 @@
 import SwiftUI
 
-enum MatrixRoomListMode {
+enum TrixRoomListMode {
     case sidebar
     case phoneInbox
 }
 
-struct MatrixRoomListView: View {
-    @ObservedObject var model: MatrixAppModel
+struct TrixRoomListView: View {
+    @ObservedObject var model: TrixAppModel
     @ObservedObject private var roomListViewModel: RoomListViewModel
     @State private var isShowingNewRoom = false
     @State private var phoneSelectedRoomID: String?
-    let mode: MatrixRoomListMode
+    let mode: TrixRoomListMode
 
-    init(model: MatrixAppModel, mode: MatrixRoomListMode = .sidebar) {
+    init(model: TrixAppModel, mode: TrixRoomListMode = .sidebar) {
         self.model = model
         self.mode = mode
         self._roomListViewModel = ObservedObject(wrappedValue: model.roomListViewModel)
@@ -29,7 +29,7 @@ struct MatrixRoomListView: View {
                 .help("New room")
             }
             .sheet(isPresented: $isShowingNewRoom) {
-                MatrixNewRoomView(model: model)
+                TrixNewRoomView(model: model)
             }
             .navigationDestination(isPresented: phoneRoomIsPresented) {
                 phoneTimelineDestination
@@ -49,7 +49,7 @@ struct MatrixRoomListView: View {
             #if os(iOS)
             VStack(spacing: 0) {
                 if let account = model.account {
-                    MatrixInboxAccountHeader(
+                    TrixInboxAccountHeader(
                         account: account,
                         isLoading: roomListViewModel.isLoading,
                         refresh: {
@@ -71,9 +71,9 @@ struct MatrixRoomListView: View {
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         Color.clear.frame(height: 86)
                     }
-                    .matrixScrollContentBackgroundHidden()
+                    .trixScrollContentBackgroundHidden()
             }
-            .background(MatrixDesign.screenBackground)
+            .background(TrixDesign.screenBackground)
             #else
             roomList
                 .listStyle(.sidebar)
@@ -102,7 +102,7 @@ struct MatrixRoomListView: View {
     private var roomListContent: some View {
         Section {
             if roomListViewModel.rooms.isEmpty {
-                MatrixEmptyStateView(
+                TrixEmptyStateView(
                     title: "No Rooms",
                     systemImage: "bubble.left",
                     message: "Create a room or accept an invite."
@@ -126,7 +126,7 @@ struct MatrixRoomListView: View {
         if !roomListViewModel.invitations.isEmpty {
             Section("Invites") {
                 ForEach(roomListViewModel.invitations) { invitation in
-                    MatrixInviteRow(
+                    TrixInviteRow(
                         invitation: invitation,
                         isWorking: roomListViewModel.invitationActionRoomID == invitation.id,
                         accept: {
@@ -146,7 +146,7 @@ struct MatrixRoomListView: View {
 
         if let errorMessage = roomListViewModel.errorMessage ?? model.errorMessage {
             Section {
-                MatrixBannerView(
+                TrixBannerView(
                     text: errorMessage,
                     systemImage: "exclamationmark.triangle",
                     tint: .red
@@ -156,18 +156,18 @@ struct MatrixRoomListView: View {
     }
 
     @ViewBuilder
-    private func roomRow(_ room: MatrixRoomSummary) -> some View {
+    private func roomRow(_ room: TrixRoomSummary) -> some View {
         if mode == .phoneInbox {
             Button {
                 openPhoneRoom(room)
             } label: {
-                MatrixRoomRow(room: room, mode: mode)
+                TrixRoomRow(room: room, mode: mode)
             }
             .buttonStyle(.plain)
             .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
             .listRowSeparator(.visible)
         } else {
-            MatrixRoomRow(room: room, mode: mode)
+            TrixRoomRow(room: room, mode: mode)
                 .tag(room.id as String?)
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -178,7 +178,7 @@ struct MatrixRoomListView: View {
         }
     }
 
-    private func openPhoneRoom(_ room: MatrixRoomSummary) {
+    private func openPhoneRoom(_ room: TrixRoomSummary) {
         model.selectedRoomID = room.id
         phoneSelectedRoomID = room.id
     }
@@ -198,24 +198,24 @@ struct MatrixRoomListView: View {
     private var phoneTimelineDestination: some View {
         if let roomID = phoneSelectedRoomID,
            let room = roomListViewModel.rooms.first(where: { $0.id == roomID }) {
-            MatrixTimelineView(model: model, room: room)
+            TrixTimelineView(model: model, room: room)
         } else {
-            MatrixEmptyStateView(
+            TrixEmptyStateView(
                 title: "Room unavailable",
                 systemImage: "exclamationmark.bubble",
-                message: "The room is no longer present in the latest Matrix sync."
+                message: "The room is no longer present in the latest Trix sync."
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(MatrixDesign.screenBackground)
+            .background(TrixDesign.screenBackground)
         }
     }
 }
 
-struct MatrixSettingsView: View {
-    @ObservedObject var model: MatrixAppModel
+struct TrixSettingsView: View {
+    @ObservedObject var model: TrixAppModel
     @ObservedObject private var deviceVerificationViewModel: DeviceVerificationViewModel
 
-    init(model: MatrixAppModel) {
+    init(model: TrixAppModel) {
         self.model = model
         self._deviceVerificationViewModel = ObservedObject(wrappedValue: model.deviceVerificationViewModel)
     }
@@ -227,7 +227,7 @@ struct MatrixSettingsView: View {
                     LabeledContent("User", value: account.userID)
                     LabeledContent("Device", value: account.deviceID)
                 } else {
-                    MatrixEmptyStateView(
+                    TrixEmptyStateView(
                         title: "Not Signed In",
                         systemImage: "person.crop.circle.badge.exclamationmark",
                         message: "Sign in before managing account settings."
@@ -258,11 +258,11 @@ struct MatrixSettingsView: View {
             }
 
             Section("Profile") {
-                MatrixProfileSettingsView(model: model)
+                TrixProfileSettingsView(model: model)
             }
 
             Section("Device Verification And Recovery") {
-                MatrixDeviceVerificationStatusView(
+                TrixDeviceVerificationStatusView(
                     viewModel: deviceVerificationViewModel,
                     requestVerification: {
                         Task {
@@ -320,11 +320,11 @@ struct MatrixSettingsView: View {
             }
 
             Section {
-                MatrixLimitationsView()
+                TrixLimitationsView()
             }
         }
-        .matrixScrollContentBackgroundHidden()
-        .background(MatrixDesign.screenBackground)
+        .trixScrollContentBackgroundHidden()
+        .background(TrixDesign.screenBackground)
         .task {
             guard model.isAuthenticated else {
                 return
@@ -335,14 +335,14 @@ struct MatrixSettingsView: View {
     }
 }
 
-private struct MatrixInboxAccountHeader: View {
-    let account: MatrixAccount
+private struct TrixInboxAccountHeader: View {
+    let account: TrixAccount
     let isLoading: Bool
     let refresh: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
-            MatrixAvatarView(
+            TrixAvatarView(
                 title: account.displayName.isEmpty ? account.userID : account.displayName,
                 systemImage: "person.crop.circle",
                 size: 32
@@ -378,13 +378,13 @@ private struct MatrixInboxAccountHeader: View {
     }
 }
 
-private struct MatrixRoomRow: View {
-    let room: MatrixRoomSummary
-    let mode: MatrixRoomListMode
+private struct TrixRoomRow: View {
+    let room: TrixRoomSummary
+    let mode: TrixRoomListMode
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            MatrixAvatarView(
+            TrixAvatarView(
                 title: room.name,
                 systemImage: room.kind.systemImage,
                 size: mode == .phoneInbox ? 50 : 34,
@@ -393,13 +393,13 @@ private struct MatrixRoomRow: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    MatrixRoomKindMark(kind: room.kind, size: 20)
+                    TrixRoomKindMark(kind: room.kind, size: 20)
 
                     Text(room.name)
                         .font(.headline)
                         .lineLimit(1)
 
-                    MatrixRoomSecurityMark(isEncrypted: room.isEncrypted, size: 20)
+                    TrixRoomSecurityMark(isEncrypted: room.isEncrypted, size: 20)
 
                     Spacer(minLength: 8)
 
@@ -424,7 +424,7 @@ private struct MatrixRoomRow: View {
                             .font(.caption.weight(.semibold))
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
-                            .background(MatrixDesign.accent, in: Capsule())
+                            .background(TrixDesign.accent, in: Capsule())
                             .foregroundStyle(.white)
                     }
                 }
@@ -443,8 +443,8 @@ private struct MatrixRoomRow: View {
     }
 }
 
-private struct MatrixInviteRow: View {
-    let invitation: MatrixRoomInvite
+private struct TrixInviteRow: View {
+    let invitation: TrixRoomInvite
     let isWorking: Bool
     let accept: () -> Void
     let decline: () -> Void
@@ -452,7 +452,7 @@ private struct MatrixInviteRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 12) {
-                MatrixAvatarView(
+                TrixAvatarView(
                     title: invitation.title,
                     systemImage: invitation.kind.systemImage,
                     size: 36,
@@ -461,13 +461,13 @@ private struct MatrixInviteRow: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
-                        MatrixRoomKindMark(kind: invitation.kind, size: 20)
+                        TrixRoomKindMark(kind: invitation.kind, size: 20)
 
                         Text(invitation.title)
                             .font(.headline)
                             .lineLimit(1)
 
-                        MatrixRoomSecurityMark(isEncrypted: invitation.isEncrypted, size: 20)
+                        TrixRoomSecurityMark(isEncrypted: invitation.isEncrypted, size: 20)
                     }
 
                     Text(invitation.subtitle)

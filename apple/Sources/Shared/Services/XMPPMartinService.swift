@@ -10,11 +10,14 @@ struct XMPPTimelineDiagnostics: Sendable {
     let mamFilteredCount: Int
     let mamEncryptedCount: Int
     let mamDecodedCount: Int
+    let mamLocalKeyCount: Int
+    let mamAccountSenderCount: Int
+    let mamPeerSenderCount: Int
     let cachedCount: Int
     let usedUnfilteredFallback: Bool
 }
 
-actor XMPPMartinService: MatrixService {
+actor XMPPMartinService: TrixService {
     private final class TrixMessageCaptureModule: XmppModuleBase, XmppModule {
         static let ID = "trix-message-capture"
 
@@ -53,6 +56,106 @@ actor XMPPMartinService: MatrixService {
         let carbonAction: MessageCarbonsModule.Action?
     }
 
+    private struct CapturedDeliveryReceipt: Sendable {
+        let messageID: String
+        let roomID: String?
+    }
+
+    private struct TypingRecord: Sendable {
+        let userID: String
+        let state: TrixTypingState
+        let updatedAt: Date
+    }
+
+    private struct EncryptedAttachmentDescriptor: Codable, Equatable, Sendable {
+        let type: String
+        let version: Int
+        let downloadURL: String
+        let fragment: String
+        let filename: String
+        let mimeType: String?
+        let originalSizeBytes: Int
+        let encryptedSizeBytes: Int
+        let imageDimensions: TrixAttachmentImageDimensions?
+        let imageBlurhash: String?
+    }
+
+    private struct DecodedTimelineContent {
+        let body: String
+        let attachment: TrixTimelineAttachment?
+    }
+
+    private struct KnownGroupRoom: Sendable {
+        let roomID: String
+        var name: String
+        var memberUserIDs: Set<String>
+        var lastActivityAt: Date
+
+        init(roomID: String, name: String, memberUserIDs: Set<String>, lastActivityAt: Date) {
+            self.roomID = roomID
+            self.name = name
+            self.memberUserIDs = Set(memberUserIDs.map { $0.lowercased() })
+            self.lastActivityAt = lastActivityAt
+        }
+
+        init(cached: TrixCachedGroupRoom) {
+            self.init(
+                roomID: cached.roomID,
+                name: cached.name,
+                memberUserIDs: cached.memberUserIDs,
+                lastActivityAt: cached.lastActivityAt
+            )
+        }
+
+        var cached: TrixCachedGroupRoom {
+            TrixCachedGroupRoom(
+                roomID: roomID,
+                name: name,
+                memberUserIDs: memberUserIDs,
+                lastActivityAt: lastActivityAt
+            )
+        }
+    }
+
+    private enum MUCInvitationTransport: String, Codable, Sendable {
+        case mediated
+        case direct
+        case unknown
+    }
+
+    private struct CapturedMUCInvitation: Codable, Sendable {
+        let roomID: String
+        let roomName: String
+        let inviterUserID: String?
+        let password: String?
+        let reason: String?
+        let receivedAt: Date
+        let transport: MUCInvitationTransport
+    }
+
+    private struct DismissedMUCInvitation: Codable, Sendable {
+        let roomID: String
+        let dismissedAt: Date
+    }
+
+    private struct StoredMUCInvitationState: Codable, Sendable {
+        let version: Int
+        let pending: [CapturedMUCInvitation]
+        let dismissed: [DismissedMUCInvitation]
+
+        static let empty = StoredMUCInvitationState(version: 1, pending: [], dismissed: [])
+    }
+
+    private struct CapturedMUCMessage: @unchecked Sendable {
+        let room: RoomProtocol
+        let message: Message
+    }
+
+    private struct GroupAffiliationRecord: Sendable {
+        let userID: String
+        let nickname: String?
+    }
+
     private final class OneShotVoidContinuation: @unchecked Sendable {
         private let lock = NSLock()
         private var continuation: CheckedContinuation<Void, Never>?
@@ -71,10 +174,13 @@ actor XMPPMartinService: MatrixService {
     }
 
     private struct ArchivedTimelineResult {
-        let items: [MatrixTimelineItem]
+        let items: [TrixTimelineItem]
         let rawCount: Int
         let filteredCount: Int
         let encryptedCount: Int
+        let localKeyCount: Int
+        let accountSenderCount: Int
+        let peerSenderCount: Int
         let usedUnfilteredFallback: Bool
     }
 
@@ -149,6 +255,124 @@ actor XMPPMartinService: MatrixService {
         func deinitialize(context: Context) {}
     }
 
+    private final class TrixMucRoomStore: RoomStore, @unchecked Sendable {
+        typealias Room = RoomBase
+
+        private let dispatcher = QueueDispatcher(label: "TrixMucRoomStore")
+        private var rooms: [BareJID: RoomBase] = [:]
+
+        func rooms(for context: Context) -> [RoomBase] {
+            dispatcher.sync {
+                Array(rooms.values)
+            }
+        }
+
+        func room(for context: Context, with jid: BareJID) -> RoomBase? {
+            dispatcher.sync {
+                rooms[jid]
+            }
+        }
+
+        func createRoom(
+            for context: Context,
+            with jid: BareJID,
+            nickname: String,
+            password: String?
+        ) -> ConversationCreateResult<RoomBase> {
+            dispatcher.sync {
+                if let room = rooms[jid] {
+                    return .found(room)
+                }
+
+                let room = RoomBase(
+                    context: context,
+                    jid: jid,
+                    nickname: nickname,
+                    password: password,
+                    dispatcher: dispatcher
+                )
+                rooms[jid] = room
+                return .created(room)
+            }
+        }
+
+        func close(room: RoomBase) -> Bool {
+            dispatcher.sync {
+                rooms.removeValue(forKey: room.jid) != nil
+            }
+        }
+
+        func initialize(context: Context) {}
+
+        func deinitialize(context: Context) {}
+    }
+
+    private final class TrixMUCInvitationCacheStore: @unchecked Sendable {
+        private let service: String
+        private let encoder = JSONEncoder()
+        private let decoder = JSONDecoder()
+
+        init(service: String = "com.softgrid.trix.xmpp.muc-invitations") {
+            self.service = service
+            encoder.dateEncodingStrategy = .iso8601
+            decoder.dateDecodingStrategy = .iso8601
+        }
+
+        func load(accountJID: String) throws -> StoredMUCInvitationState {
+            var query = baseQuery(accountJID: accountJID)
+            query[kSecReturnData as String] = true
+            query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+            var result: CFTypeRef?
+            let status = SecItemCopyMatching(query as CFDictionary, &result)
+            if status == errSecItemNotFound {
+                return .empty
+            }
+
+            guard status == errSecSuccess else {
+                throw TrixClientError.keychainFailure(status.description)
+            }
+            guard let data = result as? Data else {
+                throw TrixClientError.keychainFailure("stored MUC invitations have unexpected format")
+            }
+
+            return try decoder.decode(StoredMUCInvitationState.self, from: data)
+        }
+
+        func save(_ state: StoredMUCInvitationState, accountJID: String) throws {
+            let data = try encoder.encode(state)
+            let query = baseQuery(accountJID: accountJID)
+            let attributes = [kSecValueData as String: data]
+            let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+            if updateStatus == errSecSuccess {
+                return
+            }
+
+            guard updateStatus == errSecItemNotFound else {
+                throw TrixClientError.keychainFailure(updateStatus.description)
+            }
+
+            var item = query
+            item[kSecValueData as String] = data
+#if os(iOS)
+            item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+#endif
+
+            let addStatus = SecItemAdd(item as CFDictionary, nil)
+            guard addStatus == errSecSuccess else {
+                throw TrixClientError.keychainFailure(addStatus.description)
+            }
+        }
+
+        private func baseQuery(accountJID: String) -> [String: Any] {
+            [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: "muc-invitations:\(accountJID.lowercased())",
+            ]
+        }
+    }
+
     private final class Connection: @unchecked Sendable {
         let client: XMPPClient
         let rosterModule: RosterModule
@@ -156,6 +380,11 @@ actor XMPPMartinService: MatrixService {
         let messageCaptureModule: TrixMessageCaptureModule
         let mamModule: MessageArchiveManagementModule
         let carbonsModule: MessageCarbonsModule
+        let deliveryReceiptsModule: MessageDeliveryReceiptsModule
+        let chatStateModule: ChatStateNotificationsModule
+        let mucModule: MucModule
+        let bookmarksModule: PEPBookmarksModule
+        let pushModule: TigasePushNotificationsModule
         let omemoStack: TrixOMEMOStack
         let createdAt: Date
         var cancellables: Set<AnyCancellable> = []
@@ -167,6 +396,11 @@ actor XMPPMartinService: MatrixService {
             messageCaptureModule: TrixMessageCaptureModule,
             mamModule: MessageArchiveManagementModule,
             carbonsModule: MessageCarbonsModule,
+            deliveryReceiptsModule: MessageDeliveryReceiptsModule,
+            chatStateModule: ChatStateNotificationsModule,
+            mucModule: MucModule,
+            bookmarksModule: PEPBookmarksModule,
+            pushModule: TigasePushNotificationsModule,
             omemoStack: TrixOMEMOStack,
             createdAt: Date = Date()
         ) {
@@ -176,22 +410,41 @@ actor XMPPMartinService: MatrixService {
             self.messageCaptureModule = messageCaptureModule
             self.mamModule = mamModule
             self.carbonsModule = carbonsModule
+            self.deliveryReceiptsModule = deliveryReceiptsModule
+            self.chatStateModule = chatStateModule
+            self.mucModule = mucModule
+            self.bookmarksModule = bookmarksModule
+            self.pushModule = pushModule
             self.omemoStack = omemoStack
             self.createdAt = createdAt
         }
     }
 
     private var connections: [String: Connection] = [:]
-    private var timelineHistory: [String: [String: [MatrixTimelineItem]]] = [:]
+    private var timelineHistory: [String: [String: [TrixTimelineItem]]] = [:]
     private var timelineDiagnostics: [String: [String: XMPPTimelineDiagnostics]] = [:]
+    private var typingRecords: [String: [String: [String: TypingRecord]]] = [:]
+    private var knownGroupRooms: [String: [String: KnownGroupRoom]] = [:]
+    private var pendingGroupInvitations: [String: [String: CapturedMUCInvitation]] = [:]
+    private var dismissedGroupInvitations: [String: [String: Date]] = [:]
+    private var invitationArchiveSyncConnectionDates: [String: Date] = [:]
     private let timelineCacheStore = TrixTimelineCacheStore()
+    private let groupRoomCacheStore = TrixGroupRoomCacheStore()
+    private let mucInvitationCacheStore = TrixMUCInvitationCacheStore()
+    private let omemoPersistence: TrixOMEMOPersistence
     private static let maxCachedTimelineItems = 200
+    private static let typingRecordLifetime: TimeInterval = 6
+    private static let encryptedAttachmentDescriptorType = "com.softgrid.trix.xmpp.encrypted-attachment"
 
-    func login(userID: String, password: String, serverURL: URL) async throws -> MatrixSession {
+    init(omemoPersistence: TrixOMEMOPersistence = .keychain) {
+        self.omemoPersistence = omemoPersistence
+    }
+
+    func login(userID: String, password: String, serverURL: URL) async throws -> TrixSession {
         let jid = try Self.normalizedXMPPJID(userID)
         let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPassword.isEmpty else {
-            throw MatrixClientError.invalidCredentials
+            throw TrixClientError.invalidCredentials
         }
 
         let resource = Self.resourceName()
@@ -200,12 +453,12 @@ actor XMPPMartinService: MatrixService {
         do {
             try await connection.client.loginAndWait()
         } catch {
-            throw MatrixClientError.xmppConnectionFailed
+            throw TrixClientError.xmppConnectionFailed
         }
         await waitForOMEMOReady(connection: connection)
 
         let boundResource = connection.client.boundJid?.resource ?? resource
-        let session = MatrixSession(
+        let session = TrixSession(
             userID: jid,
             deviceID: boundResource,
             homeserverURL: XMPPClientConfiguration.connectionURL,
@@ -222,16 +475,16 @@ actor XMPPMartinService: MatrixService {
         return session
     }
 
-    func restore(session: MatrixSession) async throws -> MatrixAccount {
+    func restore(session: TrixSession) async throws -> TrixAccount {
         let connection = try await ensureConnection(for: session)
-        return MatrixAccount(
+        return TrixAccount(
             userID: session.userID,
             displayName: Self.displayName(from: session.userID),
             deviceID: connection.client.boundJid?.resource ?? session.deviceID
         )
     }
 
-    func logout(session: MatrixSession) async throws {
+    func logout(session: TrixSession) async throws {
         guard let connection = connections.removeValue(forKey: Self.sessionKey(session)) else {
             return
         }
@@ -239,93 +492,242 @@ actor XMPPMartinService: MatrixService {
         try? await connection.client.disconnect(force: true)
     }
 
-    func rooms(session: MatrixSession) async throws -> [MatrixRoomSummary] {
-        let connection = try await refreshedRosterConnection(for: session)
+    func registerAPNsToken(_ token: TrixAPNsDeviceToken, session: TrixSession) async throws -> TrixPushRegistration {
+        let connection = try await ensureConnection(for: session)
+        let gatewayJID = try await pushGatewayJID(connection: connection)
+        let provider = token.environment.xmppPushProvider
 
-        return connection.rosterModule.rosterManager
+        do {
+            let registration = try await connection.pushModule.registerDevice(
+                serviceJid: gatewayJID,
+                provider: provider,
+                deviceId: token.hexString
+            )
+            _ = try await connection.pushModule.enable(
+                serviceJid: gatewayJID,
+                node: registration.node
+            )
+
+            return TrixPushRegistration(
+                environment: token.environment,
+                provider: provider,
+                gatewayJID: gatewayJID.stringValue,
+                node: registration.node,
+                registeredAt: Date()
+            )
+        } catch let error as TrixClientError {
+            throw error
+        } catch {
+            throw TrixClientError.apnsRegistrationFailed
+        }
+    }
+
+    func unregisterAPNsToken(
+        _ token: TrixAPNsDeviceToken,
+        registration: TrixPushRegistration?,
+        session: TrixSession
+    ) async throws {
+        let connection = try await ensureConnection(for: session)
+        let provider = token.environment.xmppPushProvider
+
+        if let registration {
+            let gatewayJID = JID(registration.gatewayJID)
+            _ = try? await connection.pushModule.disable(serviceJid: gatewayJID, node: registration.node)
+            try await connection.pushModule.unregisterDevice(
+                serviceJid: gatewayJID,
+                provider: provider,
+                deviceId: token.hexString
+            )
+            return
+        }
+
+        let gatewayJID = try await pushGatewayJID(connection: connection)
+        do {
+            try await connection.pushModule.unregisterDevice(
+                serviceJid: gatewayJID,
+                provider: provider,
+                deviceId: token.hexString
+            )
+        } catch let error as TrixClientError {
+            throw error
+        } catch {
+            throw TrixClientError.apnsRegistrationFailed
+        }
+    }
+
+    func rooms(session: TrixSession) async throws -> [TrixRoomSummary] {
+        let connection = try await refreshedRosterConnection(for: session)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+
+        let rosterItems = connection.rosterModule.rosterManager
             .items(for: connection.client)
             .filter { item in
                 item.jid.bareJid.domain == XMPPClientConfiguration.serverName
             }
-            .map { item in
-                let peerJID = item.jid.bareJid.stringValue
-                let hasTrustedDevice = connection.omemoStack.store.hasTrustedActiveDevice(forName: peerJID)
-                return MatrixRoomSummary(
-                    id: peerJID,
-                    name: item.name ?? Self.displayName(from: peerJID),
-                    kind: .direct,
-                    isEncrypted: hasTrustedDevice,
-                    unreadCount: 0,
-                    lastMessagePreview: hasTrustedDevice ? "Ready for OMEMO messages" : "Trust OMEMO device before sending",
-                    lastActivityAt: Date.distantPast
-                )
+
+        var summaries: [TrixRoomSummary] = []
+        for item in rosterItems {
+            summaries.append(await roomSummary(for: item, accountJID: accountJID, connection: connection))
+        }
+        summaries.append(contentsOf: groupRoomSummaries(accountJID: accountJID, connection: connection))
+
+        return summaries.sorted { lhs, rhs in
+            if lhs.lastActivityAt != rhs.lastActivityAt {
+                return lhs.lastActivityAt > rhs.lastActivityAt
             }
-            .sorted { lhs, rhs in
-                lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-            }
+
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
     }
 
-    func timeline(roomID: String, session: MatrixSession) async throws -> [MatrixTimelineItem] {
+    private func roomSummary(
+        for item: any RosterItemProtocol,
+        accountJID: String,
+        connection: Connection
+    ) async -> TrixRoomSummary {
+        let peerJID = item.jid.bareJid.stringValue
+        let hasTrustedDevice = connection.omemoStack.store.hasTrustedActiveDevice(forName: peerJID)
+        loadCachedTimelineItems(accountJID: accountJID, roomID: peerJID)
+
+        if let archive = try? await archivedTimelineResult(peerJID: peerJID, accountJID: accountJID, connection: connection),
+           !archive.items.isEmpty {
+            storeTimelineItems(archive.items, accountJID: accountJID, roomID: peerJID)
+        }
+
+        let latestItem = timelineItems(accountJID: accountJID, roomID: peerJID).last
+        return TrixRoomSummary(
+            id: peerJID,
+            name: item.name ?? Self.displayName(from: peerJID),
+            kind: .direct,
+            isEncrypted: hasTrustedDevice,
+            unreadCount: 0,
+            lastMessagePreview: latestItem?.body ?? (hasTrustedDevice ? "Ready for OMEMO messages" : "Trust OMEMO device before sending"),
+            lastActivityAt: latestItem?.timestamp ?? Date.distantPast
+        )
+    }
+
+    private func groupRoomSummaries(accountJID: String, connection: Connection) -> [TrixRoomSummary] {
+        var groups = knownGroupRooms[accountJID.lowercased()] ?? [:]
+        for room in connection.mucModule.roomManager.rooms(for: connection.client) {
+            let roomID = room.jid.stringValue
+            let roomKey = roomID.lowercased()
+            let cached = groups[roomKey] ?? loadCachedGroup(roomID: roomID, accountJID: accountJID)
+            groups[roomKey] = KnownGroupRoom(
+                roomID: roomID,
+                name: cached?.name ?? Self.displayName(from: roomID),
+                memberUserIDs: cached?.memberUserIDs ?? Self.memberUserIDs(from: room, fallbackAccountJID: accountJID),
+                lastActivityAt: cached?.lastActivityAt ?? Date()
+            )
+        }
+
+        for bookmark in connection.bookmarksModule.currentBookmarks.items.compactMap({ $0 as? Bookmarks.Conference }) {
+            guard bookmark.jid.bareJid.domain == XMPPClientConfiguration.conferenceServerName else {
+                continue
+            }
+
+            let roomID = bookmark.jid.bareJid.stringValue
+            let roomKey = roomID.lowercased()
+            if groups[roomKey] == nil {
+                let cached = loadCachedGroup(roomID: roomID, accountJID: accountJID)
+                groups[roomKey] = KnownGroupRoom(
+                    roomID: roomID,
+                    name: bookmark.name ?? cached?.name ?? Self.displayName(from: roomID),
+                    memberUserIDs: cached?.memberUserIDs ?? [accountJID.lowercased()],
+                    lastActivityAt: cached?.lastActivityAt ?? Date.distantPast
+                )
+            }
+        }
+
+        knownGroupRooms[accountJID.lowercased()] = groups
+        return groups.values.map { group in
+            let latestItem = timelineItems(accountJID: accountJID, roomID: group.roomID).last
+            return TrixRoomSummary(
+                id: group.roomID,
+                name: group.name,
+                kind: .group,
+                isEncrypted: true,
+                unreadCount: 0,
+                lastMessagePreview: latestItem?.body ?? "Private OMEMO group",
+                lastActivityAt: latestItem?.timestamp ?? group.lastActivityAt
+            )
+        }
+    }
+
+    func timeline(roomID: String, session: TrixSession) async throws -> [TrixTimelineItem] {
         let connection = try await ensureConnection(for: session)
-        let peerJID = try Self.normalizedXMPPJID(roomID)
+        let peerJID = try Self.normalizedRoomID(roomID)
         let accountJID = try Self.normalizedXMPPJID(session.userID)
         loadCachedTimelineItems(accountJID: accountJID, roomID: peerJID)
-        do {
-            let archive = try await archivedTimelineResult(peerJID: peerJID, accountJID: accountJID, connection: connection)
-            if !archive.items.isEmpty {
-                storeTimelineItems(archive.items, accountJID: accountJID, roomID: peerJID)
+        if Self.isMUCJID(peerJID) {
+            _ = try? await joinedGroupRoom(roomID: peerJID, session: session, connection: connection)
+        } else {
+            do {
+                let archive = try await archivedTimelineResult(peerJID: peerJID, accountJID: accountJID, connection: connection)
+                if !archive.items.isEmpty {
+                    storeTimelineItems(archive.items, accountJID: accountJID, roomID: peerJID)
+                }
+                storeTimelineDiagnostics(
+                    XMPPTimelineDiagnostics(
+                        mamQuerySucceeded: true,
+                        mamRawCount: archive.rawCount,
+                        mamFilteredCount: archive.filteredCount,
+                        mamEncryptedCount: archive.encryptedCount,
+                        mamDecodedCount: archive.items.count,
+                        mamLocalKeyCount: archive.localKeyCount,
+                        mamAccountSenderCount: archive.accountSenderCount,
+                        mamPeerSenderCount: archive.peerSenderCount,
+                        cachedCount: timelineItems(accountJID: accountJID, roomID: peerJID).count,
+                        usedUnfilteredFallback: archive.usedUnfilteredFallback
+                    ),
+                    accountJID: accountJID,
+                    roomID: peerJID
+                )
+            } catch {
+                // Keep the cached/live timeline visible when MAM is not available yet.
+                storeTimelineDiagnostics(
+                    XMPPTimelineDiagnostics(
+                        mamQuerySucceeded: false,
+                        mamRawCount: 0,
+                        mamFilteredCount: 0,
+                        mamEncryptedCount: 0,
+                        mamDecodedCount: 0,
+                        mamLocalKeyCount: 0,
+                        mamAccountSenderCount: 0,
+                        mamPeerSenderCount: 0,
+                        cachedCount: timelineItems(accountJID: accountJID, roomID: peerJID).count,
+                        usedUnfilteredFallback: false
+                    ),
+                    accountJID: accountJID,
+                    roomID: peerJID
+                )
             }
-            storeTimelineDiagnostics(
-                XMPPTimelineDiagnostics(
-                    mamQuerySucceeded: true,
-                    mamRawCount: archive.rawCount,
-                    mamFilteredCount: archive.filteredCount,
-                    mamEncryptedCount: archive.encryptedCount,
-                    mamDecodedCount: archive.items.count,
-                    cachedCount: timelineItems(accountJID: accountJID, roomID: peerJID).count,
-                    usedUnfilteredFallback: archive.usedUnfilteredFallback
-                ),
-                accountJID: accountJID,
-                roomID: peerJID
-            )
-        } catch {
-            // Keep the cached/live timeline visible when MAM is not available yet.
-            storeTimelineDiagnostics(
-                XMPPTimelineDiagnostics(
-                    mamQuerySucceeded: false,
-                    mamRawCount: 0,
-                    mamFilteredCount: 0,
-                    mamEncryptedCount: 0,
-                    mamDecodedCount: 0,
-                    cachedCount: timelineItems(accountJID: accountJID, roomID: peerJID).count,
-                    usedUnfilteredFallback: false
-                ),
-                accountJID: accountJID,
-                roomID: peerJID
-            )
         }
 
         return timelineItems(accountJID: accountJID, roomID: peerJID)
     }
 
-    func timelineDiagnostics(roomID: String, session: MatrixSession) async throws -> XMPPTimelineDiagnostics? {
+    func timelineDiagnostics(roomID: String, session: TrixSession) async throws -> XMPPTimelineDiagnostics? {
         let peerJID = try Self.normalizedXMPPJID(roomID)
         let accountJID = try Self.normalizedXMPPJID(session.userID)
         return timelineDiagnostics[accountJID.lowercased()]?[peerJID.lowercased()]
     }
 
-    func sendText(_ text: String, roomID: String, session: MatrixSession) async throws -> MatrixTimelineItem {
+    func sendText(_ text: String, roomID: String, session: TrixSession) async throws -> TrixTimelineItem {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw MatrixClientError.emptyMessage
+            throw TrixClientError.emptyMessage
         }
 
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let connection = try await ensureConnection(for: session)
-        let peerJID = try Self.normalizedXMPPJID(roomID)
+        let peerJID = try Self.normalizedRoomID(roomID)
+        if Self.isMUCJID(peerJID) {
+            return try await sendGroupText(body, roomID: peerJID, session: session, connection: connection)
+        }
+
         guard connection.omemoStack.store.hasTrustedActiveDevice(forName: peerJID) else {
             _ = try? await refreshPeerDeviceIdentities(userID: peerJID, session: session)
             guard connection.omemoStack.store.hasTrustedActiveDevice(forName: peerJID) else {
-                throw MatrixClientError.omemoDeviceTrustRequired
+                throw TrixClientError.omemoDeviceTrustRequired
             }
             return try await sendText(body, roomID: roomID, session: session)
         }
@@ -336,78 +738,277 @@ actor XMPPMartinService: MatrixService {
         message.type = .chat
         message.to = JID(peerJID)
         message.body = body
+        message.messageDelivery = .request
 
         let encryptedMessage = try await encodeOMEMOMessage(message, peerJID: peerJID, connection: connection)
+        encryptedMessage.messageDelivery = .request
         guard encryptedMessage.body == nil,
               let encrypted = encryptedMessage.firstChild(name: "encrypted", xmlns: OMEMOModule.XMLNS),
               let header = encrypted.firstChild(name: "header"),
               !header.filterChildren(name: "key", xmlns: nil).isEmpty else {
-            throw MatrixClientError.omemoEncryptionFailed
+            throw TrixClientError.omemoEncryptionFailed
         }
 
         try await connection.omemoStack.module.write(stanza: encryptedMessage)
 
-        let item = MatrixTimelineItem(
+        let item = TrixTimelineItem(
             id: messageID,
             roomID: peerJID,
             sender: session.userID,
             timestamp: Date(),
             body: body,
             isLocalEcho: true,
-            attachment: nil
+            attachment: nil,
+            deliveryState: .sent
         )
         storeTimelineItems([item], accountJID: session.userID, roomID: peerJID)
         return item
     }
 
-    func sendAttachment(_ attachment: MatrixAttachmentUpload, roomID: String, session: MatrixSession) async throws -> MatrixTimelineItem {
+    func sendAttachment(_ attachment: TrixAttachmentUpload, roomID: String, session: TrixSession) async throws -> TrixTimelineItem {
         guard !attachment.data.isEmpty else {
-            throw MatrixClientError.emptyAttachment
+            throw TrixClientError.emptyAttachment
         }
 
-        _ = try await ensureConnection(for: session)
-        _ = try Self.normalizedXMPPJID(roomID)
-        throw MatrixClientError.e2eeUnavailable
+        let connection = try await ensureConnection(for: session)
+        let peerJID = try Self.normalizedRoomID(roomID)
+        if Self.isMUCJID(peerJID) {
+            return try await sendGroupAttachment(attachment, roomID: peerJID, session: session, connection: connection)
+        }
+
+        guard connection.omemoStack.store.hasTrustedActiveDevice(forName: peerJID) else {
+            _ = try? await refreshPeerDeviceIdentities(userID: peerJID, session: session)
+            guard connection.omemoStack.store.hasTrustedActiveDevice(forName: peerJID) else {
+                throw TrixClientError.omemoDeviceTrustRequired
+            }
+            return try await sendAttachment(attachment, roomID: roomID, session: session)
+        }
+
+        let encryptedMedia: (data: Data, fragment: String)
+        switch connection.omemoStack.module.encryptFile(data: attachment.data) {
+        case .success(let result):
+            encryptedMedia = (data: result.0, fragment: result.1)
+        case .failure:
+            throw TrixClientError.attachmentEncryptionUnavailable
+        }
+
+        let uploadModule: HttpFileUploadModule = connection.client.modulesManager.module(.httpFileUpload)
+        let uploadComponent = try await uploadModule.findHttpUploadComponents()
+            .filter { $0.maxSize >= encryptedMedia.data.count }
+            .sorted { $0.maxSize < $1.maxSize }
+            .first
+        guard let uploadComponent else {
+            throw TrixClientError.attachmentTransferFailed
+        }
+
+        let encryptedFilename = "trix-\(UUID().uuidString).enc"
+        let slot = try await uploadModule.requestUploadSlot(
+            componentJid: uploadComponent.jid,
+            filename: encryptedFilename,
+            size: encryptedMedia.data.count,
+            contentType: "application/octet-stream"
+        )
+        try await uploadEncryptedAttachment(encryptedMedia.data, slot: slot)
+
+        let descriptor = EncryptedAttachmentDescriptor(
+            type: Self.encryptedAttachmentDescriptorType,
+            version: 1,
+            downloadURL: slot.getUri.absoluteString,
+            fragment: encryptedMedia.fragment,
+            filename: attachment.filename,
+            mimeType: attachment.mimeType,
+            originalSizeBytes: attachment.data.count,
+            encryptedSizeBytes: encryptedMedia.data.count,
+            imageDimensions: attachment.imageDimensions,
+            imageBlurhash: attachment.imageBlurhash
+        )
+        let descriptorJSON = try Self.encodedAttachmentDescriptor(descriptor)
+
+        let messageID = "trix-attachment-\(UUID().uuidString)"
+        let message = Message()
+        message.id = messageID
+        message.type = .chat
+        message.to = JID(peerJID)
+        message.body = descriptorJSON
+        message.messageDelivery = MessageDeliveryReceiptEnum.request
+
+        let encryptedMessage = try await encodeOMEMOMessage(message, peerJID: peerJID, connection: connection)
+        encryptedMessage.messageDelivery = MessageDeliveryReceiptEnum.request
+        guard encryptedMessage.body == nil,
+              let encrypted = encryptedMessage.firstChild(name: "encrypted", xmlns: OMEMOModule.XMLNS),
+              let header = encrypted.firstChild(name: "header"),
+              !header.filterChildren(name: "key", xmlns: nil as String?).isEmpty else {
+            throw TrixClientError.omemoEncryptionFailed
+        }
+
+        try await connection.omemoStack.module.write(stanza: encryptedMessage)
+
+        let item = TrixTimelineItem(
+            id: messageID,
+            roomID: peerJID,
+            sender: session.userID,
+            timestamp: Date(),
+            body: "Attachment: \(attachment.filename)",
+            isLocalEcho: true,
+            attachment: Self.timelineAttachment(from: descriptor, sourceJSON: descriptorJSON),
+            deliveryState: .sent
+        )
+        storeTimelineItems([item], accountJID: session.userID, roomID: peerJID)
+        return item
     }
 
-    func downloadAttachment(_ attachment: MatrixTimelineAttachment, session: MatrixSession) async throws -> MatrixAttachmentDownload {
-        _ = try await ensureConnection(for: session)
-        throw MatrixClientError.attachmentDownloadUnavailable
+    func attachmentSendAvailability(roomID: String, session: TrixSession) async throws -> TrixAttachmentSendAvailability {
+        let connection = try await ensureConnection(for: session)
+        let normalizedRoomID = try Self.normalizedRoomID(roomID)
+
+        if Self.isMUCJID(normalizedRoomID) {
+            let room = try await joinedGroupRoom(roomID: normalizedRoomID, session: session, connection: connection)
+            let accountJID = try Self.normalizedXMPPJID(session.userID)
+
+            do {
+                let recipients = try await validatedGroupEncryptionRecipients(
+                    room: room,
+                    accountJID: accountJID,
+                    session: session,
+                    connection: connection
+                )
+                return .allowed(roomID: normalizedRoomID, recipientUserIDs: recipients)
+            } catch TrixClientError.groupOmemoRecipientSetUnavailable {
+                return .blocked(roomID: normalizedRoomID, reason: .groupRecipientSetUnavailable)
+            } catch TrixClientError.groupOmemoDeviceTrustRequired {
+                return .blocked(roomID: normalizedRoomID, reason: .groupOmemoDeviceTrustRequired)
+            } catch TrixClientError.omemoDeviceTrustRequired {
+                return .blocked(roomID: normalizedRoomID, reason: .groupOmemoDeviceTrustRequired)
+            }
+        }
+
+        guard connection.omemoStack.store.hasTrustedActiveDevice(forName: normalizedRoomID) else {
+            _ = try? await refreshPeerDeviceIdentities(userID: normalizedRoomID, session: session)
+            guard connection.omemoStack.store.hasTrustedActiveDevice(forName: normalizedRoomID) else {
+                return .blocked(roomID: normalizedRoomID, reason: .omemoDeviceTrustRequired)
+            }
+            return .allowed(roomID: normalizedRoomID, recipientUserIDs: [normalizedRoomID])
+        }
+
+        return .allowed(roomID: normalizedRoomID, recipientUserIDs: [normalizedRoomID])
     }
 
-    func members(roomID: String, session: MatrixSession) async throws -> [MatrixRoomMember] {
+    func downloadAttachment(_ attachment: TrixTimelineAttachment, session: TrixSession) async throws -> TrixAttachmentDownload {
+        let connection = try await ensureConnection(for: session)
+        guard let descriptor = Self.decodedAttachmentDescriptor(from: attachment.sourceJSON),
+              let url = URL(string: descriptor.downloadURL) else {
+            throw TrixClientError.attachmentDownloadUnavailable
+        }
+
+        let encryptedData = try await downloadEncryptedAttachment(from: url)
+        switch connection.omemoStack.module.decryptFile(data: encryptedData, fragment: descriptor.fragment) {
+        case .success(let data):
+            return TrixAttachmentDownload(
+                filename: descriptor.filename,
+                mimeType: descriptor.mimeType,
+                data: data
+            )
+        case .failure:
+            throw TrixClientError.attachmentDecryptionFailed
+        }
+    }
+
+    func typingState(roomID: String, session: TrixSession) async throws -> TrixRoomTypingState {
+        _ = try await ensureConnection(for: session)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
         let peerJID = try Self.normalizedXMPPJID(roomID)
+        pruneTypingRecords(accountJID: accountJID, roomID: peerJID)
+
+        let records = typingRecords[accountJID.lowercased()]?[peerJID.lowercased()] ?? [:]
+        let typingUserIDs = records.values
+            .filter { $0.state == .composing }
+            .map(\.userID)
+            .sorted()
+
+        return TrixRoomTypingState(
+            roomID: peerJID,
+            typingUserIDs: typingUserIDs,
+            updatedAt: Date()
+        )
+    }
+
+    func sendTypingState(_ state: TrixTypingState, roomID: String, session: TrixSession) async throws {
+        let connection = try await ensureConnection(for: session)
+        let peerJID = try Self.normalizedXMPPJID(roomID)
+
+        let message = Message()
+        message.id = "trix-chatstate-\(UUID().uuidString)"
+        message.type = .chat
+        message.to = JID(peerJID)
+        message.chatState = Self.chatState(from: state)
+        message.hints = [.noStore, .noCopy]
+
+        try await connection.chatStateModule.write(stanza: message)
+    }
+
+    func members(roomID: String, session: TrixSession) async throws -> [TrixRoomMember] {
+        let peerJID = try Self.normalizedRoomID(roomID)
+        if Self.isMUCJID(peerJID) {
+            let connection = try await ensureConnection(for: session)
+            let room = try await joinedGroupRoom(roomID: peerJID, session: session, connection: connection)
+            let accountJID = try Self.normalizedXMPPJID(session.userID)
+            let members = try await groupMembers(room: room, accountJID: accountJID, connection: connection)
+            cacheGroupMembers(members.map(\.userID), roomID: peerJID, accountJID: accountJID, name: nil)
+            return members
+        }
+
         return [
-            MatrixRoomMember(userID: session.userID, displayName: Self.displayName(from: session.userID), membership: .joined),
-            MatrixRoomMember(userID: peerJID, displayName: Self.displayName(from: peerJID), membership: .joined),
+            TrixRoomMember(userID: session.userID, displayName: Self.displayName(from: session.userID), membership: .joined),
+            TrixRoomMember(userID: peerJID, displayName: Self.displayName(from: peerJID), membership: .joined),
         ]
     }
 
-    func inviteUser(_ userID: String, roomID: String, session: MatrixSession) async throws {
-        _ = try await ensureConnection(for: session)
-        _ = try Self.normalizedXMPPJID(userID)
-        _ = try Self.normalizedXMPPJID(roomID)
-        throw MatrixClientError.e2eeUnavailable
+    func inviteUser(_ userID: String, roomID: String, session: TrixSession) async throws {
+        let connection = try await ensureConnection(for: session)
+        let inviteeJID = try Self.normalizedXMPPJID(userID)
+        let normalizedRoomID = try Self.normalizedRoomID(roomID)
+        guard Self.isMUCJID(normalizedRoomID) else {
+            throw TrixClientError.roomUnavailable
+        }
+
+        let room = try await joinedGroupRoom(roomID: normalizedRoomID, session: session, connection: connection)
+        try await setGroupAffiliations(
+            [MucModule.RoomAffiliation(jid: JID(inviteeJID), affiliation: .admin)],
+            room: room,
+            connection: connection
+        )
+        try await connection.mucModule.invite(to: room, invitee: JID(inviteeJID), reason: "Trix private group invite")
+        cacheGroupMembers([inviteeJID], roomID: normalizedRoomID, accountJID: session.userID, name: nil)
     }
 
-    func removeUser(_ userID: String, roomID: String, session: MatrixSession) async throws {
-        _ = try await ensureConnection(for: session)
-        _ = try Self.normalizedXMPPJID(userID)
-        _ = try Self.normalizedXMPPJID(roomID)
-        throw MatrixClientError.e2eeUnavailable
+    func removeUser(_ userID: String, roomID: String, session: TrixSession) async throws {
+        let connection = try await ensureConnection(for: session)
+        let removedJID = try Self.normalizedXMPPJID(userID)
+        let normalizedRoomID = try Self.normalizedRoomID(roomID)
+        guard Self.isMUCJID(normalizedRoomID) else {
+            throw TrixClientError.roomUnavailable
+        }
+
+        let room = try await joinedGroupRoom(roomID: normalizedRoomID, session: session, connection: connection)
+        try await setGroupAffiliations(
+            [MucModule.RoomAffiliation(jid: JID(removedJID), affiliation: .none)],
+            room: room,
+            connection: connection
+        )
+        removeCachedGroupMember(removedJID, roomID: normalizedRoomID, accountJID: session.userID)
     }
 
     func createEncryptedDirectRoom(
         inviteeUserID: String,
         name: String,
-        session: MatrixSession
-    ) async throws -> MatrixRoomSummary {
+        session: TrixSession
+    ) async throws -> TrixRoomSummary {
         let connection = try await ensureConnection(for: session)
         let peerJID = try Self.normalizedXMPPJID(inviteeUserID)
         let displayName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Self.displayName(from: peerJID) : name
         try await ensureDirectRosterItem(peerJID: peerJID, displayName: displayName, connection: connection)
 
-        return MatrixRoomSummary(
+        return TrixRoomSummary(
             id: peerJID,
             name: displayName,
             kind: .direct,
@@ -421,40 +1022,114 @@ actor XMPPMartinService: MatrixService {
     func createEncryptedGroupRoom(
         name: String,
         inviteeUserIDs: [String],
-        session: MatrixSession
-    ) async throws -> MatrixRoomSummary {
-        _ = try await ensureConnection(for: session)
-        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw MatrixClientError.groupRoomNameRequired
-        }
-        guard inviteeUserIDs.count >= 2 else {
-            throw MatrixClientError.groupInviteesRequired
-        }
-        throw MatrixClientError.e2eeUnavailable
-    }
-
-    func invitations(session: MatrixSession) async throws -> [MatrixRoomInvite] {
-        _ = try await ensureConnection(for: session)
-        return []
-    }
-
-    func acceptInvitation(roomID: String, session: MatrixSession) async throws -> MatrixRoomSummary {
-        _ = try await ensureConnection(for: session)
-        _ = try Self.normalizedXMPPJID(roomID)
-        throw MatrixClientError.inviteUnavailable
-    }
-
-    func declineInvitation(roomID: String, session: MatrixSession) async throws {
-        _ = try await ensureConnection(for: session)
-        _ = try Self.normalizedXMPPJID(roomID)
-        throw MatrixClientError.inviteUnavailable
-    }
-
-    func joinRoom(roomID: String, session: MatrixSession) async throws -> MatrixRoomSummary {
-        let roomJID = try Self.normalizedXMPPJID(roomID)
+        session: TrixSession
+    ) async throws -> TrixRoomSummary {
         let connection = try await ensureConnection(for: session)
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw TrixClientError.groupRoomNameRequired
+        }
+        let invitees = try Self.normalizedGroupInvitees(inviteeUserIDs, excluding: session.userID)
+        guard invitees.count >= 2 else {
+            throw TrixClientError.groupInviteesRequired
+        }
+        let roomName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let roomLocalpart = Self.groupRoomLocalpart(from: roomName)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+        let joinResult = try await connection.mucModule.join(
+            roomName: roomLocalpart,
+            mucServer: XMPPClientConfiguration.conferenceServerName,
+            nickname: Self.mucNickname(from: accountJID),
+            password: nil
+        )
+        let room = Self.room(from: joinResult)
+        try await configurePrivateGroupRoom(room: room, name: roomName, inviteeUserIDs: invitees, ownerJID: accountJID, connection: connection)
+        for invitee in invitees {
+            try await connection.mucModule.invite(to: room, invitee: JID(invitee), reason: "Trix private group invite")
+        }
+
+        let roomID = room.jid.stringValue
+        cacheGroupMembers([accountJID] + invitees, roomID: roomID, accountJID: accountJID, name: roomName)
+        try? await bookmarkGroupRoom(roomID: roomID, name: roomName, nickname: Self.mucNickname(from: accountJID), connection: connection)
+        return TrixRoomSummary(
+            id: roomID,
+            name: roomName,
+            kind: .group,
+            isEncrypted: true,
+            unreadCount: 0,
+            lastMessagePreview: "Trust OMEMO devices for every member before sending",
+            lastActivityAt: Date()
+        )
+    }
+
+    func invitations(session: TrixSession) async throws -> [TrixRoomInvite] {
+        let connection = try await ensureConnection(for: session)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+        try loadPersistedGroupInvitationState(accountJID: accountJID)
+        await syncArchivedGroupInvitationsIfNeeded(accountJID: accountJID, connection: connection)
+
+        return pendingGroupInvitations[accountJID.lowercased(), default: [:]]
+            .values
+            .map { invitation in
+                TrixRoomInvite(
+                    id: invitation.roomID,
+                    roomName: invitation.roomName,
+                    kind: .group,
+                    isEncrypted: true,
+                    inviterUserID: invitation.inviterUserID,
+                    inviterDisplayName: invitation.inviterUserID.map(Self.displayName(from:)),
+                    receivedAt: invitation.receivedAt
+                )
+            }
+            .sorted { $0.receivedAt > $1.receivedAt }
+    }
+
+    func acceptInvitation(roomID: String, session: TrixSession) async throws -> TrixRoomSummary {
+        let connection = try await ensureConnection(for: session)
+        let normalizedRoomID = try Self.normalizedMUCJID(roomID)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+        let accountKey = accountJID.lowercased()
+        try loadPersistedGroupInvitationState(accountJID: accountJID)
+        let invitation = pendingGroupInvitations[accountKey]?[normalizedRoomID.lowercased()]
+        let summary = try await joinGroupRoom(
+            roomID: normalizedRoomID,
+            displayName: invitation?.roomName,
+            password: invitation?.password,
+            session: session,
+            connection: connection
+        )
+        markGroupInvitationDismissed(roomID: normalizedRoomID, accountJID: accountJID, at: Date())
+        try persistGroupInvitationState(accountJID: accountJID)
+        return summary
+    }
+
+    func declineInvitation(roomID: String, session: TrixSession) async throws {
+        let connection = try await ensureConnection(for: session)
+        let normalizedRoomID = try Self.normalizedMUCJID(roomID)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+        let accountKey = accountJID.lowercased()
+        try loadPersistedGroupInvitationState(accountJID: accountJID)
+        await syncArchivedGroupInvitationsIfNeeded(accountJID: accountJID, connection: connection)
+        guard let invitation = pendingGroupInvitations[accountKey]?[normalizedRoomID.lowercased()] else {
+            throw TrixClientError.inviteUnavailable
+        }
+
+        if invitation.transport == .mediated {
+            try await declineMediatedGroupInvitation(invitation, connection: connection)
+        }
+
+        markGroupInvitationDismissed(roomID: normalizedRoomID, accountJID: accountJID, at: Date())
+        try persistGroupInvitationState(accountJID: accountJID)
+    }
+
+    func joinRoom(roomID: String, session: TrixSession) async throws -> TrixRoomSummary {
+        let roomJID = try Self.normalizedRoomID(roomID)
+        let connection = try await ensureConnection(for: session)
+        if Self.isMUCJID(roomJID) {
+            return try await joinGroupRoom(roomID: roomJID, displayName: nil, password: nil, session: session, connection: connection)
+        }
+
         try await ensureDirectRosterItem(peerJID: roomJID, displayName: Self.displayName(from: roomJID), connection: connection)
-        return MatrixRoomSummary(
+        return TrixRoomSummary(
             id: roomJID,
             name: Self.displayName(from: roomJID),
             kind: .direct,
@@ -465,18 +1140,22 @@ actor XMPPMartinService: MatrixService {
         )
     }
 
-    func joinInvitedRooms(session: MatrixSession) async throws -> [MatrixRoomSummary] {
-        _ = try await ensureConnection(for: session)
-        return []
+    func joinInvitedRooms(session: TrixSession) async throws -> [TrixRoomSummary] {
+        let invitations = try await invitations(session: session)
+        var rooms: [TrixRoomSummary] = []
+        for invitation in invitations {
+            rooms.append(try await acceptInvitation(roomID: invitation.id, session: session))
+        }
+        return rooms
     }
 
-    func deviceVerificationStatus(session: MatrixSession) async throws -> MatrixDeviceVerificationStatus {
+    func deviceVerificationStatus(session: TrixSession) async throws -> TrixDeviceVerificationStatus {
         let connection = try await ensureConnection(for: session)
         let registrationID = connection.omemoStack.store.localRegistrationId()
         let localAddress = SignalAddress(name: session.userID, deviceId: Int32(bitPattern: registrationID))
         let fingerprint = connection.omemoStack.store.identityFingerprint(forAddress: localAddress)
 
-        return MatrixDeviceVerificationStatus(
+        return TrixDeviceVerificationStatus(
             userID: session.userID,
             deviceID: String(registrationID),
             state: fingerprint == nil ? .unknown : .verified,
@@ -491,18 +1170,18 @@ actor XMPPMartinService: MatrixService {
         )
     }
 
-    func deviceVerificationFlow(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
+    func deviceVerificationFlow(session: TrixSession) async throws -> TrixDeviceVerificationFlow {
         _ = try await ensureConnection(for: session)
         return .idle
     }
 
-    func peerDeviceIdentities(userID: String, session: MatrixSession) async throws -> [MatrixPeerDeviceIdentity] {
+    func peerDeviceIdentities(userID: String, session: TrixSession) async throws -> [TrixPeerDeviceIdentity] {
         let connection = try await ensureConnection(for: session)
         let peerJID = try Self.normalizedXMPPJID(userID)
         return Self.peerDeviceIdentities(from: connection.omemoStack.store.identities(forName: peerJID), userID: peerJID)
     }
 
-    func refreshPeerDeviceIdentities(userID: String, session: MatrixSession) async throws -> [MatrixPeerDeviceIdentity] {
+    func refreshPeerDeviceIdentities(userID: String, session: TrixSession) async throws -> [TrixPeerDeviceIdentity] {
         let connection = try await ensureConnection(for: session)
         let peerJID = try Self.normalizedXMPPJID(userID)
         let bareJID = BareJID(peerJID)
@@ -513,7 +1192,7 @@ actor XMPPMartinService: MatrixService {
                 case .success:
                     continuation.resume(returning: ())
                 case .failure:
-                    continuation.resume(throwing: MatrixClientError.e2eeUnavailable)
+                    continuation.resume(throwing: TrixClientError.e2eeUnavailable)
                 }
             }
         }
@@ -521,73 +1200,73 @@ actor XMPPMartinService: MatrixService {
         return Self.peerDeviceIdentities(from: connection.omemoStack.store.identities(forName: peerJID), userID: peerJID)
     }
 
-    func trustPeerDevice(userID: String, deviceID: String, session: MatrixSession) async throws -> [MatrixPeerDeviceIdentity] {
+    func trustPeerDevice(userID: String, deviceID: String, session: TrixSession) async throws -> [TrixPeerDeviceIdentity] {
         let connection = try await ensureConnection(for: session)
         let peerJID = try Self.normalizedXMPPJID(userID)
         if !connection.omemoStack.store.trustIdentity(forName: peerJID, deviceID: deviceID) {
             _ = try await refreshPeerDeviceIdentities(userID: peerJID, session: session)
             guard connection.omemoStack.store.trustIdentity(forName: peerJID, deviceID: deviceID) else {
-                throw MatrixClientError.omemoDeviceTrustRequired
+                throw TrixClientError.omemoDeviceTrustRequired
             }
         }
 
         return Self.peerDeviceIdentities(from: connection.omemoStack.store.identities(forName: peerJID), userID: peerJID)
     }
 
-    func requestDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
+    func requestDeviceVerification(session: TrixSession) async throws -> TrixDeviceVerificationFlow {
         _ = try await ensureConnection(for: session)
-        throw MatrixClientError.e2eeUnavailable
+        throw TrixClientError.e2eeUnavailable
     }
 
     func acceptDeviceVerificationRequest(
-        _ request: MatrixDeviceVerificationRequest,
-        session: MatrixSession
-    ) async throws -> MatrixDeviceVerificationFlow {
+        _ request: TrixDeviceVerificationRequest,
+        session: TrixSession
+    ) async throws -> TrixDeviceVerificationFlow {
         _ = try await ensureConnection(for: session)
-        throw MatrixClientError.e2eeUnavailable
+        throw TrixClientError.e2eeUnavailable
     }
 
-    func startSasDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
+    func startSasDeviceVerification(session: TrixSession) async throws -> TrixDeviceVerificationFlow {
         _ = try await ensureConnection(for: session)
-        throw MatrixClientError.e2eeUnavailable
+        throw TrixClientError.e2eeUnavailable
     }
 
-    func approveDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
+    func approveDeviceVerification(session: TrixSession) async throws -> TrixDeviceVerificationFlow {
         _ = try await ensureConnection(for: session)
-        throw MatrixClientError.e2eeUnavailable
+        throw TrixClientError.e2eeUnavailable
     }
 
-    func declineDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
+    func declineDeviceVerification(session: TrixSession) async throws -> TrixDeviceVerificationFlow {
         _ = try await ensureConnection(for: session)
-        throw MatrixClientError.e2eeUnavailable
+        throw TrixClientError.e2eeUnavailable
     }
 
-    func cancelDeviceVerification(session: MatrixSession) async throws -> MatrixDeviceVerificationFlow {
+    func cancelDeviceVerification(session: TrixSession) async throws -> TrixDeviceVerificationFlow {
         _ = try await ensureConnection(for: session)
         return .idle
     }
 
-    func setUpRecovery(session: MatrixSession) async throws -> String {
+    func setUpRecovery(session: TrixSession) async throws -> String {
         _ = try await ensureConnection(for: session)
-        throw MatrixClientError.e2eeUnavailable
+        throw TrixClientError.e2eeUnavailable
     }
 
-    func confirmRecoveryKey(_ recoveryKey: String, session: MatrixSession) async throws -> MatrixDeviceVerificationStatus {
+    func confirmRecoveryKey(_ recoveryKey: String, session: TrixSession) async throws -> TrixDeviceVerificationStatus {
         _ = try await ensureConnection(for: session)
-        throw MatrixClientError.e2eeUnavailable
+        throw TrixClientError.e2eeUnavailable
     }
 
     func searchUsers(
         _ searchTerm: String,
         limit: Int,
-        session: MatrixSession
-    ) async throws -> MatrixUserSearchResult {
+        session: TrixSession
+    ) async throws -> TrixUserSearchResult {
         let connection = try await refreshedRosterConnection(for: session)
 
         let rosterUsers = connection.rosterModule.rosterManager
             .items(for: connection.client)
             .map { item in
-                MatrixUserProfile(
+                TrixUserProfile(
                     userID: item.jid.bareJid.stringValue,
                     displayName: item.name,
                     avatarURL: nil
@@ -597,7 +1276,7 @@ actor XMPPMartinService: MatrixService {
         var users = rosterUsers + (try await searchDirectoryUsers(searchTerm, limit: limit, connection: connection))
         if let directJID = try? Self.normalizedXMPPJID(searchTerm),
            !users.contains(where: { $0.userID.lowercased() == directJID.lowercased() }) {
-            users.append(MatrixUserProfile(userID: directJID, displayName: Self.displayName(from: directJID), avatarURL: nil))
+            users.append(TrixUserProfile(userID: directJID, displayName: Self.displayName(from: directJID), avatarURL: nil))
         }
 
         let needle = searchTerm.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -609,26 +1288,42 @@ actor XMPPMartinService: MatrixService {
                     || (user.displayName?.lowercased().contains(needle) == true)
             }
 
-        return MatrixUserSearchResult(users: Array(filtered.prefix(max(limit, 0))), limited: filtered.count > limit)
+        return TrixUserSearchResult(users: Array(filtered.prefix(max(limit, 0))), limited: filtered.count > limit)
     }
 
-    func profile(userID: String, session: MatrixSession) async throws -> MatrixUserProfile {
-        _ = try await ensureConnection(for: session)
+    func profile(userID: String, session: TrixSession) async throws -> TrixUserProfile {
+        let connection = try await ensureConnection(for: session)
         let jid = try Self.normalizedXMPPJID(userID)
-        return MatrixUserProfile(userID: jid, displayName: Self.displayName(from: jid), avatarURL: nil)
+        let vCard = try? await retrieveVCardElement(for: jid, connection: connection)
+        return Self.profile(from: vCard, userID: jid)
     }
 
-    func updateDisplayName(_ displayName: String, session: MatrixSession) async throws -> MatrixUserProfile {
-        _ = try await ensureConnection(for: session)
-        throw MatrixClientError.sdkAdapterUnavailable
+    func updateDisplayName(_ displayName: String, session: TrixSession) async throws -> TrixUserProfile {
+        let connection = try await ensureConnection(for: session)
+        let jid = try Self.normalizedXMPPJID(session.userID)
+        let currentVCard = try? await retrieveVCardElement(for: jid, connection: connection)
+        let currentProfile = Self.profile(from: currentVCard, userID: jid)
+        return try await updateProfile(
+            TrixUserProfileUpdate(
+                displayName: displayName,
+                bio: currentProfile.metadata.bio ?? "",
+                statusMessage: currentProfile.metadata.statusMessage ?? "",
+                website: currentProfile.metadata.website ?? ""
+            ),
+            session: session
+        )
     }
 
-    func updateProfile(_ update: MatrixUserProfileUpdate, session: MatrixSession) async throws -> MatrixUserProfile {
-        _ = try await ensureConnection(for: session)
-        throw MatrixClientError.sdkAdapterUnavailable
+    func updateProfile(_ update: TrixUserProfileUpdate, session: TrixSession) async throws -> TrixUserProfile {
+        let connection = try await ensureConnection(for: session)
+        let jid = try Self.normalizedXMPPJID(session.userID)
+        let currentVCard = try? await retrieveVCardElement(for: jid, connection: connection)
+        let updatedVCard = Self.updatingVCard(currentVCard, userID: jid, update: update)
+        try await publishVCardElement(updatedVCard, connection: connection)
+        return Self.profile(from: updatedVCard, userID: jid)
     }
 
-    private func ensureConnection(for session: MatrixSession) async throws -> Connection {
+    private func ensureConnection(for session: TrixSession) async throws -> Connection {
         let key = Self.sessionKey(session)
         if let connection = connections[key] {
             if connection.client.isConnected {
@@ -642,7 +1337,7 @@ actor XMPPMartinService: MatrixService {
         return try await openConnection(for: session)
     }
 
-    private func refreshedRosterConnection(for session: MatrixSession) async throws -> Connection {
+    private func refreshedRosterConnection(for session: TrixSession) async throws -> Connection {
         let connection = try await ensureConnection(for: session)
         do {
             try await connection.rosterModule.requestRoster()
@@ -658,7 +1353,7 @@ actor XMPPMartinService: MatrixService {
         return reconnected
     }
 
-    private func reconnect(for session: MatrixSession) async throws -> Connection {
+    private func reconnect(for session: TrixSession) async throws -> Connection {
         let key = Self.sessionKey(session)
         if let existing = connections.removeValue(forKey: key) {
             try? await existing.client.disconnect(force: true)
@@ -705,19 +1400,72 @@ actor XMPPMartinService: MatrixService {
                 }
             }
             .store(in: &connection.cancellables)
+
+        connection.deliveryReceiptsModule.receiptsPublisher
+            .sink { [weak connection] receipt in
+                guard let connection else {
+                    return
+                }
+
+                let capturedReceipt = CapturedDeliveryReceipt(
+                    messageID: receipt.messageId,
+                    roomID: Self.deliveryReceiptRoomID(
+                        from: receipt.message,
+                        accountJID: connection.client.connectionConfiguration.userJid.stringValue
+                    )
+                )
+                Task {
+                    await service.recordDeliveryReceipt(capturedReceipt, connection: connection)
+                }
+            }
+            .store(in: &connection.cancellables)
+
+        connection.mucModule.inivitationsPublisher
+            .sink { [weak connection] invitation in
+                guard let connection else {
+                    return
+                }
+
+                let capturedInvitation = CapturedMUCInvitation(
+                    roomID: invitation.roomJid.stringValue,
+                    roomName: Self.displayName(from: invitation.roomJid.stringValue),
+                    inviterUserID: invitation.inviter?.bareJid.stringValue,
+                    password: invitation.password,
+                    reason: invitation.reason,
+                    receivedAt: Date(),
+                    transport: Self.mucInvitationTransport(from: invitation)
+                )
+                Task {
+                    await service.recordGroupInvitation(capturedInvitation, connection: connection)
+                }
+            }
+            .store(in: &connection.cancellables)
+
+        connection.mucModule.messagesPublisher
+            .sink { [weak connection] event in
+                guard let connection else {
+                    return
+                }
+
+                let capturedMessage = CapturedMUCMessage(room: event.room, message: event.message)
+                Task {
+                    await service.recordGroupMessage(capturedMessage, connection: connection)
+                }
+            }
+            .store(in: &connection.cancellables)
     }
 
-    private func openConnection(for session: MatrixSession) async throws -> Connection {
+    private func openConnection(for session: TrixSession) async throws -> Connection {
         let jid = try Self.normalizedXMPPJID(session.userID)
         guard !session.accessToken.isEmpty else {
-            throw MatrixClientError.missingSession
+            throw TrixClientError.missingSession
         }
 
         let connection = try makeConnection(jid: jid, password: session.accessToken, resource: session.deviceID)
         do {
             try await connection.client.loginAndWait()
         } catch {
-            throw MatrixClientError.xmppConnectionFailed
+            throw TrixClientError.xmppConnectionFailed
         }
         await waitForOMEMOReady(connection: connection)
         await replaceConnection(connection, for: session)
@@ -726,7 +1474,7 @@ actor XMPPMartinService: MatrixService {
         return connection
     }
 
-    private func replaceConnection(_ connection: Connection, for session: MatrixSession) async {
+    private func replaceConnection(_ connection: Connection, for session: TrixSession) async {
         let key = Self.sessionKey(session)
         if let existing = connections[key] {
             try? await existing.client.disconnect(force: true)
@@ -760,11 +1508,28 @@ actor XMPPMartinService: MatrixService {
             usedUnfilteredFallback = !unfilteredEvents.isEmpty
         }
 
-        var items: [MatrixTimelineItem] = []
+        var items: [TrixTimelineItem] = []
         var encryptedCount = 0
+        var localKeyCount = 0
+        var accountSenderCount = 0
+        var peerSenderCount = 0
+        let localDeviceID = String(connection.omemoStack.store.localRegistrationId())
+        let accountKey = accountJID.lowercased()
+        let peerKey = peerJID.lowercased()
         for archived in events {
             if archived.message.firstChild(name: "encrypted", xmlns: OMEMOModule.XMLNS) != nil {
                 encryptedCount += 1
+            }
+            if Self.messageHasRecipientKey(archived.message, recipientDeviceID: localDeviceID) {
+                localKeyCount += 1
+            }
+            switch archived.message.from?.bareJid.stringValue.lowercased() {
+            case accountKey:
+                accountSenderCount += 1
+            case peerKey:
+                peerSenderCount += 1
+            default:
+                break
             }
             if let item = timelineItem(
                 from: archived.message,
@@ -783,6 +1548,9 @@ actor XMPPMartinService: MatrixService {
             rawCount: rawCount,
             filteredCount: events.count,
             encryptedCount: encryptedCount,
+            localKeyCount: localKeyCount,
+            accountSenderCount: accountSenderCount,
+            peerSenderCount: peerSenderCount,
             usedUnfilteredFallback: usedUnfilteredFallback
         )
     }
@@ -846,6 +1614,15 @@ actor XMPPMartinService: MatrixService {
     ) async {
         let message = capturedMessage.message
         let accountJID = connection.client.connectionConfiguration.userJid.stringValue
+        if let chatState = message.chatState {
+            recordChatState(
+                chatState,
+                from: message,
+                accountJID: accountJID,
+                carbonAction: capturedMessage.carbonAction
+            )
+        }
+
         guard let roomID = Self.roomID(for: message, accountJID: accountJID, carbonAction: capturedMessage.carbonAction),
               let item = timelineItem(
                 from: message,
@@ -861,20 +1638,240 @@ actor XMPPMartinService: MatrixService {
         storeTimelineItems([item], accountJID: accountJID, roomID: roomID)
     }
 
+    private func recordGroupInvitation(
+        _ invitation: CapturedMUCInvitation,
+        connection: Connection,
+        persist: Bool = true
+    ) async {
+        let accountJID = connection.client.connectionConfiguration.userJid.stringValue
+        let accountKey = accountJID.lowercased()
+        guard let normalizedInvitation = Self.normalizedCapturedMUCInvitation(invitation) else {
+            return
+        }
+
+        let roomKey = normalizedInvitation.roomID.lowercased()
+        if let dismissedAt = dismissedGroupInvitations[accountKey]?[roomKey],
+           normalizedInvitation.receivedAt <= dismissedAt {
+            return
+        }
+
+        var accountInvitations = pendingGroupInvitations[accountKey] ?? [:]
+        if let existing = accountInvitations[roomKey],
+           existing.receivedAt > normalizedInvitation.receivedAt {
+            return
+        }
+
+        accountInvitations[roomKey] = normalizedInvitation
+        pendingGroupInvitations[accountKey] = accountInvitations
+        cacheGroupMembers([accountJID], roomID: normalizedInvitation.roomID, accountJID: accountJID, name: normalizedInvitation.roomName)
+        if persist {
+            try? persistGroupInvitationState(accountJID: accountJID)
+        }
+    }
+
+    private func loadPersistedGroupInvitationState(accountJID: String) throws {
+        let state = try mucInvitationCacheStore.load(accountJID: accountJID)
+        let accountKey = accountJID.lowercased()
+        var dismissed = dismissedGroupInvitations[accountKey] ?? [:]
+        for record in state.dismissed {
+            let roomKey = record.roomID.lowercased()
+            if let existing = dismissed[roomKey], existing >= record.dismissedAt {
+                continue
+            }
+            dismissed[roomKey] = record.dismissedAt
+        }
+        dismissedGroupInvitations[accountKey] = dismissed
+
+        var pending = pendingGroupInvitations[accountKey] ?? [:]
+        for invitation in state.pending {
+            guard let normalizedInvitation = Self.normalizedCapturedMUCInvitation(invitation) else {
+                continue
+            }
+
+            let roomKey = normalizedInvitation.roomID.lowercased()
+            if let dismissedAt = dismissed[roomKey],
+               normalizedInvitation.receivedAt <= dismissedAt {
+                continue
+            }
+            if let existing = pending[roomKey],
+               existing.receivedAt > normalizedInvitation.receivedAt {
+                continue
+            }
+            pending[roomKey] = normalizedInvitation
+        }
+        pendingGroupInvitations[accountKey] = pending
+    }
+
+    private func syncArchivedGroupInvitationsIfNeeded(accountJID: String, connection: Connection) async {
+        let accountKey = accountJID.lowercased()
+        guard invitationArchiveSyncConnectionDates[accountKey] != connection.createdAt else {
+            return
+        }
+        invitationArchiveSyncConnectionDates[accountKey] = connection.createdAt
+
+        guard let archivedEvents = try? await archiveEvents(peerJID: nil, connection: connection) else {
+            return
+        }
+
+        for archived in archivedEvents {
+            guard let invitation = Self.capturedMUCInvitation(
+                from: archived.message,
+                receivedAt: archived.timestamp
+            ) else {
+                continue
+            }
+            await recordGroupInvitation(invitation, connection: connection, persist: false)
+        }
+
+        try? persistGroupInvitationState(accountJID: accountJID)
+    }
+
+    private func persistGroupInvitationState(accountJID: String) throws {
+        let accountKey = accountJID.lowercased()
+        let pending = (pendingGroupInvitations[accountKey] ?? [:])
+            .values
+            .sorted { $0.receivedAt > $1.receivedAt }
+        let dismissed = (dismissedGroupInvitations[accountKey] ?? [:])
+            .map { DismissedMUCInvitation(roomID: $0.key, dismissedAt: $0.value) }
+            .sorted { $0.dismissedAt > $1.dismissedAt }
+            .prefix(200)
+        let state = StoredMUCInvitationState(version: 1, pending: pending, dismissed: Array(dismissed))
+        try mucInvitationCacheStore.save(state, accountJID: accountJID)
+    }
+
+    private func markGroupInvitationDismissed(roomID: String, accountJID: String, at date: Date) {
+        let accountKey = accountJID.lowercased()
+        let roomKey = roomID.lowercased()
+        pendingGroupInvitations[accountKey]?.removeValue(forKey: roomKey)
+        var dismissed = dismissedGroupInvitations[accountKey] ?? [:]
+        if let existing = dismissed[roomKey], existing >= date {
+            return
+        }
+        dismissed[roomKey] = date
+        dismissedGroupInvitations[accountKey] = dismissed
+    }
+
+    private func declineMediatedGroupInvitation(
+        _ invitation: CapturedMUCInvitation,
+        connection: Connection
+    ) async throws {
+        guard let context = connection.mucModule.context else {
+            throw TrixClientError.xmppConnectionFailed
+        }
+
+        let inviterJID: JID?
+        if let inviterUserID = invitation.inviterUserID {
+            inviterJID = JID(inviterUserID)
+        } else {
+            inviterJID = nil
+        }
+
+        let mediatedInvitation = MucModule.MediatedInvitation(
+            context: context,
+            message: Message(),
+            roomJid: BareJID(invitation.roomID),
+            inviter: inviterJID,
+            reason: invitation.reason,
+            password: invitation.password
+        )
+        try await connection.mucModule.decline(invitation: mediatedInvitation, reason: "Declined in Trix")
+    }
+
+    private func recordGroupMessage(
+        _ capturedMessage: CapturedMUCMessage,
+        connection: Connection
+    ) async {
+        let message = capturedMessage.message
+        let accountJID = connection.client.connectionConfiguration.userJid.stringValue
+        let roomID = capturedMessage.room.jid.stringValue
+        let senderJID = Self.groupMessageSenderJID(message, room: capturedMessage.room, accountJID: accountJID)
+
+        guard let item = timelineItem(
+            from: message,
+            accountJID: accountJID,
+            roomID: roomID,
+            timestamp: Self.messageTimestamp(message, fallback: Date()),
+            fallbackID: nil,
+            connection: connection,
+            senderJID: senderJID
+        ) else {
+            return
+        }
+
+        var knownMembers = Self.memberUserIDs(from: capturedMessage.room, fallbackAccountJID: accountJID)
+        if let senderJID {
+            knownMembers.insert(senderJID.lowercased())
+        }
+        cacheGroupMembers(knownMembers, roomID: roomID, accountJID: accountJID, name: nil)
+        storeTimelineItems([item], accountJID: accountJID, roomID: roomID)
+        updateGroupActivity(roomID: roomID, accountJID: accountJID, at: item.timestamp)
+    }
+
+    private func recordChatState(
+        _ chatState: ChatState,
+        from message: Message,
+        accountJID: String,
+        carbonAction: MessageCarbonsModule.Action?
+    ) {
+        guard let roomID = Self.roomID(for: message, accountJID: accountJID, carbonAction: carbonAction),
+              let senderJID = message.from?.bareJid.stringValue,
+              senderJID.lowercased() != accountJID.lowercased() else {
+            return
+        }
+
+        updateTypingRecord(
+            accountJID: accountJID,
+            roomID: roomID,
+            senderJID: senderJID,
+            state: Self.typingState(from: chatState)
+        )
+    }
+
+    private func recordDeliveryReceipt(
+        _ receipt: CapturedDeliveryReceipt,
+        connection: Connection
+    ) async {
+        guard !receipt.messageID.isEmpty else {
+            return
+        }
+
+        let accountJID = connection.client.connectionConfiguration.userJid.stringValue
+        if let roomID = receipt.roomID,
+           updateTimelineDeliveryState(
+            accountJID: accountJID,
+            roomID: roomID,
+            messageID: receipt.messageID,
+            deliveryState: .delivered
+           ) {
+            return
+        }
+
+        _ = updateTimelineDeliveryState(
+            accountJID: accountJID,
+            roomID: nil,
+            messageID: receipt.messageID,
+            deliveryState: .delivered
+        )
+    }
+
     private func timelineItem(
         from message: Message,
         accountJID: String,
         roomID: String,
         timestamp: Date,
         fallbackID: String?,
-        connection: Connection
-    ) -> MatrixTimelineItem? {
+        connection: Connection,
+        senderJID: String? = nil
+    ) -> TrixTimelineItem? {
         guard message.firstChild(name: "encrypted", xmlns: OMEMOModule.XMLNS) != nil else {
             return nil
         }
 
         let decoded: Message
-        switch connection.omemoStack.module.decode(message: message, serverMsgId: fallbackID) {
+        let decodeResult = senderJID
+            .map { connection.omemoStack.module.decode(message: message, from: BareJID($0), serverMsgId: fallbackID) }
+            ?? connection.omemoStack.module.decode(message: message, serverMsgId: fallbackID)
+        switch decodeResult {
         case .successMessage(let decryptedMessage, _):
             decoded = decryptedMessage
         case .successTransportKey, .failure:
@@ -886,21 +1883,23 @@ actor XMPPMartinService: MatrixService {
             return nil
         }
 
-        let senderJID = decoded.from?.bareJid.stringValue ?? roomID
+        let content = Self.decodedTimelineContent(from: body)
+        let resolvedSenderJID = senderJID ?? decoded.from?.bareJid.stringValue ?? roomID
         let normalizedAccountJID = accountJID.lowercased()
-        let isLocalEcho = senderJID.lowercased() == normalizedAccountJID
-        return MatrixTimelineItem(
+        let isLocalEcho = resolvedSenderJID.lowercased() == normalizedAccountJID
+        return TrixTimelineItem(
             id: decoded.id ?? fallbackID ?? "xmpp-\(UUID().uuidString)",
             roomID: roomID,
-            sender: isLocalEcho ? accountJID : senderJID,
+            sender: isLocalEcho ? accountJID : resolvedSenderJID,
             timestamp: timestamp,
-            body: body,
+            body: content.body,
             isLocalEcho: isLocalEcho,
-            attachment: nil
+            attachment: content.attachment,
+            deliveryState: isLocalEcho ? .sent : nil
         )
     }
 
-    private func storeTimelineItems(_ items: [MatrixTimelineItem], accountJID: String, roomID: String) {
+    private func storeTimelineItems(_ items: [TrixTimelineItem], accountJID: String, roomID: String) {
         let accountKey = accountJID.lowercased()
         let roomKey = roomID.lowercased()
         let existingItems = timelineHistory[accountKey]?[roomKey] ?? []
@@ -911,7 +1910,117 @@ actor XMPPMartinService: MatrixService {
         try? timelineCacheStore.save(mergedItems, accountJID: accountJID, roomID: roomID)
     }
 
-    private func timelineItems(accountJID: String, roomID: String) -> [MatrixTimelineItem] {
+    @discardableResult
+    private func updateTimelineDeliveryState(
+        accountJID: String,
+        roomID: String?,
+        messageID: String,
+        deliveryState: TrixDeliveryState
+    ) -> Bool {
+        let accountKey = accountJID.lowercased()
+        guard var accountHistory = timelineHistory[accountKey] else {
+            return false
+        }
+
+        let candidateRoomKeys = roomID.map { [$0.lowercased()] } ?? Array(accountHistory.keys)
+        var changedRoomKeys: [String] = []
+        for roomKey in candidateRoomKeys {
+            guard let existingItems = accountHistory[roomKey] else {
+                continue
+            }
+
+            var roomChanged = false
+            let updatedItems = existingItems.map { item in
+                guard item.id == messageID,
+                      item.isLocalEcho,
+                      item.deliveryState != deliveryState else {
+                    return item
+                }
+
+                roomChanged = true
+                return item.withDeliveryState(deliveryState)
+            }
+
+            guard roomChanged else {
+                continue
+            }
+
+            accountHistory[roomKey] = updatedItems
+            changedRoomKeys.append(roomKey)
+            try? timelineCacheStore.save(updatedItems, accountJID: accountJID, roomID: roomKey)
+        }
+
+        guard !changedRoomKeys.isEmpty else {
+            return false
+        }
+
+        timelineHistory[accountKey] = accountHistory
+        return true
+    }
+
+    private func updateTypingRecord(
+        accountJID: String,
+        roomID: String,
+        senderJID: String,
+        state: TrixTypingState
+    ) {
+        let accountKey = accountJID.lowercased()
+        let roomKey = roomID.lowercased()
+        let senderKey = senderJID.lowercased()
+        var accountRecords = typingRecords[accountKey] ?? [:]
+        var roomRecords = accountRecords[roomKey] ?? [:]
+
+        switch state {
+        case .idle, .paused:
+            roomRecords.removeValue(forKey: senderKey)
+        case .composing:
+            roomRecords[senderKey] = TypingRecord(
+                userID: senderJID,
+                state: state,
+                updatedAt: Date()
+            )
+        }
+
+        if roomRecords.isEmpty {
+            accountRecords.removeValue(forKey: roomKey)
+        } else {
+            accountRecords[roomKey] = roomRecords
+        }
+
+        if accountRecords.isEmpty {
+            typingRecords.removeValue(forKey: accountKey)
+        } else {
+            typingRecords[accountKey] = accountRecords
+        }
+    }
+
+    private func pruneTypingRecords(accountJID: String, roomID: String) {
+        let accountKey = accountJID.lowercased()
+        let roomKey = roomID.lowercased()
+        guard var accountRecords = typingRecords[accountKey],
+              var roomRecords = accountRecords[roomKey] else {
+            return
+        }
+
+        let cutoff = Date().addingTimeInterval(-Self.typingRecordLifetime)
+        roomRecords = roomRecords.filter { _, record in
+            record.updatedAt >= cutoff
+        }
+
+        if roomRecords.isEmpty {
+            accountRecords.removeValue(forKey: roomKey)
+        } else {
+            accountRecords[roomKey] = roomRecords
+        }
+
+        if accountRecords.isEmpty {
+            typingRecords.removeValue(forKey: accountKey)
+        } else {
+            typingRecords[accountKey] = accountRecords
+        }
+    }
+
+    private func timelineItems(accountJID: String, roomID: String) -> [TrixTimelineItem] {
         timelineHistory[accountJID.lowercased()]?[roomID.lowercased()] ?? []
     }
 
@@ -945,10 +2054,396 @@ actor XMPPMartinService: MatrixService {
                 case .successMessage(let encryptedMessage, _):
                     continuation.resume(returning: encryptedMessage)
                 case .failure:
-                    continuation.resume(throwing: MatrixClientError.omemoEncryptionFailed)
+                    continuation.resume(throwing: TrixClientError.omemoEncryptionFailed)
                 }
             }
         }
+    }
+
+    private func encodeOMEMOMessage(_ message: Message, recipientJIDs: [String], connection: Connection) async throws -> Message {
+        await ensureOwnOMEMOSession(connection: connection)
+        let recipients = recipientJIDs.map(BareJID.init)
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Message, Error>) in
+            connection.omemoStack.module.encode(message: message, for: recipients) { result in
+                switch result {
+                case .successMessage(let encryptedMessage, _):
+                    continuation.resume(returning: encryptedMessage)
+                case .failure:
+                    continuation.resume(throwing: TrixClientError.omemoEncryptionFailed)
+                }
+            }
+        }
+    }
+
+    private func sendGroupText(
+        _ body: String,
+        roomID: String,
+        session: TrixSession,
+        connection: Connection
+    ) async throws -> TrixTimelineItem {
+        let room = try await joinedGroupRoom(roomID: roomID, session: session, connection: connection)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+        let recipients = try await validatedGroupEncryptionRecipients(
+            room: room,
+            accountJID: accountJID,
+            session: session,
+            connection: connection
+        )
+
+        let messageID = "trix-group-\(UUID().uuidString)"
+        let message = Message()
+        message.id = messageID
+        message.type = .groupchat
+        message.to = JID(roomID)
+        message.body = body
+
+        let encryptedMessage = try await encodeOMEMOMessage(message, recipientJIDs: recipients, connection: connection)
+        guard encryptedMessage.body == nil,
+              let encrypted = encryptedMessage.firstChild(name: "encrypted", xmlns: OMEMOModule.XMLNS),
+              let header = encrypted.firstChild(name: "header"),
+              !header.filterChildren(name: "key", xmlns: nil).isEmpty else {
+            throw TrixClientError.omemoEncryptionFailed
+        }
+
+        try await connection.mucModule.write(stanza: encryptedMessage)
+
+        let item = TrixTimelineItem(
+            id: messageID,
+            roomID: roomID,
+            sender: accountJID,
+            timestamp: Date(),
+            body: body,
+            isLocalEcho: true,
+            attachment: nil,
+            deliveryState: .sent
+        )
+        storeTimelineItems([item], accountJID: accountJID, roomID: roomID)
+        updateGroupActivity(roomID: roomID, accountJID: accountJID, at: item.timestamp)
+        return item
+    }
+
+    private func sendGroupAttachment(
+        _ attachment: TrixAttachmentUpload,
+        roomID: String,
+        session: TrixSession,
+        connection: Connection
+    ) async throws -> TrixTimelineItem {
+        let room = try await joinedGroupRoom(roomID: roomID, session: session, connection: connection)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+        let recipients = try await validatedGroupEncryptionRecipients(
+            room: room,
+            accountJID: accountJID,
+            session: session,
+            connection: connection
+        )
+
+        let encryptedMedia: (data: Data, fragment: String)
+        switch connection.omemoStack.module.encryptFile(data: attachment.data) {
+        case .success(let result):
+            encryptedMedia = (data: result.0, fragment: result.1)
+        case .failure:
+            throw TrixClientError.attachmentEncryptionUnavailable
+        }
+
+        let uploadModule: HttpFileUploadModule = connection.client.modulesManager.module(.httpFileUpload)
+        let uploadComponent = try await uploadModule.findHttpUploadComponents()
+            .filter { $0.maxSize >= encryptedMedia.data.count }
+            .sorted { $0.maxSize < $1.maxSize }
+            .first
+        guard let uploadComponent else {
+            throw TrixClientError.attachmentTransferFailed
+        }
+
+        let encryptedFilename = "trix-\(UUID().uuidString).enc"
+        let slot = try await uploadModule.requestUploadSlot(
+            componentJid: uploadComponent.jid,
+            filename: encryptedFilename,
+            size: encryptedMedia.data.count,
+            contentType: "application/octet-stream"
+        )
+        try await uploadEncryptedAttachment(encryptedMedia.data, slot: slot)
+
+        let descriptor = EncryptedAttachmentDescriptor(
+            type: Self.encryptedAttachmentDescriptorType,
+            version: 1,
+            downloadURL: slot.getUri.absoluteString,
+            fragment: encryptedMedia.fragment,
+            filename: attachment.filename,
+            mimeType: attachment.mimeType,
+            originalSizeBytes: attachment.data.count,
+            encryptedSizeBytes: encryptedMedia.data.count,
+            imageDimensions: attachment.imageDimensions,
+            imageBlurhash: attachment.imageBlurhash
+        )
+        let descriptorJSON = try Self.encodedAttachmentDescriptor(descriptor)
+
+        let messageID = "trix-group-attachment-\(UUID().uuidString)"
+        let message = Message()
+        message.id = messageID
+        message.type = .groupchat
+        message.to = JID(roomID)
+        message.body = descriptorJSON
+
+        let encryptedMessage = try await encodeOMEMOMessage(message, recipientJIDs: recipients, connection: connection)
+        guard encryptedMessage.body == nil,
+              let encrypted = encryptedMessage.firstChild(name: "encrypted", xmlns: OMEMOModule.XMLNS),
+              let header = encrypted.firstChild(name: "header"),
+              !header.filterChildren(name: "key", xmlns: nil).isEmpty else {
+            throw TrixClientError.omemoEncryptionFailed
+        }
+
+        try await connection.mucModule.write(stanza: encryptedMessage)
+
+        let item = TrixTimelineItem(
+            id: messageID,
+            roomID: roomID,
+            sender: accountJID,
+            timestamp: Date(),
+            body: "Attachment: \(attachment.filename)",
+            isLocalEcho: true,
+            attachment: Self.timelineAttachment(from: descriptor, sourceJSON: descriptorJSON),
+            deliveryState: .sent
+        )
+        storeTimelineItems([item], accountJID: accountJID, roomID: roomID)
+        updateGroupActivity(roomID: roomID, accountJID: accountJID, at: item.timestamp)
+        return item
+    }
+
+    private func joinedGroupRoom(roomID: String, session: TrixSession, connection: Connection) async throws -> RoomProtocol {
+        if let room = connection.mucModule.roomManager.room(for: connection.client, with: BareJID(roomID)),
+           room.state == .joined {
+            let accountJID = try Self.normalizedXMPPJID(session.userID)
+            cacheGroupMembers(Self.memberUserIDs(from: room, fallbackAccountJID: accountJID), roomID: roomID, accountJID: accountJID, name: nil)
+            return room
+        }
+
+        let summary = try await joinGroupRoom(roomID: roomID, displayName: nil, password: nil, session: session, connection: connection)
+        guard let room = connection.mucModule.roomManager.room(for: connection.client, with: BareJID(summary.id)) else {
+            throw TrixClientError.roomUnavailable
+        }
+        return room
+    }
+
+    private func joinGroupRoom(
+        roomID: String,
+        displayName: String?,
+        password: String?,
+        session: TrixSession,
+        connection: Connection
+    ) async throws -> TrixRoomSummary {
+        let mucJID = try Self.normalizedMUCJID(roomID)
+        let bareJID = BareJID(mucJID)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+        let result = try await connection.mucModule.join(
+            roomName: bareJID.localPart ?? "",
+            mucServer: bareJID.domain,
+            nickname: Self.mucNickname(from: accountJID),
+            password: password
+        )
+        let room = Self.room(from: result)
+        let name = displayName ?? cachedGroup(roomID: mucJID, accountJID: accountJID)?.name ?? Self.displayName(from: mucJID)
+        cacheGroupMembers(Self.memberUserIDs(from: room, fallbackAccountJID: accountJID), roomID: mucJID, accountJID: accountJID, name: name)
+        try? await bookmarkGroupRoom(roomID: mucJID, name: name, nickname: Self.mucNickname(from: accountJID), connection: connection)
+        return TrixRoomSummary(
+            id: mucJID,
+            name: name,
+            kind: .group,
+            isEncrypted: true,
+            unreadCount: 0,
+            lastMessagePreview: "Trust OMEMO devices for every member before sending",
+            lastActivityAt: Date()
+        )
+    }
+
+    private func configurePrivateGroupRoom(
+        room: RoomProtocol,
+        name: String,
+        inviteeUserIDs: [String],
+        ownerJID: String,
+        connection: Connection
+    ) async throws {
+        let config = try await roomConfiguration(roomJID: JID(room.jid), connection: connection)
+        config.name = name
+        config.desc = "Trix private OMEMO group"
+        config.membersOnly = true
+        config.publicRoom = false
+        config.persistentRoom = true
+        config.allowInvites = true
+        config.passwordProtectedRoom = false
+        config.whois = .anyone
+        try await setRoomConfiguration(config, roomJID: JID(room.jid), connection: connection)
+
+        let affiliations = [MucModule.RoomAffiliation(jid: JID(ownerJID), affiliation: .owner)]
+            + inviteeUserIDs.map { MucModule.RoomAffiliation(jid: JID($0), affiliation: .admin) }
+        try await setGroupAffiliations(affiliations, room: room, connection: connection)
+    }
+
+    private func validatedGroupEncryptionRecipients(
+        room: RoomProtocol,
+        accountJID: String,
+        session: TrixSession,
+        connection: Connection
+    ) async throws -> [String] {
+        let roomID = room.jid.stringValue
+        let accountKey = accountJID.lowercased()
+        var members = Set<String>()
+
+        do {
+            for affiliation in [MucAffiliation.owner, .admin, .member] {
+                let affiliations = try await roomAffiliations(room: room, affiliation: affiliation, connection: connection)
+                members.formUnion(affiliations.map { $0.userID.lowercased() })
+            }
+        } catch {
+            throw TrixClientError.groupOmemoRecipientSetUnavailable
+        }
+
+        members.formUnion(Self.memberUserIDs(from: room, fallbackAccountJID: accountJID))
+        cacheGroupMembers(members, roomID: roomID, accountJID: accountJID, name: nil)
+
+        let recipients = members
+            .filter { $0.lowercased() != accountKey }
+            .sorted()
+        guard !recipients.isEmpty else {
+            throw TrixClientError.groupOmemoRecipientSetUnavailable
+        }
+
+        for recipient in recipients where !connection.omemoStack.store.hasTrustedActiveDevice(forName: recipient) {
+            _ = try? await refreshPeerDeviceIdentities(userID: recipient, session: session)
+        }
+        guard recipients.allSatisfy({ connection.omemoStack.store.hasTrustedActiveDevice(forName: $0) }) else {
+            throw TrixClientError.groupOmemoDeviceTrustRequired
+        }
+
+        return recipients
+    }
+
+    private func groupMembers(room: RoomProtocol, accountJID: String, connection: Connection) async throws -> [TrixRoomMember] {
+        var membersByID: [String: TrixRoomMember] = [:]
+        let roomID = room.jid.stringValue
+        if let cached = cachedGroup(roomID: roomID, accountJID: accountJID) {
+            for jid in cached.memberUserIDs {
+                membersByID[jid.lowercased()] = TrixRoomMember(
+                    userID: jid,
+                    displayName: Self.displayName(from: jid),
+                    membership: .joined
+                )
+            }
+        }
+
+        for occupant in Self.occupants(from: room) {
+            guard let jid = occupant.jid?.bareJid.stringValue else {
+                continue
+            }
+            membersByID[jid.lowercased()] = TrixRoomMember(
+                userID: jid,
+                displayName: Self.displayName(from: jid),
+                membership: .joined
+            )
+        }
+
+        for affiliation in [MucAffiliation.owner, .admin, .member] {
+            let affiliations = (try? await roomAffiliations(room: room, affiliation: affiliation, connection: connection)) ?? []
+            for item in affiliations {
+                let jid = item.userID
+                membersByID[jid.lowercased()] = TrixRoomMember(
+                    userID: jid,
+                    displayName: item.nickname ?? Self.displayName(from: jid),
+                    membership: .joined
+                )
+            }
+        }
+
+        if membersByID[accountJID.lowercased()] == nil {
+            membersByID[accountJID.lowercased()] = TrixRoomMember(
+                userID: accountJID,
+                displayName: Self.displayName(from: accountJID),
+                membership: .joined
+            )
+        }
+
+        return membersByID.values.sorted { lhs, rhs in
+            if lhs.membership.sortOrder != rhs.membership.sortOrder {
+                return lhs.membership.sortOrder < rhs.membership.sortOrder
+            }
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        }
+    }
+
+    private func roomConfiguration(roomJID: JID, connection: Connection) async throws -> RoomConfig {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RoomConfig, Error>) in
+            connection.mucModule.roomConfiguration(roomJid: roomJID) { result in
+                switch result {
+                case .success(let config):
+                    continuation.resume(returning: config)
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func setRoomConfiguration(_ config: RoomConfig, roomJID: JID, connection: Connection) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.mucModule.setRoomConfiguration(roomJid: roomJID, configuration: config) { result in
+                switch result {
+                case .success:
+                    continuation.resume(returning: ())
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func roomAffiliations(
+        room: RoomProtocol,
+        affiliation: MucAffiliation,
+        connection: Connection
+    ) async throws -> [GroupAffiliationRecord] {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[GroupAffiliationRecord], Error>) in
+            connection.mucModule.getRoomAffiliations(from: room, with: affiliation) { result in
+                switch result {
+                case .success(let affiliations):
+                    let records = affiliations.map { item in
+                        GroupAffiliationRecord(
+                            userID: item.jid.bareJid.stringValue,
+                            nickname: item.nickname
+                        )
+                    }
+                    continuation.resume(returning: records)
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func setGroupAffiliations(
+        _ affiliations: [MucModule.RoomAffiliation],
+        room: RoomProtocol,
+        connection: Connection
+    ) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.mucModule.setRoomAffiliations(to: room, changedAffiliations: affiliations) { result in
+                switch result {
+                case .success:
+                    continuation.resume(returning: ())
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func bookmarkGroupRoom(roomID: String, name: String, nickname: String, connection: Connection) async throws {
+        let bookmark = Bookmarks.Conference(
+            name: name,
+            jid: JID(roomID),
+            autojoin: true,
+            nick: nickname,
+            password: nil
+        )
+        try await connection.bookmarksModule.addOrUpdate(bookmark: bookmark)
     }
 
     private func ensureOwnOMEMOSession(connection: Connection) async {
@@ -977,9 +2472,36 @@ actor XMPPMartinService: MatrixService {
         }
     }
 
+    private func uploadEncryptedAttachment(_ data: Data, slot: HttpFileUploadModule.Slot) async throws {
+        var request = URLRequest(url: slot.putUri)
+        request.httpMethod = "PUT"
+        for (name, value) in slot.putHeaders {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
+        if request.value(forHTTPHeaderField: "Content-Type") == nil {
+            request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        }
+
+        let (_, response) = try await URLSession.shared.upload(for: request, from: data)
+        guard let httpResponse = response as? HTTPURLResponse,
+              200..<300 ~= httpResponse.statusCode else {
+            throw TrixClientError.attachmentTransferFailed
+        }
+    }
+
+    private func downloadEncryptedAttachment(from url: URL) async throws -> Data {
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let httpResponse = response as? HTTPURLResponse,
+              200..<300 ~= httpResponse.statusCode else {
+            throw TrixClientError.attachmentTransferFailed
+        }
+
+        return data
+    }
+
     private func ensureDirectRosterItem(peerJID: String, displayName: String, connection: Connection) async throws {
         guard peerJID.caseInsensitiveCompare(connection.client.connectionConfiguration.userJid.stringValue) != .orderedSame else {
-            throw MatrixClientError.invalidMatrixUserID
+            throw TrixClientError.invalidTrixUserID
         }
 
         let jid = JID(peerJID)
@@ -989,21 +2511,119 @@ actor XMPPMartinService: MatrixService {
         try await connection.rosterModule.requestRoster()
     }
 
-    private func publishDirectoryProfileIfNeeded(session: MatrixSession, connection: Connection) async throws {
-        let displayName = Self.displayName(from: session.userID)
-        let vcard = VCard()
-        vcard.fn = displayName
-        vcard.givenName = displayName
-        vcard.nicknames = [displayName]
-        vcard.impps = [VCard.IMPP(uri: "xmpp:\(session.userID)")]
-        _ = try await connection.vCardModule.publish(vcard: vcard, to: nil)
+    private func cacheGroupMembers(_ memberUserIDs: [String], roomID: String, accountJID: String, name: String?) {
+        cacheGroupMembers(Set(memberUserIDs), roomID: roomID, accountJID: accountJID, name: name)
+    }
+
+    private func cacheGroupMembers(_ memberUserIDs: Set<String>, roomID: String, accountJID: String, name: String?) {
+        let accountKey = accountJID.lowercased()
+        let roomKey = roomID.lowercased()
+        var groups = knownGroupRooms[accountKey] ?? [:]
+        let existing = groups[roomKey] ?? loadCachedGroup(roomID: roomID, accountJID: accountJID)
+        var mergedMembers = existing?.memberUserIDs ?? []
+        mergedMembers.formUnion(memberUserIDs.map { $0.lowercased() })
+        let group = KnownGroupRoom(
+            roomID: roomID,
+            name: name ?? existing?.name ?? Self.displayName(from: roomID),
+            memberUserIDs: mergedMembers,
+            lastActivityAt: existing?.lastActivityAt ?? Date()
+        )
+        groups[roomKey] = group
+        knownGroupRooms[accountKey] = groups
+        saveCachedGroup(group, accountJID: accountJID)
+    }
+
+    private func removeCachedGroupMember(_ userID: String, roomID: String, accountJID: String) {
+        let accountKey = accountJID.lowercased()
+        let roomKey = roomID.lowercased()
+        var groups = knownGroupRooms[accountKey] ?? [:]
+        guard var group = groups[roomKey] ?? loadCachedGroup(roomID: roomID, accountJID: accountJID) else {
+            return
+        }
+
+        group.memberUserIDs.remove(userID.lowercased())
+        groups[roomKey] = group
+        knownGroupRooms[accountKey] = groups
+        saveCachedGroup(group, accountJID: accountJID)
+    }
+
+    private func cachedGroup(roomID: String, accountJID: String) -> KnownGroupRoom? {
+        let accountKey = accountJID.lowercased()
+        let roomKey = roomID.lowercased()
+        if let group = knownGroupRooms[accountKey]?[roomKey] {
+            return group
+        }
+        guard let group = loadCachedGroup(roomID: roomID, accountJID: accountJID) else {
+            return nil
+        }
+
+        var groups = knownGroupRooms[accountKey] ?? [:]
+        groups[roomKey] = group
+        knownGroupRooms[accountKey] = groups
+        return group
+    }
+
+    private func updateGroupActivity(roomID: String, accountJID: String, at date: Date) {
+        let accountKey = accountJID.lowercased()
+        let roomKey = roomID.lowercased()
+        var groups = knownGroupRooms[accountKey] ?? [:]
+        var group = groups[roomKey] ?? loadCachedGroup(roomID: roomID, accountJID: accountJID) ?? KnownGroupRoom(
+            roomID: roomID,
+            name: Self.displayName(from: roomID),
+            memberUserIDs: [accountJID.lowercased()],
+            lastActivityAt: date
+        )
+
+        group.lastActivityAt = date
+        groups[roomKey] = group
+        knownGroupRooms[accountKey] = groups
+        saveCachedGroup(group, accountJID: accountJID)
+    }
+
+    private func loadCachedGroup(roomID: String, accountJID: String) -> KnownGroupRoom? {
+        guard let cached = try? groupRoomCacheStore.load(accountJID: accountJID, roomID: roomID) else {
+            return nil
+        }
+        return KnownGroupRoom(cached: cached)
+    }
+
+    private func saveCachedGroup(_ group: KnownGroupRoom, accountJID: String) {
+        try? groupRoomCacheStore.save(group.cached, accountJID: accountJID)
+    }
+
+    private func publishDirectoryProfileIfNeeded(session: TrixSession, connection: Connection) async throws {
+        let jid = try Self.normalizedXMPPJID(session.userID)
+        let currentVCard = try? await retrieveVCardElement(for: jid, connection: connection)
+        let update = Self.directoryDefaultVCard(currentVCard, userID: jid)
+        guard update.changed else {
+            return
+        }
+
+        try await publishVCardElement(update.vCard, connection: connection)
+    }
+
+    private func retrieveVCardElement(for userID: String, connection: Connection) async throws -> Element? {
+        let iq = Iq()
+        iq.type = .get
+        iq.to = JID(userID)
+        iq.addChild(Element(name: "vCard", xmlns: "vcard-temp"))
+
+        let response = try await connection.vCardModule.write(iq: iq, timeout: 10)
+        return response.firstChild(name: "vCard", xmlns: "vcard-temp")
+    }
+
+    private func publishVCardElement(_ vCard: Element, connection: Connection) async throws {
+        let iq = Iq()
+        iq.type = .set
+        iq.addChild(vCard)
+        _ = try await connection.vCardModule.write(iq: iq, timeout: 10)
     }
 
     private func searchDirectoryUsers(
         _ searchTerm: String,
         limit: Int,
         connection: Connection
-    ) async throws -> [MatrixUserProfile] {
+    ) async throws -> [TrixUserProfile] {
         let needle = searchTerm.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty, limit > 0 else {
             return []
@@ -1016,7 +2636,7 @@ actor XMPPMartinService: MatrixService {
             }
         }
 
-        var users: [MatrixUserProfile] = []
+        var users: [TrixUserProfile] = []
         for field in ["user", "nick", "fn", "first", "last", "email"] {
             let response = try? await directorySearchResponse(fields: [field: needle], connection: connection)
             if let response {
@@ -1025,6 +2645,20 @@ actor XMPPMartinService: MatrixService {
         }
 
         return Self.deduplicatedUsers(users)
+    }
+
+    private func pushGatewayJID(connection: Connection) async throws -> JID {
+        do {
+            let components = try await connection.pushModule.findPushComponents(requiredFeatures: [])
+            guard let component = components.first else {
+                throw TrixClientError.apnsGatewayUnavailable
+            }
+            return component
+        } catch let error as TrixClientError {
+            throw error
+        } catch {
+            throw TrixClientError.apnsGatewayUnavailable
+        }
     }
 
     private func directorySearchResponse(fields: [String: String], connection: Connection) async throws -> Iq {
@@ -1050,7 +2684,7 @@ actor XMPPMartinService: MatrixService {
     }
 
     private func makeConnection(jid: String, password: String, resource: String) throws -> Connection {
-        let omemoStack = try TrixOMEMOStore.makeStack(account: jid)
+        let omemoStack = try TrixOMEMOStore.makeStack(account: jid, persistence: omemoPersistence)
         let client = XMPPClient()
         client.connectionConfiguration.userJid = BareJID(jid)
         client.connectionConfiguration.credentials = .password(password: password)
@@ -1069,6 +2703,7 @@ actor XMPPMartinService: MatrixService {
         _ = client.modulesManager.register(ResourceBinderModule())
         _ = client.modulesManager.register(SessionEstablishmentModule())
         _ = client.modulesManager.register(DiscoveryModule())
+        _ = client.modulesManager.register(AdHocCommandsModule())
         _ = client.modulesManager.register(PingModule())
         _ = client.modulesManager.register(PresenceModule())
         let messageCaptureModule = TrixMessageCaptureModule()
@@ -1083,8 +2718,21 @@ actor XMPPMartinService: MatrixService {
         _ = client.modulesManager.register(ClientStateIndicationModule())
         let mamModule = MessageArchiveManagementModule()
         _ = client.modulesManager.register(mamModule)
+        let deliveryReceiptsModule = MessageDeliveryReceiptsModule()
+        deliveryReceiptsModule.sendReceived = true
+        _ = client.modulesManager.register(deliveryReceiptsModule)
+        // ChatStateNotificationsModule reads the capabilities module when its context is set.
+        _ = client.modulesManager.register(CapabilitiesModule())
+        let chatStateModule = ChatStateNotificationsModule()
+        _ = client.modulesManager.register(chatStateModule)
         _ = client.modulesManager.register(HttpFileUploadModule())
         _ = client.modulesManager.register(PubSubModule())
+        let bookmarksModule = PEPBookmarksModule()
+        _ = client.modulesManager.register(bookmarksModule)
+        let pushModule = TigasePushNotificationsModule()
+        _ = client.modulesManager.register(pushModule)
+        let mucModule = MucModule(roomManager: RoomManagerBase(store: TrixMucRoomStore()))
+        _ = client.modulesManager.register(mucModule)
         let vCardModule = VCardTempModule()
         _ = client.modulesManager.register(vCardModule)
         _ = client.modulesManager.register(omemoStack.module)
@@ -1099,21 +2747,139 @@ actor XMPPMartinService: MatrixService {
             messageCaptureModule: messageCaptureModule,
             mamModule: mamModule,
             carbonsModule: carbonsModule,
+            deliveryReceiptsModule: deliveryReceiptsModule,
+            chatStateModule: chatStateModule,
+            mucModule: mucModule,
+            bookmarksModule: bookmarksModule,
+            pushModule: pushModule,
             omemoStack: omemoStack
+        )
+    }
+
+    private static func decodedTimelineContent(from body: String) -> DecodedTimelineContent {
+        guard let descriptor = decodedAttachmentDescriptor(from: body) else {
+            return DecodedTimelineContent(body: body, attachment: nil)
+        }
+
+        return DecodedTimelineContent(
+            body: "Attachment: \(descriptor.filename)",
+            attachment: timelineAttachment(from: descriptor, sourceJSON: body)
+        )
+    }
+
+    private static func timelineAttachment(
+        from descriptor: EncryptedAttachmentDescriptor,
+        sourceJSON: String
+    ) -> TrixTimelineAttachment {
+        TrixTimelineAttachment(
+            kind: descriptor.mimeType?.hasPrefix("image/") == true ? .image : .file,
+            filename: descriptor.filename,
+            mimeType: descriptor.mimeType,
+            sizeBytes: descriptor.originalSizeBytes,
+            sourceJSON: sourceJSON,
+            imageDimensions: descriptor.imageDimensions,
+            imageBlurhash: descriptor.imageBlurhash
+        )
+    }
+
+    private static func encodedAttachmentDescriptor(_ descriptor: EncryptedAttachmentDescriptor) throws -> String {
+        let data = try JSONEncoder().encode(descriptor)
+        guard let json = String(data: data, encoding: .utf8) else {
+            throw TrixClientError.attachmentTransferFailed
+        }
+
+        return json
+    }
+
+    private static func decodedAttachmentDescriptor(from sourceJSON: String?) -> EncryptedAttachmentDescriptor? {
+        guard let data = sourceJSON?.data(using: .utf8),
+              let descriptor = try? JSONDecoder().decode(EncryptedAttachmentDescriptor.self, from: data),
+              descriptor.type == encryptedAttachmentDescriptorType,
+              descriptor.version == 1,
+              !descriptor.downloadURL.isEmpty,
+              !descriptor.fragment.isEmpty,
+              !descriptor.filename.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+
+        return descriptor
+    }
+
+    private static func capturedMUCInvitation(
+        from message: Message,
+        receivedAt: Date
+    ) -> CapturedMUCInvitation? {
+        if let x = message.findChild(name: "x", xmlns: "http://jabber.org/protocol/muc#user"),
+           let invite = x.findChild(name: "invite"),
+           let roomJID = message.from?.bareJid.stringValue {
+            let inviterUserID = JID(invite.getAttribute("from"))?.bareJid.stringValue
+            return CapturedMUCInvitation(
+                roomID: roomJID,
+                roomName: displayName(from: roomJID),
+                inviterUserID: inviterUserID,
+                password: nonEmpty(x.getAttribute("password")),
+                reason: firstNonEmpty(invite.findChild(name: "reason")?.value, invite.getAttribute("reason")),
+                receivedAt: receivedAt,
+                transport: .mediated
+            )
+        }
+
+        if let x = message.findChild(name: "x", xmlns: "jabber:x:conference"),
+           let roomJID = x.getAttribute("jid") {
+            return CapturedMUCInvitation(
+                roomID: roomJID,
+                roomName: displayName(from: roomJID),
+                inviterUserID: message.from?.bareJid.stringValue,
+                password: nonEmpty(x.getAttribute("password")),
+                reason: nonEmpty(x.getAttribute("reason")),
+                receivedAt: receivedAt,
+                transport: .direct
+            )
+        }
+
+        return nil
+    }
+
+    private static func mucInvitationTransport(from invitation: MucModule.Invitation) -> MUCInvitationTransport {
+        if invitation is MucModule.MediatedInvitation {
+            return .mediated
+        }
+        if invitation is MucModule.DirectInvitation {
+            return .direct
+        }
+        return .unknown
+    }
+
+    private static func normalizedCapturedMUCInvitation(
+        _ invitation: CapturedMUCInvitation
+    ) -> CapturedMUCInvitation? {
+        guard let roomID = try? normalizedMUCJID(invitation.roomID) else {
+            return nil
+        }
+
+        let inviterUserID = invitation.inviterUserID.flatMap { try? normalizedXMPPJID($0) }
+        return CapturedMUCInvitation(
+            roomID: roomID,
+            roomName: nonEmpty(invitation.roomName) ?? displayName(from: roomID),
+            inviterUserID: inviterUserID,
+            password: nonEmpty(invitation.password),
+            reason: nonEmpty(invitation.reason),
+            receivedAt: invitation.receivedAt,
+            transport: invitation.transport
         )
     }
 
     private static func normalizedXMPPJID(_ userID: String) throws -> String {
         let trimmed = userID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !trimmed.isEmpty else {
-            throw MatrixClientError.invalidMatrixUserID
+            throw TrixClientError.invalidTrixUserID
         }
 
         if trimmed.hasPrefix("@"), let separator = trimmed.firstIndex(of: ":") {
             let localpart = String(trimmed[trimmed.index(after: trimmed.startIndex)..<separator])
             let server = String(trimmed[trimmed.index(after: separator)...])
             guard !localpart.isEmpty, server == XMPPClientConfiguration.serverName else {
-                throw MatrixClientError.invalidMatrixUserID
+                throw TrixClientError.invalidTrixUserID
             }
             return "\(localpart)@\(server)"
         }
@@ -1125,10 +2891,81 @@ actor XMPPMartinService: MatrixService {
               !localpart.isEmpty,
               domain == XMPPClientConfiguration.serverName,
               trimmed.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else {
-            throw MatrixClientError.invalidMatrixUserID
+            throw TrixClientError.invalidTrixUserID
         }
 
         return trimmed
+    }
+
+    private static func normalizedMUCJID(_ roomID: String) throws -> String {
+        let trimmed = roomID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let jid = BareJID(trimmed)
+        guard let localpart = jid.localPart,
+              !localpart.isEmpty,
+              jid.domain == XMPPClientConfiguration.conferenceServerName,
+              trimmed.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else {
+            throw TrixClientError.roomUnavailable
+        }
+        return jid.stringValue
+    }
+
+    private static func normalizedRoomID(_ roomID: String) throws -> String {
+        if let mucJID = try? normalizedMUCJID(roomID) {
+            return mucJID
+        }
+        return try normalizedXMPPJID(roomID)
+    }
+
+    private static func isMUCJID(_ roomID: String) -> Bool {
+        BareJID(roomID).domain == XMPPClientConfiguration.conferenceServerName
+    }
+
+    private static func normalizedGroupInvitees(_ inviteeUserIDs: [String], excluding currentUserID: String) throws -> [String] {
+        let current = try normalizedXMPPJID(currentUserID).lowercased()
+        var seen = Set<String>()
+        var invitees: [String] = []
+        for inviteeUserID in inviteeUserIDs {
+            let normalized = try normalizedXMPPJID(inviteeUserID)
+            let key = normalized.lowercased()
+            guard key != current, seen.insert(key).inserted else {
+                continue
+            }
+            invitees.append(normalized)
+        }
+        return invitees
+    }
+
+    private static func groupRoomLocalpart(from name: String) -> String {
+        let folded = name
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            .lowercased()
+        let allowed = folded.unicodeScalars.map { scalar -> Character in
+            CharacterSet.alphanumerics.contains(scalar) ? Character(scalar) : "-"
+        }
+        let slug = String(allowed)
+            .split(separator: "-")
+            .joined(separator: "-")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        let prefix = slug.isEmpty ? "group" : slug
+        return "\(prefix)-\(UUID().uuidString.prefix(8).lowercased())"
+    }
+
+    private static func mucNickname(from userID: String) -> String {
+        let localpart = BareJID(userID).localPart ?? displayName(from: userID)
+        let filtered = localpart.unicodeScalars.map { scalar -> Character in
+            CharacterSet.alphanumerics.contains(scalar) ? Character(scalar) : "-"
+        }
+        let nick = String(filtered)
+            .split(separator: "-")
+            .joined(separator: "-")
+        return nick.isEmpty ? "trix" : nick
+    }
+
+    private static func room(from result: RoomJoinResult) -> RoomProtocol {
+        switch result {
+        case .created(let room), .joined(let room):
+            return room
+        }
     }
 
     private static func validateServerTrust(_ trust: SecTrust, domain jid: String) -> Bool {
@@ -1175,6 +3012,53 @@ actor XMPPMartinService: MatrixService {
         }
     }
 
+    private static func deliveryReceiptRoomID(from message: Message, accountJID: String) -> String? {
+        roomID(for: message, accountJID: accountJID, carbonAction: nil)
+    }
+
+    private static func occupants(from room: RoomProtocol) -> [MucOccupant] {
+        (room as? RoomBase)?.occupants ?? []
+    }
+
+    private static func memberUserIDs(from room: RoomProtocol, fallbackAccountJID: String) -> Set<String> {
+        var members = Set<String>()
+        for occupant in occupants(from: room) {
+            if let jid = occupant.jid?.bareJid.stringValue {
+                members.insert(jid.lowercased())
+            }
+        }
+        members.insert(fallbackAccountJID.lowercased())
+        return members
+    }
+
+    private static func groupMessageSenderJID(_ message: Message, room: RoomProtocol, accountJID: String) -> String? {
+        guard let nickname = message.from?.resource else {
+            return nil
+        }
+        if nickname == room.nickname {
+            return accountJID
+        }
+        return room.occupant(nickname: nickname)?.jid?.bareJid.stringValue
+    }
+
+    private static func typingState(from chatState: ChatState) -> TrixTypingState {
+        switch chatState {
+        case .composing:
+            return .composing
+        case .active, .inactive, .gone, .paused:
+            return .paused
+        }
+    }
+
+    private static func chatState(from typingState: TrixTypingState) -> ChatState {
+        switch typingState {
+        case .composing:
+            return .composing
+        case .idle, .paused:
+            return .paused
+        }
+    }
+
     private static func messageMatchesPeer(_ message: Message, peerJID: String, accountJID: String) -> Bool {
         let peerKey = peerJID.lowercased()
         let accountKey = accountJID.lowercased()
@@ -1192,6 +3076,18 @@ actor XMPPMartinService: MatrixService {
         return false
     }
 
+    private static func messageHasRecipientKey(_ message: Message, recipientDeviceID: String) -> Bool {
+        guard let header = message
+            .firstChild(name: "encrypted", xmlns: OMEMOModule.XMLNS)?
+            .firstChild(name: "header") else {
+            return false
+        }
+
+        return header
+            .filterChildren(name: "key", xmlns: nil)
+            .contains { $0.getAttribute("rid") == recipientDeviceID }
+    }
+
     private static func messageTimestamp(_ message: Message, fallback: Date) -> Date {
         guard let delay = message.firstChild(name: "delay", xmlns: "urn:xmpp:delay"),
               let stamp = Delay(element: delay).stamp else {
@@ -1202,15 +3098,24 @@ actor XMPPMartinService: MatrixService {
     }
 
     private static func mergedTimelineItems(
-        _ lhs: [MatrixTimelineItem],
-        _ rhs: [MatrixTimelineItem]
-    ) -> [MatrixTimelineItem] {
-        var byID: [String: MatrixTimelineItem] = [:]
+        _ lhs: [TrixTimelineItem],
+        _ rhs: [TrixTimelineItem]
+    ) -> [TrixTimelineItem] {
+        var byID: [String: TrixTimelineItem] = [:]
         for item in lhs {
             byID[item.id] = item
         }
         for item in rhs {
-            byID[item.id] = item
+            if let existingItem = byID[item.id] {
+                byID[item.id] = item.withDeliveryState(
+                    TrixTimelineItem.mergedDeliveryState(
+                        existingItem.deliveryState,
+                        item.deliveryState
+                    )
+                )
+            } else {
+                byID[item.id] = item
+            }
         }
 
         return byID.values.sorted { first, second in
@@ -1222,13 +3127,87 @@ actor XMPPMartinService: MatrixService {
         }
     }
 
-    private static func directoryUsers(from response: Iq) -> [MatrixUserProfile] {
+    private static func profile(from vCard: Element?, userID: String) -> TrixUserProfile {
+        let displayName = firstNonEmpty(
+            vCard?.findChild(name: "FN")?.value,
+            vCard?.findChild(name: "NICKNAME")?.value,
+            vCard?.findChild(name: "N")?.findChild(name: "GIVEN")?.value,
+            displayName(from: userID)
+        )
+        let metadata = TrixUserMetadata(
+            bio: vCard?.findChild(name: "DESC")?.value,
+            statusMessage: vCard?.findChild(name: "TITLE")?.value,
+            website: vCard?.findChild(name: "URL")?.value
+        )
+        let avatarURL = vCard?
+            .findChild(name: "PHOTO")?
+            .findChild(name: "EXTVAL")?
+            .value
+
+        return TrixUserProfile(
+            userID: userID,
+            displayName: displayName,
+            avatarURL: avatarURL,
+            metadata: metadata
+        )
+    }
+
+    private static func updatingVCard(
+        _ vCard: Element?,
+        userID: String,
+        update: TrixUserProfileUpdate
+    ) -> Element {
+        let updated = vCard.map(Element.init(element:)) ?? Element(name: "vCard", xmlns: "vcard-temp")
+        updated.xmlns = "vcard-temp"
+        updated.removeChildren { child in
+            ["FN", "N", "NICKNAME", "TITLE", "DESC", "URL", "JABBERID"].contains(child.name)
+        }
+
+        let displayName = nonEmpty(update.displayName) ?? displayName(from: userID)
+        updated.addChild(Element(name: "FN", cdata: displayName))
+
+        let name = Element(name: "N")
+        name.addChild(Element(name: "GIVEN", cdata: displayName))
+        updated.addChild(name)
+
+        updated.addChild(Element(name: "NICKNAME", cdata: displayName))
+        addNonEmptyChild(name: "TITLE", value: update.statusMessage, to: updated)
+        addNonEmptyChild(name: "DESC", value: update.bio, to: updated)
+        addNonEmptyChild(name: "URL", value: update.website, to: updated)
+        updated.addChild(Element(name: "JABBERID", cdata: userID))
+        return updated
+    }
+
+    private static func directoryDefaultVCard(_ vCard: Element?, userID: String) -> (vCard: Element, changed: Bool) {
+        let updated = vCard.map(Element.init(element:)) ?? Element(name: "vCard", xmlns: "vcard-temp")
+        updated.xmlns = "vcard-temp"
+        var changed = vCard == nil
+
+        if firstNonEmpty(updated.findChild(name: "FN")?.value, updated.findChild(name: "NICKNAME")?.value) == nil {
+            let displayName = displayName(from: userID)
+            updated.addChild(Element(name: "FN", cdata: displayName))
+            updated.addChild(Element(name: "NICKNAME", cdata: displayName))
+            changed = true
+        }
+
+        let hasJabberID = updated.getChildren(name: "JABBERID").contains { child in
+            child.value?.caseInsensitiveCompare(userID) == .orderedSame
+        }
+        if !hasJabberID {
+            updated.addChild(Element(name: "JABBERID", cdata: userID))
+            changed = true
+        }
+
+        return (updated, changed)
+    }
+
+    private static func directoryUsers(from response: Iq) -> [TrixUserProfile] {
         guard response.type == .result,
               let query = response.firstChild(name: "query", xmlns: "jabber:iq:search") else {
             return []
         }
 
-        let legacyUsers = query.getChildren(name: "item").compactMap { item -> MatrixUserProfile? in
+        let legacyUsers = query.getChildren(name: "item").compactMap { item -> TrixUserProfile? in
             guard let jid = normalizedDirectoryJID(item.getAttribute("jid")) else {
                 return nil
             }
@@ -1239,13 +3218,13 @@ actor XMPPMartinService: MatrixService {
                 item.findChild(name: "first")?.value,
                 item.findChild(name: "last")?.value
             )
-            return MatrixUserProfile(userID: jid, displayName: displayName ?? Self.displayName(from: jid), avatarURL: nil)
+            return TrixUserProfile(userID: jid, displayName: displayName ?? Self.displayName(from: jid), avatarURL: nil)
         }
 
         let formUsers = query
             .getChildren(name: "x", xmlns: "jabber:x:data")
             .flatMap { form in
-                form.getChildren(name: "item").compactMap { item -> MatrixUserProfile? in
+                form.getChildren(name: "item").compactMap { item -> TrixUserProfile? in
                     var fields: [String: String] = [:]
                     for field in item.getChildren(name: "field") {
                         guard let name = field.getAttribute("var"),
@@ -1260,16 +3239,16 @@ actor XMPPMartinService: MatrixService {
                         return nil
                     }
                     let displayName = firstNonEmpty(fields["nick"], fields["fn"], fields["first"], fields["last"])
-                    return MatrixUserProfile(userID: jid, displayName: displayName ?? Self.displayName(from: jid), avatarURL: nil)
+                    return TrixUserProfile(userID: jid, displayName: displayName ?? Self.displayName(from: jid), avatarURL: nil)
                 }
             }
 
         return deduplicatedUsers(legacyUsers + formUsers)
     }
 
-    private static func deduplicatedUsers(_ users: [MatrixUserProfile]) -> [MatrixUserProfile] {
+    private static func deduplicatedUsers(_ users: [TrixUserProfile]) -> [TrixUserProfile] {
         var seen = Set<String>()
-        var result: [MatrixUserProfile] = []
+        var result: [TrixUserProfile] = []
         for user in users {
             let key = user.userID.lowercased()
             guard seen.insert(key).inserted else {
@@ -1295,6 +3274,23 @@ actor XMPPMartinService: MatrixService {
             .first { !$0.isEmpty }
     }
 
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else {
+            return nil
+        }
+
+        return trimmed
+    }
+
+    private static func addNonEmptyChild(name: String, value: String?, to parent: Element) {
+        guard let value = nonEmpty(value) else {
+            return
+        }
+
+        parent.addChild(Element(name: name, cdata: value))
+    }
+
     private static func displayName(from jid: String) -> String {
         let trimmed = jid.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.hasPrefix("@") {
@@ -1316,15 +3312,15 @@ actor XMPPMartinService: MatrixService {
         return "\(XMPPClientConfiguration.defaultResourcePrefix)-\(suffix)"
     }
 
-    private static func sessionKey(_ session: MatrixSession) -> String {
+    private static func sessionKey(_ session: TrixSession) -> String {
         session.userID.lowercased()
     }
 
-    private static func peerDeviceIdentities(from identities: [Identity], userID: String) -> [MatrixPeerDeviceIdentity] {
+    private static func peerDeviceIdentities(from identities: [Identity], userID: String) -> [TrixPeerDeviceIdentity] {
         identities
             .filter { !$0.own }
             .map { identity in
-                MatrixPeerDeviceIdentity(
+                TrixPeerDeviceIdentity(
                     userID: userID,
                     deviceID: String(UInt32(bitPattern: identity.address.deviceId)),
                     fingerprint: identity.fingerprint,
@@ -1342,7 +3338,7 @@ actor XMPPMartinService: MatrixService {
             }
     }
 
-    private static func peerTrustState(from trust: Trust) -> MatrixPeerDeviceTrustState {
+    private static func peerTrustState(from trust: Trust) -> TrixPeerDeviceTrustState {
         switch trust {
         case .undecided:
             return .undecided

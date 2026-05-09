@@ -2,8 +2,8 @@ import Foundation
 
 @MainActor
 final class RoomListViewModel: ObservableObject {
-    @Published private(set) var rooms: [MatrixRoomSummary] = []
-    @Published private(set) var invitations: [MatrixRoomInvite] = []
+    @Published private(set) var rooms: [TrixRoomSummary] = []
+    @Published private(set) var invitations: [TrixRoomInvite] = []
     @Published private(set) var isLoading = false
     @Published private(set) var isCreatingDirectRoom = false
     @Published private(set) var isCreatingGroupRoom = false
@@ -11,8 +11,8 @@ final class RoomListViewModel: ObservableObject {
     @Published private(set) var errorMessage: String?
 
     func reload(
-        session: MatrixSession,
-        service: MatrixSyncService & MatrixRoomBootstrapService,
+        session: TrixSession,
+        service: TrixSyncService & TrixRoomBootstrapService,
         showsLoading: Bool = true
     ) async {
         if showsLoading {
@@ -29,16 +29,16 @@ final class RoomListViewModel: ObservableObject {
             rooms = try await service.rooms(session: session)
             invitations = try await service.invitations(session: session)
         } catch {
-            errorMessage = error.matrixUserFacingMessage
+            errorMessage = error.trixUserFacingMessage
         }
     }
 
     func createEncryptedDirectRoom(
         inviteeUserID: String,
         roomName: String,
-        session: MatrixSession,
-        service: MatrixRoomBootstrapService
-    ) async -> MatrixRoomSummary? {
+        session: TrixSession,
+        service: TrixRoomBootstrapService
+    ) async -> TrixRoomSummary? {
         isCreatingDirectRoom = true
         errorMessage = nil
         defer { isCreatingDirectRoom = false }
@@ -56,7 +56,7 @@ final class RoomListViewModel: ObservableObject {
             rooms.insert(room, at: 0)
             return room
         } catch {
-            errorMessage = error.matrixUserFacingMessage
+            errorMessage = error.trixUserFacingMessage
             return nil
         }
     }
@@ -64,9 +64,9 @@ final class RoomListViewModel: ObservableObject {
     func createEncryptedGroupRoom(
         name: String,
         inviteeUserIDs: [String],
-        session: MatrixSession,
-        service: MatrixRoomBootstrapService
-    ) async -> MatrixRoomSummary? {
+        session: TrixSession,
+        service: TrixRoomBootstrapService
+    ) async -> TrixRoomSummary? {
         isCreatingGroupRoom = true
         errorMessage = nil
         defer { isCreatingGroupRoom = false }
@@ -74,7 +74,7 @@ final class RoomListViewModel: ObservableObject {
         do {
             let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !normalizedName.isEmpty else {
-                throw MatrixClientError.groupRoomNameRequired
+                throw TrixClientError.groupRoomNameRequired
             }
 
             let normalizedInvitees = try Self.normalizedTrixUserIDs(
@@ -90,16 +90,16 @@ final class RoomListViewModel: ObservableObject {
             rooms.insert(room, at: 0)
             return room
         } catch {
-            errorMessage = error.matrixUserFacingMessage
+            errorMessage = error.trixUserFacingMessage
             return nil
         }
     }
 
     func acceptInvitation(
-        _ invitation: MatrixRoomInvite,
-        session: MatrixSession,
-        service: MatrixRoomBootstrapService
-    ) async -> MatrixRoomSummary? {
+        _ invitation: TrixRoomInvite,
+        session: TrixSession,
+        service: TrixRoomBootstrapService
+    ) async -> TrixRoomSummary? {
         invitationActionRoomID = invitation.id
         errorMessage = nil
         defer { invitationActionRoomID = nil }
@@ -111,15 +111,15 @@ final class RoomListViewModel: ObservableObject {
             rooms.insert(room, at: 0)
             return room
         } catch {
-            errorMessage = error.matrixUserFacingMessage
+            errorMessage = error.trixUserFacingMessage
             return nil
         }
     }
 
     func declineInvitation(
-        _ invitation: MatrixRoomInvite,
-        session: MatrixSession,
-        service: MatrixRoomBootstrapService
+        _ invitation: TrixRoomInvite,
+        session: TrixSession,
+        service: TrixRoomBootstrapService
     ) async -> Bool {
         invitationActionRoomID = invitation.id
         errorMessage = nil
@@ -130,7 +130,7 @@ final class RoomListViewModel: ObservableObject {
             invitations.removeAll { $0.id == invitation.id }
             return true
         } catch {
-            errorMessage = error.matrixUserFacingMessage
+            errorMessage = error.trixUserFacingMessage
             return false
         }
     }
@@ -151,7 +151,7 @@ final class RoomListViewModel: ObservableObject {
             let localpart = String(trimmed[trimmed.index(after: trimmed.startIndex)..<separator])
             let serverName = String(trimmed[trimmed.index(after: separator)...])
             guard !localpart.isEmpty, serverName == XMPPClientConfiguration.serverName else {
-                throw MatrixClientError.invalidMatrixUserID
+                throw TrixClientError.invalidTrixUserID
             }
 
             return "\(localpart)@\(serverName)"
@@ -164,7 +164,7 @@ final class RoomListViewModel: ObservableObject {
               !localpart.isEmpty,
               serverName == XMPPClientConfiguration.serverName,
               trimmed.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else {
-            throw MatrixClientError.invalidMatrixUserID
+            throw TrixClientError.invalidTrixUserID
         }
 
         return trimmed
@@ -186,7 +186,7 @@ final class RoomListViewModel: ObservableObject {
         }
 
         guard normalizedUserIDs.count >= 2 else {
-            throw MatrixClientError.groupInviteesRequired
+            throw TrixClientError.groupInviteesRequired
         }
 
         return normalizedUserIDs

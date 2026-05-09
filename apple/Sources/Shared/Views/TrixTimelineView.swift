@@ -7,19 +7,33 @@ import UIKit
 import AppKit
 #endif
 
-struct MatrixTimelineView: View {
-    @ObservedObject var model: MatrixAppModel
-    let room: MatrixRoomSummary
+private enum TrixAttachmentImportError: LocalizedError {
+    case blocked(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .blocked(let message):
+            return message
+        }
+    }
+}
+
+struct TrixTimelineView: View {
+    @ObservedObject var model: TrixAppModel
+    let room: TrixRoomSummary
     @ObservedObject private var timelineViewModel: TimelineViewModel
     @State private var draft = ""
     @State private var isShowingFileImporter = false
     @State private var isShowingPeerDevices = false
+    @State private var isShowingGroupMembers = false
     @State private var isLoadingPeerDevices = false
-    @State private var peerDevices: [MatrixPeerDeviceIdentity] = []
+    @State private var peerDevices: [TrixPeerDeviceIdentity] = []
     @State private var peerDeviceError: String?
     @State private var fileImportError: String?
+    @State private var typingPauseTask: Task<Void, Never>?
+    @State private var lastSentTypingState: TrixTypingState = .idle
 
-    init(model: MatrixAppModel, room: MatrixRoomSummary) {
+    init(model: TrixAppModel, room: TrixRoomSummary) {
         self.model = model
         self.room = room
         self._timelineViewModel = ObservedObject(wrappedValue: model.timelineViewModel)
@@ -40,7 +54,7 @@ struct MatrixTimelineView: View {
                                 .frame(maxWidth: .infinity, alignment: .center)
                                 .padding(.top, 54)
                         } else if timelineViewModel.items.isEmpty {
-                            MatrixEmptyStateView(
+                            TrixEmptyStateView(
                                 title: "No messages",
                                 systemImage: "bubble.left.and.text.bubble.right",
                                 message: "Messages will appear here after sync."
@@ -49,7 +63,7 @@ struct MatrixTimelineView: View {
                         }
 
                         ForEach(timelineViewModel.items) { item in
-                            MatrixTimelineRow(
+                            TrixTimelineRow(
                                 item: item,
                                 isDownloadingAttachment: timelineViewModel.downloadingAttachmentID == item.id,
                                 downloadAttachment: {
@@ -65,7 +79,7 @@ struct MatrixTimelineView: View {
                     .padding(.top, 10)
                     .padding(.bottom, 12)
                 }
-                .matrixScrollDismissesKeyboard()
+                .trixScrollDismissesKeyboard()
                 .onChange(of: timelineViewModel.items) { _, items in
                     guard let last = items.last else {
                         return
@@ -76,8 +90,14 @@ struct MatrixTimelineView: View {
                 }
             }
 
+            if !timelineViewModel.typingUserIDs.isEmpty {
+                typingIndicator
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+            }
+
             if let errorMessage = timelineViewModel.errorMessage ?? fileImportError {
-                MatrixBannerView(
+                TrixBannerView(
                     text: errorMessage,
                     systemImage: "exclamationmark.triangle.fill",
                     tint: .red
@@ -88,7 +108,7 @@ struct MatrixTimelineView: View {
 
             if !canSendEncrypted {
                 HStack(spacing: 10) {
-                    MatrixBannerView(
+                    TrixBannerView(
                         text: "OMEMO is required for Trix chats. Trust a contact device before sending.",
                         systemImage: "lock.slash.fill",
                         tint: .orange
@@ -106,6 +126,16 @@ struct MatrixTimelineView: View {
                 .padding(.bottom, 8)
             }
 
+            if let attachmentBlockMessage {
+                TrixBannerView(
+                    text: attachmentBlockMessage,
+                    systemImage: "paperclip.badge.ellipsis",
+                    tint: .orange
+                )
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+            }
+
             HStack(spacing: 10) {
                 Button {
                     fileImportError = nil
@@ -116,22 +146,22 @@ struct MatrixTimelineView: View {
                     } else {
                         Image(systemName: "paperclip")
                             .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(MatrixDesign.accent)
+                            .foregroundStyle(TrixDesign.accent)
                             .frame(width: 38, height: 38)
                     }
                 }
                 .buttonStyle(.borderless)
                 .disabled(timelineViewModel.isSendingAttachment || !canSendEncryptedAttachments)
-                .help("Encrypted attachments")
+                .help(attachmentHelpText)
 
                 TextField(canSendEncrypted ? "Message" : "OMEMO required", text: $draft, axis: .vertical)
                     .lineLimit(1...5)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(MatrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(TrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(MatrixDesign.surfaceStroke, lineWidth: 1)
+                            .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
                     }
 
                 Button {
@@ -146,7 +176,7 @@ struct MatrixTimelineView: View {
                     } else {
                         Image(systemName: draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "arrow.up.circle" : "arrow.up.circle.fill")
                             .font(.system(size: 32, weight: .semibold))
-                            .foregroundStyle(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : MatrixDesign.accent)
+                            .foregroundStyle(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : TrixDesign.accent)
                     }
                 }
                 .buttonStyle(.borderless)
@@ -158,9 +188,9 @@ struct MatrixTimelineView: View {
             .padding(.bottom, 12)
             .background(.ultraThinMaterial)
         }
-        .background(MatrixDesign.screenBackground.ignoresSafeArea())
+        .background(TrixDesign.screenBackground.ignoresSafeArea())
         .navigationTitle(room.name)
-        .matrixInlineNavigationTitle()
+        .trixInlineNavigationTitle()
         .fileImporter(
             isPresented: $isShowingFileImporter,
             allowedContentTypes: [.item],
@@ -179,11 +209,11 @@ struct MatrixTimelineView: View {
             )
         ) {
             if let attachment = timelineViewModel.downloadedAttachment {
-                MatrixAttachmentPreviewView(attachment: attachment)
+                TrixAttachmentPreviewView(attachment: attachment)
             }
         }
         .sheet(isPresented: $isShowingPeerDevices) {
-            MatrixPeerDeviceTrustView(
+            TrixPeerDeviceTrustView(
                 roomName: room.name,
                 devices: peerDevices,
                 isLoading: isLoadingPeerDevices,
@@ -200,9 +230,26 @@ struct MatrixTimelineView: View {
                 }
             )
         }
+        .sheet(isPresented: $isShowingGroupMembers) {
+            TrixGroupMembersView(model: model, room: room)
+        }
         .task(id: room.id) {
             await model.selectRoom(room)
             await loadPeerDevices(refresh: false)
+            await model.loadAttachmentSendAvailability(roomID: room.id)
+        }
+        .task(id: "typing-\(room.id)") {
+            while !Task.isCancelled {
+                await model.loadTypingState(roomID: room.id)
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+        .onChange(of: draft) { _, newValue in
+            handleDraftChange(newValue)
+        }
+        .onDisappear {
+            typingPauseTask?.cancel()
+            sendTypingStateIfNeeded(.paused)
         }
     }
 
@@ -211,12 +258,68 @@ struct MatrixTimelineView: View {
     }
 
     private var canSendEncryptedAttachments: Bool {
-        false
+        guard let availability = timelineViewModel.attachmentSendAvailability,
+              availability.roomID == room.id else {
+            return false
+        }
+
+        return availability.canSend
+    }
+
+    private var attachmentBlockMessage: String? {
+        guard room.kind == .group,
+              !timelineViewModel.isLoadingAttachmentAvailability,
+              let availability = timelineViewModel.attachmentSendAvailability,
+              availability.roomID == room.id,
+              !availability.canSend else {
+            return nil
+        }
+
+        return availability.blockReason?.message
+    }
+
+    private var attachmentHelpText: String {
+        if canSendEncryptedAttachments {
+            return "Encrypted attachments"
+        }
+
+        if timelineViewModel.isLoadingAttachmentAvailability {
+            return "Checking OMEMO attachment readiness"
+        }
+
+        return timelineViewModel.attachmentSendAvailability?.blockReason?.message ?? "Encrypted attachments are not available yet"
+    }
+
+    private var typingIndicator: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "ellipsis.bubble.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(TrixDesign.accent)
+
+            Text(typingIndicatorText)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var typingIndicatorText: String {
+        if room.kind == .direct {
+            return "\(room.name) is typing"
+        }
+
+        if timelineViewModel.typingUserIDs.count == 1,
+           let userID = timelineViewModel.typingUserIDs.first {
+            return "\(Self.displayName(from: userID)) is typing"
+        }
+
+        return "\(timelineViewModel.typingUserIDs.count) people are typing"
     }
 
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
-            MatrixAvatarView(
+            TrixAvatarView(
                 title: room.name,
                 systemImage: room.kind.systemImage,
                 size: 44,
@@ -225,13 +328,13 @@ struct MatrixTimelineView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    MatrixRoomKindMark(kind: room.kind, size: 20)
+                    TrixRoomKindMark(kind: room.kind, size: 20)
 
                     Text(room.name)
                         .font(.headline)
                         .lineLimit(1)
 
-                    MatrixRoomSecurityMark(isEncrypted: canSendEncrypted, size: 20)
+                    TrixRoomSecurityMark(isEncrypted: canSendEncrypted, size: 20)
                 }
                 Text(room.subtitle)
                     .font(.subheadline)
@@ -248,6 +351,13 @@ struct MatrixTimelineView: View {
                     Image(systemName: "checkmark.shield")
                 }
                 .help("OMEMO devices")
+            } else {
+                Button {
+                    isShowingGroupMembers = true
+                } label: {
+                    Image(systemName: "person.2.badge.gearshape")
+                }
+                .help("Group members")
             }
 
             Button {
@@ -261,6 +371,44 @@ struct MatrixTimelineView: View {
         }
     }
 
+    private func handleDraftChange(_ value: String) {
+        typingPauseTask?.cancel()
+        guard canSendEncrypted else {
+            sendTypingStateIfNeeded(.paused)
+            return
+        }
+
+        let isTyping = !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard isTyping else {
+            sendTypingStateIfNeeded(.paused)
+            return
+        }
+
+        sendTypingStateIfNeeded(.composing)
+        typingPauseTask = Task {
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else {
+                return
+            }
+
+            await model.sendTypingState(.paused, roomID: room.id)
+            await MainActor.run {
+                lastSentTypingState = .paused
+            }
+        }
+    }
+
+    private func sendTypingStateIfNeeded(_ state: TrixTypingState) {
+        guard lastSentTypingState != state else {
+            return
+        }
+
+        lastSentTypingState = state
+        Task {
+            await model.sendTypingState(state, roomID: room.id)
+        }
+    }
+
     private func showPeerDevices() {
         isShowingPeerDevices = true
         Task {
@@ -270,6 +418,11 @@ struct MatrixTimelineView: View {
 
     private func importAttachment(from result: Result<[URL], Error>) {
         do {
+            guard canSendEncryptedAttachments else {
+                throw timelineViewModel.attachmentSendAvailability?.blockReason.map { TrixAttachmentImportError.blocked($0.message) }
+                    ?? TrixAttachmentImportError.blocked("Encrypted attachments are not available yet.")
+            }
+
             guard let url = try result.get().first else {
                 return
             }
@@ -280,11 +433,11 @@ struct MatrixTimelineView: View {
                 await model.sendAttachment(upload)
             }
         } catch {
-            fileImportError = error.matrixUserFacingMessage
+            fileImportError = error.trixUserFacingMessage
         }
     }
 
-    private func readAttachmentUpload(from url: URL) throws -> MatrixAttachmentUpload {
+    private func readAttachmentUpload(from url: URL) throws -> TrixAttachmentUpload {
         let canAccess = url.startAccessingSecurityScopedResource()
         defer {
             if canAccess {
@@ -293,7 +446,7 @@ struct MatrixTimelineView: View {
         }
 
         #if os(macOS)
-        var coordinatedResult: Result<MatrixAttachmentUpload, Error>?
+        var coordinatedResult: Result<TrixAttachmentUpload, Error>?
         var coordinationError: NSError?
         NSFileCoordinator().coordinate(
             readingItemAt: url,
@@ -301,7 +454,7 @@ struct MatrixTimelineView: View {
             error: &coordinationError
         ) { readableURL in
             coordinatedResult = Result {
-                try MatrixAttachmentUpload(
+                try TrixAttachmentUpload(
                     fileURL: readableURL,
                     fallbackFilename: url.lastPathComponent
                 )
@@ -314,9 +467,9 @@ struct MatrixTimelineView: View {
         if let coordinationError {
             throw coordinationError
         }
-        throw MatrixClientError.attachmentTransferFailed
+        throw TrixClientError.attachmentTransferFailed
         #else
-        return try MatrixAttachmentUpload(fileURL: url)
+        return try TrixAttachmentUpload(fileURL: url)
         #endif
     }
 
@@ -332,30 +485,40 @@ struct MatrixTimelineView: View {
         do {
             peerDevices = try await model.peerDeviceIdentities(for: room.id, refresh: refresh)
         } catch {
-            peerDeviceError = error.matrixUserFacingMessage
+            peerDeviceError = error.trixUserFacingMessage
         }
     }
 
-    private func trustPeerDevice(_ device: MatrixPeerDeviceIdentity) async {
+    private func trustPeerDevice(_ device: TrixPeerDeviceIdentity) async {
         isLoadingPeerDevices = true
         peerDeviceError = nil
         defer { isLoadingPeerDevices = false }
 
         do {
             peerDevices = try await model.trustPeerDevice(userID: device.userID, deviceID: device.deviceID)
+            await model.loadAttachmentSendAvailability(roomID: room.id)
         } catch {
-            peerDeviceError = error.matrixUserFacingMessage
+            peerDeviceError = error.trixUserFacingMessage
         }
+    }
+
+    private static func displayName(from userID: String) -> String {
+        let localpart = userID
+            .split(separator: "@")
+            .first
+            .map(String.init)
+
+        return localpart?.capitalized ?? userID
     }
 }
 
-private struct MatrixPeerDeviceTrustView: View {
+private struct TrixPeerDeviceTrustView: View {
     let roomName: String
-    let devices: [MatrixPeerDeviceIdentity]
+    let devices: [TrixPeerDeviceIdentity]
     let isLoading: Bool
     let errorMessage: String?
     let refresh: () -> Void
-    let trust: (MatrixPeerDeviceIdentity) -> Void
+    let trust: (TrixPeerDeviceIdentity) -> Void
 
     var body: some View {
         NavigationStack {
@@ -364,7 +527,7 @@ private struct MatrixPeerDeviceTrustView: View {
                     ProgressView("Loading OMEMO devices")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if devices.isEmpty {
-                    MatrixEmptyStateView(
+                    TrixEmptyStateView(
                         title: "No OMEMO Devices",
                         systemImage: "checkmark.shield",
                         message: "No published OMEMO devices were found for this contact yet."
@@ -415,10 +578,10 @@ private struct MatrixPeerDeviceTrustView: View {
                                 }
                                 .padding(12)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(MatrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .background(TrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                                 .overlay {
                                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .stroke(MatrixDesign.surfaceStroke, lineWidth: 1)
+                                        .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
                                 }
                             }
                         }
@@ -426,7 +589,7 @@ private struct MatrixPeerDeviceTrustView: View {
                 }
 
                 if let errorMessage {
-                    MatrixBannerView(
+                    TrixBannerView(
                         text: errorMessage,
                         systemImage: "exclamationmark.triangle",
                         tint: .red
@@ -455,12 +618,12 @@ private struct MatrixPeerDeviceTrustView: View {
                 }
             }
         }
-        .matrixDialogSurface(minWidth: 520, minHeight: 360)
+        .trixDialogSurface(minWidth: 520, minHeight: 360)
     }
 }
 
-private struct MatrixTimelineRow: View {
-    let item: MatrixTimelineItem
+private struct TrixTimelineRow: View {
+    let item: TrixTimelineItem
     let isDownloadingAttachment: Bool
     let downloadAttachment: () -> Void
 
@@ -474,13 +637,13 @@ private struct MatrixTimelineRow: View {
                 if !item.isLocalEcho {
                     Text(displaySender)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(MatrixDesign.accent.opacity(0.88))
+                        .foregroundStyle(TrixDesign.accent.opacity(0.88))
                         .padding(.horizontal, 8)
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
                     if let attachment = item.attachment {
-                        MatrixAttachmentRow(
+                        TrixAttachmentRow(
                             attachment: attachment,
                             isOutgoing: item.isLocalEcho,
                             isDownloading: isDownloadingAttachment,
@@ -498,8 +661,10 @@ private struct MatrixTimelineRow: View {
                         Spacer(minLength: 0)
                         HStack(spacing: 4) {
                             if item.isLocalEcho {
-                                Image(systemName: "checkmark")
+                                Image(systemName: deliveryState.systemImage)
                                     .font(.caption2.weight(.semibold))
+                                    .accessibilityLabel(deliveryState.label)
+                                    .help(deliveryState.label)
                             }
 
                             Text(item.timestamp, style: .time)
@@ -512,14 +677,14 @@ private struct MatrixTimelineRow: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 11)
                 .frame(maxWidth: bubbleMaxWidth, alignment: item.isLocalEcho ? .trailing : .leading)
-                .background(item.isLocalEcho ? MatrixDesign.accent : MatrixDesign.incomingBubbleSurface)
+                .background(item.isLocalEcho ? TrixDesign.accent : TrixDesign.incomingBubbleSurface)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(item.isLocalEcho ? .clear : MatrixDesign.surfaceStroke, lineWidth: 1)
+                        .stroke(item.isLocalEcho ? .clear : TrixDesign.surfaceStroke, lineWidth: 1)
                 }
                 .shadow(
-                    color: item.isLocalEcho ? MatrixDesign.accent.opacity(0.18) : MatrixDesign.softShadow,
+                    color: item.isLocalEcho ? TrixDesign.accent.opacity(0.18) : TrixDesign.softShadow,
                     radius: item.isLocalEcho ? 12 : 8,
                     y: item.isLocalEcho ? 6 : 4
                 )
@@ -547,6 +712,10 @@ private struct MatrixTimelineRow: View {
         return localpart.capitalized
     }
 
+    private var deliveryState: TrixDeliveryState {
+        item.deliveryState ?? .sent
+    }
+
     private var bubbleMaxWidth: CGFloat {
         #if os(macOS)
         return 520
@@ -556,8 +725,8 @@ private struct MatrixTimelineRow: View {
     }
 }
 
-private struct MatrixAttachmentRow: View {
-    let attachment: MatrixTimelineAttachment
+private struct TrixAttachmentRow: View {
+    let attachment: TrixTimelineAttachment
     let isOutgoing: Bool
     let isDownloading: Bool
     let download: () -> Void
@@ -565,16 +734,16 @@ private struct MatrixAttachmentRow: View {
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isOutgoing ? Color.white.opacity(0.18) : MatrixDesign.accent.opacity(0.12))
+                .fill(isOutgoing ? Color.white.opacity(0.18) : TrixDesign.accent.opacity(0.12))
                 .frame(width: 42, height: 42)
                 .overlay {
                     if isDownloading {
                         ProgressView()
-                            .tint(isOutgoing ? .white : MatrixDesign.accent)
+                            .tint(isOutgoing ? .white : TrixDesign.accent)
                     } else {
                         Image(systemName: attachment.isImage ? "photo" : "doc")
                             .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(isOutgoing ? .white : MatrixDesign.accent)
+                            .foregroundStyle(isOutgoing ? .white : TrixDesign.accent)
                     }
                 }
 
@@ -599,7 +768,7 @@ private struct MatrixAttachmentRow: View {
             } label: {
                 Image(systemName: isDownloading ? "hourglass" : "arrow.down.circle.fill")
                     .font(.system(size: 24, weight: .semibold))
-                    .foregroundStyle(isOutgoing ? .white : MatrixDesign.accent)
+                    .foregroundStyle(isOutgoing ? .white : TrixDesign.accent)
             }
             .buttonStyle(.borderless)
             .disabled(isDownloading || !attachment.isDownloadable)
@@ -609,8 +778,8 @@ private struct MatrixAttachmentRow: View {
     }
 }
 
-private struct MatrixAttachmentPreviewView: View {
-    let attachment: MatrixAttachmentDownload
+private struct TrixAttachmentPreviewView: View {
+    let attachment: TrixAttachmentDownload
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @State private var isExporting = false
@@ -626,7 +795,7 @@ private struct MatrixAttachmentPreviewView: View {
                         .resizable()
                         .scaledToFit()
                         .frame(maxWidth: .infinity, maxHeight: 420)
-                        .background(MatrixDesign.secondarySurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .background(TrixDesign.secondarySurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 } else {
                     Label(attachment.filename, systemImage: "doc")
                         .font(.headline)
@@ -681,7 +850,7 @@ private struct MatrixAttachmentPreviewView: View {
             }
             .padding(20)
             .navigationTitle("Attachment")
-            .matrixInlineNavigationTitle()
+            .trixInlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
@@ -690,7 +859,7 @@ private struct MatrixAttachmentPreviewView: View {
                 }
             }
         }
-        .matrixAttachmentPreviewFrame()
+        .trixAttachmentPreviewFrame()
         .task(id: attachment.id) {
             prepareTemporaryFile()
         }
@@ -699,12 +868,12 @@ private struct MatrixAttachmentPreviewView: View {
         }
         .fileExporter(
             isPresented: $isExporting,
-            document: MatrixAttachmentFileDocument(data: attachment.data),
+            document: TrixAttachmentFileDocument(data: attachment.data),
             contentType: .data,
             defaultFilename: attachment.safeFilename
         ) { result in
             if case .failure(let error) = result {
-                attachmentActionError = error.matrixUserFacingMessage
+                attachmentActionError = error.trixUserFacingMessage
             }
         }
     }
@@ -731,14 +900,14 @@ private struct MatrixAttachmentPreviewView: View {
 
         do {
             let directoryURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("TrixMatrix-\(attachment.id.uuidString)", isDirectory: true)
+                .appendingPathComponent("Trix-\(attachment.id.uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
             let fileURL = directoryURL.appendingPathComponent(attachment.safeFilename, isDirectory: false)
             try attachment.data.write(to: fileURL, options: [.atomic])
             temporaryDirectoryURL = directoryURL
             temporaryFileURL = fileURL
         } catch {
-            attachmentActionError = error.matrixUserFacingMessage
+            attachmentActionError = error.trixUserFacingMessage
         }
     }
 
@@ -754,7 +923,7 @@ private struct MatrixAttachmentPreviewView: View {
     }
 }
 
-private struct MatrixAttachmentFileDocument: FileDocument {
+private struct TrixAttachmentFileDocument: FileDocument {
     static var readableContentTypes: [UTType] {
         [.data]
     }
@@ -774,7 +943,7 @@ private struct MatrixAttachmentFileDocument: FileDocument {
     }
 }
 
-private extension MatrixAttachmentDownload {
+private extension TrixAttachmentDownload {
     var safeFilename: String {
         let trimmed = filename.trimmingCharacters(in: .whitespacesAndNewlines)
         var blockedCharacters = CharacterSet(charactersIn: "/\\:")
@@ -796,11 +965,11 @@ private extension MatrixAttachmentDownload {
 
 private extension View {
     @ViewBuilder
-    func matrixAttachmentPreviewFrame() -> some View {
+    func trixAttachmentPreviewFrame() -> some View {
         #if os(macOS)
-        self.matrixDialogSurface(minWidth: 420, minHeight: 320)
+        self.trixDialogSurface(minWidth: 420, minHeight: 320)
         #else
-        self.matrixDialogSurface()
+        self.trixDialogSurface()
         #endif
     }
 }

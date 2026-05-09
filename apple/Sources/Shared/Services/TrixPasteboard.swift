@@ -6,7 +6,7 @@ import UIKit
 import AppKit
 #endif
 
-enum MatrixPasteboard {
+enum TrixPasteboard {
     @MainActor
     static func copy(_ value: String) {
         #if os(iOS)

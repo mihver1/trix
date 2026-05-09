@@ -1,8 +1,8 @@
 import SwiftUI
 
-struct MatrixProfileSettingsView: View {
-    @ObservedObject var model: MatrixAppModel
-    @StateObject private var viewModel = MatrixProfileViewModel()
+struct TrixProfileSettingsView: View {
+    @ObservedObject var model: TrixAppModel
+    @StateObject private var viewModel = TrixProfileViewModel()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -31,10 +31,10 @@ struct MatrixProfileSettingsView: View {
                     .frame(minHeight: 76)
                     .padding(6)
                     .scrollContentBackground(.hidden)
-                    .background(MatrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(TrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(MatrixDesign.surfaceStroke, lineWidth: 1)
+                            .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
                     }
             }
 

@@ -9,10 +9,10 @@ version := `cat VERSION | tr -d '[:space:]'`
 ios_dir := repo_root / "apps/ios"
 macos_dir := repo_root / "apps/macos"
 macos_admin_dir := repo_root / "apps/macos-admin"
-matrix_apple_dir := repo_root / "apple"
-matrix_ios_derived_data := "/tmp/trixmatrix-ios-dd"
-matrix_macos_derived_data := "/tmp/trixmatrix-macos-dd"
-matrix_app_bundle_id := "com.softgrid.trixapp"
+trix_apple_dir := repo_root / "apple"
+trix_ios_derived_data := "/tmp/trix-ios-dd"
+trix_macos_derived_data := "/tmp/trix-macos-dd"
+trix_app_bundle_id := "com.softgrid.trixapp"
 android_gradle := repo_root / "apps/android/app/build.gradle.kts"
 
 # ── Versioning ────────────────────────────────────────────────
@@ -144,17 +144,17 @@ build-core-universal:
 run-server:
     cargo run -p trixd
 
-# Build the Matrix iOS app for a simulator; signing: automatic|unsigned
-matrix-ios-build signing="automatic" simulator="iPhone 17": xcodegen-matrix-apple
+# Build the XMPP Trix iOS app for a simulator; signing: automatic|unsigned
+trix-ios-build signing="automatic" simulator="iPhone 17": xcodegen-trix-apple
     #!/usr/bin/env bash
     set -euo pipefail
     signing="{{ signing }}"
     simulator="{{ simulator }}"
     build_args=(
-      -project "{{ matrix_apple_dir }}/TrixMatrix.xcodeproj"
+      -project "{{ trix_apple_dir }}/TrixMatrix.xcodeproj"
       -scheme TrixMatrixiOS
       -destination "platform=iOS Simulator,name=$simulator"
-      -derivedDataPath "{{ matrix_ios_derived_data }}"
+      -derivedDataPath "{{ trix_ios_derived_data }}"
       build
     )
     case "$signing" in
@@ -162,16 +162,16 @@ matrix-ios-build signing="automatic" simulator="iPhone 17": xcodegen-matrix-appl
       unsigned) build_args+=(CODE_SIGNING_ALLOWED=NO) ;;
       *) echo "error: signing must be automatic or unsigned" >&2; exit 1 ;;
     esac
-    echo "==> building Matrix iOS app for $simulator (signing=$signing)"
+    echo "==> building Trix iOS app for $simulator (signing=$signing)"
     xcodebuild "${build_args[@]}"
 
-# Build, install, and launch the Matrix iOS app in a simulator; signing: automatic|unsigned
-matrix-ios-run signing="automatic" simulator="iPhone 17":
+# Build, install, and launch the XMPP Trix iOS app in a simulator; signing: automatic|unsigned
+trix-ios-run signing="automatic" simulator="iPhone 17":
     #!/usr/bin/env bash
     set -euo pipefail
     simulator="{{ simulator }}"
-    just --justfile "{{ repo_root }}/justfile" matrix-ios-build "{{ signing }}" "$simulator"
-    app="{{ matrix_ios_derived_data }}/Build/Products/Debug-iphonesimulator/Trix.app"
+    just --justfile "{{ repo_root }}/justfile" trix-ios-build "{{ signing }}" "$simulator"
+    app="{{ trix_ios_derived_data }}/Build/Products/Debug-iphonesimulator/Trix.app"
     if [[ ! -d "$app" ]]; then
       echo "error: built app not found at $app" >&2
       exit 1
@@ -181,19 +181,19 @@ matrix-ios-run signing="automatic" simulator="iPhone 17":
     xcrun simctl bootstatus "$simulator" -b
     echo "==> installing $app"
     xcrun simctl install "$simulator" "$app"
-    echo "==> launching {{ matrix_app_bundle_id }} on $simulator"
-    xcrun simctl launch --terminate-running-process "$simulator" "{{ matrix_app_bundle_id }}"
+    echo "==> launching {{ trix_app_bundle_id }} on $simulator"
+    xcrun simctl launch --terminate-running-process "$simulator" "{{ trix_app_bundle_id }}"
 
-# Build the Matrix macOS app; signing: automatic|unsigned
-matrix-macos-build signing="automatic": xcodegen-matrix-apple
+# Build the XMPP Trix macOS app; signing: automatic|unsigned
+trix-macos-build signing="automatic": xcodegen-trix-apple
     #!/usr/bin/env bash
     set -euo pipefail
     signing="{{ signing }}"
     build_args=(
-      -project "{{ matrix_apple_dir }}/TrixMatrix.xcodeproj"
+      -project "{{ trix_apple_dir }}/TrixMatrix.xcodeproj"
       -scheme TrixMatrixMac
       -destination 'platform=macOS'
-      -derivedDataPath "{{ matrix_macos_derived_data }}"
+      -derivedDataPath "{{ trix_macos_derived_data }}"
       build
     )
     case "$signing" in
@@ -201,21 +201,34 @@ matrix-macos-build signing="automatic": xcodegen-matrix-apple
       unsigned) build_args+=(CODE_SIGNING_ALLOWED=NO) ;;
       *) echo "error: signing must be automatic or unsigned" >&2; exit 1 ;;
     esac
-    echo "==> building Matrix macOS app (signing=$signing)"
+    echo "==> building Trix macOS app (signing=$signing)"
     xcodebuild "${build_args[@]}"
 
-# Build and launch the Matrix macOS app; signing: automatic|unsigned
-matrix-macos-run signing="automatic":
+# Build and launch the XMPP Trix macOS app; signing: automatic|unsigned
+trix-macos-run signing="automatic":
     #!/usr/bin/env bash
     set -euo pipefail
-    just --justfile "{{ repo_root }}/justfile" matrix-macos-build "{{ signing }}"
-    app="{{ matrix_macos_derived_data }}/Build/Products/Debug/Trix.app"
+    just --justfile "{{ repo_root }}/justfile" trix-macos-build "{{ signing }}"
+    app="{{ trix_macos_derived_data }}/Build/Products/Debug/Trix.app"
     if [[ ! -d "$app" ]]; then
       echo "error: built app not found at $app" >&2
       exit 1
     fi
     echo "==> launching $app"
     open "$app"
+
+# Compatibility lanes for callers that still use the previous Matrix names.
+matrix-ios-build signing="automatic" simulator="iPhone 17":
+    just --justfile "{{ repo_root }}/justfile" trix-ios-build "{{ signing }}" "{{ simulator }}"
+
+matrix-ios-run signing="automatic" simulator="iPhone 17":
+    just --justfile "{{ repo_root }}/justfile" trix-ios-run "{{ signing }}" "{{ simulator }}"
+
+matrix-macos-build signing="automatic":
+    just --justfile "{{ repo_root }}/justfile" trix-macos-build "{{ signing }}"
+
+matrix-macos-run signing="automatic":
+    just --justfile "{{ repo_root }}/justfile" trix-macos-run "{{ signing }}"
 
 # ── Code generation ───────────────────────────────────────────
 
@@ -246,7 +259,7 @@ strings:
 # ── Xcode project generation ─────────────────────────────────
 
 # Regenerate all Xcode projects via XcodeGen
-xcodegen-all: xcodegen-ios xcodegen-macos xcodegen-macos-admin xcodegen-matrix-apple
+xcodegen-all: xcodegen-ios xcodegen-macos xcodegen-macos-admin xcodegen-trix-apple
 
 # Regenerate iOS Xcode project
 xcodegen-ios:
@@ -260,9 +273,12 @@ xcodegen-macos:
 xcodegen-macos-admin:
     cd "{{ macos_admin_dir }}" && xcodegen generate
 
-# Regenerate Matrix Apple Xcode project
-xcodegen-matrix-apple:
-    cd "{{ matrix_apple_dir }}" && xcodegen generate
+# Regenerate XMPP Trix Apple Xcode project
+xcodegen-trix-apple:
+    cd "{{ trix_apple_dir }}" && xcodegen generate
+
+# Compatibility lane for callers that still use the previous Matrix name.
+xcodegen-matrix-apple: xcodegen-trix-apple
 
 # ── Formatting & linting ─────────────────────────────────────
 

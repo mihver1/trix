@@ -1,10 +1,12 @@
 [workspace]
 members = [
     "apps/trix-botd",
+    "apps/trix-push-gateway",
     "apps/trix-tui",
     "apps/trixd",
     "crates/trix-bot",
     "crates/trix-core",
+    "crates/trix-push",
     "crates/trix-server",
     "crates/trix-types",
 ]
@@ -38,9 +40,11 @@ openmls_traits = "0.5.0"
 rand = "0.9.1"
 ratatui = "0.29.0"
 reqwest = { version = "0.12.15", default-features = false, features = ["http2", "json", "rustls-tls"] }
+quick-xml = "0.38.4"
 rusqlite = { version = "0.32.0", features = ["bundled-sqlcipher-vendored-openssl"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
+sha1 = "0.10.6"
 sha2 = "0.10.9"
 sqlx = { version = "0.8.6", features = ["runtime-tokio-rustls", "postgres", "uuid", "json", "migrate", "chrono"] }
 thiserror = "2.0.12"

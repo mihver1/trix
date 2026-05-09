@@ -3,6 +3,11 @@ import Foundation
 @preconcurrency import MartinOMEMO
 import Security
 
+enum TrixOMEMOPersistence: Sendable {
+    case keychain
+    case memory
+}
+
 struct TrixOMEMOStack {
     let store: TrixOMEMOStore
     let signalStorage: SignalStorage
@@ -44,6 +49,7 @@ final class TrixOMEMOStore: SignalSessionStoreProtocol,
 
     private let service: String
     private let account: String
+    private let persistence: TrixOMEMOPersistence
     private let queue: DispatchQueue
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -51,16 +57,30 @@ final class TrixOMEMOStore: SignalSessionStoreProtocol,
 
     init(
         account: String,
-        service: String = "com.softgrid.trix.xmpp.omemo"
+        service: String = "com.softgrid.trix.xmpp.omemo",
+        persistence: TrixOMEMOPersistence = .keychain
     ) throws {
         self.account = account.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         self.service = service
+        self.persistence = persistence
         self.queue = DispatchQueue(label: "TrixOMEMOStore.\(self.account)")
-        self.state = try Self.loadState(service: service, account: Self.keychainAccount(for: self.account), decoder: decoder)
+        switch persistence {
+        case .keychain:
+            self.state = try Self.loadState(
+                service: service,
+                account: Self.keychainAccount(for: self.account),
+                decoder: decoder
+            )
+        case .memory:
+            self.state = State()
+        }
     }
 
-    static func makeStack(account: String) throws -> TrixOMEMOStack {
-        let store = try TrixOMEMOStore(account: account)
+    static func makeStack(
+        account: String,
+        persistence: TrixOMEMOPersistence = .keychain
+    ) throws -> TrixOMEMOStack {
+        let store = try TrixOMEMOStore(account: account, persistence: persistence)
         let signalStorage = SignalStorage(
             sessionStore: store,
             preKeyStore: store,
@@ -69,7 +89,7 @@ final class TrixOMEMOStore: SignalSessionStoreProtocol,
             senderKeyStore: store
         )
         guard let signalContext = SignalContext(withStorage: signalStorage) else {
-            throw MatrixClientError.e2eeUnavailable
+            throw TrixClientError.e2eeUnavailable
         }
 
         try store.ensureLocalIdentity(context: signalContext)
@@ -97,7 +117,7 @@ final class TrixOMEMOStore: SignalSessionStoreProtocol,
             if next.localRegistrationID == nil || next.localRegistrationID == 0 {
                 let registrationID = context.generateRegistrationId()
                 guard registrationID != 0 else {
-                    throw MatrixClientError.e2eeUnavailable
+                    throw TrixClientError.e2eeUnavailable
                 }
                 next.localRegistrationID = registrationID
                 changed = true
@@ -108,7 +128,7 @@ final class TrixOMEMOStore: SignalSessionStoreProtocol,
                       let keyPairData = keyPair.keyPair,
                       let publicKey = keyPair.publicKey,
                       let registrationID = next.localRegistrationID else {
-                    throw MatrixClientError.e2eeUnavailable
+                    throw TrixClientError.e2eeUnavailable
                 }
 
                 next.identityKeyPairData = keyPairData
@@ -444,6 +464,10 @@ final class TrixOMEMOStore: SignalSessionStoreProtocol,
     }
 
     private func persist(_ state: State) throws {
+        guard persistence == .keychain else {
+            return
+        }
+
         let data = try encoder.encode(state)
         let account = Self.keychainAccount(for: account)
         let query = Self.baseQuery(service: service, account: account)
@@ -455,7 +479,7 @@ final class TrixOMEMOStore: SignalSessionStoreProtocol,
         }
 
         guard updateStatus == errSecItemNotFound else {
-            throw MatrixClientError.keychainFailure(updateStatus.description)
+            throw TrixClientError.keychainFailure(updateStatus.description)
         }
 
         var item = query
@@ -466,7 +490,7 @@ final class TrixOMEMOStore: SignalSessionStoreProtocol,
 
         let addStatus = SecItemAdd(item as CFDictionary, nil)
         guard addStatus == errSecSuccess else {
-            throw MatrixClientError.keychainFailure(addStatus.description)
+            throw TrixClientError.keychainFailure(addStatus.description)
         }
     }
 
@@ -483,11 +507,11 @@ final class TrixOMEMOStore: SignalSessionStoreProtocol,
         }
 
         guard status == errSecSuccess else {
-            throw MatrixClientError.keychainFailure(status.description)
+            throw TrixClientError.keychainFailure(status.description)
         }
 
         guard let data = result as? Data else {
-            throw MatrixClientError.keychainFailure("stored OMEMO state has unexpected format")
+            throw TrixClientError.keychainFailure("stored OMEMO state has unexpected format")
         }
 
         return try decoder.decode(State.self, from: data)

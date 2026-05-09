@@ -7,6 +7,7 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde_json::json;
+use trix_push::normalize_apns_token_hex as normalize_apns_token_hex_value;
 use uuid::Uuid;
 
 use crate::{
@@ -457,28 +458,5 @@ fn pending_bootstrap_to_api(
 }
 
 fn normalize_apns_token_hex(raw_value: &str) -> Result<String, AppError> {
-    let normalized: String = raw_value
-        .chars()
-        .filter(|character| !character.is_ascii_whitespace())
-        .map(|character| character.to_ascii_lowercase())
-        .collect();
-
-    if normalized.is_empty() {
-        return Err(AppError::bad_request("token_hex must not be empty"));
-    }
-    if normalized.len() % 2 != 0 {
-        return Err(AppError::bad_request(
-            "token_hex must contain an even number of hex characters",
-        ));
-    }
-    if !normalized
-        .chars()
-        .all(|character| character.is_ascii_hexdigit())
-    {
-        return Err(AppError::bad_request(
-            "token_hex must be a hex-encoded APNs token",
-        ));
-    }
-
-    Ok(normalized)
+    normalize_apns_token_hex_value(raw_value).map_err(|err| AppError::bad_request(err.to_string()))
 }

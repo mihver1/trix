@@ -6,7 +6,7 @@ import UIKit
 import AppKit
 #endif
 
-enum MatrixDesign {
+enum TrixDesign {
     static let accent = Color(red: 0.14, green: 0.55, blue: 0.98)
     static let groupAccent = Color(red: 0.10, green: 0.66, blue: 0.54)
     static let unlockedAccent = Color.yellow
@@ -34,22 +34,22 @@ enum MatrixDesign {
     static let errorSurface = Color.red.opacity(0.10)
 }
 
-extension MatrixRoomKind {
+extension TrixRoomKind {
     var tint: Color {
         switch self {
         case .direct:
-            return MatrixDesign.accent
+            return TrixDesign.accent
         case .group:
-            return MatrixDesign.groupAccent
+            return TrixDesign.groupAccent
         }
     }
 }
 
-struct MatrixAvatarView: View {
+struct TrixAvatarView: View {
     let title: String
     let systemImage: String
     let size: CGFloat
-    var tint: Color = MatrixDesign.accent
+    var tint: Color = TrixDesign.accent
 
     var body: some View {
         ZStack {
@@ -70,7 +70,7 @@ struct MatrixAvatarView: View {
         .frame(width: size, height: size)
         .overlay {
             Circle()
-                .stroke(MatrixDesign.surfaceStroke, lineWidth: 1)
+                .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
         }
     }
 
@@ -86,10 +86,10 @@ struct MatrixAvatarView: View {
     }
 }
 
-struct MatrixStatusPill: View {
+struct TrixStatusPill: View {
     let title: String
     let systemImage: String
-    var tint: Color = MatrixDesign.accent
+    var tint: Color = TrixDesign.accent
 
     var body: some View {
         Label(title, systemImage: systemImage)
@@ -106,8 +106,8 @@ struct MatrixStatusPill: View {
     }
 }
 
-struct MatrixRoomKindMark: View {
-    let kind: MatrixRoomKind
+struct TrixRoomKindMark: View {
+    let kind: TrixRoomKind
     var size: CGFloat = 24
 
     var body: some View {
@@ -120,17 +120,17 @@ struct MatrixRoomKindMark: View {
     }
 }
 
-struct MatrixRoomSecurityMark: View {
+struct TrixRoomSecurityMark: View {
     let isEncrypted: Bool
     var size: CGFloat = 24
 
     var body: some View {
         Image(systemName: isEncrypted ? "lock.fill" : "lock.open.fill")
             .font(.system(size: size * 0.48, weight: .semibold))
-            .foregroundStyle(isEncrypted ? .green : MatrixDesign.unlockedAccent)
+            .foregroundStyle(isEncrypted ? .green : TrixDesign.unlockedAccent)
             .frame(width: size, height: size)
             .background(
-                (isEncrypted ? Color.green : MatrixDesign.unlockedAccent)
+                (isEncrypted ? Color.green : TrixDesign.unlockedAccent)
                     .opacity(isEncrypted ? 0.13 : 0.18),
                 in: Circle()
             )
@@ -138,7 +138,7 @@ struct MatrixRoomSecurityMark: View {
     }
 }
 
-struct MatrixBannerView: View {
+struct TrixBannerView: View {
     let text: String
     let systemImage: String
     var tint: Color
@@ -159,7 +159,7 @@ struct MatrixBannerView: View {
     }
 }
 
-struct MatrixEmptyStateView: View {
+struct TrixEmptyStateView: View {
     let title: String
     let systemImage: String
     let message: String
@@ -168,7 +168,7 @@ struct MatrixEmptyStateView: View {
         VStack(spacing: 12) {
             Image(systemName: systemImage)
                 .font(.system(size: 34, weight: .semibold))
-                .foregroundStyle(MatrixDesign.accent)
+                .foregroundStyle(TrixDesign.accent)
 
             VStack(spacing: 4) {
                 Text(title)
@@ -187,7 +187,7 @@ struct MatrixEmptyStateView: View {
 
 extension View {
     @ViewBuilder
-    func matrixScrollContentBackgroundHidden() -> some View {
+    func trixScrollContentBackgroundHidden() -> some View {
         #if os(iOS)
         self.scrollContentBackground(.hidden)
         #elseif os(macOS)
@@ -198,7 +198,7 @@ extension View {
     }
 
     @ViewBuilder
-    func matrixInlineNavigationTitle() -> some View {
+    func trixInlineNavigationTitle() -> some View {
         #if os(iOS)
         self.navigationBarTitleDisplayMode(.inline)
         #else
@@ -207,7 +207,7 @@ extension View {
     }
 
     @ViewBuilder
-    func matrixScrollDismissesKeyboard() -> some View {
+    func trixScrollDismissesKeyboard() -> some View {
         #if os(iOS)
         self.scrollDismissesKeyboard(.interactively)
         #else
@@ -215,10 +215,10 @@ extension View {
         #endif
     }
 
-    func matrixDialogSurface(minWidth: CGFloat? = nil, minHeight: CGFloat? = nil) -> some View {
+    func trixDialogSurface(minWidth: CGFloat? = nil, minHeight: CGFloat? = nil) -> some View {
         self
-            .tint(MatrixDesign.accent)
+            .tint(TrixDesign.accent)
             .frame(minWidth: minWidth, minHeight: minHeight)
-            .background(MatrixDesign.screenBackground.ignoresSafeArea())
+            .background(TrixDesign.screenBackground.ignoresSafeArea())
     }
 }

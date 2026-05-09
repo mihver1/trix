@@ -2,7 +2,7 @@ import Foundation
 import CoreGraphics
 import ImageIO
 
-struct MatrixSession: Codable, Equatable, Sendable {
+struct TrixSession: Codable, Equatable, Sendable {
     let userID: String
     let deviceID: String
     let homeserverURL: URL
@@ -13,23 +13,23 @@ struct MatrixSession: Codable, Equatable, Sendable {
     let createdAt: Date
 }
 
-struct MatrixAccount: Equatable, Sendable {
+struct TrixAccount: Equatable, Sendable {
     let userID: String
     let displayName: String
     let deviceID: String
 }
 
-struct MatrixUserProfile: Identifiable, Equatable, Sendable {
+struct TrixUserProfile: Identifiable, Equatable, Sendable {
     let userID: String
     let displayName: String?
     let avatarURL: String?
-    let metadata: MatrixUserMetadata
+    let metadata: TrixUserMetadata
 
     init(
         userID: String,
         displayName: String?,
         avatarURL: String?,
-        metadata: MatrixUserMetadata = .empty
+        metadata: TrixUserMetadata = .empty
     ) {
         self.userID = userID
         self.displayName = displayName
@@ -73,8 +73,8 @@ struct MatrixUserProfile: Identifiable, Equatable, Sendable {
     }
 }
 
-struct MatrixUserMetadata: Codable, Equatable, Sendable {
-    static let empty = MatrixUserMetadata()
+struct TrixUserMetadata: Codable, Equatable, Sendable {
+    static let empty = TrixUserMetadata()
 
     let bio: String?
     let statusMessage: String?
@@ -104,7 +104,7 @@ struct MatrixUserMetadata: Codable, Equatable, Sendable {
     }
 }
 
-struct MatrixUserProfileUpdate: Equatable, Sendable {
+struct TrixUserProfileUpdate: Equatable, Sendable {
     let displayName: String
     let bio: String
     let statusMessage: String
@@ -122,8 +122,8 @@ struct MatrixUserProfileUpdate: Equatable, Sendable {
         self.website = website.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    var metadata: MatrixUserMetadata {
-        MatrixUserMetadata(
+    var metadata: TrixUserMetadata {
+        TrixUserMetadata(
             bio: bio,
             statusMessage: statusMessage,
             website: website
@@ -131,12 +131,12 @@ struct MatrixUserProfileUpdate: Equatable, Sendable {
     }
 }
 
-struct MatrixUserSearchResult: Equatable, Sendable {
-    let users: [MatrixUserProfile]
+struct TrixUserSearchResult: Equatable, Sendable {
+    let users: [TrixUserProfile]
     let limited: Bool
 }
 
-enum MatrixDeviceVerificationState: String, Codable, Sendable {
+enum TrixDeviceVerificationState: String, Codable, Sendable {
     case unknown
     case verified
     case unverified
@@ -153,7 +153,7 @@ enum MatrixDeviceVerificationState: String, Codable, Sendable {
     }
 }
 
-enum MatrixRecoveryState: String, Codable, Sendable {
+enum TrixRecoveryState: String, Codable, Sendable {
     case unknown
     case disabled
     case enabled
@@ -173,7 +173,7 @@ enum MatrixRecoveryState: String, Codable, Sendable {
     }
 }
 
-enum MatrixBackupState: String, Codable, Sendable {
+enum TrixBackupState: String, Codable, Sendable {
     case unknown
     case creating
     case enabling
@@ -202,14 +202,14 @@ enum MatrixBackupState: String, Codable, Sendable {
     }
 }
 
-struct MatrixDeviceVerificationStatus: Equatable, Sendable {
+struct TrixDeviceVerificationStatus: Equatable, Sendable {
     let userID: String
     let deviceID: String
-    let state: MatrixDeviceVerificationState
+    let state: TrixDeviceVerificationState
     let hasDevicesToVerifyAgainst: Bool
     let isLastDevice: Bool
-    let recoveryState: MatrixRecoveryState
-    let backupState: MatrixBackupState
+    let recoveryState: TrixRecoveryState
+    let backupState: TrixBackupState
     let backupExistsOnServer: Bool?
     let ed25519Fingerprint: String?
     let curve25519IdentityKey: String?
@@ -276,7 +276,7 @@ struct MatrixDeviceVerificationStatus: Equatable, Sendable {
     }
 }
 
-enum MatrixPeerDeviceTrustState: String, Codable, Sendable {
+enum TrixPeerDeviceTrustState: String, Codable, Sendable {
     case undecided
     case trusted
     case verified
@@ -300,11 +300,11 @@ enum MatrixPeerDeviceTrustState: String, Codable, Sendable {
     }
 }
 
-struct MatrixPeerDeviceIdentity: Identifiable, Equatable, Sendable {
+struct TrixPeerDeviceIdentity: Identifiable, Equatable, Sendable {
     let userID: String
     let deviceID: String
     let fingerprint: String
-    let trustState: MatrixPeerDeviceTrustState
+    let trustState: TrixPeerDeviceTrustState
     let isActive: Bool
     let isLocalDevice: Bool
 
@@ -325,7 +325,7 @@ struct MatrixPeerDeviceIdentity: Identifiable, Equatable, Sendable {
     }
 }
 
-struct MatrixDeviceVerificationRequest: Identifiable, Equatable, Sendable {
+struct TrixDeviceVerificationRequest: Identifiable, Equatable, Sendable {
     let flowID: String
     let senderUserID: String
     let senderDisplayName: String?
@@ -354,7 +354,7 @@ struct MatrixDeviceVerificationRequest: Identifiable, Equatable, Sendable {
     }
 }
 
-struct MatrixDeviceVerificationEmoji: Identifiable, Equatable, Sendable {
+struct TrixDeviceVerificationEmoji: Identifiable, Equatable, Sendable {
     let symbol: String
     let description: String
 
@@ -363,12 +363,12 @@ struct MatrixDeviceVerificationEmoji: Identifiable, Equatable, Sendable {
     }
 }
 
-enum MatrixDeviceVerificationChallenge: Equatable, Sendable {
-    case emojis([MatrixDeviceVerificationEmoji])
+enum TrixDeviceVerificationChallenge: Equatable, Sendable {
+    case emojis([TrixDeviceVerificationEmoji])
     case decimals([String])
 }
 
-enum MatrixDeviceVerificationFlowPhase: String, Codable, Sendable {
+enum TrixDeviceVerificationFlowPhase: String, Codable, Sendable {
     case idle
     case requestSent
     case incomingRequest
@@ -406,14 +406,14 @@ enum MatrixDeviceVerificationFlowPhase: String, Codable, Sendable {
     }
 }
 
-struct MatrixDeviceVerificationFlow: Equatable, Sendable {
-    let phase: MatrixDeviceVerificationFlowPhase
-    let request: MatrixDeviceVerificationRequest?
-    let challenge: MatrixDeviceVerificationChallenge?
+struct TrixDeviceVerificationFlow: Equatable, Sendable {
+    let phase: TrixDeviceVerificationFlowPhase
+    let request: TrixDeviceVerificationRequest?
+    let challenge: TrixDeviceVerificationChallenge?
     let updatedAt: Date
 
-    static var idle: MatrixDeviceVerificationFlow {
-        MatrixDeviceVerificationFlow(
+    static var idle: TrixDeviceVerificationFlow {
+        TrixDeviceVerificationFlow(
             phase: .idle,
             request: nil,
             challenge: nil,
@@ -460,7 +460,7 @@ struct MatrixDeviceVerificationFlow: Equatable, Sendable {
     }
 }
 
-enum MatrixRoomKind: String, Codable, Sendable {
+enum TrixRoomKind: String, Codable, Sendable {
     case direct
     case group
 
@@ -483,10 +483,10 @@ enum MatrixRoomKind: String, Codable, Sendable {
     }
 }
 
-struct MatrixRoomSummary: Identifiable, Equatable, Sendable {
+struct TrixRoomSummary: Identifiable, Equatable, Sendable {
     let id: String
     let name: String
-    let kind: MatrixRoomKind
+    let kind: TrixRoomKind
     let isEncrypted: Bool
     let unreadCount: Int
     let lastMessagePreview: String
@@ -497,10 +497,10 @@ struct MatrixRoomSummary: Identifiable, Equatable, Sendable {
     }
 }
 
-struct MatrixRoomInvite: Identifiable, Equatable, Sendable {
+struct TrixRoomInvite: Identifiable, Equatable, Sendable {
     let id: String
     let roomName: String
-    let kind: MatrixRoomKind
+    let kind: TrixRoomKind
     let isEncrypted: Bool
     let inviterUserID: String?
     let inviterDisplayName: String?
@@ -524,7 +524,7 @@ struct MatrixRoomInvite: Identifiable, Equatable, Sendable {
     }
 }
 
-enum MatrixRoomMembership: String, Codable, Sendable {
+enum TrixRoomMembership: String, Codable, Sendable {
     case joined
     case invited
     case left
@@ -566,10 +566,10 @@ enum MatrixRoomMembership: String, Codable, Sendable {
     }
 }
 
-struct MatrixRoomMember: Identifiable, Equatable, Sendable {
+struct TrixRoomMember: Identifiable, Equatable, Sendable {
     let userID: String
     let displayName: String?
-    let membership: MatrixRoomMembership
+    let membership: TrixRoomMembership
 
     var id: String {
         userID
@@ -603,27 +603,135 @@ struct MatrixRoomMember: Identifiable, Equatable, Sendable {
     }
 }
 
-struct MatrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
+enum TrixDeliveryState: String, Codable, Equatable, Sendable {
+    case sent
+    case delivered
+
+    var label: String {
+        switch self {
+        case .sent:
+            return "Sent"
+        case .delivered:
+            return "Delivered"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .sent:
+            return "checkmark"
+        case .delivered:
+            return "checkmark.circle.fill"
+        }
+    }
+}
+
+enum TrixTypingState: String, Codable, Equatable, Sendable {
+    case idle
+    case composing
+    case paused
+}
+
+struct TrixRoomTypingState: Codable, Equatable, Sendable {
+    let roomID: String
+    let typingUserIDs: [String]
+    let updatedAt: Date
+
+    var hasTypingUsers: Bool {
+        !typingUserIDs.isEmpty
+    }
+}
+
+struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
     let id: String
     let roomID: String
     let sender: String
     let timestamp: Date
     let body: String
     let isLocalEcho: Bool
-    let attachment: MatrixTimelineAttachment?
+    let attachment: TrixTimelineAttachment?
+    let deliveryState: TrixDeliveryState?
+
+    init(
+        id: String,
+        roomID: String,
+        sender: String,
+        timestamp: Date,
+        body: String,
+        isLocalEcho: Bool,
+        attachment: TrixTimelineAttachment?,
+        deliveryState: TrixDeliveryState? = nil
+    ) {
+        self.id = id
+        self.roomID = roomID
+        self.sender = sender
+        self.timestamp = timestamp
+        self.body = body
+        self.isLocalEcho = isLocalEcho
+        self.attachment = attachment
+        self.deliveryState = deliveryState
+    }
+
+    func withDeliveryState(_ deliveryState: TrixDeliveryState?) -> TrixTimelineItem {
+        TrixTimelineItem(
+            id: id,
+            roomID: roomID,
+            sender: sender,
+            timestamp: timestamp,
+            body: body,
+            isLocalEcho: isLocalEcho,
+            attachment: attachment,
+            deliveryState: deliveryState
+        )
+    }
+
+    static func mergedDeliveryState(
+        _ lhs: TrixDeliveryState?,
+        _ rhs: TrixDeliveryState?
+    ) -> TrixDeliveryState? {
+        if lhs == .delivered || rhs == .delivered {
+            return .delivered
+        }
+
+        if lhs == .sent || rhs == .sent {
+            return .sent
+        }
+
+        return nil
+    }
 }
 
-enum MatrixTimelineAttachmentKind: String, Codable, Sendable {
+enum TrixTimelineAttachmentKind: String, Codable, Sendable {
     case file
     case image
 }
 
-struct MatrixTimelineAttachment: Codable, Equatable, Sendable {
-    let kind: MatrixTimelineAttachmentKind
+struct TrixTimelineAttachment: Codable, Equatable, Sendable {
+    let kind: TrixTimelineAttachmentKind
     let filename: String
     let mimeType: String?
     let sizeBytes: Int?
     let sourceJSON: String?
+    let imageDimensions: TrixAttachmentImageDimensions?
+    let imageBlurhash: String?
+
+    init(
+        kind: TrixTimelineAttachmentKind,
+        filename: String,
+        mimeType: String?,
+        sizeBytes: Int?,
+        sourceJSON: String?,
+        imageDimensions: TrixAttachmentImageDimensions? = nil,
+        imageBlurhash: String? = nil
+    ) {
+        self.kind = kind
+        self.filename = filename
+        self.mimeType = mimeType
+        self.sizeBytes = sizeBytes
+        self.sourceJSON = sourceJSON
+        self.imageDimensions = imageDimensions
+        self.imageBlurhash = imageBlurhash
+    }
 
     var isDownloadable: Bool {
         sourceJSON != nil
@@ -634,7 +742,7 @@ struct MatrixTimelineAttachment: Codable, Equatable, Sendable {
     }
 
     var subtitle: String {
-        [mimeType, formattedSize].compactMap { $0 }.joined(separator: " - ")
+        [mimeType, formattedSize, formattedDimensions].compactMap { $0 }.joined(separator: " - ")
     }
 
     private var formattedSize: String? {
@@ -644,13 +752,21 @@ struct MatrixTimelineAttachment: Codable, Equatable, Sendable {
 
         return ByteCountFormatter.string(fromByteCount: Int64(sizeBytes), countStyle: .file)
     }
+
+    private var formattedDimensions: String? {
+        guard let imageDimensions else {
+            return nil
+        }
+
+        return "\(imageDimensions.width)x\(imageDimensions.height)"
+    }
 }
 
-struct MatrixAttachmentUpload: Equatable, Sendable {
+struct TrixAttachmentUpload: Equatable, Sendable {
     let filename: String
     let mimeType: String
     let data: Data
-    let imageDimensions: MatrixAttachmentImageDimensions?
+    let imageDimensions: TrixAttachmentImageDimensions?
     let imageBlurhash: String?
 
     var isImage: Bool {
@@ -665,7 +781,7 @@ struct MatrixAttachmentUpload: Equatable, Sendable {
         filename: String,
         mimeType: String,
         data: Data,
-        imageDimensions: MatrixAttachmentImageDimensions? = nil,
+        imageDimensions: TrixAttachmentImageDimensions? = nil,
         imageBlurhash: String? = nil
     ) {
         self.filename = filename
@@ -692,7 +808,7 @@ struct MatrixAttachmentUpload: Equatable, Sendable {
         )
     }
 
-    private static func imageDimensions(from data: Data, mimeType: String) -> MatrixAttachmentImageDimensions? {
+    private static func imageDimensions(from data: Data, mimeType: String) -> TrixAttachmentImageDimensions? {
         guard mimeType.hasPrefix("image/"),
               let source = CGImageSourceCreateWithData(data as CFData, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
@@ -708,7 +824,7 @@ struct MatrixAttachmentUpload: Equatable, Sendable {
             return nil
         }
 
-        return MatrixAttachmentImageDimensions(width: pixelWidth, height: pixelHeight)
+        return TrixAttachmentImageDimensions(width: pixelWidth, height: pixelHeight)
     }
 
     private static func averageBlurhash(from data: Data, mimeType: String) -> String? {
@@ -757,7 +873,7 @@ struct MatrixAttachmentUpload: Equatable, Sendable {
     }
 }
 
-struct MatrixAttachmentDownload: Identifiable, Equatable, Sendable {
+struct TrixAttachmentDownload: Identifiable, Equatable, Sendable {
     let id = UUID()
     let filename: String
     let mimeType: String?
@@ -772,21 +888,213 @@ struct MatrixAttachmentDownload: Identifiable, Equatable, Sendable {
     }
 }
 
-struct MatrixAttachmentImageDimensions: Codable, Equatable, Sendable {
+enum TrixAttachmentSendBlockReason: String, Codable, Equatable, Sendable {
+    case omemoDeviceTrustRequired
+    case groupRecipientSetUnavailable
+    case groupOmemoDeviceTrustRequired
+    case unavailable
+
+    var message: String {
+        switch self {
+        case .omemoDeviceTrustRequired:
+            return "Trust at least one active OMEMO device for this contact before sending attachments."
+        case .groupRecipientSetUnavailable:
+            return "Group attachments require a validated MUC member recipient set before sending."
+        case .groupOmemoDeviceTrustRequired:
+            return "Trust an active OMEMO device for every group member before sending attachments."
+        case .unavailable:
+            return "Encrypted attachments are not available for this room yet."
+        }
+    }
+}
+
+struct TrixAttachmentSendAvailability: Equatable, Sendable {
+    let roomID: String
+    let canSend: Bool
+    let recipientUserIDs: [String]
+    let blockReason: TrixAttachmentSendBlockReason?
+
+    static func allowed(roomID: String, recipientUserIDs: [String]) -> TrixAttachmentSendAvailability {
+        TrixAttachmentSendAvailability(
+            roomID: roomID,
+            canSend: true,
+            recipientUserIDs: recipientUserIDs,
+            blockReason: nil
+        )
+    }
+
+    static func blocked(
+        roomID: String,
+        reason: TrixAttachmentSendBlockReason
+    ) -> TrixAttachmentSendAvailability {
+        TrixAttachmentSendAvailability(
+            roomID: roomID,
+            canSend: false,
+            recipientUserIDs: [],
+            blockReason: reason
+        )
+    }
+}
+
+struct TrixAttachmentImageDimensions: Codable, Equatable, Sendable {
     let width: UInt64
     let height: UInt64
 }
 
-enum MatrixClientError: LocalizedError {
+enum TrixAPNsEnvironment: String, Codable, Equatable, Sendable {
+    case sandbox
+    case production
+
+    static var current: TrixAPNsEnvironment {
+        #if DEBUG
+        .sandbox
+        #else
+        .production
+        #endif
+    }
+
+    var xmppPushProvider: String {
+        switch self {
+        case .sandbox:
+            return XMPPPushConfiguration.apnsSandboxProvider
+        case .production:
+            return XMPPPushConfiguration.apnsProductionProvider
+        }
+    }
+}
+
+struct TrixAPNsDeviceToken: Equatable, Sendable {
+    let data: Data
+    let environment: TrixAPNsEnvironment
+
+    init(data: Data, environment: TrixAPNsEnvironment = .current) {
+        self.data = data
+        self.environment = environment
+    }
+
+    var hexString: String {
+        data.map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+struct TrixPushRegistration: Equatable, Sendable {
+    let environment: TrixAPNsEnvironment
+    let provider: String
+    let gatewayJID: String
+    let node: String
+    let registeredAt: Date
+}
+
+enum TrixPushRegistrationBlocker: String, Codable, Equatable, Sendable {
+    case waitingForAPNsToken
+    case waitingForSession
+    case pushGatewayUnavailable
+    case registrationFailed
+}
+
+struct TrixRemoteNotificationPayload: Equatable, Sendable {
+    let accountID: String?
+    let roomID: String?
+    let badge: Int?
+    let isWakeOnlySync: Bool
+
+    init(userInfo: [AnyHashable: Any]) {
+        let root = Self.stringKeyedDictionary(userInfo)
+        let aps = Self.dictionary(root["aps"])
+        let trix = Self.dictionary(root["trix"])
+
+        self.accountID = Self.nonEmptyString(trix?["account"])
+        self.roomID = Self.nonEmptyString(trix?["room"])
+        self.badge = Self.integer(trix?["badge"]) ?? Self.integer(aps?["badge"])
+
+        let contentAvailable = Self.integer(aps?["content-available"]) == 1
+        let type = Self.nonEmptyString(trix?["type"])
+        self.isWakeOnlySync = contentAvailable &&
+            type == "sync" &&
+            aps?["alert"] == nil &&
+            aps?["sound"] == nil &&
+            !Self.containsForbiddenPlaintextKey(root)
+    }
+
+    private static func stringKeyedDictionary(_ dictionary: [AnyHashable: Any]) -> [String: Any] {
+        dictionary.reduce(into: [:]) { partialResult, pair in
+            guard let key = pair.key as? String else {
+                return
+            }
+            partialResult[key] = pair.value
+        }
+    }
+
+    private static func dictionary(_ value: Any?) -> [String: Any]? {
+        if let dictionary = value as? [String: Any] {
+            return dictionary
+        }
+
+        if let dictionary = value as? [AnyHashable: Any] {
+            return stringKeyedDictionary(dictionary)
+        }
+
+        return nil
+    }
+
+    private static func nonEmptyString(_ value: Any?) -> String? {
+        guard let string = value as? String else {
+            return nil
+        }
+
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func integer(_ value: Any?) -> Int? {
+        switch value {
+        case let int as Int:
+            return int
+        case let number as NSNumber:
+            return number.intValue
+        case let string as String:
+            return Int(string)
+        default:
+            return nil
+        }
+    }
+
+    private static func containsForbiddenPlaintextKey(_ dictionary: [String: Any]) -> Bool {
+        for (key, value) in dictionary {
+            let normalizedKey = key.lowercased()
+            if normalizedKey.contains("body") ||
+                normalizedKey.contains("plaintext") ||
+                normalizedKey.contains("decrypted") ||
+                normalizedKey.contains("filename") ||
+                normalizedKey.contains("attachmentname") ||
+                normalizedKey.contains("attachment-name") {
+                return true
+            }
+
+            if let nested = Self.dictionary(value),
+               containsForbiddenPlaintextKey(nested) {
+                return true
+            }
+        }
+
+        return false
+    }
+}
+
+enum TrixClientError: LocalizedError {
     case invalidHomeserver
     case invalidCredentials
-    case invalidMatrixUserID
+    case invalidTrixUserID
     case groupRoomNameRequired
     case groupInviteesRequired
     case emptyMessage
     case emptyAttachment
     case attachmentDownloadUnavailable
     case attachmentTransferFailed
+    case attachmentEncryptionUnavailable
+    case attachmentDecryptionFailed
+    case groupOmemoRecipientSetUnavailable
+    case groupOmemoDeviceTrustRequired
     case missingSession
     case roomUnavailable
     case inviteUnavailable
@@ -803,6 +1111,8 @@ enum MatrixClientError: LocalizedError {
     case omemoDeviceTrustRequired
     case omemoEncryptionFailed
     case xmppConnectionFailed
+    case apnsGatewayUnavailable
+    case apnsRegistrationFailed
 
     var errorDescription: String? {
         switch self {
@@ -810,7 +1120,7 @@ enum MatrixClientError: LocalizedError {
             return "The server address is invalid."
         case .invalidCredentials:
             return "Enter an XMPP JID and password."
-        case .invalidMatrixUserID:
+        case .invalidTrixUserID:
             return "Enter an XMPP JID on trix.selfhost.ru."
         case .groupRoomNameRequired:
             return "Enter a group name."
@@ -824,6 +1134,14 @@ enum MatrixClientError: LocalizedError {
             return "This attachment is not available for download yet."
         case .attachmentTransferFailed:
             return "Attachment transfer failed."
+        case .attachmentEncryptionUnavailable:
+            return "Encrypted attachment transfer is not available yet."
+        case .attachmentDecryptionFailed:
+            return "Attachment decryption failed."
+        case .groupOmemoRecipientSetUnavailable:
+            return "Group OMEMO sends require a validated MUC member recipient set before sending."
+        case .groupOmemoDeviceTrustRequired:
+            return "Trust an active OMEMO device for every group member before sending."
         case .missingSession:
             return "No saved Trix session is available."
         case .roomUnavailable:
@@ -856,12 +1174,16 @@ enum MatrixClientError: LocalizedError {
             return "OMEMO encryption failed. Refresh the contact devices and try again."
         case .xmppConnectionFailed:
             return "Could not connect to the XMPP server."
+        case .apnsGatewayUnavailable:
+            return "The XMPP APNs gateway is not available yet."
+        case .apnsRegistrationFailed:
+            return "APNs registration failed."
         }
     }
 }
 
 extension Error {
-    var matrixUserFacingMessage: String {
+    var trixUserFacingMessage: String {
         if let localizedError = self as? LocalizedError,
            let description = localizedError.errorDescription {
             return description

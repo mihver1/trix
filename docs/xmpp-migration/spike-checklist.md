@@ -35,7 +35,7 @@ reviewed library APIs?
 
 - [ ] Confirm OMEMO implementation availability.
 - [ ] Confirm one-to-one encrypted send and receive.
-- [ ] Confirm private group encrypted send and receive.
+- [x] Confirm private group encrypted send and receive.
 - [ ] Confirm device bundle publication and retrieval.
 - [ ] Confirm multi-device behavior for one user.
 - [ ] Confirm trust or verification model exposed by the library.
@@ -43,7 +43,7 @@ reviewed library APIs?
       registration id, identity key pair, prekeys, signed prekeys, sessions,
       identities, and sender keys.
 - [x] Confirm the app can detect missing or unsupported OMEMO state before send.
-- [ ] Confirm no application code needs to manually manipulate key material.
+- [x] Confirm no application code needs to manually manipulate key material.
 - [ ] Decide whether the implementation targets current `urn:xmpp:omemo:2`,
       legacy ecosystem namespaces, or an explicitly documented compatibility
       bridge inside the selected library.
@@ -51,7 +51,8 @@ reviewed library APIs?
 Exit criteria:
 
 - Two-account encrypted DM prototype passes.
-- Three-account encrypted group prototype passes.
+- Three-account encrypted group prototype passes. The `group-e2ee` macOS live
+  smoke passed on 2026-05-09.
 - The blocked-state UX requirements are documented.
 - If group OMEMO is not viable, the XMPP pivot is blocked until an acceptable
   library or protocol path is chosen.
@@ -85,21 +86,25 @@ Exit criteria:
 
 - One server is selected with a local private configuration.
 - Federation-disabled behavior is verified.
-- Backup and restore are verified locally.
+- Backup creation is scripted, but restore remains blocked: the local
+  `server/xmpp/scripts/restore-verify.sh` fresh-volume drill starts ejabberd
+  after restore but the disposable account is not present.
 
 ## Control-Plane Gate
 
 Question: which operations belong in Trix control-plane APIs versus direct XMPP
 server administration?
 
-- [ ] Define account create, disable, and inspect operations.
+- [x] Define account create as a localhost ejabberd API/backend operation behind
+  a Trix operator wrapper.
 - [ ] Define invite lifecycle.
 - [ ] Define group create and membership operations.
 - [ ] Define profile metadata ownership.
-- [ ] Define health and backup status operations.
+- [x] Define health as a localhost ejabberd API/backend operation behind a Trix
+  operator wrapper.
 - [ ] Define audit/diagnostic output and redaction rules.
-- [ ] Confirm the selected server exposes safe admin APIs or a supported
-  automation path.
+- [x] Confirm ejabberd exposes a usable localhost admin API/backend path for
+  health and disposable account create/delete smoke.
 
 Exit criteria:
 
@@ -129,9 +134,14 @@ Exit criteria:
 Question: how do notifications work without leaking plaintext?
 
 - [ ] Confirm server-side push extension support.
-- [ ] Confirm APNs integration path for iOS.
-- [ ] Confirm macOS notification path.
-- [ ] Confirm push payloads do not include decrypted message bodies.
+- [x] Confirm APNs integration path for iOS registration plumbing.
+- [x] Confirm macOS notification registration plumbing.
+- [x] Confirm the Apple app handles remote pushes as wake-only sync hints and
+      does not display decrypted body notifications.
+- [x] Confirm a Trix APNs gateway/push component exists behind XEP-0357.
+- [ ] Confirm signed-device APNs delivery reaches iOS and macOS.
+- [ ] Confirm push payloads do not include decrypted message bodies in live APNs
+      delivery or gateway logs.
 - [ ] Confirm badge/unread state source.
 - [ ] Confirm behavior while app is logged out or local keys are unavailable.
 
@@ -139,6 +149,17 @@ Exit criteria:
 
 - Notification architecture is accepted or explicitly deferred before launch
   readiness.
+
+Current result:
+
+- Apple registration plumbing is present: platform APNs token capture,
+  `TrixPushRegistrationService`, Martin `TigasePushNotificationsModule`
+  register/enable, and wake-only remote push handling.
+- `trix-push-gateway` now provides the private APNs sender and XEP-0114
+  component for Martin/Tigase registration nodes. ejabberd `mod_push` remains
+  necessary but does not send APNs directly.
+- MVP blocker: the component has not been deployed with real APNs credentials
+  and has not passed signed-device APNs delivery smoke.
 
 ## Attachment Gate
 

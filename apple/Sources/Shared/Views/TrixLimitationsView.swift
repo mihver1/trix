@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct MatrixLimitationsView: View {
+struct TrixLimitationsView: View {
     private let pendingItems = [
         "group OMEMO",
         "encrypted attachments",
@@ -21,7 +21,7 @@ struct MatrixLimitationsView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(12)
-        .background(MatrixDesign.warningSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(TrixDesign.warningSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(Color.orange.opacity(0.22), lineWidth: 1)
@@ -29,10 +29,10 @@ struct MatrixLimitationsView: View {
     }
 }
 
-struct MatrixDeviceVerificationNoticeView: View {
-    let status: MatrixDeviceVerificationStatus?
+struct TrixDeviceVerificationNoticeView: View {
+    let status: TrixDeviceVerificationStatus?
 
-    init(status: MatrixDeviceVerificationStatus? = nil) {
+    init(status: TrixDeviceVerificationStatus? = nil) {
         self.status = status
     }
 
@@ -60,12 +60,12 @@ struct MatrixDeviceVerificationNoticeView: View {
     }
 }
 
-struct MatrixDeviceVerificationStatusView: View {
+struct TrixDeviceVerificationStatusView: View {
     @ObservedObject var viewModel: DeviceVerificationViewModel
     @State private var hasCopiedRecoveryKey = false
 
     let requestVerification: () -> Void
-    let acceptRequest: (MatrixDeviceVerificationRequest) -> Void
+    let acceptRequest: (TrixDeviceVerificationRequest) -> Void
     let startSas: () -> Void
     let approve: () -> Void
     let decline: () -> Void
@@ -138,13 +138,13 @@ struct MatrixDeviceVerificationStatusView: View {
                     }
                 }
             } else if !viewModel.isLoading {
-                MatrixDeviceVerificationNoticeView()
+                TrixDeviceVerificationNoticeView()
             }
 
             Divider()
 
             if !(viewModel.status?.lacksEligibleVerificationDevice == true && viewModel.flow.phase == .idle) {
-                MatrixDeviceVerificationFlowView(flow: viewModel.flow)
+                TrixDeviceVerificationFlowView(flow: viewModel.flow)
             }
             actionButtons
             recoveryControls
@@ -158,7 +158,7 @@ struct MatrixDeviceVerificationStatusView: View {
         }
     }
 
-    private func iconName(for state: MatrixDeviceVerificationState) -> String {
+    private func iconName(for state: TrixDeviceVerificationState) -> String {
         switch state {
         case .verified:
             return "checkmark.shield.fill"
@@ -169,7 +169,7 @@ struct MatrixDeviceVerificationStatusView: View {
         }
     }
 
-    private func tint(for state: MatrixDeviceVerificationState) -> Color {
+    private func tint(for state: TrixDeviceVerificationState) -> Color {
         switch state {
         case .verified:
             return .green
@@ -343,7 +343,7 @@ struct MatrixDeviceVerificationStatusView: View {
 
     private func recoveryKeyCopyButton(_ recoveryKey: String) -> some View {
         Button {
-            MatrixPasteboard.copy(recoveryKey)
+            TrixPasteboard.copy(recoveryKey)
             hasCopiedRecoveryKey = true
         } label: {
             actionLabel(
@@ -370,8 +370,8 @@ struct MatrixDeviceVerificationStatusView: View {
     }
 }
 
-private struct MatrixDeviceVerificationFlowView: View {
-    let flow: MatrixDeviceVerificationFlow
+private struct TrixDeviceVerificationFlowView: View {
+    let flow: TrixDeviceVerificationFlow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -391,7 +391,7 @@ private struct MatrixDeviceVerificationFlowView: View {
             }
 
             if let challenge = flow.challenge {
-                MatrixDeviceVerificationChallengeView(challenge: challenge)
+                TrixDeviceVerificationChallengeView(challenge: challenge)
             }
         }
     }
@@ -433,8 +433,8 @@ private struct MatrixDeviceVerificationFlowView: View {
     }
 }
 
-private struct MatrixDeviceVerificationChallengeView: View {
-    let challenge: MatrixDeviceVerificationChallenge
+private struct TrixDeviceVerificationChallengeView: View {
+    let challenge: TrixDeviceVerificationChallenge
 
     var body: some View {
         switch challenge {
