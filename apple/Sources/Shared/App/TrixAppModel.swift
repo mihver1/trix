@@ -10,6 +10,7 @@ final class TrixAppModel: ObservableObject {
     @Published private(set) var sessionCleanupMessage: String?
     @Published var errorMessage: String?
     @Published var selectedRoomID: String?
+    @Published private(set) var lastRoomRefreshAt: Date?
     @Published private(set) var pushRegistration: TrixPushRegistration?
     @Published private(set) var pushRegistrationBlocker: TrixPushRegistrationBlocker? = .waitingForAPNsToken
 
@@ -162,10 +163,12 @@ final class TrixAppModel: ObservableObject {
     func reloadRooms() async {
         guard let session else {
             roomListViewModel.clear()
+            lastRoomRefreshAt = nil
             return
         }
 
         await roomListViewModel.reload(session: session, service: trixService)
+        lastRoomRefreshAt = Date()
         reconcileSelectedRoom()
 
         if let selectedRoomID {
@@ -183,6 +186,7 @@ final class TrixAppModel: ObservableObject {
             service: trixService,
             showsLoading: false
         )
+        lastRoomRefreshAt = Date()
         reconcileSelectedRoom()
 
         if let selectedRoomID {
@@ -213,6 +217,7 @@ final class TrixAppModel: ObservableObject {
     func selectRoom(_ room: TrixRoomSummary) async {
         selectedRoomID = room.id
         await loadTimeline(roomID: room.id)
+        roomListViewModel.markRead(roomID: room.id)
     }
 
     func loadTimeline(roomID: String) async {
@@ -238,6 +243,21 @@ final class TrixAppModel: ObservableObject {
         )
         try? await trixService.sendTypingState(.paused, roomID: roomID, session: session)
         await roomListViewModel.reload(session: session, service: trixService)
+        lastRoomRefreshAt = Date()
+    }
+
+    func setReaction(_ emoji: String, for item: TrixTimelineItem) async {
+        guard let session, let selectedRoomID else {
+            return
+        }
+
+        await timelineViewModel.setReaction(
+            emoji,
+            item: item,
+            roomID: selectedRoomID,
+            session: session,
+            service: trixService
+        )
     }
 
     func sendAttachment(_ attachment: TrixAttachmentUpload) async {
@@ -252,6 +272,7 @@ final class TrixAppModel: ObservableObject {
             service: trixService
         )
         await roomListViewModel.reload(session: session, service: trixService)
+        lastRoomRefreshAt = Date()
     }
 
     func downloadAttachment(for item: TrixTimelineItem) async {
@@ -555,6 +576,14 @@ final class TrixAppModel: ObservableObject {
         }
     }
 
+    func forgetRoomLocally(_ room: TrixRoomSummary) {
+        roomListViewModel.forgetRoomLocally(roomID: room.id)
+        if selectedRoomID == room.id {
+            selectedRoomID = roomListViewModel.rooms.first?.id
+            timelineViewModel.clear()
+        }
+    }
+
     private func reconcileSelectedRoom() {
         if let selectedRoomID,
            roomListViewModel.rooms.contains(where: { $0.id == selectedRoomID }) {
@@ -611,6 +640,7 @@ final class TrixAppModel: ObservableObject {
         selectedRoomID = nil
         pushRegistration = nil
         pushRegistrationBlocker = apnsDeviceToken == nil ? .waitingForAPNsToken : .waitingForSession
+        lastRoomRefreshAt = nil
         roomListViewModel.clear()
         timelineViewModel.clear()
         deviceVerificationViewModel.clear()

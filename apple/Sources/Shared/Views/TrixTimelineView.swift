@@ -32,6 +32,8 @@ struct TrixTimelineView: View {
     @State private var fileImportError: String?
     @State private var typingPauseTask: Task<Void, Never>?
     @State private var lastSentTypingState: TrixTypingState = .idle
+    @State private var isShowingLocalForgetConfirmation = false
+    @State private var isShowingGroupLeaveConfirmation = false
 
     init(model: TrixAppModel, room: TrixRoomSummary) {
         self.model = model
@@ -49,30 +51,35 @@ struct TrixTimelineView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        if timelineViewModel.isLoading && timelineViewModel.items.isEmpty {
-                            ProgressView("Loading timeline")
-                                .frame(maxWidth: .infinity, alignment: .center)
+                        if timelineViewModel.items.isEmpty {
+                            timelineEmptyState
                                 .padding(.top, 54)
-                        } else if timelineViewModel.items.isEmpty {
-                            TrixEmptyStateView(
-                                title: "No messages",
-                                systemImage: "bubble.left.and.text.bubble.right",
-                                message: "Messages will appear here after sync."
-                            )
-                            .padding(.top, 54)
                         }
 
-                        ForEach(timelineViewModel.items) { item in
-                            TrixTimelineRow(
-                                item: item,
-                                isDownloadingAttachment: timelineViewModel.downloadingAttachmentID == item.id,
-                                downloadAttachment: {
-                                    Task {
-                                        await model.downloadAttachment(for: item)
+                        ForEach(timelineEntries) { entry in
+                            switch entry {
+                            case .daySeparator(let id, let date):
+                                TrixTimelineDaySeparator(date: date)
+                                    .id(id)
+                            case .message(let presentation):
+                                TrixTimelineRow(
+                                    presentation: presentation,
+                                    isDownloadingAttachment: timelineViewModel.downloadingAttachmentID == presentation.item.id,
+                                    attachmentFailure: timelineViewModel.attachmentDownloadFailures[presentation.item.id],
+                                    isReacting: timelineViewModel.reactionActionMessageID == presentation.item.id,
+                                    downloadAttachment: {
+                                        Task {
+                                            await model.downloadAttachment(for: presentation.item)
+                                        }
+                                    },
+                                    react: { emoji in
+                                        Task {
+                                            await model.setReaction(emoji, for: presentation.item)
+                                        }
                                     }
-                                }
-                            )
-                            .id(item.id)
+                                )
+                                .id(presentation.item.id)
+                            }
                         }
                     }
                     .padding(.horizontal, 12)
@@ -163,13 +170,12 @@ struct TrixTimelineView: View {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
                     }
+                    .trixMacCommandReturn {
+                        sendDraft()
+                    }
 
                 Button {
-                    let text = draft
-                    draft = ""
-                    Task {
-                        await model.send(text: text)
-                    }
+                    sendDraft()
                 } label: {
                     if timelineViewModel.isSending {
                         ProgressView()
@@ -233,6 +239,30 @@ struct TrixTimelineView: View {
         .sheet(isPresented: $isShowingGroupMembers) {
             TrixGroupMembersView(model: model, room: room)
         }
+        .confirmationDialog(
+            "Forget this DM locally?",
+            isPresented: $isShowingLocalForgetConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Forget Locally", role: .destructive) {
+                model.forgetRoomLocally(room)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes the room from local navigation state only. It does not delete the conversation for the other account.")
+        }
+        .confirmationDialog(
+            "Leave this group locally?",
+            isPresented: $isShowingGroupLeaveConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Leave Locally", role: .destructive) {
+                model.forgetRoomLocally(room)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("A server-backed MUC leave is still blocked in this client slice. This only hides local room state and does not destroy the group.")
+        }
         .task(id: room.id) {
             await model.selectRoom(room)
             await loadPeerDevices(refresh: false)
@@ -255,6 +285,37 @@ struct TrixTimelineView: View {
 
     private var canSendEncrypted: Bool {
         room.isEncrypted || peerDevices.contains(where: \.canSendEncrypted)
+    }
+
+    @ViewBuilder
+    private var timelineEmptyState: some View {
+        if timelineViewModel.isLoading {
+            ProgressView("Loading timeline")
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 36)
+        } else if timelineViewModel.errorMessage != nil {
+            TrixEmptyStateView(
+                title: "Timeline unavailable",
+                systemImage: "exclamationmark.bubble",
+                message: "Refresh this chat to try loading messages again."
+            )
+        } else if canSendEncrypted {
+            TrixEmptyStateView(
+                title: "No messages yet",
+                systemImage: "bubble.left.and.text.bubble.right",
+                message: "Encrypted messages will appear here after sync."
+            )
+        } else {
+            TrixEmptyStateView(
+                title: "OMEMO required",
+                systemImage: "lock.shield",
+                message: "Trust a contact device before sending encrypted messages."
+            )
+        }
+    }
+
+    private var timelineEntries: [TrixTimelineEntry] {
+        Self.timelineEntries(for: timelineViewModel.items)
     }
 
     private var canSendEncryptedAttachments: Bool {
@@ -288,6 +349,21 @@ struct TrixTimelineView: View {
         }
 
         return timelineViewModel.attachmentSendAvailability?.blockReason?.message ?? "Encrypted attachments are not available yet"
+    }
+
+    private func sendDraft() {
+        let text = draft
+        guard canSendEncrypted,
+              !timelineViewModel.isSending,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
+
+        draft = ""
+        sendTypingStateIfNeeded(.paused)
+        Task {
+            await model.send(text: text)
+        }
     }
 
     private var typingIndicator: some View {
@@ -368,6 +444,25 @@ struct TrixTimelineView: View {
                 Image(systemName: "arrow.clockwise")
             }
             .help("Refresh timeline")
+
+            Menu {
+                if room.kind == .direct {
+                    Button(role: .destructive) {
+                        isShowingLocalForgetConfirmation = true
+                    } label: {
+                        Label("Forget DM Locally", systemImage: "eye.slash")
+                    }
+                } else {
+                    Button(role: .destructive) {
+                        isShowingGroupLeaveConfirmation = true
+                    } label: {
+                        Label("Leave Group", systemImage: "rectangle.portrait.and.arrow.right")
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .help("Conversation actions")
         }
     }
 
@@ -510,6 +605,131 @@ struct TrixTimelineView: View {
 
         return localpart?.capitalized ?? userID
     }
+
+    private static func timelineEntries(for items: [TrixTimelineItem]) -> [TrixTimelineEntry] {
+        let sortedItems = items.sorted { first, second in
+            if first.timestamp != second.timestamp {
+                return first.timestamp < second.timestamp
+            }
+
+            return first.id < second.id
+        }
+
+        var entries: [TrixTimelineEntry] = []
+        let calendar = Calendar.current
+
+        for index in sortedItems.indices {
+            let item = sortedItems[index]
+            let previous = index > sortedItems.startIndex ? sortedItems[sortedItems.index(before: index)] : nil
+            let next = index < sortedItems.index(before: sortedItems.endIndex) ? sortedItems[sortedItems.index(after: index)] : nil
+
+            if previous.map({ !calendar.isDate($0.timestamp, inSameDayAs: item.timestamp) }) ?? true {
+                let dayID = "day-\(calendar.startOfDay(for: item.timestamp).timeIntervalSince1970)"
+                entries.append(.daySeparator(id: dayID, date: item.timestamp))
+            }
+
+            let startsCluster = previous.map { previousItem in
+                !Self.canCluster(previousItem, with: item, calendar: calendar)
+            } ?? true
+            let endsCluster = next.map { nextItem in
+                !Self.canCluster(item, with: nextItem, calendar: calendar)
+            } ?? true
+
+            entries.append(
+                .message(
+                    TrixTimelineMessagePresentation(
+                        item: item,
+                        startsCluster: startsCluster,
+                        endsCluster: endsCluster,
+                        showsSender: !item.isLocalEcho && startsCluster
+                    )
+                )
+            )
+        }
+
+        return entries
+    }
+
+    private static func canCluster(
+        _ first: TrixTimelineItem,
+        with second: TrixTimelineItem,
+        calendar: Calendar
+    ) -> Bool {
+        first.sender == second.sender &&
+        first.isLocalEcho == second.isLocalEcho &&
+        calendar.isDate(first.timestamp, inSameDayAs: second.timestamp) &&
+        second.timestamp.timeIntervalSince(first.timestamp) <= 5 * 60
+    }
+}
+
+private enum TrixTimelineEntry: Identifiable {
+    case daySeparator(id: String, date: Date)
+    case message(TrixTimelineMessagePresentation)
+
+    var id: String {
+        switch self {
+        case .daySeparator(let id, _):
+            return id
+        case .message(let presentation):
+            return presentation.item.id
+        }
+    }
+}
+
+private struct TrixTimelineMessagePresentation: Identifiable {
+    let item: TrixTimelineItem
+    let startsCluster: Bool
+    let endsCluster: Bool
+    let showsSender: Bool
+
+    var id: String {
+        item.id
+    }
+}
+
+private struct TrixTimelineDaySeparator: View {
+    let date: Date
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Rectangle()
+                .fill(TrixDesign.surfaceStroke)
+                .frame(height: 1)
+
+            Text(label)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+            Rectangle()
+                .fill(TrixDesign.surfaceStroke)
+                .frame(height: 1)
+        }
+        .padding(.horizontal, 2)
+        .padding(.top, 16)
+        .padding(.bottom, 8)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var label: String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) {
+            return "Today"
+        }
+
+        if calendar.isDateInYesterday(date) {
+            return "Yesterday"
+        }
+
+        return Self.formatter.string(from: date)
+    }
+
+    private static let formatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
 }
 
 private struct TrixPeerDeviceTrustView: View {
@@ -623,9 +843,16 @@ private struct TrixPeerDeviceTrustView: View {
 }
 
 private struct TrixTimelineRow: View {
-    let item: TrixTimelineItem
+    let presentation: TrixTimelineMessagePresentation
     let isDownloadingAttachment: Bool
+    let attachmentFailure: String?
+    let isReacting: Bool
     let downloadAttachment: () -> Void
+    let react: (String) -> Void
+
+    private var item: TrixTimelineItem {
+        presentation.item
+    }
 
     var body: some View {
         HStack {
@@ -634,11 +861,12 @@ private struct TrixTimelineRow: View {
             }
 
             VStack(alignment: item.isLocalEcho ? .trailing : .leading, spacing: 4) {
-                if !item.isLocalEcho {
+                if presentation.showsSender {
                     Text(displaySender)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(TrixDesign.accent.opacity(0.88))
                         .padding(.horizontal, 8)
+                        .padding(.top, 2)
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -647,6 +875,7 @@ private struct TrixTimelineRow: View {
                             attachment: attachment,
                             isOutgoing: item.isLocalEcho,
                             isDownloading: isDownloadingAttachment,
+                            failureMessage: attachmentFailure,
                             download: downloadAttachment
                         )
                     } else {
@@ -657,9 +886,21 @@ private struct TrixTimelineRow: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
+                    TrixReactionChips(
+                        aggregates: item.reactionAggregates,
+                        isOutgoing: item.isLocalEcho,
+                        react: react
+                    )
+
                     HStack {
                         Spacer(minLength: 0)
                         HStack(spacing: 4) {
+                            TrixReactionMenu(
+                                isOutgoing: item.isLocalEcho,
+                                isWorking: isReacting,
+                                react: react
+                            )
+
                             if item.isLocalEcho {
                                 Image(systemName: deliveryState.systemImage)
                                     .font(.caption2.weight(.semibold))
@@ -675,12 +916,13 @@ private struct TrixTimelineRow: View {
                     }
                 }
                 .padding(.horizontal, 14)
-                .padding(.vertical, 11)
+                .padding(.top, presentation.startsCluster ? 11 : 9)
+                .padding(.bottom, presentation.endsCluster ? 11 : 9)
                 .frame(maxWidth: bubbleMaxWidth, alignment: item.isLocalEcho ? .trailing : .leading)
                 .background(item.isLocalEcho ? TrixDesign.accent : TrixDesign.incomingBubbleSurface)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .clipShape(bubbleShape)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    bubbleShape
                         .stroke(item.isLocalEcho ? .clear : TrixDesign.surfaceStroke, lineWidth: 1)
                 }
                 .shadow(
@@ -695,7 +937,7 @@ private struct TrixTimelineRow: View {
                 Spacer(minLength: 54)
             }
         }
-        .padding(.top, 8)
+        .padding(.top, presentation.startsCluster ? 8 : 2)
     }
 
     private var displaySender: String {
@@ -716,6 +958,10 @@ private struct TrixTimelineRow: View {
         item.deliveryState ?? .sent
     }
 
+    private var bubbleShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+    }
+
     private var bubbleMaxWidth: CGFloat {
         #if os(macOS)
         return 520
@@ -729,6 +975,7 @@ private struct TrixAttachmentRow: View {
     let attachment: TrixTimelineAttachment
     let isOutgoing: Bool
     let isDownloading: Bool
+    let failureMessage: String?
     let download: () -> Void
 
     var body: some View {
@@ -764,6 +1011,20 @@ private struct TrixAttachmentRow: View {
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(isOutgoing ? .white.opacity(0.82) : .secondary)
                     .lineLimit(1)
+
+                if !attachment.isDownloadable {
+                    Label("Download unavailable", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(isOutgoing ? .white.opacity(0.82) : .orange)
+                        .lineLimit(1)
+                }
+
+                if failureMessage != nil {
+                    Label("Download failed. Try again.", systemImage: "arrow.clockwise.circle.fill")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(isOutgoing ? .white.opacity(0.86) : .orange)
+                        .lineLimit(1)
+                }
             }
 
             Spacer()
@@ -791,11 +1052,89 @@ private struct TrixAttachmentRow: View {
     }
 
     private var attachmentButtonHelp: String {
+        if failureMessage != nil {
+            return "Retry encrypted attachment download"
+        }
+
         if attachment.isImage {
             return "Download and preview encrypted image"
         }
 
         return "Download encrypted attachment"
+    }
+}
+
+private struct TrixReactionMenu: View {
+    let isOutgoing: Bool
+    let isWorking: Bool
+    let react: (String) -> Void
+
+    var body: some View {
+        Menu {
+            ForEach(Self.palette, id: \.self) { emoji in
+                Button(emoji) {
+                    react(emoji)
+                }
+            }
+        } label: {
+            if isWorking {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: "face.smiling")
+                    .font(.caption2.weight(.semibold))
+            }
+        }
+        .foregroundStyle(isOutgoing ? .white.opacity(0.82) : .secondary)
+        .help("React")
+        .accessibilityLabel("React")
+    }
+
+    private static let palette = ["👍", "❤️", "😂", "✅", "👀"]
+}
+
+private struct TrixReactionChips: View {
+    let aggregates: [TrixReactionAggregate]
+    let isOutgoing: Bool
+    let react: (String) -> Void
+
+    var body: some View {
+        if !aggregates.isEmpty {
+            HStack(spacing: 6) {
+                ForEach(aggregates) { aggregate in
+                    Button {
+                        react(aggregate.emoji)
+                    } label: {
+                        Text("\(aggregate.emoji) \(aggregate.count)")
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(chipBackground(for: aggregate), in: Capsule())
+                            .foregroundStyle(chipForeground(for: aggregate))
+                    }
+                    .buttonStyle(.plain)
+                    .help(aggregate.isOwnReaction ? "Remove your reaction" : "React")
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: isOutgoing ? .trailing : .leading)
+        }
+    }
+
+    private func chipBackground(for aggregate: TrixReactionAggregate) -> Color {
+        if aggregate.isOwnReaction {
+            return isOutgoing ? Color.white.opacity(0.30) : TrixDesign.accent.opacity(0.16)
+        }
+
+        return isOutgoing ? Color.white.opacity(0.18) : Color.secondary.opacity(0.12)
+    }
+
+    private func chipForeground(for aggregate: TrixReactionAggregate) -> Color {
+        if aggregate.isOwnReaction {
+            return isOutgoing ? .white : TrixDesign.accent
+        }
+
+        return isOutgoing ? .white.opacity(0.86) : .primary
     }
 }
 
@@ -991,6 +1330,22 @@ private extension View {
         self.trixDialogSurface(minWidth: 420, minHeight: 320)
         #else
         self.trixDialogSurface()
+        #endif
+    }
+
+    @ViewBuilder
+    func trixMacCommandReturn(_ action: @escaping () -> Void) -> some View {
+        #if os(macOS)
+        self.onKeyPress(.return, phases: .down) { press in
+            guard press.modifiers.contains(.command) else {
+                return .ignored
+            }
+
+            action()
+            return .handled
+        }
+        #else
+        self
         #endif
     }
 }

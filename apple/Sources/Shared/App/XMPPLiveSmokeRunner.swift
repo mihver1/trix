@@ -45,6 +45,7 @@ enum XMPPLiveSmokeRunner {
         case sendTimeline = "send-timeline"
         case timelineRestart = "timeline-restart"
         case dmE2EE = "dm-e2ee"
+        case dmReaction = "dm-reaction"
         case dmAttachment = "dm-attachment"
         case deliveryReceipt = "delivery-receipt"
         case typing
@@ -76,7 +77,7 @@ enum XMPPLiveSmokeRunner {
                 return .memory
             case .roster, .roomList, .search, .peerDevices, .trustPeer, .profile, .profileUpdate,
                  .blockedSend, .timeline, .sendTimeline, .timelineRestart, .dmE2EE, .dmAttachment,
-                 .deliveryReceipt, .groupE2EE, .groupAttachment:
+                 .dmReaction, .deliveryReceipt, .groupE2EE, .groupAttachment:
                 return .keychain
             }
         }
@@ -292,6 +293,13 @@ enum XMPPLiveSmokeRunner {
                     session: session
                 )
 
+            case .dmReaction:
+                try await runDMReactionSmoke(
+                    configuration: configuration,
+                    service: service,
+                    session: session
+                )
+
             case .deliveryReceipt:
                 try await runDeliveryReceiptSmoke(
                     configuration: configuration,
@@ -461,6 +469,91 @@ enum XMPPLiveSmokeRunner {
 
             try? await peerService.logout(session: peerSession)
             status("dm-e2ee ok decrypted_peers=1")
+        } catch {
+            try? await peerService.logout(session: peerSession)
+            throw error
+        }
+    }
+
+    private static func runDMReactionSmoke(
+        configuration: Configuration,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws {
+        guard configuration.allowSend else {
+            throw TrixClientError.e2eeUnavailable
+        }
+
+        let peerID = try requiredPeerID(configuration.peerID)
+        let peerPassword = try requiredPassword(configuration.peerPassword)
+        let peerService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+        let peerSession = try await peerService.login(
+            userID: peerID,
+            password: peerPassword,
+            serverURL: configuration.serverURL
+        )
+        status("dm-reaction peer-login ok resource=\(peerSession.deviceID)")
+
+        do {
+            try await ensureTrustedPeer(
+                peerID: peerID,
+                service: service,
+                session: session,
+                allowTrust: configuration.allowTrust,
+                statusPrefix: "dm-reaction owner-peer"
+            )
+            try await ensureTrustedPeer(
+                peerID: session.userID,
+                service: peerService,
+                session: peerSession,
+                allowTrust: configuration.allowTrust,
+                statusPrefix: "dm-reaction peer-owner"
+            )
+
+            let room = try await service.createEncryptedDirectRoom(
+                inviteeUserID: peerID,
+                name: "",
+                session: session
+            )
+            let messageBody = "smoke-reaction-\(UUID().uuidString)"
+            let sentItem = try await service.sendText(messageBody, roomID: room.id, session: session)
+            status("dm-reaction send ok id=\(sentItem.id)")
+
+            guard try await waitForDirectMessage(
+                messageID: sentItem.id,
+                expectedBody: messageBody,
+                expectedSender: session.userID,
+                roomID: session.userID,
+                role: "peer",
+                service: peerService,
+                session: peerSession
+            ) else {
+                status("dm-reaction failed receive=false role=peer")
+                throw TrixClientError.xmppConnectionFailed
+            }
+
+            let reactions = try await peerService.setReaction("👍", messageID: sentItem.id, roomID: session.userID, session: peerSession)
+            guard reactions.contains(where: { $0.sender.lowercased() == peerSession.userID.lowercased() && $0.emoji == "👍" }) else {
+                status("dm-reaction failed local_reaction_missing role=peer")
+                throw TrixClientError.reactionsUnavailable
+            }
+            status("dm-reaction react ok role=peer id=\(sentItem.id)")
+
+            guard try await waitForReaction(
+                messageID: sentItem.id,
+                emoji: "👍",
+                reactorID: peerSession.userID,
+                roomID: peerID,
+                role: "owner",
+                service: service,
+                session: session
+            ) else {
+                status("dm-reaction failed receive=false role=owner")
+                throw TrixClientError.xmppConnectionFailed
+            }
+
+            try? await peerService.logout(session: peerSession)
+            status("dm-reaction ok reactors=1")
         } catch {
             try? await peerService.logout(session: peerSession)
             throw error
@@ -1169,6 +1262,37 @@ enum XMPPLiveSmokeRunner {
 
         if sawID {
             status("dm-e2ee failed receive_mismatch role=\(role) id=\(messageID)")
+        }
+        return false
+    }
+
+    private static func waitForReaction(
+        messageID: String,
+        emoji: String,
+        reactorID: String,
+        roomID: String,
+        role: String,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws -> Bool {
+        let reactorKey = reactorID.lowercased()
+        var sawID = false
+        for _ in 0..<40 {
+            let items = try await service.timeline(roomID: roomID, session: session)
+            if let item = items.first(where: { $0.id == messageID }) {
+                sawID = true
+                if item.reactions.contains(where: { $0.sender.lowercased() == reactorKey && $0.emoji == emoji }) {
+                    let aggregateCount = item.reactionAggregates.first(where: { $0.emoji == emoji })?.count ?? 0
+                    status("dm-reaction receive ok role=\(role) id=\(messageID) aggregate=\(aggregateCount)")
+                    return true
+                }
+            }
+
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+
+        if sawID {
+            status("dm-reaction failed reaction_missing role=\(role) id=\(messageID)")
         }
         return false
     }

@@ -19,6 +19,7 @@ protocol TrixSyncService: Sendable {
 protocol TrixRoomService: Sendable {
     func timeline(roomID: String, session: TrixSession) async throws -> [TrixTimelineItem]
     func sendText(_ text: String, roomID: String, session: TrixSession) async throws -> TrixTimelineItem
+    func setReaction(_ emoji: String, messageID: String, roomID: String, session: TrixSession) async throws -> [TrixMessageReaction]
     func attachmentSendAvailability(roomID: String, session: TrixSession) async throws -> TrixAttachmentSendAvailability
     func sendAttachment(_ attachment: TrixAttachmentUpload, roomID: String, session: TrixSession) async throws -> TrixTimelineItem
     func downloadAttachment(_ attachment: TrixTimelineAttachment, session: TrixSession) async throws -> TrixAttachmentDownload

@@ -503,6 +503,18 @@ struct TrixRoomSummary: Identifiable, Equatable, Sendable {
     var subtitle: String {
         kind.label
     }
+
+    func markingRead() -> TrixRoomSummary {
+        TrixRoomSummary(
+            id: id,
+            name: name,
+            kind: kind,
+            isEncrypted: isEncrypted,
+            unreadCount: 0,
+            lastMessagePreview: lastMessagePreview,
+            lastActivityAt: lastActivityAt
+        )
+    }
 }
 
 struct TrixRoomInvite: Identifiable, Equatable, Sendable {
@@ -634,6 +646,27 @@ enum TrixDeliveryState: String, Codable, Equatable, Sendable {
     }
 }
 
+struct TrixMessageReaction: Identifiable, Codable, Equatable, Sendable {
+    let emoji: String
+    let sender: String
+    let timestamp: Date
+    let isLocalEcho: Bool
+
+    var id: String {
+        "\(emoji)|\(sender.lowercased())"
+    }
+}
+
+struct TrixReactionAggregate: Identifiable, Equatable, Sendable {
+    let emoji: String
+    let count: Int
+    let isOwnReaction: Bool
+
+    var id: String {
+        emoji
+    }
+}
+
 enum TrixTypingState: String, Codable, Equatable, Sendable {
     case idle
     case composing
@@ -651,6 +684,18 @@ struct TrixRoomTypingState: Codable, Equatable, Sendable {
 }
 
 struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case roomID
+        case sender
+        case timestamp
+        case body
+        case isLocalEcho
+        case attachment
+        case deliveryState
+        case reactions
+    }
+
     let id: String
     let roomID: String
     let sender: String
@@ -659,6 +704,7 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
     let isLocalEcho: Bool
     let attachment: TrixTimelineAttachment?
     let deliveryState: TrixDeliveryState?
+    let reactions: [TrixMessageReaction]
 
     init(
         id: String,
@@ -668,7 +714,8 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
         body: String,
         isLocalEcho: Bool,
         attachment: TrixTimelineAttachment?,
-        deliveryState: TrixDeliveryState? = nil
+        deliveryState: TrixDeliveryState? = nil,
+        reactions: [TrixMessageReaction] = []
     ) {
         self.id = id
         self.roomID = roomID
@@ -678,6 +725,20 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
         self.isLocalEcho = isLocalEcho
         self.attachment = attachment
         self.deliveryState = deliveryState
+        self.reactions = reactions
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.roomID = try container.decode(String.self, forKey: .roomID)
+        self.sender = try container.decode(String.self, forKey: .sender)
+        self.timestamp = try container.decode(Date.self, forKey: .timestamp)
+        self.body = try container.decode(String.self, forKey: .body)
+        self.isLocalEcho = try container.decode(Bool.self, forKey: .isLocalEcho)
+        self.attachment = try container.decodeIfPresent(TrixTimelineAttachment.self, forKey: .attachment)
+        self.deliveryState = try container.decodeIfPresent(TrixDeliveryState.self, forKey: .deliveryState)
+        self.reactions = try container.decodeIfPresent([TrixMessageReaction].self, forKey: .reactions) ?? []
     }
 
     func withDeliveryState(_ deliveryState: TrixDeliveryState?) -> TrixTimelineItem {
@@ -689,8 +750,41 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
             body: body,
             isLocalEcho: isLocalEcho,
             attachment: attachment,
-            deliveryState: deliveryState
+            deliveryState: deliveryState,
+            reactions: reactions
         )
+    }
+
+    func withReactions(_ reactions: [TrixMessageReaction]) -> TrixTimelineItem {
+        TrixTimelineItem(
+            id: id,
+            roomID: roomID,
+            sender: sender,
+            timestamp: timestamp,
+            body: body,
+            isLocalEcho: isLocalEcho,
+            attachment: attachment,
+            deliveryState: deliveryState,
+            reactions: reactions
+        )
+    }
+
+    var reactionAggregates: [TrixReactionAggregate] {
+        Dictionary(grouping: reactions, by: \.emoji)
+            .map { emoji, reactions in
+                TrixReactionAggregate(
+                    emoji: emoji,
+                    count: reactions.count,
+                    isOwnReaction: reactions.contains(where: \.isLocalEcho)
+                )
+            }
+            .sorted { lhs, rhs in
+                if lhs.count != rhs.count {
+                    return lhs.count > rhs.count
+                }
+
+                return lhs.emoji < rhs.emoji
+            }
     }
 
     static func mergedDeliveryState(
@@ -1134,6 +1228,7 @@ enum TrixClientError: LocalizedError {
     case xmppConnectionFailed
     case apnsGatewayUnavailable
     case apnsRegistrationFailed
+    case reactionsUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -1199,6 +1294,8 @@ enum TrixClientError: LocalizedError {
             return "The XMPP APNs gateway is not available yet."
         case .apnsRegistrationFailed:
             return "APNs registration failed."
+        case .reactionsUnavailable:
+            return "Message reactions are not available on this XMPP path yet."
         }
     }
 }

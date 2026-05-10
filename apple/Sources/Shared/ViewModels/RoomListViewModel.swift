@@ -135,6 +135,17 @@ final class RoomListViewModel: ObservableObject {
         }
     }
 
+    func markRead(roomID: String) {
+        rooms = rooms.map { room in
+            room.id == roomID ? room.markingRead() : room
+        }
+    }
+
+    func forgetRoomLocally(roomID: String) {
+        rooms.removeAll { $0.id == roomID }
+        invitations.removeAll { $0.id == roomID }
+    }
+
     func clear() {
         rooms = []
         invitations = []

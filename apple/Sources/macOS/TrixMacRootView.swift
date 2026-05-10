@@ -801,7 +801,12 @@ private struct TrixMacRoomRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            TrixRoomKindMark(kind: room.kind, size: 28)
+            TrixAvatarView(
+                title: room.name,
+                systemImage: room.kind.systemImage,
+                size: 34,
+                tint: room.kind.tint
+            )
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -824,7 +829,7 @@ private struct TrixMacRoomRow: View {
             Spacer()
 
             if room.unreadCount > 0 {
-                Text("\(room.unreadCount)")
+                Text(room.unreadCount > 99 ? "99+" : "\(room.unreadCount)")
                     .font(.caption.weight(.semibold))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
@@ -845,7 +850,12 @@ private struct TrixMacInviteRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
-                TrixRoomKindMark(kind: invitation.kind, size: 28)
+                TrixAvatarView(
+                    title: invitation.kind == .direct ? invitation.inviterLabel : invitation.title,
+                    systemImage: invitation.kind.systemImage,
+                    size: 34,
+                    tint: invitation.kind.tint
+                )
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
@@ -893,11 +903,13 @@ private struct TrixMacInviteRow: View {
 
 struct TrixMacSettingsView: View {
     @ObservedObject var model: TrixAppModel
+    @ObservedObject private var roomListViewModel: RoomListViewModel
     @ObservedObject private var deviceVerificationViewModel: DeviceVerificationViewModel
     @State private var activeTab: TrixMacSettingsTab = .account
 
     init(model: TrixAppModel) {
         self.model = model
+        self._roomListViewModel = ObservedObject(wrappedValue: model.roomListViewModel)
         self._deviceVerificationViewModel = ObservedObject(wrappedValue: model.deviceVerificationViewModel)
     }
 
@@ -937,6 +949,8 @@ struct TrixMacSettingsView: View {
             profileSettings
         case .security:
             securitySettings
+        case .diagnostics:
+            diagnosticsSettings
         case .mvp:
             TrixLimitationsView()
         }
@@ -960,6 +974,9 @@ struct TrixMacSettingsView: View {
                     LabeledContent("Server", value: homeserverURL)
                 }
 
+                LabeledContent("Connection", value: model.isAuthenticated ? "Session restored" : "Signed out")
+                LabeledContent("Last checked", value: lastCheckedLabel)
+
                 Divider()
 
                 HStack(spacing: 10) {
@@ -982,6 +999,13 @@ struct TrixMacSettingsView: View {
                     .disabled(!model.isAuthenticated || model.isLoggingOut)
                 }
                 .buttonStyle(.bordered)
+
+                if let sessionCleanupMessage = model.sessionCleanupMessage {
+                    Text(sessionCleanupMessage)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .padding(.vertical, 4)
         }
@@ -1062,11 +1086,113 @@ struct TrixMacSettingsView: View {
             .padding(.vertical, 4)
         }
     }
+
+    private var diagnosticsSettings: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            GroupBox("Connection") {
+                VStack(alignment: .leading, spacing: 10) {
+                    LabeledContent("Server", value: model.session?.homeserverURL.absoluteString ?? XMPPClientConfiguration.connectionURL.absoluteString)
+                    LabeledContent("State", value: model.isAuthenticated ? "Session restored" : "Signed out")
+                    LabeledContent("Last checked", value: lastCheckedLabel)
+
+                    Button {
+                        Task {
+                            await model.reloadRooms()
+                        }
+                    } label: {
+                        Label("Refresh Connection", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!model.isAuthenticated)
+                }
+                .padding(.vertical, 4)
+            }
+
+            GroupBox("Push") {
+                VStack(alignment: .leading, spacing: 10) {
+                    LabeledContent("Status", value: pushRegistrationStatus)
+                    if let registration = model.pushRegistration {
+                        LabeledContent("Environment", value: registration.environment.rawValue)
+                        LabeledContent("Provider", value: registration.provider)
+                        LabeledContent("Gateway", value: registration.gatewayJID)
+                    } else if let blocker = model.pushRegistrationBlocker {
+                        Text(blockerExplanation(blocker))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            GroupBox("Redacted Diagnostics") {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(diagnosticRows, id: \.0) { title, value in
+                        LabeledContent(title, value: value)
+                    }
+
+                    Text("Diagnostics are local and redacted: no passwords, APNs tokens, OMEMO secrets, private keys, or decrypted message bodies are shown.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
+    private var pushRegistrationStatus: String {
+        if model.pushRegistration != nil {
+            return "Registered"
+        }
+
+        return model.pushRegistrationBlocker?.label ?? "Unknown"
+    }
+
+    private var lastCheckedLabel: String {
+        guard let lastRoomRefreshAt = model.lastRoomRefreshAt else {
+            return "Not checked"
+        }
+
+        return lastRoomRefreshAt.formatted(date: .abbreviated, time: .standard)
+    }
+
+    private var diagnosticRows: [(String, String)] {
+        [
+            ("Account", model.account?.userID ?? "Signed out"),
+            ("Server", model.session?.homeserverURL.host ?? XMPPClientConfiguration.serverName),
+            ("Rooms", "\(roomListViewModel.rooms.count)"),
+            ("Invites", "\(roomListViewModel.invitations.count)"),
+            ("Unread", "\(totalUnreadCount)"),
+            ("Push", pushRegistrationStatus),
+            ("Device trust", deviceVerificationViewModel.status?.state.label ?? "Unknown"),
+        ]
+    }
+
+    private var totalUnreadCount: Int {
+        roomListViewModel.rooms.reduce(0) { partialResult, room in
+            partialResult + max(room.unreadCount, 0)
+        }
+    }
+
+    private func blockerExplanation(_ blocker: TrixPushRegistrationBlocker) -> String {
+        switch blocker {
+        case .waitingForAPNsToken:
+            return "The app has not received an APNs device token in this run."
+        case .waitingForSession:
+            return "Sign in before registering this device for wake-only pushes."
+        case .pushGatewayUnavailable:
+            return "The XMPP push gateway could not be reached from this client."
+        case .registrationFailed:
+            return "XMPP push registration failed. Refresh after the gateway and account are available."
+        }
+    }
 }
 
 private enum TrixMacSettingsTab: String, CaseIterable, Identifiable {
     case account
     case security
+    case diagnostics
     case mvp
 
     var id: String {
@@ -1079,6 +1205,8 @@ private enum TrixMacSettingsTab: String, CaseIterable, Identifiable {
             return "Account"
         case .security:
             return "Security"
+        case .diagnostics:
+            return "Diagnostics"
         case .mvp:
             return "MVP Limits"
         }
@@ -1090,6 +1218,8 @@ private enum TrixMacSettingsTab: String, CaseIterable, Identifiable {
             return "person.crop.circle"
         case .security:
             return "checkmark.shield"
+        case .diagnostics:
+            return "waveform.path.ecg"
         case .mvp:
             return "exclamationmark.triangle"
         }

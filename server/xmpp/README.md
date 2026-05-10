@@ -28,11 +28,11 @@ is disabled, registration is closed by default, and no secrets are committed.
 - `scripts/local-smoke.sh`: bounded local ejabberd start plus STARTTLS/SASL
   login smoke with generated disposable credentials.
 - `scripts/operator-control.sh`: local operator commands for provision,
-  reset-password, disable, directory search, and archive/upload/push health over
-  the loopback `mod_http_api` backend.
+  reset-password, disable, enable, directory search, and archive/upload/push
+  health over the loopback `mod_http_api` backend.
 - `scripts/operator-api-smoke.sh`: localhost `mod_http_api` provision,
-  reset-password, directory search, health, disable, and cleanup smoke with
-  generated disposable credentials.
+  reset-password, directory search, health, disable, enable, and cleanup smoke
+  with generated disposable credentials.
 - `scripts/restore-verify.sh`: fresh-instance restore verifier using
   ejabberd-native Mnesia backup/restore for account state plus a compose-scoped
   upload-volume archive.
@@ -198,6 +198,7 @@ cd server/xmpp
 ./scripts/operator-control.sh provision-user alice /run/secrets/trix/alice-password
 ./scripts/operator-control.sh reset-password alice /run/secrets/trix/alice-new-password
 ./scripts/operator-control.sh disable-user alice "left private group"
+./scripts/operator-control.sh enable-user alice
 ./scripts/operator-control.sh search-directory ali
 ./scripts/operator-control.sh archive-upload-push-health
 ```
@@ -206,7 +207,8 @@ cd server/xmpp
 `TRIX_XMPP_OPERATOR_ALLOW_NON_LOOPBACK=1` is set for an explicit private
 maintenance session. Passwords are read from files and are never printed.
 Disable uses ejabberd `ban_account`, which blocks login and kicks current
-sessions without deleting the account's roster/vCard/archive state.
+sessions without deleting the account's roster/vCard/archive state. Enable uses
+ejabberd `unban_account` to clear that ban without changing the account secret.
 
 ## Deployment Notes
 

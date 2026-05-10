@@ -63,6 +63,14 @@ actor XMPPMartinService: TrixService {
         let roomID: String?
     }
 
+    private struct CapturedReactionUpdate: Sendable {
+        let messageID: String
+        let roomID: String
+        let senderJID: String
+        let emojis: [String]
+        let timestamp: Date
+    }
+
     private struct TypingRecord: Sendable {
         let userID: String
         let state: TrixTypingState
@@ -438,6 +446,7 @@ actor XMPPMartinService: TrixService {
     private static let maxCachedTimelineItems = 200
     private static let typingRecordLifetime: TimeInterval = 6
     private static let encryptedAttachmentDescriptorType = "com.softgrid.trix.xmpp.encrypted-attachment"
+    private static let messageReactionsXMLNS = "urn:xmpp:reactions:0"
 
     init(omemoPersistence: TrixOMEMOPersistence = .keychain) {
         self.omemoPersistence = omemoPersistence
@@ -604,7 +613,7 @@ actor XMPPMartinService: TrixService {
             kind: .direct,
             isEncrypted: hasTrustedDevice,
             unreadCount: 0,
-            lastMessagePreview: latestItem?.body ?? (hasTrustedDevice ? "Ready for OMEMO messages" : "Trust OMEMO device before sending"),
+            lastMessagePreview: Self.roomPreview(from: latestItem) ?? (hasTrustedDevice ? "Ready for OMEMO messages" : "Trust OMEMO device before sending"),
             lastActivityAt: latestItem?.timestamp ?? Date.distantPast
         )
     }
@@ -650,7 +659,7 @@ actor XMPPMartinService: TrixService {
                 kind: .group,
                 isEncrypted: true,
                 unreadCount: 0,
-                lastMessagePreview: latestItem?.body ?? "Private OMEMO group",
+                lastMessagePreview: Self.roomPreview(from: latestItem) ?? "Private OMEMO group",
                 lastActivityAt: latestItem?.timestamp ?? group.lastActivityAt
             )
         }
@@ -770,6 +779,68 @@ actor XMPPMartinService: TrixService {
         )
         storeTimelineItems([item], accountJID: session.userID, roomID: peerJID)
         return item
+    }
+
+    func setReaction(_ emoji: String, messageID: String, roomID: String, session: TrixSession) async throws -> [TrixMessageReaction] {
+        let normalizedEmoji = try Self.normalizedReactionEmoji(emoji)
+        let connection = try await ensureConnection(for: session)
+        let peerJID = try Self.normalizedRoomID(roomID)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+
+        _ = loadCachedTimelineItems(accountJID: accountJID, roomID: peerJID)
+        guard let item = timelineItems(accountJID: accountJID, roomID: peerJID).first(where: { $0.id == messageID }) else {
+            throw TrixClientError.roomUnavailable
+        }
+
+        if Self.isMUCJID(peerJID) {
+            let room = try await joinedGroupRoom(roomID: peerJID, session: session, connection: connection)
+            _ = try await validatedGroupEncryptionRecipients(
+                room: room,
+                accountJID: accountJID,
+                session: session,
+                connection: connection
+            )
+        } else {
+            guard connection.omemoStack.store.hasTrustedActiveDevice(forName: peerJID) else {
+                _ = try? await refreshPeerDeviceIdentities(userID: peerJID, session: session)
+                guard connection.omemoStack.store.hasTrustedActiveDevice(forName: peerJID) else {
+                    throw TrixClientError.omemoDeviceTrustRequired
+                }
+                return try await setReaction(normalizedEmoji, messageID: messageID, roomID: roomID, session: session)
+            }
+        }
+
+        var ownEmojis = item.reactions
+            .filter { $0.sender.caseInsensitiveCompare(accountJID) == .orderedSame }
+            .map(\.emoji)
+        if ownEmojis.contains(normalizedEmoji) {
+            ownEmojis.removeAll { $0 == normalizedEmoji }
+        } else {
+            ownEmojis.append(normalizedEmoji)
+        }
+        ownEmojis = Self.uniqueReactionEmojis(ownEmojis)
+
+        let reactionMessage = Self.reactionMessage(
+            roomID: peerJID,
+            messageID: messageID,
+            emojis: ownEmojis,
+            isGroup: Self.isMUCJID(peerJID)
+        )
+        if Self.isMUCJID(peerJID) {
+            try await connection.mucModule.write(stanza: reactionMessage)
+            updateGroupActivity(roomID: peerJID, accountJID: accountJID, at: Date())
+        } else {
+            try await connection.messageCaptureModule.write(stanza: reactionMessage)
+        }
+
+        return applyReactionUpdate(
+            messageID: messageID,
+            roomID: peerJID,
+            senderJID: accountJID,
+            emojis: ownEmojis,
+            timestamp: Date(),
+            accountJID: accountJID
+        )
     }
 
     func sendAttachment(_ attachment: TrixAttachmentUpload, roomID: String, session: TrixSession) async throws -> TrixTimelineItem {
@@ -1516,6 +1587,7 @@ actor XMPPMartinService: TrixService {
         }
 
         var items: [TrixTimelineItem] = []
+        var reactionUpdates: [CapturedReactionUpdate] = []
         var encryptedCount = 0
         var localKeyCount = 0
         var accountSenderCount = 0
@@ -1543,6 +1615,18 @@ actor XMPPMartinService: TrixService {
             default:
                 break
             }
+            if let reaction = Self.capturedReactionUpdate(
+                from: archived.message,
+                accountJID: accountJID,
+                roomID: peerJID,
+                senderJID: nil,
+                carbonAction: nil,
+                timestamp: archived.timestamp
+            ) {
+                reactionUpdates.append(reaction)
+                continue
+            }
+
             if let item = timelineItem(
                 from: archived.message,
                 accountJID: accountJID,
@@ -1553,6 +1637,9 @@ actor XMPPMartinService: TrixService {
             ) {
                 items.append(item)
             }
+        }
+        for reactionUpdate in reactionUpdates {
+            items = Self.applyingReactionUpdate(reactionUpdate, to: items, accountJID: accountJID)
         }
 
         return ArchivedTimelineResult(
@@ -1636,15 +1723,30 @@ actor XMPPMartinService: TrixService {
             )
         }
 
-        guard let roomID = Self.roomID(for: message, accountJID: accountJID, carbonAction: capturedMessage.carbonAction),
-              let item = timelineItem(
+        guard let roomID = Self.roomID(for: message, accountJID: accountJID, carbonAction: capturedMessage.carbonAction) else {
+            return
+        }
+
+        if let reaction = Self.capturedReactionUpdate(
+            from: message,
+            accountJID: accountJID,
+            roomID: roomID,
+            senderJID: nil,
+            carbonAction: capturedMessage.carbonAction,
+            timestamp: Self.messageTimestamp(message, fallback: Date())
+        ) {
+            _ = applyReactionUpdate(reaction, accountJID: accountJID)
+            return
+        }
+
+        guard let item = timelineItem(
                 from: message,
                 accountJID: accountJID,
                 roomID: roomID,
                 timestamp: Self.messageTimestamp(message, fallback: Date()),
                 fallbackID: nil,
                 connection: connection
-              ) else {
+        ) else {
             return
         }
 
@@ -1799,6 +1901,20 @@ actor XMPPMartinService: TrixService {
         let roomID = capturedMessage.room.jid.stringValue
         let senderJID = Self.groupMessageSenderJID(message, room: capturedMessage.room, accountJID: accountJID)
 
+        if let senderJID,
+           let reaction = Self.capturedReactionUpdate(
+            from: message,
+            accountJID: accountJID,
+            roomID: roomID,
+            senderJID: senderJID,
+            carbonAction: nil,
+            timestamp: Self.messageTimestamp(message, fallback: Date())
+        ) {
+            _ = applyReactionUpdate(reaction, accountJID: accountJID)
+            cacheGroupMembers([senderJID.lowercased()], roomID: roomID, accountJID: accountJID, name: nil)
+            return
+        }
+
         guard let item = timelineItem(
             from: message,
             accountJID: accountJID,
@@ -1921,6 +2037,50 @@ actor XMPPMartinService: TrixService {
         accountHistory[roomKey] = mergedItems
         timelineHistory[accountKey] = accountHistory
         try? timelineCacheStore.save(mergedItems, accountJID: accountJID, roomID: roomID)
+    }
+
+    @discardableResult
+    private func applyReactionUpdate(_ update: CapturedReactionUpdate, accountJID: String) -> [TrixMessageReaction] {
+        applyReactionUpdate(
+            messageID: update.messageID,
+            roomID: update.roomID,
+            senderJID: update.senderJID,
+            emojis: update.emojis,
+            timestamp: update.timestamp,
+            accountJID: accountJID
+        )
+    }
+
+    @discardableResult
+    private func applyReactionUpdate(
+        messageID: String,
+        roomID: String,
+        senderJID: String,
+        emojis: [String],
+        timestamp: Date,
+        accountJID: String
+    ) -> [TrixMessageReaction] {
+        let accountKey = accountJID.lowercased()
+        let roomKey = roomID.lowercased()
+        guard var accountHistory = timelineHistory[accountKey],
+              let existingItems = accountHistory[roomKey],
+              let itemIndex = existingItems.firstIndex(where: { $0.id == messageID }) else {
+            return []
+        }
+
+        var updatedItems = existingItems
+        let updatedItem = Self.applyingReactionSet(
+            senderJID: senderJID,
+            emojis: emojis,
+            timestamp: timestamp,
+            accountJID: accountJID,
+            to: updatedItems[itemIndex]
+        )
+        updatedItems[itemIndex] = updatedItem
+        accountHistory[roomKey] = updatedItems
+        timelineHistory[accountKey] = accountHistory
+        try? timelineCacheStore.save(updatedItems, accountJID: accountJID, roomID: roomID)
+        return updatedItem.reactions
     }
 
     @discardableResult
@@ -2811,6 +2971,144 @@ actor XMPPMartinService: TrixService {
         return descriptor
     }
 
+    private static func normalizedReactionEmoji(_ value: String) throws -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 16 else {
+            throw TrixClientError.reactionsUnavailable
+        }
+        return trimmed
+    }
+
+    private static func uniqueReactionEmojis(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        var emojis: [String] = []
+        for value in values {
+            guard let emoji = try? normalizedReactionEmoji(value),
+                  seen.insert(emoji).inserted else {
+                continue
+            }
+            emojis.append(emoji)
+        }
+        return emojis
+    }
+
+    private static func reactionMessage(
+        roomID: String,
+        messageID: String,
+        emojis: [String],
+        isGroup: Bool
+    ) -> Message {
+        let message = Message()
+        message.id = "trix-reaction-\(UUID().uuidString)"
+        message.type = isGroup ? .groupchat : .chat
+        message.to = JID(roomID)
+
+        let reactions = Element(name: "reactions", xmlns: messageReactionsXMLNS)
+        reactions.setAttribute("id", value: messageID)
+        for emoji in uniqueReactionEmojis(emojis) {
+            reactions.addChild(Element(name: "reaction", cdata: emoji))
+        }
+        message.addChild(reactions)
+        message.addChild(Element(name: "store", xmlns: "urn:xmpp:hints"))
+        return message
+    }
+
+    private static func capturedReactionUpdate(
+        from message: Message,
+        accountJID: String,
+        roomID: String,
+        senderJID: String?,
+        carbonAction: MessageCarbonsModule.Action?,
+        timestamp: Date
+    ) -> CapturedReactionUpdate? {
+        guard let reactions = message.firstChild(name: "reactions", xmlns: messageReactionsXMLNS),
+              let targetMessageID = reactions.getAttribute("id")?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !targetMessageID.isEmpty else {
+            return nil
+        }
+
+        let resolvedSenderJID: String?
+        if let senderJID {
+            resolvedSenderJID = senderJID
+        } else if case .sent? = carbonAction {
+            resolvedSenderJID = accountJID
+        } else if let from = message.from?.bareJid.stringValue,
+                  from.lowercased() == accountJID.lowercased(),
+                  let to = message.to?.bareJid.stringValue,
+                  to.lowercased() == roomID.lowercased() {
+            resolvedSenderJID = accountJID
+        } else {
+            resolvedSenderJID = message.from?.bareJid.stringValue
+        }
+
+        guard let resolvedSenderJID,
+              !resolvedSenderJID.isEmpty else {
+            return nil
+        }
+
+        let emojis = uniqueReactionEmojis(
+            reactions
+                .filterChildren(name: "reaction", xmlns: nil)
+                .compactMap(\.value)
+        )
+        return CapturedReactionUpdate(
+            messageID: targetMessageID,
+            roomID: roomID,
+            senderJID: resolvedSenderJID,
+            emojis: emojis,
+            timestamp: timestamp
+        )
+    }
+
+    private static func applyingReactionUpdate(
+        _ update: CapturedReactionUpdate,
+        to items: [TrixTimelineItem],
+        accountJID: String
+    ) -> [TrixTimelineItem] {
+        guard let itemIndex = items.firstIndex(where: { $0.id == update.messageID }) else {
+            return items
+        }
+
+        var updatedItems = items
+        updatedItems[itemIndex] = applyingReactionSet(
+            senderJID: update.senderJID,
+            emojis: update.emojis,
+            timestamp: update.timestamp,
+            accountJID: accountJID,
+            to: updatedItems[itemIndex]
+        )
+        return updatedItems
+    }
+
+    private static func applyingReactionSet(
+        senderJID: String,
+        emojis: [String],
+        timestamp: Date,
+        accountJID: String,
+        to item: TrixTimelineItem
+    ) -> TrixTimelineItem {
+        let senderKey = senderJID.lowercased()
+        let localKey = accountJID.lowercased()
+        let preservedReactions = item.reactions.filter { $0.sender.lowercased() != senderKey }
+        let replacements = uniqueReactionEmojis(emojis).map { emoji in
+            TrixMessageReaction(
+                emoji: emoji,
+                sender: senderJID,
+                timestamp: timestamp,
+                isLocalEcho: senderKey == localKey
+            )
+        }
+        return item.withReactions((preservedReactions + replacements).sorted { lhs, rhs in
+            if lhs.timestamp != rhs.timestamp {
+                return lhs.timestamp < rhs.timestamp
+            }
+            if lhs.sender != rhs.sender {
+                return lhs.sender < rhs.sender
+            }
+            return lhs.emoji < rhs.emoji
+        })
+    }
+
     private static func capturedMUCInvitation(
         from message: Message,
         receivedAt: Date
@@ -3128,11 +3426,14 @@ actor XMPPMartinService: TrixService {
         }
         for item in rhs {
             if let existingItem = byID[item.id] {
-                byID[item.id] = item.withDeliveryState(
+                let mergedItem = item.withDeliveryState(
                     TrixTimelineItem.mergedDeliveryState(
                         existingItem.deliveryState,
                         item.deliveryState
                     )
+                )
+                byID[item.id] = mergedItem.withReactions(
+                    item.reactions.isEmpty ? existingItem.reactions : item.reactions
                 )
             } else {
                 byID[item.id] = item
@@ -3146,6 +3447,25 @@ actor XMPPMartinService: TrixService {
 
             return first.id < second.id
         }
+    }
+
+    private static func roomPreview(from item: TrixTimelineItem?) -> String? {
+        guard let item else {
+            return nil
+        }
+
+        let body: String
+        if let attachment = item.attachment {
+            body = "Attachment: \(attachment.filename)"
+        } else {
+            body = item.body
+        }
+
+        if item.isLocalEcho {
+            return "You: \(body)"
+        }
+
+        return body
     }
 
     private static func profile(from vCard: Element?, userID: String) -> TrixUserProfile {

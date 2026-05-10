@@ -307,6 +307,35 @@ struct TrixSettingsView: View {
                 LabeledContent("Push", value: pushRegistrationStatus)
             }
 
+            Section("Connection") {
+                LabeledContent("Server", value: model.session?.homeserverURL.absoluteString ?? XMPPClientConfiguration.connectionURL.absoluteString)
+                LabeledContent("State", value: model.isAuthenticated ? "Session restored" : "Signed out")
+                LabeledContent("Last checked", value: lastCheckedLabel)
+
+                Button {
+                    Task {
+                        await model.reloadRooms()
+                    }
+                } label: {
+                    Label("Refresh Connection", systemImage: "arrow.clockwise")
+                }
+                .disabled(!model.isAuthenticated)
+            }
+
+            Section("Push") {
+                LabeledContent("APNs", value: pushRegistrationStatus)
+                if let registration = model.pushRegistration {
+                    LabeledContent("Environment", value: registration.environment.rawValue)
+                    LabeledContent("Provider", value: registration.provider)
+                    LabeledContent("Gateway", value: registration.gatewayJID)
+                } else if let blocker = model.pushRegistrationBlocker {
+                    Text(blockerExplanation(blocker))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             Section("Profile") {
                 TrixProfileSettingsView(model: model)
             }
@@ -377,6 +406,17 @@ struct TrixSettingsView: View {
             Section {
                 TrixLimitationsView()
             }
+
+            Section("Diagnostics") {
+                ForEach(diagnosticRows, id: \.0) { title, value in
+                    LabeledContent(title, value: value)
+                }
+
+                Text("Diagnostics are redacted: no passwords, APNs tokens, OMEMO secrets, private keys, or decrypted message bodies are shown.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .trixScrollContentBackgroundHidden()
         .background(TrixDesign.screenBackground)
@@ -395,6 +435,39 @@ struct TrixSettingsView: View {
         }
 
         return model.pushRegistrationBlocker?.label ?? "Unknown"
+    }
+
+    private var lastCheckedLabel: String {
+        guard let lastRoomRefreshAt = model.lastRoomRefreshAt else {
+            return "Not checked"
+        }
+
+        return lastRoomRefreshAt.formatted(date: .abbreviated, time: .standard)
+    }
+
+    private var diagnosticRows: [(String, String)] {
+        [
+            ("Account", model.account?.userID ?? "Signed out"),
+            ("Server", model.session?.homeserverURL.host ?? XMPPClientConfiguration.serverName),
+            ("Rooms", "\(roomListViewModel.rooms.count)"),
+            ("Invites", "\(roomListViewModel.invitations.count)"),
+            ("Unread", "\(roomListViewModel.totalUnreadCount)"),
+            ("Push", pushRegistrationStatus),
+            ("Device trust", deviceVerificationViewModel.status?.state.label ?? "Unknown"),
+        ]
+    }
+
+    private func blockerExplanation(_ blocker: TrixPushRegistrationBlocker) -> String {
+        switch blocker {
+        case .waitingForAPNsToken:
+            return "The app has not received an APNs device token in this run."
+        case .waitingForSession:
+            return "Sign in before registering this device for wake-only pushes."
+        case .pushGatewayUnavailable:
+            return "The XMPP push gateway could not be reached from this client."
+        case .registrationFailed:
+            return "XMPP push registration failed. Refresh after the gateway and account are available."
+        }
     }
 }
 
@@ -454,7 +527,7 @@ private struct TrixInboxAccountHeader: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     TrixStatusPill(
-                        title: unreadCount == 0 ? "No unread" : "\(min(unreadCount, 99)) unread",
+                        title: unreadCount == 0 ? "No unread" : "\(cappedUnreadCount) unread",
                         systemImage: unreadCount == 0 ? "checkmark.circle" : "circle.fill",
                         tint: unreadCount == 0 ? Color.secondary : TrixDesign.accent
                     )
@@ -483,6 +556,10 @@ private struct TrixInboxAccountHeader: View {
 
         return pushRegistrationBlocker?.label ?? "Push unknown"
     }
+
+    private var cappedUnreadCount: String {
+        unreadCount > 99 ? "99+" : "\(max(unreadCount, 0))"
+    }
 }
 
 private struct TrixRoomRow: View {
@@ -499,7 +576,7 @@ private struct TrixRoomRow: View {
             }
 
             TrixAvatarView(
-                title: room.name,
+                title: roomTitle,
                 systemImage: room.kind.systemImage,
                 size: mode == .phoneInbox ? 50 : 34,
                 tint: room.kind.tint
@@ -509,7 +586,7 @@ private struct TrixRoomRow: View {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     TrixRoomKindMark(kind: room.kind, size: 20)
 
-                    Text(room.name)
+                    Text(roomTitle)
                         .font(.headline.weight(room.unreadCount > 0 ? .semibold : .regular))
                         .lineLimit(1)
 
@@ -534,7 +611,7 @@ private struct TrixRoomRow: View {
                     Spacer(minLength: 8)
 
                     if room.unreadCount > 0 {
-                        Text(room.unreadCount > 99 ? "99+" : "\(room.unreadCount)")
+                        Text(cappedUnreadCount)
                             .font(.caption.weight(.semibold))
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
@@ -558,9 +635,17 @@ private struct TrixRoomRow: View {
     }
 
     private var accessibilityLabel: String {
-        let unread = room.unreadCount > 0 ? ", \(room.unreadCount) unread" : ", no unread messages"
+        let unread = room.unreadCount > 0 ? ", \(cappedUnreadCount) unread" : ", no unread messages"
         let encrypted = room.isEncrypted ? ", encrypted" : ", not encrypted"
-        return "\(room.name), \(room.kind.label)\(unread)\(encrypted), \(room.lastMessagePreview)"
+        return "\(roomTitle), \(room.kind.label)\(unread)\(encrypted), \(room.lastMessagePreview)"
+    }
+
+    private var roomTitle: String {
+        room.name.isEmpty ? room.id : room.name
+    }
+
+    private var cappedUnreadCount: String {
+        room.unreadCount > 99 ? "99+" : "\(max(room.unreadCount, 0))"
     }
 }
 
@@ -574,7 +659,7 @@ private struct TrixInviteRow: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 12) {
                 TrixAvatarView(
-                    title: invitation.title,
+                    title: inviteAvatarTitle,
                     systemImage: invitation.kind.systemImage,
                     size: 36,
                     tint: invitation.kind.tint
@@ -595,6 +680,14 @@ private struct TrixInviteRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
+
+                    Label(
+                        isWorking ? "Updating invite" : "Pending invite",
+                        systemImage: isWorking ? "clock.arrow.circlepath" : "clock"
+                    )
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(isWorking ? TrixDesign.accent : Color.orange)
+                        .lineLimit(1)
                 }
 
                 Spacer()
@@ -605,7 +698,7 @@ private struct TrixInviteRow: View {
                     accept()
                 } label: {
                     if isWorking {
-                        ProgressView()
+                        Label("Accepting", systemImage: "clock.arrow.circlepath")
                     } else {
                         Label("Accept", systemImage: "checkmark")
                     }
@@ -624,6 +717,14 @@ private struct TrixInviteRow: View {
             .controlSize(.small)
         }
         .padding(.vertical, 6)
+    }
+
+    private var inviteAvatarTitle: String {
+        if invitation.kind == .direct {
+            return invitation.inviterLabel
+        }
+
+        return invitation.title
     }
 }
 

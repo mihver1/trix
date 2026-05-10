@@ -54,16 +54,16 @@ struct TrixAvatarView: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(tint.opacity(0.15))
+                .fill(resolvedTint.opacity(0.15))
 
             if initials.isEmpty {
                 Image(systemName: systemImage)
                     .font(.system(size: size * 0.38, weight: .semibold))
-                    .foregroundStyle(tint)
+                    .foregroundStyle(resolvedTint)
             } else {
                 Text(initials)
                     .font(.system(size: size * 0.34, weight: .semibold))
-                    .foregroundStyle(tint)
+                    .foregroundStyle(resolvedTint)
                     .minimumScaleFactor(0.7)
             }
         }
@@ -72,6 +72,26 @@ struct TrixAvatarView: View {
             Circle()
                 .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
         }
+    }
+
+    private var resolvedTint: Color {
+        guard !initials.isEmpty else {
+            return tint
+        }
+
+        let palette: [Color] = [
+            TrixDesign.accent,
+            TrixDesign.groupAccent,
+            Color(red: 0.72, green: 0.28, blue: 0.34),
+            Color(red: 0.58, green: 0.36, blue: 0.78),
+            Color(red: 0.17, green: 0.56, blue: 0.48),
+            Color(red: 0.76, green: 0.42, blue: 0.18),
+        ]
+        let hash = title.unicodeScalars.reduce(UInt64(0)) { partialResult, scalar in
+            partialResult &* 31 &+ UInt64(scalar.value)
+        }
+        let index = Int(hash % UInt64(palette.count))
+        return palette[index]
     }
 
     private var initials: String {

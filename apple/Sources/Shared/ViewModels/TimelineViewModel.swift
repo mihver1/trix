@@ -9,6 +9,8 @@ final class TimelineViewModel: ObservableObject {
     @Published private(set) var isSendingAttachment = false
     @Published private(set) var isLoadingAttachmentAvailability = false
     @Published private(set) var downloadingAttachmentID: String?
+    @Published private(set) var attachmentDownloadFailures: [String: String] = [:]
+    @Published private(set) var reactionActionMessageID: String?
     @Published private(set) var downloadedAttachment: TrixAttachmentDownload?
     @Published private(set) var attachmentSendAvailability: TrixAttachmentSendAvailability?
     @Published private(set) var typingUserIDs: [String] = []
@@ -76,6 +78,27 @@ final class TimelineViewModel: ObservableObject {
         }
     }
 
+    func setReaction(
+        _ emoji: String,
+        item: TrixTimelineItem,
+        roomID: String,
+        session: TrixSession,
+        service: TrixRoomService
+    ) async {
+        reactionActionMessageID = item.id
+        errorMessage = nil
+        defer { reactionActionMessageID = nil }
+
+        do {
+            let reactions = try await service.setReaction(emoji, messageID: item.id, roomID: roomID, session: session)
+            store(item.withReactions(reactions), for: roomID)
+        } catch {
+            if self.roomID == roomID {
+                errorMessage = error.trixUserFacingMessage
+            }
+        }
+    }
+
     func sendAttachment(
         _ attachment: TrixAttachmentUpload,
         roomID: String,
@@ -106,13 +129,16 @@ final class TimelineViewModel: ObservableObject {
         }
 
         downloadingAttachmentID = item.id
+        attachmentDownloadFailures[item.id] = nil
         errorMessage = nil
         defer { downloadingAttachmentID = nil }
 
         do {
             downloadedAttachment = try await service.downloadAttachment(attachment, session: session)
         } catch {
-            errorMessage = error.trixUserFacingMessage
+            let message = error.trixUserFacingMessage
+            attachmentDownloadFailures[item.id] = message
+            errorMessage = message
         }
     }
 
@@ -182,6 +208,8 @@ final class TimelineViewModel: ObservableObject {
         isSendingAttachment = false
         isLoadingAttachmentAvailability = false
         downloadingAttachmentID = nil
+        attachmentDownloadFailures = [:]
+        reactionActionMessageID = nil
         downloadedAttachment = nil
         attachmentSendAvailability = nil
         typingUserIDs = []

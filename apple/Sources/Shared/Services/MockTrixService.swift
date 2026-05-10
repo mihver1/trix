@@ -400,8 +400,41 @@ actor MockTrixService: TrixService {
         )
 
         timelines[roomID, default: []].append(item)
-        updateRoomPreview(roomID: roomID, body: body, date: item.timestamp)
+        updateRoomPreview(roomID: roomID, body: "You: \(body)", date: item.timestamp)
         return item
+    }
+
+    func setReaction(_ emoji: String, messageID: String, roomID: String, session: TrixSession) async throws -> [TrixMessageReaction] {
+        let normalizedEmoji = emoji.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedEmoji.isEmpty else {
+            throw TrixClientError.reactionsUnavailable
+        }
+
+        var roomTimeline = timelines[roomID, default: []]
+        guard let itemIndex = roomTimeline.firstIndex(where: { $0.id == messageID }) else {
+            throw TrixClientError.roomUnavailable
+        }
+
+        var item = roomTimeline[itemIndex]
+        var reactions = item.reactions.filter { reaction in
+            !(reaction.sender.caseInsensitiveCompare(session.userID) == .orderedSame && reaction.emoji == normalizedEmoji)
+        }
+
+        if reactions.count == item.reactions.count {
+            reactions.append(
+                TrixMessageReaction(
+                    emoji: normalizedEmoji,
+                    sender: session.userID,
+                    timestamp: Date(),
+                    isLocalEcho: true
+                )
+            )
+        }
+
+        item = item.withReactions(reactions)
+        roomTimeline[itemIndex] = item
+        timelines[roomID] = roomTimeline
+        return reactions
     }
 
     func attachmentSendAvailability(roomID: String, session: TrixSession) async throws -> TrixAttachmentSendAvailability {
@@ -446,7 +479,7 @@ actor MockTrixService: TrixService {
         )
 
         timelines[roomID, default: []].append(item)
-        updateRoomPreview(roomID: roomID, body: "Attachment: \(attachment.filename)", date: item.timestamp)
+        updateRoomPreview(roomID: roomID, body: "You: Attachment: \(attachment.filename)", date: item.timestamp)
         return item
     }
 

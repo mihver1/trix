@@ -32,6 +32,7 @@ Even with OMEMO, the server can still observe metadata, including:
 - Account JIDs and resource/device activity.
 - MUC room membership.
 - Message timing and approximate sizes.
+- XEP-0444 reaction metadata, including the reacted-to message id and emoji.
 - IP addresses and user agents.
 - Media upload/download timing and sizes.
 - Push gateway interactions if push is enabled.
@@ -188,10 +189,19 @@ with committed default passwords.
 The current ejabberd `mod_http_api` path is acceptable only as a localhost-bound
 backend for a trusted operator wrapper or local scripts. The checked-in
 `server/xmpp/scripts/operator-control.sh` flow can provision accounts, reset
-passwords, disable accounts with `ban_account`, search the small local directory,
-and report archive/upload/push health through loopback-only calls. It is not a
-public or client-facing API and must not be exposed directly outside the host.
-Passwords are read from local files and must not be logged.
+passwords, disable accounts with `ban_account`, re-enable them with
+`unban_account`, search the small local directory, and report
+archive/upload/push health through loopback-only calls. It is not a public or
+client-facing API and must not be exposed directly outside the host. Passwords
+are read from local files and must not be logged.
+
+## Local Diagnostics Risk
+
+The Apple Settings diagnostics surface is intentionally local and redacted. It
+may show account JID, server, room/invite/unread counts, push registration
+status, and device-trust state, but it must not show passwords, APNs tokens,
+OMEMO secrets, private keys, media keys, local file paths, or decrypted message
+or attachment bodies.
 
 ## Logging Rules
 

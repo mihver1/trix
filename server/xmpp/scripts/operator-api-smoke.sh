@@ -54,6 +54,7 @@ esac
 "$SCRIPT_DIR/operator-control.sh" search-directory "$USER_NAME" >/dev/null
 "$SCRIPT_DIR/operator-control.sh" archive-upload-push-health >/dev/null
 "$SCRIPT_DIR/operator-control.sh" disable-user "$USER_NAME" "operator API smoke" >/dev/null
+"$SCRIPT_DIR/operator-control.sh" enable-user "$USER_NAME" >/dev/null
 
 curl -fsS -X POST \
   -H 'Content-Type: application/json' \

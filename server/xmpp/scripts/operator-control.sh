@@ -24,6 +24,7 @@ Usage:
   operator-control.sh provision-user <localpart> <password-file>
   operator-control.sh reset-password <localpart> <password-file>
   operator-control.sh disable-user <localpart> [reason]
+  operator-control.sh enable-user <localpart>
   operator-control.sh search-directory <query>
 
 Environment:
@@ -195,6 +196,12 @@ disable_user() {
   echo "disable_user=ok jid=${user}@${HOST}"
 }
 
+enable_user() {
+  local user="$1"
+  api_post_json unban_account user-host "$user" "$HOST" >/dev/null
+  echo "enable_user=ok jid=${user}@${HOST}"
+}
+
 search_directory() {
   local query="$1"
   local users_payload="$TMP_DIR/registered-users.json"
@@ -285,6 +292,10 @@ main() {
     disable-user)
       [ "$#" -ge 2 ] && [ "$#" -le 3 ] || { usage >&2; exit 2; }
       disable_user "$2" "${3:-disabled by Trix operator}"
+      ;;
+    enable-user)
+      [ "$#" -eq 2 ] || { usage >&2; exit 2; }
+      enable_user "$2"
       ;;
     search-directory)
       [ "$#" -eq 2 ] || { usage >&2; exit 2; }

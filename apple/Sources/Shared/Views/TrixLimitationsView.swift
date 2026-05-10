@@ -2,11 +2,12 @@ import SwiftUI
 
 struct TrixLimitationsView: View {
     private let pendingItems = [
-        "group OMEMO",
-        "encrypted attachments",
-        "push notifications",
-        "timeline restart refresh",
-        "TestFlight packaging",
+        "signed-device APNs delivery",
+        "server-backed read markers",
+        "live XEP-0444 reactions",
+        "server-backed group leave",
+        "full app relaunch smoke",
+        "persistent encrypted sync tests",
     ]
 
     var body: some View {

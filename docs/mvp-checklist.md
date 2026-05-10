@@ -40,17 +40,27 @@ checklist, not by copying legacy implementation details.
 - [x] Live-validate E2EE group send/receive with at least three accounts.
       `group-e2ee` macOS live smoke passed on 2026-05-09 with `test`, `friend`,
       and `admin` accounts.
-- [x] Timeline refresh after app restart through MAM and local cache. The
-      scrubbed macOS `timeline-restart` live-smoke mode is wired: it can
+- [x] Timeline refresh after fresh service/session restore through MAM and local
+      cache. The scrubbed macOS `timeline-restart` live-smoke mode is wired: it can
       optionally send one OMEMO DM, reload MAM/cache, create a fresh service
       instance, restore the session, and require overlapping item IDs after
       restart. On 2026-05-10 the credentialed run passed with
       `mam=ok`, `cache_loaded=1`, `overlap=1`, and no missing local recipient
-      key for the newly sent sender-side stanza.
-- [ ] Unread/read decorations.
+      key for the newly sent sender-side stanza. A full signed-app process
+      quit/relaunch smoke is still tracked separately.
+- [x] Local unread badges and mark-read-on-open UI. Room lists cap large unread
+      counts at `99+`, opening a room clears the local unread display, and
+      outgoing previews use a `You:` prefix. Server-backed unread state and
+      chat-marker/read-marker sync remain open.
 - [x] Delivery decorations.
 - [x] Typing indicators.
-- [ ] Message reactions.
+- [x] Message reactions. The Apple model/service/view-model boundary,
+      quick-reaction menu, aggregate chips, self-highlight, mock-service
+      toggling, and Martin-backed XEP-0444 send/receive/cache path are wired.
+      Reaction stanzas remain XMPP metadata visible to the private server; text
+      and attachment sends still fail closed on OMEMO trust/encryption gates.
+      The `dm-reaction` live-smoke mode is wired for credentialed two-account
+      validation, but has not been run in this slice.
 - [x] Foreground room/invite/timeline refresh while the app scene is active.
 - [ ] APNs-backed notifications without plaintext payloads. Apple token capture,
       XMPP push-component registration plumbing, and wake-only payload handling
@@ -151,8 +161,13 @@ checklist, not by copying legacy implementation details.
       a trusted active OMEMO device.
 - [x] Download encrypted DM timeline file/image attachments, decrypt locally,
       and preview images in app.
+- [x] Show visible encrypted-attachment download failure state and allow retry
+      from the same attachment control without logging decrypted bytes or media
+      keys.
 - [x] Open, share, or export downloaded DM attachments through OS controls.
-- [x] Show sender, timestamp, and body in the SwiftUI timeline model.
+- [x] Show sender, timestamp, and body in the SwiftUI timeline model, with day
+      separators, sender/time-window clustering, sender name on the first
+      incoming group cluster, and normal encrypted/blocked/empty states.
 - [x] Show sent/delivered decorations for local outgoing DM messages through
       XMPP delivery receipts.
 - [x] Live-validate XMPP delivery receipt updates with both DM accounts online.
@@ -166,6 +181,11 @@ checklist, not by copying legacy implementation details.
 - [x] Select DM and new-group invitees from Trix directory search results
       instead of raw JID-only entry.
 - [x] Select existing-group add-member users from Trix directory search results.
+- [x] Hide/forget a DM locally with confirmation and accurate wording that it is
+      not a global delete.
+- [ ] Server-backed group leave. The timeline action surface now has a
+      confirmation flow, but the checked-in action is local-only and says so
+      until the Martin MUC leave path is validated.
 - [x] Keep newly decrypted or locally sent DM timeline items visible after app
       restart through the local Keychain-backed timeline cache.
 - [x] Include the sender's current OMEMO device in new DM and group sends through
@@ -225,6 +245,8 @@ checklist, not by copying legacy implementation details.
       without deleting account data.
 - [x] Reset password through `operator-control.sh reset-password`, backed by
       ejabberd `change_password` with the new password read from a local file.
+- [x] Re-enable a disabled user through `operator-control.sh enable-user`,
+      backed by ejabberd `unban_account` without changing the account secret.
 - [x] Search directory by handle/name through `operator-control.sh
       search-directory`, backed by `registered_users` plus vCard `FN` and
       `NICKNAME` lookups over the loopback API.
@@ -264,11 +286,14 @@ checklist, not by copying legacy implementation details.
 - [ ] Persistent tests around encrypted DM/group sync. `timeline-restart` now
       covers the DM restart/cache/MAM path in credentialed live smoke, but this
       still needs automated persistent coverage.
+- [ ] Full signed-app quit/relaunch timeline smoke. Current `timeline-restart`
+      proves a fresh `XMPPMartinService` restore in-process; it does not yet
+      prove a complete OS app process quit/relaunch.
 - [x] Persistent smoke coverage around directory/profile/control-plane flows:
       Apple live-smoke modes cover directory/profile, and
       `server/xmpp/scripts/operator-api-smoke.sh` now exercises provision,
-      reset-password, directory search, health, disable, and cleanup through the
-      localhost control-plane backend.
+      reset-password, directory search, health, disable, enable, and cleanup
+      through the localhost control-plane backend.
 - [x] Repeatable archive/TestFlight script path for the new XMPP `apple/` app.
 - [x] Fail-closed Apple APNs registration plumbing exists for the new XMPP
       targets: platform token capture, service-bound XMPP push registration, and
