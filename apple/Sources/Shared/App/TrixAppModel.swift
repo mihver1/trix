@@ -330,6 +330,18 @@ final class TrixAppModel: ObservableObject {
         return devices
     }
 
+    func trustAccountDevice(_ device: TrixPeerDeviceIdentity) async {
+        guard let session else {
+            return
+        }
+
+        await deviceVerificationViewModel.trustAccountDevice(
+            device,
+            session: session,
+            service: trixService
+        )
+    }
+
     func inviteUser(_ userID: String, to roomID: String) async throws {
         guard let session else {
             throw TrixClientError.missingSession

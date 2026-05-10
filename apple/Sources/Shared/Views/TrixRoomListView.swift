@@ -52,6 +52,10 @@ struct TrixRoomListView: View {
                     TrixInboxAccountHeader(
                         account: account,
                         isLoading: roomListViewModel.isLoading,
+                        unreadCount: roomListViewModel.totalUnreadCount,
+                        invitationCount: roomListViewModel.invitations.count,
+                        pushRegistration: model.pushRegistration,
+                        pushRegistrationBlocker: model.pushRegistrationBlocker,
                         refresh: {
                             Task {
                                 await model.reloadRooms()
@@ -100,6 +104,19 @@ struct TrixRoomListView: View {
 
     @ViewBuilder
     private var roomListContent: some View {
+        if mode == .phoneInbox {
+            invitesSection
+            roomsSection
+        } else {
+            roomsSection
+            invitesSection
+        }
+
+        errorSection
+    }
+
+    @ViewBuilder
+    private var roomsSection: some View {
         Section {
             if roomListViewModel.rooms.isEmpty {
                 TrixEmptyStateView(
@@ -122,28 +139,21 @@ struct TrixRoomListView: View {
                 }
             }
         }
+    }
 
+    @ViewBuilder
+    private var invitesSection: some View {
         if !roomListViewModel.invitations.isEmpty {
             Section("Invites") {
                 ForEach(roomListViewModel.invitations) { invitation in
-                    TrixInviteRow(
-                        invitation: invitation,
-                        isWorking: roomListViewModel.invitationActionRoomID == invitation.id,
-                        accept: {
-                            Task {
-                                await model.acceptInvitation(invitation)
-                            }
-                        },
-                        decline: {
-                            Task {
-                                await model.declineInvitation(invitation)
-                            }
-                        }
-                    )
+                    inviteRow(invitation)
                 }
             }
         }
+    }
 
+    @ViewBuilder
+    private var errorSection: some View {
         if let errorMessage = roomListViewModel.errorMessage ?? model.errorMessage {
             Section {
                 TrixBannerView(
@@ -153,6 +163,36 @@ struct TrixRoomListView: View {
                 )
             }
         }
+    }
+
+    private func inviteRow(_ invitation: TrixRoomInvite) -> some View {
+        TrixInviteRow(
+            invitation: invitation,
+            isWorking: roomListViewModel.invitationActionRoomID == invitation.id,
+            accept: {
+                Task {
+                    await model.acceptInvitation(invitation)
+                }
+            },
+            decline: {
+                Task {
+                    await model.declineInvitation(invitation)
+                }
+            }
+        )
+        .trixInviteSwipeActions(
+            isEnabled: roomListViewModel.invitationActionRoomID != invitation.id,
+            accept: {
+                Task {
+                    await model.acceptInvitation(invitation)
+                }
+            },
+            decline: {
+                Task {
+                    await model.declineInvitation(invitation)
+                }
+            }
+        )
     }
 
     @ViewBuilder
@@ -213,10 +253,12 @@ struct TrixRoomListView: View {
 
 struct TrixSettingsView: View {
     @ObservedObject var model: TrixAppModel
+    @ObservedObject private var roomListViewModel: RoomListViewModel
     @ObservedObject private var deviceVerificationViewModel: DeviceVerificationViewModel
 
     init(model: TrixAppModel) {
         self.model = model
+        self._roomListViewModel = ObservedObject(wrappedValue: model.roomListViewModel)
         self._deviceVerificationViewModel = ObservedObject(wrappedValue: model.deviceVerificationViewModel)
     }
 
@@ -257,6 +299,14 @@ struct TrixSettingsView: View {
                 .disabled(!model.isAuthenticated || model.isLoggingOut)
             }
 
+            Section("Account State") {
+                LabeledContent("Session", value: model.isAuthenticated ? "Signed in" : "Signed out")
+                LabeledContent("Rooms", value: "\(roomListViewModel.rooms.count)")
+                LabeledContent("Invites", value: "\(roomListViewModel.invitations.count)")
+                LabeledContent("Unread", value: "\(roomListViewModel.totalUnreadCount)")
+                LabeledContent("Push", value: pushRegistrationStatus)
+            }
+
             Section("Profile") {
                 TrixProfileSettingsView(model: model)
             }
@@ -292,6 +342,11 @@ struct TrixSettingsView: View {
                     cancel: {
                         Task {
                             await model.cancelDeviceVerification()
+                        }
+                    },
+                    trustAccountDevice: { device in
+                        Task {
+                            await model.trustAccountDevice(device)
                         }
                     },
                     setUpRecovery: {
@@ -333,48 +388,100 @@ struct TrixSettingsView: View {
             await model.reloadDeviceVerificationStatus()
         }
     }
+
+    private var pushRegistrationStatus: String {
+        if model.pushRegistration != nil {
+            return "Registered"
+        }
+
+        return model.pushRegistrationBlocker?.label ?? "Unknown"
+    }
+}
+
+private extension RoomListViewModel {
+    var totalUnreadCount: Int {
+        rooms.reduce(0) { partialResult, room in
+            partialResult + max(room.unreadCount, 0)
+        }
+    }
 }
 
 private struct TrixInboxAccountHeader: View {
     let account: TrixAccount
     let isLoading: Bool
+    let unreadCount: Int
+    let invitationCount: Int
+    let pushRegistration: TrixPushRegistration?
+    let pushRegistrationBlocker: TrixPushRegistrationBlocker?
     let refresh: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            TrixAvatarView(
-                title: account.displayName.isEmpty ? account.userID : account.displayName,
-                systemImage: "person.crop.circle",
-                size: 32
-            )
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                TrixAvatarView(
+                    title: account.displayName.isEmpty ? account.userID : account.displayName,
+                    systemImage: "person.crop.circle",
+                    size: 32
+                )
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(account.displayName.isEmpty ? "Trix" : account.displayName)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(account.displayName.isEmpty ? "Trix" : account.displayName)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
 
-                Text(account.userID)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-
-            Spacer()
-
-            Button(action: refresh) {
-                if isLoading {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Image(systemName: "arrow.clockwise")
+                    Text(account.userID)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
+
+                Spacer()
+
+                Button(action: refresh) {
+                    if isLoading {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                .buttonStyle(.borderless)
+                .disabled(isLoading)
+                .accessibilityLabel("Refresh rooms")
             }
-            .buttonStyle(.borderless)
-            .disabled(isLoading)
-            .accessibilityLabel("Refresh rooms")
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    TrixStatusPill(
+                        title: unreadCount == 0 ? "No unread" : "\(min(unreadCount, 99)) unread",
+                        systemImage: unreadCount == 0 ? "checkmark.circle" : "circle.fill",
+                        tint: unreadCount == 0 ? Color.secondary : TrixDesign.accent
+                    )
+
+                    TrixStatusPill(
+                        title: invitationCount == 0 ? "No invites" : "\(invitationCount) invite\(invitationCount == 1 ? "" : "s")",
+                        systemImage: invitationCount == 0 ? "person.badge.plus" : "person.crop.circle.badge.plus",
+                        tint: invitationCount == 0 ? Color.secondary : Color.orange
+                    )
+                }
+
+                TrixStatusPill(
+                    title: pushStatusTitle,
+                    systemImage: pushRegistration == nil ? "bell.slash" : "bell.badge",
+                    tint: pushRegistration == nil ? Color.secondary : Color.green
+                )
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var pushStatusTitle: String {
+        if pushRegistration != nil {
+            return "Push ready"
+        }
+
+        return pushRegistrationBlocker?.label ?? "Push unknown"
     }
 }
 
@@ -384,6 +491,13 @@ private struct TrixRoomRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
+            if mode == .phoneInbox {
+                Circle()
+                    .fill(room.unreadCount > 0 ? TrixDesign.accent : Color.clear)
+                    .frame(width: 8, height: 8)
+                    .accessibilityHidden(true)
+            }
+
             TrixAvatarView(
                 title: room.name,
                 systemImage: room.kind.systemImage,
@@ -396,7 +510,7 @@ private struct TrixRoomRow: View {
                     TrixRoomKindMark(kind: room.kind, size: 20)
 
                     Text(room.name)
-                        .font(.headline)
+                        .font(.headline.weight(room.unreadCount > 0 ? .semibold : .regular))
                         .lineLimit(1)
 
                     TrixRoomSecurityMark(isEncrypted: room.isEncrypted, size: 20)
@@ -405,16 +519,16 @@ private struct TrixRoomRow: View {
 
                     if mode == .phoneInbox {
                         Text(room.lastActivityAt.formatted(date: .omitted, time: .shortened))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .font(.caption.weight(room.unreadCount > 0 ? .semibold : .regular))
+                            .foregroundStyle(room.unreadCount > 0 ? TrixDesign.accent : Color.secondary)
                             .monospacedDigit()
                     }
                 }
 
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(room.lastMessagePreview)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .font(.subheadline.weight(room.unreadCount > 0 ? .semibold : .regular))
+                        .foregroundStyle(room.unreadCount > 0 ? Color.primary : Color.secondary)
                         .lineLimit(mode == .phoneInbox ? 2 : 1)
 
                     Spacer(minLength: 8)
@@ -440,6 +554,13 @@ private struct TrixRoomRow: View {
         }
         .padding(.vertical, mode == .phoneInbox ? 10 : 4)
         .padding(.horizontal, mode == .phoneInbox ? 4 : 0)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var accessibilityLabel: String {
+        let unread = room.unreadCount > 0 ? ", \(room.unreadCount) unread" : ", no unread messages"
+        let encrypted = room.isEncrypted ? ", encrypted" : ", not encrypted"
+        return "\(room.name), \(room.kind.label)\(unread)\(encrypted), \(room.lastMessagePreview)"
     }
 }
 
@@ -503,5 +624,35 @@ private struct TrixInviteRow: View {
             .controlSize(.small)
         }
         .padding(.vertical, 6)
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func trixInviteSwipeActions(
+        isEnabled: Bool,
+        accept: @escaping () -> Void,
+        decline: @escaping () -> Void
+    ) -> some View {
+        #if os(iOS)
+        swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button {
+                accept()
+            } label: {
+                Label("Accept", systemImage: "checkmark")
+            }
+            .tint(.green)
+            .disabled(!isEnabled)
+
+            Button(role: .destructive) {
+                decline()
+            } label: {
+                Label("Decline", systemImage: "xmark")
+            }
+            .disabled(!isEnabled)
+        }
+        #else
+        self
+        #endif
     }
 }

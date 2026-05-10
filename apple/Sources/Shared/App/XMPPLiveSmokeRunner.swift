@@ -43,9 +43,13 @@ enum XMPPLiveSmokeRunner {
         case blockedSend = "blocked-send"
         case timeline
         case sendTimeline = "send-timeline"
+        case timelineRestart = "timeline-restart"
+        case dmE2EE = "dm-e2ee"
+        case dmAttachment = "dm-attachment"
         case deliveryReceipt = "delivery-receipt"
         case typing
         case groupE2EE = "group-e2ee"
+        case groupAttachment = "group-attachment"
     }
 
     private struct Configuration {
@@ -71,7 +75,8 @@ enum XMPPLiveSmokeRunner {
             case .login, .sessionRestore, .typing:
                 return .memory
             case .roster, .roomList, .search, .peerDevices, .trustPeer, .profile, .profileUpdate,
-                 .blockedSend, .timeline, .sendTimeline, .deliveryReceipt, .groupE2EE:
+                 .blockedSend, .timeline, .sendTimeline, .timelineRestart, .dmE2EE, .dmAttachment,
+                 .deliveryReceipt, .groupE2EE, .groupAttachment:
                 return .keychain
             }
         }
@@ -242,9 +247,7 @@ enum XMPPLiveSmokeRunner {
                 let deliveredCount = items.filter { $0.deliveryState == .delivered }.count
                 status("timeline ok count=\(items.count) local=\(localEchoCount) sent=\(sentCount) delivered=\(deliveredCount)")
                 if let diagnostics = try await service.timelineDiagnostics(roomID: peerID, session: session) {
-                    status(
-                        "timeline diagnostics mam=\(diagnostics.mamQuerySucceeded ? "ok" : "failed") raw=\(diagnostics.mamRawCount) filtered=\(diagnostics.mamFilteredCount) encrypted=\(diagnostics.mamEncryptedCount) decoded=\(diagnostics.mamDecodedCount) local_keys=\(diagnostics.mamLocalKeyCount) account_from=\(diagnostics.mamAccountSenderCount) peer_from=\(diagnostics.mamPeerSenderCount) cached=\(diagnostics.cachedCount) fallback=\(diagnostics.usedUnfilteredFallback)"
-                    )
+                    status("timeline diagnostics \(timelineDiagnosticsSummary(diagnostics))")
                 }
 
             case .sendTimeline:
@@ -265,10 +268,29 @@ enum XMPPLiveSmokeRunner {
                 let deliveredCount = items.filter { $0.deliveryState == .delivered }.count
                 status("send-timeline timeline ok count=\(items.count) local=\(localEchoCount) sent=\(sentCount) delivered=\(deliveredCount)")
                 if let diagnostics = try await service.timelineDiagnostics(roomID: peerID, session: session) {
-                    status(
-                        "send-timeline diagnostics mam=\(diagnostics.mamQuerySucceeded ? "ok" : "failed") raw=\(diagnostics.mamRawCount) filtered=\(diagnostics.mamFilteredCount) encrypted=\(diagnostics.mamEncryptedCount) decoded=\(diagnostics.mamDecodedCount) local_keys=\(diagnostics.mamLocalKeyCount) account_from=\(diagnostics.mamAccountSenderCount) peer_from=\(diagnostics.mamPeerSenderCount) cached=\(diagnostics.cachedCount) fallback=\(diagnostics.usedUnfilteredFallback)"
-                    )
+                    status("send-timeline diagnostics \(timelineDiagnosticsSummary(diagnostics))")
                 }
+
+            case .timelineRestart:
+                try await runTimelineRestartSmoke(
+                    configuration: configuration,
+                    service: service,
+                    session: session
+                )
+
+            case .dmE2EE:
+                try await runDME2EESmoke(
+                    configuration: configuration,
+                    service: service,
+                    session: session
+                )
+
+            case .dmAttachment:
+                try await runDMAttachmentSmoke(
+                    configuration: configuration,
+                    service: service,
+                    session: session
+                )
 
             case .deliveryReceipt:
                 try await runDeliveryReceiptSmoke(
@@ -286,6 +308,13 @@ enum XMPPLiveSmokeRunner {
 
             case .groupE2EE:
                 try await runGroupE2EESmoke(
+                    configuration: configuration,
+                    service: service,
+                    session: session
+                )
+
+            case .groupAttachment:
+                try await runGroupAttachmentSmoke(
                     configuration: configuration,
                     service: service,
                     session: session
@@ -316,6 +345,353 @@ enum XMPPLiveSmokeRunner {
         } catch {
             status("finish failed error=\(safeError(error))")
             exit(1)
+        }
+    }
+
+    private static func runTimelineRestartSmoke(
+        configuration: Configuration,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws {
+        let peerID = try requiredPeerID(configuration.peerID)
+        if configuration.allowSend {
+            try await ensureTrustedPeer(
+                peerID: peerID,
+                service: service,
+                session: session,
+                allowTrust: configuration.allowTrust,
+                statusPrefix: "timeline-restart"
+            )
+            let room = try await service.createEncryptedDirectRoom(
+                inviteeUserID: peerID,
+                name: "",
+                session: session
+            )
+            let sentItem = try await service.sendText("smoke-restart-\(UUID().uuidString)", roomID: room.id, session: session)
+            status("timeline-restart send ok id=\(sentItem.id)")
+        }
+
+        let beforeItems = try await service.timeline(roomID: peerID, session: session)
+        guard !beforeItems.isEmpty else {
+            status("timeline-restart failed empty_before")
+            throw TrixClientError.roomUnavailable
+        }
+
+        if let diagnostics = try await service.timelineDiagnostics(roomID: peerID, session: session) {
+            status("timeline-restart before diagnostics \(timelineDiagnosticsSummary(diagnostics))")
+        }
+
+        try? await service.logout(session: session)
+        let restoredService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+        let restoredAccount = try await restoredService.restore(session: session)
+        status("timeline-restart restore ok user=\(restoredAccount.userID) resource=\(restoredAccount.deviceID)")
+
+        let afterItems = try await restoredService.timeline(roomID: peerID, session: session)
+        let beforeIDs = Set(beforeItems.map(\.id))
+        let afterIDs = Set(afterItems.map(\.id))
+        let overlapCount = beforeIDs.intersection(afterIDs).count
+        guard overlapCount > 0 else {
+            status("timeline-restart failed overlap=0 after=\(afterItems.count)")
+            try? await restoredService.logout(session: session)
+            throw TrixClientError.roomUnavailable
+        }
+
+        let localEchoCount = afterItems.filter(\.isLocalEcho).count
+        let sentCount = afterItems.filter { $0.deliveryState == .sent }.count
+        let deliveredCount = afterItems.filter { $0.deliveryState == .delivered }.count
+        status(
+            "timeline-restart ok before=\(beforeItems.count) after=\(afterItems.count) overlap=\(overlapCount) local=\(localEchoCount) sent=\(sentCount) delivered=\(deliveredCount)"
+        )
+        if let diagnostics = try await restoredService.timelineDiagnostics(roomID: peerID, session: session) {
+            status("timeline-restart after diagnostics \(timelineDiagnosticsSummary(diagnostics))")
+        }
+
+        try? await restoredService.logout(session: session)
+    }
+
+    private static func runDME2EESmoke(
+        configuration: Configuration,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws {
+        guard configuration.allowSend else {
+            throw TrixClientError.e2eeUnavailable
+        }
+
+        let peerID = try requiredPeerID(configuration.peerID)
+        let peerPassword = try requiredPassword(configuration.peerPassword)
+        let peerService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+        let peerSession = try await peerService.login(
+            userID: peerID,
+            password: peerPassword,
+            serverURL: configuration.serverURL
+        )
+        status("dm-e2ee peer-login ok resource=\(peerSession.deviceID)")
+
+        do {
+            try await ensureTrustedPeer(
+                peerID: peerID,
+                service: service,
+                session: session,
+                allowTrust: configuration.allowTrust,
+                statusPrefix: "dm-e2ee"
+            )
+
+            let room = try await service.createEncryptedDirectRoom(
+                inviteeUserID: peerID,
+                name: "",
+                session: session
+            )
+            let messageBody = "smoke-dm-\(UUID().uuidString)"
+            let sentItem = try await service.sendText(messageBody, roomID: room.id, session: session)
+            status("dm-e2ee send ok id=\(sentItem.id)")
+
+            guard try await waitForDirectMessage(
+                messageID: sentItem.id,
+                expectedBody: messageBody,
+                expectedSender: session.userID,
+                roomID: session.userID,
+                role: "peer",
+                service: peerService,
+                session: peerSession
+            ) else {
+                status("dm-e2ee failed receive=false role=peer")
+                throw TrixClientError.xmppConnectionFailed
+            }
+
+            try? await peerService.logout(session: peerSession)
+            status("dm-e2ee ok decrypted_peers=1")
+        } catch {
+            try? await peerService.logout(session: peerSession)
+            throw error
+        }
+    }
+
+    private static func runDMAttachmentSmoke(
+        configuration: Configuration,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws {
+        guard configuration.allowSend else {
+            throw TrixClientError.e2eeUnavailable
+        }
+
+        let peerID = try requiredPeerID(configuration.peerID)
+        let peerPassword = try requiredPassword(configuration.peerPassword)
+        let peerService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+        let peerSession = try await peerService.login(
+            userID: peerID,
+            password: peerPassword,
+            serverURL: configuration.serverURL
+        )
+        status("dm-attachment peer-login ok resource=\(peerSession.deviceID)")
+
+        do {
+            try await ensureTrustedPeer(
+                peerID: peerID,
+                service: service,
+                session: session,
+                allowTrust: configuration.allowTrust,
+                statusPrefix: "dm-attachment"
+            )
+
+            let room = try await service.createEncryptedDirectRoom(
+                inviteeUserID: peerID,
+                name: "",
+                session: session
+            )
+            let availability = try await service.attachmentSendAvailability(roomID: room.id, session: session)
+            guard availability.canSend else {
+                throw TrixClientError.omemoDeviceTrustRequired
+            }
+            status("dm-attachment availability ok recipients=\(availability.recipientUserIDs.count)")
+
+            let attachment = try smokeImageAttachment()
+            let sentItem = try await service.sendAttachment(attachment, roomID: room.id, session: session)
+            guard sentItem.attachment != nil else {
+                throw TrixClientError.attachmentDownloadUnavailable
+            }
+            status("dm-attachment send ok id=\(sentItem.id) encrypted=true")
+
+            guard try await waitForAttachmentDownload(
+                messageID: sentItem.id,
+                expectedUpload: attachment,
+                expectedSender: session.userID,
+                roomID: session.userID,
+                role: "peer",
+                statusPrefix: "dm-attachment",
+                service: peerService,
+                session: peerSession
+            ) else {
+                status("dm-attachment failed download=false role=peer")
+                throw TrixClientError.attachmentDecryptionFailed
+            }
+
+            try? await peerService.logout(session: peerSession)
+            status("dm-attachment ok downloaded_peers=1")
+        } catch {
+            try? await peerService.logout(session: peerSession)
+            throw error
+        }
+    }
+
+    private static func runGroupAttachmentSmoke(
+        configuration: Configuration,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws {
+        guard configuration.allowSend else {
+            throw TrixClientError.e2eeUnavailable
+        }
+        guard configuration.allowTrust else {
+            throw TrixClientError.omemoDeviceTrustRequired
+        }
+
+        let peerID = try requiredPeerID(configuration.peerID)
+        let peerPassword = try requiredPassword(configuration.peerPassword)
+        let thirdID = try requiredPeerID(configuration.thirdID)
+        let thirdPassword = try requiredPassword(configuration.thirdPassword)
+        guard Set([session.userID, peerID, thirdID].map { $0.lowercased() }).count == 3 else {
+            throw TrixClientError.invalidTrixUserID
+        }
+
+        let peerService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+        let thirdService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+        let peerSession = try await peerService.login(
+            userID: peerID,
+            password: peerPassword,
+            serverURL: configuration.serverURL
+        )
+        status("group-attachment login ok role=peer resource=\(peerSession.deviceID)")
+
+        var thirdSession: TrixSession?
+        do {
+            let loggedInThirdSession = try await thirdService.login(
+                userID: thirdID,
+                password: thirdPassword,
+                serverURL: configuration.serverURL
+            )
+            thirdSession = loggedInThirdSession
+            status("group-attachment login ok role=third resource=\(loggedInThirdSession.deviceID)")
+
+            let room = try await service.createEncryptedGroupRoom(
+                name: "Trix Attachment Smoke \(UUID().uuidString.prefix(8))",
+                inviteeUserIDs: [peerID, thirdID],
+                session: session
+            )
+            guard room.kind == .group, room.isEncrypted else {
+                throw TrixClientError.e2eeUnavailable
+            }
+            status("group-attachment create ok room=\(room.id) invitees=2 encrypted=true")
+
+            let peerRoom = try await acceptGroupInvitation(
+                roomID: room.id,
+                role: "peer",
+                statusPrefix: "group-attachment",
+                service: peerService,
+                session: peerSession
+            )
+            let thirdRoom = try await acceptGroupInvitation(
+                roomID: room.id,
+                role: "third",
+                statusPrefix: "group-attachment",
+                service: thirdService,
+                session: loggedInThirdSession
+            )
+            guard peerRoom.id.lowercased() == room.id.lowercased(),
+                  thirdRoom.id.lowercased() == room.id.lowercased() else {
+                throw TrixClientError.roomUnavailable
+            }
+
+            let ownerMembers = try await waitForGroupMembers(
+                roomID: room.id,
+                expectedUserIDs: [session.userID, peerID, thirdID],
+                statusPrefix: "group-attachment",
+                service: service,
+                session: session
+            )
+            status("group-attachment members ok role=owner count=\(ownerMembers.count) joined=\(ownerMembers.filter { $0.membership == .joined }.count)")
+            let peerMembers = try await waitForGroupMembers(
+                roomID: room.id,
+                expectedUserIDs: [session.userID, peerID, thirdID],
+                statusPrefix: "group-attachment",
+                service: peerService,
+                session: peerSession
+            )
+            status("group-attachment members ok role=peer count=\(peerMembers.count) joined=\(peerMembers.filter { $0.membership == .joined }.count)")
+            let thirdMembers = try await waitForGroupMembers(
+                roomID: room.id,
+                expectedUserIDs: [session.userID, peerID, thirdID],
+                statusPrefix: "group-attachment",
+                service: thirdService,
+                session: loggedInThirdSession
+            )
+            status("group-attachment members ok role=third count=\(thirdMembers.count) joined=\(thirdMembers.filter { $0.membership == .joined }.count)")
+
+            try await ensureGroupTrustGraph(
+                ownerID: session.userID,
+                ownerService: service,
+                ownerSession: session,
+                peerID: peerID,
+                peerService: peerService,
+                peerSession: peerSession,
+                thirdID: thirdID,
+                thirdService: thirdService,
+                thirdSession: loggedInThirdSession,
+                allowTrust: configuration.allowTrust,
+                statusPrefix: "group-attachment"
+            )
+
+            let availability = try await service.attachmentSendAvailability(roomID: room.id, session: session)
+            guard availability.canSend else {
+                throw TrixClientError.groupOmemoDeviceTrustRequired
+            }
+            status("group-attachment availability ok recipients=\(availability.recipientUserIDs.count)")
+
+            let attachment = try smokeImageAttachment()
+            let sentItem = try await service.sendAttachment(attachment, roomID: room.id, session: session)
+            guard sentItem.attachment != nil else {
+                throw TrixClientError.attachmentDownloadUnavailable
+            }
+            status("group-attachment send ok id=\(sentItem.id) encrypted=true")
+
+            guard try await waitForAttachmentDownload(
+                messageID: sentItem.id,
+                expectedUpload: attachment,
+                expectedSender: session.userID,
+                roomID: room.id,
+                role: "peer",
+                statusPrefix: "group-attachment",
+                service: peerService,
+                session: peerSession
+            ) else {
+                status("group-attachment failed download=false role=peer")
+                throw TrixClientError.attachmentDecryptionFailed
+            }
+
+            guard try await waitForAttachmentDownload(
+                messageID: sentItem.id,
+                expectedUpload: attachment,
+                expectedSender: session.userID,
+                roomID: room.id,
+                role: "third",
+                statusPrefix: "group-attachment",
+                service: thirdService,
+                session: loggedInThirdSession
+            ) else {
+                status("group-attachment failed download=false role=third")
+                throw TrixClientError.attachmentDecryptionFailed
+            }
+
+            try? await thirdService.logout(session: loggedInThirdSession)
+            try? await peerService.logout(session: peerSession)
+            status("group-attachment ok downloaded_peers=2")
+        } catch {
+            if let thirdSession {
+                try? await thirdService.logout(session: thirdSession)
+            }
+            try? await peerService.logout(session: peerSession)
+            throw error
         }
     }
 
@@ -658,68 +1034,70 @@ enum XMPPLiveSmokeRunner {
         thirdID: String,
         thirdService: XMPPMartinService,
         thirdSession: TrixSession,
-        allowTrust: Bool
+        allowTrust: Bool,
+        statusPrefix: String = "group-e2ee"
     ) async throws {
         try await ensureTrustedPeer(
             peerID: peerID,
             service: ownerService,
             session: ownerSession,
             allowTrust: allowTrust,
-            statusPrefix: "group-e2ee trust owner-peer"
+            statusPrefix: "\(statusPrefix) trust owner-peer"
         )
         try await ensureTrustedPeer(
             peerID: thirdID,
             service: ownerService,
             session: ownerSession,
             allowTrust: allowTrust,
-            statusPrefix: "group-e2ee trust owner-third"
+            statusPrefix: "\(statusPrefix) trust owner-third"
         )
         try await ensureTrustedPeer(
             peerID: ownerID,
             service: peerService,
             session: peerSession,
             allowTrust: allowTrust,
-            statusPrefix: "group-e2ee trust peer-owner"
+            statusPrefix: "\(statusPrefix) trust peer-owner"
         )
         try await ensureTrustedPeer(
             peerID: thirdID,
             service: peerService,
             session: peerSession,
             allowTrust: allowTrust,
-            statusPrefix: "group-e2ee trust peer-third"
+            statusPrefix: "\(statusPrefix) trust peer-third"
         )
         try await ensureTrustedPeer(
             peerID: ownerID,
             service: thirdService,
             session: thirdSession,
             allowTrust: allowTrust,
-            statusPrefix: "group-e2ee trust third-owner"
+            statusPrefix: "\(statusPrefix) trust third-owner"
         )
         try await ensureTrustedPeer(
             peerID: peerID,
             service: thirdService,
             session: thirdSession,
             allowTrust: allowTrust,
-            statusPrefix: "group-e2ee trust third-peer"
+            statusPrefix: "\(statusPrefix) trust third-peer"
         )
-        status("group-e2ee trust-checks ok checks=6")
+        status("\(statusPrefix) trust-checks ok checks=6")
     }
 
     private static func acceptGroupInvitation(
         roomID: String,
         role: String,
+        statusPrefix: String = "group-e2ee",
         service: XMPPMartinService,
         session: TrixSession
     ) async throws -> TrixRoomSummary {
         for attempt in 0..<30 {
             let invitations = try await service.invitations(session: session)
             if invitations.contains(where: { $0.id.lowercased() == roomID.lowercased() }) {
-                status("group-e2ee invite ok role=\(role) pending=\(invitations.count)")
+                status("\(statusPrefix) invite ok role=\(role) pending=\(invitations.count)")
                 let summary = try await service.acceptInvitation(roomID: roomID, session: session)
                 guard summary.kind == .group, summary.isEncrypted else {
                     throw TrixClientError.e2eeUnavailable
                 }
-                status("group-e2ee join ok role=\(role)")
+                status("\(statusPrefix) join ok role=\(role)")
                 return summary
             }
 
@@ -728,13 +1106,14 @@ enum XMPPLiveSmokeRunner {
             }
         }
 
-        status("group-e2ee failed invite_missing role=\(role)")
+        status("\(statusPrefix) failed invite_missing role=\(role)")
         throw TrixClientError.inviteUnavailable
     }
 
     private static func waitForGroupMembers(
         roomID: String,
         expectedUserIDs: [String],
+        statusPrefix: String = "group-e2ee",
         service: XMPPMartinService,
         session: TrixSession
     ) async throws -> [TrixRoomMember] {
@@ -757,8 +1136,94 @@ enum XMPPLiveSmokeRunner {
             }
         }
 
-        status("group-e2ee failed members_missing count=\(lastMembers.count)")
+        status("\(statusPrefix) failed members_missing count=\(lastMembers.count)")
         throw TrixClientError.roomUnavailable
+    }
+
+    private static func waitForDirectMessage(
+        messageID: String,
+        expectedBody: String,
+        expectedSender: String,
+        roomID: String,
+        role: String,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws -> Bool {
+        let expectedSenderKey = expectedSender.lowercased()
+        var sawID = false
+        for _ in 0..<40 {
+            let items = try await service.timeline(roomID: roomID, session: session)
+            if items.contains(where: { item in
+                let senderMatches = item.sender.lowercased() == expectedSenderKey
+                let idMatches = item.id == messageID
+                let bodyMatches = item.body == expectedBody
+                sawID = sawID || idMatches
+                return !item.isLocalEcho && senderMatches && idMatches && bodyMatches
+            }) {
+                status("dm-e2ee receive ok role=\(role) id=\(messageID) decrypted=true")
+                return true
+            }
+
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+
+        if sawID {
+            status("dm-e2ee failed receive_mismatch role=\(role) id=\(messageID)")
+        }
+        return false
+    }
+
+    private static func waitForAttachmentDownload(
+        messageID: String,
+        expectedUpload: TrixAttachmentUpload,
+        expectedSender: String,
+        roomID: String,
+        role: String,
+        statusPrefix: String,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws -> Bool {
+        let expectedSenderKey = expectedSender.lowercased()
+        var sawID = false
+        for _ in 0..<40 {
+            let items = try await service.timeline(roomID: roomID, session: session)
+            let matchingItems = items.filter { item in
+                let senderMatches = item.sender.lowercased() == expectedSenderKey
+                let idMatches = item.id == messageID
+                sawID = sawID || idMatches
+                return !item.isLocalEcho && senderMatches && idMatches && item.attachment != nil
+            }
+
+            for item in matchingItems {
+                guard let attachment = item.attachment else {
+                    continue
+                }
+
+                do {
+                    let download = try await service.downloadAttachment(attachment, session: session)
+                    guard download.data == expectedUpload.data,
+                          download.mimeType == Optional(expectedUpload.mimeType),
+                          download.isImage == expectedUpload.isImage else {
+                        status("\(statusPrefix) failed attachment_mismatch role=\(role) id=\(messageID)")
+                        return false
+                    }
+
+                    status(
+                        "\(statusPrefix) download ok role=\(role) id=\(messageID) bytes=\(download.data.count) image=\(download.isImage)"
+                    )
+                    return true
+                } catch {
+                    try? await Task.sleep(for: .milliseconds(500))
+                }
+            }
+
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+
+        if sawID {
+            status("\(statusPrefix) failed attachment_download_unavailable role=\(role) id=\(messageID)")
+        }
+        return false
     }
 
     private static func waitForGroupMessage(
@@ -792,6 +1257,19 @@ enum XMPPLiveSmokeRunner {
             status("group-e2ee failed receive_mismatch role=\(role) id=\(messageID)")
         }
         return false
+    }
+
+    private static func smokeImageAttachment() throws -> TrixAttachmentUpload {
+        let base64PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+        guard let data = Data(base64Encoded: base64PNG) else {
+            throw TrixClientError.attachmentTransferFailed
+        }
+
+        return TrixAttachmentUpload(
+            filename: "trix-smoke-image.png",
+            mimeType: "image/png",
+            data: data
+        )
     }
 
     private static func waitForDeliveredState(
@@ -855,6 +1333,23 @@ enum XMPPLiveSmokeRunner {
         default:
             return "unexpected_error"
         }
+    }
+
+    private static func timelineDiagnosticsSummary(_ diagnostics: XMPPTimelineDiagnostics) -> String {
+        [
+            "mam=\(diagnostics.mamQuerySucceeded ? "ok" : "failed")",
+            "raw=\(diagnostics.mamRawCount)",
+            "filtered=\(diagnostics.mamFilteredCount)",
+            "encrypted=\(diagnostics.mamEncryptedCount)",
+            "decoded=\(diagnostics.mamDecodedCount)",
+            "local_keys=\(diagnostics.mamLocalKeyCount)",
+            "account_from=\(diagnostics.mamAccountSenderCount)",
+            "account_missing_local_key=\(diagnostics.mamAccountSenderMissingLocalKeyCount)",
+            "peer_from=\(diagnostics.mamPeerSenderCount)",
+            "cache_loaded=\(diagnostics.localCacheLoadedCount)",
+            "cached=\(diagnostics.cachedCount)",
+            "fallback=\(diagnostics.usedUnfilteredFallback)",
+        ].joined(separator: " ")
     }
 
     private static func status(_ message: String) {

@@ -27,8 +27,12 @@ is disabled, registration is closed by default, and no secrets are committed.
 - `.env.example`: non-secret local overrides for image tags and bind addresses.
 - `scripts/local-smoke.sh`: bounded local ejabberd start plus STARTTLS/SASL
   login smoke with generated disposable credentials.
-- `scripts/operator-api-smoke.sh`: localhost `mod_http_api` status,
-  register, and unregister smoke with generated disposable credentials.
+- `scripts/operator-control.sh`: local operator commands for provision,
+  reset-password, disable, directory search, and archive/upload/push health over
+  the loopback `mod_http_api` backend.
+- `scripts/operator-api-smoke.sh`: localhost `mod_http_api` provision,
+  reset-password, directory search, health, disable, and cleanup smoke with
+  generated disposable credentials.
 - `scripts/restore-verify.sh`: fresh-instance restore verifier using
   ejabberd-native Mnesia backup/restore for account state plus a compose-scoped
   upload-volume archive.
@@ -187,6 +191,23 @@ Trix still needs a small authenticated and audited operator wrapper before any
 non-local caller can create users, reset passwords, change group membership, or
 inspect diagnostics. Do not expose `5280` publicly.
 
+The checked-in MVP operator wrapper is intentionally a local script:
+
+```bash
+cd server/xmpp
+./scripts/operator-control.sh provision-user alice /run/secrets/trix/alice-password
+./scripts/operator-control.sh reset-password alice /run/secrets/trix/alice-new-password
+./scripts/operator-control.sh disable-user alice "left private group"
+./scripts/operator-control.sh search-directory ali
+./scripts/operator-control.sh archive-upload-push-health
+```
+
+`operator-control.sh` refuses non-loopback API URLs unless
+`TRIX_XMPP_OPERATOR_ALLOW_NON_LOOPBACK=1` is set for an explicit private
+maintenance session. Passwords are read from files and are never printed.
+Disable uses ejabberd `ban_account`, which blocks login and kicks current
+sessions without deleting the account's roster/vCard/archive state.
+
 ## Deployment Notes
 
 1. Copy `.env.example` to `.env`.
@@ -232,6 +253,35 @@ Do not commit the `.p8` key or related credentials. The XEP-0114 component port
 through Compose. `iNPUTmice/up` was reviewed as a possible component reference,
 but it is a UnifiedPush provider for XMPP distributors and does not implement
 APNs provider delivery or the Martin/Tigase registration flow Trix uses.
+
+Production status on 2026-05-10: the XMPP deploy at `trix.selfhost.ru` runs
+`ejabberd` plus `trix-push-gateway`. The gateway was built from a minimal Rust
+source context under `/opt/trix-build`, uses deployment-local APNs token-auth
+material mounted from `/opt/trix-xmpp/certs/apns`, rejects checked-in default
+secrets, exposes HTTP health only on `127.0.0.1:8090`, and connects to ejabberd
+as the private XEP-0114 component `push.trix.selfhost.ru`. External checks keep
+`5222` reachable while `5269`, `5347`, and `8090` are not reachable from the
+internet. Do not mark APNs delivery complete until a signed-device wake-only
+smoke passes without alert, body, filename, media-key, or decrypted-content
+payload fields.
+
+To verify a legacy `trixd` env file or process without printing values:
+
+```bash
+server/xmpp/scripts/push-gateway-apns-presence.sh /path/to/trixd.env
+server/xmpp/scripts/push-gateway-apns-presence.sh --pid <trixd-pid>
+```
+
+The checker prints only `present`, `missing`, `complete`, and key-file
+readability status. It does not print APNs team IDs, key IDs, topics, private
+key contents, or key paths. Once the source reports `apns_config=complete`, copy
+or mount the `.p8` into the XMPP deployment, set matching `TRIX_APNS_*` values
+for `trix-push-gateway`, set fresh `TRIX_PUSH_GATEWAY_TOKEN` and
+`TRIX_XMPP_PUSH_COMPONENT_SECRET`, then start:
+
+```bash
+podman compose --profile push-gateway up -d ejabberd push-gateway
+```
 
 ## Backup
 

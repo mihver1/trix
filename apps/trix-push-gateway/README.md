@@ -55,7 +55,9 @@ cargo run -p trix-push-gateway
 
 The component secret must match ejabberd's `ejabberd_service` password for
 `push.trix.selfhost.ru`. Keep that listener private to the host or Docker
-network.
+network. The gateway refuses empty, placeholder, and checked-in
+`dev-local-*-change-me` gateway/component secrets; production must provide
+deployment-local values through the environment or host secret files.
 
 Health:
 
@@ -76,3 +78,12 @@ Wake request shape:
 ```
 
 Callers must send `Authorization: Bearer <TRIX_PUSH_GATEWAY_TOKEN>`.
+
+## Deployment Status
+
+The 2026-05-10 XMPP deploy runs this gateway on the VPS. The container loads
+deployment-local APNs token-auth settings from `/opt/trix-xmpp/.env`, mounts the
+APNs `.p8` key read-only from `/opt/trix-xmpp/certs/apns`, keeps the HTTP health
+endpoint on `127.0.0.1:8090`, and connects to ejabberd as
+`push.trix.selfhost.ru`. APNs smoke remains open until a signed iOS or macOS
+device confirms a wake-only background push with no plaintext payload fields.

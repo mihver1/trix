@@ -370,7 +370,16 @@ private struct TrixMacRoomContextView: View {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(items) { item in
                     if let attachment = item.attachment {
-                        TrixMacSharedMediaRow(item: item, attachment: attachment)
+                        TrixMacSharedMediaRow(
+                            item: item,
+                            attachment: attachment,
+                            isDownloading: timelineViewModel.downloadingAttachmentID == item.id,
+                            open: {
+                                Task {
+                                    await model.downloadAttachment(for: item)
+                                }
+                            }
+                        )
                     }
                 }
             }
@@ -713,6 +722,8 @@ private struct TrixMacParticipantRow<Action: View>: View {
 private struct TrixMacSharedMediaRow: View {
     let item: TrixTimelineItem
     let attachment: TrixTimelineAttachment
+    let isDownloading: Bool
+    let open: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
@@ -732,6 +743,23 @@ private struct TrixMacSharedMediaRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
+
+            Spacer(minLength: 8)
+
+            Button {
+                open()
+            } label: {
+                if isDownloading {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.down.circle")
+                }
+            }
+            .buttonStyle(.borderless)
+            .disabled(isDownloading || !attachment.isDownloadable)
+            .help(attachment.isDownloadable ? "Download and preview attachment" : "Attachment is not available for download")
+            .accessibilityLabel("Download and preview \(attachment.filename)")
         }
         .padding(.vertical, 3)
     }
@@ -999,6 +1027,11 @@ struct TrixMacSettingsView: View {
                     cancel: {
                         Task {
                             await model.cancelDeviceVerification()
+                        }
+                    },
+                    trustAccountDevice: { device in
+                        Task {
+                            await model.trustAccountDevice(device)
                         }
                     },
                     setUpRecovery: {

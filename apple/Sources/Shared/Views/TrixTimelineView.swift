@@ -741,7 +741,7 @@ private struct TrixAttachmentRow: View {
                         ProgressView()
                             .tint(isOutgoing ? .white : TrixDesign.accent)
                     } else {
-                        Image(systemName: attachment.isImage ? "photo" : "doc")
+                        Image(systemName: attachment.isImage ? "photo.on.rectangle.angled" : "doc.fill")
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(isOutgoing ? .white : TrixDesign.accent)
                     }
@@ -759,6 +759,11 @@ private struct TrixAttachmentRow: View {
                         .font(.caption)
                         .foregroundStyle(isOutgoing ? .white.opacity(0.82) : .secondary)
                 }
+
+                Label("Encrypted attachment", systemImage: "lock.fill")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(isOutgoing ? .white.opacity(0.82) : .secondary)
+                    .lineLimit(1)
             }
 
             Spacer()
@@ -766,15 +771,31 @@ private struct TrixAttachmentRow: View {
             Button {
                 download()
             } label: {
-                Image(systemName: isDownloading ? "hourglass" : "arrow.down.circle.fill")
+                Image(systemName: attachmentButtonImage)
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(isOutgoing ? .white : TrixDesign.accent)
             }
             .buttonStyle(.borderless)
             .disabled(isDownloading || !attachment.isDownloadable)
-            .help("Download attachment")
-            .accessibilityLabel("Download attachment")
+            .help(attachmentButtonHelp)
+            .accessibilityLabel(attachmentButtonHelp)
         }
+    }
+
+    private var attachmentButtonImage: String {
+        if isDownloading {
+            return "hourglass"
+        }
+
+        return attachment.isImage ? "eye.circle.fill" : "arrow.down.circle.fill"
+    }
+
+    private var attachmentButtonHelp: String {
+        if attachment.isImage {
+            return "Download and preview encrypted image"
+        }
+
+        return "Download encrypted attachment"
     }
 }
 

@@ -316,7 +316,15 @@ struct TrixPeerDeviceIdentity: Identifiable, Equatable, Sendable {
         isActive && trustState.allowsEncryptedSend
     }
 
+    var hasFingerprint: Bool {
+        !fingerprint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var shortFingerprint: String {
+        guard hasFingerprint else {
+            return "Fingerprint unavailable"
+        }
+
         guard fingerprint.count > 19 else {
             return fingerprint
         }
@@ -990,6 +998,19 @@ enum TrixPushRegistrationBlocker: String, Codable, Equatable, Sendable {
     case waitingForSession
     case pushGatewayUnavailable
     case registrationFailed
+
+    var label: String {
+        switch self {
+        case .waitingForAPNsToken:
+            return "Waiting for APNs token"
+        case .waitingForSession:
+            return "Waiting for session"
+        case .pushGatewayUnavailable:
+            return "Push gateway unavailable"
+        case .registrationFailed:
+            return "Registration failed"
+        }
+    }
 }
 
 struct TrixRemoteNotificationPayload: Equatable, Sendable {

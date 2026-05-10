@@ -25,10 +25,13 @@ Tigase Martin is the first spike candidate. It is the most coherent Swift-native
 XMPP stack found so far, and it advertises iOS and macOS support plus XMPP
 features such as MUC, MAM, push, HTTP upload, and OMEMO through MartinOMEMO.
 
-Gate: license review. Martin is AGPL with other licensing available, and
-MartinOMEMO/libsignal paths have GPL licensing. For a non-commercial private app
-this may be acceptable, but the repo owner still needs to explicitly accept the
-obligations before shipping.
+Decision: accepted for the current non-commercial private MVP/TestFlight
+validation path. The pinned stack and license evidence are recorded in
+`license-sbom.md`: Martin `3.2.4` and tigase-logging.swift `1.0.0` are treated
+as AGPL-3.0 dependencies, while MartinOMEMO `2.2.3` and Tigase libsignal
+`1.0.0` are treated as GPL-3.0 dependencies. Distribution outside the trusted
+private group still needs source/license handling or a commercial/permissive
+license path.
 
 ### XMPPFramework
 
@@ -52,7 +55,9 @@ license review.
 
 ## Technical Blockers
 
-- OMEMO licensing obligations must be consciously accepted before implementation.
+- OMEMO licensing obligations are accepted for the current private
+  non-commercial validation path; broader distribution still requires
+  source/license handling or legal review.
 - XEP-0384 is still experimental, and current spec namespace behavior may differ
   from older deployed ecosystem behavior.
 - Group OMEMO requires non-anonymous, preferably members-only MUC rooms and real
@@ -61,11 +66,11 @@ license review.
   fingerprint state and must not silently trust all devices.
 - The first MartinOMEMO integration now has persistent local OMEMO state,
   CryptoKit AES-GCM, DM device fingerprint display, manual trust, and encrypted
-  DM text send after trust. Live two-account send/receive validation is still
-  pending.
-- MartinOMEMO `2.2.3` appears to have a sender-key callback `user_data` wiring
-  issue in local inspection; group OMEMO needs an upstream fix, local patch, or
-  alternate validated path before it can be treated as viable.
+  DM text send after trust. The MVP checklist records live two-account
+  send/receive validation.
+- Group OMEMO text send/receive has passed a three-account live smoke. Broader
+  group history, removal, and second-device behavior remain separate validation
+  items.
 - MAM can replay encrypted stanzas, but offline catch-up still depends on OMEMO
   prekey/session behavior.
 - HTTP upload URLs are bearer-style; encrypted media requires client-side media
@@ -95,13 +100,14 @@ license review.
     plaintext message bodies.
 11. Interop-test with Monal and at least one non-Apple OMEMO client before
     claiming XMPP ecosystem compatibility.
-12. Produce an SBOM and license report before implementation approval.
+12. Keep the SBOM/license record current before distribution.
 
 ## Decision
 
 Continue Apple XMPP implementation only in fail-closed slices: no plaintext
 fallback, no silent device trust, and no custom crypto. For the current
-non-commercial friends app, Tigase Martin plus MartinOMEMO remains the first
-spike path, but license obligations and group OMEMO smoke tests must be closed
-before launch readiness. If no acceptable group OMEMO path exists, the XMPP pivot
-is blocked because mandatory E2EE in groups is a hard product requirement.
+non-commercial friends app, Tigase Martin plus MartinOMEMO is the accepted MVP
+path with GPL/AGPL obligations documented in `license-sbom.md`. Launch readiness
+still depends on the remaining live smoke, device-management, recovery, APNs,
+attachment, restart-history, and broader multi-device validation items tracked
+in `docs/mvp-checklist.md`.

@@ -23,7 +23,8 @@ RUN apt-get update \
 
 WORKDIR /srv/trix
 COPY --from=builder /app/target/release/${TRIX_BIN} /usr/local/bin/trix-service
-RUN mkdir -p /var/lib/trix/blobs && chown -R trix:trix /var/lib/trix
+RUN mkdir -p /var/lib/trix/blobs /var/lib/trix-push-gateway \
+    && chown -R trix:trix /var/lib/trix /var/lib/trix-push-gateway
 
 USER trix
 

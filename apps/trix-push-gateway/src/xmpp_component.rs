@@ -67,9 +67,8 @@ async fn run_once(
             anyhow::bail!("XMPP component stream closed before handshake");
         }
         buffer.push_str(&String::from_utf8_lossy(&scratch[..read]));
-        if let Some(end) = buffer.find('>') {
-            let stream_open = buffer[..=end].to_owned();
-            buffer = buffer[end + 1..].to_owned();
+        if let Some((stream_open, remaining)) = take_stream_open(&buffer) {
+            buffer = remaining;
             break extract_attr(&stream_open, "id").context("missing XMPP component stream id")?;
         }
     };
@@ -450,6 +449,12 @@ fn take_stanza(buffer: &mut String) -> Option<String> {
     Some(stanza)
 }
 
+fn take_stream_open(buffer: &str) -> Option<(String, String)> {
+    let start = buffer.find("<stream:stream")?;
+    let end = buffer[start..].find('>')? + start;
+    Some((buffer[start..=end].to_owned(), buffer[end + 1..].to_owned()))
+}
+
 fn extract_attr(xml: &str, name: &str) -> Option<String> {
     for quote in ['"', '\''] {
         let needle = format!("{name}={quote}");
@@ -525,5 +530,15 @@ mod tests {
             parsed.kind,
             IqKind::PubSubPublish { ref node } if node == "trix-push/abcdef"
         ));
+    }
+
+    #[test]
+    fn extracts_stream_open_after_xml_declaration() {
+        let xml = "<?xml version='1.0'?><stream:stream id='abc123' xmlns:stream='http://etherx.jabber.org/streams' xmlns='jabber:component:accept'><handshake/>";
+
+        let (open, remaining) = take_stream_open(xml).expect("stream open");
+
+        assert_eq!(extract_attr(&open, "id").as_deref(), Some("abc123"));
+        assert_eq!(remaining, "<handshake/>");
     }
 }

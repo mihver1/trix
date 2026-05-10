@@ -12,7 +12,9 @@ struct XMPPTimelineDiagnostics: Sendable {
     let mamDecodedCount: Int
     let mamLocalKeyCount: Int
     let mamAccountSenderCount: Int
+    let mamAccountSenderMissingLocalKeyCount: Int
     let mamPeerSenderCount: Int
+    let localCacheLoadedCount: Int
     let cachedCount: Int
     let usedUnfilteredFallback: Bool
 }
@@ -180,6 +182,7 @@ actor XMPPMartinService: TrixService {
         let encryptedCount: Int
         let localKeyCount: Int
         let accountSenderCount: Int
+        let accountSenderMissingLocalKeyCount: Int
         let peerSenderCount: Int
         let usedUnfilteredFallback: Bool
     }
@@ -657,7 +660,7 @@ actor XMPPMartinService: TrixService {
         let connection = try await ensureConnection(for: session)
         let peerJID = try Self.normalizedRoomID(roomID)
         let accountJID = try Self.normalizedXMPPJID(session.userID)
-        loadCachedTimelineItems(accountJID: accountJID, roomID: peerJID)
+        let localCacheLoadedCount = loadCachedTimelineItems(accountJID: accountJID, roomID: peerJID)
         if Self.isMUCJID(peerJID) {
             _ = try? await joinedGroupRoom(roomID: peerJID, session: session, connection: connection)
         } else {
@@ -675,7 +678,9 @@ actor XMPPMartinService: TrixService {
                         mamDecodedCount: archive.items.count,
                         mamLocalKeyCount: archive.localKeyCount,
                         mamAccountSenderCount: archive.accountSenderCount,
+                        mamAccountSenderMissingLocalKeyCount: archive.accountSenderMissingLocalKeyCount,
                         mamPeerSenderCount: archive.peerSenderCount,
+                        localCacheLoadedCount: localCacheLoadedCount,
                         cachedCount: timelineItems(accountJID: accountJID, roomID: peerJID).count,
                         usedUnfilteredFallback: archive.usedUnfilteredFallback
                     ),
@@ -693,7 +698,9 @@ actor XMPPMartinService: TrixService {
                         mamDecodedCount: 0,
                         mamLocalKeyCount: 0,
                         mamAccountSenderCount: 0,
+                        mamAccountSenderMissingLocalKeyCount: 0,
                         mamPeerSenderCount: 0,
+                        localCacheLoadedCount: localCacheLoadedCount,
                         cachedCount: timelineItems(accountJID: accountJID, roomID: peerJID).count,
                         usedUnfilteredFallback: false
                     ),
@@ -707,7 +714,7 @@ actor XMPPMartinService: TrixService {
     }
 
     func timelineDiagnostics(roomID: String, session: TrixSession) async throws -> XMPPTimelineDiagnostics? {
-        let peerJID = try Self.normalizedXMPPJID(roomID)
+        let peerJID = try Self.normalizedRoomID(roomID)
         let accountJID = try Self.normalizedXMPPJID(session.userID)
         return timelineDiagnostics[accountJID.lowercased()]?[peerJID.lowercased()]
     }
@@ -1512,6 +1519,7 @@ actor XMPPMartinService: TrixService {
         var encryptedCount = 0
         var localKeyCount = 0
         var accountSenderCount = 0
+        var accountSenderMissingLocalKeyCount = 0
         var peerSenderCount = 0
         let localDeviceID = String(connection.omemoStack.store.localRegistrationId())
         let accountKey = accountJID.lowercased()
@@ -1520,12 +1528,16 @@ actor XMPPMartinService: TrixService {
             if archived.message.firstChild(name: "encrypted", xmlns: OMEMOModule.XMLNS) != nil {
                 encryptedCount += 1
             }
-            if Self.messageHasRecipientKey(archived.message, recipientDeviceID: localDeviceID) {
+            let hasLocalKey = Self.messageHasRecipientKey(archived.message, recipientDeviceID: localDeviceID)
+            if hasLocalKey {
                 localKeyCount += 1
             }
             switch archived.message.from?.bareJid.stringValue.lowercased() {
             case accountKey:
                 accountSenderCount += 1
+                if !hasLocalKey {
+                    accountSenderMissingLocalKeyCount += 1
+                }
             case peerKey:
                 peerSenderCount += 1
             default:
@@ -1550,6 +1562,7 @@ actor XMPPMartinService: TrixService {
             encryptedCount: encryptedCount,
             localKeyCount: localKeyCount,
             accountSenderCount: accountSenderCount,
+            accountSenderMissingLocalKeyCount: accountSenderMissingLocalKeyCount,
             peerSenderCount: peerSenderCount,
             usedUnfilteredFallback: usedUnfilteredFallback
         )
@@ -2024,18 +2037,20 @@ actor XMPPMartinService: TrixService {
         timelineHistory[accountJID.lowercased()]?[roomID.lowercased()] ?? []
     }
 
-    private func loadCachedTimelineItems(accountJID: String, roomID: String) {
+    @discardableResult
+    private func loadCachedTimelineItems(accountJID: String, roomID: String) -> Int {
         let accountKey = accountJID.lowercased()
         let roomKey = roomID.lowercased()
         guard timelineHistory[accountKey]?[roomKey] == nil,
               let cachedItems = try? timelineCacheStore.load(accountJID: accountJID, roomID: roomID),
               !cachedItems.isEmpty else {
-            return
+            return 0
         }
 
         var accountHistory = timelineHistory[accountKey] ?? [:]
         accountHistory[roomKey] = cachedItems
         timelineHistory[accountKey] = accountHistory
+        return cachedItems.count
     }
 
     private func storeTimelineDiagnostics(_ diagnostics: XMPPTimelineDiagnostics, accountJID: String, roomID: String) {
@@ -2047,22 +2062,13 @@ actor XMPPMartinService: TrixService {
     }
 
     private func encodeOMEMOMessage(_ message: Message, peerJID: String, connection: Connection) async throws -> Message {
-        await ensureOwnOMEMOSession(connection: connection)
-        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Message, Error>) in
-            connection.omemoStack.module.encode(message: message, for: [BareJID(peerJID)]) { result in
-                switch result {
-                case .successMessage(let encryptedMessage, _):
-                    continuation.resume(returning: encryptedMessage)
-                case .failure:
-                    continuation.resume(throwing: TrixClientError.omemoEncryptionFailed)
-                }
-            }
-        }
+        return try await encodeOMEMOMessage(message, recipientJIDs: [peerJID], connection: connection)
     }
 
     private func encodeOMEMOMessage(_ message: Message, recipientJIDs: [String], connection: Connection) async throws -> Message {
         await ensureOwnOMEMOSession(connection: connection)
-        let recipients = recipientJIDs.map(BareJID.init)
+        let accountJID = connection.client.connectionConfiguration.userJid.stringValue
+        let recipients = Self.uniqueRecipientJIDs(recipientJIDs + [accountJID]).map(BareJID.init)
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Message, Error>) in
             connection.omemoStack.module.encode(message: message, for: recipients) { result in
                 switch result {
@@ -2933,6 +2939,21 @@ actor XMPPMartinService: TrixService {
             invitees.append(normalized)
         }
         return invitees
+    }
+
+    private static func uniqueRecipientJIDs(_ recipientJIDs: [String]) -> [String] {
+        var seen = Set<String>()
+        var recipients: [String] = []
+        for recipientJID in recipientJIDs {
+            let normalized = recipientJID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalized.isEmpty,
+                  seen.insert(normalized).inserted else {
+                continue
+            }
+
+            recipients.append(normalized)
+        }
+        return recipients
     }
 
     private static func groupRoomLocalpart(from name: String) -> String {

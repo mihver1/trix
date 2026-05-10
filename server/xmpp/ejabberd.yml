@@ -43,10 +43,10 @@ listen:
     module: ejabberd_service
     check_from: true
     global_routes: false
-    shaper_rule: fast
+    shaper: fast
     max_stanza_size: 65536
     hosts:
-      "push.@HOST@":
+      "push.trix.selfhost.ru":
         password: PUSH_COMPONENT_SECRET
 
 # No ejabberd_s2s_in listener is configured, and outgoing S2S is denied.

@@ -70,6 +70,7 @@ struct TrixDeviceVerificationStatusView: View {
     let approve: () -> Void
     let decline: () -> Void
     let cancel: () -> Void
+    let trustAccountDevice: (TrixPeerDeviceIdentity) -> Void
     let setUpRecovery: () -> Void
     let confirmRecoveryKey: () -> Void
     let dismissRecoveryKey: () -> Void
@@ -96,7 +97,7 @@ struct TrixDeviceVerificationStatusView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 LabeledContent("Current device", value: status.deviceID)
-                LabeledContent("Other device", value: status.deviceAvailabilityLabel)
+                LabeledContent("Other device", value: otherDeviceAvailabilityLabel(for: status))
                 LabeledContent("Recovery", value: status.recoveryState.label)
                 LabeledContent("Key backup", value: status.backupState.label)
                 LabeledContent("Remote backup", value: status.backupAvailabilityLabel)
@@ -129,6 +130,13 @@ struct TrixDeviceVerificationStatusView: View {
                     }
                 }
 
+                TrixAccountDeviceManagementView(
+                    devices: viewModel.accountDevices,
+                    refreshMessage: viewModel.accountDeviceRefreshMessage,
+                    actionInFlight: viewModel.actionInFlight,
+                    trust: trustAccountDevice
+                )
+
                 if viewModel.isLoading {
                     HStack(spacing: 8) {
                         ProgressView()
@@ -148,6 +156,7 @@ struct TrixDeviceVerificationStatusView: View {
             }
             actionButtons
             recoveryControls
+            recoveryAndReinstallLimitations
 
             if let errorMessage = viewModel.errorMessage {
                 Text(errorMessage)
@@ -186,6 +195,18 @@ struct TrixDeviceVerificationStatusView: View {
         }
 
         return "\(key.prefix(8))...\(key.suffix(8))"
+    }
+
+    private func otherDeviceAvailabilityLabel(for status: TrixDeviceVerificationStatus) -> String {
+        let activeOtherDeviceCount = viewModel.accountDevices.filter { device in
+            !device.isLocalDevice && device.isActive
+        }.count
+
+        guard activeOtherDeviceCount > 0 else {
+            return status.deviceAvailabilityLabel
+        }
+
+        return activeOtherDeviceCount == 1 ? "1 active account device" : "\(activeOtherDeviceCount) active account devices"
     }
 
     @ViewBuilder
@@ -367,6 +388,119 @@ struct TrixDeviceVerificationStatusView: View {
     private func actionLabel(_ title: String, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
             .lineLimit(1)
+    }
+
+    private var recoveryAndReinstallLimitations: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Recovery and reinstall", systemImage: "externaldrive.badge.exclamationmark")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Server-side OMEMO key recovery is not wired in this client slice. Deleting the app or resetting Keychain creates a new OMEMO device; old encrypted history that was not encrypted for this device can remain unavailable. Trust replacement devices only after comparing fingerprints from an existing trusted session.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 2)
+    }
+}
+
+private struct TrixAccountDeviceManagementView: View {
+    let devices: [TrixPeerDeviceIdentity]
+    let refreshMessage: String?
+    let actionInFlight: TrixDeviceVerificationAction?
+    let trust: (TrixPeerDeviceIdentity) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Account OMEMO Devices", systemImage: "macbook.and.iphone")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Published devices for this account are shown for fingerprint comparison. Trix does not trust new devices automatically.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let refreshMessage {
+                Label {
+                    Text(refreshMessage)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle")
+                }
+                .font(.callout)
+                .foregroundStyle(.orange)
+            }
+
+            if devices.isEmpty {
+                Text("No OMEMO device identities are available yet.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(devices) { device in
+                        accountDeviceRow(device)
+                    }
+                }
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    private func accountDeviceRow(_ device: TrixPeerDeviceIdentity) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Label(device.isLocalDevice ? "Current Device" : "Account Device", systemImage: deviceIcon(for: device))
+                    .font(.callout.weight(.semibold))
+
+                Spacer(minLength: 8)
+
+                Text(device.trustState.label)
+                    .font(.caption)
+                    .foregroundStyle(device.canSendEncrypted || device.isLocalDevice ? .green : .orange)
+            }
+
+            LabeledContent("Device ID", value: device.deviceID)
+
+            LabeledContent {
+                Text(device.shortFingerprint)
+                    .font(.caption.monospaced())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .foregroundStyle(device.hasFingerprint ? .primary : .secondary)
+            } label: {
+                Text("Fingerprint")
+            }
+
+            Text(device.isActive ? "Published active OMEMO device" : "Inactive OMEMO device")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if canTrust(device) {
+                Button {
+                    trust(device)
+                } label: {
+                    Label("Trust This Device", systemImage: "checkmark.shield")
+                        .lineLimit(1)
+                }
+                .buttonStyle(.bordered)
+                .disabled(actionInFlight != nil)
+                .help("Trust only after comparing the fingerprint on this device with another trusted session.")
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func canTrust(_ device: TrixPeerDeviceIdentity) -> Bool {
+        !device.isLocalDevice && device.isActive && !device.canSendEncrypted
+    }
+
+    private func deviceIcon(for device: TrixPeerDeviceIdentity) -> String {
+        if device.isLocalDevice {
+            return "iphone.and.arrow.forward"
+        }
+
+        return device.canSendEncrypted ? "checkmark.shield" : "exclamationmark.shield"
     }
 }
 

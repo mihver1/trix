@@ -108,17 +108,19 @@ The checked-in Apple app now has fail-closed APNs plumbing:
 - Foreground notification presentation is suppressed for this target; remote
   pushes only wake and refresh local encrypted state.
 
-Current MVP blocker: `server/xmpp` enables ejabberd `mod_push` and
-`trix-push-gateway` now provides the private XEP-0114 component that accepts
+Current MVP blocker: `server/xmpp` enables ejabberd `mod_push` and the checked-in
+`trix-push-gateway` provides the private XEP-0114 component that accepts
 Martin/Tigase APNs token registration, maps XEP-0357 nodes, signs APNs requests,
-and emits the wake-only payload contract above. APNs-backed delivery remains
-blocked until that component is deployed with real APNs credentials and a
-signed-device APNs smoke passes without plaintext payload fields.
+and emits the wake-only payload contract above. On 2026-05-10 the gateway was
+deployed on the VPS with deployment-local APNs token-auth material and connected
+to ejabberd as `push.trix.selfhost.ru`. Keep signed-device APNs smoke open until
+the gateway sends a wake-only payload with no plaintext fields.
 
 Optional live smoke modes are available through `TRIX_XMPP_LIVE_SMOKE_MODE`:
 `login`, `session-restore`, `roster`, `room-list`, `search`, `peer-devices`,
 `trust-peer`, `profile`, `profile-update`, `timeline`, `send-timeline`,
-`delivery-receipt`, `typing`, `blocked-send`, and `group-e2ee`.
+`timeline-restart`, `dm-e2ee`, `dm-attachment`, `delivery-receipt`, `typing`,
+`blocked-send`, `group-e2ee`, and `group-attachment`.
 Provide credentials only through temporary environment variables:
 
 ```bash
@@ -163,7 +165,23 @@ timeline and prints only counts, never message bodies. The `send-timeline` mode
 requires `TRIX_XMPP_LIVE_SMOKE_PEER_ID` and
 `TRIX_XMPP_LIVE_SMOKE_ALLOW_SEND=1`; it sends one generated OMEMO message and
 then reloads the timeline, still printing only IDs plus timeline and
-sent/delivered counts. The `delivery-receipt` mode also requires
+sent/delivered counts. The `timeline-restart` mode also requires
+`TRIX_XMPP_LIVE_SMOKE_PEER_ID`; with `TRIX_XMPP_LIVE_SMOKE_ALLOW_SEND=1` and
+`TRIX_XMPP_LIVE_SMOKE_ALLOW_TRUST=1`, it first sends one generated OMEMO DM,
+then reloads MAM/cache, disconnects the service, restores through a fresh
+service instance, and requires overlapping item IDs after restart. It prints
+only IDs and MAM/cache counts, including whether archived sender stanzas are
+missing a local recipient key. The `dm-e2ee` mode also requires
+`TRIX_XMPP_LIVE_SMOKE_PEER_ID`, `TRIX_XMPP_LIVE_SMOKE_PEER_PASSWORD`,
+`TRIX_XMPP_LIVE_SMOKE_ALLOW_SEND=1`, and, when trust is not already present,
+`TRIX_XMPP_LIVE_SMOKE_ALLOW_TRUST=1`; it keeps the peer online, sends one
+generated OMEMO DM, waits for the peer to decrypt it, and prints only
+IDs/status. The `dm-attachment` mode uses the same credential and trust
+variables, sends one generated image fixture through the encrypted attachment
+path, waits for the peer to download and decrypt it, and prints only
+IDs/status, byte counts, and image booleans. It must not print the decrypted
+content, filename, media key fragment, or download URL. The `delivery-receipt`
+mode also requires
 `TRIX_XMPP_LIVE_SMOKE_PEER_PASSWORD`; it keeps the peer online, sends one
 generated OMEMO message, and waits for a real XMPP delivery receipt without
 printing message text or credentials. The `typing` mode uses the same peer
@@ -175,7 +193,10 @@ and prints only state-transition status. The `group-e2ee` mode requires
 `TRIX_XMPP_LIVE_SMOKE_ALLOW_TRUST=1`; it creates a private MUC, joins all three
 accounts, checks owner/peer/third member-list visibility, explicitly trusts the
 active OMEMO devices, sends one generated group message, and prints only
-IDs/status.
+IDs/status. The `group-attachment` mode uses the same three-account variables,
+validates the MUC member recipient set and trust graph, sends one generated
+encrypted image attachment, waits for peer and third account download/decrypt,
+and prints only IDs/status, byte counts, and image booleans.
 
 From the repository root, the current Apple lanes are:
 
@@ -191,6 +212,13 @@ The old `matrix-*` just lanes remain as temporary compatibility aliases.
 The checked-in Apple code is now the first XMPP client slice:
 
 - shared SwiftUI views for iOS and macOS;
+- iOS-specific Chats and Settings tabs with a dense inbox, prioritized pending
+  invites, visible accept/decline buttons plus iOS swipe actions, unread badges
+  and emphasis, account/sync/push state summaries without token values, chat
+  bubbles, OMEMO-gated composer controls, and encrypted attachment
+  download/preview affordances;
+- macOS-specific three-column workspace with dense room sidebar, selected-room
+  timeline column, and room inspector column;
 - login/session UI;
 - room list and timeline UI;
 - composer and attachment affordances;
@@ -205,23 +233,44 @@ The checked-in Apple code is now the first XMPP client slice:
   key pair, prekeys, signed prekeys, sessions, identities, and sender keys;
 - CryptoKit-backed AES-GCM engine for MartinOMEMO;
 - explicit peer-device inventory, fingerprint display, and manual trust for DMs;
+- Settings-based account device management for the current account: the app
+  refreshes published OMEMO devices through MartinOMEMO, shows device IDs,
+  fingerprints, active/trust state, and allows manual trust of one selected
+  active account device only after fingerprint comparison;
 - OMEMO encrypted DM text send after at least one active contact device is
   trusted;
+- sender-side restart replay for new outbound messages is supported by including
+  the current account's own OMEMO device in the MartinOMEMO recipient set for
+  DM and group sends; older archived stanzas without that local recipient key
+  remain unrecoverable without a reviewed recovery/key-backup path;
 - encrypted DM attachment send/download through MartinOMEMO file encryption and
   XEP-0363 HTTP upload, with image dimensions preserved in the encrypted
-  descriptor;
+  descriptor; on 2026-05-10 the credentialed `dm-attachment` live smoke passed
+  upload, peer download, local decrypt, MIME, byte equality, and image
+  classification without printing decrypted content, filenames, media keys, or
+  secret URLs;
 - encrypted group attachment send through the same local file-encryption and
   HTTP-upload path, gated on a validated MUC member recipient set and trusted
-  active OMEMO devices for every group recipient;
+  active OMEMO devices for every group recipient; `group-attachment` live smoke
+  passed on 2026-05-10 with peer and third-account download/decrypt validation;
 - Martin-backed private MUC creation/join, members-only non-anonymous room
   configuration, persistent pending invite accept/decline after reconnect,
   member list, add-member, and remove-member operations. New Apple-created
   groups grant invited members MUC admin affiliation for the MVP UI, and member
   lists merge live occupants, affiliation results, and a Keychain known-member
   cache;
+- macOS room inspector with contact/group people panels, common chat summaries,
+  metadata, directory-backed member add/remove controls, and shared-media rows
+  that can download encrypted attachments into the decrypted preview flow;
 - OMEMO-gated group text send using MartinOMEMO multi-recipient encode for the
   known MUC member set;
 - existing signing, entitlement, and TestFlight assumptions.
+
+The current Apple XMPP dependency decision is Martin `3.2.4` plus MartinOMEMO
+`2.2.3` and Tigase libsignal `1.0.0`. GPL/AGPL obligations are accepted for the
+private non-commercial MVP/TestFlight path and recorded in
+`docs/xmpp-migration/license-sbom.md`; broader distribution still needs the
+source/license handling documented there.
 
 Plaintext fallback is still blocked. DM text send now goes through MartinOMEMO
 only after manual device trust. DM attachments are encrypted locally before
@@ -231,8 +280,15 @@ unless every known group recipient has a trusted active OMEMO device; live
 three-account group send/receive/decrypt validation passed on 2026-05-09. Group
 attachment send now uses the encrypted attachment path, but the product UI only
 enables the attachment picker after the service validates the MUC recipient set
-and group OMEMO trust state. The Matrix Rust SDK adapter has been removed from
-the new Apple targets.
+and group OMEMO trust state. Credentialed DM and group attachment live-smoke
+runs passed on 2026-05-10 with upload, download, decrypt, MIME/image, and byte
+equality checks. The Matrix Rust SDK adapter has been removed from the new Apple
+targets.
+
+On macOS, downloaded attachments are previewed locally after decrypt and expose
+Open, Share, and Export OS controls. The room inspector's shared-media section
+uses the same service/view-model download path as the timeline; it does not add
+plaintext server access or a separate file-transfer path.
 
 The product session path stores the XMPP login material only in the app Keychain
 record used by `TrixAppModel.start()` for restore. Logging out disconnects the
@@ -241,6 +297,22 @@ room, timeline, and verification state, and leaves local OMEMO identity/trust
 state in Keychain so the client does not silently rotate devices or discard
 trust decisions. Resetting OMEMO state is still a manual app-Keychain reset
 operation, not a normal logout side effect.
+
+Timeline restart behavior uses two layers. `XMPPMartinService.timeline(...)`
+loads the room's Keychain-backed local timeline cache before querying MAM, then
+merges any decryptable encrypted archive items back into the same bounded cache.
+The `timeline-restart` live-smoke mode exercises this through a fresh service
+instance and reports only counts. On 2026-05-10 the credentialed run passed with
+MAM available, local cache loaded after restart, overlapping item IDs, and no
+missing local recipient key for the newly sent sender-side stanza.
+
+The Device Verification And Recovery settings surface is explicit about the
+current recovery limit. This MartinOMEMO slice does not provide a validated
+server-side OMEMO key backup/recovery path, and the app does not implement one
+itself. Reinstalling the app or resetting its Keychain state creates a new OMEMO
+device. Old encrypted history that was not encrypted for that device can remain
+unavailable, and replacement devices must be trusted only after comparing
+fingerprints from an existing trusted session.
 
 ## Target Service Boundary
 
@@ -272,14 +344,18 @@ gates:
 
 1. Confirm the Apple XMPP library path. Current first candidate: Martin
    `3.2.4` plus MartinOMEMO `2.2.3`.
-2. Spike Tigase Martin plus MartinOMEMO first, because this is a non-commercial
-   friends app and GPL/AGPL obligations may be acceptable.
-3. Record the license/SBOM decision before shipping.
-4. Validate encrypted DM receive and live two-account DM send.
+2. Use Tigase Martin plus MartinOMEMO for the private non-commercial MVP path;
+   GPL/AGPL obligations are accepted for that scope in
+   `docs/xmpp-migration/license-sbom.md`.
+3. Keep the license/SBOM record current before broader distribution.
+4. Validate encrypted DM receive and live two-account DM send with `dm-e2ee`.
 5. Validate encrypted group send/receive in a members-only, non-anonymous MUC.
 6. Validate MAM restart/offline history.
-7. Validate encrypted attachment upload/download.
-8. Validate broader device trust UX without silent trust-all.
+7. Validate encrypted attachment upload/download with `dm-attachment` and
+   `group-attachment`; both modes print only scrubbed status lines.
+8. Live-validate the broader device trust UX with a second signed device. The
+   Settings surface and manual per-device trust are wired; live second-device
+   validation is still pending.
 9. Validate APNs push without plaintext payloads.
 
 Group OMEMO evidence from the checked libraries: Martin exposes `MucModule`

@@ -37,14 +37,16 @@ source-distribution and App Store/TestFlight decision.
 
 Mitigation:
 
-- Produce an SBOM and license report before selecting the Apple stack.
-- Record whether GPL/AGPL obligations are acceptable for the non-commercial
-  friends app before implementation.
+- Keep the SBOM/license report in `license-sbom.md` current for the selected
+  Apple stack.
+- GPL/AGPL obligations are accepted for the non-commercial private friends MVP;
+  broader distribution still needs source/license handling or a separate
+  commercial/permissive license path.
 - Do not copy Monal or Tigase OMEMO code into Trix without legal review.
 
 Owner: Product lead and Apple implementation lead.
 
-Status: Open.
+Status: Accepted for private MVP; distribution obligations remain tracked.
 
 ### Group OMEMO Semantics Do Not Match Product Needs
 

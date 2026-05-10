@@ -134,6 +134,14 @@ This control plane should use server-supported APIs, admin commands, or a small
 Trix service. It must not become a second messaging protocol or a parallel
 plaintext chat backend.
 
+For the MVP closeout, the concrete backend is a loopback-only ejabberd
+`mod_http_api` surface wrapped by `server/xmpp/scripts/operator-control.sh`.
+That covers friend account provisioning, password reset, account disable,
+small-directory search, and archive/upload/push health for a single trusted
+operator. A network-facing or multi-operator control plane remains a separate
+authenticated/audited wrapper; exposing ejabberd `5280` directly is out of
+scope.
+
 ## Multidevice Model
 
 A user may have multiple devices. Each device has its own OMEMO identity and

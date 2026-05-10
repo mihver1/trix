@@ -88,7 +88,7 @@ impl GatewayConfig {
             "info,trix_push_gateway=debug,trix_push=debug",
         )?;
         let shared_token = env_required("TRIX_PUSH_GATEWAY_TOKEN")?;
-        if shared_token.trim().is_empty() || shared_token == "replace-me" {
+        if is_insecure_default_secret(&shared_token) {
             anyhow::bail!("TRIX_PUSH_GATEWAY_TOKEN must be a non-default secret");
         }
 
@@ -147,7 +147,7 @@ fn xmpp_component_from_env() -> Result<Option<XmppComponentConfig>> {
     }
 
     let shared_secret = env_required("TRIX_XMPP_COMPONENT_SECRET")?;
-    if shared_secret.trim().is_empty() || shared_secret == "replace-me" {
+    if is_insecure_default_secret(&shared_secret) {
         anyhow::bail!("TRIX_XMPP_COMPONENT_SECRET must be a non-default secret");
     }
 
@@ -307,4 +307,31 @@ fn env_truthy_value(value: &str) -> bool {
         value.trim().to_ascii_lowercase().as_str(),
         "1" | "true" | "yes" | "on"
     )
+}
+
+fn is_insecure_default_secret(value: &str) -> bool {
+    matches!(
+        value.trim(),
+        "" | "replace-me"
+            | "dev-local-push-gateway-token-change-me"
+            | "dev-local-push-component-secret-change-me"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_placeholder_and_compose_default_secrets() {
+        assert!(is_insecure_default_secret(""));
+        assert!(is_insecure_default_secret("replace-me"));
+        assert!(is_insecure_default_secret(
+            "dev-local-push-gateway-token-change-me"
+        ));
+        assert!(is_insecure_default_secret(
+            "dev-local-push-component-secret-change-me"
+        ));
+        assert!(!is_insecure_default_secret("deployment-local-secret"));
+    }
 }

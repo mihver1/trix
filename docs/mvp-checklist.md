@@ -16,20 +16,37 @@ checklist, not by copying legacy implementation details.
 - [x] DM timeline, group timeline, and text composer.
 - [x] Mandatory OMEMO DM creation and text send/receive.
 - [x] Mandatory OMEMO group creation and text send/receive.
-- [ ] Attachment send/download with encrypted media and in-app image preview
+- [x] Attachment send/download with encrypted media and in-app image preview
       is implemented in the Apple XMPP service for DMs and group MUCs; group
       sends remain gated on a validated MUC member recipient set plus trusted
-      active OMEMO devices for every recipient. Keep open until live validation
-      is complete.
-- [ ] iOS product-parity pass: Chats/Settings tabs, dense inbox, visible invite
+      active OMEMO devices for every recipient. On 2026-05-10 credentialed
+      `dm-attachment` and `group-attachment` live-smoke modes passed upload,
+      peer download, local decrypt, MIME/image flag, and byte equality checks
+      without printing decrypted content, filenames, media keys, or URLs.
+- [x] iOS product-parity pass: Chats/Settings tabs, dense inbox, visible invite
       actions, account state, chat bubbles, composer, and attachment download
-      affordances aligned with the legacy Trix client.
-- [ ] macOS product-parity pass: multi-column workspace, room inspector, member
-      management, and attachment open/share/export flow.
+      affordances are wired in SwiftUI. The iOS inbox prioritizes pending
+      invites, shows unread/account/push state without token values, keeps
+      OMEMO lock/trust visibility in chat headers and composer blockers, and
+      exposes encrypted attachment download/preview affordances.
+- [x] macOS product-parity pass: multi-column workspace, room inspector, member
+      management, and attachment open/share/export flow. The macOS app uses a
+      three-column `NavigationSplitView`, inspector-side people/common-chat/media
+      panels, directory-backed group add/remove controls, and shared-media rows
+      that download encrypted attachments into the same decrypted preview sheet
+      used by the timeline. The preview exposes OS Open, Share, and Export
+      controls after local decrypt; live server round-trip validation remains
+      tracked by the attachment validation item above.
 - [x] Live-validate E2EE group send/receive with at least three accounts.
       `group-e2ee` macOS live smoke passed on 2026-05-09 with `test`, `friend`,
       and `admin` accounts.
-- [ ] Timeline refresh after app restart through MAM and local cache.
+- [x] Timeline refresh after app restart through MAM and local cache. The
+      scrubbed macOS `timeline-restart` live-smoke mode is wired: it can
+      optionally send one OMEMO DM, reload MAM/cache, create a fresh service
+      instance, restore the session, and require overlapping item IDs after
+      restart. On 2026-05-10 the credentialed run passed with
+      `mam=ok`, `cache_loaded=1`, `overlap=1`, and no missing local recipient
+      key for the newly sent sender-side stanza.
 - [ ] Unread/read decorations.
 - [x] Delivery decorations.
 - [x] Typing indicators.
@@ -38,13 +55,18 @@ checklist, not by copying legacy implementation details.
 - [ ] APNs-backed notifications without plaintext payloads. Apple token capture,
       XMPP push-component registration plumbing, and wake-only payload handling
       are wired. `trix-push-gateway` now includes the APNs sender plus XEP-0114
-      component/store for Martin/XEP-0357 registration nodes. Delivery remains
-      blocked until deployment with real APNs credentials passes signed-device
-      smoke without exposing plaintext payloads.
+      component/store for Martin/XEP-0357 registration nodes. On 2026-05-10 the
+      gateway was deployed on the VPS with deployment-local APNs token-auth
+      material, bound its HTTP health endpoint to localhost only, and connected
+      to ejabberd as `push.trix.selfhost.ru`. Keep this open until signed-device
+      APNs smoke confirms wake-only delivery with no plaintext fields.
 - [x] Trix user directory search for new DM/group creation and add-member flows.
 - [x] Basic XMPP vCard-backed profile view/edit surface for display name, bio,
       status, and website.
-- [ ] Device trust and broader device-management surfaces.
+- [x] Device trust and broader device-management surfaces. Apple Settings now
+      shows the current OMEMO device, published account devices discovered
+      through MartinOMEMO, fingerprints, active/trust state, and a manual
+      per-device trust action. It does not silently trust new devices.
 - [x] Repeatable local archive/TestFlight script path for the new XMPP Apple
       app targets.
 
@@ -64,7 +86,10 @@ checklist, not by copying legacy implementation details.
 - [x] Enable HTTP file sharing/upload for encrypted attachments.
 - [x] Disable public registration.
 - [x] Create disposable local test users.
-- [ ] Create the friend group accounts through an operator-controlled flow.
+- [x] Create the friend group accounts through an operator-controlled flow:
+      `server/xmpp/scripts/operator-control.sh provision-user` reads passwords
+      from local files, calls only the loopback `mod_http_api`, and prints no
+      password material.
 - [x] Back up server state.
 - [x] Back up uploaded encrypted media or confirm media is intentionally
       disposable.
@@ -112,8 +137,12 @@ checklist, not by copying legacy implementation details.
 - [x] Open a group room through the service layer.
 - [x] Wire DM text send through MartinOMEMO only after explicit peer-device
       trust.
-- [x] Live-validate DM text send between two accounts.
-- [x] Receive and decrypt an OMEMO DM message.
+- [x] Live-validate DM text send/receive between two accounts. The scrubbed
+      `dm-e2ee` live-smoke mode is wired and checks peer decrypt without
+      printing message body or credentials. On 2026-05-10 the credentialed
+      `test` to `friend` run passed with peer decrypt confirmed.
+- [x] Receive and decrypt an OMEMO DM message through the MartinOMEMO service
+      path.
 - [x] Receive and decrypt an OMEMO group message.
 - [x] Block plaintext send in product DM/group flows.
 - [x] Send a file or image attachment from the SwiftUI timeline composer in
@@ -139,9 +168,13 @@ checklist, not by copying legacy implementation details.
 - [x] Select existing-group add-member users from Trix directory search results.
 - [x] Keep newly decrypted or locally sent DM timeline items visible after app
       restart through the local Keychain-backed timeline cache.
-- [ ] Restore sender-side OMEMO self-history from MAM after restart; encrypted
-      server archives are ciphertext-only and old messages that were not
-      encrypted for the sender's current device cannot be reconstructed.
+- [x] Include the sender's current OMEMO device in new DM and group sends through
+      the existing MartinOMEMO recipient-set API, so future MAM archives include
+      a local recipient key for sender-side restart/self-history replay.
+- [ ] Backfill older sender-side OMEMO self-history from MAM after restart.
+      Encrypted server archives are ciphertext-only, and old messages that were
+      not encrypted for the sender's current device cannot be reconstructed
+      without a reviewed recovery/key-backup path.
 
 ## E2EE
 
@@ -149,8 +182,11 @@ checklist, not by copying legacy implementation details.
       macOS targets.
 - [x] Wire persistent local OMEMO state and module registration into the XMPP
       connection.
-- [ ] Spike Tigase Martin plus MartinOMEMO first, with GPL/AGPL obligations
-      explicitly accepted or rejected for the non-commercial friends app.
+- [x] Spike Tigase Martin plus MartinOMEMO first, with GPL/AGPL obligations
+      explicitly accepted or rejected for the non-commercial friends app. The
+      current MVP decision accepts the pinned Martin/MartinOMEMO/libsignal stack
+      for private non-commercial validation with source/license obligations
+      tracked in `docs/xmpp-migration/license-sbom.md`.
 - [x] Create or join an encrypted DM.
 - [x] Send and receive an encrypted DM message.
 - [x] Create or join a private members-only, non-anonymous MUC with OMEMO-gated
@@ -160,13 +196,22 @@ checklist, not by copying legacy implementation details.
 - [x] Confirm the Apple XMPP attachment path encrypts media with MartinOMEMO
       before HTTP upload. Group MUC attachment send additionally requires a
       validated recipient set and trusted active OMEMO device for every
-      recipient. Live server round-trip validation is still required.
-- [ ] Add a second device and confirm device list/fingerprint state is visible.
+      recipient. Scrubbed `dm-attachment` and `group-attachment` modes validate
+      live server upload, peer download, decrypt, MIME, image flag, and byte
+      equality; the 2026-05-10 credentialed runs passed for both DM and group.
+- [ ] Add a second device and confirm device list/fingerprint state is visible
+      in a live two-device run. The Apple Settings surface is wired to the
+      existing MartinOMEMO account-device discovery path and shows fingerprints,
+      but signed/second-device validation has not been run in this worker slice.
 - [x] Show peer OMEMO device fingerprints and manual trust controls for DMs.
 - [x] Confirm untrusted or unknown device behavior is understandable.
 - [x] Confirm the app does not silently trust all devices.
 - [x] Confirm the composer blocks sending when required OMEMO state is missing.
-- [ ] Confirm recovery or reinstall limitations are visible and documented.
+- [x] Confirm recovery or reinstall limitations are visible and documented.
+      Apple Settings now states that server-side OMEMO key recovery is not wired
+      for this MartinOMEMO slice, reinstall/Keychain reset creates a new OMEMO
+      device, and old ciphertext not encrypted for the replacement device can
+      remain unavailable.
 
 ## Control Plane
 
@@ -175,9 +220,14 @@ checklist, not by copying legacy implementation details.
       service in front of ejabberd: yes, use ejabberd `mod_http_api` only as a
       localhost backend behind an authenticated/audited Trix operator wrapper.
 - [x] Create user.
-- [ ] Disable user.
-- [ ] Reset password.
-- [ ] Search directory by handle/name.
+- [x] Disable user through `operator-control.sh disable-user`, backed by
+      ejabberd `ban_account` so sessions are kicked and new login is blocked
+      without deleting account data.
+- [x] Reset password through `operator-control.sh reset-password`, backed by
+      ejabberd `change_password` with the new password read from a local file.
+- [x] Search directory by handle/name through `operator-control.sh
+      search-directory`, backed by `registered_users` plus vCard `FN` and
+      `NICKNAME` lookups over the loopback API.
 - [x] View and edit account profile metadata through the Apple XMPP client.
 - [x] Create group through the Apple XMPP client MUC path.
 - [x] Add group member through the Apple XMPP client MUC path.
@@ -189,19 +239,36 @@ checklist, not by copying legacy implementation details.
       affiliation for the MVP member-management UI; older member-only rooms may
       still return forbidden for add/remove from non-admin accounts.
 - [x] View server health.
-- [ ] View archive/upload/push health.
+- [x] View archive/upload/push health through `operator-control.sh
+      archive-upload-push-health`, which reports loopback API status, backup
+      archive presence, HTTP upload reachability, and push-gateway reachability
+      without exposing credentials.
 - [x] Keep admin credentials out of logs and repo files.
 
 ## Deferred MVP Items
 
-- [ ] Production device trust UX.
-- [ ] Account recovery/reinstall UX.
-- [ ] Push notifications through APNs. Blocked until the checked-in
-      `trix-push-gateway` component is deployed behind ejabberd
-      `mod_push`/XEP-0357 with deployment-local APNs signing material and passes
-      signed-device delivery smoke with no plaintext payload fields.
-- [ ] Persistent tests around encrypted DM/group sync.
-- [ ] Persistent tests around directory/profile/control-plane flows.
+- [x] Production device trust UX for the MVP: current-account device list,
+      fingerprint visibility, active/trust labels, and explicit per-device
+      manual trust are wired through existing MartinOMEMO/store APIs. Reviewed
+      SAS verification and device revocation are not implemented; the UI keeps
+      those limitations visible instead of trusting devices automatically.
+- [x] Account recovery/reinstall UX for the MVP: the app documents the current
+      limitation in Settings and docs. Real server-side OMEMO key backup or
+      recovery remains blocked until a reviewed MartinOMEMO recovery path is
+      selected; no custom key recovery was added.
+- [ ] Push notifications through APNs. The checked-in `trix-push-gateway`
+      component is deployed behind ejabberd `mod_push`/XEP-0357 with
+      deployment-local APNs signing material. Keep this open until a signed iOS
+      or macOS device confirms wake-only APNs delivery with no plaintext payload
+      fields.
+- [ ] Persistent tests around encrypted DM/group sync. `timeline-restart` now
+      covers the DM restart/cache/MAM path in credentialed live smoke, but this
+      still needs automated persistent coverage.
+- [x] Persistent smoke coverage around directory/profile/control-plane flows:
+      Apple live-smoke modes cover directory/profile, and
+      `server/xmpp/scripts/operator-api-smoke.sh` now exercises provision,
+      reset-password, directory search, health, disable, and cleanup through the
+      localhost control-plane backend.
 - [x] Repeatable archive/TestFlight script path for the new XMPP `apple/` app.
 - [x] Fail-closed Apple APNs registration plumbing exists for the new XMPP
       targets: platform token capture, service-bound XMPP push registration, and
@@ -209,8 +276,10 @@ checklist, not by copying legacy implementation details.
 - [x] Trix APNs gateway/push component exists as `trix-push-gateway`: it accepts
       Martin/Tigase registration, stores XEP-0357 node mappings, and calls the
       APNs sender with wake-only payloads.
-- [ ] Trix APNs gateway/push component is deployed with deployment-local
-      credentials outside the repo and passes signed-device delivery smoke.
+- [x] Trix APNs gateway/push component is deployed with deployment-local
+      credentials outside the repo. On 2026-05-10 `trix-push-gateway` built on
+      the VPS, started healthy, exposed `127.0.0.1:8090` only, and connected to
+      ejabberd as the private XEP-0114 component `push.trix.selfhost.ru`.
 
 ## Current First-Slice Status
 
@@ -223,7 +292,9 @@ checklist, not by copying legacy implementation details.
 - [x] Daily root-only XMPP backup timer is installed.
 - [x] Apple OMEMO dependency candidate builds: Martin `3.2.4`, MartinOMEMO
       `2.2.3`, libsignal `1.0.0`.
-- [ ] OMEMO DM live smoke is validated.
+- [x] OMEMO DM live smoke has a scrubbed `dm-e2ee` two-account runner. On
+      2026-05-10 the credentialed `test` to `friend` run passed with peer
+      decrypt confirmed.
 - [x] OMEMO group live smoke is validated.
 - [x] Protocol-neutral Apple service boundary exists.
 - [x] First XMPP adapter is wired for login, restore, and roster-backed room
@@ -242,11 +313,16 @@ checklist, not by copying legacy implementation details.
       Apple target.
 - [x] Apple APNs tokens are never logged by the new XMPP app path and remote
       pushes are handled as wake/sync hints only.
-- [ ] APNs delivery is blocked on deployment/signed-device smoke. ejabberd
-      `mod_push` is wired to a private XEP-0114 component path, and
-      `trix-push-gateway` owns APNs sender plus Martin/XEP-0357 registration
-      mapping, but the live APNs credentialed path has not been smoke-tested.
-- [ ] Trix control-plane model is selected.
+- [ ] APNs delivery is blocked only on signed-device smoke. ejabberd `mod_push`
+      is wired to a private XEP-0114 component path, and `trix-push-gateway`
+      owns APNs sender plus Martin/XEP-0357 registration mapping. On 2026-05-10
+      the gateway deployed with APNs credentials and connected to ejabberd; the
+      remaining proof is a signed device receiving a wake-only APNs payload with
+      no alert, body, filename, media-key, or decrypted-content fields.
+- [x] Trix control-plane model is selected: for MVP closeout, checked-in
+      operator scripts use loopback-only ejabberd `mod_http_api`; any non-local
+      or multi-operator access still requires a small authenticated/audited Trix
+      wrapper before exposure.
 - [x] No custom crypto is added.
 
 ## Notes

@@ -60,6 +60,30 @@ trust UX only if the limitation is visible and tracked.
 The app should surface OMEMO device identity and trust state. It must not mark all
 devices trusted locally just to make encrypted sending easier.
 
+The Apple Settings surface now shows the current account's OMEMO device list
+from the existing MartinOMEMO discovery/store path: current device, published
+account devices, device ids, fingerprints, active state, and local trust state.
+Trust is a per-device manual action and is only offered after the user can
+compare the fingerprint. The app still does not provide reviewed SAS
+cross-signing or device revocation in this slice; those remain blocked rather
+than replaced with custom crypto or silent trust-all behavior.
+
+## Recovery And Reinstall Risk
+
+The current Apple MartinOMEMO path persists local OMEMO registration id,
+identity keys, prekeys, signed prekeys, sessions, identities, sender keys, and
+trust decisions in the app Keychain. Logging out removes the saved XMPP login but
+does not erase OMEMO device state.
+
+There is no validated server-side OMEMO key backup or account recovery path in
+this slice. If the app is deleted, the Keychain state is reset, or the account is
+restored onto a fresh device, the client creates a new OMEMO device. Old
+ciphertext archived in MAM or stored in local caches can remain unavailable when
+it was not encrypted for the replacement device. Trix must not add custom key
+recovery or manually move OMEMO private key material to work around this; the
+limitation must remain visible until a reviewed MartinOMEMO recovery path is
+selected.
+
 ## Group E2EE Risk
 
 OMEMO group chat depends on correctly mapping room occupants to real JIDs and
@@ -87,13 +111,17 @@ Uploaded files must be encrypted before upload. The server may store encrypted
 media blobs and metadata, but it must not receive plaintext file contents from
 product chat flows.
 
-The Apple XMPP DM attachment MVP uses MartinOMEMO file encryption before
-requesting an HTTP upload, then sends the download URL, media decryption
-fragment, filename, MIME type, size, and image dimensions inside an
-OMEMO-encrypted message descriptor. HTTP upload requests use a generic encrypted
-filename and `application/octet-stream` so the upload service does not receive
-the original filename or MIME type. Group attachments remain blocked until group
-OMEMO is validated.
+The Apple XMPP attachment MVP uses MartinOMEMO file encryption before requesting
+an HTTP upload, then sends the download URL, media decryption fragment, filename,
+MIME type, size, and image dimensions inside an OMEMO-encrypted message
+descriptor. HTTP upload requests use a generic encrypted filename and
+`application/octet-stream` so the upload service does not receive the original
+filename or MIME type. Group attachment sending uses the same encrypted path and
+is gated on a validated MUC recipient set plus trusted active OMEMO devices for
+every recipient. On 2026-05-10 the credentialed `dm-attachment` and
+`group-attachment` smoke modes passed live upload, peer download, local decrypt,
+MIME/image classification, and byte equality checks without printing decrypted
+content, filenames, media keys, or secret URLs.
 
 Do not log filenames, local paths, media keys, decrypted media bytes, or
 decrypted previews in production paths.
@@ -135,9 +163,17 @@ APNs requests by itself. APNs signing material has been verified on the legacy
 `trix-server` deployment, and the APNs sender code is extracted into the
 standalone `trix-push-gateway` binary. The gateway also has an XEP-0114
 component mode that accepts Martin/Tigase `register-device`, stores XEP-0357
-node mappings outside the repo, and emits only the wake contract above. APNs
-delivery is not launch-ready until this component is deployed with real
-credentials and passes signed-device smoke plus log/payload audit.
+node mappings outside the repo, and emits only the wake contract above.
+
+On 2026-05-10 the XMPP push gateway was deployed on the VPS with
+deployment-local APNs token-auth material. The APNs `.p8` key is mounted into
+the container read-only, owned for the non-root gateway user, and not committed
+to the repository. `trix-push-gateway` is healthy, binds its HTTP endpoint to
+`127.0.0.1:8090`, connects to ejabberd as the private XEP-0114 component
+`push.trix.selfhost.ru`, and the component port is not externally reachable.
+APNs delivery is still not launch-complete until signed-device smoke confirms
+delivery and a payload/log audit confirms no alert, body, filename, media-key,
+or decrypted-content fields.
 
 ## Registration And Provisioning Risk
 
@@ -150,9 +186,12 @@ The control plane must not expose secrets in logs and must not create accounts
 with committed default passwords.
 
 The current ejabberd `mod_http_api` path is acceptable only as a localhost-bound
-backend for a trusted operator wrapper or local scripts. Its loopback API can
-perform health and disposable account lifecycle operations, but it is not a
+backend for a trusted operator wrapper or local scripts. The checked-in
+`server/xmpp/scripts/operator-control.sh` flow can provision accounts, reset
+passwords, disable accounts with `ban_account`, search the small local directory,
+and report archive/upload/push health through loopback-only calls. It is not a
 public or client-facing API and must not be exposed directly outside the host.
+Passwords are read from local files and must not be logged.
 
 ## Logging Rules
 
