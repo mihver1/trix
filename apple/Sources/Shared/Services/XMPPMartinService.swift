@@ -36,17 +36,37 @@ actor XMPPMartinService: TrixService {
         }
     }
 
+    private struct ArchivedMessageSnapshot: @unchecked Sendable {
+        let messageID: String
+        let timestamp: Date
+        let message: Message
+    }
+
     private final class MAMArchiveCollector: @unchecked Sendable {
         private let lock = NSLock()
-        private var events: [MessageArchiveManagementModule.ArchivedMessageReceived] = []
+        private var events: [ArchivedMessageSnapshot] = []
 
         func append(_ event: MessageArchiveManagementModule.ArchivedMessageReceived) {
+            guard let message = XMPPMartinService.detachedMessage(event.message) else {
+                return
+            }
+
+            append(
+                ArchivedMessageSnapshot(
+                    messageID: event.messageId,
+                    timestamp: event.timestamp,
+                    message: message
+                )
+            )
+        }
+
+        private func append(_ event: ArchivedMessageSnapshot) {
             lock.lock()
             events.append(event)
             lock.unlock()
         }
 
-        func snapshot() -> [MessageArchiveManagementModule.ArchivedMessageReceived] {
+        func snapshot() -> [ArchivedMessageSnapshot] {
             lock.lock()
             defer { lock.unlock() }
             return events
@@ -55,6 +75,7 @@ actor XMPPMartinService: TrixService {
 
     private struct CapturedMessage: @unchecked Sendable {
         let message: Message
+        let accountJID: String
         let carbonAction: MessageCarbonsModule.Action?
     }
 
@@ -157,7 +178,9 @@ actor XMPPMartinService: TrixService {
     }
 
     private struct CapturedMUCMessage: @unchecked Sendable {
-        let room: RoomProtocol
+        let roomID: String
+        let senderJID: String?
+        let knownMemberUserIDs: Set<String>
         let message: Message
     }
 
@@ -1458,8 +1481,15 @@ actor XMPPMartinService: TrixService {
                 guard let connection else {
                     return
                 }
+                guard let message = Self.detachedMessage(message) else {
+                    return
+                }
 
-                let capturedMessage = CapturedMessage(message: message, carbonAction: nil)
+                let capturedMessage = CapturedMessage(
+                    message: message,
+                    accountJID: connection.client.connectionConfiguration.userJid.stringValue,
+                    carbonAction: nil
+                )
                 Task {
                     await service.recordLiveMessage(capturedMessage, connection: connection)
                 }
@@ -1471,8 +1501,15 @@ actor XMPPMartinService: TrixService {
                 guard let connection else {
                     return
                 }
+                guard let message = Self.detachedMessage(carbon.message) else {
+                    return
+                }
 
-                let capturedMessage = CapturedMessage(message: carbon.message, carbonAction: carbon.action)
+                let capturedMessage = CapturedMessage(
+                    message: message,
+                    accountJID: connection.client.connectionConfiguration.userJid.stringValue,
+                    carbonAction: carbon.action
+                )
                 Task {
                     await service.recordLiveMessage(capturedMessage, connection: connection)
                 }
@@ -1524,8 +1561,17 @@ actor XMPPMartinService: TrixService {
                 guard let connection else {
                     return
                 }
+                guard let message = Self.detachedMessage(event.message) else {
+                    return
+                }
+                let accountJID = connection.client.connectionConfiguration.userJid.stringValue
 
-                let capturedMessage = CapturedMUCMessage(room: event.room, message: event.message)
+                let capturedMessage = CapturedMUCMessage(
+                    roomID: event.room.jid.stringValue,
+                    senderJID: Self.groupMessageSenderJID(event.message, room: event.room, accountJID: accountJID),
+                    knownMemberUserIDs: Self.memberUserIDs(from: event.room, fallbackAccountJID: accountJID),
+                    message: message
+                )
                 Task {
                     await service.recordGroupMessage(capturedMessage, connection: connection)
                 }
@@ -1632,7 +1678,7 @@ actor XMPPMartinService: TrixService {
                 accountJID: accountJID,
                 roomID: peerJID,
                 timestamp: archived.timestamp,
-                fallbackID: archived.messageId,
+                fallbackID: archived.messageID,
                 connection: connection
             ) {
                 items.append(item)
@@ -1655,7 +1701,7 @@ actor XMPPMartinService: TrixService {
         )
     }
 
-    private func archiveEvents(peerJID: String?, connection: Connection) async throws -> [MessageArchiveManagementModule.ArchivedMessageReceived] {
+    private func archiveEvents(peerJID: String?, connection: Connection) async throws -> [ArchivedMessageSnapshot] {
         let queryID = "trix-mam-\(UUID().uuidString)"
         let collector = MAMArchiveCollector()
         let cancellable = connection.mamModule.archivedMessagesPublisher.sink { event in
@@ -1713,7 +1759,7 @@ actor XMPPMartinService: TrixService {
         connection: Connection
     ) async {
         let message = capturedMessage.message
-        let accountJID = connection.client.connectionConfiguration.userJid.stringValue
+        let accountJID = capturedMessage.accountJID
         if let chatState = message.chatState {
             recordChatState(
                 chatState,
@@ -1898,8 +1944,8 @@ actor XMPPMartinService: TrixService {
     ) async {
         let message = capturedMessage.message
         let accountJID = connection.client.connectionConfiguration.userJid.stringValue
-        let roomID = capturedMessage.room.jid.stringValue
-        let senderJID = Self.groupMessageSenderJID(message, room: capturedMessage.room, accountJID: accountJID)
+        let roomID = capturedMessage.roomID
+        let senderJID = capturedMessage.senderJID
 
         if let senderJID,
            let reaction = Self.capturedReactionUpdate(
@@ -1927,7 +1973,7 @@ actor XMPPMartinService: TrixService {
             return
         }
 
-        var knownMembers = Self.memberUserIDs(from: capturedMessage.room, fallbackAccountJID: accountJID)
+        var knownMembers = capturedMessage.knownMemberUserIDs
         if let senderJID {
             knownMembers.insert(senderJID.lowercased())
         }
@@ -3378,6 +3424,14 @@ actor XMPPMartinService: TrixService {
         }
     }
 
+    private static func detachedMessage(_ message: Message) -> Message? {
+        guard let element = Element.from(string: message.element.stringValue) else {
+            return nil
+        }
+
+        return Stanza.from(element: element) as? Message
+    }
+
     private static func messageMatchesPeer(_ message: Message, peerJID: String, accountJID: String) -> Bool {
         let peerKey = peerJID.lowercased()
         let accountKey = accountJID.lowercased()
@@ -3409,11 +3463,29 @@ actor XMPPMartinService: TrixService {
 
     private static func messageTimestamp(_ message: Message, fallback: Date) -> Date {
         guard let delay = message.firstChild(name: "delay", xmlns: "urn:xmpp:delay"),
-              let stamp = Delay(element: delay).stamp else {
+              let stamp = delay.getAttribute("stamp"),
+              let parsed = parseXMPPDelayStamp(stamp) else {
             return fallback
         }
 
-        return stamp
+        return parsed
+    }
+
+    private static func parseXMPPDelayStamp(_ stamp: String) -> Date? {
+        let trimmed = stamp.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractionalFormatter.date(from: trimmed) {
+            return date
+        }
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: trimmed)
     }
 
     private static func mergedTimelineItems(
