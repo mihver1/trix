@@ -10,6 +10,8 @@ struct TrixRoomListView: View {
     @ObservedObject private var roomListViewModel: RoomListViewModel
     @State private var isShowingNewRoom = false
     @State private var phoneSelectedRoomID: String?
+    @State private var directSearchUserIDInProgress: String?
+    @StateObject private var roomSearchViewModel = TrixUserDirectorySearchViewModel()
     let mode: TrixRoomListMode
 
     init(model: TrixAppModel, mode: TrixRoomListMode = .sidebar) {
@@ -33,6 +35,15 @@ struct TrixRoomListView: View {
             }
             .navigationDestination(isPresented: phoneRoomIsPresented) {
                 phoneTimelineDestination
+            }
+            .task(id: roomSearchViewModel.query) {
+                await roomSearchViewModel.search(
+                    excluding: searchExcludedUserIDs,
+                    limit: 20,
+                    searchUsers: { query, limit in
+                        try await model.searchUsers(query, limit: limit)
+                    }
+                )
             }
     }
 
@@ -104,15 +115,45 @@ struct TrixRoomListView: View {
 
     @ViewBuilder
     private var roomListContent: some View {
+        searchSection
+
         if mode == .phoneInbox {
             invitesSection
             roomsSection
+            peopleSection
         } else {
             roomsSection
+            peopleSection
             invitesSection
         }
 
         errorSection
+    }
+
+    @ViewBuilder
+    private var searchSection: some View {
+        Section {
+            TrixRoomSearchField(
+                query: $roomSearchViewModel.query,
+                isSearching: roomSearchViewModel.isSearching
+            )
+            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+
+            if let errorMessage = roomSearchViewModel.errorMessage {
+                Text(errorMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if shouldShowNoSearchMatches {
+                Text("No matches")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else if roomSearchViewModel.isLimited {
+                Text("More people available")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     @ViewBuilder
@@ -124,8 +165,13 @@ struct TrixRoomListView: View {
                     systemImage: "bubble.left",
                     message: "Create a room or accept an invite."
                 )
+            } else if visibleRooms.isEmpty {
+                Text("No matching chats")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 8)
             } else {
-                ForEach(roomListViewModel.rooms) { room in
+                ForEach(visibleRooms) { room in
                     roomRow(room)
                 }
             }
@@ -136,6 +182,27 @@ struct TrixRoomListView: View {
                 if roomListViewModel.isLoading {
                     ProgressView()
                         .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var peopleSection: some View {
+        if !directoryPeopleResults.isEmpty {
+            Section("People") {
+                ForEach(directoryPeopleResults) { profile in
+                    Button {
+                        openDirectoryUser(profile)
+                    } label: {
+                        TrixRoomDirectoryUserSearchRow(
+                            profile: profile,
+                            isWorking: isCreatingDirectRoom(for: profile)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(directSearchUserIDInProgress != nil)
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                 }
             }
         }
@@ -223,6 +290,78 @@ struct TrixRoomListView: View {
         phoneSelectedRoomID = room.id
     }
 
+    private func openDirectoryUser(_ profile: TrixUserProfile) {
+        if let existingRoom = existingDirectRoom(for: profile) {
+            openRoom(existingRoom)
+            return
+        }
+
+        directSearchUserIDInProgress = profile.userID
+        Task {
+            let didCreate = await model.createEncryptedDirectRoom(
+                inviteeUserID: profile.userID,
+                roomName: profile.title
+            )
+            directSearchUserIDInProgress = nil
+            guard didCreate, mode == .phoneInbox else {
+                return
+            }
+
+            phoneSelectedRoomID = model.selectedRoomID
+        }
+    }
+
+    private func openRoom(_ room: TrixRoomSummary) {
+        switch mode {
+        case .phoneInbox:
+            openPhoneRoom(room)
+        case .sidebar:
+            Task {
+                await model.selectRoom(room)
+            }
+        }
+    }
+
+    private func existingDirectRoom(for profile: TrixUserProfile) -> TrixRoomSummary? {
+        roomListViewModel.rooms.first { room in
+            room.kind == .direct &&
+                room.id.caseInsensitiveCompare(profile.userID) == .orderedSame
+        }
+    }
+
+    private func isCreatingDirectRoom(for profile: TrixUserProfile) -> Bool {
+        guard let userID = directSearchUserIDInProgress else {
+            return false
+        }
+
+        return userID.caseInsensitiveCompare(profile.userID) == .orderedSame
+    }
+
+    private var visibleRooms: [TrixRoomSummary] {
+        TrixRoomSearch.matchingRooms(
+            roomListViewModel.rooms,
+            query: roomSearchViewModel.query,
+            directoryResults: roomSearchViewModel.results
+        )
+    }
+
+    private var directoryPeopleResults: [TrixUserProfile] {
+        TrixRoomSearch.peopleResults(
+            roomSearchViewModel.results,
+            query: roomSearchViewModel.query,
+            rooms: roomListViewModel.rooms,
+            currentUserID: model.session?.userID
+        )
+    }
+
+    private var shouldShowNoSearchMatches: Bool {
+        !TrixRoomSearch.normalizedQuery(roomSearchViewModel.query).isEmpty &&
+            !roomSearchViewModel.isSearching &&
+            visibleRooms.isEmpty &&
+            directoryPeopleResults.isEmpty &&
+            roomSearchViewModel.errorMessage == nil
+    }
+
     private var phoneRoomIsPresented: Binding<Bool> {
         Binding(
             get: { phoneSelectedRoomID != nil },
@@ -248,6 +387,14 @@ struct TrixRoomListView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(TrixDesign.screenBackground)
         }
+    }
+
+    private var searchExcludedUserIDs: Set<String> {
+        guard let userID = model.session?.userID else {
+            return []
+        }
+
+        return [userID]
     }
 }
 
@@ -338,6 +485,14 @@ struct TrixSettingsView: View {
 
             Section("Profile") {
                 TrixProfileSettingsView(model: model)
+            }
+
+            Section("Password") {
+                TrixPasswordChangeView(model: model)
+            }
+
+            Section("Invite Codes") {
+                TrixInviteIssueView(model: model)
             }
 
             Section("Device Verification And Recovery") {

@@ -79,10 +79,11 @@ ios-testflight build_number="": (_testflight-preflight) sync-version
 macos-testflight build_number="" destination="upload": (_testflight-preflight) sync-version
     #!/usr/bin/env bash
     set -euo pipefail
-    export TRIX_MACOS_BUILD_NUMBER="{{ if build_number == "" { "$(date '+%Y%m%d%H%M')" } else { build_number } }}"
+    export TRIX_APPLE_BUILD_NUMBER="{{ if build_number == "" { "$(date '+%Y%m%d%H%M')" } else { build_number } }}"
+    export TRIX_APPLE_MARKETING_VERSION="{{ version }}"
     export TRIX_ASC_DESTINATION="{{ destination }}"
-    echo "==> macOS TestFlight build v{{ version }} (CURRENT_PROJECT_VERSION=$TRIX_MACOS_BUILD_NUMBER)"
-    bash "{{ macos_dir }}/scripts/archive-testflight.sh"
+    echo "==> XMPP Trix macOS TestFlight build v{{ version }} (CURRENT_PROJECT_VERSION=$TRIX_APPLE_BUILD_NUMBER)"
+    bash "{{ trix_apple_dir }}/scripts/archive-testflight.sh" --platform macos
 
 # Build iOS archive only (no upload)
 ios-archive build_number="":
@@ -96,10 +97,10 @@ ios-archive build_number="":
 macos-archive build_number="":
     #!/usr/bin/env bash
     set -euo pipefail
-    export TRIX_MACOS_BUILD_NUMBER="{{ if build_number == "" { "$(date '+%Y%m%d%H%M')" } else { build_number } }}"
-    export TRIX_SKIP_EXPORT="1"
-    echo "==> macOS archive (CURRENT_PROJECT_VERSION=$TRIX_MACOS_BUILD_NUMBER)"
-    bash "{{ macos_dir }}/scripts/archive-testflight.sh"
+    export TRIX_APPLE_BUILD_NUMBER="{{ if build_number == "" { "$(date '+%Y%m%d%H%M')" } else { build_number } }}"
+    export TRIX_APPLE_MARKETING_VERSION="{{ version }}"
+    echo "==> XMPP Trix macOS archive (CURRENT_PROJECT_VERSION=$TRIX_APPLE_BUILD_NUMBER)"
+    bash "{{ trix_apple_dir }}/scripts/archive-testflight.sh" --platform macos --unsigned-archive
 
 # Build macOS beta .app bundle (direct, not App Store)
 macos-beta:

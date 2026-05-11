@@ -66,10 +66,18 @@ struct TrixTimelineView: View {
                                     presentation: presentation,
                                     isDownloadingAttachment: timelineViewModel.downloadingAttachmentID == presentation.item.id,
                                     attachmentFailure: timelineViewModel.attachmentDownloadFailures[presentation.item.id],
+                                    inlineAttachmentPreview: timelineViewModel.inlineAttachmentPreviews[presentation.item.id],
+                                    isLoadingInlineAttachmentPreview: timelineViewModel.inlineAttachmentPreviewLoadingIDs.contains(presentation.item.id),
+                                    inlineAttachmentPreviewFailure: timelineViewModel.inlineAttachmentPreviewFailures[presentation.item.id],
                                     isReacting: timelineViewModel.reactionActionMessageID == presentation.item.id,
                                     downloadAttachment: {
                                         Task {
                                             await model.downloadAttachment(for: presentation.item)
+                                        }
+                                    },
+                                    loadInlineAttachmentPreview: {
+                                        Task {
+                                            await model.loadInlineAttachmentPreview(for: presentation.item)
                                         }
                                     },
                                     react: { emoji in
@@ -846,8 +854,12 @@ private struct TrixTimelineRow: View {
     let presentation: TrixTimelineMessagePresentation
     let isDownloadingAttachment: Bool
     let attachmentFailure: String?
+    let inlineAttachmentPreview: TrixAttachmentDownload?
+    let isLoadingInlineAttachmentPreview: Bool
+    let inlineAttachmentPreviewFailure: String?
     let isReacting: Bool
     let downloadAttachment: () -> Void
+    let loadInlineAttachmentPreview: () -> Void
     let react: (String) -> Void
 
     private var item: TrixTimelineItem {
@@ -873,10 +885,15 @@ private struct TrixTimelineRow: View {
                     if let attachment = item.attachment {
                         TrixAttachmentRow(
                             attachment: attachment,
+                            itemID: item.id,
                             isOutgoing: item.isLocalEcho,
                             isDownloading: isDownloadingAttachment,
                             failureMessage: attachmentFailure,
-                            download: downloadAttachment
+                            inlinePreview: inlineAttachmentPreview,
+                            isLoadingInlinePreview: isLoadingInlineAttachmentPreview,
+                            inlinePreviewFailure: inlineAttachmentPreviewFailure,
+                            download: downloadAttachment,
+                            loadInlinePreview: loadInlineAttachmentPreview
                         )
                     } else {
                         Text(item.body)
@@ -973,73 +990,95 @@ private struct TrixTimelineRow: View {
 
 private struct TrixAttachmentRow: View {
     let attachment: TrixTimelineAttachment
+    let itemID: String
     let isOutgoing: Bool
     let isDownloading: Bool
     let failureMessage: String?
+    let inlinePreview: TrixAttachmentDownload?
+    let isLoadingInlinePreview: Bool
+    let inlinePreviewFailure: String?
     let download: () -> Void
+    let loadInlinePreview: () -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isOutgoing ? Color.white.opacity(0.18) : TrixDesign.accent.opacity(0.12))
-                .frame(width: 42, height: 42)
-                .overlay {
-                    if isDownloading {
-                        ProgressView()
-                            .tint(isOutgoing ? .white : TrixDesign.accent)
-                    } else {
-                        Image(systemName: attachment.isImage ? "photo.on.rectangle.angled" : "doc.fill")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(isOutgoing ? .white : TrixDesign.accent)
+        VStack(alignment: .leading, spacing: 10) {
+            if TrixInlineMediaPreviewSupport.canAttemptInlinePreview(attachment) {
+                TrixInlineAttachmentPreview(
+                    itemID: itemID,
+                    attachment: attachment,
+                    preview: inlinePreview,
+                    isLoading: isLoadingInlinePreview,
+                    failureMessage: inlinePreviewFailure,
+                    isOutgoing: isOutgoing,
+                    open: download,
+                    loadPreview: loadInlinePreview
+                )
+            }
+
+            HStack(alignment: .center, spacing: 10) {
+                if !TrixInlineMediaPreviewSupport.canAttemptInlinePreview(attachment) {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(isOutgoing ? Color.white.opacity(0.18) : TrixDesign.accent.opacity(0.12))
+                        .frame(width: 42, height: 42)
+                        .overlay {
+                            if isDownloading {
+                                ProgressView()
+                                    .tint(isOutgoing ? .white : TrixDesign.accent)
+                            } else {
+                                Image(systemName: attachment.isImage ? "photo.on.rectangle.angled" : "doc.fill")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(isOutgoing ? .white : TrixDesign.accent)
+                            }
+                        }
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(attachment.filename)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(isOutgoing ? .white : .primary)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+
+                    if !attachment.subtitle.isEmpty {
+                        Text(attachment.subtitle)
+                            .font(.caption)
+                            .foregroundStyle(isOutgoing ? .white.opacity(0.82) : .secondary)
+                    }
+
+                    Label("Encrypted attachment", systemImage: "lock.fill")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(isOutgoing ? .white.opacity(0.82) : .secondary)
+                        .lineLimit(1)
+
+                    if !attachment.isDownloadable {
+                        Label("Download unavailable", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(isOutgoing ? .white.opacity(0.82) : .orange)
+                            .lineLimit(1)
+                    }
+
+                    if failureMessage != nil {
+                        Label("Download failed. Try again.", systemImage: "arrow.clockwise.circle.fill")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(isOutgoing ? .white.opacity(0.86) : .orange)
+                            .lineLimit(1)
                     }
                 }
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(attachment.filename)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(isOutgoing ? .white : .primary)
-                    .lineLimit(2)
-                    .textSelection(.enabled)
+                Spacer()
 
-                if !attachment.subtitle.isEmpty {
-                    Text(attachment.subtitle)
-                        .font(.caption)
-                        .foregroundStyle(isOutgoing ? .white.opacity(0.82) : .secondary)
+                Button {
+                    download()
+                } label: {
+                    Image(systemName: attachmentButtonImage)
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(isOutgoing ? .white : TrixDesign.accent)
                 }
-
-                Label("Encrypted attachment", systemImage: "lock.fill")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(isOutgoing ? .white.opacity(0.82) : .secondary)
-                    .lineLimit(1)
-
-                if !attachment.isDownloadable {
-                    Label("Download unavailable", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(isOutgoing ? .white.opacity(0.82) : .orange)
-                        .lineLimit(1)
-                }
-
-                if failureMessage != nil {
-                    Label("Download failed. Try again.", systemImage: "arrow.clockwise.circle.fill")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(isOutgoing ? .white.opacity(0.86) : .orange)
-                        .lineLimit(1)
-                }
+                .buttonStyle(.borderless)
+                .disabled(isDownloading || !attachment.isDownloadable)
+                .help(attachmentButtonHelp)
+                .accessibilityLabel(attachmentButtonHelp)
             }
-
-            Spacer()
-
-            Button {
-                download()
-            } label: {
-                Image(systemName: attachmentButtonImage)
-                    .font(.system(size: 24, weight: .semibold))
-                    .foregroundStyle(isOutgoing ? .white : TrixDesign.accent)
-            }
-            .buttonStyle(.borderless)
-            .disabled(isDownloading || !attachment.isDownloadable)
-            .help(attachmentButtonHelp)
-            .accessibilityLabel(attachmentButtonHelp)
         }
     }
 

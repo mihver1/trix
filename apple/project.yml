@@ -55,6 +55,15 @@ targets:
     type: application
     platform: macOS
     deploymentTarget: "14.0"
+    info:
+      path: Sources/macOS/Info.plist
+      properties:
+        CFBundleIconFile: AppIcon
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ITSAppUsesNonExemptEncryption: false
+        LSApplicationCategoryType: public.app-category.social-networking
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
     sources:
       - path: Sources/Shared
       - path: Sources/macOS
@@ -67,12 +76,9 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trixapp
         PRODUCT_NAME: Trix
-        GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: TrixMac.entitlements
         DEVELOPMENT_TEAM: HGY33KYKQ2
-        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
-        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.social-networking
       configs:
         Debug:
           TRIX_APNS_ENTITLEMENT_ENVIRONMENT: development

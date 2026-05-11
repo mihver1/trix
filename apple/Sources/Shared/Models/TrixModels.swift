@@ -990,6 +990,110 @@ struct TrixAttachmentDownload: Identifiable, Equatable, Sendable {
     }
 }
 
+enum TrixInlineMediaPreviewSupport {
+    static let maxInlinePreviewBytes = 25 * 1024 * 1024
+    static let fallbackAspectRatio: CGFloat = 4 / 3
+    static let minAspectRatio: CGFloat = 0.5
+    static let maxAspectRatio: CGFloat = 1.8
+
+    private static let imageMimeTypes: Set<String> = [
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+        "image/heif",
+        "image/heic",
+        "image/heif-sequence",
+        "image/heic-sequence",
+    ]
+
+    private static let imageFileExtensions: Set<String> = [
+        "jpg",
+        "jpeg",
+        "png",
+        "gif",
+        "webp",
+        "heif",
+        "heic",
+    ]
+
+    static func canAttemptInlinePreview(_ attachment: TrixTimelineAttachment) -> Bool {
+        guard attachment.isDownloadable,
+              supports(mimeType: attachment.mimeType, filename: attachment.filename),
+              let sizeBytes = attachment.sizeBytes,
+              sizeBytes <= maxInlinePreviewBytes else {
+            return false
+        }
+
+        return true
+    }
+
+    static func canRenderInlinePreview(_ download: TrixAttachmentDownload) -> Bool {
+        supports(mimeType: download.mimeType, filename: download.filename)
+            && download.data.count <= maxInlinePreviewBytes
+    }
+
+    static func supports(mimeType: String?, filename: String?) -> Bool {
+        if let normalizedMimeType = mimeType?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() {
+            if normalizedMimeType.hasPrefix("image/") || imageMimeTypes.contains(normalizedMimeType) {
+                return true
+            }
+        }
+
+        guard let filename else {
+            return false
+        }
+
+        let fileExtension = URL(fileURLWithPath: filename)
+            .pathExtension
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if imageFileExtensions.contains(fileExtension) {
+            return true
+        }
+
+        return imageFileExtensions.contains(
+            filename
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+        )
+    }
+
+    static func isAnimatedGIF(mimeType: String?, filename: String?) -> Bool {
+        if mimeType?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() == "image/gif" {
+            return true
+        }
+
+        guard let filename else {
+            return false
+        }
+
+        let fileExtension = URL(fileURLWithPath: filename)
+            .pathExtension
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        return fileExtension == "gif"
+            || filename.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "gif"
+    }
+
+    static func aspectRatio(for attachment: TrixTimelineAttachment) -> CGFloat {
+        guard let dimensions = attachment.imageDimensions,
+              dimensions.width > 0,
+              dimensions.height > 0 else {
+            return fallbackAspectRatio
+        }
+
+        let ratio = CGFloat(dimensions.width) / CGFloat(dimensions.height)
+        return min(max(ratio, minAspectRatio), maxAspectRatio)
+    }
+}
+
 enum TrixAttachmentSendBlockReason: String, Codable, Equatable, Sendable {
     case omemoDeviceTrustRequired
     case groupRecipientSetUnavailable
@@ -1220,6 +1324,12 @@ enum TrixClientError: LocalizedError {
     case recoveryKeySetupFailed
     case recoveryKeyConfirmationFailed
     case profileMetadataEncodingFailed
+    case inviteIssueUnavailable
+    case inviteIssueUnauthorized
+    case passwordChangeUnavailable
+    case invalidRegistrationInvite
+    case registrationPasswordTooWeak
+    case registrationUnavailable
     case keychainFailure(String)
     case sdkAdapterUnavailable
     case e2eeUnavailable
@@ -1278,6 +1388,18 @@ enum TrixClientError: LocalizedError {
             return "Recovery key confirmation failed."
         case .profileMetadataEncodingFailed:
             return "Profile metadata could not be encoded."
+        case .inviteIssueUnavailable:
+            return "Invite creation is not available."
+        case .inviteIssueUnauthorized:
+            return "Sign in again before changing account settings."
+        case .passwordChangeUnavailable:
+            return "Password change is not available."
+        case .invalidRegistrationInvite:
+            return "Invite code or handle is not valid."
+        case .registrationPasswordTooWeak:
+            return "Use a password with at least 12 characters."
+        case .registrationUnavailable:
+            return "Invite registration is not available."
         case .keychainFailure(let detail):
             return "Keychain operation failed: \(detail)"
         case .sdkAdapterUnavailable:

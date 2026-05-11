@@ -69,6 +69,8 @@ private struct TrixMacWorkspaceView: View {
 private struct TrixMacRoomListView: View {
     @ObservedObject var model: TrixAppModel
     @ObservedObject private var roomListViewModel: RoomListViewModel
+    @State private var directSearchUserIDInProgress: String?
+    @StateObject private var roomSearchViewModel = TrixUserDirectorySearchViewModel()
 
     init(model: TrixAppModel) {
         self.model = model
@@ -77,6 +79,8 @@ private struct TrixMacRoomListView: View {
 
     var body: some View {
         List(selection: $model.selectedRoomID) {
+            searchSection
+
             Section {
                 if roomListViewModel.rooms.isEmpty {
                     ContentUnavailableView(
@@ -84,8 +88,13 @@ private struct TrixMacRoomListView: View {
                         systemImage: "bubble.left",
                         description: Text("Create a room or accept an invite.")
                     )
+                } else if visibleRooms.isEmpty {
+                    Text("No matching chats")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 8)
                 } else {
-                    ForEach(roomListViewModel.rooms) { room in
+                    ForEach(visibleRooms) { room in
                         TrixMacRoomRow(room: room)
                             .tag(room.id as String?)
                             .contentShape(Rectangle())
@@ -106,6 +115,8 @@ private struct TrixMacRoomListView: View {
                     }
                 }
             }
+
+            peopleSection
 
             if !roomListViewModel.invitations.isEmpty {
                 Section("Invites") {
@@ -138,6 +149,126 @@ private struct TrixMacRoomListView: View {
             }
         }
         .listStyle(.sidebar)
+        .task(id: roomSearchViewModel.query) {
+            await roomSearchViewModel.search(
+                excluding: searchExcludedUserIDs,
+                limit: 20,
+                searchUsers: { query, limit in
+                    try await model.searchUsers(query, limit: limit)
+                }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var searchSection: some View {
+        Section {
+            TrixRoomSearchField(
+                query: $roomSearchViewModel.query,
+                isSearching: roomSearchViewModel.isSearching
+            )
+
+            if let errorMessage = roomSearchViewModel.errorMessage {
+                Text(errorMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if shouldShowNoSearchMatches {
+                Text("No matches")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else if roomSearchViewModel.isLimited {
+                Text("More people available")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var peopleSection: some View {
+        if !directoryPeopleResults.isEmpty {
+            Section("People") {
+                ForEach(directoryPeopleResults) { profile in
+                    Button {
+                        openDirectoryUser(profile)
+                    } label: {
+                        TrixRoomDirectoryUserSearchRow(
+                            profile: profile,
+                            isWorking: isCreatingDirectRoom(for: profile)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(directSearchUserIDInProgress != nil)
+                }
+            }
+        }
+    }
+
+    private func openDirectoryUser(_ profile: TrixUserProfile) {
+        if let existingRoom = existingDirectRoom(for: profile) {
+            Task {
+                await model.selectRoom(existingRoom)
+            }
+            return
+        }
+
+        directSearchUserIDInProgress = profile.userID
+        Task {
+            _ = await model.createEncryptedDirectRoom(
+                inviteeUserID: profile.userID,
+                roomName: profile.title
+            )
+            directSearchUserIDInProgress = nil
+        }
+    }
+
+    private func existingDirectRoom(for profile: TrixUserProfile) -> TrixRoomSummary? {
+        roomListViewModel.rooms.first { room in
+            room.kind == .direct &&
+                room.id.caseInsensitiveCompare(profile.userID) == .orderedSame
+        }
+    }
+
+    private func isCreatingDirectRoom(for profile: TrixUserProfile) -> Bool {
+        guard let userID = directSearchUserIDInProgress else {
+            return false
+        }
+
+        return userID.caseInsensitiveCompare(profile.userID) == .orderedSame
+    }
+
+    private var visibleRooms: [TrixRoomSummary] {
+        TrixRoomSearch.matchingRooms(
+            roomListViewModel.rooms,
+            query: roomSearchViewModel.query,
+            directoryResults: roomSearchViewModel.results
+        )
+    }
+
+    private var directoryPeopleResults: [TrixUserProfile] {
+        TrixRoomSearch.peopleResults(
+            roomSearchViewModel.results,
+            query: roomSearchViewModel.query,
+            rooms: roomListViewModel.rooms,
+            currentUserID: model.session?.userID
+        )
+    }
+
+    private var shouldShowNoSearchMatches: Bool {
+        !TrixRoomSearch.normalizedQuery(roomSearchViewModel.query).isEmpty &&
+            !roomSearchViewModel.isSearching &&
+            visibleRooms.isEmpty &&
+            directoryPeopleResults.isEmpty &&
+            roomSearchViewModel.errorMessage == nil
+    }
+
+    private var searchExcludedUserIDs: Set<String> {
+        guard let userID = model.session?.userID else {
+            return []
+        }
+
+        return [userID]
     }
 }
 
@@ -947,6 +1078,9 @@ struct TrixMacSettingsView: View {
         case .account:
             accountSettings
             profileSettings
+            passwordSettings
+        case .invites:
+            inviteSettings
         case .security:
             securitySettings
         case .diagnostics:
@@ -1014,6 +1148,20 @@ struct TrixMacSettingsView: View {
     private var profileSettings: some View {
         GroupBox("Profile") {
             TrixProfileSettingsView(model: model)
+                .padding(.vertical, 4)
+        }
+    }
+
+    private var passwordSettings: some View {
+        GroupBox("Password") {
+            TrixPasswordChangeView(model: model)
+                .padding(.vertical, 4)
+        }
+    }
+
+    private var inviteSettings: some View {
+        GroupBox("Invite Codes") {
+            TrixInviteIssueView(model: model)
                 .padding(.vertical, 4)
         }
     }
@@ -1191,6 +1339,7 @@ struct TrixMacSettingsView: View {
 
 private enum TrixMacSettingsTab: String, CaseIterable, Identifiable {
     case account
+    case invites
     case security
     case diagnostics
     case mvp
@@ -1203,6 +1352,8 @@ private enum TrixMacSettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .account:
             return "Account"
+        case .invites:
+            return "Invites"
         case .security:
             return "Security"
         case .diagnostics:
@@ -1216,6 +1367,8 @@ private enum TrixMacSettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .account:
             return "person.crop.circle"
+        case .invites:
+            return "envelope.badge"
         case .security:
             return "checkmark.shield"
         case .diagnostics:

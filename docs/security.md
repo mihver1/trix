@@ -76,6 +76,11 @@ identity keys, prekeys, signed prekeys, sessions, identities, sender keys, and
 trust decisions in the app Keychain. Logging out removes the saved XMPP login but
 does not erase OMEMO device state.
 
+The decrypted local timeline cache is stored outside Keychain in app-controlled
+Application Support storage and encrypted with an app-local cache key that is
+stored in Keychain. Keychain is used for small secret material, not as the
+message-history database.
+
 There is no validated server-side OMEMO key backup or account recovery path in
 this slice. If the app is deleted, the Keychain state is reset, or the account is
 restored onto a fresh device, the client creates a new OMEMO device. Old
@@ -123,6 +128,11 @@ every recipient. On 2026-05-10 the credentialed `dm-attachment` and
 `group-attachment` smoke modes passed live upload, peer download, local decrypt,
 MIME/image classification, and byte equality checks without printing decrypted
 content, filenames, media keys, or secret URLs.
+
+Inline timeline media previews use the same local decrypt path as manual
+attachment preview and are limited to supported image attachments with bounded
+descriptor sizes. They must not introduce server-side plaintext access or
+logging of decrypted bytes, filenames, media keys, local paths, or preview data.
 
 Do not log filenames, local paths, media keys, decrypted media bytes, or
 decrypted previews in production paths.
@@ -179,9 +189,9 @@ or decrypted-content fields.
 ## Registration And Provisioning Risk
 
 Public registration is out of scope. Users should be created by the operator
-through the Trix control plane, a server admin API, or a documented one-off admin
-command. Any temporary registration window must be short-lived and closed after
-use.
+through the Trix control plane, a server admin API, a documented one-off admin
+command, or a single-use invite wrapper that keeps public XMPP registration
+disabled.
 
 The control plane must not expose secrets in logs and must not create accounts
 with committed default passwords.
@@ -194,6 +204,20 @@ passwords, disable accounts with `ban_account`, re-enable them with
 archive/upload/push health through loopback-only calls. It is not a public or
 client-facing API and must not be exposed directly outside the host. Passwords
 are read from local files and must not be logged.
+
+The checked-in invite-registration wrapper is the first app-facing account
+bootstrap path. It keeps invite codes single-use, stores only code hashes plus
+redemption metadata, requires a bearer token for `POST /v1/operator/invites`,
+allows signed-in app users to issue codes through `POST /v1/invites` only after
+ejabberd `check_password` validates the current XMPP account, and redeems
+through the loopback ejabberd API. It also allows signed-in app users to change
+their own password through `POST /v1/account/password`; the wrapper validates the
+current password with `check_password` before calling loopback `change_password`.
+Only `POST /v1/invites`, `POST /v1/account/password`, and
+`POST /v1/registration/redeem` should be reachable by clients through private TLS
+policy; `/v1/operator/*` remains operator-only. Request bodies include invite
+codes and XMPP passwords, so reverse proxy and service logs must not capture
+bodies.
 
 ## Local Diagnostics Risk
 

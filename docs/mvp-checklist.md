@@ -23,6 +23,8 @@ checklist, not by copying legacy implementation details.
       `dm-attachment` and `group-attachment` live-smoke modes passed upload,
       peer download, local decrypt, MIME/image flag, and byte equality checks
       without printing decrypted content, filenames, media keys, or URLs.
+      iOS and macOS timeline rows render bounded inline previews for supported
+      image attachments after local decrypt.
 - [x] iOS product-parity pass: Chats/Settings tabs, dense inbox, visible invite
       actions, account state, chat bubbles, composer, and attachment download
       affordances are wired in SwiftUI. The iOS inbox prioritizes pending
@@ -133,6 +135,11 @@ checklist, not by copying legacy implementation details.
 - [x] Confirm local session cleanup behavior is explicit and safe: logout removes
       the saved XMPP login from Keychain and keeps OMEMO device/trust state
       local until app Keychain data is reset.
+- [x] Change own account password from Apple Settings through the invite/control
+      wrapper. The app submits the current password only for Basic-auth
+      validation, the wrapper checks it with ejabberd `check_password`, calls
+      loopback `change_password`, rejects weak new passwords, and the client
+      updates the saved Keychain session password only after success.
 
 ## Messaging
 
@@ -160,7 +167,7 @@ checklist, not by copying legacy implementation details.
       the service validates the MUC member recipient set and every recipient has
       a trusted active OMEMO device.
 - [x] Download encrypted DM timeline file/image attachments, decrypt locally,
-      and preview images in app.
+      and preview supported images inline or in the full attachment preview.
 - [x] Show visible encrypted-attachment download failure state and allow retry
       from the same attachment control without logging decrypted bytes or media
       keys.
@@ -187,7 +194,8 @@ checklist, not by copying legacy implementation details.
       confirmation flow, but the checked-in action is local-only and says so
       until the Martin MUC leave path is validated.
 - [x] Keep newly decrypted or locally sent DM timeline items visible after app
-      restart through the local Keychain-backed timeline cache.
+      restart through the local encrypted timeline cache. The cache file lives
+      outside Keychain and is encrypted with a small Keychain-held cache key.
 - [x] Include the sender's current OMEMO device in new DM and group sends through
       the existing MartinOMEMO recipient-set API, so future MAM archives include
       a local recipient key for sender-side restart/self-history replay.
@@ -240,6 +248,13 @@ checklist, not by copying legacy implementation details.
       service in front of ejabberd: yes, use ejabberd `mod_http_api` only as a
       localhost backend behind an authenticated/audited Trix operator wrapper.
 - [x] Create user.
+- [x] App-driven invite registration flow: `server/xmpp/scripts/
+      invite-registration-server.py` creates bearer-protected single-use
+      operator invites, lets signed-in Apple clients issue invites after
+      ejabberd `check_password` validates the current XMPP account, stores only
+      invite-code hashes, redeems through the loopback ejabberd API, and the
+      Apple login screen can create an account from an invite before saving the
+      normal XMPP session.
 - [x] Disable user through `operator-control.sh disable-user`, backed by
       ejabberd `ban_account` so sessions are kicked and new login is blocked
       without deleting account data.
@@ -294,6 +309,9 @@ checklist, not by copying legacy implementation details.
       `server/xmpp/scripts/operator-api-smoke.sh` now exercises provision,
       reset-password, directory search, health, disable, enable, and cleanup
       through the localhost control-plane backend.
+- [x] Dry-run smoke coverage for invite creation, first redemption, and
+      single-use replay rejection, including app-issued invites, through
+      `server/xmpp/scripts/invite-registration-smoke.sh`.
 - [x] Repeatable archive/TestFlight script path for the new XMPP `apple/` app.
 - [x] Fail-closed Apple APNs registration plumbing exists for the new XMPP
       targets: platform token capture, service-bound XMPP push registration, and

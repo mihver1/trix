@@ -2,6 +2,7 @@ import Foundation
 
 enum TrixClientConfiguration {
     static let homeserverURL = URL(string: "https://trix.selfhost.ru")!
+    static let registrationAPIBaseURL = URL(string: "https://trix.selfhost.ru")!
     static let serverName = "trix.selfhost.ru"
 }
 

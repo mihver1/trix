@@ -1,6 +1,8 @@
 import Foundation
 
 actor MockTrixService: TrixService {
+    private static let mockImageData = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAABgAAAASCAIAAADOjonJAAAAKUlEQVR42mPQ6n2HhvSXd6IhYtQwjBpER4PI04apZtQgeho0mrKHoEEA2EuLf1hOf2sAAAAASUVORK5CYII=") ?? Data()
+
     private var roomSummaries: [TrixRoomSummary]
     private var roomInvites: [TrixRoomInvite]
     private var membersByRoomID: [String: [TrixRoomMember]]
@@ -21,8 +23,8 @@ actor MockTrixService: TrixService {
             kind: .direct,
             isEncrypted: true,
             unreadCount: 1,
-            lastMessagePreview: "Mock DM preview",
-            lastActivityAt: now.addingTimeInterval(-240)
+            lastMessagePreview: "trix-preview.png",
+            lastActivityAt: now.addingTimeInterval(-60)
         )
         let groupRoom = TrixRoomSummary(
             id: "!friends:trix.selfhost.ru",
@@ -63,6 +65,7 @@ actor MockTrixService: TrixService {
         self.backupExistsOnServer = false
         self.attachmentDataBySourceJSON = [
             "mock://attachment/brief": Data("Mock Trix attachment bytes".utf8),
+            "mock://attachment/image": Self.mockImageData,
         ]
         self.typingUserIDsByRoomID = [:]
         self.profilesByUserID = [
@@ -106,6 +109,22 @@ actor MockTrixService: TrixService {
                         mimeType: "application/pdf",
                         sizeBytes: 28,
                         sourceJSON: "mock://attachment/brief"
+                    )
+                ),
+                TrixTimelineItem(
+                    id: "$mock-dm-4",
+                    roomID: directRoom.id,
+                    sender: "@alice:trix.selfhost.ru",
+                    timestamp: now.addingTimeInterval(-60),
+                    body: "trix-preview.png",
+                    isLocalEcho: false,
+                    attachment: TrixTimelineAttachment(
+                        kind: .image,
+                        filename: "trix-preview.png",
+                        mimeType: "image/png",
+                        sizeBytes: Self.mockImageData.count,
+                        sourceJSON: "mock://attachment/image",
+                        imageDimensions: TrixAttachmentImageDimensions(width: 24, height: 18)
                     )
                 ),
             ],
@@ -473,7 +492,9 @@ actor MockTrixService: TrixService {
                 filename: attachment.filename,
                 mimeType: attachment.mimeType,
                 sizeBytes: attachment.data.count,
-                sourceJSON: sourceJSON
+                sourceJSON: sourceJSON,
+                imageDimensions: attachment.imageDimensions,
+                imageBlurhash: attachment.imageBlurhash
             ),
             deliveryState: .sent
         )

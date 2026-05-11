@@ -38,7 +38,7 @@ lightweight fallback for a shell-managed spike.
 
 The Trix control plane is the operator-owned source of truth for:
 
-- Account creation and disablement.
+- Account creation, disablement, and password changes.
 - Invite issuance and expiry.
 - User display profile metadata owned by Trix.
 - Group creation policy.
@@ -46,10 +46,11 @@ The Trix control plane is the operator-owned source of truth for:
 - Device/session audit summaries where supported by the XMPP stack.
 - Server health and backup status.
 
-The Apple clients should not expose self-registration for the MVP. They should
-consume Trix control-plane decisions and use XMPP only for messaging,
-presence-compatible state, roster/group membership sync, encrypted message
-delivery, and media transfer.
+The Apple clients should not expose public self-registration for the MVP. They
+may issue and redeem single-use Trix invite codes and change the signed-in
+account password through the control-plane wrapper, then use XMPP only for login,
+messaging, presence-compatible state, roster/group membership sync, encrypted
+message delivery, and media transfer.
 
 ### Apple Clients
 
@@ -130,7 +131,7 @@ Definition of done:
 - iOS and macOS build with the new service boundary.
 - SwiftUI views do not call the XMPP library directly.
 - Mock services cover login, room list, DM timeline, group timeline, invite,
-  composer, attachment, and visible encryption states.
+  password change, composer, attachment, and visible encryption states.
 - Existing legacy and Matrix release tooling remains untouched unless a later
   task explicitly reopens that scope.
 
@@ -177,6 +178,8 @@ Verification checklist:
 - Confirm session restore.
 - Disable the account from the control plane.
 - Confirm new sessions are rejected.
+- Change the account password from Settings and confirm the saved session uses
+  the accepted new password.
 - Confirm logs redact credentials and message content.
 
 ### Phase 4: Mandatory OMEMO Messaging

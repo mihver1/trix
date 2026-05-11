@@ -12,6 +12,9 @@ final class TimelineViewModel: ObservableObject {
     @Published private(set) var attachmentDownloadFailures: [String: String] = [:]
     @Published private(set) var reactionActionMessageID: String?
     @Published private(set) var downloadedAttachment: TrixAttachmentDownload?
+    @Published private(set) var inlineAttachmentPreviews: [String: TrixAttachmentDownload] = [:]
+    @Published private(set) var inlineAttachmentPreviewLoadingIDs: Set<String> = []
+    @Published private(set) var inlineAttachmentPreviewFailures: [String: String] = [:]
     @Published private(set) var attachmentSendAvailability: TrixAttachmentSendAvailability?
     @Published private(set) var typingUserIDs: [String] = []
     @Published private(set) var errorMessage: String?
@@ -128,17 +131,62 @@ final class TimelineViewModel: ObservableObject {
             return
         }
 
+        if let cachedPreview = inlineAttachmentPreviews[item.id] {
+            downloadedAttachment = cachedPreview
+            return
+        }
+
         downloadingAttachmentID = item.id
         attachmentDownloadFailures[item.id] = nil
         errorMessage = nil
         defer { downloadingAttachmentID = nil }
 
         do {
-            downloadedAttachment = try await service.downloadAttachment(attachment, session: session)
+            let download = try await service.downloadAttachment(attachment, session: session)
+            downloadedAttachment = download
+            if TrixInlineMediaPreviewSupport.canRenderInlinePreview(download) {
+                inlineAttachmentPreviews[item.id] = download
+                inlineAttachmentPreviewFailures[item.id] = nil
+            }
         } catch {
             let message = error.trixUserFacingMessage
             attachmentDownloadFailures[item.id] = message
             errorMessage = message
+        }
+    }
+
+    func loadInlineAttachmentPreview(
+        for item: TrixTimelineItem,
+        session: TrixSession,
+        service: TrixRoomService
+    ) async {
+        guard let attachment = item.attachment,
+              TrixInlineMediaPreviewSupport.canAttemptInlinePreview(attachment),
+              inlineAttachmentPreviews[item.id] == nil,
+              !inlineAttachmentPreviewLoadingIDs.contains(item.id),
+              inlineAttachmentPreviewFailures[item.id] == nil else {
+            return
+        }
+
+        setInlineAttachmentPreviewLoading(true, for: item.id)
+        defer {
+            setInlineAttachmentPreviewLoading(false, for: item.id)
+        }
+
+        do {
+            let download = try await service.downloadAttachment(attachment, session: session)
+            guard self.roomID == item.roomID,
+                  TrixInlineMediaPreviewSupport.canRenderInlinePreview(download) else {
+                return
+            }
+
+            inlineAttachmentPreviews[item.id] = download
+        } catch {
+            guard self.roomID == item.roomID else {
+                return
+            }
+
+            inlineAttachmentPreviewFailures[item.id] = error.trixUserFacingMessage
         }
     }
 
@@ -211,10 +259,23 @@ final class TimelineViewModel: ObservableObject {
         attachmentDownloadFailures = [:]
         reactionActionMessageID = nil
         downloadedAttachment = nil
+        inlineAttachmentPreviews = [:]
+        inlineAttachmentPreviewLoadingIDs = []
+        inlineAttachmentPreviewFailures = [:]
         attachmentSendAvailability = nil
         typingUserIDs = []
         errorMessage = nil
         cachedItemsByRoomID = [:]
+    }
+
+    private func setInlineAttachmentPreviewLoading(_ isLoading: Bool, for itemID: String) {
+        var loadingIDs = inlineAttachmentPreviewLoadingIDs
+        if isLoading {
+            loadingIDs.insert(itemID)
+        } else {
+            loadingIDs.remove(itemID)
+        }
+        inlineAttachmentPreviewLoadingIDs = loadingIDs
     }
 
     private func store(_ item: TrixTimelineItem, for roomID: String) {

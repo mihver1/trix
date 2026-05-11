@@ -28,3 +28,4 @@ apps/ios/TrixiOS/Bridge/Artifacts/
 /testflight-export-options.plist
 /.tmp-*
 /.warp/
+/server/xmpp/.state/

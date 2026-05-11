@@ -6,6 +6,12 @@ protocol TrixSessionStore {
     func clearSession() throws
 }
 
+protocol TrixRegistrationService: Sendable {
+    func issueInvite(_ request: TrixInviteIssueRequest, session: TrixSession) async throws -> TrixIssuedInvite
+    func redeemInvite(_ request: TrixInviteRegistrationRequest) async throws -> TrixInviteRegistrationResult
+    func changePassword(_ request: TrixPasswordChangeRequest, session: TrixSession) async throws -> TrixPasswordChangeResult
+}
+
 protocol TrixAuthService: Sendable {
     func login(userID: String, password: String, serverURL: URL) async throws -> TrixSession
     func restore(session: TrixSession) async throws -> TrixAccount

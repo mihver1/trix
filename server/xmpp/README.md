@@ -33,6 +33,12 @@ is disabled, registration is closed by default, and no secrets are committed.
 - `scripts/operator-api-smoke.sh`: localhost `mod_http_api` provision,
   reset-password, directory search, health, disable, enable, and cleanup smoke
   with generated disposable credentials.
+- `scripts/invite-registration-server.py`: small invite wrapper for app-driven
+  account registration. Operator invite creation is bearer-protected, invite
+  codes are stored only as hashes, and successful redemption provisions the XMPP
+  account through the loopback ejabberd API.
+- `scripts/invite-registration-smoke.sh`: dry-run smoke for invite creation,
+  redemption, and single-use replay rejection without real ejabberd credentials.
 - `scripts/restore-verify.sh`: fresh-instance restore verifier using
   ejabberd-native Mnesia backup/restore for account state plus a compose-scoped
   upload-volume archive.
@@ -210,6 +216,61 @@ Disable uses ejabberd `ban_account`, which blocks login and kicks current
 sessions without deleting the account's roster/vCard/archive state. Enable uses
 ejabberd `unban_account` to clear that ban without changing the account secret.
 
+## Invite Registration
+
+Public XMPP in-band registration stays disabled. App registration uses a small
+Trix wrapper instead:
+
+- Operators create one-use invite codes with `POST /v1/operator/invites` and a
+  deployment-local `Authorization: Bearer ...` token.
+- Signed-in Apple clients create one-use invite codes with `POST /v1/invites`
+  using the current XMPP JID/password over private TLS; the wrapper validates
+  that account through ejabberd `check_password` before issuing a code.
+- Signed-in Apple clients change their own password with
+  `POST /v1/account/password` using the current XMPP JID/password over private
+  TLS; the wrapper validates the current password through `check_password` and
+  then calls ejabberd `change_password` through the loopback API.
+- Apps redeem invite codes with `POST /v1/registration/redeem`, providing the
+  invite code, handle, display name, and user-chosen password.
+- The wrapper stores only invite-code hashes and redemption metadata; it does
+  not store user passwords.
+- Redemption provisions the account through the localhost ejabberd API command
+  `register`; `mod_http_api` remains a backend only and must not be exposed.
+
+Run the wrapper on the XMPP host or a private sidecar that can reach the
+localhost ejabberd API:
+
+```bash
+cd server/xmpp
+TRIX_INVITE_OPERATOR_TOKEN="$(openssl rand -hex 32)" \
+TRIX_INVITE_STORE_PATH=/var/lib/trix-xmpp/invites.json \
+./scripts/invite-registration-server.py
+```
+
+Create an invite for a reserved handle:
+
+```bash
+curl -fsS \
+  -H "Authorization: Bearer $TRIX_INVITE_OPERATOR_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"localpart":"alice","display_name":"Alice","ttl_seconds":604800}' \
+  http://127.0.0.1:8091/v1/operator/invites
+```
+
+Expose only the app-facing `/v1/registration/redeem` endpoint through the
+private TLS reverse proxy used by the Apple clients. If in-app invite issuing and
+password change are enabled, expose `POST /v1/invites` and
+`POST /v1/account/password` through the same private TLS policy. Keep
+`/v1/operator/*` reachable only from an operator network or localhost. Do not
+log request bodies: they contain invite codes and XMPP passwords.
+
+Dry-run the wrapper contract without ejabberd:
+
+```bash
+cd server/xmpp
+./scripts/invite-registration-smoke.sh
+```
+
 ## Deployment Notes
 
 1. Copy `.env.example` to `.env`.
@@ -232,8 +293,9 @@ cd server/xmpp
 podman compose --profile push-gateway up -d ejabberd push-gateway
 ```
 
-6. Add users through `ejabberdctl` or the localhost-only control plane after
-   admin authentication is validated.
+6. Add users through `ejabberdctl`, the localhost-only operator control plane,
+   or the invite-registration wrapper after operator authentication is
+   configured.
 7. Open only the required public ports. For this private non-federated target,
    do not open `5269`.
 

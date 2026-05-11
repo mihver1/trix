@@ -6,6 +6,7 @@ final class TrixAppModel: ObservableObject {
     @Published private(set) var account: TrixAccount?
     @Published private(set) var isStarting = false
     @Published private(set) var isLoggingIn = false
+    @Published private(set) var isRegistering = false
     @Published private(set) var isLoggingOut = false
     @Published private(set) var sessionCleanupMessage: String?
     @Published var errorMessage: String?
@@ -19,6 +20,7 @@ final class TrixAppModel: ObservableObject {
     let deviceVerificationViewModel: DeviceVerificationViewModel
 
     private let sessionStore: TrixSessionStore
+    private let registrationService: TrixRegistrationService
     private let trixService: TrixService
     private var apnsDeviceToken: TrixAPNsDeviceToken?
     private var hasStarted = false
@@ -26,9 +28,11 @@ final class TrixAppModel: ObservableObject {
 
     init(
         sessionStore: TrixSessionStore = KeychainTrixSessionStore(),
+        registrationService: TrixRegistrationService = HTTPInviteRegistrationService(),
         trixService: TrixService = XMPPMartinService()
     ) {
         self.sessionStore = sessionStore
+        self.registrationService = registrationService
         self.trixService = trixService
         self.roomListViewModel = RoomListViewModel()
         self.timelineViewModel = TimelineViewModel()
@@ -106,6 +110,105 @@ final class TrixAppModel: ObservableObject {
             clearAuthenticatedState()
             errorMessage = error.trixUserFacingMessage
         }
+    }
+
+    func registerWithInvite(inviteCode: String, localpart: String, displayName: String, password: String) async {
+        guard !isRegistering, !isLoggingIn else {
+            return
+        }
+
+        isRegistering = true
+        errorMessage = nil
+        sessionCleanupMessage = nil
+        defer { isRegistering = false }
+
+        var newSession: TrixSession?
+        do {
+            let registration = try await registrationService.redeemInvite(
+                TrixInviteRegistrationRequest(
+                    inviteCode: inviteCode,
+                    localpart: localpart,
+                    password: password,
+                    displayName: displayName
+                )
+            )
+
+            let authenticatedSession = try await trixService.login(
+                userID: registration.userID,
+                password: password,
+                serverURL: XMPPClientConfiguration.connectionURL
+            )
+            newSession = authenticatedSession
+            let restoredAccount = try await trixService.restore(session: authenticatedSession)
+            try sessionStore.saveSession(authenticatedSession)
+            session = authenticatedSession
+            account = restoredAccount
+
+            if let displayName = registration.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !displayName.isEmpty {
+                if let profile = try? await trixService.updateDisplayName(displayName, session: authenticatedSession) {
+                    account = TrixAccount(
+                        userID: profile.userID,
+                        displayName: profile.displayName ?? "",
+                        deviceID: authenticatedSession.deviceID
+                    )
+                }
+            }
+
+            await reloadRooms()
+            await reloadDeviceVerificationStatus()
+            await syncAPNsRegistrationIfPossible()
+        } catch {
+            if let newSession {
+                try? await trixService.logout(session: newSession)
+                try? sessionStore.clearSession()
+            }
+            clearAuthenticatedState()
+            errorMessage = error.trixUserFacingMessage
+        }
+    }
+
+    func issueInvite(localpart: String, displayName: String, ttlDays: Int) async throws -> TrixIssuedInvite {
+        guard let session else {
+            throw TrixClientError.missingSession
+        }
+
+        return try await registrationService.issueInvite(
+            TrixInviteIssueRequest(
+                localpart: localpart,
+                displayName: displayName,
+                ttlSeconds: max(1, ttlDays) * 24 * 60 * 60
+            ),
+            session: session
+        )
+    }
+
+    func changePassword(currentPassword: String, newPassword: String) async throws -> TrixPasswordChangeResult {
+        guard let session else {
+            throw TrixClientError.missingSession
+        }
+
+        let result = try await registrationService.changePassword(
+            TrixPasswordChangeRequest(
+                currentPassword: currentPassword,
+                newPassword: newPassword
+            ),
+            session: session
+        )
+
+        let updatedSession = TrixSession(
+            userID: session.userID,
+            deviceID: session.deviceID,
+            homeserverURL: session.homeserverURL,
+            accessToken: newPassword,
+            refreshToken: session.refreshToken,
+            oidcData: session.oidcData,
+            sdkStoreID: session.sdkStoreID,
+            createdAt: session.createdAt
+        )
+        try sessionStore.saveSession(updatedSession)
+        self.session = updatedSession
+        return result
     }
 
     func logout() async {
@@ -281,6 +384,18 @@ final class TrixAppModel: ObservableObject {
         }
 
         await timelineViewModel.downloadAttachment(
+            for: item,
+            session: session,
+            service: trixService
+        )
+    }
+
+    func loadInlineAttachmentPreview(for item: TrixTimelineItem) async {
+        guard let session else {
+            return
+        }
+
+        await timelineViewModel.loadInlineAttachmentPreview(
             for: item,
             session: session,
             service: trixService
@@ -653,6 +768,7 @@ extension TrixAppModel {
         if ProcessInfo.processInfo.environment["TRIX_MATRIX_USE_MOCK_SERVICE"] == "1" {
             return TrixAppModel(
                 sessionStore: TrixMockSessionStore(),
+                registrationService: MockInviteRegistrationService(),
                 trixService: MockTrixService()
             )
         }

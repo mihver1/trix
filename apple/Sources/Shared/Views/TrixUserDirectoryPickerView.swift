@@ -173,7 +173,7 @@ private struct TrixSelectedDirectoryUserRow: View {
     }
 }
 
-private extension View {
+extension View {
     @ViewBuilder
     func trixDirectorySearchInput() -> some View {
         #if os(iOS)

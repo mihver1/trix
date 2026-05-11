@@ -220,17 +220,22 @@ The checked-in Apple code is now the first XMPP client slice:
   invites, visible accept/decline buttons plus iOS swipe actions, capped unread
   badges, local mark-read-on-open, account/connection/push state summaries
   without token values, redacted diagnostics, chat bubbles, OMEMO-gated composer
-  controls, and encrypted attachment download/preview/retry affordances;
+  controls, inline previews for supported encrypted image attachments, and
+  encrypted attachment download/preview/retry affordances;
 - macOS-specific three-column workspace with dense room sidebar, selected-room
   timeline column, room inspector column, deterministic generated avatars, and
   Settings diagnostics for connection, push, and redacted local state;
-- login/session UI;
+- login/session UI plus invite-code account creation from the login screen,
+  invite-code issuing from Settings for signed-in accounts, and Settings-based
+  password change that updates the saved Keychain session password only after the
+  server accepts the new password;
 - room list and timeline UI;
 - composer and attachment affordances;
 - settings/profile surfaces;
 - service and view-model boundaries;
 - mock service for local UI development;
-- Martin-backed XMPP login, Keychain-backed session restore, logout, and
+- Martin-backed XMPP login, invite-code issuing/registration, password-change
+  handoff to the account wrapper, Keychain-backed session restore, logout, and
   roster-backed DM list;
 - MartinOMEMO/libsignal linked into both targets for the OMEMO implementation
   path;
@@ -264,7 +269,10 @@ The checked-in Apple code is now the first XMPP client slice:
   descriptor; on 2026-05-10 the credentialed `dm-attachment` live smoke passed
   upload, peer download, local decrypt, MIME, byte equality, and image
   classification without printing decrypted content, filenames, media keys, or
-  secret URLs;
+  secret URLs. Supported image attachments (`gif`, `heic`, `heif`, `jpeg`,
+  `jpg`, `png`, `webp`, plus image MIME types) render inline in the iOS and
+  macOS timeline after local decrypt when their encrypted descriptor carries a
+  bounded original size;
 - encrypted group attachment send through the same local file-encryption and
   HTTP-upload path, gated on a validated MUC member recipient set and trusted
   active OMEMO devices for every group recipient; `group-attachment` live smoke
@@ -301,10 +309,13 @@ runs passed on 2026-05-10 with upload, download, decrypt, MIME/image, and byte
 equality checks. The Matrix Rust SDK adapter has been removed from the new Apple
 targets.
 
-On macOS, downloaded attachments are previewed locally after decrypt and expose
-Open, Share, and Export OS controls. The room inspector's shared-media section
-uses the same service/view-model download path as the timeline; it does not add
-plaintext server access or a separate file-transfer path.
+On iOS and macOS, supported encrypted image attachments get inline timeline
+previews from the same local-decrypt service path as the full attachment
+preview. On macOS, downloaded attachments are previewed locally after decrypt
+and expose Open, Share, and Export OS controls. The room inspector's
+shared-media section uses the same service/view-model download path as the
+timeline; it does not add plaintext server access or a separate file-transfer
+path.
 
 The product session path stores the XMPP login material only in the app Keychain
 record used by `TrixAppModel.start()` for restore. Logging out disconnects the
@@ -315,8 +326,10 @@ trust decisions. Resetting OMEMO state is still a manual app-Keychain reset
 operation, not a normal logout side effect.
 
 Timeline restart behavior uses two layers. `XMPPMartinService.timeline(...)`
-loads the room's Keychain-backed local timeline cache before querying MAM, then
+loads the room's local encrypted timeline file cache before querying MAM, then
 merges any decryptable encrypted archive items back into the same bounded cache.
+The file cache is encrypted with a small cache key stored in Keychain, while
+message history itself is not stored as Keychain generic-password blobs.
 The `timeline-restart` live-smoke mode exercises this through a fresh service
 instance and reports only counts. On 2026-05-10 the credentialed run passed with
 MAM available, local cache loaded after restart, overlapping item IDs, and no
@@ -339,6 +352,9 @@ SwiftUI views should depend on view models, not XMPP or OMEMO APIs.
 The target protocol-neutral boundary is:
 
 - `TrixSessionStore`: secure local session and device material storage.
+- `TrixRegistrationService`: invite issuing, unauthenticated invite redemption
+  before a normal XMPP login, and signed-in account password change through the
+  Trix wrapper.
 - `TrixAuthService`: login, logout, and session restore.
 - `TrixSyncService`: room list, account state, and sync lifecycle.
 - `TrixRoomService`: timeline, text send, attachments, reactions, typing, and

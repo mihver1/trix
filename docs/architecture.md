@@ -142,6 +142,19 @@ operator. A network-facing or multi-operator control plane remains a separate
 authenticated/audited wrapper; exposing ejabberd `5280` directly is out of
 scope.
 
+App-driven registration is handled by a separate invite wrapper, not XMPP public
+registration. Operators create one-use invite codes through an authenticated
+operator endpoint, and signed-in Apple clients can issue codes from Settings
+after the wrapper validates the current XMPP account through ejabberd
+`check_password`. Apple clients redeem a code, handle, display name, and
+user-chosen password through the app-facing endpoint. The wrapper stores only
+invite-code hashes and redemption metadata, provisions the account through the
+loopback ejabberd API, and returns the new XMPP JID for immediate client login.
+The same wrapper handles self-service password changes for signed-in clients by
+validating the current XMPP password through `check_password` and then calling
+loopback `change_password`; request bodies must stay out of proxy and service
+logs.
+
 ## Multidevice Model
 
 A user may have multiple devices. Each device has its own OMEMO identity and
