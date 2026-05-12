@@ -178,9 +178,7 @@ struct TrixTimelineView: View {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
                     }
-                    .trixMacCommandReturn {
-                        sendDraft()
-                    }
+                    .trixMacComposerReturn(text: $draft, send: sendDraft)
 
                 Button {
                     sendDraft()
@@ -1373,14 +1371,20 @@ private extension View {
     }
 
     @ViewBuilder
-    func trixMacCommandReturn(_ action: @escaping () -> Void) -> some View {
+    func trixMacComposerReturn(text: Binding<String>, send: @escaping () -> Void) -> some View {
         #if os(macOS)
         self.onKeyPress(.return, phases: .down) { press in
             guard press.modifiers.contains(.command) else {
-                return .ignored
+                if let responder = NSApp.keyWindow?.firstResponder,
+                   responder.tryToPerform(#selector(NSTextView.insertNewlineIgnoringFieldEditor(_:)), with: nil) {
+                    return .handled
+                }
+
+                text.wrappedValue.append("\n")
+                return .handled
             }
 
-            action()
+            send()
             return .handled
         }
         #else
