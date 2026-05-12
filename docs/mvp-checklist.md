@@ -52,8 +52,10 @@ checklist, not by copying legacy implementation details.
       quit/relaunch smoke is still tracked separately.
 - [x] Local unread badges and mark-read-on-open UI. Room lists cap large unread
       counts at `99+`, opening a room clears the local unread display, and
-      outgoing previews use a `You:` prefix. Server-backed unread state and
-      chat-marker/read-marker sync remain open.
+      room refreshes preserve/increment local unread state for inactive rooms
+      when new incoming activity updates the preview. Outgoing previews use a
+      `You:` prefix and do not increment local unread. Server-backed unread
+      state and chat-marker/read-marker sync remain open.
 - [x] Delivery decorations.
 - [x] Typing indicators.
 - [x] Message reactions. The Apple model/service/view-model boundary,
@@ -66,12 +68,15 @@ checklist, not by copying legacy implementation details.
 - [x] Foreground room/invite/timeline refresh while the app scene is active.
 - [ ] APNs-backed notifications without plaintext payloads. Apple token capture,
       XMPP push-component registration plumbing, and wake-only payload handling
-      are wired. `trix-push-gateway` now includes the APNs sender plus XEP-0114
-      component/store for Martin/XEP-0357 registration nodes. On 2026-05-10 the
-      gateway was deployed on the VPS with deployment-local APNs token-auth
-      material, bound its HTTP health endpoint to localhost only, and connected
-      to ejabberd as `push.trix.selfhost.ru`. Keep this open until signed-device
-      APNs smoke confirms wake-only delivery with no plaintext fields.
+      are wired. Inactive iOS/macOS push handling now syncs room state without
+      marking the selected room read and may create a generic local notification
+      with only encrypted-message/unread-count wording. `trix-push-gateway` now
+      includes the APNs sender plus XEP-0114 component/store for Martin/XEP-0357
+      registration nodes. On 2026-05-10 the gateway was deployed on the VPS with
+      deployment-local APNs token-auth material, bound its HTTP health endpoint to
+      localhost only, and connected to ejabberd as `push.trix.selfhost.ru`. Keep
+      this open until signed-device APNs smoke confirms wake-only delivery with
+      no plaintext fields.
 - [x] Trix user directory search for new DM/group creation and add-member flows.
 - [x] Basic XMPP vCard-backed profile view/edit surface for display name, bio,
       status, and website.
@@ -295,9 +300,10 @@ checklist, not by copying legacy implementation details.
       selected; no custom key recovery was added.
 - [ ] Push notifications through APNs. The checked-in `trix-push-gateway`
       component is deployed behind ejabberd `mod_push`/XEP-0357 with
-      deployment-local APNs signing material. Keep this open until a signed iOS
-      or macOS device confirms wake-only APNs delivery with no plaintext payload
-      fields.
+      deployment-local APNs signing material. The Apple app requests notification
+      authorization and creates only generic local notifications after inactive
+      wake-only sync. Keep this open until a signed iOS or macOS device confirms
+      wake-only APNs delivery with no plaintext payload fields.
 - [ ] Persistent tests around encrypted DM/group sync. `timeline-restart` now
       covers the DM restart/cache/MAM path in credentialed live smoke, but this
       still needs automated persistent coverage.
@@ -315,7 +321,7 @@ checklist, not by copying legacy implementation details.
 - [x] Repeatable archive/TestFlight script path for the new XMPP `apple/` app.
 - [x] Fail-closed Apple APNs registration plumbing exists for the new XMPP
       targets: platform token capture, service-bound XMPP push registration, and
-      wake-only remote push handling.
+      wake-only remote push handling with inactive generic local notifications.
 - [x] Trix APNs gateway/push component exists as `trix-push-gateway`: it accepts
       Martin/Tigase registration, stores XEP-0357 node mappings, and calls the
       APNs sender with wake-only payloads.

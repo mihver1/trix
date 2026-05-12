@@ -504,16 +504,20 @@ struct TrixRoomSummary: Identifiable, Equatable, Sendable {
         kind.label
     }
 
-    func markingRead() -> TrixRoomSummary {
+    func withUnreadCount(_ unreadCount: Int) -> TrixRoomSummary {
         TrixRoomSummary(
             id: id,
             name: name,
             kind: kind,
             isEncrypted: isEncrypted,
-            unreadCount: 0,
+            unreadCount: max(unreadCount, 0),
             lastMessagePreview: lastMessagePreview,
             lastActivityAt: lastActivityAt
         )
+    }
+
+    func markingRead() -> TrixRoomSummary {
+        withUnreadCount(0)
     }
 }
 
@@ -1189,6 +1193,25 @@ struct TrixPushRegistration: Equatable, Sendable {
     let gatewayJID: String
     let node: String
     let registeredAt: Date
+}
+
+struct TrixLocalNotificationRequest: Equatable, Sendable {
+    let title: String
+    let body: String
+    let threadIdentifier: String
+    let badgeCount: Int
+}
+
+struct TrixRemoteNotificationHandlingResult: Equatable, Sendable {
+    let didProcess: Bool
+    let badgeCount: Int
+    let localNotification: TrixLocalNotificationRequest?
+
+    static let ignored = TrixRemoteNotificationHandlingResult(
+        didProcess: false,
+        badgeCount: 0,
+        localNotification: nil
+    )
 }
 
 enum TrixPushRegistrationBlocker: String, Codable, Equatable, Sendable {

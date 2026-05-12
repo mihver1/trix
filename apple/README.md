@@ -218,13 +218,18 @@ The checked-in Apple code is now the first XMPP client slice:
 - shared SwiftUI views for iOS and macOS;
 - iOS-specific Chats and Settings tabs with a dense inbox, prioritized pending
   invites, visible accept/decline buttons plus iOS swipe actions, capped unread
-  badges, local mark-read-on-open, account/connection/push state summaries
-  without token values, redacted diagnostics, chat bubbles, OMEMO-gated composer
-  controls, inline previews for supported encrypted image attachments, and
-  encrypted attachment download/preview/retry affordances;
+  badges that preserve/increment for inactive-room preview updates, local
+  mark-read-on-open, account/connection/push state summaries without token
+  values, redacted diagnostics, chat bubbles, OMEMO-gated composer controls,
+  inline previews for supported encrypted image attachments, and encrypted
+  attachment download/preview/retry affordances;
 - macOS-specific three-column workspace with dense room sidebar, selected-room
   timeline column, room inspector column, deterministic generated avatars, and
   Settings diagnostics for connection, push, and redacted local state;
+- iOS and macOS wake-only push handling that requests notification permission,
+  avoids marking rooms read while inactive, and shows only generic local
+  encrypted-message/unread-count notifications without decrypted body text or
+  attachment names;
 - login/session UI plus invite-code account creation from the login screen,
   invite-code issuing from Settings for signed-in accounts, and Settings-based
   password change that updates the saved Keychain session password only after the
@@ -254,8 +259,9 @@ The checked-in Apple code is now the first XMPP client slice:
   DM and group sends; older archived stanzas without that local recipient key
   remain unrecoverable without a reviewed recovery/key-backup path;
 - day separators, sender/time-window clustering, sender names on the first
-  incoming group cluster, local unread clearing, `You:` outgoing previews, and
-  local-only hide/forget wording for DMs;
+  incoming group cluster, local unread preservation for inactive rooms, local
+  unread clearing on open, `You:` outgoing previews, and local-only hide/forget
+  wording for DMs;
 - reaction model/service/view-model/UI wiring with quick-reaction menu,
   aggregate chips, self-highlight, mock-service toggling, and a Martin-backed
   XEP-0444 stanza send/receive/cache path. Reaction metadata is visible to the

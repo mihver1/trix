@@ -246,21 +246,41 @@ final class TrixAppModel: ObservableObject {
         await syncAPNsRegistrationIfPossible()
     }
 
-    func handleRemoteNotification(userInfo: [AnyHashable: Any]) async -> Bool {
+    func handleRemoteNotification(
+        userInfo: [AnyHashable: Any],
+        applicationIsActive: Bool
+    ) async -> TrixRemoteNotificationHandlingResult {
         let payload = TrixRemoteNotificationPayload(userInfo: userInfo)
         guard payload.isWakeOnlySync,
               let session,
               !isLoggingOut else {
-            return false
+            return .ignored
         }
 
         if let accountID = payload.accountID,
            accountID.caseInsensitiveCompare(session.userID) != .orderedSame {
-            return false
+            return .ignored
         }
 
-        await refreshForeground()
-        return true
+        let previousRooms = roomListViewModel.rooms
+        await refreshForeground(
+            markSelectedRoomRead: applicationIsActive,
+            reloadSelectedTimeline: applicationIsActive
+        )
+
+        let badgeCount = max(payload.badge ?? 0, totalUnreadCount)
+        let localNotification = applicationIsActive ? nil : Self.localNotificationRequest(
+            previousRooms: previousRooms,
+            currentRooms: roomListViewModel.rooms,
+            payload: payload,
+            badgeCount: badgeCount
+        )
+
+        return TrixRemoteNotificationHandlingResult(
+            didProcess: true,
+            badgeCount: badgeCount,
+            localNotification: localNotification
+        )
     }
 
     func reloadRooms() async {
@@ -270,7 +290,11 @@ final class TrixAppModel: ObservableObject {
             return
         }
 
-        await roomListViewModel.reload(session: session, service: trixService)
+        await roomListViewModel.reload(
+            session: session,
+            service: trixService,
+            selectedRoomID: selectedRoomID
+        )
         lastRoomRefreshAt = Date()
         reconcileSelectedRoom()
 
@@ -279,7 +303,10 @@ final class TrixAppModel: ObservableObject {
         }
     }
 
-    func refreshForeground() async {
+    func refreshForeground(
+        markSelectedRoomRead: Bool = true,
+        reloadSelectedTimeline: Bool = true
+    ) async {
         guard let session, !isLoggingOut else {
             return
         }
@@ -287,12 +314,13 @@ final class TrixAppModel: ObservableObject {
         await roomListViewModel.reload(
             session: session,
             service: trixService,
+            selectedRoomID: markSelectedRoomRead ? selectedRoomID : nil,
             showsLoading: false
         )
         lastRoomRefreshAt = Date()
         reconcileSelectedRoom()
 
-        if let selectedRoomID {
+        if reloadSelectedTimeline, let selectedRoomID {
             await timelineViewModel.load(
                 roomID: selectedRoomID,
                 session: session,
@@ -345,7 +373,11 @@ final class TrixAppModel: ObservableObject {
             service: trixService
         )
         try? await trixService.sendTypingState(.paused, roomID: roomID, session: session)
-        await roomListViewModel.reload(session: session, service: trixService)
+        await roomListViewModel.reload(
+            session: session,
+            service: trixService,
+            selectedRoomID: selectedRoomID
+        )
         lastRoomRefreshAt = Date()
     }
 
@@ -374,7 +406,11 @@ final class TrixAppModel: ObservableObject {
             session: session,
             service: trixService
         )
-        await roomListViewModel.reload(session: session, service: trixService)
+        await roomListViewModel.reload(
+            session: session,
+            service: trixService,
+            selectedRoomID: selectedRoomID
+        )
         lastRoomRefreshAt = Date()
     }
 
@@ -462,7 +498,11 @@ final class TrixAppModel: ObservableObject {
         }
 
         let devices = try await trixService.trustPeerDevice(userID: userID, deviceID: deviceID, session: session)
-        await roomListViewModel.reload(session: session, service: trixService)
+        await roomListViewModel.reload(
+            session: session,
+            service: trixService,
+            selectedRoomID: selectedRoomID
+        )
         return devices
     }
 
@@ -706,6 +746,53 @@ final class TrixAppModel: ObservableObject {
         }
 
         selectedRoomID = roomListViewModel.rooms.first?.id
+    }
+
+    private var totalUnreadCount: Int {
+        roomListViewModel.rooms.reduce(0) { partialResult, room in
+            partialResult + max(room.unreadCount, 0)
+        }
+    }
+
+    private static func localNotificationRequest(
+        previousRooms: [TrixRoomSummary],
+        currentRooms: [TrixRoomSummary],
+        payload: TrixRemoteNotificationPayload,
+        badgeCount: Int
+    ) -> TrixLocalNotificationRequest? {
+        let previousUnreadByRoomID = Dictionary(
+            previousRooms.map { ($0.id.lowercased(), max($0.unreadCount, 0)) },
+            uniquingKeysWith: { existing, _ in existing }
+        )
+        let roomsWithNewUnread = currentRooms.filter { room in
+            let previousUnread = previousUnreadByRoomID[room.id.lowercased()] ?? 0
+            return max(room.unreadCount, 0) > previousUnread
+        }
+        let hasPayloadRoomHint = payload.roomID?.isEmpty == false
+        let notificationUnreadCount = max(
+            badgeCount,
+            roomsWithNewUnread.reduce(0) { partialResult, room in
+                partialResult + max(room.unreadCount, 0)
+            },
+            hasPayloadRoomHint ? 1 : 0
+        )
+        guard notificationUnreadCount > 0 else {
+            return nil
+        }
+
+        let body = notificationUnreadCount == 1
+            ? "New encrypted message"
+            : "\(notificationUnreadCount) unread encrypted messages"
+        let threadIdentifier = roomsWithNewUnread.count == 1
+            ? roomsWithNewUnread[0].id
+            : payload.roomID ?? "trix-unread"
+
+        return TrixLocalNotificationRequest(
+            title: "Trix",
+            body: body,
+            threadIdentifier: threadIdentifier,
+            badgeCount: notificationUnreadCount
+        )
     }
 
     private func syncAPNsRegistrationIfPossible() async {

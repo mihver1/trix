@@ -1,8 +1,12 @@
 import AppKit
+import UserNotifications
 
 final class TrixMacAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApplication.shared.registerForRemoteNotifications(matching: [.badge])
+        NSApplication.shared.registerForRemoteNotifications(matching: [.alert, .badge, .sound])
+        Task { @MainActor in
+            await TrixAPNsCoordinator.shared.requestUserNotificationAuthorization()
+        }
     }
 
     func application(
@@ -25,7 +29,10 @@ final class TrixMacAppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, didReceiveRemoteNotification userInfo: [String: Any]) {
         Task { @MainActor in
-            _ = await TrixAPNsCoordinator.shared.didReceiveRemoteNotification(userInfo: userInfo)
+            _ = await TrixAPNsCoordinator.shared.didReceiveRemoteNotification(
+                userInfo: userInfo,
+                applicationIsActive: application.isActive
+            )
         }
     }
 }

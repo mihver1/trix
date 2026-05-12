@@ -288,6 +288,9 @@ struct TrixRoomListView: View {
     private func openPhoneRoom(_ room: TrixRoomSummary) {
         model.selectedRoomID = room.id
         phoneSelectedRoomID = room.id
+        Task {
+            await model.selectRoom(room)
+        }
     }
 
     private func openDirectoryUser(_ profile: TrixUserProfile) {

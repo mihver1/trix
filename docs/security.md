@@ -168,6 +168,10 @@ The current Apple XMPP path accepts only wake-only pushes with
 metadata is allowed. Alert, sound, plaintext/body, decrypted, filename, and
 attachment-name payload fields are rejected by the app handler, and the app does
 not create local notifications containing decrypted message or attachment text.
+When the app is inactive, it may turn a valid wake-only push plus local sync into
+a generic local notification such as a new encrypted-message/unread count alert.
+Those local notifications must not include decrypted text, filenames, or
+attachment names.
 
 ejabberd `mod_push` only exposes XMPP push semantics; it does not sign or send
 APNs requests by itself. APNs signing material has been verified on the legacy

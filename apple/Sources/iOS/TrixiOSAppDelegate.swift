@@ -8,6 +8,9 @@ final class TrixiOSAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificat
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
         application.registerForRemoteNotifications()
+        Task { @MainActor in
+            await TrixAPNsCoordinator.shared.requestUserNotificationAuthorization()
+        }
         return true
     }
 
@@ -41,6 +44,9 @@ final class TrixiOSAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificat
         _ application: UIApplication,
         didReceiveRemoteNotification userInfo: [AnyHashable: Any]
     ) async -> UIBackgroundFetchResult {
-        await TrixAPNsCoordinator.shared.didReceiveRemoteNotification(userInfo: userInfo) ? .newData : .noData
+        await TrixAPNsCoordinator.shared.didReceiveRemoteNotification(
+            userInfo: userInfo,
+            applicationIsActive: application.applicationState == .active
+        ) ? .newData : .noData
     }
 }

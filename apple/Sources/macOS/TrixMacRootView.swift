@@ -57,6 +57,7 @@ private struct TrixMacWorkspaceView: View {
             TrixNewRoomView(model: model)
         }
         .task(id: scenePhase) {
+            TrixAPNsCoordinator.shared.setApplicationIsActive(scenePhase == .active)
             guard scenePhase == .active else {
                 return
             }

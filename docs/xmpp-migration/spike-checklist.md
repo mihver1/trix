@@ -140,6 +140,8 @@ Question: how do notifications work without leaking plaintext?
 - [x] Confirm macOS notification registration plumbing.
 - [x] Confirm the Apple app handles remote pushes as wake-only sync hints and
       does not display decrypted body notifications.
+- [x] Confirm inactive iOS/macOS wake-only handling can create generic local
+      notifications without decrypted text, filenames, or attachment names.
 - [x] Confirm a Trix APNs gateway/push component exists behind XEP-0357.
 - [ ] Confirm signed-device APNs delivery reaches iOS and macOS.
 - [ ] Confirm push payloads do not include decrypted message bodies in live APNs
@@ -156,7 +158,8 @@ Current result:
 
 - Apple registration plumbing is present: platform APNs token capture,
   `TrixPushRegistrationService`, Martin `TigasePushNotificationsModule`
-  register/enable, and wake-only remote push handling.
+  register/enable, wake-only remote push handling, and generic local
+  notifications for inactive app state.
 - `trix-push-gateway` now provides the private APNs sender and XEP-0114
   component for Martin/Tigase registration nodes. ejabberd `mod_push` remains
   necessary but does not send APNs directly.

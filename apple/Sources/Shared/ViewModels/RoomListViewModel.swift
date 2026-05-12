@@ -13,6 +13,7 @@ final class RoomListViewModel: ObservableObject {
     func reload(
         session: TrixSession,
         service: TrixSyncService & TrixRoomBootstrapService,
+        selectedRoomID: String? = nil,
         showsLoading: Bool = true
     ) async {
         if showsLoading {
@@ -26,7 +27,8 @@ final class RoomListViewModel: ObservableObject {
         }
 
         do {
-            rooms = try await service.rooms(session: session)
+            let loadedRooms = try await service.rooms(session: session)
+            rooms = mergedRoomsAfterReload(loadedRooms, selectedRoomID: selectedRoomID)
             invitations = try await service.invitations(session: session)
         } catch {
             errorMessage = error.trixUserFacingMessage
@@ -136,8 +138,9 @@ final class RoomListViewModel: ObservableObject {
     }
 
     func markRead(roomID: String) {
+        let roomKey = roomID.lowercased()
         rooms = rooms.map { room in
-            room.id == roomID ? room.markingRead() : room
+            room.id.lowercased() == roomKey ? room.markingRead() : room
         }
     }
 
@@ -216,5 +219,51 @@ final class RoomListViewModel: ObservableObject {
             .split(separator: "@")
             .first
             .map { String($0).capitalized } ?? userID
+    }
+
+    private func mergedRoomsAfterReload(
+        _ loadedRooms: [TrixRoomSummary],
+        selectedRoomID: String?
+    ) -> [TrixRoomSummary] {
+        let previousRoomsByID = Dictionary(
+            rooms.map { ($0.id.lowercased(), $0) },
+            uniquingKeysWith: { existing, _ in existing }
+        )
+        let selectedRoomKey = selectedRoomID?.lowercased()
+
+        return loadedRooms.map { loadedRoom in
+            let roomKey = loadedRoom.id.lowercased()
+            guard roomKey != selectedRoomKey else {
+                return loadedRoom.markingRead()
+            }
+
+            let serverUnreadCount = max(loadedRoom.unreadCount, 0)
+            guard let previousRoom = previousRoomsByID[roomKey] else {
+                return loadedRoom.withUnreadCount(serverUnreadCount)
+            }
+
+            let previousUnreadCount = max(previousRoom.unreadCount, 0)
+            if Self.hasNewIncomingActivity(loadedRoom, comparedTo: previousRoom) {
+                return loadedRoom.withUnreadCount(max(serverUnreadCount, previousUnreadCount + 1))
+            }
+
+            return loadedRoom.withUnreadCount(max(serverUnreadCount, previousUnreadCount))
+        }
+    }
+
+    private static func hasNewIncomingActivity(
+        _ loadedRoom: TrixRoomSummary,
+        comparedTo previousRoom: TrixRoomSummary
+    ) -> Bool {
+        guard !loadedRoom.lastMessagePreview.hasPrefix("You:") else {
+            return false
+        }
+
+        if loadedRoom.lastActivityAt > previousRoom.lastActivityAt {
+            return true
+        }
+
+        return loadedRoom.lastActivityAt == previousRoom.lastActivityAt &&
+            loadedRoom.lastMessagePreview != previousRoom.lastMessagePreview
     }
 }
