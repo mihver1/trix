@@ -236,9 +236,15 @@ extension View {
     }
 
     func trixDialogSurface(minWidth: CGFloat? = nil, minHeight: CGFloat? = nil) -> some View {
+        #if os(iOS)
+        self
+            .tint(TrixDesign.accent)
+            .background(TrixDesign.screenBackground.ignoresSafeArea())
+        #else
         self
             .tint(TrixDesign.accent)
             .frame(minWidth: minWidth, minHeight: minHeight)
             .background(TrixDesign.screenBackground.ignoresSafeArea())
+        #endif
     }
 }

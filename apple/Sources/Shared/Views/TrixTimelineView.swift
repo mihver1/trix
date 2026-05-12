@@ -95,6 +95,9 @@ struct TrixTimelineView: View {
                     .padding(.bottom, 12)
                 }
                 .trixScrollDismissesKeyboard()
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    timelineBottomControls
+                }
                 .onChange(of: timelineViewModel.items) { _, items in
                     guard let last = items.last else {
                         return
@@ -104,101 +107,6 @@ struct TrixTimelineView: View {
                     }
                 }
             }
-
-            if !timelineViewModel.typingUserIDs.isEmpty {
-                typingIndicator
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
-            }
-
-            if let errorMessage = timelineViewModel.errorMessage ?? fileImportError {
-                TrixBannerView(
-                    text: errorMessage,
-                    systemImage: "exclamationmark.triangle.fill",
-                    tint: .red
-                )
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
-            }
-
-            if !canSendEncrypted {
-                HStack(spacing: 10) {
-                    TrixBannerView(
-                        text: "OMEMO is required for Trix chats. Trust a contact device before sending.",
-                        systemImage: "lock.slash.fill",
-                        tint: .orange
-                    )
-
-                    Button {
-                        showPeerDevices()
-                    } label: {
-                        Image(systemName: "checkmark.shield")
-                    }
-                    .buttonStyle(.bordered)
-                    .help("Review OMEMO devices")
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
-            }
-
-            if let attachmentBlockMessage {
-                TrixBannerView(
-                    text: attachmentBlockMessage,
-                    systemImage: "paperclip.badge.ellipsis",
-                    tint: .orange
-                )
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
-            }
-
-            HStack(spacing: 10) {
-                Button {
-                    fileImportError = nil
-                    isShowingFileImporter = true
-                } label: {
-                    if timelineViewModel.isSendingAttachment {
-                        ProgressView()
-                    } else {
-                        Image(systemName: "paperclip")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(TrixDesign.accent)
-                            .frame(width: 38, height: 38)
-                    }
-                }
-                .buttonStyle(.borderless)
-                .disabled(timelineViewModel.isSendingAttachment || !canSendEncryptedAttachments)
-                .help(attachmentHelpText)
-
-                TextField(canSendEncrypted ? "Message" : "OMEMO required", text: $draft, axis: .vertical)
-                    .lineLimit(1...5)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(TrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
-                    }
-                    .trixMacComposerReturn(text: $draft, send: sendDraft)
-
-                Button {
-                    sendDraft()
-                } label: {
-                    if timelineViewModel.isSending {
-                        ProgressView()
-                    } else {
-                        Image(systemName: draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "arrow.up.circle" : "arrow.up.circle.fill")
-                            .font(.system(size: 32, weight: .semibold))
-                            .foregroundStyle(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : TrixDesign.accent)
-                    }
-                }
-                .buttonStyle(.borderless)
-                .disabled(timelineViewModel.isSending || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !canSendEncrypted)
-                .help("Send message")
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 10)
-            .padding(.bottom, 12)
-            .background(.ultraThinMaterial)
         }
         .background(TrixDesign.screenBackground.ignoresSafeArea())
         .navigationTitle(room.name)
@@ -291,6 +199,117 @@ struct TrixTimelineView: View {
 
     private var canSendEncrypted: Bool {
         room.isEncrypted || peerDevices.contains(where: \.canSendEncrypted)
+    }
+
+    private var timelineBottomControls: some View {
+        VStack(spacing: 0) {
+            if !timelineViewModel.typingUserIDs.isEmpty {
+                typingIndicator
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+            }
+
+            if let errorMessage = timelineViewModel.errorMessage ?? fileImportError {
+                TrixBannerView(
+                    text: errorMessage,
+                    systemImage: "exclamationmark.triangle.fill",
+                    tint: .red
+                )
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+            }
+
+            if !canSendEncrypted {
+                encryptionRequiredBanner
+            }
+
+            if let attachmentBlockMessage {
+                TrixBannerView(
+                    text: attachmentBlockMessage,
+                    systemImage: "paperclip.badge.ellipsis",
+                    tint: .orange
+                )
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+            }
+
+            composer
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var encryptionRequiredBanner: some View {
+        HStack(spacing: 10) {
+            TrixBannerView(
+                text: "OMEMO is required for Trix chats. Trust a contact device before sending.",
+                systemImage: "lock.slash.fill",
+                tint: .orange
+            )
+            .layoutPriority(1)
+
+            Button {
+                showPeerDevices()
+            } label: {
+                Image(systemName: "checkmark.shield")
+            }
+            .buttonStyle(.bordered)
+            .help("Review OMEMO devices")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
+    }
+
+    private var composer: some View {
+        HStack(spacing: 10) {
+            Button {
+                fileImportError = nil
+                isShowingFileImporter = true
+            } label: {
+                if timelineViewModel.isSendingAttachment {
+                    ProgressView()
+                } else {
+                    Image(systemName: "paperclip")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(TrixDesign.accent)
+                        .frame(width: 38, height: 38)
+                }
+            }
+            .buttonStyle(.borderless)
+            .disabled(timelineViewModel.isSendingAttachment || !canSendEncryptedAttachments)
+            .help(attachmentHelpText)
+
+            TextField(canSendEncrypted ? "Message" : "OMEMO required", text: $draft, axis: .vertical)
+                .lineLimit(1...5)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(TrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
+                }
+                .layoutPriority(1)
+                .trixMacComposerReturn(text: $draft, send: sendDraft)
+
+            Button {
+                sendDraft()
+            } label: {
+                if timelineViewModel.isSending {
+                    ProgressView()
+                } else {
+                    Image(systemName: draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "arrow.up.circle" : "arrow.up.circle.fill")
+                        .font(.system(size: 32, weight: .semibold))
+                        .foregroundStyle(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : TrixDesign.accent)
+                }
+            }
+            .buttonStyle(.borderless)
+            .disabled(timelineViewModel.isSending || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !canSendEncrypted)
+            .help("Send message")
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+        .background(.ultraThinMaterial)
     }
 
     @ViewBuilder
@@ -777,12 +796,15 @@ private struct TrixPeerDeviceTrustView: View {
                                         Label(device.trustState.label, systemImage: device.canSendEncrypted ? "checkmark.shield.fill" : "exclamationmark.shield")
                                             .font(.headline)
                                             .foregroundStyle(device.canSendEncrypted ? .green : .orange)
+                                            .lineLimit(1)
 
                                         Spacer()
 
                                         Text(device.deviceID)
                                             .font(.caption.monospaced())
                                             .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
                                     }
 
                                     Text(device.shortFingerprint)
@@ -811,6 +833,7 @@ private struct TrixPeerDeviceTrustView: View {
                                 }
                             }
                         }
+                        .frame(maxWidth: .infinity)
                     }
                 }
 
@@ -825,9 +848,11 @@ private struct TrixPeerDeviceTrustView: View {
                 Text("Trust only after comparing this fingerprint with the contact over an independent channel.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(20)
             .navigationTitle("Trust \(roomName)")
+            .trixInlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
