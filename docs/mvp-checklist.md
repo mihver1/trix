@@ -307,6 +307,11 @@ checklist, not by copying legacy implementation details.
       archive presence, HTTP upload reachability, and push-gateway reachability
       without exposing credentials.
 - [x] Keep admin credentials out of logs and repo files.
+- [x] Add control-plane rate-limit and anti-loop protection: the
+      invite-registration wrapper now limits app-facing routes by source IP and
+      signed-in account JID, and `operator-control.sh` keeps restrictive
+      file-backed per-command counters before loopback `mod_http_api` calls.
+      These limits are defense-in-depth and do not make raw `/api` public-safe.
 
 ## Deferred MVP Items
 
