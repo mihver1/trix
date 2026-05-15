@@ -14,6 +14,9 @@ final class TrixAppModel: ObservableObject {
     @Published private(set) var lastRoomRefreshAt: Date?
     @Published private(set) var pushRegistration: TrixPushRegistration?
     @Published private(set) var pushRegistrationBlocker: TrixPushRegistrationBlocker? = .waitingForAPNsToken
+    @Published private(set) var stickerPacks: [TrixStickerPack] = []
+    @Published private(set) var isImportingStickerPack = false
+    @Published private(set) var stickerImportMessage: String?
 
     let roomListViewModel: RoomListViewModel
     let timelineViewModel: TimelineViewModel
@@ -21,7 +24,10 @@ final class TrixAppModel: ObservableObject {
 
     private let sessionStore: TrixSessionStore
     private let registrationService: TrixRegistrationService
+    private let stickerImportService: TrixStickerImportService
+    private let stickerLibraryStore: TrixStickerLibraryStore
     private let trixService: TrixService
+    private var stickerAssetDataByID: [String: Data] = [:]
     private var apnsDeviceToken: TrixAPNsDeviceToken?
     private var hasStarted = false
     private let foregroundRefreshInterval: Duration = .seconds(10)
@@ -29,10 +35,14 @@ final class TrixAppModel: ObservableObject {
     init(
         sessionStore: TrixSessionStore = KeychainTrixSessionStore(),
         registrationService: TrixRegistrationService = HTTPInviteRegistrationService(),
+        stickerImportService: TrixStickerImportService = HTTPStickerImportService(),
+        stickerLibraryStore: TrixStickerLibraryStore = TrixStickerLibraryStore(),
         trixService: TrixService = XMPPMartinService()
     ) {
         self.sessionStore = sessionStore
         self.registrationService = registrationService
+        self.stickerImportService = stickerImportService
+        self.stickerLibraryStore = stickerLibraryStore
         self.trixService = trixService
         self.roomListViewModel = RoomListViewModel()
         self.timelineViewModel = TimelineViewModel()
@@ -67,6 +77,7 @@ final class TrixAppModel: ObservableObject {
 
             session = restoredSession
             account = try await trixService.restore(session: restoredSession)
+            loadStickerLibrary(for: restoredSession.userID)
             await reloadRooms()
             await reloadDeviceVerificationStatus()
             await syncAPNsRegistrationIfPossible()
@@ -99,6 +110,7 @@ final class TrixAppModel: ObservableObject {
             try sessionStore.saveSession(authenticatedSession)
             session = authenticatedSession
             account = restoredAccount
+            loadStickerLibrary(for: authenticatedSession.userID)
             await reloadRooms()
             await reloadDeviceVerificationStatus()
             await syncAPNsRegistrationIfPossible()
@@ -143,6 +155,7 @@ final class TrixAppModel: ObservableObject {
             try sessionStore.saveSession(authenticatedSession)
             session = authenticatedSession
             account = restoredAccount
+            loadStickerLibrary(for: authenticatedSession.userID)
 
             if let displayName = registration.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
                !displayName.isEmpty {
@@ -412,6 +425,104 @@ final class TrixAppModel: ObservableObject {
             selectedRoomID: selectedRoomID
         )
         lastRoomRefreshAt = Date()
+    }
+
+    func sendSticker(_ sticker: TrixSticker) async {
+        guard let data = stickerAssetDataByID[sticker.id],
+              let pack = stickerPacks.first(where: { $0.id == sticker.packID }) else {
+            errorMessage = TrixClientError.stickerFileUnavailable.trixUserFacingMessage
+            return
+        }
+
+        let upload = TrixAttachmentUpload(
+            filename: sticker.filename,
+            mimeType: sticker.mimeType,
+            data: data,
+            imageDimensions: sticker.imageDimensions,
+            stickerMetadata: TrixStickerAttachmentMetadata(
+                stickerID: sticker.id,
+                packID: pack.id,
+                packTitle: pack.title,
+                source: pack.source,
+                emoji: sticker.emoji
+            )
+        )
+        await sendAttachment(upload)
+    }
+
+    func stickerData(for sticker: TrixSticker) -> Data? {
+        stickerAssetDataByID[sticker.id]
+    }
+
+    func importTelegramStickerPack(_ reference: String) async {
+        guard let session else {
+            return
+        }
+        guard !isImportingStickerPack else {
+            return
+        }
+
+        isImportingStickerPack = true
+        stickerImportMessage = nil
+        errorMessage = nil
+        defer { isImportingStickerPack = false }
+
+        do {
+            let importResult = try await stickerImportService.resolveTelegramStickerPack(reference, session: session)
+            guard !importResult.stickers.isEmpty else {
+                throw TrixClientError.unsupportedStickerPack
+            }
+
+            var stickers: [TrixSticker] = []
+            var dataByStickerID: [String: Data] = [:]
+            for item in importResult.stickers {
+                let download = try await stickerImportService.downloadTelegramStickerFile(item, session: session)
+                let sticker = TrixSticker(
+                    id: item.id,
+                    packID: importResult.packID,
+                    emoji: item.emoji,
+                    filename: download.filename,
+                    mimeType: download.mimeType,
+                    sizeBytes: download.data.count,
+                    imageDimensions: item.imageDimensions,
+                    source: item.source
+                )
+                stickers.append(sticker)
+                dataByStickerID[sticker.id] = download.data
+            }
+
+            let pack = TrixStickerPack(
+                id: importResult.packID,
+                title: importResult.title,
+                source: importResult.source,
+                stickers: stickers,
+                importedAt: Date()
+            )
+            let state = try stickerLibraryStore.save(
+                pack: pack,
+                dataByStickerID: dataByStickerID,
+                accountID: session.userID
+            )
+            stickerPacks = state.packs
+            stickerAssetDataByID = state.dataByStickerID
+            stickerImportMessage = Self.stickerImportMessage(
+                pack: pack,
+                importedStickerCount: stickers.count,
+                unsupportedStickerCount: importResult.unsupportedStickerCount
+            )
+        } catch {
+            stickerImportMessage = error.trixUserFacingMessage
+        }
+    }
+
+    func importStickerPack(from metadata: TrixStickerAttachmentMetadata) async {
+        guard metadata.source.kind == .telegram,
+              let packName = metadata.source.name else {
+            stickerImportMessage = TrixClientError.stickerPackUnavailable.trixUserFacingMessage
+            return
+        }
+
+        await importTelegramStickerPack(packName)
     }
 
     func downloadAttachment(for item: TrixTimelineItem) async {
@@ -836,6 +947,31 @@ final class TrixAppModel: ObservableObject {
         pushRegistrationBlocker = .waitingForSession
     }
 
+    private func loadStickerLibrary(for accountID: String) {
+        do {
+            let state = try stickerLibraryStore.load(accountID: accountID)
+            stickerPacks = state.packs
+            stickerAssetDataByID = state.dataByStickerID
+            stickerImportMessage = nil
+        } catch {
+            stickerPacks = []
+            stickerAssetDataByID = [:]
+            stickerImportMessage = error.trixUserFacingMessage
+        }
+    }
+
+    private static func stickerImportMessage(
+        pack: TrixStickerPack,
+        importedStickerCount: Int,
+        unsupportedStickerCount: Int
+    ) -> String {
+        if unsupportedStickerCount > 0 {
+            return "Imported \(importedStickerCount) stickers from \(pack.title). Skipped \(unsupportedStickerCount) unsupported animated or video stickers."
+        }
+
+        return "Imported \(importedStickerCount) stickers from \(pack.title)."
+    }
+
     private func clearAuthenticatedState() {
         session = nil
         account = nil
@@ -843,6 +979,10 @@ final class TrixAppModel: ObservableObject {
         pushRegistration = nil
         pushRegistrationBlocker = apnsDeviceToken == nil ? .waitingForAPNsToken : .waitingForSession
         lastRoomRefreshAt = nil
+        stickerPacks = []
+        stickerAssetDataByID = [:]
+        stickerImportMessage = nil
+        isImportingStickerPack = false
         roomListViewModel.clear()
         timelineViewModel.clear()
         deviceVerificationViewModel.clear()
@@ -856,6 +996,7 @@ extension TrixAppModel {
             return TrixAppModel(
                 sessionStore: TrixMockSessionStore(),
                 registrationService: MockInviteRegistrationService(),
+                stickerImportService: MockStickerImportService(),
                 trixService: MockTrixService()
             )
         }
@@ -885,5 +1026,40 @@ private struct TrixMockSessionStore: TrixSessionStore {
 
     func clearSession() throws {
     }
+}
+
+private struct MockStickerImportService: TrixStickerImportService {
+    func resolveTelegramStickerPack(_ reference: String, session: TrixSession) async throws -> TrixTelegramStickerPackImport {
+        let source = TrixStickerSource(kind: .telegram, name: "FakePack", url: "https://t.me/addstickers/FakePack")
+        return TrixTelegramStickerPackImport(
+            packID: "telegram:fakepack",
+            title: "Fake Telegram Pack",
+            source: source,
+            stickers: [
+                TrixTelegramStickerImportItem(
+                    id: "telegram:fake-static-unique",
+                    packID: "telegram:fakepack",
+                    emoji: "🙂",
+                    filename: "fake-static.png",
+                    mimeType: "image/png",
+                    sizeBytes: Self.mockImageData.count,
+                    imageDimensions: TrixAttachmentImageDimensions(width: 24, height: 18),
+                    source: source,
+                    fileToken: "mock-token"
+                ),
+            ],
+            unsupportedStickerCount: 2
+        )
+    }
+
+    func downloadTelegramStickerFile(_ sticker: TrixTelegramStickerImportItem, session: TrixSession) async throws -> TrixTelegramStickerFileDownload {
+        TrixTelegramStickerFileDownload(
+            filename: sticker.filename,
+            mimeType: sticker.mimeType,
+            data: Self.mockImageData
+        )
+    }
+
+    private static let mockImageData = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAABgAAAASCAIAAADOjonJAAAAKUlEQVR42mPQ6n2HhvSXd6IhYtQwjBpER4PI04apZtQgeho0mrKHoEEA2EuLf1hOf2sAAAAASUVORK5CYII=") ?? Data()
 }
 #endif

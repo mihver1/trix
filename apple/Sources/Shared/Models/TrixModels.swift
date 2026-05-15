@@ -687,6 +687,98 @@ struct TrixRoomTypingState: Codable, Equatable, Sendable {
     }
 }
 
+enum TrixStickerSourceKind: String, Codable, Sendable {
+    case telegram
+    case local
+}
+
+struct TrixStickerSource: Codable, Equatable, Sendable {
+    let kind: TrixStickerSourceKind
+    let name: String?
+    let url: String?
+
+    init(kind: TrixStickerSourceKind, name: String? = nil, url: String? = nil) {
+        self.kind = kind
+        self.name = Self.nonEmpty(name)
+        self.url = Self.nonEmpty(url)
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
+}
+
+struct TrixSticker: Identifiable, Codable, Equatable, Sendable {
+    let id: String
+    let packID: String
+    let emoji: String?
+    let filename: String
+    let mimeType: String
+    let sizeBytes: Int?
+    let imageDimensions: TrixAttachmentImageDimensions?
+    let source: TrixStickerSource
+
+    init(
+        id: String,
+        packID: String,
+        emoji: String?,
+        filename: String,
+        mimeType: String,
+        sizeBytes: Int?,
+        imageDimensions: TrixAttachmentImageDimensions?,
+        source: TrixStickerSource
+    ) {
+        self.id = id
+        self.packID = packID
+        self.emoji = emoji?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.filename = filename
+        self.mimeType = mimeType
+        self.sizeBytes = sizeBytes
+        self.imageDimensions = imageDimensions
+        self.source = source
+    }
+}
+
+struct TrixStickerPack: Identifiable, Codable, Equatable, Sendable {
+    let id: String
+    let title: String
+    let source: TrixStickerSource
+    let stickers: [TrixSticker]
+    let importedAt: Date
+}
+
+struct TrixStickerAttachmentMetadata: Codable, Equatable, Sendable {
+    let stickerID: String
+    let packID: String
+    let packTitle: String
+    let source: TrixStickerSource
+    let emoji: String?
+
+    init(
+        stickerID: String,
+        packID: String,
+        packTitle: String,
+        source: TrixStickerSource,
+        emoji: String?
+    ) {
+        self.stickerID = stickerID
+        self.packID = packID
+        self.packTitle = packTitle
+        self.source = source
+        self.emoji = emoji?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    }
+}
+
+struct TrixStickerImportSummary: Equatable, Sendable {
+    let pack: TrixStickerPack
+    let importedStickerCount: Int
+    let unsupportedStickerCount: Int
+}
+
 struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id
@@ -810,6 +902,7 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
 enum TrixTimelineAttachmentKind: String, Codable, Sendable {
     case file
     case image
+    case sticker
 }
 
 struct TrixTimelineAttachment: Codable, Equatable, Sendable {
@@ -820,6 +913,7 @@ struct TrixTimelineAttachment: Codable, Equatable, Sendable {
     let sourceJSON: String?
     let imageDimensions: TrixAttachmentImageDimensions?
     let imageBlurhash: String?
+    let stickerMetadata: TrixStickerAttachmentMetadata?
 
     init(
         kind: TrixTimelineAttachmentKind,
@@ -828,7 +922,8 @@ struct TrixTimelineAttachment: Codable, Equatable, Sendable {
         sizeBytes: Int?,
         sourceJSON: String?,
         imageDimensions: TrixAttachmentImageDimensions? = nil,
-        imageBlurhash: String? = nil
+        imageBlurhash: String? = nil,
+        stickerMetadata: TrixStickerAttachmentMetadata? = nil
     ) {
         self.kind = kind
         self.filename = filename
@@ -837,6 +932,7 @@ struct TrixTimelineAttachment: Codable, Equatable, Sendable {
         self.sourceJSON = sourceJSON
         self.imageDimensions = imageDimensions
         self.imageBlurhash = imageBlurhash
+        self.stickerMetadata = stickerMetadata
     }
 
     var isDownloadable: Bool {
@@ -844,11 +940,24 @@ struct TrixTimelineAttachment: Codable, Equatable, Sendable {
     }
 
     var isImage: Bool {
-        kind == .image || mimeType?.hasPrefix("image/") == true
+        kind == .image || kind == .sticker || mimeType?.hasPrefix("image/") == true
+    }
+
+    var isSticker: Bool {
+        kind == .sticker || stickerMetadata != nil
     }
 
     var subtitle: String {
-        [mimeType, formattedSize, formattedDimensions].compactMap { $0 }.joined(separator: " - ")
+        let details = [mimeType, formattedSize, formattedDimensions].compactMap { $0 }.joined(separator: " - ")
+        guard isSticker else {
+            return details
+        }
+        return [stickerMetadata?.packTitle, details].compactMap { value in
+            guard let value, !value.isEmpty else {
+                return nil
+            }
+            return value
+        }.joined(separator: " - ")
     }
 
     private var formattedSize: String? {
@@ -874,9 +983,14 @@ struct TrixAttachmentUpload: Equatable, Sendable {
     let data: Data
     let imageDimensions: TrixAttachmentImageDimensions?
     let imageBlurhash: String?
+    let stickerMetadata: TrixStickerAttachmentMetadata?
 
     var isImage: Bool {
         mimeType.hasPrefix("image/")
+    }
+
+    var isSticker: Bool {
+        stickerMetadata != nil
     }
 
     var canSendAsImage: Bool {
@@ -888,13 +1002,15 @@ struct TrixAttachmentUpload: Equatable, Sendable {
         mimeType: String,
         data: Data,
         imageDimensions: TrixAttachmentImageDimensions? = nil,
-        imageBlurhash: String? = nil
+        imageBlurhash: String? = nil,
+        stickerMetadata: TrixStickerAttachmentMetadata? = nil
     ) {
         self.filename = filename
         self.mimeType = mimeType
         self.data = data
         self.imageDimensions = imageDimensions ?? Self.imageDimensions(from: data, mimeType: mimeType)
         self.imageBlurhash = imageBlurhash ?? Self.averageBlurhash(from: data, mimeType: mimeType)
+        self.stickerMetadata = stickerMetadata
     }
 
     init(fileURL: URL, fallbackFilename: String? = nil) throws {
@@ -1335,6 +1451,10 @@ enum TrixClientError: LocalizedError {
     case attachmentTransferFailed
     case attachmentEncryptionUnavailable
     case attachmentDecryptionFailed
+    case stickerImportUnavailable
+    case stickerPackUnavailable
+    case stickerFileUnavailable
+    case unsupportedStickerPack
     case groupOmemoRecipientSetUnavailable
     case groupOmemoDeviceTrustRequired
     case missingSession
@@ -1387,6 +1507,14 @@ enum TrixClientError: LocalizedError {
             return "Encrypted attachment transfer is not available yet."
         case .attachmentDecryptionFailed:
             return "Attachment decryption failed."
+        case .stickerImportUnavailable:
+            return "Sticker import is not available yet."
+        case .stickerPackUnavailable:
+            return "Sticker pack is not available."
+        case .stickerFileUnavailable:
+            return "Sticker file download failed."
+        case .unsupportedStickerPack:
+            return "This sticker pack has no supported static stickers."
         case .groupOmemoRecipientSetUnavailable:
             return "Group OMEMO sends require a validated MUC member recipient set before sending."
         case .groupOmemoDeviceTrustRequired:
@@ -1453,5 +1581,11 @@ extension Error {
         }
 
         return localizedDescription
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
     }
 }

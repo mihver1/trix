@@ -12,6 +12,11 @@ protocol TrixRegistrationService: Sendable {
     func changePassword(_ request: TrixPasswordChangeRequest, session: TrixSession) async throws -> TrixPasswordChangeResult
 }
 
+protocol TrixStickerImportService: Sendable {
+    func resolveTelegramStickerPack(_ reference: String, session: TrixSession) async throws -> TrixTelegramStickerPackImport
+    func downloadTelegramStickerFile(_ sticker: TrixTelegramStickerImportItem, session: TrixSession) async throws -> TrixTelegramStickerFileDownload
+}
+
 protocol TrixAuthService: Sendable {
     func login(userID: String, password: String, serverURL: URL) async throws -> TrixSession
     func restore(session: TrixSession) async throws -> TrixAccount

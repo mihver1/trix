@@ -859,14 +859,14 @@ private struct TrixMacSharedMediaRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: attachment.isImage ? "photo" : "doc")
+            Image(systemName: attachment.isSticker ? "face.smiling" : (attachment.isImage ? "photo" : "doc"))
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(TrixDesign.accent)
                 .frame(width: 32, height: 32)
                 .background(TrixDesign.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(attachment.filename)
+                Text(attachment.isSticker ? (attachment.stickerMetadata?.packTitle ?? "Sticker") : attachment.filename)
                     .font(.callout.weight(.medium))
                     .lineLimit(1)
 

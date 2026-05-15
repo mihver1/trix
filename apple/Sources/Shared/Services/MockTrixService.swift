@@ -488,19 +488,24 @@ actor MockTrixService: TrixService {
             body: attachment.filename,
             isLocalEcho: true,
             attachment: TrixTimelineAttachment(
-                kind: attachment.isImage ? .image : .file,
+                kind: attachment.isSticker ? .sticker : (attachment.isImage ? .image : .file),
                 filename: attachment.filename,
                 mimeType: attachment.mimeType,
                 sizeBytes: attachment.data.count,
                 sourceJSON: sourceJSON,
                 imageDimensions: attachment.imageDimensions,
-                imageBlurhash: attachment.imageBlurhash
+                imageBlurhash: attachment.imageBlurhash,
+                stickerMetadata: attachment.stickerMetadata
             ),
             deliveryState: .sent
         )
 
         timelines[roomID, default: []].append(item)
-        updateRoomPreview(roomID: roomID, body: "You: Attachment: \(attachment.filename)", date: item.timestamp)
+        updateRoomPreview(
+            roomID: roomID,
+            body: attachment.isSticker ? "You: Sticker" : "You: Attachment: \(attachment.filename)",
+            date: item.timestamp
+        )
         return item
     }
 

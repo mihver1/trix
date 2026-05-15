@@ -190,11 +190,12 @@ trix-macos-build signing="automatic": xcodegen-trix-apple
     #!/usr/bin/env bash
     set -euo pipefail
     signing="{{ signing }}"
+    derived_data="{{ trix_macos_derived_data }}"
     build_args=(
       -project "{{ trix_apple_dir }}/TrixMatrix.xcodeproj"
       -scheme TrixMatrixMac
       -destination 'platform=macOS'
-      -derivedDataPath "{{ trix_macos_derived_data }}"
+      -derivedDataPath "$derived_data"
       build
     )
     case "$signing" in
@@ -202,6 +203,10 @@ trix-macos-build signing="automatic": xcodegen-trix-apple
       unsigned) build_args+=(CODE_SIGNING_ALLOWED=NO) ;;
       *) echo "error: signing must be automatic or unsigned" >&2; exit 1 ;;
     esac
+    rm -rf \
+      "$derived_data/Build/Intermediates.noindex" \
+      "$derived_data/ModuleCache.noindex" \
+      "$derived_data/SDKStatCaches.noindex"
     echo "==> building Trix macOS app (signing=$signing)"
     xcodebuild "${build_args[@]}"
 

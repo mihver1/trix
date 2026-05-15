@@ -4,7 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STORE_FILE="$(mktemp "${TMPDIR:-/tmp}/trix-invites.XXXXXX")"
 LOG_FILE="$(mktemp "${TMPDIR:-/tmp}/trix-invite-server.XXXXXX")"
+STICKER_FILE="$(mktemp "${TMPDIR:-/tmp}/trix-sticker.XXXXXX")"
 TOKEN="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32 || true)"
+TELEGRAM_TOKEN="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32 || true)"
+STICKER_SECRET="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32 || true)"
 PASSWORD="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24 || true)"
 PORT="$(python3 - <<'PY'
 import socket
@@ -23,13 +26,13 @@ cleanup() {
     kill "$SERVER_PID" >/dev/null 2>&1 || true
     wait "$SERVER_PID" >/dev/null 2>&1 || true
   fi
-  rm -f "$STORE_FILE" "$LOG_FILE"
+  rm -f "$STORE_FILE" "$LOG_FILE" "$STICKER_FILE"
   exit "$status"
 }
 
 trap cleanup EXIT
 
-if [ -z "$TOKEN" ] || [ -z "$PASSWORD" ]; then
+if [ -z "$TOKEN" ] || [ -z "$TELEGRAM_TOKEN" ] || [ -z "$STICKER_SECRET" ] || [ -z "$PASSWORD" ]; then
   echo "failed to generate disposable invite smoke secrets" >&2
   exit 2
 fi
@@ -38,6 +41,9 @@ TRIX_INVITE_BIND=127.0.0.1 \
 TRIX_INVITE_PORT="$PORT" \
 TRIX_INVITE_STORE_PATH="$STORE_FILE" \
 TRIX_INVITE_OPERATOR_TOKEN="$TOKEN" \
+TRIX_TELEGRAM_BOT_TOKEN="$TELEGRAM_TOKEN" \
+TRIX_STICKER_TOKEN_SECRET="$STICKER_SECRET" \
+TRIX_TELEGRAM_FAKE=1 \
 TRIX_INVITE_DRY_RUN=1 \
 python3 "$SCRIPT_DIR/invite-registration-server.py" >"$LOG_FILE" 2>&1 &
 SERVER_PID=$!
@@ -185,4 +191,112 @@ if [ "$WEAK_CHANGE_STATUS" != "400" ]; then
   exit 1
 fi
 
-echo "invite registration and password smoke passed in dry-run mode"
+STICKER_AUTH_STATUS="$(curl -sS \
+  -o /dev/null \
+  -w '%{http_code}' \
+  -H 'Content-Type: application/json' \
+  --data-binary '{"pack_url":"https://t.me/addstickers/FakePack"}' \
+  "http://127.0.0.1:${PORT}/v1/stickers/telegram/packs")"
+
+if [ "$STICKER_AUTH_STATUS" != "401" ]; then
+  echo "expected unauthenticated sticker import to fail with HTTP 401, got ${STICKER_AUTH_STATUS}" >&2
+  exit 1
+fi
+
+STICKER_PACK_RESPONSE="$(curl -fsS \
+  -H "Authorization: ${AUTH_HEADER}" \
+  -H 'Content-Type: application/json' \
+  --data-binary '{"pack_url":"https://t.me/addstickers/FakePack"}' \
+  "http://127.0.0.1:${PORT}/v1/stickers/telegram/packs")"
+
+STICKER_FILE_TOKEN="$(python3 -c 'import json,sys
+response = json.load(sys.stdin)
+pack = response.get("pack", {})
+stickers = pack.get("stickers", [])
+if pack.get("id") != "telegram:fakepack":
+    raise SystemExit("unexpected sticker pack id")
+if response.get("unsupported_count") != 2:
+    raise SystemExit("unexpected unsupported sticker count")
+if len(stickers) != 1:
+    raise SystemExit("unexpected supported sticker count")
+if stickers[0].get("id") != "telegram:fake-static-unique":
+    raise SystemExit("unexpected sticker id")
+print(stickers[0]["file_token"])
+' <<<"$STICKER_PACK_RESPONSE")"
+
+curl -fsS \
+  -H "Authorization: ${AUTH_HEADER}" \
+  -H 'Content-Type: application/json' \
+  --data-binary "$(python3 -c 'import json,sys; print(json.dumps({"file_token": sys.argv[1]}, separators=(",", ":")))' "$STICKER_FILE_TOKEN")" \
+  "http://127.0.0.1:${PORT}/v1/stickers/telegram/file" >"$STICKER_FILE"
+
+python3 - "$STICKER_FILE" <<'PY'
+import pathlib
+import sys
+
+if pathlib.Path(sys.argv[1]).stat().st_size <= 0:
+    raise SystemExit("empty sticker file download")
+PY
+
+BAD_STICKER_STATUS="$(curl -sS \
+  -o /dev/null \
+  -w '%{http_code}' \
+  -H "Authorization: ${AUTH_HEADER}" \
+  -H 'Content-Type: application/json' \
+  --data-binary '{"file_token":"not-a-valid-token"}' \
+  "http://127.0.0.1:${PORT}/v1/stickers/telegram/file")"
+
+if [ "$BAD_STICKER_STATUS" != "400" ]; then
+  echo "expected malformed sticker token to fail with HTTP 400, got ${BAD_STICKER_STATUS}" >&2
+  exit 1
+fi
+
+EXPIRED_STICKER_TOKEN="$(python3 - "$STICKER_SECRET" <<'PY'
+import base64
+import hashlib
+import hmac
+import json
+import sys
+
+payload = {
+    "file_id": "fake-static-file-id",
+    "file_unique_id": "fake-static-unique",
+    "pack_name": "FakePack",
+    "pack_title": "Fake Telegram Pack",
+    "filename": "fake-static-unique.webp",
+    "mime_type": "image/webp",
+    "exp": 1,
+}
+body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+encoded_body = base64.urlsafe_b64encode(body).decode("ascii").rstrip("=")
+signature = hmac.new(sys.argv[1].encode("utf-8"), encoded_body.encode("ascii"), hashlib.sha256).digest()
+encoded_signature = base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
+print(f"{encoded_body}.{encoded_signature}")
+PY
+)"
+
+EXPIRED_STICKER_STATUS="$(python3 - "$EXPIRED_STICKER_TOKEN" <<'PY' | curl -sS \
+  -o /dev/null \
+  -w '%{http_code}' \
+  -H "Authorization: ${AUTH_HEADER}" \
+  -H 'Content-Type: application/json' \
+  --data-binary @- \
+  "http://127.0.0.1:${PORT}/v1/stickers/telegram/file"
+import json
+import sys
+
+print(json.dumps({"file_token": sys.argv[1]}, separators=(",", ":")))
+PY
+)"
+
+if [ "$EXPIRED_STICKER_STATUS" != "410" ]; then
+  echo "expected expired sticker token to fail with HTTP 410, got ${EXPIRED_STICKER_STATUS}" >&2
+  exit 1
+fi
+
+if grep -q "$TELEGRAM_TOKEN\|$STICKER_SECRET\|$STICKER_FILE_TOKEN" "$LOG_FILE"; then
+  echo "sticker smoke leaked Telegram token, sticker secret, or file token to logs" >&2
+  exit 1
+fi
+
+echo "invite registration, password, and sticker import smoke passed in dry-run mode"

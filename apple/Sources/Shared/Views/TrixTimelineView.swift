@@ -34,6 +34,7 @@ struct TrixTimelineView: View {
     @State private var lastSentTypingState: TrixTypingState = .idle
     @State private var isShowingLocalForgetConfirmation = false
     @State private var isShowingGroupLeaveConfirmation = false
+    @State private var isShowingStickerPicker = false
 
     init(model: TrixAppModel, room: TrixRoomSummary) {
         self.model = model
@@ -83,6 +84,11 @@ struct TrixTimelineView: View {
                                     react: { emoji in
                                         Task {
                                             await model.setReaction(emoji, for: presentation.item)
+                                        }
+                                    },
+                                    addStickerPack: { metadata in
+                                        Task {
+                                            await model.importStickerPack(from: metadata)
                                         }
                                     }
                                 )
@@ -153,6 +159,22 @@ struct TrixTimelineView: View {
         .sheet(isPresented: $isShowingGroupMembers) {
             TrixGroupMembersView(model: model, room: room)
         }
+        .sheet(isPresented: $isShowingStickerPicker) {
+            TrixStickerPickerView(
+                model: model,
+                canSendStickers: canSendEncryptedAttachments,
+                sendSticker: { sticker in
+                    Task {
+                        await model.sendSticker(sticker)
+                    }
+                },
+                importTelegramPack: { reference in
+                    Task {
+                        await model.importTelegramStickerPack(reference)
+                    }
+                }
+            )
+        }
         .confirmationDialog(
             "Forget this DM locally?",
             isPresented: $isShowingLocalForgetConfirmation,
@@ -219,6 +241,16 @@ struct TrixTimelineView: View {
                     .padding(.bottom, 8)
             }
 
+            if let stickerImportMessage = model.stickerImportMessage {
+                TrixBannerView(
+                    text: stickerImportMessage,
+                    systemImage: "face.smiling",
+                    tint: TrixDesign.accent
+                )
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+            }
+
             if !canSendEncrypted {
                 encryptionRequiredBanner
             }
@@ -278,6 +310,17 @@ struct TrixTimelineView: View {
             .buttonStyle(.borderless)
             .disabled(timelineViewModel.isSendingAttachment || !canSendEncryptedAttachments)
             .help(attachmentHelpText)
+
+            Button {
+                isShowingStickerPicker = true
+            } label: {
+                Image(systemName: "face.smiling")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(TrixDesign.accent)
+                    .frame(width: 38, height: 38)
+            }
+            .buttonStyle(.borderless)
+            .help("Stickers")
 
             TextField(canSendEncrypted ? "Message" : "OMEMO required", text: $draft, axis: .vertical)
                 .lineLimit(1...5)
@@ -884,6 +927,7 @@ private struct TrixTimelineRow: View {
     let downloadAttachment: () -> Void
     let loadInlineAttachmentPreview: () -> Void
     let react: (String) -> Void
+    let addStickerPack: (TrixStickerAttachmentMetadata) -> Void
 
     private var item: TrixTimelineItem {
         presentation.item
@@ -904,72 +948,95 @@ private struct TrixTimelineRow: View {
                         .padding(.top, 2)
                 }
 
-                VStack(alignment: .leading, spacing: 8) {
-                    if let attachment = item.attachment {
-                        TrixAttachmentRow(
-                            attachment: attachment,
-                            itemID: item.id,
-                            isOutgoing: item.isLocalEcho,
-                            isDownloading: isDownloadingAttachment,
-                            failureMessage: attachmentFailure,
-                            inlinePreview: inlineAttachmentPreview,
-                            isLoadingInlinePreview: isLoadingInlineAttachmentPreview,
-                            inlinePreviewFailure: inlineAttachmentPreviewFailure,
-                            download: downloadAttachment,
-                            loadInlinePreview: loadInlineAttachmentPreview
-                        )
-                    } else {
-                        Text(item.body)
-                            .font(.body)
-                            .foregroundStyle(item.isLocalEcho ? .white : .primary)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    TrixReactionChips(
-                        aggregates: item.reactionAggregates,
+                if let attachment = item.attachment, attachment.isSticker {
+                    TrixStickerMessageContent(
+                        attachment: attachment,
+                        itemID: item.id,
                         isOutgoing: item.isLocalEcho,
-                        react: react
+                        timestamp: item.timestamp,
+                        deliveryState: deliveryState,
+                        isDownloading: isDownloadingAttachment,
+                        failureMessage: attachmentFailure,
+                        inlinePreview: inlineAttachmentPreview,
+                        isLoadingInlinePreview: isLoadingInlineAttachmentPreview,
+                        inlinePreviewFailure: inlineAttachmentPreviewFailure,
+                        isReacting: isReacting,
+                        reactionAggregates: item.reactionAggregates,
+                        download: downloadAttachment,
+                        loadInlinePreview: loadInlineAttachmentPreview,
+                        react: react,
+                        addStickerPack: addStickerPack
                     )
-
-                    HStack {
-                        Spacer(minLength: 0)
-                        HStack(spacing: 4) {
-                            TrixReactionMenu(
+                    .frame(maxWidth: bubbleMaxWidth, alignment: item.isLocalEcho ? .trailing : .leading)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let attachment = item.attachment {
+                            TrixAttachmentRow(
+                                attachment: attachment,
+                                itemID: item.id,
                                 isOutgoing: item.isLocalEcho,
-                                isWorking: isReacting,
-                                react: react
+                                isDownloading: isDownloadingAttachment,
+                                failureMessage: attachmentFailure,
+                                inlinePreview: inlineAttachmentPreview,
+                                isLoadingInlinePreview: isLoadingInlineAttachmentPreview,
+                                inlinePreviewFailure: inlineAttachmentPreviewFailure,
+                                download: downloadAttachment,
+                                loadInlinePreview: loadInlineAttachmentPreview,
+                                addStickerPack: addStickerPack
                             )
-
-                            if item.isLocalEcho {
-                                Image(systemName: deliveryState.systemImage)
-                                    .font(.caption2.weight(.semibold))
-                                    .accessibilityLabel(deliveryState.label)
-                                    .help(deliveryState.label)
-                            }
-
-                            Text(item.timestamp, style: .time)
-                                .font(.caption2.weight(.medium))
-                                .monospacedDigit()
+                        } else {
+                            Text(item.body)
+                                .font(.body)
+                                .foregroundStyle(item.isLocalEcho ? .white : .primary)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                        .foregroundStyle(item.isLocalEcho ? .white.opacity(0.82) : .secondary)
+
+                        TrixReactionChips(
+                            aggregates: item.reactionAggregates,
+                            isOutgoing: item.isLocalEcho,
+                            react: react
+                        )
+
+                        HStack {
+                            Spacer(minLength: 0)
+                            HStack(spacing: 4) {
+                                TrixReactionMenu(
+                                    isOutgoing: item.isLocalEcho,
+                                    isWorking: isReacting,
+                                    react: react
+                                )
+
+                                if item.isLocalEcho {
+                                    Image(systemName: deliveryState.systemImage)
+                                        .font(.caption2.weight(.semibold))
+                                        .accessibilityLabel(deliveryState.label)
+                                        .help(deliveryState.label)
+                                }
+
+                                Text(item.timestamp, style: .time)
+                                    .font(.caption2.weight(.medium))
+                                    .monospacedDigit()
+                            }
+                            .foregroundStyle(item.isLocalEcho ? .white.opacity(0.82) : .secondary)
+                        }
                     }
+                    .padding(.horizontal, 14)
+                    .padding(.top, presentation.startsCluster ? 11 : 9)
+                    .padding(.bottom, presentation.endsCluster ? 11 : 9)
+                    .frame(maxWidth: bubbleMaxWidth, alignment: item.isLocalEcho ? .trailing : .leading)
+                    .background(item.isLocalEcho ? TrixDesign.accent : TrixDesign.incomingBubbleSurface)
+                    .clipShape(bubbleShape)
+                    .overlay {
+                        bubbleShape
+                            .stroke(item.isLocalEcho ? .clear : TrixDesign.surfaceStroke, lineWidth: 1)
+                    }
+                    .shadow(
+                        color: item.isLocalEcho ? TrixDesign.accent.opacity(0.18) : TrixDesign.softShadow,
+                        radius: item.isLocalEcho ? 12 : 8,
+                        y: item.isLocalEcho ? 6 : 4
+                    )
                 }
-                .padding(.horizontal, 14)
-                .padding(.top, presentation.startsCluster ? 11 : 9)
-                .padding(.bottom, presentation.endsCluster ? 11 : 9)
-                .frame(maxWidth: bubbleMaxWidth, alignment: item.isLocalEcho ? .trailing : .leading)
-                .background(item.isLocalEcho ? TrixDesign.accent : TrixDesign.incomingBubbleSurface)
-                .clipShape(bubbleShape)
-                .overlay {
-                    bubbleShape
-                        .stroke(item.isLocalEcho ? .clear : TrixDesign.surfaceStroke, lineWidth: 1)
-                }
-                .shadow(
-                    color: item.isLocalEcho ? TrixDesign.accent.opacity(0.18) : TrixDesign.softShadow,
-                    radius: item.isLocalEcho ? 12 : 8,
-                    y: item.isLocalEcho ? 6 : 4
-                )
             }
             .frame(maxWidth: .infinity, alignment: item.isLocalEcho ? .trailing : .leading)
 
@@ -1011,6 +1078,221 @@ private struct TrixTimelineRow: View {
     }
 }
 
+private struct TrixStickerMessageContent: View {
+    let attachment: TrixTimelineAttachment
+    let itemID: String
+    let isOutgoing: Bool
+    let timestamp: Date
+    let deliveryState: TrixDeliveryState
+    let isDownloading: Bool
+    let failureMessage: String?
+    let inlinePreview: TrixAttachmentDownload?
+    let isLoadingInlinePreview: Bool
+    let inlinePreviewFailure: String?
+    let isReacting: Bool
+    let reactionAggregates: [TrixReactionAggregate]
+    let download: () -> Void
+    let loadInlinePreview: () -> Void
+    let react: (String) -> Void
+    let addStickerPack: (TrixStickerAttachmentMetadata) -> Void
+
+    var body: some View {
+        let size = stickerSize
+
+        VStack(alignment: isOutgoing ? .trailing : .leading, spacing: 6) {
+            ZStack(alignment: .bottomTrailing) {
+                Button {
+                    guard attachment.isDownloadable else {
+                        return
+                    }
+
+                    if inlinePreview == nil {
+                        loadInlinePreview()
+                    } else {
+                        download()
+                    }
+                } label: {
+                    stickerSurface(size: size)
+                        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .help(stickerHelpText)
+                .accessibilityLabel(stickerAccessibilityLabel)
+
+                metadataPill
+                    .padding(6)
+            }
+            .frame(width: size.width, height: size.height)
+            .contextMenu {
+                Button {
+                    download()
+                } label: {
+                    Label("Open Sticker", systemImage: "eye")
+                }
+                .disabled(!attachment.isDownloadable)
+
+                if let stickerMetadata = attachment.stickerMetadata,
+                   stickerMetadata.source.kind == .telegram {
+                    Button {
+                        addStickerPack(stickerMetadata)
+                    } label: {
+                        Label("Add Sticker Pack", systemImage: "plus.circle")
+                    }
+                }
+            }
+            .task(id: itemID) {
+                guard inlinePreview == nil,
+                      !isLoadingInlinePreview,
+                      inlinePreviewFailure == nil,
+                      attachment.isDownloadable else {
+                    return
+                }
+
+                loadInlinePreview()
+            }
+
+            TrixReactionChips(
+                aggregates: reactionAggregates,
+                isOutgoing: false,
+                react: react
+            )
+            .frame(width: size.width, alignment: isOutgoing ? .trailing : .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func stickerSurface(size: CGSize) -> some View {
+        if let inlinePreview, let image = platformImage(from: inlinePreview.data) {
+            image
+                .resizable()
+                .scaledToFit()
+                .frame(width: size.width, height: size.height)
+        } else if isLoadingInlinePreview || isDownloading {
+            ProgressView()
+                .controlSize(.regular)
+                .frame(width: size.width, height: size.height)
+                .background(placeholderBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        } else {
+            VStack(spacing: 8) {
+                Image(systemName: placeholderSystemImage)
+                    .font(.system(size: 30, weight: .semibold))
+                Text(placeholderText)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+            }
+            .foregroundStyle(placeholderForeground)
+            .frame(width: size.width, height: size.height)
+            .background(placeholderBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+    }
+
+    private var metadataPill: some View {
+        HStack(spacing: 5) {
+            TrixReactionMenu(
+                isOutgoing: true,
+                isWorking: isReacting,
+                react: react
+            )
+
+            if isOutgoing {
+                Image(systemName: deliveryState.systemImage)
+                    .font(.caption2.weight(.semibold))
+                    .accessibilityLabel(deliveryState.label)
+                    .help(deliveryState.label)
+            }
+
+            Text(timestamp, style: .time)
+                .font(.caption2.weight(.semibold))
+                .monospacedDigit()
+        }
+        .foregroundStyle(.white.opacity(0.92))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Color.black.opacity(0.34), in: Capsule())
+    }
+
+    private var stickerSize: CGSize {
+        let maxSize = Self.maxStickerSize
+        let aspectRatio = TrixInlineMediaPreviewSupport.aspectRatio(for: attachment)
+        var fittedSize = CGSize(
+            width: maxSize.width,
+            height: maxSize.width / aspectRatio
+        )
+
+        if fittedSize.height > maxSize.height {
+            fittedSize = CGSize(
+                width: maxSize.height * aspectRatio,
+                height: maxSize.height
+            )
+        }
+
+        return fittedSize
+    }
+
+    private static var maxStickerSize: CGSize {
+        #if os(macOS)
+        CGSize(width: 220, height: 220)
+        #else
+        CGSize(width: 190, height: 190)
+        #endif
+    }
+
+    private var placeholderBackground: Color {
+        TrixDesign.secondarySurface.opacity(0.72)
+    }
+
+    private var placeholderForeground: Color {
+        inlinePreviewFailure == nil && failureMessage == nil ? TrixDesign.accent : .orange
+    }
+
+    private var placeholderSystemImage: String {
+        inlinePreviewFailure == nil && failureMessage == nil ? "face.smiling" : "exclamationmark.triangle.fill"
+    }
+
+    private var placeholderText: String {
+        if inlinePreviewFailure != nil || failureMessage != nil {
+            return "Tap to retry"
+        }
+
+        return "Sticker"
+    }
+
+    private var stickerHelpText: String {
+        if inlinePreview == nil {
+            return "Load encrypted sticker"
+        }
+
+        return "Open encrypted sticker"
+    }
+
+    private var stickerAccessibilityLabel: String {
+        if let emoji = attachment.stickerMetadata?.emoji {
+            return "Sticker \(emoji)"
+        }
+
+        return "Sticker"
+    }
+
+    private func platformImage(from data: Data) -> Image? {
+        #if os(iOS)
+        guard let image = UIImage(data: data) else {
+            return nil
+        }
+        return Image(uiImage: image)
+        #elseif os(macOS)
+        guard let image = NSImage(data: data) else {
+            return nil
+        }
+        return Image(nsImage: image)
+        #else
+        return nil
+        #endif
+    }
+}
+
 private struct TrixAttachmentRow: View {
     let attachment: TrixTimelineAttachment
     let itemID: String
@@ -1022,6 +1304,7 @@ private struct TrixAttachmentRow: View {
     let inlinePreviewFailure: String?
     let download: () -> Void
     let loadInlinePreview: () -> Void
+    let addStickerPack: (TrixStickerAttachmentMetadata) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1056,7 +1339,7 @@ private struct TrixAttachmentRow: View {
                 }
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(attachment.filename)
+                    Text(attachmentTitle)
                         .font(.body.weight(.medium))
                         .foregroundStyle(isOutgoing ? .white : .primary)
                         .lineLimit(2)
@@ -1068,7 +1351,7 @@ private struct TrixAttachmentRow: View {
                             .foregroundStyle(isOutgoing ? .white.opacity(0.82) : .secondary)
                     }
 
-                    Label("Encrypted attachment", systemImage: "lock.fill")
+                    Label(attachment.isSticker ? "Encrypted sticker" : "Encrypted attachment", systemImage: "lock.fill")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(isOutgoing ? .white.opacity(0.82) : .secondary)
                         .lineLimit(1)
@@ -1102,6 +1385,18 @@ private struct TrixAttachmentRow: View {
                 .help(attachmentButtonHelp)
                 .accessibilityLabel(attachmentButtonHelp)
             }
+
+            if let stickerMetadata = attachment.stickerMetadata,
+               stickerMetadata.source.kind == .telegram {
+                Button {
+                    addStickerPack(stickerMetadata)
+                } label: {
+                    Label("Add Sticker Pack", systemImage: "plus.circle.fill")
+                }
+                .font(.caption.weight(.semibold))
+                .buttonStyle(.borderless)
+                .foregroundStyle(isOutgoing ? .white : TrixDesign.accent)
+            }
         }
     }
 
@@ -1110,7 +1405,19 @@ private struct TrixAttachmentRow: View {
             return "hourglass"
         }
 
-        return attachment.isImage ? "eye.circle.fill" : "arrow.down.circle.fill"
+        return attachment.isImage || attachment.isSticker ? "eye.circle.fill" : "arrow.down.circle.fill"
+    }
+
+    private var attachmentTitle: String {
+        guard let stickerMetadata = attachment.stickerMetadata else {
+            return attachment.filename
+        }
+
+        if let emoji = stickerMetadata.emoji {
+            return "Sticker \(emoji)"
+        }
+
+        return "Sticker"
     }
 
     private var attachmentButtonHelp: String {
@@ -1118,11 +1425,169 @@ private struct TrixAttachmentRow: View {
             return "Retry encrypted attachment download"
         }
 
+        if attachment.isSticker {
+            return "Download and preview encrypted sticker"
+        }
+
         if attachment.isImage {
             return "Download and preview encrypted image"
         }
 
         return "Download encrypted attachment"
+    }
+}
+
+private struct TrixStickerPickerView: View {
+    @ObservedObject var model: TrixAppModel
+    let canSendStickers: Bool
+    let sendSticker: (TrixSticker) -> Void
+    let importTelegramPack: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var telegramReference = ""
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 10) {
+                    TextField("Telegram pack link", text: $telegramReference)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(model.isImportingStickerPack)
+
+                    Button {
+                        importTelegramPack(telegramReference)
+                        telegramReference = ""
+                    } label: {
+                        if model.isImportingStickerPack {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "square.and.arrow.down")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isImportingStickerPack || telegramReference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .help("Import Telegram sticker pack")
+                }
+
+                if let stickerImportMessage = model.stickerImportMessage {
+                    TrixBannerView(
+                        text: stickerImportMessage,
+                        systemImage: "face.smiling",
+                        tint: TrixDesign.accent
+                    )
+                }
+
+                if !canSendStickers {
+                    TrixBannerView(
+                        text: "OMEMO attachment readiness is required before sending stickers.",
+                        systemImage: "lock.slash.fill",
+                        tint: .orange
+                    )
+                }
+
+                if model.stickerPacks.isEmpty {
+                    TrixEmptyStateView(
+                        title: "No stickers",
+                        systemImage: "face.smiling",
+                        message: "Imported Telegram sticker packs will appear here."
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 18) {
+                            ForEach(model.stickerPacks) { pack in
+                                VStack(alignment: .leading, spacing: 10) {
+                                    Text(pack.title)
+                                        .font(.headline)
+                                        .lineLimit(1)
+
+                                    LazyVGrid(columns: columns, spacing: 10) {
+                                        ForEach(pack.stickers) { sticker in
+                                            TrixStickerTile(
+                                                sticker: sticker,
+                                                data: model.stickerData(for: sticker),
+                                                canSend: canSendStickers,
+                                                send: {
+                                                    sendSticker(sticker)
+                                                    dismiss()
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+            .padding(20)
+            .navigationTitle("Stickers")
+            .trixInlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .trixStickerPickerFrame()
+    }
+
+    private var columns: [GridItem] {
+        [GridItem(.adaptive(minimum: 72, maximum: 92), spacing: 10)]
+    }
+}
+
+private struct TrixStickerTile: View {
+    let sticker: TrixSticker
+    let data: Data?
+    let canSend: Bool
+    let send: () -> Void
+
+    var body: some View {
+        Button(action: send) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(TrixDesign.secondarySurface)
+
+                if let data, let image = platformImage(from: data) {
+                    image
+                        .resizable()
+                        .scaledToFit()
+                        .padding(8)
+                } else {
+                    Image(systemName: "face.smiling")
+                        .font(.system(size: 28, weight: .semibold))
+                        .foregroundStyle(TrixDesign.accent)
+                }
+            }
+            .frame(width: 72, height: 72)
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!canSend || data == nil)
+        .help(sticker.emoji.map { "Send sticker \($0)" } ?? "Send sticker")
+        .accessibilityLabel(sticker.emoji.map { "Send sticker \($0)" } ?? "Send sticker")
+    }
+
+    private func platformImage(from data: Data) -> Image? {
+        #if os(iOS)
+        guard let image = UIImage(data: data) else {
+            return nil
+        }
+        return Image(uiImage: image)
+        #elseif os(macOS)
+        guard let image = NSImage(data: data) else {
+            return nil
+        }
+        return Image(nsImage: image)
+        #else
+        return nil
+        #endif
     }
 }
 
@@ -1390,6 +1855,15 @@ private extension View {
     func trixAttachmentPreviewFrame() -> some View {
         #if os(macOS)
         self.trixDialogSurface(minWidth: 420, minHeight: 320)
+        #else
+        self.trixDialogSurface()
+        #endif
+    }
+
+    @ViewBuilder
+    func trixStickerPickerFrame() -> some View {
+        #if os(macOS)
+        self.trixDialogSurface(minWidth: 520, minHeight: 520)
         #else
         self.trixDialogSurface()
         #endif

@@ -86,3 +86,17 @@ targets:
           TRIX_APNS_ENTITLEMENT_ENVIRONMENT: development
         Release:
           TRIX_APNS_ENTITLEMENT_ENVIRONMENT: production
+
+  TrixMatrixMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests/Shared
+    dependencies:
+      - target: TrixMatrixMac
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trixapp.tests
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Trix.app/Contents/MacOS/Trix
+        BUNDLE_LOADER: $(TEST_HOST)

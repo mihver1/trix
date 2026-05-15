@@ -33,12 +33,14 @@ is disabled, registration is closed by default, and no secrets are committed.
 - `scripts/operator-api-smoke.sh`: localhost `mod_http_api` provision,
   reset-password, directory search, health, disable, enable, and cleanup smoke
   with generated disposable credentials.
-- `scripts/invite-registration-server.py`: small invite wrapper for app-driven
-  account registration. Operator invite creation is bearer-protected, invite
-  codes are stored only as hashes, and successful redemption provisions the XMPP
-  account through the loopback ejabberd API.
+- `scripts/invite-registration-server.py`: small app-facing wrapper for invite
+  registration, account password changes, and Telegram sticker-pack import.
+  Operator invite creation is bearer-protected, invite codes are stored only as
+  hashes, successful redemption provisions the XMPP account through the loopback
+  ejabberd API, and Telegram bot credentials stay server-side.
 - `scripts/invite-registration-smoke.sh`: dry-run smoke for invite creation,
-  redemption, and single-use replay rejection without real ejabberd credentials.
+  redemption, single-use replay rejection, password changes, and fake Telegram
+  sticker import without real ejabberd or Telegram credentials.
 - `scripts/restore-verify.sh`: fresh-instance restore verifier using
   ejabberd-native Mnesia backup/restore for account state plus a compose-scoped
   upload-volume archive.
@@ -230,6 +232,10 @@ Trix wrapper instead:
   `POST /v1/account/password` using the current XMPP JID/password over private
   TLS; the wrapper validates the current password through `check_password` and
   then calls ejabberd `change_password` through the loopback API.
+- Signed-in Apple clients import static public Telegram sticker packs with
+  `POST /v1/stickers/telegram/packs` and fetch individual sticker bytes through
+  `POST /v1/stickers/telegram/file`. Both endpoints use the same XMPP
+  JID/password Basic auth pattern as the signed-in invite and password routes.
 - Apps redeem invite codes with `POST /v1/registration/redeem`, providing the
   invite code, handle, display name, and user-chosen password.
 - The wrapper stores only invite-code hashes and redemption metadata; it does
@@ -258,11 +264,29 @@ curl -fsS \
 ```
 
 Expose only the app-facing `/v1/registration/redeem` endpoint through the
-private TLS reverse proxy used by the Apple clients. If in-app invite issuing and
-password change are enabled, expose `POST /v1/invites` and
-`POST /v1/account/password` through the same private TLS policy. Keep
+private TLS reverse proxy used by the Apple clients. If in-app invite issuing,
+password change, or Telegram sticker import are enabled, expose
+`POST /v1/invites`, `POST /v1/account/password`,
+`POST /v1/stickers/telegram/packs`, and
+`POST /v1/stickers/telegram/file` through the same private TLS policy. Keep
 `/v1/operator/*` reachable only from an operator network or localhost. Do not
-log request bodies: they contain invite codes and XMPP passwords.
+log request bodies: they contain invite codes, XMPP passwords, and short-lived
+sticker file tokens.
+
+Enable Telegram sticker import only with deployment-local server secrets:
+
+```bash
+TRIX_TELEGRAM_BOT_TOKEN=... \
+TRIX_STICKER_TOKEN_SECRET="$(openssl rand -hex 32)" \
+./scripts/invite-registration-server.py
+```
+
+The wrapper resolves `t.me/addstickers/<name>` through Telegram Bot API
+`getStickerSet`, returns only regular static stickers for v1, and reports an
+unsupported count for animated `.TGS` or video `.WEBM` stickers. Clients receive
+pack metadata plus short-lived signed file tokens; the actual sticker bytes are
+downloaded through the wrapper, so Telegram bot tokens and Telegram file paths
+are never exposed to Apple clients.
 
 Dry-run the wrapper contract without ejabberd:
 

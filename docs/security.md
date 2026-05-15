@@ -137,6 +137,34 @@ logging of decrypted bytes, filenames, media keys, local paths, or preview data.
 Do not log filenames, local paths, media keys, decrypted media bytes, or
 decrypted previews in production paths.
 
+## Sticker Import Risk
+
+Stickers are a presentation layer on top of the encrypted attachment path, not a
+new plaintext media channel. Apple sends sticker bytes through the existing
+MartinOMEMO file-encryption and HTTP-upload flow, with sticker metadata kept
+inside the OMEMO-encrypted attachment descriptor. The descriptor version remains
+`1` so older clients can still treat the item as a normal encrypted attachment.
+
+Telegram sticker import is server-proxied. The app-facing wrapper accepts
+`POST /v1/stickers/telegram/packs` and
+`POST /v1/stickers/telegram/file` only after the same signed-in XMPP Basic auth
+validation used by the invite/password routes. `TRIX_TELEGRAM_BOT_TOKEN` and
+`TRIX_STICKER_TOKEN_SECRET` are deployment-local server secrets and must never
+ship in an Apple client or be committed. Sticker file responses use short-lived
+HMAC-signed tokens so Telegram file paths and bot credentials are not exposed to
+clients.
+
+The v1 import path accepts only regular static Telegram stickers. Animated
+`.TGS` and video `.WEBM` stickers are skipped and surfaced to the user as an
+unsupported count. Imported sticker packs are stored per account on Apple in an
+Application Support library encrypted with a local Keychain-held key. Received
+Telegram-sourced stickers may offer "Add Sticker Pack" by importing the source
+pack metadata; non-Telegram sticker pack import stays unavailable in v1.
+
+Do not log Telegram bot tokens, sticker token secrets, signed sticker file
+tokens, Telegram file paths, local sticker files, decrypted sticker bytes,
+sticker media keys, or XMPP passwords used for sticker import authentication.
+
 ## Backup Risk
 
 Server backups include account metadata, rosters, MUC state, SQL-backed MAM
@@ -217,11 +245,12 @@ ejabberd `check_password` validates the current XMPP account, and redeems
 through the loopback ejabberd API. It also allows signed-in app users to change
 their own password through `POST /v1/account/password`; the wrapper validates the
 current password with `check_password` before calling loopback `change_password`.
-Only `POST /v1/invites`, `POST /v1/account/password`, and
-`POST /v1/registration/redeem` should be reachable by clients through private TLS
-policy; `/v1/operator/*` remains operator-only. Request bodies include invite
-codes and XMPP passwords, so reverse proxy and service logs must not capture
-bodies.
+Only `POST /v1/invites`, `POST /v1/account/password`,
+`POST /v1/registration/redeem`, `POST /v1/stickers/telegram/packs`, and
+`POST /v1/stickers/telegram/file` should be reachable by clients through private
+TLS policy; `/v1/operator/*` remains operator-only. Request bodies include invite
+codes, XMPP passwords, and short-lived sticker file tokens, so reverse proxy and
+service logs must not capture bodies.
 
 ## Local Diagnostics Risk
 
@@ -238,5 +267,7 @@ or attachment bodies.
 - Do not log OMEMO private keys, bundles with private material, or trust secrets.
 - Do not log decrypted message bodies in production paths.
 - Do not log decrypted attachment contents.
+- Do not log Telegram bot tokens, sticker token secrets, sticker file tokens, or
+  decrypted sticker bytes.
 - Do not log APNs tokens or admin credentials.
 - Keep debug logs local and scrubbed.

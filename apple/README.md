@@ -279,6 +279,13 @@ The checked-in Apple code is now the first XMPP client slice:
   `jpg`, `png`, `webp`, plus image MIME types) render inline in the iOS and
   macOS timeline after local decrypt when their encrypted descriptor carries a
   bounded original size;
+- Telegram static sticker import through the app-facing XMPP account wrapper,
+  a per-account local sticker library encrypted under Application Support with
+  a Keychain-held key, a composer sticker picker, received Telegram sticker pack
+  import, and sticker timeline rendering. Sticker sends reuse the encrypted
+  attachment path and remain gated on the same OMEMO availability, recipient,
+  and trust checks as normal attachments. Animated `.TGS` and video `.WEBM`
+  Telegram stickers are skipped in v1 and reported as unsupported;
 - encrypted group attachment send through the same local file-encryption and
   HTTP-upload path, gated on a validated MUC member recipient set and trusted
   active OMEMO devices for every group recipient; `group-attachment` live smoke
@@ -312,8 +319,10 @@ attachment send now uses the encrypted attachment path, but the product UI only
 enables the attachment picker after the service validates the MUC recipient set
 and group OMEMO trust state. Credentialed DM and group attachment live-smoke
 runs passed on 2026-05-10 with upload, download, decrypt, MIME/image, and byte
-equality checks. The Matrix Rust SDK adapter has been removed from the new Apple
-targets.
+equality checks. Sticker sends use the same attachment send gate and encrypted
+descriptor path; credentialed `dm-sticker` and `group-sticker` live-smoke modes
+are not wired in this slice. The Matrix Rust SDK adapter has been removed from
+the new Apple targets.
 
 On iOS and macOS, supported encrypted image attachments get inline timeline
 previews from the same local-decrypt service path as the full attachment
@@ -361,6 +370,8 @@ The target protocol-neutral boundary is:
 - `TrixRegistrationService`: invite issuing, unauthenticated invite redemption
   before a normal XMPP login, and signed-in account password change through the
   Trix wrapper.
+- `TrixStickerImportService`: signed-in Telegram sticker-pack import and
+  server-proxied sticker file download through the same app-facing wrapper.
 - `TrixAuthService`: login, logout, and session restore.
 - `TrixSyncService`: room list, account state, and sync lifecycle.
 - `TrixRoomService`: timeline, text send, attachments, reactions, typing, and
@@ -396,10 +407,15 @@ gates:
 7. Validate XEP-0444 DM reactions with `dm-reaction`.
 8. Validate encrypted attachment upload/download with `dm-attachment` and
    `group-attachment`; both modes print only scrubbed status lines.
-9. Live-validate the broader device trust UX with a second signed device. The
+9. Validate static Telegram sticker import, local encrypted library
+   persistence, and received Telegram sticker pack import. The checked-in unit
+   tests cover URL parsing, save/load/dedup, descriptor metadata flow, and
+   received-pack import; live credentialed sticker-send smoke remains optional
+   follow-up work.
+10. Live-validate the broader device trust UX with a second signed device. The
    Settings surface and manual per-device trust are wired; live second-device
    validation is still pending.
-10. Validate APNs push without plaintext payloads.
+11. Validate APNs push without plaintext payloads.
 
 Group OMEMO evidence from the checked libraries: Martin exposes `MucModule`
 join/configuration/invite/affiliation APIs, and MartinOMEMO exposes
@@ -423,6 +439,8 @@ and [../docs/xmpp-migration/spike-checklist.md](../docs/xmpp-migration/spike-che
 - Do not silently trust all devices.
 - Do not log XMPP passwords, auth tokens, OMEMO secrets, APNs tokens, decrypted
   message bodies, or decrypted attachment contents.
+- Do not log Telegram bot tokens, sticker token secrets, signed sticker file
+  tokens, Telegram file paths, or decrypted sticker bytes.
 - Keep protocol calls behind service/view-model boundaries.
 
 ## Planned Cleanup

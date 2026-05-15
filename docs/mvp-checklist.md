@@ -25,6 +25,15 @@ checklist, not by copying legacy implementation details.
       without printing decrypted content, filenames, media keys, or URLs.
       iOS and macOS timeline rows render bounded inline previews for supported
       image attachments after local decrypt.
+- [x] Static Telegram sticker import and encrypted sticker sends are implemented
+      as a presentation layer over encrypted attachments. The app-facing wrapper
+      resolves public `t.me/addstickers/<name>` packs server-side, returns only
+      regular static stickers with short-lived file tokens, and skips animated
+      or video stickers with a visible unsupported count. Apple stores imported
+      packs per account in a local encrypted library, renders stickers in the
+      picker/timeline, and keeps sticker sends behind the same OMEMO attachment
+      availability and trust gates. Credentialed sticker-specific live smoke is
+      not wired in this slice.
 - [x] iOS product-parity pass: Chats/Settings tabs, dense inbox, visible invite
       actions, account state, chat bubbles, composer, and attachment download
       affordances are wired in SwiftUI. The iOS inbox prioritizes pending
@@ -171,6 +180,10 @@ checklist, not by copying legacy implementation details.
       encrypted DMs and group MUCs. Group attachment send remains blocked unless
       the service validates the MUC member recipient set and every recipient has
       a trusted active OMEMO device.
+- [x] Send a local sticker from the SwiftUI timeline composer through the same
+      encrypted attachment pipeline. Sticker metadata is included inside the
+      OMEMO-encrypted descriptor, while descriptor version remains `1` for older
+      clients to render the item as a normal encrypted attachment.
 - [x] Download encrypted DM timeline file/image attachments, decrypt locally,
       and preview supported images inline or in the full attachment preview.
 - [x] Show visible encrypted-attachment download failure state and allow retry
@@ -260,6 +273,14 @@ checklist, not by copying legacy implementation details.
       invite-code hashes, redeems through the loopback ejabberd API, and the
       Apple login screen can create an account from an invite before saving the
       normal XMPP session.
+- [x] App-facing Telegram sticker import wrapper:
+      `server/xmpp/scripts/invite-registration-server.py` exposes
+      `POST /v1/stickers/telegram/packs` and
+      `POST /v1/stickers/telegram/file` for signed-in XMPP users, keeps the
+      Telegram bot token server-side, signs short-lived sticker file tokens with
+      deployment-local secret material, and has dry-run fake Telegram smoke
+      coverage for pack resolve, file download, unsupported sticker reporting,
+      auth failure, bad/expired token handling, and secret redaction.
 - [x] Disable user through `operator-control.sh disable-user`, backed by
       ejabberd `ban_account` so sessions are kicked and new login is blocked
       without deleting account data.
@@ -317,7 +338,8 @@ checklist, not by copying legacy implementation details.
       through the localhost control-plane backend.
 - [x] Dry-run smoke coverage for invite creation, first redemption, and
       single-use replay rejection, including app-issued invites, through
-      `server/xmpp/scripts/invite-registration-smoke.sh`.
+      `server/xmpp/scripts/invite-registration-smoke.sh`. The same dry-run smoke
+      now covers fake Telegram sticker import and signed file-token download.
 - [x] Repeatable archive/TestFlight script path for the new XMPP `apple/` app.
 - [x] Fail-closed Apple APNs registration plumbing exists for the new XMPP
       targets: platform token capture, service-bound XMPP push registration, and

@@ -109,6 +109,7 @@ actor XMPPMartinService: TrixService {
         let encryptedSizeBytes: Int
         let imageDimensions: TrixAttachmentImageDimensions?
         let imageBlurhash: String?
+        let stickerMetadata: TrixStickerAttachmentMetadata?
     }
 
     private struct DecodedTimelineContent {
@@ -921,7 +922,8 @@ actor XMPPMartinService: TrixService {
             originalSizeBytes: attachment.data.count,
             encryptedSizeBytes: encryptedMedia.data.count,
             imageDimensions: attachment.imageDimensions,
-            imageBlurhash: attachment.imageBlurhash
+            imageBlurhash: attachment.imageBlurhash,
+            stickerMetadata: attachment.stickerMetadata
         )
         let descriptorJSON = try Self.encodedAttachmentDescriptor(descriptor)
 
@@ -949,7 +951,7 @@ actor XMPPMartinService: TrixService {
             roomID: peerJID,
             sender: session.userID,
             timestamp: Date(),
-            body: "Attachment: \(attachment.filename)",
+            body: Self.attachmentTimelineBody(for: attachment),
             isLocalEcho: true,
             attachment: Self.timelineAttachment(from: descriptor, sourceJSON: descriptorJSON),
             deliveryState: .sent
@@ -2385,7 +2387,8 @@ actor XMPPMartinService: TrixService {
             originalSizeBytes: attachment.data.count,
             encryptedSizeBytes: encryptedMedia.data.count,
             imageDimensions: attachment.imageDimensions,
-            imageBlurhash: attachment.imageBlurhash
+            imageBlurhash: attachment.imageBlurhash,
+            stickerMetadata: attachment.stickerMetadata
         )
         let descriptorJSON = try Self.encodedAttachmentDescriptor(descriptor)
 
@@ -2411,7 +2414,7 @@ actor XMPPMartinService: TrixService {
             roomID: roomID,
             sender: accountJID,
             timestamp: Date(),
-            body: "Attachment: \(attachment.filename)",
+            body: Self.attachmentTimelineBody(for: attachment),
             isLocalEcho: true,
             attachment: Self.timelineAttachment(from: descriptor, sourceJSON: descriptorJSON),
             deliveryState: .sent
@@ -2974,7 +2977,7 @@ actor XMPPMartinService: TrixService {
         }
 
         return DecodedTimelineContent(
-            body: "Attachment: \(descriptor.filename)",
+            body: attachmentTimelineBody(for: descriptor),
             attachment: timelineAttachment(from: descriptor, sourceJSON: body)
         )
     }
@@ -2984,14 +2987,39 @@ actor XMPPMartinService: TrixService {
         sourceJSON: String
     ) -> TrixTimelineAttachment {
         TrixTimelineAttachment(
-            kind: descriptor.mimeType?.hasPrefix("image/") == true ? .image : .file,
+            kind: descriptor.stickerMetadata != nil ? .sticker : (descriptor.mimeType?.hasPrefix("image/") == true ? .image : .file),
             filename: descriptor.filename,
             mimeType: descriptor.mimeType,
             sizeBytes: descriptor.originalSizeBytes,
             sourceJSON: sourceJSON,
             imageDimensions: descriptor.imageDimensions,
-            imageBlurhash: descriptor.imageBlurhash
+            imageBlurhash: descriptor.imageBlurhash,
+            stickerMetadata: descriptor.stickerMetadata
         )
+    }
+
+    private static func attachmentTimelineBody(for attachment: TrixAttachmentUpload) -> String {
+        guard let stickerMetadata = attachment.stickerMetadata else {
+            return "Attachment: \(attachment.filename)"
+        }
+
+        return stickerTimelineBody(emoji: stickerMetadata.emoji, packTitle: stickerMetadata.packTitle)
+    }
+
+    private static func attachmentTimelineBody(for descriptor: EncryptedAttachmentDescriptor) -> String {
+        guard let stickerMetadata = descriptor.stickerMetadata else {
+            return "Attachment: \(descriptor.filename)"
+        }
+
+        return stickerTimelineBody(emoji: stickerMetadata.emoji, packTitle: stickerMetadata.packTitle)
+    }
+
+    private static func stickerTimelineBody(emoji: String?, packTitle: String) -> String {
+        if let emoji, !emoji.isEmpty {
+            return "Sticker \(emoji)"
+        }
+
+        return "Sticker: \(packTitle)"
     }
 
     private static func encodedAttachmentDescriptor(_ descriptor: EncryptedAttachmentDescriptor) throws -> String {
@@ -3528,7 +3556,7 @@ actor XMPPMartinService: TrixService {
 
         let body: String
         if let attachment = item.attachment {
-            body = "Attachment: \(attachment.filename)"
+            body = attachment.isSticker ? item.body : "Attachment: \(attachment.filename)"
         } else {
             body = item.body
         }

@@ -3,6 +3,7 @@ import base64
 import hashlib
 import hmac
 import json
+import mimetypes
 import os
 import re
 import secrets
@@ -29,8 +30,16 @@ OPERATOR_TOKEN = os.environ.get("TRIX_INVITE_OPERATOR_TOKEN", "")
 DEFAULT_TTL_SECONDS = int(os.environ.get("TRIX_INVITE_DEFAULT_TTL_SECONDS", "604800"))
 DRY_RUN = os.environ.get("TRIX_INVITE_DRY_RUN", "0") == "1"
 ALLOW_NON_LOOPBACK_API = os.environ.get("TRIX_XMPP_OPERATOR_ALLOW_NON_LOOPBACK", "0") == "1"
+TELEGRAM_BOT_TOKEN = os.environ.get("TRIX_TELEGRAM_BOT_TOKEN", "")
+STICKER_TOKEN_SECRET = os.environ.get("TRIX_STICKER_TOKEN_SECRET", "")
+TELEGRAM_API_BASE_URL = os.environ.get("TRIX_TELEGRAM_API_BASE_URL", "https://api.telegram.org").rstrip("/")
+TELEGRAM_FILE_BASE_URL = os.environ.get("TRIX_TELEGRAM_FILE_BASE_URL", "https://api.telegram.org/file").rstrip("/")
+TELEGRAM_FAKE = os.environ.get("TRIX_TELEGRAM_FAKE", "0") == "1"
+STICKER_FILE_TOKEN_TTL_SECONDS = int(os.environ.get("TRIX_STICKER_FILE_TOKEN_TTL_SECONDS", "900"))
 LOCALPART_RE = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,30}[a-z0-9])?$")
 MAX_BODY_BYTES = 16 * 1024
+MAX_STICKER_BYTES = 8 * 1024 * 1024
+TELEGRAM_PACK_NAME_RE = re.compile(r"^[A-Za-z0-9_]{1,128}$")
 
 
 class InviteError(Exception):
@@ -182,6 +191,14 @@ class Handler(BaseHTTPRequestHandler):
                 issuer = self.require_account_auth()
                 self.change_account_password(issuer)
                 return
+            if self.path == "/v1/stickers/telegram/packs":
+                self.require_account_auth()
+                self.import_telegram_sticker_pack()
+                return
+            if self.path == "/v1/stickers/telegram/file":
+                self.require_account_auth()
+                self.download_telegram_sticker_file()
+                return
             if self.path == "/v1/registration/redeem":
                 self.redeem_invite()
                 return
@@ -226,6 +243,36 @@ class Handler(BaseHTTPRequestHandler):
             {
                 "user_id": issuer,
                 "changed_at": now_iso(),
+            },
+        )
+
+    def import_telegram_sticker_pack(self):
+        ensure_sticker_import_config()
+        body = self.read_json_body()
+        pack_name = normalize_telegram_pack_name(
+            body.get("url") or body.get("pack_url") or body.get("name") or body.get("pack_name")
+        )
+        pack = fetch_telegram_sticker_pack(pack_name)
+        self.write_json(HTTPStatus.OK, pack)
+
+    def download_telegram_sticker_file(self):
+        ensure_sticker_import_config()
+        body = self.read_json_body()
+        token = normalized_required_string(body.get("file_token"), "file_token")
+        payload = verify_sticker_file_token(token)
+        data, mime_type = fetch_telegram_sticker_file(payload)
+        filename = safe_sticker_filename(
+            payload.get("filename"),
+            payload.get("file_unique_id", "sticker"),
+            mime_type,
+        )
+        self.write_binary(
+            HTTPStatus.OK,
+            data,
+            content_type=mime_type,
+            extra_headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "X-Trix-Sticker-Filename": filename,
             },
         )
 
@@ -307,6 +354,16 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def write_binary(self, status, data, content_type="application/octet-stream", extra_headers=None):
+        self.send_response(int(status))
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(data)))
+        for key, value in (extra_headers or {}).items():
+            self.send_header(key, value)
+        self.end_headers()
+        self.wfile.write(data)
+
     def log_message(self, fmt, *args):
         sys.stderr.write("%s %s\n" % (self.log_date_time_string(), fmt % args))
 
@@ -379,6 +436,316 @@ def api_post(command, payload):
         raise RuntimeError(f"ejabberd API returned HTTP {error.code}") from error
     except urllib.error.URLError as error:
         raise RuntimeError("ejabberd API is unreachable") from error
+
+
+def ensure_sticker_import_config():
+    if not TELEGRAM_BOT_TOKEN.strip():
+        raise InviteError(HTTPStatus.SERVICE_UNAVAILABLE, "telegram_import_unavailable", "Telegram sticker import is not configured.")
+    if not STICKER_TOKEN_SECRET.strip():
+        raise InviteError(HTTPStatus.SERVICE_UNAVAILABLE, "telegram_import_unavailable", "Telegram sticker import is not configured.")
+
+
+def normalize_telegram_pack_name(value):
+    raw = normalized_required_string(value, "pack_name")
+    parsed = urllib.parse.urlparse(raw)
+    if parsed.scheme and parsed.netloc:
+        host = parsed.netloc.lower()
+        path_parts = [part for part in parsed.path.split("/") if part]
+        if host in {"t.me", "telegram.me"} and len(path_parts) >= 2 and path_parts[0].lower() == "addstickers":
+            raw = path_parts[1]
+        else:
+            raise InviteError(HTTPStatus.BAD_REQUEST, "invalid_sticker_pack", "Telegram sticker pack link is invalid.")
+    else:
+        raw = raw.strip().rstrip("/")
+        lowered = raw.lower()
+        if lowered.startswith("t.me/addstickers/") or lowered.startswith("telegram.me/addstickers/"):
+            raw = raw.rstrip("/").rsplit("/", 1)[-1]
+
+    pack_name = urllib.parse.unquote(raw.strip().split("?", 1)[0].split("#", 1)[0]).strip()
+    if not TELEGRAM_PACK_NAME_RE.fullmatch(pack_name):
+        raise InviteError(HTTPStatus.BAD_REQUEST, "invalid_sticker_pack", "Telegram sticker pack name is invalid.")
+    return pack_name
+
+
+def fetch_telegram_sticker_pack(pack_name):
+    response = telegram_api_json("getStickerSet", {"name": pack_name})
+    result = response.get("result") or {}
+    title = normalized_optional_string(result.get("title")) or pack_name
+    returned_name = normalized_optional_string(result.get("name")) or pack_name
+    pack_id = telegram_pack_id(returned_name)
+    stickers = []
+    unsupported_count = 0
+
+    for sticker in result.get("stickers") or []:
+        if not is_supported_static_telegram_sticker(sticker):
+            unsupported_count += 1
+            continue
+        sticker_payload = telegram_sticker_payload(sticker, returned_name, title, pack_id)
+        if sticker_payload is None:
+            unsupported_count += 1
+            continue
+        stickers.append(sticker_payload)
+
+    return {
+        "pack": {
+            "id": pack_id,
+            "title": title,
+            "source": {
+                "kind": "telegram",
+                "name": returned_name,
+                "url": f"https://t.me/addstickers/{returned_name}",
+            },
+            "stickers": stickers,
+        },
+        "unsupported_count": unsupported_count,
+    }
+
+
+def telegram_sticker_payload(sticker, pack_name, pack_title, pack_id):
+    file_id = normalized_optional_string(sticker.get("file_id"))
+    file_unique_id = normalized_optional_string(sticker.get("file_unique_id"))
+    if file_id is None or file_unique_id is None:
+        return None
+
+    mime_type = "image/webp"
+    filename = safe_sticker_filename(None, file_unique_id, mime_type)
+    width = integer_value(sticker.get("width"))
+    height = integer_value(sticker.get("height"))
+    file_size = integer_value(sticker.get("file_size"))
+    token = sign_sticker_file_token(
+        {
+            "file_id": file_id,
+            "file_unique_id": file_unique_id,
+            "pack_name": pack_name,
+            "pack_title": pack_title,
+            "filename": filename,
+            "mime_type": mime_type,
+            "exp": int(time.time()) + STICKER_FILE_TOKEN_TTL_SECONDS,
+        }
+    )
+    return {
+        "id": f"telegram:{file_unique_id.lower()}",
+        "pack_id": pack_id,
+        "emoji": normalized_optional_string(sticker.get("emoji")),
+        "filename": filename,
+        "mime_type": mime_type,
+        "width": width,
+        "height": height,
+        "size_bytes": file_size,
+        "file_token": token,
+        "source": {
+            "kind": "telegram",
+            "name": pack_name,
+            "url": f"https://t.me/addstickers/{pack_name}",
+        },
+    }
+
+
+def fetch_telegram_sticker_file(token_payload):
+    file_id = normalized_optional_string(token_payload.get("file_id"))
+    if file_id is None:
+        raise InviteError(HTTPStatus.BAD_REQUEST, "invalid_file_token", "Sticker file token is invalid.")
+
+    file_info = telegram_api_json("getFile", {"file_id": file_id}).get("result") or {}
+    file_path = normalized_optional_string(file_info.get("file_path"))
+    file_size = integer_value(file_info.get("file_size"))
+    if file_path is None:
+        raise InviteError(HTTPStatus.BAD_GATEWAY, "telegram_file_unavailable", "Telegram sticker file is unavailable.")
+    if file_size is not None and file_size > MAX_STICKER_BYTES:
+        raise InviteError(HTTPStatus.BAD_GATEWAY, "telegram_file_too_large", "Telegram sticker file is too large.")
+
+    data = telegram_file_bytes(file_path)
+    if len(data) > MAX_STICKER_BYTES:
+        raise InviteError(HTTPStatus.BAD_GATEWAY, "telegram_file_too_large", "Telegram sticker file is too large.")
+    mime_type = mimetypes.guess_type(file_path)[0] or normalized_optional_string(token_payload.get("mime_type")) or "application/octet-stream"
+    if not mime_type.startswith("image/"):
+        raise InviteError(HTTPStatus.BAD_GATEWAY, "telegram_file_unsupported", "Telegram sticker file format is not supported.")
+    return data, mime_type
+
+
+def telegram_api_json(method, payload):
+    if TELEGRAM_FAKE:
+        return fake_telegram_api_json(method, payload)
+
+    url = f"{TELEGRAM_API_BASE_URL}/bot{TELEGRAM_BOT_TOKEN}/{method}"
+    data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            parsed = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError):
+        raise InviteError(HTTPStatus.BAD_GATEWAY, "telegram_unavailable", "Telegram sticker import failed.")
+
+    if not parsed.get("ok"):
+        raise InviteError(HTTPStatus.BAD_GATEWAY, "telegram_unavailable", "Telegram sticker import failed.")
+    return parsed
+
+
+def telegram_file_bytes(file_path):
+    if TELEGRAM_FAKE:
+        return fake_telegram_file_bytes(file_path)
+
+    quoted_path = urllib.parse.quote(file_path, safe="/")
+    request = urllib.request.Request(f"{TELEGRAM_FILE_BASE_URL}/bot{TELEGRAM_BOT_TOKEN}/{quoted_path}", method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            data = response.read(MAX_STICKER_BYTES + 1)
+    except (urllib.error.HTTPError, urllib.error.URLError):
+        raise InviteError(HTTPStatus.BAD_GATEWAY, "telegram_file_unavailable", "Telegram sticker file is unavailable.")
+    return data
+
+
+def fake_telegram_api_json(method, payload):
+    if method == "getStickerSet":
+        name = normalized_optional_string(payload.get("name")) or "FakePack"
+        return {
+            "ok": True,
+            "result": {
+                "name": name,
+                "title": "Fake Telegram Pack",
+                "sticker_type": "regular",
+                "stickers": [
+                    {
+                        "file_id": "fake-static-file-id",
+                        "file_unique_id": "fake-static-unique",
+                        "type": "regular",
+                        "width": 512,
+                        "height": 512,
+                        "is_animated": False,
+                        "is_video": False,
+                        "emoji": "🙂",
+                        "file_size": 68,
+                    },
+                    {
+                        "file_id": "fake-animated-file-id",
+                        "file_unique_id": "fake-animated-unique",
+                        "type": "regular",
+                        "width": 512,
+                        "height": 512,
+                        "is_animated": True,
+                        "is_video": False,
+                        "emoji": "✨",
+                    },
+                    {
+                        "file_id": "fake-video-file-id",
+                        "file_unique_id": "fake-video-unique",
+                        "type": "regular",
+                        "width": 512,
+                        "height": 512,
+                        "is_animated": False,
+                        "is_video": True,
+                        "emoji": "🎬",
+                    },
+                ],
+            },
+        }
+    if method == "getFile":
+        file_id = normalized_optional_string(payload.get("file_id"))
+        if file_id != "fake-static-file-id":
+            return {"ok": False}
+        return {
+            "ok": True,
+            "result": {
+                "file_id": file_id,
+                "file_unique_id": "fake-static-unique",
+                "file_size": 68,
+                "file_path": "stickers/fake-static.png",
+            },
+        }
+    return {"ok": False}
+
+
+def fake_telegram_file_bytes(file_path):
+    if file_path != "stickers/fake-static.png":
+        raise InviteError(HTTPStatus.BAD_GATEWAY, "telegram_file_unavailable", "Telegram sticker file is unavailable.")
+    return base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lZG3TQAAAABJRU5ErkJggg=="
+    )
+
+
+def is_supported_static_telegram_sticker(sticker):
+    if sticker.get("type") != "regular":
+        return False
+    if bool(sticker.get("is_animated")) or bool(sticker.get("is_video")):
+        return False
+    return True
+
+
+def sign_sticker_file_token(payload):
+    body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    encoded_body = base64.urlsafe_b64encode(body).decode("ascii").rstrip("=")
+    signature = hmac.new(STICKER_TOKEN_SECRET.encode("utf-8"), encoded_body.encode("ascii"), hashlib.sha256).digest()
+    encoded_signature = base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
+    return f"{encoded_body}.{encoded_signature}"
+
+
+def verify_sticker_file_token(token):
+    if "." not in token:
+        raise InviteError(HTTPStatus.BAD_REQUEST, "invalid_file_token", "Sticker file token is invalid.")
+    encoded_body, encoded_signature = token.split(".", 1)
+    expected = hmac.new(STICKER_TOKEN_SECRET.encode("utf-8"), encoded_body.encode("ascii"), hashlib.sha256).digest()
+    try:
+        provided = base64.urlsafe_b64decode(pad_base64(encoded_signature))
+    except Exception:
+        raise InviteError(HTTPStatus.BAD_REQUEST, "invalid_file_token", "Sticker file token is invalid.")
+    if not hmac.compare_digest(provided, expected):
+        raise InviteError(HTTPStatus.UNAUTHORIZED, "invalid_file_token", "Sticker file token is invalid.")
+
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(pad_base64(encoded_body)).decode("utf-8"))
+    except Exception:
+        raise InviteError(HTTPStatus.BAD_REQUEST, "invalid_file_token", "Sticker file token is invalid.")
+
+    expires_at = integer_value(payload.get("exp"))
+    if expires_at is None or expires_at <= int(time.time()):
+        raise InviteError(HTTPStatus.GONE, "file_token_expired", "Sticker file token has expired.")
+    return payload
+
+
+def pad_base64(value):
+    return value + ("=" * (-len(value) % 4))
+
+
+def telegram_pack_id(pack_name):
+    return f"telegram:{pack_name.lower()}"
+
+
+def safe_sticker_filename(value, fallback_id, mime_type):
+    raw = normalized_optional_string(value) or fallback_id
+    extension = extension_for_mime_type(mime_type)
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", raw).strip(".-")
+    if not safe:
+        safe = "sticker"
+    if extension and not safe.lower().endswith(f".{extension}"):
+        safe = f"{safe}.{extension}"
+    return safe[:120]
+
+
+def extension_for_mime_type(mime_type):
+    if mime_type == "image/png":
+        return "png"
+    if mime_type in {"image/jpeg", "image/jpg"}:
+        return "jpg"
+    if mime_type == "image/gif":
+        return "gif"
+    if mime_type == "image/webp":
+        return "webp"
+    guessed = mimetypes.guess_extension(mime_type or "")
+    return guessed.lstrip(".") if guessed else "bin"
+
+
+def integer_value(value):
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def normalize_invite_code(value):
