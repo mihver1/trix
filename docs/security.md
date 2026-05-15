@@ -183,6 +183,13 @@ ejabberd-native Mnesia backup/restore for account state plus a scoped upload
 archive, and passed locally on 2026-05-09. Do not treat tar-only fresh-volume
 archives as production-ready restore for account state.
 
+The same restore gate is wired into `.github/workflows/xmpp-restore-verify.yml`
+for manual, scheduled, and `server/xmpp/**` change-triggered runs. CI uses only
+generated disposable accounts and local container volumes; it must not consume
+production backups, TLS private keys, APNs credentials, or deployment secrets.
+Failures should report restore-stage errors without printing generated
+passwords.
+
 ## Push Notification Risk
 
 Push notifications should not include decrypted message bodies. The APNs payload

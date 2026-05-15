@@ -120,7 +120,9 @@ checklist, not by copying legacy implementation details.
 - [x] Back up uploaded encrypted media or confirm media is intentionally
       disposable.
 - [x] Restore backup into a fresh server instance through the
-      ejabberd-native backup/restore verifier.
+      ejabberd-native backup/restore verifier. The verifier is also wired as a
+      manual, scheduled, and `server/xmpp/**` path-triggered GitHub Actions gate
+      that uses disposable local accounts and no production secrets.
 
 ## Apple Login And Session
 

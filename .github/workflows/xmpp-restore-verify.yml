@@ -1,0 +1,44 @@
+name: XMPP restore verification
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+  pull_request:
+    paths:
+      - "server/xmpp/**"
+      - ".github/workflows/xmpp-restore-verify.yml"
+  push:
+    paths:
+      - "server/xmpp/**"
+      - ".github/workflows/xmpp-restore-verify.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xmpp-restore-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  restore-verify:
+    name: Restore verifier
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TRIX_XMPP_CONTAINER_RUNTIME: docker
+      TRIX_XMPP_RESTORE_PROJECT: trix-xmpp-restore-ci-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Confirm container runtime
+        run: |
+          docker version
+          docker compose version
+
+      - name: Check XMPP shell scripts
+        run: bash -n server/xmpp/scripts/*.sh
+
+      - name: Verify disposable restore
+        run: server/xmpp/scripts/restore-verify.sh

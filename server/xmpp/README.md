@@ -459,6 +459,26 @@ intentionally avoids mixing `podman compose` with plain `podman run` or
 `podman volume`, because delegated Compose providers can use a different volume
 namespace.
 
+Automated restore gate:
+
+```text
+.github/workflows/xmpp-restore-verify.yml
+```
+
+The workflow runs on demand, daily, and for changes under `server/xmpp/**`. It
+uses GitHub-hosted Docker with no production secrets, checks shell syntax, and
+runs the same `restore-verify.sh` disposable native-Mnesia restore path. Local
+agents can force the same runtime explicitly:
+
+```bash
+TRIX_XMPP_CONTAINER_RUNTIME=docker ./scripts/restore-verify.sh
+TRIX_XMPP_CONTAINER_RUNTIME=podman ./scripts/restore-verify.sh
+```
+
+The verifier generates disposable account credentials at runtime and redacts the
+generated password on failing command output. Do not replace this gate with
+production backup artifacts or tar-only volume restore.
+
 Production backup scripts still need to follow the same native-Mnesia restore
 requirement before tar-only volume backups are accepted for production migration
 or host rename scenarios.
