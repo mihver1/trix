@@ -1444,6 +1444,7 @@ private struct TrixStickerPickerView: View {
     let importTelegramPack: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var telegramReference = ""
+    @State private var selectedStickerPackID: String?
 
     var body: some View {
         NavigationStack {
@@ -1492,32 +1493,11 @@ private struct TrixStickerPickerView: View {
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 18) {
-                            ForEach(model.stickerPacks) { pack in
-                                VStack(alignment: .leading, spacing: 10) {
-                                    Text(pack.title)
-                                        .font(.headline)
-                                        .lineLimit(1)
+                    stickerPackSelector
 
-                                    LazyVGrid(columns: columns, spacing: 10) {
-                                        ForEach(pack.stickers) { sticker in
-                                            TrixStickerTile(
-                                                sticker: sticker,
-                                                data: model.stickerData(for: sticker),
-                                                canSend: canSendStickers,
-                                                send: {
-                                                    sendSticker(sticker)
-                                                    dismiss()
-                                                }
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
+                    Divider()
+
+                    selectedStickerGrid
                 }
             }
             .padding(20)
@@ -1532,10 +1512,156 @@ private struct TrixStickerPickerView: View {
             }
         }
         .trixStickerPickerFrame()
+        .onAppear(perform: ensureSelectedStickerPack)
+        .onChange(of: model.stickerPacks.map(\.id)) { oldIDs, newIDs in
+            if let insertedID = newIDs.first(where: { !oldIDs.contains($0) }) {
+                selectedStickerPackID = insertedID
+            } else {
+                ensureSelectedStickerPack()
+            }
+        }
     }
 
     private var columns: [GridItem] {
         [GridItem(.adaptive(minimum: 72, maximum: 92), spacing: 10)]
+    }
+
+    private var selectedStickerPack: TrixStickerPack? {
+        if let selectedStickerPackID,
+           let pack = model.stickerPacks.first(where: { $0.id == selectedStickerPackID }) {
+            return pack
+        }
+
+        return model.stickerPacks.first
+    }
+
+    private var stickerPackSelector: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 10) {
+                ForEach(model.stickerPacks) { pack in
+                    TrixStickerPackTab(
+                        pack: pack,
+                        previewData: pack.stickers.first.flatMap { model.stickerData(for: $0) },
+                        isSelected: selectedStickerPack?.id == pack.id,
+                        select: {
+                            selectedStickerPackID = pack.id
+                        }
+                    )
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private var selectedStickerGrid: some View {
+        Group {
+            if let pack = selectedStickerPack {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(pack.title)
+                            .font(.headline)
+                            .lineLimit(1)
+
+                        Spacer()
+
+                        Text("\(pack.stickers.count)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+
+                    ScrollView {
+                        LazyVGrid(columns: columns, spacing: 10) {
+                            ForEach(pack.stickers) { sticker in
+                                TrixStickerTile(
+                                    sticker: sticker,
+                                    data: model.stickerData(for: sticker),
+                                    canSend: canSendStickers,
+                                    send: {
+                                        sendSticker(sticker)
+                                        dismiss()
+                                    }
+                                )
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+        }
+    }
+
+    private func ensureSelectedStickerPack() {
+        guard !model.stickerPacks.isEmpty else {
+            selectedStickerPackID = nil
+            return
+        }
+
+        if let selectedStickerPackID,
+           model.stickerPacks.contains(where: { $0.id == selectedStickerPackID }) {
+            return
+        }
+
+        selectedStickerPackID = model.stickerPacks.first?.id
+    }
+}
+
+private struct TrixStickerPackTab: View {
+    let pack: TrixStickerPack
+    let previewData: Data?
+    let isSelected: Bool
+    let select: () -> Void
+
+    var body: some View {
+        Button(action: select) {
+            VStack(spacing: 6) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(isSelected ? TrixDesign.accent.opacity(0.16) : TrixDesign.secondarySurface)
+
+                    if let previewData, let image = platformImage(from: previewData) {
+                        image
+                            .resizable()
+                            .scaledToFit()
+                            .padding(6)
+                    } else {
+                        Image(systemName: "face.smiling")
+                            .font(.system(size: 24, weight: .semibold))
+                            .foregroundStyle(TrixDesign.accent)
+                    }
+                }
+                .frame(width: 58, height: 58)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(isSelected ? TrixDesign.accent : TrixDesign.surfaceStroke, lineWidth: isSelected ? 2 : 1)
+                }
+
+                Text(pack.title)
+                    .font(.caption2.weight(isSelected ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? TrixDesign.accent : .secondary)
+                    .lineLimit(1)
+                    .frame(width: 70)
+            }
+        }
+        .buttonStyle(.plain)
+        .help(pack.title)
+        .accessibilityLabel("Sticker pack \(pack.title)")
+    }
+
+    private func platformImage(from data: Data) -> Image? {
+        #if os(iOS)
+        guard let image = UIImage(data: data) else {
+            return nil
+        }
+        return Image(uiImage: image)
+        #elseif os(macOS)
+        guard let image = NSImage(data: data) else {
+            return nil
+        }
+        return Image(nsImage: image)
+        #else
+        return nil
+        #endif
     }
 }
 
