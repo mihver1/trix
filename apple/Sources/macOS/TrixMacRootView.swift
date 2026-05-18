@@ -6,8 +6,7 @@ struct TrixMacRootView: View {
     var body: some View {
         Group {
             if model.isStarting {
-                ProgressView("Restoring session")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                TrixStartupRestoreView(status: model.startupStatus)
             } else if model.isAuthenticated {
                 TrixMacWorkspaceView(model: model)
             } else {

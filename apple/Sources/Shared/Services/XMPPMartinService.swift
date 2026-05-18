@@ -455,6 +455,70 @@ actor XMPPMartinService: TrixService {
         }
     }
 
+    private final class XMPPLoginWaitState: @unchecked Sendable {
+        private let client: XMPPClient
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<Void, Error>?
+        private var cancellable: AnyCancellable?
+
+        init(continuation: CheckedContinuation<Void, Error>, client: XMPPClient) {
+            self.continuation = continuation
+            self.client = client
+        }
+
+        func retain(_ cancellable: AnyCancellable) {
+            lock.lock()
+            if continuation == nil {
+                lock.unlock()
+                cancellable.cancel()
+                return
+            }
+
+            self.cancellable = cancellable
+            lock.unlock()
+        }
+
+        func resumeReturning() {
+            finish(.success(()), disconnect: false)
+        }
+
+        func resumeThrowing(_ error: Error, disconnect: Bool) {
+            finish(.failure(error), disconnect: disconnect)
+        }
+
+        private func finish(_ result: Result<Void, Error>, disconnect: Bool) {
+            let activeContinuation: CheckedContinuation<Void, Error>
+            let activeCancellable: AnyCancellable?
+
+            lock.lock()
+            guard let storedContinuation = continuation else {
+                lock.unlock()
+                return
+            }
+
+            activeContinuation = storedContinuation
+            activeCancellable = cancellable
+            continuation = nil
+            cancellable = nil
+            lock.unlock()
+
+            activeCancellable?.cancel()
+            if disconnect {
+                let client = client
+                Task {
+                    try? await client.disconnect(force: true)
+                }
+            }
+
+            switch result {
+            case .success:
+                activeContinuation.resume()
+            case .failure(let error):
+                activeContinuation.resume(throwing: error)
+            }
+        }
+    }
+
     private var connections: [String: Connection] = [:]
     private var timelineHistory: [String: [String: [TrixTimelineItem]]] = [:]
     private var timelineDiagnostics: [String: [String: XMPPTimelineDiagnostics]] = [:]
@@ -469,6 +533,7 @@ actor XMPPMartinService: TrixService {
     private let omemoPersistence: TrixOMEMOPersistence
     private static let maxCachedTimelineItems = 200
     private static let typingRecordLifetime: TimeInterval = 6
+    private static let xmppConnectionTimeout: TimeInterval = 15
     private static let encryptedAttachmentDescriptorType = "com.softgrid.trix.xmpp.encrypted-attachment"
     private static let messageReactionsXMLNS = "urn:xmpp:reactions:0"
 
@@ -487,7 +552,7 @@ actor XMPPMartinService: TrixService {
         let connection = try makeConnection(jid: jid, password: password, resource: resource)
 
         do {
-            try await connection.client.loginAndWait()
+            try await loginAndWait(client: connection.client)
         } catch {
             throw TrixClientError.xmppConnectionFailed
         }
@@ -1589,7 +1654,7 @@ actor XMPPMartinService: TrixService {
 
         let connection = try makeConnection(jid: jid, password: session.accessToken, resource: session.deviceID)
         do {
-            try await connection.client.loginAndWait()
+            try await loginAndWait(client: connection.client)
         } catch {
             throw TrixClientError.xmppConnectionFailed
         }
@@ -1607,6 +1672,30 @@ actor XMPPMartinService: TrixService {
         }
         installTimelineSubscriptions(for: connection)
         connections[key] = connection
+    }
+
+    private func loginAndWait(client: XMPPClient) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            let waitState = XMPPLoginWaitState(continuation: continuation, client: client)
+            waitState.retain(
+                client.$state.dropFirst().sink { state in
+                    switch state {
+                    case .connected:
+                        waitState.resumeReturning()
+                    case .disconnected(let error):
+                        waitState.resumeThrowing(error, disconnect: false)
+                    default:
+                        break
+                    }
+                }
+            )
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.xmppConnectionTimeout) {
+                waitState.resumeThrowing(XMPPError.remote_server_timeout, disconnect: true)
+            }
+
+            client.login()
+        }
     }
 
     private func archivedTimelineResult(
@@ -2907,6 +2996,7 @@ actor XMPPMartinService: TrixService {
         client.connectionConfiguration.disableTLS = false
         client.connectionConfiguration.disableCompression = true
         client.connectionConfiguration.modifyConnectorOptions(type: SocketConnector.Options.self) { options in
+            options.conntectionTimeout = Self.xmppConnectionTimeout
             options.sslCertificateValidation = .customValidator { trust in
                 Self.validateServerTrust(trust, domain: jid)
             }

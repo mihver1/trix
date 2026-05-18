@@ -6,17 +6,7 @@ struct TrixRootView: View {
     var body: some View {
         Group {
             if model.isStarting {
-                VStack(spacing: 14) {
-                    TrixAvatarView(
-                        title: "Trix",
-                        systemImage: "bubble.left.and.bubble.right.fill",
-                        size: 58
-                    )
-                    ProgressView("Restoring session")
-                        .controlSize(.regular)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(TrixDesign.screenBackground)
+                TrixStartupRestoreView(status: model.startupStatus)
             } else if model.isAuthenticated {
                 TrixWorkspaceView(model: model)
             } else {
@@ -26,6 +16,53 @@ struct TrixRootView: View {
         .task {
             await model.start()
         }
+    }
+}
+
+struct TrixStartupRestoreView: View {
+    let status: TrixStartupStatus
+
+    var body: some View {
+        VStack(spacing: 18) {
+            TrixAvatarView(
+                title: "Trix",
+                systemImage: "bubble.left.and.bubble.right.fill",
+                size: 58
+            )
+
+            ProgressView()
+                .controlSize(.regular)
+
+            VStack(spacing: 8) {
+                Text("Restoring session")
+                    .font(.headline)
+
+                if !status.step.isEmpty {
+                    Text(status.step)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+
+                if !status.title.isEmpty {
+                    Text(status.title)
+                        .font(.subheadline.weight(.medium))
+                        .multilineTextAlignment(.center)
+                }
+
+                if !status.detail.isEmpty {
+                    Text(status.detail)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: 320)
+        }
+        .padding(28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(TrixDesign.screenBackground)
     }
 }
 

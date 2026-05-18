@@ -1,10 +1,49 @@
 import Foundation
 
+struct TrixStartupStatus: Equatable {
+    let step: String
+    let title: String
+    let detail: String
+
+    static let idle = TrixStartupStatus(
+        step: "",
+        title: "",
+        detail: ""
+    )
+
+    static let checkingSavedSession = TrixStartupStatus(
+        step: "Step 1 of 3",
+        title: "Checking saved session",
+        detail: "Reading Trix credentials from Keychain."
+    )
+
+    static func openingXMPPSession(host: String) -> TrixStartupStatus {
+        TrixStartupStatus(
+            step: "Step 2 of 3",
+            title: "Opening XMPP session",
+            detail: "Connecting to \(host), negotiating TLS, and restoring the encrypted device state."
+        )
+    }
+
+    static let finishingRestore = TrixStartupStatus(
+        step: "Step 3 of 3",
+        title: "Session restored",
+        detail: "Loading chats, device trust, and push state."
+    )
+
+    static let restoreFailed = TrixStartupStatus(
+        step: "Restore failed",
+        title: "Could not restore session",
+        detail: "Returning to sign-in so the saved session can be replaced."
+    )
+}
+
 @MainActor
 final class TrixAppModel: ObservableObject {
     @Published private(set) var session: TrixSession?
     @Published private(set) var account: TrixAccount?
     @Published private(set) var isStarting = false
+    @Published private(set) var startupStatus = TrixStartupStatus.idle
     @Published private(set) var isLoggingIn = false
     @Published private(set) var isRegistering = false
     @Published private(set) var isLoggingOut = false
@@ -68,24 +107,37 @@ final class TrixAppModel: ObservableObject {
 
         hasStarted = true
         isStarting = true
-        defer { isStarting = false }
+        startupStatus = .checkingSavedSession
 
         do {
             guard let restoredSession = try sessionStore.loadSession() else {
+                isStarting = false
+                startupStatus = .idle
                 return
             }
 
+            startupStatus = .openingXMPPSession(host: Self.startupHostDescription(from: restoredSession))
+            let restoredAccount = try await trixService.restore(session: restoredSession)
             session = restoredSession
-            account = try await trixService.restore(session: restoredSession)
+            account = restoredAccount
+            startupStatus = .finishingRestore
+            isStarting = false
+
             loadStickerLibrary(for: restoredSession.userID)
             await reloadRooms()
             await reloadDeviceVerificationStatus()
             await syncAPNsRegistrationIfPossible()
         } catch {
+            startupStatus = .restoreFailed
+            isStarting = false
             clearAuthenticatedState()
             try? sessionStore.clearSession()
             errorMessage = error.trixUserFacingMessage
         }
+    }
+
+    private static func startupHostDescription(from session: TrixSession) -> String {
+        session.homeserverURL.host ?? XMPPClientConfiguration.connectionURL.host ?? "the configured XMPP server"
     }
 
     func login(userID: String, password: String) async {
