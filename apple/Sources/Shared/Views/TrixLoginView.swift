@@ -65,12 +65,7 @@ struct TrixLoginView: View {
 
     private var form: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Picker("Mode", selection: $authMode) {
-                ForEach(AuthMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
+            TrixAuthModeSelector(selection: $authMode)
 
             switch authMode {
             case .login:
@@ -238,6 +233,44 @@ private enum AuthMode: String, CaseIterable, Identifiable {
             return "Log In"
         case .registration:
             return "Join"
+        }
+    }
+}
+
+private struct TrixAuthModeSelector: View {
+    @Binding var selection: AuthMode
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(AuthMode.allCases) { mode in
+                Button {
+                    selection = mode
+                } label: {
+                    Text(mode.title)
+                        .font(.callout.weight(.semibold))
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(selection == mode ? Color.primary : Color.secondary)
+                .background {
+                    if selection == mode {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(TrixDesign.primarySurface)
+                            .shadow(color: TrixDesign.softShadow, radius: 2, y: 1)
+                    }
+                }
+                .accessibilityLabel(mode.title)
+                .accessibilityValue(selection == mode ? "Selected" : "")
+            }
+        }
+        .padding(3)
+        .background(TrixDesign.secondarySurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
         }
     }
 }
