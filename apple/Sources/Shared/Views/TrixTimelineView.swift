@@ -3,8 +3,10 @@ import UniformTypeIdentifiers
 
 #if os(iOS)
 import UIKit
+private typealias TrixPlatformPasteImage = UIImage
 #elseif os(macOS)
 import AppKit
+private typealias TrixPlatformPasteImage = NSImage
 #endif
 
 private enum TrixAttachmentImportError: LocalizedError {
@@ -35,6 +37,7 @@ struct TrixTimelineView: View {
     @State private var isShowingLocalForgetConfirmation = false
     @State private var isShowingGroupLeaveConfirmation = false
     @State private var isShowingStickerPicker = false
+    @State private var isAttachmentDropTargeted = false
 
     init(model: TrixAppModel, room: TrixRoomSummary) {
         self.model = model
@@ -115,6 +118,23 @@ struct TrixTimelineView: View {
             }
         }
         .background(TrixDesign.screenBackground.ignoresSafeArea())
+        .overlay {
+            if isAttachmentDropTargeted {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(TrixDesign.accent, style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
+                    .padding(10)
+                    .allowsHitTesting(false)
+            }
+        }
+        .trixAttachmentPasteCommand { providers in
+            _ = importAttachment(from: providers)
+        }
+        .onDrop(
+            of: Self.attachmentImportTypeIdentifiers,
+            isTargeted: $isAttachmentDropTargeted
+        ) { providers in
+            importAttachment(from: providers)
+        }
         .navigationTitle(room.name)
         .trixInlineNavigationTitle()
         .fileImporter(
@@ -386,6 +406,36 @@ struct TrixTimelineView: View {
         Self.timelineEntries(for: timelineViewModel.items)
     }
 
+    fileprivate static var attachmentImportContentTypes: [UTType] {
+        var types: [UTType] = [
+            .fileURL,
+            .png,
+            .jpeg,
+            .gif,
+            .tiff,
+            .image,
+            .item,
+        ]
+        for identifier in ["public.heic", "public.heif", "org.webmproject.webp"] {
+            if let type = UTType(identifier) {
+                types.append(type)
+            }
+        }
+        return types
+    }
+
+    private static var attachmentImageDataContentTypes: [UTType] {
+        attachmentImportContentTypes.filter { contentType in
+            contentType.conforms(to: .image) &&
+                contentType != .image &&
+                contentType != .item
+        }
+    }
+
+    private static var attachmentImportTypeIdentifiers: [String] {
+        attachmentImportContentTypes.map(\.identifier)
+    }
+
     private var canSendEncryptedAttachments: Bool {
         guard let availability = timelineViewModel.attachmentSendAvailability,
               availability.roomID == room.id else {
@@ -581,10 +631,7 @@ struct TrixTimelineView: View {
 
     private func importAttachment(from result: Result<[URL], Error>) {
         do {
-            guard canSendEncryptedAttachments else {
-                throw timelineViewModel.attachmentSendAvailability?.blockReason.map { TrixAttachmentImportError.blocked($0.message) }
-                    ?? TrixAttachmentImportError.blocked("Encrypted attachments are not available yet.")
-            }
+            try ensureCanImportAttachment()
 
             guard let url = try result.get().first else {
                 return
@@ -600,7 +647,50 @@ struct TrixTimelineView: View {
         }
     }
 
+    @discardableResult
+    private func importAttachment(from providers: [NSItemProvider]) -> Bool {
+        do {
+            try ensureCanImportAttachment()
+        } catch {
+            fileImportError = error.trixUserFacingMessage
+            return false
+        }
+
+        fileImportError = nil
+
+        if let fileProvider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }) {
+            loadFileAttachment(from: fileProvider)
+            return true
+        }
+
+        if let imageProvider = providers.first(where: Self.canLoadPlatformImage(from:)) {
+            loadPlatformImageAttachment(from: imageProvider)
+            return true
+        }
+
+        for provider in providers {
+            if let contentType = Self.attachmentImageDataContentTypes.first(where: { provider.hasItemConformingToTypeIdentifier($0.identifier) }) {
+                loadImageDataAttachment(from: provider, contentType: contentType)
+                return true
+            }
+        }
+
+        fileImportError = TrixClientError.attachmentTransferFailed.trixUserFacingMessage
+        return false
+    }
+
+    private func ensureCanImportAttachment() throws {
+        guard canSendEncryptedAttachments else {
+            throw timelineViewModel.attachmentSendAvailability?.blockReason.map { TrixAttachmentImportError.blocked($0.message) }
+                ?? TrixAttachmentImportError.blocked("Encrypted attachments are not available yet.")
+        }
+    }
+
     private func readAttachmentUpload(from url: URL) throws -> TrixAttachmentUpload {
+        try Self.readAttachmentUpload(from: url)
+    }
+
+    nonisolated private static func readAttachmentUpload(from url: URL) throws -> TrixAttachmentUpload {
         let canAccess = url.startAccessingSecurityScopedResource()
         defer {
             if canAccess {
@@ -633,6 +723,141 @@ struct TrixTimelineView: View {
         throw TrixClientError.attachmentTransferFailed
         #else
         return try TrixAttachmentUpload(fileURL: url)
+        #endif
+    }
+
+    nonisolated private func loadFileAttachment(from provider: NSItemProvider) {
+        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, error in
+            if let error {
+                failAttachmentImport(error)
+                return
+            }
+
+            do {
+                let url = try Self.fileURL(from: item)
+                let upload = try Self.readAttachmentUpload(from: url)
+                completeAttachmentImport(upload)
+            } catch {
+                failAttachmentImport(error)
+            }
+        }
+    }
+
+    nonisolated private func loadImageDataAttachment(from provider: NSItemProvider, contentType: UTType) {
+        provider.loadDataRepresentation(forTypeIdentifier: contentType.identifier) { data, error in
+            if let error {
+                failAttachmentImport(error)
+                return
+            }
+
+            guard let data, !data.isEmpty else {
+                failAttachmentImport(TrixClientError.emptyAttachment)
+                return
+            }
+
+            do {
+                let upload = try Self.imageAttachmentUpload(data: data, contentType: contentType)
+                completeAttachmentImport(upload)
+            } catch {
+                failAttachmentImport(error)
+            }
+        }
+    }
+
+    nonisolated private func loadPlatformImageAttachment(from provider: NSItemProvider) {
+        provider.loadObject(ofClass: TrixPlatformPasteImage.self) { object, error in
+            if let error {
+                failAttachmentImport(error)
+                return
+            }
+
+            guard let image = object as? TrixPlatformPasteImage,
+                  let data = Self.pngData(from: image),
+                  !data.isEmpty else {
+                failAttachmentImport(TrixClientError.attachmentTransferFailed)
+                return
+            }
+
+            completeAttachmentImport(
+                TrixAttachmentUpload(
+                    filename: Self.pastedImageFilename(fileExtension: "png"),
+                    mimeType: "image/png",
+                    data: data
+                )
+            )
+        }
+    }
+
+    nonisolated private func completeAttachmentImport(_ upload: TrixAttachmentUpload) {
+        Task { @MainActor in
+            fileImportError = nil
+            await model.sendAttachment(upload)
+        }
+    }
+
+    nonisolated private func failAttachmentImport(_ error: Error) {
+        let message = error.trixUserFacingMessage
+        Task { @MainActor in
+            fileImportError = message
+        }
+    }
+
+    nonisolated private static func fileURL(from item: NSSecureCoding?) throws -> URL {
+        if let url = item as? URL {
+            return url
+        }
+        if let url = item as? NSURL {
+            return url as URL
+        }
+        if let data = item as? Data,
+           let url = URL(dataRepresentation: data, relativeTo: nil) {
+            return url
+        }
+        if let string = item as? String,
+           let url = URL(string: string) {
+            return url
+        }
+
+        throw TrixClientError.attachmentTransferFailed
+    }
+
+    nonisolated private static func imageAttachmentUpload(data: Data, contentType: UTType) throws -> TrixAttachmentUpload {
+        if contentType == .tiff,
+           let image = TrixPlatformPasteImage(data: data),
+           let pngData = pngData(from: image) {
+            return TrixAttachmentUpload(
+                filename: pastedImageFilename(fileExtension: "png"),
+                mimeType: "image/png",
+                data: pngData
+            )
+        }
+
+        let mimeType = contentType.preferredMIMEType ?? "application/octet-stream"
+        let fileExtension = contentType.preferredFilenameExtension ?? "bin"
+        return TrixAttachmentUpload(
+            filename: pastedImageFilename(fileExtension: fileExtension),
+            mimeType: mimeType,
+            data: data
+        )
+    }
+
+    nonisolated private static func pastedImageFilename(fileExtension: String) -> String {
+        "pasted-image-\(Int(Date().timeIntervalSince1970)).\(fileExtension)"
+    }
+
+    nonisolated private static func canLoadPlatformImage(from provider: NSItemProvider) -> Bool {
+        provider.canLoadObject(ofClass: TrixPlatformPasteImage.self)
+    }
+
+    nonisolated private static func pngData(from image: TrixPlatformPasteImage) -> Data? {
+        #if os(iOS)
+        return image.pngData()
+        #elseif os(macOS)
+        guard let tiffData = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData) else {
+            return nil
+        }
+        return bitmap.representation(using: .png, properties: [:])
         #endif
     }
 
@@ -727,6 +952,17 @@ struct TrixTimelineView: View {
         first.isLocalEcho == second.isLocalEcho &&
         calendar.isDate(first.timestamp, inSameDayAs: second.timestamp) &&
         second.timestamp.timeIntervalSince(first.timestamp) <= 5 * 60
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func trixAttachmentPasteCommand(_ action: @escaping ([NSItemProvider]) -> Void) -> some View {
+        #if os(macOS)
+        onPasteCommand(of: TrixTimelineView.attachmentImportContentTypes, perform: action)
+        #else
+        self
+        #endif
     }
 }
 

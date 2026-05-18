@@ -519,6 +519,61 @@ actor XMPPMartinService: TrixService {
         }
     }
 
+    private final class XMPPMUCJoinWaitState: @unchecked Sendable {
+        private let mucModule: MucModule
+        private let room: RoomProtocol
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<RoomJoinResult, Error>?
+
+        init(
+            continuation: CheckedContinuation<RoomJoinResult, Error>,
+            mucModule: MucModule,
+            room: RoomProtocol
+        ) {
+            self.continuation = continuation
+            self.mucModule = mucModule
+            self.room = room
+        }
+
+        func resume(with result: Result<RoomJoinResult, XMPPError>) {
+            switch result {
+            case .success(let joinResult):
+                finish(.success(joinResult), leaveRoom: false)
+            case .failure(let error):
+                finish(.failure(error), leaveRoom: false)
+            }
+        }
+
+        func resumeThrowing(_ error: Error, leaveRoom: Bool) {
+            finish(.failure(error), leaveRoom: leaveRoom)
+        }
+
+        private func finish(_ result: Result<RoomJoinResult, Error>, leaveRoom: Bool) {
+            let activeContinuation: CheckedContinuation<RoomJoinResult, Error>
+
+            lock.lock()
+            guard let storedContinuation = continuation else {
+                lock.unlock()
+                return
+            }
+
+            activeContinuation = storedContinuation
+            continuation = nil
+            lock.unlock()
+
+            if leaveRoom {
+                mucModule.leave(room: room)
+            }
+
+            switch result {
+            case .success(let joinResult):
+                activeContinuation.resume(returning: joinResult)
+            case .failure(let error):
+                activeContinuation.resume(throwing: error)
+            }
+        }
+    }
+
     private var connections: [String: Connection] = [:]
     private var timelineHistory: [String: [String: [TrixTimelineItem]]] = [:]
     private var timelineDiagnostics: [String: [String: XMPPTimelineDiagnostics]] = [:]
@@ -534,6 +589,7 @@ actor XMPPMartinService: TrixService {
     private static let maxCachedTimelineItems = 200
     private static let typingRecordLifetime: TimeInterval = 6
     private static let xmppConnectionTimeout: TimeInterval = 15
+    private static let mucJoinTimeout: TimeInterval = 15
     private static let encryptedAttachmentDescriptorType = "com.softgrid.trix.xmpp.encrypted-attachment"
     private static let messageReactionsXMLNS = "urn:xmpp:reactions:0"
 
@@ -2536,15 +2592,8 @@ actor XMPPMartinService: TrixService {
         connection: Connection
     ) async throws -> TrixRoomSummary {
         let mucJID = try Self.normalizedMUCJID(roomID)
-        let bareJID = BareJID(mucJID)
         let accountJID = try Self.normalizedXMPPJID(session.userID)
-        let result = try await connection.mucModule.join(
-            roomName: bareJID.localPart ?? "",
-            mucServer: bareJID.domain,
-            nickname: Self.mucNickname(from: accountJID),
-            password: password
-        )
-        let room = Self.room(from: result)
+        let room = try await joinMucRoom(roomID: mucJID, password: password, accountJID: accountJID, connection: connection)
         let name = displayName ?? cachedGroup(roomID: mucJID, accountJID: accountJID)?.name ?? Self.displayName(from: mucJID)
         cacheGroupMembers(Self.memberUserIDs(from: room, fallbackAccountJID: accountJID), roomID: mucJID, accountJID: accountJID, name: name)
         try? await bookmarkGroupRoom(roomID: mucJID, name: name, nickname: Self.mucNickname(from: accountJID), connection: connection)
@@ -2557,6 +2606,50 @@ actor XMPPMartinService: TrixService {
             lastMessagePreview: "Trust OMEMO devices for every member before sending",
             lastActivityAt: Date()
         )
+    }
+
+    private func joinMucRoom(
+        roomID: String,
+        password: String?,
+        accountJID: String,
+        connection: Connection
+    ) async throws -> RoomProtocol {
+        let bareJID = BareJID(roomID)
+        if let existingRoom = connection.mucModule.roomManager.room(for: connection.client, with: bareJID) {
+            if existingRoom.state == .joined {
+                return existingRoom
+            }
+
+            connection.mucModule.roomManager.close(room: existingRoom)
+        }
+
+        guard let room = connection.mucModule.roomManager.createRoom(
+            for: connection.client,
+            with: bareJID,
+            nickname: Self.mucNickname(from: accountJID),
+            password: password
+        ) else {
+            throw TrixClientError.roomUnavailable
+        }
+
+        let result = try await joinMucRoom(room, connection: connection)
+        return Self.room(from: result)
+    }
+
+    private func joinMucRoom(_ room: RoomProtocol, connection: Connection) async throws -> RoomJoinResult {
+        try await withCheckedThrowingContinuation { continuation in
+            let waitState = XMPPMUCJoinWaitState(
+                continuation: continuation,
+                mucModule: connection.mucModule,
+                room: room
+            )
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.mucJoinTimeout) {
+                waitState.resumeThrowing(TrixClientError.roomJoinTimedOut, leaveRoom: true)
+            }
+            connection.mucModule.join(room: room, fetchHistory: .initial) { result in
+                waitState.resume(with: result)
+            }
+        }
     }
 
     private func configurePrivateGroupRoom(

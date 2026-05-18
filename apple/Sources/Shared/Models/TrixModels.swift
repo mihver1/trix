@@ -1516,6 +1516,7 @@ enum TrixClientError: LocalizedError {
     case missingSession
     case roomUnavailable
     case inviteUnavailable
+    case roomJoinTimedOut
     case noEligibleDeviceForVerification
     case recoverySetupUnavailable
     case recoveryKeyConfirmationUnavailable
@@ -1581,6 +1582,8 @@ enum TrixClientError: LocalizedError {
             return "The selected room is not available yet."
         case .inviteUnavailable:
             return "The invite is no longer available."
+        case .roomJoinTimedOut:
+            return "Joining the room timed out. Refresh invites and try again."
         case .noEligibleDeviceForVerification:
             return "No trusted OMEMO device is available to verify this device."
         case .recoverySetupUnavailable:

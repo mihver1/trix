@@ -56,6 +56,7 @@ final class TrixAppModel: ObservableObject {
     @Published private(set) var stickerPacks: [TrixStickerPack] = []
     @Published private(set) var isImportingStickerPack = false
     @Published private(set) var stickerImportMessage: String?
+    @Published private var selectedRoomSnapshot: TrixRoomSummary?
 
     let roomListViewModel: RoomListViewModel
     let timelineViewModel: TimelineViewModel
@@ -97,7 +98,15 @@ final class TrixAppModel: ObservableObject {
             return nil
         }
 
-        return roomListViewModel.rooms.first { $0.id == selectedRoomID }
+        if let room = roomListViewModel.rooms.first(where: { $0.id == selectedRoomID }) {
+            return room
+        }
+
+        if selectedRoomSnapshot?.id == selectedRoomID {
+            return selectedRoomSnapshot
+        }
+
+        return nil
     }
 
     func start() async {
@@ -365,6 +374,7 @@ final class TrixAppModel: ObservableObject {
             selectedRoomID: selectedRoomID
         )
         lastRoomRefreshAt = Date()
+        refreshSelectedRoomSnapshot()
         reconcileSelectedRoom()
 
         if let selectedRoomID {
@@ -387,6 +397,7 @@ final class TrixAppModel: ObservableObject {
             showsLoading: false
         )
         lastRoomRefreshAt = Date()
+        refreshSelectedRoomSnapshot()
         reconcileSelectedRoom()
 
         if reloadSelectedTimeline, let selectedRoomID {
@@ -404,6 +415,8 @@ final class TrixAppModel: ObservableObject {
             return
         }
 
+        await refreshForeground()
+
         while !Task.isCancelled && isAuthenticated {
             try? await Task.sleep(for: foregroundRefreshInterval)
             guard !Task.isCancelled else {
@@ -416,6 +429,7 @@ final class TrixAppModel: ObservableObject {
 
     func selectRoom(_ room: TrixRoomSummary) async {
         selectedRoomID = room.id
+        selectedRoomSnapshot = room
         await loadTimeline(roomID: room.id)
         roomListViewModel.markRead(roomID: room.id)
     }
@@ -445,9 +459,11 @@ final class TrixAppModel: ObservableObject {
         await roomListViewModel.reload(
             session: session,
             service: trixService,
-            selectedRoomID: selectedRoomID
+            selectedRoomID: selectedRoomID,
+            showsLoading: false
         )
         lastRoomRefreshAt = Date()
+        refreshSelectedRoomSnapshot()
     }
 
     func setReaction(_ emoji: String, for item: TrixTimelineItem) async {
@@ -478,9 +494,11 @@ final class TrixAppModel: ObservableObject {
         await roomListViewModel.reload(
             session: session,
             service: trixService,
-            selectedRoomID: selectedRoomID
+            selectedRoomID: selectedRoomID,
+            showsLoading: false
         )
         lastRoomRefreshAt = Date()
+        refreshSelectedRoomSnapshot()
     }
 
     func sendSticker(_ sticker: TrixSticker) async {
@@ -877,8 +895,9 @@ final class TrixAppModel: ObservableObject {
             return
         }
 
-        await reloadRooms()
         selectedRoomID = room.id
+        selectedRoomSnapshot = room
+        await reloadRooms()
         await loadTimeline(roomID: room.id)
     }
 
@@ -902,17 +921,36 @@ final class TrixAppModel: ObservableObject {
         roomListViewModel.forgetRoomLocally(roomID: room.id)
         if selectedRoomID == room.id {
             selectedRoomID = roomListViewModel.rooms.first?.id
+            selectedRoomSnapshot = roomListViewModel.rooms.first
             timelineViewModel.clear()
         }
     }
 
     private func reconcileSelectedRoom() {
         if let selectedRoomID,
-           roomListViewModel.rooms.contains(where: { $0.id == selectedRoomID }) {
+           let room = roomListViewModel.rooms.first(where: { $0.id == selectedRoomID }) {
+            selectedRoomSnapshot = room
+            return
+        }
+
+        if let selectedRoomID,
+           selectedRoomSnapshot?.id == selectedRoomID {
             return
         }
 
         selectedRoomID = roomListViewModel.rooms.first?.id
+        selectedRoomSnapshot = roomListViewModel.rooms.first
+    }
+
+    private func refreshSelectedRoomSnapshot() {
+        guard let selectedRoomID else {
+            selectedRoomSnapshot = nil
+            return
+        }
+
+        if let room = roomListViewModel.rooms.first(where: { $0.id == selectedRoomID }) {
+            selectedRoomSnapshot = room
+        }
     }
 
     private var totalUnreadCount: Int {
@@ -1032,6 +1070,7 @@ final class TrixAppModel: ObservableObject {
         session = nil
         account = nil
         selectedRoomID = nil
+        selectedRoomSnapshot = nil
         pushRegistration = nil
         pushRegistrationBlocker = apnsDeviceToken == nil ? .waitingForAPNsToken : .waitingForSession
         lastRoomRefreshAt = nil
