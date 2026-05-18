@@ -65,6 +65,39 @@ final class TrixStickerTests: XCTestCase {
         XCTAssertEqual(deduped.dataByStickerID[sticker.id], Data([5, 6]))
     }
 
+    func testStickerLibraryStoreDeletesSinglePackAndItsData() throws {
+        let accountID = "@stickers-delete-\(UUID().uuidString):trix.selfhost.ru"
+        let keychainService = "com.softgrid.trix.tests.stickers-delete.\(UUID().uuidString)"
+        let store = TrixStickerLibraryStore(
+            keychainService: keychainService,
+            keychainAccount: "key",
+            directoryName: "StickerLibraryDeleteTests-\(UUID().uuidString)"
+        )
+        defer {
+            try? store.clear(accountID: accountID)
+            deleteTestKeychainItem(service: keychainService)
+        }
+
+        let source = TrixStickerSource(kind: .telegram, name: "FakePack", url: "https://t.me/addstickers/FakePack")
+        let firstSticker = sticker(id: "telegram:first", packID: "telegram:first-pack", source: source)
+        let secondSticker = sticker(id: "telegram:second", packID: "telegram:second-pack", source: source)
+        let firstPack = pack(id: "telegram:first-pack", title: "First Pack", source: source, stickers: [firstSticker])
+        let secondPack = pack(id: "telegram:second-pack", title: "Second Pack", source: source, stickers: [secondSticker])
+
+        _ = try store.save(pack: firstPack, dataByStickerID: [firstSticker.id: Data([1])], accountID: accountID)
+        _ = try store.save(pack: secondPack, dataByStickerID: [secondSticker.id: Data([2])], accountID: accountID)
+
+        let state = try store.deletePack(id: firstPack.id, accountID: accountID)
+        XCTAssertEqual(state.packs.map(\.id), [secondPack.id])
+        XCTAssertNil(state.dataByStickerID[firstSticker.id])
+        XCTAssertEqual(state.dataByStickerID[secondSticker.id], Data([2]))
+
+        let stats = try store.stats(accountID: accountID)
+        XCTAssertEqual(stats.packCount, 1)
+        XCTAssertEqual(stats.stickerCount, 1)
+        XCTAssertEqual(stats.totalBytes, 1)
+    }
+
     @MainActor
     func testReceivedTelegramStickerMetadataImportsWholePack() async throws {
         let accountID = "@me:trix.selfhost.ru"
@@ -111,6 +144,34 @@ final class TrixStickerTests: XCTestCase {
         XCTAssertEqual(model.stickerPacks.first?.stickers.count, 2)
         XCTAssertEqual(model.stickerPacks.first?.id, "telegram:fakepack")
     }
+}
+
+private func sticker(id: String, packID: String, source: TrixStickerSource) -> TrixSticker {
+    TrixSticker(
+        id: id,
+        packID: packID,
+        emoji: "🙂",
+        filename: "\(id).png",
+        mimeType: "image/png",
+        sizeBytes: 1,
+        imageDimensions: TrixAttachmentImageDimensions(width: 1, height: 1),
+        source: source
+    )
+}
+
+private func pack(
+    id: String,
+    title: String,
+    source: TrixStickerSource,
+    stickers: [TrixSticker]
+) -> TrixStickerPack {
+    TrixStickerPack(
+        id: id,
+        title: title,
+        source: source,
+        stickers: stickers,
+        importedAt: Date()
+    )
 }
 
 private func deleteTestKeychainItem(service: String) {

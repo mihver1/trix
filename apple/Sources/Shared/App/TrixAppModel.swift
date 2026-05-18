@@ -56,6 +56,11 @@ final class TrixAppModel: ObservableObject {
     @Published private(set) var stickerPacks: [TrixStickerPack] = []
     @Published private(set) var isImportingStickerPack = false
     @Published private(set) var stickerImportMessage: String?
+    @Published private(set) var stickerLibraryStats: TrixStickerLibraryStats = .empty
+    @Published private(set) var mediaCachePolicy: TrixMediaCachePolicy
+    @Published private(set) var mediaCacheSnapshot: TrixMediaCacheSnapshot = .empty
+    @Published private(set) var isUpdatingMediaCache = false
+    @Published private(set) var mediaCacheMessage: String?
     @Published private var selectedRoomSnapshot: TrixRoomSummary?
 
     let roomListViewModel: RoomListViewModel
@@ -66,6 +71,8 @@ final class TrixAppModel: ObservableObject {
     private let registrationService: TrixRegistrationService
     private let stickerImportService: TrixStickerImportService
     private let stickerLibraryStore: TrixStickerLibraryStore
+    private let mediaCacheStore: TrixMediaCacheStore
+    private let mediaCacheSettingsStore: TrixMediaCacheSettingsStore
     private let trixService: TrixService
     private var stickerAssetDataByID: [String: Data] = [:]
     private var apnsDeviceToken: TrixAPNsDeviceToken?
@@ -77,13 +84,18 @@ final class TrixAppModel: ObservableObject {
         registrationService: TrixRegistrationService = HTTPInviteRegistrationService(),
         stickerImportService: TrixStickerImportService = HTTPStickerImportService(),
         stickerLibraryStore: TrixStickerLibraryStore = TrixStickerLibraryStore(),
+        mediaCacheStore: TrixMediaCacheStore = TrixMediaCacheStore(),
+        mediaCacheSettingsStore: TrixMediaCacheSettingsStore = UserDefaultsTrixMediaCacheSettingsStore(),
         trixService: TrixService = XMPPMartinService()
     ) {
         self.sessionStore = sessionStore
         self.registrationService = registrationService
         self.stickerImportService = stickerImportService
         self.stickerLibraryStore = stickerLibraryStore
+        self.mediaCacheStore = mediaCacheStore
+        self.mediaCacheSettingsStore = mediaCacheSettingsStore
         self.trixService = trixService
+        self.mediaCachePolicy = mediaCacheSettingsStore.loadPolicy()
         self.roomListViewModel = RoomListViewModel()
         self.timelineViewModel = TimelineViewModel()
         self.deviceVerificationViewModel = DeviceVerificationViewModel()
@@ -132,6 +144,7 @@ final class TrixAppModel: ObservableObject {
             startupStatus = .finishingRestore
 
             loadStickerLibrary(for: restoredSession.userID)
+            refreshLocalMediaState(for: restoredSession.userID)
             await loadCachedRoomsForCurrentSession()
             isStarting = false
 
@@ -174,6 +187,7 @@ final class TrixAppModel: ObservableObject {
             session = authenticatedSession
             account = restoredAccount
             loadStickerLibrary(for: authenticatedSession.userID)
+            refreshLocalMediaState(for: authenticatedSession.userID)
             await reloadRooms()
             await reloadDeviceVerificationStatus()
             await syncAPNsRegistrationIfPossible()
@@ -219,6 +233,7 @@ final class TrixAppModel: ObservableObject {
             session = authenticatedSession
             account = restoredAccount
             loadStickerLibrary(for: authenticatedSession.userID)
+            refreshLocalMediaState(for: authenticatedSession.userID)
 
             if let displayName = registration.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
                !displayName.isEmpty {
@@ -623,6 +638,7 @@ final class TrixAppModel: ObservableObject {
             )
             stickerPacks = state.packs
             stickerAssetDataByID = state.dataByStickerID
+            refreshStickerStats(for: session.userID)
             stickerImportMessage = Self.stickerImportMessage(
                 pack: pack,
                 importedStickerCount: stickers.count,
@@ -648,11 +664,15 @@ final class TrixAppModel: ObservableObject {
             return
         }
 
-        await timelineViewModel.downloadAttachment(
+        if let snapshot = await timelineViewModel.downloadAttachment(
             for: item,
             session: session,
-            service: trixService
-        )
+            service: trixService,
+            mediaCacheStore: mediaCacheStore,
+            mediaCachePolicy: mediaCachePolicy
+        ) {
+            mediaCacheSnapshot = snapshot
+        }
     }
 
     func loadInlineAttachmentPreview(for item: TrixTimelineItem) async {
@@ -660,11 +680,142 @@ final class TrixAppModel: ObservableObject {
             return
         }
 
-        await timelineViewModel.loadInlineAttachmentPreview(
+        if let snapshot = await timelineViewModel.loadInlineAttachmentPreview(
             for: item,
             session: session,
-            service: trixService
-        )
+            service: trixService,
+            mediaCacheStore: mediaCacheStore,
+            mediaCachePolicy: mediaCachePolicy
+        ) {
+            mediaCacheSnapshot = snapshot
+        }
+    }
+
+    func dismissMediaCacheMessage() {
+        mediaCacheMessage = nil
+    }
+
+    func updateMediaCachePolicy(_ policy: TrixMediaCachePolicy) async {
+        isUpdatingMediaCache = true
+        mediaCacheMessage = nil
+        defer { isUpdatingMediaCache = false }
+
+        do {
+            let sanitizedPolicy = policy.sanitized
+            try mediaCacheSettingsStore.savePolicy(sanitizedPolicy)
+            mediaCachePolicy = sanitizedPolicy
+
+            if let session {
+                mediaCacheSnapshot = try mediaCacheStore.applyRetention(
+                    accountID: session.userID,
+                    policy: sanitizedPolicy
+                )
+            }
+            mediaCacheMessage = "Media cache policy updated."
+        } catch {
+            mediaCacheMessage = error.trixUserFacingMessage
+        }
+    }
+
+    func clearMediaCache() async {
+        guard let session else {
+            return
+        }
+
+        isUpdatingMediaCache = true
+        mediaCacheMessage = nil
+        defer { isUpdatingMediaCache = false }
+
+        do {
+            mediaCacheSnapshot = try mediaCacheStore.clearAll(accountID: session.userID)
+            timelineViewModel.clearAttachmentDownloads()
+            mediaCacheMessage = "Media cache cleared."
+        } catch {
+            mediaCacheMessage = error.trixUserFacingMessage
+        }
+    }
+
+    func clearSelectedRoomMediaCache() async {
+        guard let session, let selectedRoomID else {
+            return
+        }
+
+        isUpdatingMediaCache = true
+        mediaCacheMessage = nil
+        defer { isUpdatingMediaCache = false }
+
+        do {
+            mediaCacheSnapshot = try mediaCacheStore.clearRoom(
+                accountID: session.userID,
+                roomID: selectedRoomID
+            )
+            timelineViewModel.clearAttachmentDownloads()
+            mediaCacheMessage = "Current chat media cache cleared."
+        } catch {
+            mediaCacheMessage = error.trixUserFacingMessage
+        }
+    }
+
+    func clearMediaCacheOlderThan(days: Int) async {
+        guard let session else {
+            return
+        }
+
+        isUpdatingMediaCache = true
+        mediaCacheMessage = nil
+        defer { isUpdatingMediaCache = false }
+
+        do {
+            let cutoff = Date().addingTimeInterval(-Double(max(1, days)) * 24 * 60 * 60)
+            mediaCacheSnapshot = try mediaCacheStore.clearOlderThan(
+                accountID: session.userID,
+                cutoff: cutoff
+            )
+            timelineViewModel.clearAttachmentDownloads()
+            mediaCacheMessage = "Older media cache entries cleared."
+        } catch {
+            mediaCacheMessage = error.trixUserFacingMessage
+        }
+    }
+
+    func deleteStickerPack(_ pack: TrixStickerPack) async {
+        guard let session else {
+            return
+        }
+
+        isUpdatingMediaCache = true
+        mediaCacheMessage = nil
+        defer { isUpdatingMediaCache = false }
+
+        do {
+            let state = try stickerLibraryStore.deletePack(id: pack.id, accountID: session.userID)
+            stickerPacks = state.packs
+            stickerAssetDataByID = state.dataByStickerID
+            refreshStickerStats(for: session.userID)
+            mediaCacheMessage = "Sticker pack removed."
+        } catch {
+            mediaCacheMessage = error.trixUserFacingMessage
+        }
+    }
+
+    func clearStickerLibrary() async {
+        guard let session else {
+            return
+        }
+
+        isUpdatingMediaCache = true
+        mediaCacheMessage = nil
+        defer { isUpdatingMediaCache = false }
+
+        do {
+            try stickerLibraryStore.clear(accountID: session.userID)
+            stickerPacks = []
+            stickerAssetDataByID = [:]
+            stickerLibraryStats = .empty
+            mediaCacheMessage = "Sticker library cleared."
+        } catch {
+            mediaCacheMessage = error.trixUserFacingMessage
+        }
     }
 
     func loadAttachmentSendAvailability(roomID: String) async {
@@ -1089,12 +1240,32 @@ final class TrixAppModel: ObservableObject {
             let state = try stickerLibraryStore.load(accountID: accountID)
             stickerPacks = state.packs
             stickerAssetDataByID = state.dataByStickerID
+            refreshStickerStats(for: accountID)
             stickerImportMessage = nil
         } catch {
             stickerPacks = []
             stickerAssetDataByID = [:]
+            stickerLibraryStats = .empty
             stickerImportMessage = error.trixUserFacingMessage
         }
+    }
+
+    private func refreshLocalMediaState(for accountID: String) {
+        do {
+            mediaCacheSnapshot = try mediaCacheStore.applyRetention(
+                accountID: accountID,
+                policy: mediaCachePolicy
+            )
+        } catch {
+            mediaCacheSnapshot = .empty
+            mediaCacheMessage = error.trixUserFacingMessage
+        }
+
+        refreshStickerStats(for: accountID)
+    }
+
+    private func refreshStickerStats(for accountID: String) {
+        stickerLibraryStats = (try? stickerLibraryStore.stats(accountID: accountID)) ?? .empty
     }
 
     private static func stickerImportMessage(
@@ -1121,6 +1292,10 @@ final class TrixAppModel: ObservableObject {
         stickerAssetDataByID = [:]
         stickerImportMessage = nil
         isImportingStickerPack = false
+        stickerLibraryStats = .empty
+        mediaCacheSnapshot = .empty
+        mediaCacheMessage = nil
+        isUpdatingMediaCache = false
         roomListViewModel.clear()
         timelineViewModel.clear()
         deviceVerificationViewModel.clear()

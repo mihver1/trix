@@ -561,6 +561,10 @@ struct TrixSettingsView: View {
                 .disabled(!model.isAuthenticated || deviceVerificationViewModel.isLoading)
             }
 
+            Section("Media Cache And Stickers") {
+                TrixMediaCacheSettingsView(model: model)
+            }
+
             Section {
                 TrixLimitationsView()
             }

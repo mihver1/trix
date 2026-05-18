@@ -34,6 +34,13 @@ copying old implementation details.
       picker/timeline, and keeps sticker sends behind the same OMEMO attachment
       availability and trust gates. Credentialed sticker-specific live smoke is
       not wired in this slice.
+- [x] Local encrypted media cache retention is wired for downloaded attachments
+      and sticker previews. Apple stores decrypted media bytes only after local
+      OMEMO media decryption, encrypts cache blobs and the cache index with a
+      Keychain-held local key, and exposes Settings controls for maximum cache
+      size, age, per-chat media depth, forever retention, clear-all media,
+      clear-current-chat media, clear-old media, clear-all stickers, and
+      individual sticker-pack removal.
 - [x] iOS product-parity pass: Chats/Settings tabs, dense inbox, visible invite
       actions, account state, chat bubbles, composer, and attachment download
       affordances are wired in SwiftUI. The iOS inbox prioritizes pending

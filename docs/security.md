@@ -81,10 +81,14 @@ identity keys, prekeys, signed prekeys, sessions, identities, sender keys, and
 trust decisions in the app Keychain. Logging out removes the saved XMPP login but
 does not erase OMEMO device state.
 
-The decrypted local timeline cache and room-summary cache are stored outside
-Keychain in app-controlled Application Support storage and encrypted with
-app-local cache keys that are stored in Keychain. Keychain is used for small
-secret material, not as the message-history or room-list database.
+The decrypted local timeline cache, room-summary cache, and media cache are
+stored outside Keychain in app-controlled Application Support storage and
+encrypted with app-local cache keys that are stored in Keychain. Keychain is
+used for small secret material, not as the message-history, room-list, or media
+database. The media cache stores decrypted attachment bytes only after local
+OMEMO media decryption, encrypts each blob and its index at rest, uses hashed
+file names, and exposes Settings controls for size, age, per-chat media depth,
+forever retention, and full or partial deletion.
 
 There is no validated server-side OMEMO key backup or account recovery path in
 this slice. If the app is deleted, the Keychain state is reset, or the account is
@@ -166,6 +170,8 @@ unsupported count. Imported sticker packs are stored per account on Apple in an
 Application Support library encrypted with a local Keychain-held key. Received
 Telegram-sourced stickers may offer "Add Sticker Pack" by importing the source
 pack metadata; non-Telegram sticker pack import stays unavailable in v1.
+Settings can clear the full local sticker library or remove individual imported
+packs without touching timeline or chat caches.
 
 Do not log Telegram bot tokens, sticker token secrets, signed sticker file
 tokens, Telegram file paths, local sticker files, decrypted sticker bytes,

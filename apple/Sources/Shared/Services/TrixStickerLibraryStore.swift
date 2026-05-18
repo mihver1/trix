@@ -7,6 +7,18 @@ struct TrixStickerLibraryState: Equatable, Sendable {
     let dataByStickerID: [String: Data]
 }
 
+struct TrixStickerLibraryStats: Equatable, Sendable {
+    let packCount: Int
+    let stickerCount: Int
+    let totalBytes: Int64
+
+    static let empty = TrixStickerLibraryStats(packCount: 0, stickerCount: 0, totalBytes: 0)
+
+    var formattedTotalBytes: String {
+        ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)
+    }
+}
+
 final class TrixStickerLibraryStore: @unchecked Sendable {
     private struct StoredLibrary: Codable {
         let version: Int
@@ -67,11 +79,44 @@ final class TrixStickerLibraryStore: @unchecked Sendable {
         )
     }
 
+    func deletePack(id packID: String, accountID: String) throws -> TrixStickerLibraryState {
+        var stored = try loadStoredLibrary(accountID: accountID)
+        let removedStickerIDs = Set(
+            stored.packs
+                .filter { $0.id == packID }
+                .flatMap(\.stickers)
+                .map(\.id)
+        )
+
+        stored.packs.removeAll { $0.id == packID }
+        let retainedStickerIDs = Set(stored.packs.flatMap(\.stickers).map(\.id))
+        for stickerID in removedStickerIDs {
+            if !retainedStickerIDs.contains(stickerID) {
+                stored.dataByStickerID[stickerID] = nil
+            }
+        }
+        stored.packs = sortedPacks(stored.packs)
+        try saveStoredLibrary(stored, accountID: accountID)
+        return TrixStickerLibraryState(
+            packs: stored.packs,
+            dataByStickerID: stored.dataByStickerID
+        )
+    }
+
     func clear(accountID: String) throws {
         let fileURL = try libraryFileURL(accountID: accountID)
         if FileManager.default.fileExists(atPath: fileURL.path) {
             try FileManager.default.removeItem(at: fileURL)
         }
+    }
+
+    func stats(accountID: String) throws -> TrixStickerLibraryStats {
+        let stored = try loadStoredLibrary(accountID: accountID)
+        return TrixStickerLibraryStats(
+            packCount: stored.packs.count,
+            stickerCount: stored.packs.reduce(0) { $0 + $1.stickers.count },
+            totalBytes: stored.dataByStickerID.values.reduce(Int64(0)) { $0 + Int64($1.count) }
+        )
     }
 
     private func loadStoredLibrary(accountID: String) throws -> StoredLibrary {
