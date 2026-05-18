@@ -158,17 +158,37 @@ struct TrixRoomSecurityMark: View {
     }
 }
 
+enum TrixTransientBanner {
+    static let autoDismissDelay: Duration = .seconds(60)
+}
+
 struct TrixBannerView: View {
     let text: String
     let systemImage: String
     var tint: Color
+    var dismissAction: (() -> Void)?
 
     var body: some View {
-        Label {
-            Text(text)
-                .fixedSize(horizontal: false, vertical: true)
-        } icon: {
-            Image(systemName: systemImage)
+        HStack(alignment: .top, spacing: 10) {
+            Label {
+                Text(text)
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: systemImage)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let dismissAction {
+                Button(action: dismissAction) {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Dismiss")
+                .accessibilityLabel("Dismiss notification")
+            }
         }
         .font(.footnote)
         .foregroundStyle(tint)

@@ -536,6 +536,10 @@ final class TrixAppModel: ObservableObject {
         stickerAssetDataByID[sticker.id]
     }
 
+    func dismissStickerImportMessage() {
+        stickerImportMessage = nil
+    }
+
     func importTelegramStickerPack(_ reference: String) async {
         guard let session else {
             return

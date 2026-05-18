@@ -231,6 +231,10 @@ final class TimelineViewModel: ObservableObject {
         downloadedAttachment = nil
     }
 
+    func dismissErrorMessage() {
+        errorMessage = nil
+    }
+
     func loadAttachmentSendAvailability(
         roomID: String,
         session: TrixSession,

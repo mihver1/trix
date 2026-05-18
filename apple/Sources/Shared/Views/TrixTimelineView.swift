@@ -265,6 +265,30 @@ struct TrixTimelineView: View {
         .onChange(of: draft) { _, newValue in
             handleDraftChange(newValue)
         }
+        .task(id: timelineToastMessage) {
+            guard let message = timelineToastMessage else {
+                return
+            }
+
+            try? await Task.sleep(for: TrixTransientBanner.autoDismissDelay)
+            guard !Task.isCancelled else {
+                return
+            }
+
+            await dismissTimelineToast(matching: message)
+        }
+        .task(id: model.stickerImportMessage) {
+            guard let message = model.stickerImportMessage else {
+                return
+            }
+
+            try? await Task.sleep(for: TrixTransientBanner.autoDismissDelay)
+            guard !Task.isCancelled else {
+                return
+            }
+
+            await dismissStickerImportMessage(matching: message)
+        }
         .onDisappear {
             typingPauseTask?.cancel()
             sendTypingStateIfNeeded(.paused)
@@ -301,7 +325,8 @@ struct TrixTimelineView: View {
                 TrixBannerView(
                     text: errorMessage,
                     systemImage: "exclamationmark.triangle.fill",
-                    tint: .red
+                    tint: .red,
+                    dismissAction: dismissTimelineToast
                 )
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
@@ -311,7 +336,8 @@ struct TrixTimelineView: View {
                 TrixBannerView(
                     text: stickerImportMessage,
                     systemImage: "face.smiling",
-                    tint: TrixDesign.accent
+                    tint: TrixDesign.accent,
+                    dismissAction: model.dismissStickerImportMessage
                 )
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
@@ -508,6 +534,10 @@ struct TrixTimelineView: View {
         return timelineViewModel.items
     }
 
+    private var timelineToastMessage: String? {
+        timelineViewModel.errorMessage ?? fileImportError
+    }
+
     private var isTimelineLoading: Bool {
         timelineViewModel.roomID != room.id || timelineViewModel.isLoading
     }
@@ -598,6 +628,31 @@ struct TrixTimelineView: View {
         Task {
             await model.send(text: text)
         }
+    }
+
+    @MainActor
+    private func dismissTimelineToast() {
+        timelineViewModel.dismissErrorMessage()
+        fileImportError = nil
+    }
+
+    @MainActor
+    private func dismissTimelineToast(matching message: String) {
+        if timelineViewModel.errorMessage == message {
+            timelineViewModel.dismissErrorMessage()
+        }
+        if fileImportError == message {
+            fileImportError = nil
+        }
+    }
+
+    @MainActor
+    private func dismissStickerImportMessage(matching message: String) {
+        guard model.stickerImportMessage == message else {
+            return
+        }
+
+        model.dismissStickerImportMessage()
     }
 
     private var typingIndicator: some View {
@@ -2367,7 +2422,8 @@ private struct TrixStickerPickerView: View {
                     TrixBannerView(
                         text: stickerImportMessage,
                         systemImage: "face.smiling",
-                        tint: TrixDesign.accent
+                        tint: TrixDesign.accent,
+                        dismissAction: model.dismissStickerImportMessage
                     )
                 }
 
@@ -2406,6 +2462,18 @@ private struct TrixStickerPickerView: View {
             }
         }
         .trixStickerPickerFrame()
+        .task(id: model.stickerImportMessage) {
+            guard let message = model.stickerImportMessage else {
+                return
+            }
+
+            try? await Task.sleep(for: TrixTransientBanner.autoDismissDelay)
+            guard !Task.isCancelled else {
+                return
+            }
+
+            await dismissStickerImportMessage(matching: message)
+        }
         .onAppear(perform: ensureSelectedStickerPack)
         .onChange(of: model.stickerPacks.map(\.id)) { oldIDs, newIDs in
             if let insertedID = newIDs.first(where: { !oldIDs.contains($0) }) {
@@ -2497,6 +2565,15 @@ private struct TrixStickerPickerView: View {
         }
 
         selectedStickerPackID = model.stickerPacks.first?.id
+    }
+
+    @MainActor
+    private func dismissStickerImportMessage(matching message: String) {
+        guard model.stickerImportMessage == message else {
+            return
+        }
+
+        model.dismissStickerImportMessage()
     }
 }
 
