@@ -395,10 +395,14 @@ actor MockTrixService: TrixService {
         return try await deviceVerificationStatus(session: session)
     }
 
-    func timeline(roomID: String, session: TrixSession) async throws -> [TrixTimelineItem] {
+    func cachedTimeline(roomID: String, session: TrixSession) async throws -> [TrixTimelineItem] {
         timelines[roomID, default: []].sorted { lhs, rhs in
             lhs.timestamp < rhs.timestamp
         }
+    }
+
+    func timeline(roomID: String, session: TrixSession) async throws -> [TrixTimelineItem] {
+        try await cachedTimeline(roomID: roomID, session: session)
     }
 
     func sendText(_ text: String, roomID: String, session: TrixSession) async throws -> TrixTimelineItem {

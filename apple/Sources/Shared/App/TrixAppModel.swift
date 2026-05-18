@@ -428,15 +428,23 @@ final class TrixAppModel: ObservableObject {
     }
 
     func selectRoom(_ room: TrixRoomSummary) async {
-        selectedRoomID = room.id
-        selectedRoomSnapshot = room
+        prepareRoomSelection(room)
         await loadTimeline(roomID: room.id)
         roomListViewModel.markRead(roomID: room.id)
+    }
+
+    func prepareRoomSelection(_ room: TrixRoomSummary) {
+        selectedRoomSnapshot = room
+        timelineViewModel.prepareForRoomSwitch(roomID: room.id)
+        selectedRoomID = room.id
     }
 
     func loadTimeline(roomID: String) async {
         guard let session else {
             timelineViewModel.clear()
+            return
+        }
+        guard selectedRoomID == roomID else {
             return
         }
 
@@ -780,7 +788,7 @@ final class TrixAppModel: ObservableObject {
         }
 
         await reloadRooms()
-        selectedRoomID = room.id
+        prepareRoomSelection(room)
         await loadTimeline(roomID: room.id)
         return true
     }
@@ -800,7 +808,7 @@ final class TrixAppModel: ObservableObject {
         }
 
         await reloadRooms()
-        selectedRoomID = room.id
+        prepareRoomSelection(room)
         await loadTimeline(roomID: room.id)
         return true
     }
@@ -895,8 +903,7 @@ final class TrixAppModel: ObservableObject {
             return
         }
 
-        selectedRoomID = room.id
-        selectedRoomSnapshot = room
+        prepareRoomSelection(room)
         await reloadRooms()
         await loadTimeline(roomID: room.id)
     }

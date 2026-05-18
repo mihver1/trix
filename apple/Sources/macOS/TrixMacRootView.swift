@@ -78,7 +78,7 @@ private struct TrixMacRoomListView: View {
     }
 
     var body: some View {
-        List(selection: $model.selectedRoomID) {
+        List(selection: selectedRoomBinding) {
             searchSection
 
             Section {
@@ -98,11 +98,6 @@ private struct TrixMacRoomListView: View {
                         TrixMacRoomRow(room: room)
                             .tag(room.id as String?)
                             .contentShape(Rectangle())
-                            .onTapGesture {
-                                Task {
-                                    await model.selectRoom(room)
-                                }
-                            }
                     }
                 }
             } header: {
@@ -160,6 +155,36 @@ private struct TrixMacRoomListView: View {
         }
     }
 
+    private var selectedRoomBinding: Binding<String?> {
+        Binding(
+            get: { model.selectedRoomID },
+            set: { roomID in
+                selectRoom(roomID: roomID)
+            }
+        )
+    }
+
+    private func selectRoom(roomID: String?) {
+        guard let roomID else {
+            model.selectedRoomID = nil
+            return
+        }
+
+        guard let room = roomListViewModel.rooms.first(where: { $0.id == roomID }) else {
+            model.selectedRoomID = roomID
+            return
+        }
+
+        openRoom(room)
+    }
+
+    private func openRoom(_ room: TrixRoomSummary) {
+        model.prepareRoomSelection(room)
+        Task {
+            await model.selectRoom(room)
+        }
+    }
+
     @ViewBuilder
     private var searchSection: some View {
         Section {
@@ -207,9 +232,7 @@ private struct TrixMacRoomListView: View {
 
     private func openDirectoryUser(_ profile: TrixUserProfile) {
         if let existingRoom = existingDirectRoom(for: profile) {
-            Task {
-                await model.selectRoom(existingRoom)
-            }
+            openRoom(existingRoom)
             return
         }
 

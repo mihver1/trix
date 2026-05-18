@@ -52,10 +52,14 @@ struct TrixTimelineView: View {
                 .padding(.vertical, 10)
                 .background(.regularMaterial)
 
+            if let progress = visibleLoadProgress, !visibleTimelineItems.isEmpty {
+                timelineLoadProgressBar(progress)
+            }
+
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        if timelineViewModel.items.isEmpty {
+                        if visibleTimelineItems.isEmpty {
                             timelineEmptyState
                                 .padding(.top, 54)
                         }
@@ -108,6 +112,9 @@ struct TrixTimelineView: View {
                     timelineBottomControls
                 }
                 .onChange(of: timelineViewModel.items) { _, items in
+                    guard timelineViewModel.roomID == room.id else {
+                        return
+                    }
                     guard let last = items.last else {
                         return
                     }
@@ -220,7 +227,9 @@ struct TrixTimelineView: View {
             Text("A server-backed MUC leave is still blocked in this client slice. This only hides local room state and does not destroy the group.")
         }
         .task(id: room.id) {
-            await model.selectRoom(room)
+            if timelineViewModel.roomID != room.id {
+                await model.selectRoom(room)
+            }
             await loadPeerDevices(refresh: false)
             await model.loadAttachmentSendAvailability(roomID: room.id)
         }
@@ -288,6 +297,20 @@ struct TrixTimelineView: View {
             composer
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private func timelineLoadProgressBar(_ progress: TrixTimelineLoadProgress) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ProgressView(value: progress.fractionCompleted, total: 1)
+                .progressViewStyle(.linear)
+            Text(progress.status)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 7)
+        .background(.regularMaterial)
     }
 
     private var encryptionRequiredBanner: some View {
@@ -377,10 +400,8 @@ struct TrixTimelineView: View {
 
     @ViewBuilder
     private var timelineEmptyState: some View {
-        if timelineViewModel.isLoading {
-            ProgressView("Loading timeline")
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, 36)
+        if isTimelineLoading {
+            timelineLoadingState
         } else if timelineViewModel.errorMessage != nil {
             TrixEmptyStateView(
                 title: "Timeline unavailable",
@@ -402,8 +423,47 @@ struct TrixTimelineView: View {
         }
     }
 
+    private var timelineLoadingState: some View {
+        VStack(spacing: 10) {
+            if let progress = visibleLoadProgress {
+                ProgressView(value: progress.fractionCompleted, total: 1)
+                    .progressViewStyle(.linear)
+                    .frame(maxWidth: 260)
+                Text(progress.status)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            } else {
+                ProgressView("Loading timeline")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.vertical, 36)
+    }
+
     private var timelineEntries: [TrixTimelineEntry] {
-        Self.timelineEntries(for: timelineViewModel.items)
+        Self.timelineEntries(for: visibleTimelineItems)
+    }
+
+    private var visibleTimelineItems: [TrixTimelineItem] {
+        guard timelineViewModel.roomID == room.id else {
+            return []
+        }
+
+        return timelineViewModel.items
+    }
+
+    private var isTimelineLoading: Bool {
+        timelineViewModel.roomID != room.id || timelineViewModel.isLoading
+    }
+
+    private var visibleLoadProgress: TrixTimelineLoadProgress? {
+        guard let progress = timelineViewModel.loadProgress,
+              progress.roomID == room.id else {
+            return nil
+        }
+
+        return progress
     }
 
     fileprivate static var attachmentImportContentTypes: [UTType] {

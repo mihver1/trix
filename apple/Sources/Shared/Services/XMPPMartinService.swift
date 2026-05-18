@@ -810,6 +810,13 @@ actor XMPPMartinService: TrixService {
         }
     }
 
+    func cachedTimeline(roomID: String, session: TrixSession) async throws -> [TrixTimelineItem] {
+        let peerJID = try Self.normalizedRoomID(roomID)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+        _ = loadCachedTimelineItems(accountJID: accountJID, roomID: peerJID)
+        return timelineItems(accountJID: accountJID, roomID: peerJID)
+    }
+
     func timeline(roomID: String, session: TrixSession) async throws -> [TrixTimelineItem] {
         let connection = try await ensureConnection(for: session)
         let peerJID = try Self.normalizedRoomID(roomID)

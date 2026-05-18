@@ -286,7 +286,7 @@ struct TrixRoomListView: View {
     }
 
     private func openPhoneRoom(_ room: TrixRoomSummary) {
-        model.selectedRoomID = room.id
+        model.prepareRoomSelection(room)
         phoneSelectedRoomID = room.id
         Task {
             await model.selectRoom(room)

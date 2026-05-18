@@ -1,10 +1,17 @@
 import Foundation
 
+struct TrixTimelineLoadProgress: Equatable {
+    let roomID: String
+    let fractionCompleted: Double
+    let status: String
+}
+
 @MainActor
 final class TimelineViewModel: ObservableObject {
     @Published private(set) var roomID: String?
     @Published private(set) var items: [TrixTimelineItem] = []
     @Published private(set) var isLoading = false
+    @Published private(set) var loadProgress: TrixTimelineLoadProgress?
     @Published private(set) var isSending = false
     @Published private(set) var isSendingAttachment = false
     @Published private(set) var isLoadingAttachmentAvailability = false
@@ -20,35 +27,65 @@ final class TimelineViewModel: ObservableObject {
     @Published private(set) var errorMessage: String?
     private var cachedItemsByRoomID: [String: [TrixTimelineItem]] = [:]
 
+    func prepareForRoomSwitch(roomID: String) {
+        guard self.roomID != roomID else {
+            return
+        }
+
+        self.roomID = roomID
+        resetRoomScopedState()
+        items = cachedItemsByRoomID[roomID] ?? []
+        isLoading = true
+        loadProgress = TrixTimelineLoadProgress(
+            roomID: roomID,
+            fractionCompleted: 0.1,
+            status: "Opening chat"
+        )
+    }
+
     func load(
         roomID: String,
         session: TrixSession,
         service: TrixRoomService,
         showsLoading: Bool = true
     ) async {
-        self.roomID = roomID
+        prepareForLoad(roomID: roomID, showsLoading: showsLoading)
         if showsLoading {
             isLoading = true
         }
         errorMessage = nil
         defer {
-            if showsLoading {
+            if showsLoading, self.roomID == roomID {
                 isLoading = false
+                loadProgress = nil
             }
         }
 
         do {
+            if showsLoading {
+                updateLoadProgress(roomID: roomID, fractionCompleted: 0.25, status: "Loading local cache")
+            }
+            if let cachedItems = try? await service.cachedTimeline(roomID: roomID, session: session),
+               !cachedItems.isEmpty {
+                guard self.roomID == roomID, !Task.isCancelled else {
+                    return
+                }
+
+                storeLoadedItems(cachedItems, for: roomID)
+            }
+
+            if showsLoading {
+                updateLoadProgress(roomID: roomID, fractionCompleted: 0.65, status: "Syncing encrypted archive")
+            }
             let loadedItems = try await service.timeline(roomID: roomID, session: session)
-            guard self.roomID == roomID else {
+            guard self.roomID == roomID, !Task.isCancelled else {
                 return
             }
 
-            let mergedItems = Self.mergedTimelineItems(
-                cachedItemsByRoomID[roomID] ?? [],
-                loadedItems
-            )
-            cachedItemsByRoomID[roomID] = mergedItems
-            items = mergedItems
+            storeLoadedItems(loadedItems, for: roomID)
+            if showsLoading {
+                updateLoadProgress(roomID: roomID, fractionCompleted: 1, status: "Timeline ready")
+            }
         } catch {
             guard self.roomID == roomID else {
                 return
@@ -252,6 +289,7 @@ final class TimelineViewModel: ObservableObject {
         roomID = nil
         items = []
         isLoading = false
+        loadProgress = nil
         isSending = false
         isSendingAttachment = false
         isLoadingAttachmentAvailability = false
@@ -268,6 +306,52 @@ final class TimelineViewModel: ObservableObject {
         cachedItemsByRoomID = [:]
     }
 
+    private func prepareForLoad(roomID: String, showsLoading: Bool) {
+        if self.roomID != roomID {
+            self.roomID = roomID
+            resetRoomScopedState()
+            items = cachedItemsByRoomID[roomID] ?? []
+        }
+
+        if showsLoading {
+            isLoading = true
+            loadProgress = TrixTimelineLoadProgress(
+                roomID: roomID,
+                fractionCompleted: 0.15,
+                status: "Preparing timeline"
+            )
+        }
+    }
+
+    private func updateLoadProgress(roomID: String, fractionCompleted: Double, status: String) {
+        guard self.roomID == roomID else {
+            return
+        }
+
+        loadProgress = TrixTimelineLoadProgress(
+            roomID: roomID,
+            fractionCompleted: fractionCompleted,
+            status: status
+        )
+    }
+
+    private func resetRoomScopedState() {
+        items = []
+        isSending = false
+        isSendingAttachment = false
+        isLoadingAttachmentAvailability = false
+        downloadingAttachmentID = nil
+        attachmentDownloadFailures = [:]
+        reactionActionMessageID = nil
+        downloadedAttachment = nil
+        inlineAttachmentPreviews = [:]
+        inlineAttachmentPreviewLoadingIDs = []
+        inlineAttachmentPreviewFailures = [:]
+        attachmentSendAvailability = nil
+        typingUserIDs = []
+        errorMessage = nil
+    }
+
     private func setInlineAttachmentPreviewLoading(_ isLoading: Bool, for itemID: String) {
         var loadingIDs = inlineAttachmentPreviewLoadingIDs
         if isLoading {
@@ -276,6 +360,15 @@ final class TimelineViewModel: ObservableObject {
             loadingIDs.remove(itemID)
         }
         inlineAttachmentPreviewLoadingIDs = loadingIDs
+    }
+
+    private func storeLoadedItems(_ loadedItems: [TrixTimelineItem], for roomID: String) {
+        let mergedItems = Self.mergedTimelineItems(
+            cachedItemsByRoomID[roomID] ?? [],
+            loadedItems
+        )
+        cachedItemsByRoomID[roomID] = mergedItems
+        items = mergedItems
     }
 
     private func store(_ item: TrixTimelineItem, for roomID: String) {

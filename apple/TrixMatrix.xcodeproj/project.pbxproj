@@ -42,6 +42,7 @@
 		5BCD889F6C600AFC151E706F /* MartinOMEMO in Frameworks */ = {isa = PBXBuildFile; productRef = 7BF98DD511834ED334A9B210 /* MartinOMEMO */; };
 		67CC33870704986A5164F9A2 /* RoomListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CB4DE535EF97BB0D0B809CB /* RoomListViewModel.swift */; };
 		6D3ADB1DE9BA846DCE0F6CF1 /* TrixPasswordChangeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47369C50BE6121D347C0CB7C /* TrixPasswordChangeView.swift */; };
+		6D57E5D1FCB8F27CE604807D /* TimelineViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEDCBB15AE4311F5FE32A774 /* TimelineViewModelTests.swift */; };
 		6DB899B364A13A3B8507B857 /* TrixStickerImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A20B3F32A750F95F1336243 /* TrixStickerImportService.swift */; };
 		71F0476C58E284C111056AF1 /* TrixRoomSearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A96ED103808B7E771FFC5BA /* TrixRoomSearchView.swift */; };
 		7237DC2D59EBADBA1D775E58 /* TrixModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9F6EEF889A5560D0EDF1503 /* TrixModels.swift */; };
@@ -150,6 +151,7 @@
 		EDAB7547FCC71382F1D4B836 /* TrixiOSAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixiOSAppDelegate.swift; sourceTree = "<group>"; };
 		EE82DADDEFD49DFCE533A797 /* TrixUIPrimitives.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixUIPrimitives.swift; sourceTree = "<group>"; };
 		EEB0655E233DAB56B8623281 /* TimelineViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineViewModel.swift; sourceTree = "<group>"; };
+		EEDCBB15AE4311F5FE32A774 /* TimelineViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineViewModelTests.swift; sourceTree = "<group>"; };
 		F121190716DA6556A98C18CE /* TrixAPNsCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixAPNsCoordinator.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -178,6 +180,7 @@
 		02B6E2ED9762411B61972286 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				EEDCBB15AE4311F5FE32A774 /* TimelineViewModelTests.swift */,
 				97D5FB80F688141C7F418525 /* TrixRemoteNotificationPayloadTests.swift */,
 				0E361322ECEB6552681FC51E /* TrixStickerTests.swift */,
 			);
@@ -549,6 +552,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6D57E5D1FCB8F27CE604807D /* TimelineViewModelTests.swift in Sources */,
 				D1020333366101FD28A6BC76 /* TrixRemoteNotificationPayloadTests.swift in Sources */,
 				CFD02B00A99A6EB28089E5A7 /* TrixStickerTests.swift in Sources */,
 			);
