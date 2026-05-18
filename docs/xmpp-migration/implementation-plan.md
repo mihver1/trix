@@ -4,7 +4,7 @@
 
 Ship a private XMPP-backed Trix messenger with mandatory OMEMO for DMs and
 groups, no federation, centralized Trix control-plane operations, and native
-iOS and macOS clients with legacy feature parity.
+iOS and macOS clients with product feature parity.
 
 The plan does not include Matrix history migration, Matrix bridging, or
 compatibility with existing Matrix rooms. Users should treat the XMPP launch as
@@ -132,8 +132,8 @@ Definition of done:
 - SwiftUI views do not call the XMPP library directly.
 - Mock services cover login, room list, DM timeline, group timeline, invite,
   password change, composer, attachment, and visible encryption states.
-- Existing legacy and Matrix release tooling remains untouched unless a later
-  task explicitly reopens that scope.
+- Current Apple/XMPP release tooling remains intact unless a later task
+  explicitly scopes a replacement.
 
 Verification commands:
 
@@ -211,7 +211,7 @@ Verification checklist:
 
 ### Phase 5: Legacy Parity Features
 
-Implement parity features using the legacy product as the behavior target, not
+Implement parity features using the intended product as the behavior target, not
 as code to copy.
 
 Definition of done:

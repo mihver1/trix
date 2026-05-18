@@ -1,7 +1,7 @@
-# XMPP Legacy Parity Checklist
+# XMPP Product Parity Checklist
 
 Use this checklist to decide whether the XMPP+OMEMO implementation has reached
-legacy Trix product parity. A checked item means both iOS and macOS have been
+Trix product parity. A checked item means both iOS and macOS have been
 verified unless the item explicitly names one platform.
 
 ## Account And Session
@@ -30,8 +30,8 @@ Definition of done:
 - [ ] Last message, timestamp, unread state, and sender summary are visible.
 - [ ] App restart reloads the same room list and selected timeline state where
   appropriate.
-- [ ] iOS navigation matches the legacy compact messenger shape.
-- [ ] macOS navigation supports the legacy desktop workflows.
+- [ ] iOS navigation matches the compact messenger shape expected for Trix.
+- [ ] macOS navigation supports the desktop workflows expected for Trix.
 
 Definition of done:
 
@@ -119,8 +119,8 @@ Definition of done:
 
 Definition of done:
 
-- User-visible conversation state is at least as understandable as legacy Trix,
-  even where XMPP extensions differ from the legacy implementation.
+- User-visible conversation state is understandable even where XMPP extensions
+  differ from prior prototypes.
 
 ## Directory, Profile, And Settings
 
@@ -183,4 +183,3 @@ Definition of done:
 
 - Release commands are documented with real target names and have been run at
   least once after XMPP integration lands.
-

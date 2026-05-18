@@ -1087,7 +1087,7 @@ final class TrixAppModel: ObservableObject {
 extension TrixAppModel {
     static func makeDefault() -> TrixAppModel {
         #if DEBUG
-        if ProcessInfo.processInfo.environment["TRIX_MATRIX_USE_MOCK_SERVICE"] == "1" {
+        if ProcessInfo.processInfo.environment["TRIX_USE_MOCK_SERVICE"] == "1" {
             return TrixAppModel(
                 sessionStore: TrixMockSessionStore(),
                 registrationService: MockInviteRegistrationService(),

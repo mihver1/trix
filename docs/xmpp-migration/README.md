@@ -1,7 +1,7 @@
 # XMPP Migration Package
 
-This folder is the planning package for a Trix pivot from the current Matrix
-MVP path to a private XMPP deployment with mandatory OMEMO encryption.
+This folder is the planning package for the Trix pivot to a private XMPP
+deployment with mandatory OMEMO encryption.
 
 The package is intentionally scoped to planning. It does not create Apple code,
 bridge code, or migration scripts.
@@ -18,7 +18,7 @@ and a centralized Trix operator control plane.
   first product candidate because the MVP needs centralized administration;
   Prosody remains a lightweight fallback for shell-managed spikes.
 - Clients: two native Apple clients, iOS and macOS.
-- Product target: feature parity with the legacy Trix messenger.
+- Product target: feature parity with the intended Trix messenger experience.
 - Control plane: centralized Trix-owned account, roster, group, policy, and
   operational administration.
 
@@ -32,22 +32,18 @@ and a centralized Trix operator control plane.
 - No plaintext DM or group fallback.
 - No public federated XMPP service for the MVP.
 
-Existing Matrix documents and code can be used as current-state references, but
-the XMPP migration must not depend on moving Matrix rooms, Matrix event history,
+The XMPP migration must not depend on moving Matrix rooms, Matrix event history,
 Matrix device state, or Matrix recovery material into XMPP.
-
-The old Matrix known-bugs folder is now an archive only:
-[../known_bugs/README.md](../known_bugs/README.md).
 
 ## Documents
 
 - [Implementation Plan](implementation-plan.md): phased delivery plan,
   definitions of done, and verification expectations.
-- [Parity Checklist](parity-checklist.md): legacy feature parity target for
-  the XMPP clients and control plane.
+- [Parity Checklist](parity-checklist.md): product parity target for the XMPP
+  clients and control plane.
 - [Protocol Feature Map](protocol-feature-map.md): feature-by-feature mapping
-  from legacy Trix behavior to XMPP primitives, Trix control-plane ownership, and
-  Apple verification surfaces.
+  from intended Trix behavior to XMPP primitives, Trix control-plane ownership,
+  and Apple verification surfaces.
 - [Apple OMEMO Feasibility](apple-omemo-feasibility.md): current Apple library
   candidates, licensing risks, interop risks, and the smoke tests required before
   implementation.

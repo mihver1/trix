@@ -1,40 +1,13 @@
-OUT ?= bindings
-
 check:
-	$(MAKE) contract-check
 	cargo check --workspace
 
 fmt:
 	cargo fmt --all
 
-contract-check:
-	cargo test -p trix-core --test ffi_surface_test
-	cargo test -p trix-types --test api_json_contract
-	cargo test -p trix-server --test openapi_v0_contract
-	python3 scripts/ffi_parity_audit.py --strict
-	./scripts/verify-uniffi-bindings.sh
-	python3 -m unittest discover -s scripts -p 'test_*.py' -v
+check-apple:
+	cd apple && xcodegen generate
+	xcodebuild -project apple/TrixMatrix.xcodeproj -scheme TrixMatrixMac -destination 'platform=macOS' build CODE_SIGNING_ALLOWED=NO
+	xcodebuild -project apple/TrixMatrix.xcodeproj -scheme TrixMatrixiOS -destination 'platform=iOS Simulator,name=iPhone 17' build CODE_SIGNING_ALLOWED=NO
 
-run-server:
-	cargo run -p trixd
-
-strings-generate:
-	ruby scripts/generate_strings.rb
-
-build-trix-core-lib:
-	cargo build -p trix-core --lib
-
-ffi-bindings-swift: build-trix-core-lib
-	mkdir -p $(OUT)
-	cargo run -p trix-core --bin uniffi-bindgen -- generate --library target/debug/libtrix_core.dylib --language swift --out-dir $(OUT)
-
-ffi-bindings-kotlin: build-trix-core-lib
-	mkdir -p $(OUT)
-	cargo run -p trix-core --bin uniffi-bindgen -- generate --library target/debug/libtrix_core.dylib --language kotlin --out-dir $(OUT)
-
-ffi-bindings: build-trix-core-lib
-	mkdir -p $(OUT)
-	cargo run -p trix-core --bin uniffi-bindgen -- generate --library target/debug/libtrix_core.dylib --language swift --language kotlin --out-dir $(OUT)
-
-ffi-parity-audit:
-	python3 scripts/ffi_parity_audit.py --strict
+run-push-gateway:
+	cargo run -p trix-push-gateway

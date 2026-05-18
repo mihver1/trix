@@ -8,8 +8,8 @@ parallel Matrix service, or Matrix data migration path for this MVP.
 
 ## Legacy Product Parity Target
 
-Validated from the legacy client READMEs, known-bugs backlog, and client
-checklist, not by copying legacy implementation details.
+Validated from the XMPP MVP docs and current Apple/XMPP implementation, not by
+copying old implementation details.
 
 - [x] Login, logout, and session restore.
 - [x] Room list with DMs and groups.
@@ -79,7 +79,7 @@ checklist, not by copying legacy implementation details.
       XMPP push-component registration plumbing, and generic sync payload
       handling are wired. Inactive iOS/macOS push handling now syncs room state
       without marking the selected room read. Visible APNs use only `Trix` plus
-      encrypted-message/unread-count wording, and legacy silent sync may create a
+      encrypted-message/unread-count wording, and older silent sync may create a
       generic local notification with the same plaintext-free wording.
       `trix-push-gateway` now includes the APNs sender plus XEP-0114
       component/store for Martin/XEP-0357 registration nodes. On 2026-05-10 the
@@ -405,10 +405,9 @@ checklist, not by copying legacy implementation details.
   `TrixMatrix.xcodeproj`, `TrixMatrixiOS`, and `TrixMatrixMac` for command
   compatibility during this slice. Temporary `matrix-*` just aliases remain only
   for callers that have not switched command names yet.
-- Existing legacy TestFlight scripts are preserved. The new XMPP Apple app now
-  has `apple/scripts/archive-testflight.sh` for iOS/macOS archive, export, and
-  upload paths, with unsigned archive mode for machines without signing
-  material.
+- The XMPP Apple app has `apple/scripts/archive-testflight.sh` for iOS/macOS
+  archive, export, and upload paths, with unsigned archive mode for machines
+  without signing material.
 - Live smoke must print only scrubbed status lines. It must not print passwords,
   auth tokens, OMEMO secrets, APNs tokens, decrypted message bodies, or decrypted
   attachment contents.

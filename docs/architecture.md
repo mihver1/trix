@@ -169,10 +169,10 @@ For Trix MVP this means:
 - Account recovery and device replacement must be documented as separate flows
   from login.
 
-## Legacy Code
+## Removed Legacy Code
 
-The existing `apps/ios`, `apps/macos`, `crates/trix-core`, and `apps/trixd` paths
-remain in the repository during the pivot. They preserve UI history, release
-tooling, and test references. New XMPP protocol work should avoid expanding the
-legacy OpenMLS/UniFFI surface unless the task explicitly concerns legacy
-maintenance.
+The legacy custom `trixd`/OpenMLS clients, Rust core/server crates, generated
+UniFFI bindings, SQL migrations, OpenAPI contract, and old interop harnesses are
+no longer part of the active repository surface. New work should target the
+current XMPP scaffold, the SwiftUI Apple app under `apple/`, and the standalone
+XMPP push gateway.

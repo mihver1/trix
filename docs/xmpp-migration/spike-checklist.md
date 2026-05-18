@@ -45,7 +45,7 @@ reviewed library APIs?
 - [x] Confirm the app can detect missing or unsupported OMEMO state before send.
 - [x] Confirm no application code needs to manually manipulate key material.
 - [ ] Decide whether the implementation targets current `urn:xmpp:omemo:2`,
-      legacy ecosystem namespaces, or an explicitly documented compatibility
+      older ecosystem namespaces, or an explicitly documented compatibility
       bridge inside the selected library.
 
 Exit criteria:
@@ -116,15 +116,15 @@ Exit criteria:
 
 ## History And Launch Gate
 
-Question: what happens to existing Matrix and legacy data?
+Question: what happens to existing Matrix and prototype data?
 
 - [x] Confirm no Matrix data migration.
 - [x] Confirm no Matrix bridge.
 - [x] Confirm no Matrix room history import.
 - [x] Confirm no Matrix device or recovery material import.
 - [ ] Define the user-facing launch/reset message.
-- [ ] Define whether legacy local history remains view-only, exported, or
-  ignored for the XMPP launch.
+- [ ] Define whether prior local history is ignored or handled by an explicit
+  export/reset message for the XMPP launch.
 
 Exit criteria:
 
@@ -195,7 +195,7 @@ Question: how will the two Apple clients ship?
 - [ ] Confirm Keychain access groups.
 - [ ] Confirm APNs entitlements if notifications are in scope.
 - [ ] Confirm TestFlight/archive commands.
-- [ ] Confirm upgrade behavior from Matrix or legacy builds.
+- [ ] Confirm upgrade behavior from earlier Matrix or prototype builds.
 
 Exit criteria:
 

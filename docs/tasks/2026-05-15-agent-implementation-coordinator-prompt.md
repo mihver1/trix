@@ -70,8 +70,8 @@ same evidence standard.
   message bodies, decrypted attachments, filenames, media keys, search queries,
   drafts, exported content, invite secrets, or local secret paths.
 - Keep `mod_http_api` and operator control surfaces loopback-only.
-- Preserve existing TestFlight and legacy tooling unless the task explicitly
-  scopes that change.
+- Preserve current Apple/XMPP release and verification tooling unless the task
+  explicitly scopes that change.
 - Prefer existing repo patterns over new abstractions. Add abstractions only when
   they remove real complexity or match local structure.
 - For Apple UI work, support both iOS and macOS where the current shared app does,
@@ -120,7 +120,6 @@ For push/server/control-plane changes, add the relevant Rust/script checks:
 cargo test -p trix-push
 cargo test -p trix-push-gateway
 cargo check -p trix-push-gateway
-cargo check -p trixd
 bash -n server/xmpp/scripts/*.sh apple/scripts/archive-testflight.sh
 git diff --check
 ```
@@ -177,4 +176,3 @@ Only after the user explicitly confirms closure:
 If the implementation is blocked, do not delete or mark the task done. Update the
 task file with a `## Blocked` section that contains the concrete blocker,
 evidence, and next command/action needed.
-

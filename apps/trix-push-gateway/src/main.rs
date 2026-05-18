@@ -12,10 +12,9 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 use trix_push::{
-    ApnsDeliveryOutcome, ApnsPushClient, ApnsPushConfig, ApnsPushTarget,
+    ApnsDeliveryOutcome, ApnsPushClient, ApnsPushConfig, ApnsPushTarget, ApplePushEnvironment,
     TrixApnsNotificationPayload, normalize_apns_token_hex,
 };
-use trix_types::{ApplePushEnvironment, ServiceStatus};
 
 mod store;
 mod xmpp_component;
@@ -171,7 +170,7 @@ fn xmpp_component_from_env() -> Result<Option<XmppComponentConfig>> {
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         service: "trix-push-gateway",
-        status: ServiceStatus::Ok,
+        status: "ok",
         version: env!("CARGO_PKG_VERSION"),
     })
 }
@@ -257,7 +256,7 @@ struct WakeResponse {
 #[derive(Debug, Serialize)]
 struct HealthResponse {
     service: &'static str,
-    status: ServiceStatus,
+    status: &'static str,
     version: &'static str,
 }
 

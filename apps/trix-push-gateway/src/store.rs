@@ -8,9 +8,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
-use trix_types::ApplePushEnvironment;
 
-use trix_push::normalize_apns_token_hex;
+use trix_push::{ApplePushEnvironment, normalize_apns_token_hex};
 
 pub struct PushRegistrationStore {
     path: PathBuf,

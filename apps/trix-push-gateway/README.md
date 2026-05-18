@@ -1,8 +1,7 @@
 # Trix Push Gateway
 
-`trix-push-gateway` is a small APNs sender extracted from the legacy `trixd`
-push path. It is intentionally not a chat server and does not handle OMEMO
-payloads.
+`trix-push-gateway` is a small APNs sender and XEP-0114 XMPP push component. It
+is intentionally not a chat server and does not handle OMEMO payloads.
 
 Current scope:
 

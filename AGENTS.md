@@ -2,8 +2,9 @@
 
 ## Project Direction
 
-Trix is pivoting from the legacy custom `trixd`/OpenMLS prototype and the
-short-lived Matrix experiment to a small private XMPP + OMEMO messenger.
+Trix is a small private XMPP + OMEMO messenger. The legacy custom
+`trixd`/OpenMLS prototype and the short-lived Matrix experiment are no longer
+active repo surfaces.
 
 Target architecture:
 
@@ -34,26 +35,20 @@ writing crypto in the app.
 
 ## Repository Layout
 
-- `server/xmpp/`: new private XMPP server scaffold, deployment notes, and smoke
+- `server/xmpp/`: private XMPP server scaffold, deployment notes, and smoke
   checklist.
-- `server/`: older Conduit/Matrix server files may remain while the XMPP spike is
-  in flight. Treat them as temporary experiment artifacts, not the target MVP.
 - `apple/`: current SwiftUI Apple client scaffold. Source files, service
   protocols, models, and views use protocol-neutral `Trix*` names. The generated
   Xcode project and schemes still keep `TrixMatrix*` compatibility names for
   this slice. Keep SDK/protocol calls behind service protocols and view models.
+- `apps/trix-push-gateway/`: private APNs sender and XEP-0114 XMPP push
+  component for the XMPP deployment.
+- `crates/trix-push/`: APNs client and payload support used by the push gateway.
 - `docs/architecture.md`: XMPP + OMEMO target architecture.
 - `docs/security.md`: private deployment threat model and E2EE caveats.
 - `docs/mvp-checklist.md`: concrete XMPP/OMEMO validation checklist.
 - `docs/xmpp-migration/`: migration plan, parity checklist, spike checklist, and
   risk register for the XMPP pivot.
-- `apps/ios`, `apps/macos`: legacy Apple clients backed by `trix-core` and
-  OpenMLS. Keep their UI and release tooling intact while the new XMPP path is
-  brought up.
-- `apps/ios/scripts/build-testflight.sh`: current iOS TestFlight path.
-- `apps/macos/scripts/archive-testflight.sh`: current macOS TestFlight path.
-- `crates/`, `apps/trixd`, `apps/android`, `apps/trix-botd`: legacy prototype
-  code. Do not remove during small XMPP MVP slices unless explicitly asked.
 
 ## Package Managers
 
@@ -119,29 +114,13 @@ xcodebuild \
 These target names are still Matrix-named until the protocol-neutral Apple
 project/scheme rename lands. Do not treat that naming as the product direction.
 
-## Legacy Commands
+## Rust Commands
 
-Use these when editing legacy code:
-
-```bash
-cargo check -p trix-core
-cargo test -p trix-core
-swift test --package-path apps/macos
-swift test --package-path apps/macos-admin
-xcodebuild -project "apps/macos-admin/TrixMacAdmin.xcodeproj" -scheme "TrixMacAdmin" -destination "platform=macOS" build CODE_SIGNING_ALLOWED=NO
-./scripts/client-smoke-harness.sh --list-suites
-./scripts/client-smoke-harness.sh --suite macos --no-postgres
-./scripts/client-smoke-harness.sh --suite ios-unit --no-postgres
-```
-
-Existing TestFlight tooling:
+Use these when editing the remaining Rust XMPP push gateway code:
 
 ```bash
-cd apps/ios
-./scripts/build-testflight.sh
-
-cd apps/macos
-./scripts/archive-testflight.sh
+cargo check --workspace
+cargo test --workspace
 ```
 
 ## Formatting And Linting Expectations
@@ -152,7 +131,6 @@ cd apps/macos
 - Keep UI and session/sync logic separated through service protocols and view
   models.
 - Keep documentation accurate when behavior changes.
-- Do not hand-edit generated UniFFI files in legacy clients.
 
 ## Security Rules
 
@@ -192,5 +170,4 @@ For XMPP MVP tasks:
 - No custom crypto is added.
 - No secrets are committed.
 - Unimplemented MVP items are listed in `docs/mvp-checklist.md`.
-- Existing TestFlight scripts are preserved unless explicitly replaced.
 - Available build/test/smoke commands are run and exact results are reported.

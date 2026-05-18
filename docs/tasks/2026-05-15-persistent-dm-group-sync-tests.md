@@ -32,7 +32,7 @@ reconstructing the command chain from memory.
 - Do not require committed credentials.
 - Do not print decrypted message bodies, credentials, OMEMO keys, attachment
   filenames, media keys, or APNs tokens.
-- Do not turn this into a Matrix or legacy `trix-core` test.
+- Do not turn this into a Matrix-era or removed Rust-core test.
 - Do not mark the checklist complete with only a mock/unit test; the requested
   coverage is around the existing live encrypted sync behavior.
 

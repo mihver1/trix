@@ -204,9 +204,8 @@ Those remote or local notifications must not include decrypted text, filenames,
 or attachment names.
 
 ejabberd `mod_push` only exposes XMPP push semantics; it does not sign or send
-APNs requests by itself. APNs signing material has been verified on the legacy
-`trix-server` deployment, and the APNs sender code is extracted into the
-standalone `trix-push-gateway` binary. The gateway also has an XEP-0114
+APNs requests by itself. APNs signing is handled by the standalone
+`trix-push-gateway` binary. The gateway also has an XEP-0114
 component mode that accepts Martin/Tigase `register-device`, stores XEP-0357
 node mappings outside the repo, and emits only the generic sync notification
 contract above.

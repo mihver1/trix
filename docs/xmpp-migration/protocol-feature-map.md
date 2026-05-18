@@ -1,12 +1,12 @@
 # XMPP Protocol Feature Map
 
-This map ties legacy Trix behavior to the XMPP primitive, Trix control-plane
-owner, Apple implementation surface, and verification path. It is not a claim
-that every XEP is production-ready in the chosen Apple stack. OMEMO group live
-validation, message reactions, and signed-device APNs delivery are still spike
-gates.
+This map ties intended Trix product behavior to the XMPP primitive, Trix
+control-plane owner, Apple implementation surface, and verification path. It is
+not a claim that every XEP is production-ready in the chosen Apple stack. OMEMO
+group live validation, message reactions, and signed-device APNs delivery are
+still spike gates.
 
-| Legacy feature | XMPP or control-plane primitive | Apple implementation surface | Verification |
+| Product feature | XMPP or control-plane primitive | Apple implementation surface | Verification |
 |---|---|---|---|
 | Private single-server deployment, no federation | ejabberd or Prosody with server-to-server disabled; no public `5269`; no s2s DNS records | No federation UI; fixed Trix account domain from config | Server config check, external `5222` positive check, external `5269` negative check |
 | Operator account lifecycle | ejabberd admin API or Trix control-plane wrapper; public registration disabled; single-use invite issue/redemption and self-service password change allowed | Settings invite-code issuing, invite-code account creation, password change, login, disabled-account state | Create invite from app, redeem once, change password from Settings, log in both platforms, disable user, verify new sessions fail |
@@ -28,9 +28,9 @@ gates.
 | Notifications | XEP-0357 or server-specific push integration plus Trix APNs gateway | APNs registration, push handling, badge sync | Background push with payload/log audit confirming no decrypted body |
 | Chat lifecycle | MUC leave/destroy where allowed, local hide/forget, XEP-0424 for message retraction only | Leave group, hide/remove DM with accurate wording | Leave from both platforms, wording does not promise impossible remote deletion |
 | Diagnostics/status | Trix diagnostics/control plane plus XMPP connection/archive/push/OMEMO state | iOS status view, macOS advanced/status panels, redacted diagnostic export | Offline/server failure states, secret-redaction checks during login/send/push |
-| Centralized server management | ejabberd admin API or Trix wrapper for accounts, groups, health, backups | Operator app/script, likely successor to `apps/macos-admin` | Create/disable users, inspect groups, verify backup status, no committed secrets |
+| Centralized server management | ejabberd admin API or Trix wrapper for accounts, groups, health, backups | Operator script or future operator UI | Create/disable users, inspect groups, verify backup status, no committed secrets |
 | Bot/runtime parity | Bot as ordinary XMPP account using the same OMEMO policy | Separate bot service/CLI, not SwiftUI | Bot logs in, joins encrypted DM/group if supported, no bot-only plaintext path |
-| Release parity | XMPP iOS/macOS targets, existing signing/APNs assumptions preserved | New target names/scripts, legacy release scripts untouched until replaced | iOS/macOS debug builds, archive/TestFlight path, fresh install login smoke |
+| Release parity | XMPP iOS/macOS targets, existing signing/APNs assumptions preserved | Current `apple/` archive/TestFlight script | iOS/macOS debug builds, archive/TestFlight path, fresh install login smoke |
 
 ## Protocol References
 

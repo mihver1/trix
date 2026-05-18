@@ -45,8 +45,7 @@ payload contains no plaintext fields.
 1. Confirm the current state with `git status --short`, then inspect the files
    above.
 2. Build or install a signed app using the existing `apple/` lane and a real
-   Apple signing identity. Prefer the current app path, not the legacy
-   `apps/ios` lane.
+   Apple signing identity.
 3. Register APNs from the signed app. Verify the app reaches an APNs registered
    state through UI/status or scrubbed logs without printing the token.
 4. Trigger a generic push through the real path:

@@ -10,7 +10,6 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::Mutex;
-use trix_types::ApplePushEnvironment;
 
 const APNS_AUTH_TOKEN_TTL_SECONDS: u64 = 50 * 60;
 const APNS_PUSH_TYPE_BACKGROUND: &str = "background";
@@ -209,6 +208,13 @@ impl ApnsPushClient {
 pub struct ApnsPushTarget {
     pub token_hex: String,
     pub environment: ApplePushEnvironment,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApplePushEnvironment {
+    Sandbox,
+    Production,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

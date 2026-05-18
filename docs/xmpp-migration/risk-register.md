@@ -52,9 +52,8 @@ Status: Accepted for private MVP; distribution obligations remain tracked.
 
 Level: High
 
-Risk: private encrypted group behavior may differ from Matrix encrypted rooms or
-legacy expectations, especially around membership changes, device fan-out, and
-history visibility.
+Risk: private encrypted group behavior may differ from product expectations,
+especially around membership changes, device fan-out, and history visibility.
 
 Mitigation:
 
@@ -192,7 +191,7 @@ Status: Open.
 
 Level: Medium
 
-Risk: the pivot can stall if every legacy edge case is treated as launch
+Risk: the pivot can stall if every old prototype edge case is treated as launch
 blocking without owner, priority, or verification.
 
 Mitigation:

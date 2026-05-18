@@ -11,8 +11,8 @@ The default recommendation is now ejabberd, because Trix needs a centralized
 operator control plane. Prosody remains in this directory only as a lightweight
 shell-managed fallback/spike profile.
 
-The scaffold is intentionally separate from the Matrix server files. Federation
-is disabled, registration is closed by default, and no secrets are committed.
+Federation is disabled, registration is closed by default, and no secrets are
+committed.
 
 ## Files
 
@@ -329,12 +329,11 @@ ejabberd `mod_push` is enabled for XMPP push semantics, but ejabberd is not an
 APNs provider by itself. Trix provides `trix-push-gateway` as a private APNs
 sender plus XEP-0114 component for Martin/Tigase registration.
 
-APNs signing material has been verified on the legacy `trix-server` deployment,
-outside this repository. The gateway loads APNs credentials from environment or
-a mounted `.p8` file, accepts only generic notification requests, advertises
-`pubsub/push`, handles Martin's `register-device` command, stores the returned
-XEP-0357 node mapping locally, and sends only generic APNs alerts with
-`aps.content-available=1` plus `trix.type=sync` notifications.
+The gateway loads APNs credentials from environment or a mounted `.p8` file,
+accepts only generic notification requests, advertises `pubsub/push`, handles
+Martin's `register-device` command, stores the returned XEP-0357 node mapping
+locally, and sends only generic APNs alerts with `aps.content-available=1` plus
+`trix.type=sync` notifications.
 
 Do not commit the `.p8` key or related credentials. The XEP-0114 component port
 `5347` must stay private to the host or Docker network and must not be published
@@ -353,18 +352,8 @@ internet. Do not mark APNs delivery complete until a signed-device visible
 generic smoke passes without plaintext message, filename, media-key, or
 decrypted-content payload fields.
 
-To verify a legacy `trixd` env file or process without printing values:
-
-```bash
-server/xmpp/scripts/push-gateway-apns-presence.sh /path/to/trixd.env
-server/xmpp/scripts/push-gateway-apns-presence.sh --pid <trixd-pid>
-```
-
-The checker prints only `present`, `missing`, `complete`, and key-file
-readability status. It does not print APNs team IDs, key IDs, topics, private
-key contents, or key paths. Once the source reports `apns_config=complete`, copy
-or mount the `.p8` into the XMPP deployment, set matching `TRIX_APNS_*` values
-for `trix-push-gateway`, set fresh `TRIX_PUSH_GATEWAY_TOKEN` and
+Mount the `.p8` into the XMPP deployment, set matching `TRIX_APNS_*` values for
+`trix-push-gateway`, set fresh `TRIX_PUSH_GATEWAY_TOKEN` and
 `TRIX_XMPP_PUSH_COMPONENT_SECRET`, then start:
 
 ```bash
