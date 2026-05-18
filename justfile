@@ -5,7 +5,8 @@ set dotenv-load := true
 set positional-arguments := true
 
 repo_root := justfile_directory()
-version := `cat VERSION | tr -d '[:space:]'`
+version_file := repo_root / "version.conf"
+version := `awk -F= '/^[[:space:]]*VERSION[[:space:]]*=/{gsub(/[[:space:]"]/, "", $2); print $2; found=1; exit} END{if(!found) exit 1}' version.conf`
 ios_dir := repo_root / "apps/ios"
 macos_dir := repo_root / "apps/macos"
 macos_admin_dir := repo_root / "apps/macos-admin"
@@ -26,7 +27,15 @@ bump level:
     #!/usr/bin/env bash
     set -euo pipefail
     current="{{ version }}"
+    version_file="{{ version_file }}"
+
     IFS='.' read -r major minor patch <<< "$current"
+    if [[ -z "${major:-}" || -z "${minor:-}" || -z "${patch:-}" ]] ||
+       [[ ! "$major" =~ ^[0-9]+$ || ! "$minor" =~ ^[0-9]+$ || ! "$patch" =~ ^[0-9]+$ ]]; then
+      echo "error: VERSION in $version_file must be semver-like MAJOR.MINOR.PATCH, got '$current'" >&2
+      exit 1
+    fi
+
     case "{{ level }}" in
       major) major=$((major + 1)); minor=0; patch=0 ;;
       minor) minor=$((minor + 1)); patch=0 ;;
@@ -34,7 +43,11 @@ bump level:
       *) echo "error: expected major, minor, or patch" >&2; exit 1 ;;
     esac
     next="${major}.${minor}.${patch}"
-    echo "$next" > "{{ repo_root }}/VERSION"
+    if grep -qE '^[[:space:]]*VERSION[[:space:]]*=' "$version_file"; then
+      sed -i '' -E "s/^[[:space:]]*VERSION[[:space:]]*=.*/VERSION=$next/" "$version_file"
+    else
+      printf '\nVERSION=%s\n' "$next" >> "$version_file"
+    fi
     echo "==> $current -> $next"
     just sync-version
     git add -A
@@ -42,7 +55,7 @@ bump level:
     git tag "v$next"
     echo "==> tagged v$next"
 
-# Sync VERSION file into all platform configs
+# Sync version.conf into all platform configs
 sync-version:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -54,6 +67,8 @@ sync-version:
     sed -i '' "s/MARKETING_VERSION: .*/MARKETING_VERSION: $v/" "{{ macos_dir }}/project.yml"
     # macOS Admin project.yml
     sed -i '' "s/MARKETING_VERSION: .*/MARKETING_VERSION: $v/" "{{ macos_admin_dir }}/project.yml"
+    # XMPP Apple project.yml
+    sed -i '' "s/MARKETING_VERSION: .*/MARKETING_VERSION: $v/" "{{ trix_apple_dir }}/project.yml"
     # Android build.gradle.kts
     sed -i '' "s/versionName = \".*\"/versionName = \"$v\"/" "{{ android_gradle }}"
     # Cargo.toml workspace version
@@ -61,6 +76,7 @@ sync-version:
     echo "    ios/project.yml"
     echo "    macos/project.yml"
     echo "    macos-admin/project.yml"
+    echo "    apple/project.yml"
     echo "    android/app/build.gradle.kts"
     echo "    Cargo.toml"
 
@@ -70,10 +86,11 @@ sync-version:
 ios-testflight build_number="": (_testflight-preflight) sync-version
     #!/usr/bin/env bash
     set -euo pipefail
-    export TRIX_IOS_BUILD_NUMBER="{{ if build_number == "" { "$(date '+%Y%m%d%H%M')" } else { build_number } }}"
-    export TRIX_IOS_MARKETING_VERSION="{{ version }}"
-    echo "==> iOS TestFlight build v{{ version }} (CURRENT_PROJECT_VERSION=$TRIX_IOS_BUILD_NUMBER)"
-    bash "{{ ios_dir }}/scripts/build-testflight.sh" --upload --skip-prechecks
+    export TRIX_APPLE_BUILD_NUMBER="{{ if build_number == "" { "$(date '+%Y%m%d%H%M')" } else { build_number } }}"
+    export TRIX_APPLE_MARKETING_VERSION="{{ version }}"
+    export TRIX_ASC_DESTINATION="upload"
+    echo "==> XMPP Trix iOS TestFlight build v{{ version }} (CURRENT_PROJECT_VERSION=$TRIX_APPLE_BUILD_NUMBER)"
+    bash "{{ trix_apple_dir }}/scripts/archive-testflight.sh" --platform ios
 
 # Build macOS app and upload to TestFlight
 macos-testflight build_number="" destination="upload": (_testflight-preflight) sync-version
@@ -89,9 +106,10 @@ macos-testflight build_number="" destination="upload": (_testflight-preflight) s
 ios-archive build_number="":
     #!/usr/bin/env bash
     set -euo pipefail
-    export TRIX_IOS_BUILD_NUMBER="{{ if build_number == "" { "$(date '+%Y%m%d%H%M')" } else { build_number } }}"
-    echo "==> iOS archive (CURRENT_PROJECT_VERSION=$TRIX_IOS_BUILD_NUMBER)"
-    bash "{{ ios_dir }}/scripts/build-testflight.sh" --skip-prechecks
+    export TRIX_APPLE_BUILD_NUMBER="{{ if build_number == "" { "$(date '+%Y%m%d%H%M')" } else { build_number } }}"
+    export TRIX_APPLE_MARKETING_VERSION="{{ version }}"
+    echo "==> XMPP Trix iOS archive (CURRENT_PROJECT_VERSION=$TRIX_APPLE_BUILD_NUMBER)"
+    bash "{{ trix_apple_dir }}/scripts/archive-testflight.sh" --platform ios --unsigned-archive
 
 # Build macOS archive only (no upload)
 macos-archive build_number="":
