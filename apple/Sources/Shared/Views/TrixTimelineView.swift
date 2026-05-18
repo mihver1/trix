@@ -1281,11 +1281,10 @@ private struct TrixTimelineRow: View {
                                 addStickerPack: addStickerPack
                             )
                         } else {
-                            Text(item.body)
-                                .font(.body)
-                                .foregroundStyle(item.isLocalEcho ? .white : .primary)
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
+                            TrixCollapsibleMessageText(
+                                text: item.body,
+                                isOutgoing: item.isLocalEcho
+                            )
                         }
 
                         TrixReactionChips(
@@ -1371,6 +1370,126 @@ private struct TrixTimelineRow: View {
         #else
         return 330
         #endif
+    }
+}
+
+private struct TrixCollapsibleMessageText: View {
+    let text: String
+    let isOutgoing: Bool
+    @State private var isExpanded = false
+
+    private let previewLineCount = 20
+    private let collapseThreshold = 30
+
+    var body: some View {
+        if shouldCollapse {
+            VStack(alignment: .leading, spacing: 8) {
+                if isExpanded {
+                    messageText(text)
+
+                    unfoldButton(
+                        title: "Fold",
+                        systemImage: "chevron.up",
+                        accessibilityLabel: "Collapse message"
+                    )
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                } else {
+                    ZStack(alignment: .bottomTrailing) {
+                        messageText(previewText, lineLimit: previewLineCount)
+                            .padding(.bottom, 24)
+
+                        LinearGradient(
+                            colors: [
+                                bubbleSurface.opacity(0),
+                                bubbleSurface.opacity(0.92),
+                                bubbleSurface,
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: 58)
+                        .allowsHitTesting(false)
+
+                        unfoldButton(
+                            title: "Unfold",
+                            systemImage: "chevron.down",
+                            accessibilityLabel: "Unfold message"
+                        )
+                    }
+                }
+            }
+            .onChange(of: text) { _, _ in
+                isExpanded = false
+            }
+        } else {
+            messageText(text)
+        }
+    }
+
+    private var shouldCollapse: Bool {
+        logicalLines.count > collapseThreshold
+    }
+
+    private var previewText: String {
+        logicalLines.prefix(previewLineCount).joined(separator: "\n")
+    }
+
+    private var logicalLines: [String] {
+        text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .components(separatedBy: "\n")
+    }
+
+    private var bubbleSurface: Color {
+        isOutgoing ? TrixDesign.accent : TrixDesign.incomingBubbleSurface
+    }
+
+    private var textColor: Color {
+        isOutgoing ? .white : .primary
+    }
+
+    private var buttonForeground: Color {
+        isOutgoing ? .white : TrixDesign.accent
+    }
+
+    private var buttonSurface: Color {
+        isOutgoing ? Color.white.opacity(0.18) : TrixDesign.accent.opacity(0.12)
+    }
+
+    private func messageText(_ value: String, lineLimit: Int? = nil) -> some View {
+        Text(value)
+            .font(.body)
+            .foregroundStyle(textColor)
+            .lineLimit(lineLimit)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func unfoldButton(
+        title: String,
+        systemImage: String,
+        accessibilityLabel: String
+    ) -> some View {
+        Button {
+            withAnimation(.snappy(duration: 0.2)) {
+                isExpanded.toggle()
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Text(title)
+                Image(systemName: systemImage)
+                    .font(.caption.weight(.bold))
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(buttonForeground)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(buttonSurface, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+        .help(accessibilityLabel)
     }
 }
 
