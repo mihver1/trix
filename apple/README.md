@@ -105,11 +105,18 @@ The checked-in Apple app now has fail-closed APNs plumbing:
   optional `trix.room`, and optional badge metadata. The only accepted visible
   APNs alert is generic: title `Trix` with `New encrypted message` or unread-count
   wording. Payloads with plaintext/body outside that generic alert, decrypted
-  content, filename, or attachment-name fields are ignored by the app.
+  content, filename, attachment-name, or notification-profile fields are ignored
+  by the app.
 - Foreground notification presentation is suppressed for this target; remote
   pushes refresh local encrypted state. Inactive visible APNs are shown by the
   system, while legacy silent sync payloads may still create a generic local
-  notification after local sync.
+  notification after local sync. Those local fallback notifications honor
+  per-room default, muted, and mentions-only profiles after decrypted local state
+  has been refreshed.
+- Per-room notification profiles are stored locally in an AES-GCM encrypted
+  Application Support file with the encryption key in Keychain, and are backed by
+  a private XMPP PEP item under `urn:softgrid:trix:notification-profiles:1`.
+  They are never copied into APNs payloads.
 
 Current MVP blocker: `server/xmpp` enables ejabberd `mod_push` and the checked-in
 `trix-push-gateway` provides the private XEP-0114 component that accepts
@@ -234,7 +241,8 @@ The checked-in Apple code is now the first XMPP client slice:
 - iOS and macOS generic push handling that requests notification permission,
   avoids marking rooms read while inactive, and shows only generic
   encrypted-message/unread-count notifications without decrypted body text or
-  attachment names;
+  attachment names, with per-room default/muted/mentions-only controls in each
+  room;
 - login/session UI plus invite-code account creation from the login screen,
   invite-code issuing from Settings for signed-in accounts, and Settings-based
   password change that updates the saved Keychain session password only after the

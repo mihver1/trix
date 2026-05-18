@@ -41,6 +41,7 @@ struct TrixTimelineView: View {
     @State private var isShowingGroupLeaveConfirmation = false
     @State private var isShowingStickerPicker = false
     @State private var isAttachmentDropTargeted = false
+    @State private var isShowingNotificationSettings = false
 
     init(model: TrixAppModel, room: TrixRoomSummary) {
         self.model = model
@@ -223,6 +224,9 @@ struct TrixTimelineView: View {
                     }
                 }
             )
+        }
+        .sheet(isPresented: $isShowingNotificationSettings) {
+            TrixRoomNotificationSettingsView(model: model, room: room)
         }
         .confirmationDialog(
             "Forget this DM locally?",
@@ -700,6 +704,11 @@ struct TrixTimelineView: View {
                         .lineLimit(1)
 
                     TrixRoomSecurityMark(isEncrypted: canSendEncrypted, size: 20)
+
+                    TrixRoomNotificationProfileMark(
+                        profile: model.roomNotificationProfile(for: room.id),
+                        size: 20
+                    )
                 }
                 Text(room.subtitle)
                     .font(.subheadline)
@@ -742,6 +751,15 @@ struct TrixTimelineView: View {
             .help("Refresh timeline")
 
             Menu {
+                Button {
+                    isShowingNotificationSettings = true
+                } label: {
+                    Label(
+                        "Notifications",
+                        systemImage: model.roomNotificationProfile(for: room.id).systemImage
+                    )
+                }
+
                 if room.kind == .direct {
                     Button(role: .destructive) {
                         isShowingLocalForgetConfirmation = true
@@ -1236,6 +1254,62 @@ struct TrixTimelineView: View {
         first.isLocalEcho == second.isLocalEcho &&
         calendar.isDate(first.timestamp, inSameDayAs: second.timestamp) &&
         second.timestamp.timeIntervalSince(first.timestamp) <= 5 * 60
+    }
+}
+
+private struct TrixRoomNotificationSettingsView: View {
+    @ObservedObject var model: TrixAppModel
+    let room: TrixRoomSummary
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Notifications") {
+                    Picker("Profile", selection: profileBinding) {
+                        ForEach(TrixRoomNotificationProfile.allCases) { profile in
+                            Label(profile.label, systemImage: profile.systemImage)
+                                .tag(profile)
+                        }
+                    }
+                    .pickerStyle(.inline)
+
+                    if model.isUpdatingRoomNotificationProfile {
+                        ProgressView()
+                    }
+
+                    if let message = model.roomNotificationProfileMessage {
+                        TrixBannerView(
+                            text: message,
+                            systemImage: "exclamationmark.triangle",
+                            tint: .orange,
+                            dismissAction: model.dismissRoomNotificationProfileMessage
+                        )
+                    }
+                }
+            }
+            .navigationTitle(room.name)
+            .trixInlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .trixDialogSurface(minWidth: 360, minHeight: 300)
+    }
+
+    private var profileBinding: Binding<TrixRoomNotificationProfile> {
+        Binding(
+            get: { model.roomNotificationProfile(for: room.id) },
+            set: { profile in
+                Task {
+                    await model.setRoomNotificationProfile(profile, for: room.id)
+                }
+            }
+        )
     }
 }
 

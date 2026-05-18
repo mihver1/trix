@@ -268,13 +268,21 @@ struct TrixRoomListView: View {
             Button {
                 openPhoneRoom(room)
             } label: {
-                TrixRoomRow(room: room, mode: mode)
+                TrixRoomRow(
+                    room: room,
+                    notificationProfile: model.roomNotificationProfile(for: room.id),
+                    mode: mode
+                )
             }
             .buttonStyle(.plain)
             .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
             .listRowSeparator(.visible)
         } else {
-            TrixRoomRow(room: room, mode: mode)
+            TrixRoomRow(
+                room: room,
+                notificationProfile: model.roomNotificationProfile(for: room.id),
+                mode: mode
+            )
                 .tag(room.id as String?)
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -726,6 +734,7 @@ private struct TrixInboxAccountHeader: View {
 
 private struct TrixRoomRow: View {
     let room: TrixRoomSummary
+    let notificationProfile: TrixRoomNotificationProfile
     let mode: TrixRoomListMode
 
     var body: some View {
@@ -753,6 +762,8 @@ private struct TrixRoomRow: View {
                         .lineLimit(1)
 
                     TrixRoomSecurityMark(isEncrypted: room.isEncrypted, size: 20)
+
+                    TrixRoomNotificationProfileMark(profile: notificationProfile, size: 18)
 
                     Spacer(minLength: 8)
 
@@ -799,7 +810,8 @@ private struct TrixRoomRow: View {
     private var accessibilityLabel: String {
         let unread = room.unreadCount > 0 ? ", \(cappedUnreadCount) unread" : ", no unread messages"
         let encrypted = room.isEncrypted ? ", encrypted" : ", not encrypted"
-        return "\(roomTitle), \(room.kind.label)\(unread)\(encrypted), \(room.lastMessagePreview)"
+        let notifications = notificationProfile == .defaultProfile ? "" : ", \(notificationProfile.label)"
+        return "\(roomTitle), \(room.kind.label)\(unread)\(encrypted)\(notifications), \(room.lastMessagePreview)"
     }
 
     private var roomTitle: String {

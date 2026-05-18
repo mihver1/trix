@@ -95,7 +95,10 @@ private struct TrixMacRoomListView: View {
                         .padding(.vertical, 8)
                 } else {
                     ForEach(visibleRooms) { room in
-                        TrixMacRoomRow(room: room)
+                        TrixMacRoomRow(
+                            room: room,
+                            notificationProfile: model.roomNotificationProfile(for: room.id)
+                        )
                             .tag(room.id as String?)
                             .contentShape(Rectangle())
                     }
@@ -952,6 +955,7 @@ private struct TrixMacMetadataRow: View {
 
 private struct TrixMacRoomRow: View {
     let room: TrixRoomSummary
+    let notificationProfile: TrixRoomNotificationProfile
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -968,6 +972,7 @@ private struct TrixMacRoomRow: View {
                         .font(.headline)
                         .lineLimit(1)
                     TrixRoomSecurityMark(isEncrypted: room.isEncrypted, size: 20)
+                    TrixRoomNotificationProfileMark(profile: notificationProfile, size: 18)
                 }
 
                 Text(room.subtitle)

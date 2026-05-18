@@ -667,6 +667,38 @@ enum TrixRoomKind: String, Codable, Sendable {
     }
 }
 
+enum TrixRoomNotificationProfile: String, Codable, CaseIterable, Identifiable, Sendable {
+    case defaultProfile = "default"
+    case muted
+    case mentionsOnly
+
+    var id: String {
+        rawValue
+    }
+
+    var label: String {
+        switch self {
+        case .defaultProfile:
+            return "Default"
+        case .muted:
+            return "Muted"
+        case .mentionsOnly:
+            return "Mentions Only"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .defaultProfile:
+            return "bell"
+        case .muted:
+            return "bell.slash"
+        case .mentionsOnly:
+            return "bell.badge"
+        }
+    }
+}
+
 struct TrixRoomSummary: Identifiable, Codable, Equatable, Sendable {
     let id: String
     let name: String
@@ -1646,11 +1678,20 @@ struct TrixRemoteNotificationPayload: Equatable, Sendable {
     ) -> Bool {
         for (key, value) in dictionary {
             let normalizedKey = key.lowercased()
+            let compactKey = normalizedKey
+                .replacingOccurrences(of: "_", with: "")
+                .replacingOccurrences(of: "-", with: "")
             let childPath = path + [normalizedKey]
             if !isAllowedGenericAlertFieldPath(childPath) &&
                 (normalizedKey.contains("body") ||
                 normalizedKey.contains("plaintext") ||
                 normalizedKey.contains("decrypted") ||
+                compactKey.contains("notificationprofile") ||
+                compactKey.contains("notificationpreferences") ||
+                compactKey.contains("mute") ||
+                compactKey.contains("muted") ||
+                compactKey.contains("mentionsonly") ||
+                compactKey.contains("mention") ||
                 normalizedKey.contains("filename") ||
                 normalizedKey.contains("attachmentname") ||
                 normalizedKey.contains("attachment-name")) {

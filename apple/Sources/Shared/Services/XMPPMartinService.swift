@@ -420,6 +420,7 @@ actor XMPPMartinService: TrixService {
         let csiModule: ClientStateIndicationModule
         let mucModule: MucModule
         let bookmarksModule: PEPBookmarksModule
+        let pubSubModule: PubSubModule
         let pushModule: TigasePushNotificationsModule
         let omemoStack: TrixOMEMOStack
         let createdAt: Date
@@ -438,6 +439,7 @@ actor XMPPMartinService: TrixService {
             csiModule: ClientStateIndicationModule,
             mucModule: MucModule,
             bookmarksModule: PEPBookmarksModule,
+            pubSubModule: PubSubModule,
             pushModule: TigasePushNotificationsModule,
             omemoStack: TrixOMEMOStack,
             createdAt: Date = Date()
@@ -453,6 +455,7 @@ actor XMPPMartinService: TrixService {
             self.csiModule = csiModule
             self.mucModule = mucModule
             self.bookmarksModule = bookmarksModule
+            self.pubSubModule = pubSubModule
             self.pushModule = pushModule
             self.omemoStack = omemoStack
             self.createdAt = createdAt
@@ -597,6 +600,8 @@ actor XMPPMartinService: TrixService {
     private static let mucJoinTimeout: TimeInterval = 15
     private static let encryptedAttachmentDescriptorType = "com.softgrid.trix.xmpp.encrypted-attachment"
     private static let messageReactionsXMLNS = "urn:xmpp:reactions:0"
+    private static let notificationProfilesNode = "urn:softgrid:trix:notification-profiles:1"
+    private static let notificationProfilesItemID = "profiles"
 
     init(omemoPersistence: TrixOMEMOPersistence = .keychain) {
         self.omemoPersistence = omemoPersistence
@@ -714,6 +719,51 @@ actor XMPPMartinService: TrixService {
             throw error
         } catch {
             throw TrixClientError.apnsRegistrationFailed
+        }
+    }
+
+    func roomNotificationProfiles(session: TrixSession) async throws -> TrixRoomNotificationProfileSnapshot? {
+        let connection = try await ensureConnection(for: session)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+
+        do {
+            let items = try await connection.pubSubModule.retrieveItems(
+                from: BareJID(accountJID),
+                for: Self.notificationProfilesNode,
+                limit: .items(withIds: [Self.notificationProfilesItemID])
+            )
+            guard let payload = items.items.first?.payload else {
+                return nil
+            }
+            return Self.notificationProfileSnapshot(from: payload)
+        } catch let error as PubSubError where error.error == .item_not_found {
+            return nil
+        }
+    }
+
+    func updateRoomNotificationProfiles(
+        _ snapshot: TrixRoomNotificationProfileSnapshot,
+        session: TrixSession
+    ) async throws {
+        let connection = try await ensureConnection(for: session)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+        let payload = Self.notificationProfileElement(from: snapshot)
+
+        do {
+            _ = try await connection.pubSubModule.publishItem(
+                at: nil,
+                to: Self.notificationProfilesNode,
+                itemId: Self.notificationProfilesItemID,
+                payload: payload
+            )
+        } catch let error as PubSubError where error.error == .item_not_found {
+            try await createNotificationProfilesNode(connection: connection, accountJID: accountJID)
+            _ = try await connection.pubSubModule.publishItem(
+                at: nil,
+                to: Self.notificationProfilesNode,
+                itemId: Self.notificationProfilesItemID,
+                payload: payload
+            )
         }
     }
 
@@ -2908,6 +2958,22 @@ actor XMPPMartinService: TrixService {
         try await connection.bookmarksModule.addOrUpdate(bookmark: bookmark)
     }
 
+    private func createNotificationProfilesNode(connection: Connection, accountJID: String) async throws {
+        let config = PubSubNodeConfig()
+        config.FORM_TYPE = "http://jabber.org/protocol/pubsub#node_config"
+        config.persistItems = true
+        config.accessModel = .whitelist
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.pubSubModule.createNode(
+                at: BareJID(accountJID),
+                node: Self.notificationProfilesNode,
+                with: config
+            ) { result in
+                continuation.resume(with: result.map { _ in () })
+            }
+        }
+    }
+
     private func ensureOwnOMEMOSession(connection: Connection) async {
         let registrationID = connection.omemoStack.store.localRegistrationId()
         guard registrationID != 0 else {
@@ -3190,7 +3256,8 @@ actor XMPPMartinService: TrixService {
         let chatStateModule = ChatStateNotificationsModule()
         _ = client.modulesManager.register(chatStateModule)
         _ = client.modulesManager.register(HttpFileUploadModule())
-        _ = client.modulesManager.register(PubSubModule())
+        let pubSubModule = PubSubModule()
+        _ = client.modulesManager.register(pubSubModule)
         let bookmarksModule = PEPBookmarksModule()
         _ = client.modulesManager.register(bookmarksModule)
         let pushModule = TigasePushNotificationsModule()
@@ -3216,6 +3283,7 @@ actor XMPPMartinService: TrixService {
             csiModule: csiModule,
             mucModule: mucModule,
             bookmarksModule: bookmarksModule,
+            pubSubModule: pubSubModule,
             pushModule: pushModule,
             omemoStack: omemoStack
         )
@@ -3542,6 +3610,56 @@ actor XMPPMartinService: TrixService {
             return mucJID
         }
         return try normalizedXMPPJID(roomID)
+    }
+
+    private static func notificationProfileElement(
+        from snapshot: TrixRoomNotificationProfileSnapshot
+    ) -> Element {
+        let element = Element(name: "profiles", xmlns: notificationProfilesNode)
+        element.setAttribute("version", value: "1")
+        element.setAttribute("updated-at", value: ISO8601DateFormatter().string(from: snapshot.updatedAt))
+
+        for (roomID, profile) in snapshot.profilesByRoomID.sorted(by: { $0.key < $1.key }) {
+            let roomElement = Element(name: "room")
+            roomElement.setAttribute("id", value: roomID)
+            roomElement.setAttribute("profile", value: profile.rawValue)
+            element.addChild(roomElement)
+        }
+
+        return element
+    }
+
+    private static func notificationProfileSnapshot(
+        from element: Element
+    ) -> TrixRoomNotificationProfileSnapshot? {
+        guard element.name == "profiles",
+              element.xmlns == notificationProfilesNode else {
+            return nil
+        }
+
+        var profilesByRoomID: [String: TrixRoomNotificationProfile] = [:]
+        element.forEachChild { child in
+            guard child.name == "room",
+                  let roomID = child.getAttribute("id"),
+                  let rawProfile = child.getAttribute("profile"),
+                  let profile = TrixRoomNotificationProfile(rawValue: rawProfile) else {
+                return
+            }
+
+            let normalizedRoomID = TrixRoomNotificationProfileSnapshot.normalizedRoomID(roomID)
+            guard !normalizedRoomID.isEmpty, profile != .defaultProfile else {
+                return
+            }
+            profilesByRoomID[normalizedRoomID] = profile
+        }
+
+        let updatedAt = element
+            .getAttribute("updated-at")
+            .flatMap { ISO8601DateFormatter().date(from: $0) } ?? .distantPast
+        return TrixRoomNotificationProfileSnapshot(
+            profilesByRoomID: profilesByRoomID,
+            updatedAt: updatedAt
+        )
     }
 
     private static func isMUCJID(_ roomID: String) -> Bool {

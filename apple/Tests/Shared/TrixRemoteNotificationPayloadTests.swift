@@ -79,4 +79,19 @@ final class TrixRemoteNotificationPayloadTests: XCTestCase {
         XCTAssertFalse(payload.isSyncNotification)
         XCTAssertTrue(payload.presentsRemoteNotification)
     }
+
+    func testRejectsNotificationProfileHints() {
+        let payload = TrixRemoteNotificationPayload(userInfo: [
+            "aps": [
+                "content-available": 1,
+            ],
+            "trix": [
+                "type": "sync",
+                "notification_profile": "muted",
+            ],
+        ])
+
+        XCTAssertFalse(payload.isSyncNotification)
+        XCTAssertFalse(payload.presentsRemoteNotification)
+    }
 }

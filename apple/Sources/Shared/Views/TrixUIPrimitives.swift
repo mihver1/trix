@@ -158,6 +158,33 @@ struct TrixRoomSecurityMark: View {
     }
 }
 
+struct TrixRoomNotificationProfileMark: View {
+    let profile: TrixRoomNotificationProfile
+    var size: CGFloat = 22
+
+    var body: some View {
+        if profile != .defaultProfile {
+            Image(systemName: profile.systemImage)
+                .font(.system(size: size * 0.48, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: size, height: size)
+                .background(tint.opacity(0.13), in: Circle())
+                .accessibilityLabel(profile.label)
+        }
+    }
+
+    private var tint: Color {
+        switch profile {
+        case .defaultProfile:
+            return Color.secondary
+        case .muted:
+            return Color.secondary
+        case .mentionsOnly:
+            return TrixDesign.accent
+        }
+    }
+}
+
 enum TrixTransientBanner {
     static let autoDismissDelay: Duration = .seconds(60)
 }

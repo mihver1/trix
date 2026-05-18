@@ -15,6 +15,7 @@ actor MockTrixService: TrixService {
     private var backupExistsOnServer: Bool
     private var attachmentDataBySourceJSON: [String: Data]
     private var profilesByUserID: [String: TrixUserProfile]
+    private var notificationProfilesByAccountID: [String: TrixRoomNotificationProfileSnapshot]
     private var typingUserIDsByRoomID: [String: [String]]
 
     init(now: Date = Date()) {
@@ -77,6 +78,7 @@ actor MockTrixService: TrixService {
             "@carol:trix.selfhost.ru": TrixUserProfile(userID: "@carol:trix.selfhost.ru", displayName: "Carol", avatarURL: nil),
             "@dora:trix.selfhost.ru": TrixUserProfile(userID: "@dora:trix.selfhost.ru", displayName: "Dora", avatarURL: nil),
         ]
+        self.notificationProfilesByAccountID = [:]
         self.timelines = [
             directRoom.id: [
                 TrixTimelineItem(
@@ -207,6 +209,17 @@ actor MockTrixService: TrixService {
         registration: TrixPushRegistration?,
         session: TrixSession
     ) async throws {
+    }
+
+    func roomNotificationProfiles(session: TrixSession) async throws -> TrixRoomNotificationProfileSnapshot? {
+        notificationProfilesByAccountID[session.userID.lowercased()]
+    }
+
+    func updateRoomNotificationProfiles(
+        _ snapshot: TrixRoomNotificationProfileSnapshot,
+        session: TrixSession
+    ) async throws {
+        notificationProfilesByAccountID[session.userID.lowercased()] = snapshot
     }
 
     func setApplicationActive(_ isActive: Bool, session: TrixSession) async {

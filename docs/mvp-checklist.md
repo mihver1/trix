@@ -90,7 +90,10 @@ copying old implementation details.
       handling are wired. Inactive iOS/macOS push handling now syncs room state
       without marking the selected room read. Visible APNs use only `Trix` plus
       encrypted-message/unread-count wording, and older silent sync may create a
-      generic local notification with the same plaintext-free wording.
+      generic local notification with the same plaintext-free wording. Per-room
+      default/muted/mentions-only profiles are available in rooms, stored locally
+      with encryption at rest, backed by a private XMPP PEP item, and used to
+      suppress only local fallback notification presentation after sync.
       `trix-push-gateway` now includes the APNs sender plus XEP-0114
       component/store for Martin/XEP-0357 registration nodes. On 2026-05-10 the
       gateway was deployed on the VPS with deployment-local APNs token-auth

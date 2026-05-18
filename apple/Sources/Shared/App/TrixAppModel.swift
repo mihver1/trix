@@ -61,6 +61,9 @@ final class TrixAppModel: ObservableObject {
     @Published private(set) var mediaCacheSnapshot: TrixMediaCacheSnapshot = .empty
     @Published private(set) var isUpdatingMediaCache = false
     @Published private(set) var mediaCacheMessage: String?
+    @Published private(set) var roomNotificationProfiles: [String: TrixRoomNotificationProfile] = [:]
+    @Published private(set) var isUpdatingRoomNotificationProfile = false
+    @Published private(set) var roomNotificationProfileMessage: String?
     @Published private var selectedRoomSnapshot: TrixRoomSummary?
 
     let roomListViewModel: RoomListViewModel
@@ -73,9 +76,11 @@ final class TrixAppModel: ObservableObject {
     private let stickerLibraryStore: TrixStickerLibraryStore
     private let mediaCacheStore: TrixMediaCacheStore
     private let mediaCacheSettingsStore: TrixMediaCacheSettingsStore
+    private let roomNotificationProfileStore: TrixRoomNotificationProfileStore
     private let trixService: TrixService
     private var stickerAssetDataByID: [String: Data] = [:]
     private var apnsDeviceToken: TrixAPNsDeviceToken?
+    private var roomNotificationProfileSnapshot = TrixRoomNotificationProfileSnapshot.empty
     private var hasStarted = false
     private let foregroundRefreshInterval: Duration = .seconds(10)
 
@@ -86,6 +91,7 @@ final class TrixAppModel: ObservableObject {
         stickerLibraryStore: TrixStickerLibraryStore = TrixStickerLibraryStore(),
         mediaCacheStore: TrixMediaCacheStore = TrixMediaCacheStore(),
         mediaCacheSettingsStore: TrixMediaCacheSettingsStore = UserDefaultsTrixMediaCacheSettingsStore(),
+        roomNotificationProfileStore: TrixRoomNotificationProfileStore = TrixRoomNotificationProfileStore(),
         trixService: TrixService = XMPPMartinService()
     ) {
         self.sessionStore = sessionStore
@@ -94,6 +100,7 @@ final class TrixAppModel: ObservableObject {
         self.stickerLibraryStore = stickerLibraryStore
         self.mediaCacheStore = mediaCacheStore
         self.mediaCacheSettingsStore = mediaCacheSettingsStore
+        self.roomNotificationProfileStore = roomNotificationProfileStore
         self.trixService = trixService
         self.mediaCachePolicy = mediaCacheSettingsStore.loadPolicy()
         self.roomListViewModel = RoomListViewModel()
@@ -145,6 +152,7 @@ final class TrixAppModel: ObservableObject {
 
             loadStickerLibrary(for: restoredSession.userID)
             refreshLocalMediaState(for: restoredSession.userID)
+            loadRoomNotificationProfiles(for: restoredSession.userID)
             await loadCachedRoomsForCurrentSession()
             isStarting = false
 
@@ -188,8 +196,10 @@ final class TrixAppModel: ObservableObject {
             account = restoredAccount
             loadStickerLibrary(for: authenticatedSession.userID)
             refreshLocalMediaState(for: authenticatedSession.userID)
+            loadRoomNotificationProfiles(for: authenticatedSession.userID)
             await reloadRooms()
             await reloadDeviceVerificationStatus()
+            await syncRoomNotificationProfilesFromServerIfPossible(for: authenticatedSession)
             await syncAPNsRegistrationIfPossible()
         } catch {
             if let newSession {
@@ -234,6 +244,7 @@ final class TrixAppModel: ObservableObject {
             account = restoredAccount
             loadStickerLibrary(for: authenticatedSession.userID)
             refreshLocalMediaState(for: authenticatedSession.userID)
+            loadRoomNotificationProfiles(for: authenticatedSession.userID)
 
             if let displayName = registration.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
                !displayName.isEmpty {
@@ -248,6 +259,7 @@ final class TrixAppModel: ObservableObject {
 
             await reloadRooms()
             await reloadDeviceVerificationStatus()
+            await syncRoomNotificationProfilesFromServerIfPossible(for: authenticatedSession)
             await syncAPNsRegistrationIfPossible()
         } catch {
             if let newSession {
@@ -347,6 +359,42 @@ final class TrixAppModel: ObservableObject {
         await trixService.setApplicationActive(isActive, session: session)
     }
 
+    func roomNotificationProfile(for roomID: String) -> TrixRoomNotificationProfile {
+        roomNotificationProfileSnapshot.profile(for: roomID)
+    }
+
+    func setRoomNotificationProfile(
+        _ profile: TrixRoomNotificationProfile,
+        for roomID: String
+    ) async {
+        guard let session else {
+            return
+        }
+
+        isUpdatingRoomNotificationProfile = true
+        roomNotificationProfileMessage = nil
+        defer { isUpdatingRoomNotificationProfile = false }
+
+        let updatedSnapshot = roomNotificationProfileSnapshot.setting(profile, for: roomID)
+        do {
+            try roomNotificationProfileStore.save(updatedSnapshot, accountID: session.userID)
+        } catch {
+            roomNotificationProfileMessage = error.trixUserFacingMessage
+            return
+        }
+
+        applyRoomNotificationProfileSnapshot(updatedSnapshot)
+        do {
+            try await trixService.updateRoomNotificationProfiles(updatedSnapshot, session: session)
+        } catch {
+            roomNotificationProfileMessage = "Notification preferences were saved locally. Server sync failed."
+        }
+    }
+
+    func dismissRoomNotificationProfileMessage() {
+        roomNotificationProfileMessage = nil
+    }
+
     func handleRemoteNotification(
         userInfo: [AnyHashable: Any],
         applicationIsActive: Bool
@@ -373,10 +421,11 @@ final class TrixAppModel: ObservableObject {
         let shouldScheduleLocalNotification = !applicationIsActive &&
             !payload.presentsRemoteNotification
         let localNotification = shouldScheduleLocalNotification
-            ? Self.localNotificationRequest(
+            ? await localNotificationRequest(
                 previousRooms: previousRooms,
                 currentRooms: roomListViewModel.rooms,
                 payload: payload,
+                session: session,
                 badgeCount: badgeCount
             )
             : nil
@@ -426,6 +475,9 @@ final class TrixAppModel: ObservableObject {
     private func finishSessionRestoreInBackground() async {
         await reloadRooms()
         await reloadDeviceVerificationStatus()
+        if let session {
+            await syncRoomNotificationProfilesFromServerIfPossible(for: session)
+        }
         await syncAPNsRegistrationIfPossible()
     }
 
@@ -1153,44 +1205,56 @@ final class TrixAppModel: ObservableObject {
         }
     }
 
-    private static func localNotificationRequest(
+    private func localNotificationRequest(
         previousRooms: [TrixRoomSummary],
         currentRooms: [TrixRoomSummary],
         payload: TrixRemoteNotificationPayload,
+        session: TrixSession,
         badgeCount: Int
-    ) -> TrixLocalNotificationRequest? {
-        let previousUnreadByRoomID = Dictionary(
-            previousRooms.map { ($0.id.lowercased(), max($0.unreadCount, 0)) },
-            uniquingKeysWith: { existing, _ in existing }
+    ) async -> TrixLocalNotificationRequest? {
+        let candidateRooms = TrixRoomNotificationPlanner.candidateRooms(
+            previousRooms: previousRooms,
+            currentRooms: currentRooms,
+            payload: payload
         )
-        let roomsWithNewUnread = currentRooms.filter { room in
-            let previousUnread = previousUnreadByRoomID[room.id.lowercased()] ?? 0
-            return max(room.unreadCount, 0) > previousUnread
-        }
-        let hasPayloadRoomHint = payload.roomID?.isEmpty == false
-        let notificationUnreadCount = max(
-            badgeCount,
-            roomsWithNewUnread.reduce(0) { partialResult, room in
-                partialResult + max(room.unreadCount, 0)
-            },
-            hasPayloadRoomHint ? 1 : 0
-        )
-        guard notificationUnreadCount > 0 else {
+        guard !candidateRooms.isEmpty else {
             return nil
         }
 
-        let body = notificationUnreadCount == 1
-            ? "New encrypted message"
-            : "\(notificationUnreadCount) unread encrypted messages"
-        let threadIdentifier = roomsWithNewUnread.count == 1
-            ? roomsWithNewUnread[0].id
-            : payload.roomID ?? "trix-unread"
+        let previousActivityByRoomID = Dictionary(
+            previousRooms.map { (TrixRoomNotificationProfileSnapshot.normalizedRoomID($0.id), $0.lastActivityAt) },
+            uniquingKeysWith: { existing, _ in existing }
+        )
+        var candidates: [TrixRoomNotificationCandidate] = []
+        for room in candidateRooms {
+            let profile = roomNotificationProfile(for: room.id)
+            let previousActivityAt = previousActivityByRoomID[
+                TrixRoomNotificationProfileSnapshot.normalizedRoomID(room.id)
+            ]
+            let hasMention: Bool
+            if profile == .mentionsOnly {
+                let items = (try? await trixService.cachedTimeline(roomID: room.id, session: session)) ?? []
+                hasMention = TrixRoomNotificationPlanner.timelineContainsMention(
+                    items,
+                    accountID: session.userID,
+                    newerThan: previousActivityAt
+                )
+            } else {
+                hasMention = false
+            }
+            candidates.append(
+                TrixRoomNotificationCandidate(
+                    room: room,
+                    profile: profile,
+                    hasMention: hasMention
+                )
+            )
+        }
 
-        return TrixLocalNotificationRequest(
-            title: "Trix",
-            body: body,
-            threadIdentifier: threadIdentifier,
-            badgeCount: notificationUnreadCount
+        return TrixRoomNotificationPlanner.localNotificationRequest(
+            candidates: candidates,
+            payload: payload,
+            badgeCount: badgeCount
         )
     }
 
@@ -1233,6 +1297,44 @@ final class TrixAppModel: ObservableObject {
         )
         pushRegistration = nil
         pushRegistrationBlocker = .waitingForSession
+    }
+
+    private func loadRoomNotificationProfiles(for accountID: String) {
+        do {
+            applyRoomNotificationProfileSnapshot(
+                try roomNotificationProfileStore.load(accountID: accountID)
+            )
+            roomNotificationProfileMessage = nil
+        } catch {
+            applyRoomNotificationProfileSnapshot(.empty)
+            roomNotificationProfileMessage = error.trixUserFacingMessage
+        }
+    }
+
+    private func syncRoomNotificationProfilesFromServerIfPossible(for session: TrixSession) async {
+        do {
+            let localSnapshot = roomNotificationProfileSnapshot
+            guard let remoteSnapshot = try await trixService.roomNotificationProfiles(session: session) else {
+                if !localSnapshot.isEmpty {
+                    try await trixService.updateRoomNotificationProfiles(localSnapshot, session: session)
+                }
+                return
+            }
+
+            if remoteSnapshot.updatedAt > localSnapshot.updatedAt {
+                try roomNotificationProfileStore.save(remoteSnapshot, accountID: session.userID)
+                applyRoomNotificationProfileSnapshot(remoteSnapshot)
+            } else if localSnapshot.updatedAt > remoteSnapshot.updatedAt {
+                try await trixService.updateRoomNotificationProfiles(localSnapshot, session: session)
+            }
+        } catch {
+            roomNotificationProfileMessage = "Notification preferences are available locally. Server sync failed."
+        }
+    }
+
+    private func applyRoomNotificationProfileSnapshot(_ snapshot: TrixRoomNotificationProfileSnapshot) {
+        roomNotificationProfileSnapshot = snapshot
+        roomNotificationProfiles = snapshot.profilesByRoomID
     }
 
     private func loadStickerLibrary(for accountID: String) {
@@ -1296,6 +1398,10 @@ final class TrixAppModel: ObservableObject {
         mediaCacheSnapshot = .empty
         mediaCacheMessage = nil
         isUpdatingMediaCache = false
+        roomNotificationProfileSnapshot = .empty
+        roomNotificationProfiles = [:]
+        roomNotificationProfileMessage = nil
+        isUpdatingRoomNotificationProfile = false
         roomListViewModel.clear()
         timelineViewModel.clear()
         deviceVerificationViewModel.clear()

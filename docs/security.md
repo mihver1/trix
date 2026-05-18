@@ -208,12 +208,23 @@ The current Apple XMPP path accepts only sync pushes with
 metadata is allowed. The only accepted visible APNs alert is generic: title
 `Trix` with `New encrypted message` or unread-count wording. Plaintext/body
 outside that generic alert, decrypted content, filename, and attachment-name
-payload fields are rejected by the app handler, and the app does not create local
-notifications containing decrypted message or attachment text. When the app is
-inactive and receives an older silent sync payload, it may turn local sync into a
-generic local notification such as a new encrypted-message/unread count alert.
-Those remote or local notifications must not include decrypted text, filenames,
-or attachment names.
+payload fields are rejected by the app handler, and notification profile or mute
+state is also rejected if it appears in APNs metadata. The app does not create
+local notifications containing decrypted message or attachment text. When the app
+is inactive and receives an older silent sync payload, it may turn local sync
+into a generic local notification such as a new encrypted-message/unread count
+alert. Those local fallback notifications are filtered by per-room default,
+muted, or mentions-only profiles after sync. Mentions-only currently uses local
+decrypted content matching for the account JID or localpart mention token until
+the dedicated XMPP mentions work lands; if no local mention can be identified,
+non-mention notifications are suppressed. Those remote or local notifications
+must not include decrypted text, filenames, room names, or attachment names.
+
+Per-room notification profiles reveal behavior metadata. The Apple client stores
+the local profile cache in Application Support encrypted with AES-GCM and a
+Keychain-held key, and backs the settings with a private XMPP PEP item so profile
+changes survive local cache loss. The server-backed PEP item contains room IDs
+and profile values for the signed-in account; it is not copied into APNs payloads.
 
 ejabberd `mod_push` only exposes XMPP push semantics; it does not sign or send
 APNs requests by itself. APNs signing is handled by the standalone
