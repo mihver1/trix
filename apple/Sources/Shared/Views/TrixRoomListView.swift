@@ -486,6 +486,10 @@ struct TrixSettingsView: View {
                 }
             }
 
+            Section("App Lock") {
+                TrixAppLockSettingsSection(viewModel: model.appLockViewModel)
+            }
+
             Section("Profile") {
                 TrixProfileSettingsView(model: model)
             }

@@ -21,7 +21,9 @@ struct TrixMacApp: App {
         .defaultSize(width: 1240, height: 760)
 
         Settings {
-            TrixMacSettingsView(model: model)
+            TrixAppLockProtectedView(model: model) {
+                TrixMacSettingsView(model: model)
+            }
         }
         .defaultSize(width: 760, height: 620)
     }

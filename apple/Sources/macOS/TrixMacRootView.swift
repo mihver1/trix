@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TrixMacRootView: View {
     @ObservedObject var model: TrixAppModel
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
@@ -9,7 +10,9 @@ struct TrixMacRootView: View {
                 ProgressView("Restoring session")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if model.isAuthenticated {
-                TrixMacWorkspaceView(model: model)
+                TrixAppLockProtectedView(model: model) {
+                    TrixMacWorkspaceView(model: model)
+                }
             } else {
                 TrixLoginView(model: model)
                     .frame(minWidth: 520, minHeight: 520)
@@ -17,6 +20,13 @@ struct TrixMacRootView: View {
         }
         .task {
             await model.start()
+        }
+        .task(id: scenePhase) {
+            TrixAPNsCoordinator.shared.setApplicationIsActive(scenePhase == .active)
+            model.appLockViewModel.handleLifecyclePhase(
+                TrixAppLockLifecyclePhase(scenePhase),
+                isAuthenticated: model.isAuthenticated
+            )
         }
     }
 }
@@ -1168,71 +1178,78 @@ struct TrixMacSettingsView: View {
     }
 
     private var securitySettings: some View {
-        GroupBox("Device Verification And Recovery") {
-            VStack(alignment: .leading, spacing: 12) {
-                TrixDeviceVerificationStatusView(
-                    viewModel: deviceVerificationViewModel,
-                    requestVerification: {
-                        Task {
-                            await model.requestDeviceVerification()
-                        }
-                    },
-                    acceptRequest: { request in
-                        Task {
-                            await model.acceptDeviceVerificationRequest(request)
-                        }
-                    },
-                    startSas: {
-                        Task {
-                            await model.startSasDeviceVerification()
-                        }
-                    },
-                    approve: {
-                        Task {
-                            await model.approveDeviceVerification()
-                        }
-                    },
-                    decline: {
-                        Task {
-                            await model.declineDeviceVerification()
-                        }
-                    },
-                    cancel: {
-                        Task {
-                            await model.cancelDeviceVerification()
-                        }
-                    },
-                    trustAccountDevice: { device in
-                        Task {
-                            await model.trustAccountDevice(device)
-                        }
-                    },
-                    setUpRecovery: {
-                        Task {
-                            await model.setUpRecovery()
-                        }
-                    },
-                    confirmRecoveryKey: {
-                        Task {
-                            await model.confirmRecoveryKey()
-                        }
-                    },
-                    dismissRecoveryKey: {
-                        deviceVerificationViewModel.dismissRecoveryKey()
-                    }
-                )
-
-                Button {
-                    Task {
-                        await model.reloadDeviceVerificationStatus()
-                    }
-                } label: {
-                    Label("Refresh Verification", systemImage: "arrow.clockwise")
-                }
-                .buttonStyle(.bordered)
-                .disabled(!model.isAuthenticated || deviceVerificationViewModel.isLoading)
+        VStack(alignment: .leading, spacing: 14) {
+            GroupBox("App Lock") {
+                TrixAppLockSettingsSection(viewModel: model.appLockViewModel)
+                    .padding(.vertical, 4)
             }
-            .padding(.vertical, 4)
+
+            GroupBox("Device Verification And Recovery") {
+                VStack(alignment: .leading, spacing: 12) {
+                    TrixDeviceVerificationStatusView(
+                        viewModel: deviceVerificationViewModel,
+                        requestVerification: {
+                            Task {
+                                await model.requestDeviceVerification()
+                            }
+                        },
+                        acceptRequest: { request in
+                            Task {
+                                await model.acceptDeviceVerificationRequest(request)
+                            }
+                        },
+                        startSas: {
+                            Task {
+                                await model.startSasDeviceVerification()
+                            }
+                        },
+                        approve: {
+                            Task {
+                                await model.approveDeviceVerification()
+                            }
+                        },
+                        decline: {
+                            Task {
+                                await model.declineDeviceVerification()
+                            }
+                        },
+                        cancel: {
+                            Task {
+                                await model.cancelDeviceVerification()
+                            }
+                        },
+                        trustAccountDevice: { device in
+                            Task {
+                                await model.trustAccountDevice(device)
+                            }
+                        },
+                        setUpRecovery: {
+                            Task {
+                                await model.setUpRecovery()
+                            }
+                        },
+                        confirmRecoveryKey: {
+                            Task {
+                                await model.confirmRecoveryKey()
+                            }
+                        },
+                        dismissRecoveryKey: {
+                            deviceVerificationViewModel.dismissRecoveryKey()
+                        }
+                    )
+
+                    Button {
+                        Task {
+                            await model.reloadDeviceVerificationStatus()
+                        }
+                    } label: {
+                        Label("Refresh Verification", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!model.isAuthenticated || deviceVerificationViewModel.isLoading)
+                }
+                .padding(.vertical, 4)
+            }
         }
     }
 

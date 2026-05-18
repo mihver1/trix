@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TrixRootView: View {
     @ObservedObject var model: TrixAppModel
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
@@ -18,13 +19,37 @@ struct TrixRootView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(TrixDesign.screenBackground)
             } else if model.isAuthenticated {
-                TrixWorkspaceView(model: model)
+                TrixAppLockProtectedView(model: model) {
+                    TrixWorkspaceView(model: model)
+                }
             } else {
                 TrixLoginView(model: model)
             }
         }
         .task {
             await model.start()
+        }
+        .task(id: scenePhase) {
+            TrixAPNsCoordinator.shared.setApplicationIsActive(scenePhase == .active)
+            model.appLockViewModel.handleLifecyclePhase(
+                TrixAppLockLifecyclePhase(scenePhase),
+                isAuthenticated: model.isAuthenticated
+            )
+        }
+    }
+}
+
+extension TrixAppLockLifecyclePhase {
+    init(_ scenePhase: ScenePhase) {
+        switch scenePhase {
+        case .active:
+            self = .active
+        case .inactive:
+            self = .inactive
+        case .background:
+            self = .background
+        @unknown default:
+            self = .inactive
         }
     }
 }

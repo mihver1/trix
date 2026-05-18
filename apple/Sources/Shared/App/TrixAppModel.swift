@@ -21,6 +21,7 @@ final class TrixAppModel: ObservableObject {
     let roomListViewModel: RoomListViewModel
     let timelineViewModel: TimelineViewModel
     let deviceVerificationViewModel: DeviceVerificationViewModel
+    let appLockViewModel: TrixAppLockViewModel
 
     private let sessionStore: TrixSessionStore
     private let registrationService: TrixRegistrationService
@@ -37,7 +38,8 @@ final class TrixAppModel: ObservableObject {
         registrationService: TrixRegistrationService = HTTPInviteRegistrationService(),
         stickerImportService: TrixStickerImportService = HTTPStickerImportService(),
         stickerLibraryStore: TrixStickerLibraryStore = TrixStickerLibraryStore(),
-        trixService: TrixService = XMPPMartinService()
+        trixService: TrixService = XMPPMartinService(),
+        appLockViewModel: TrixAppLockViewModel = TrixAppLockViewModel()
     ) {
         self.sessionStore = sessionStore
         self.registrationService = registrationService
@@ -47,6 +49,7 @@ final class TrixAppModel: ObservableObject {
         self.roomListViewModel = RoomListViewModel()
         self.timelineViewModel = TimelineViewModel()
         self.deviceVerificationViewModel = DeviceVerificationViewModel()
+        self.appLockViewModel = appLockViewModel
     }
 
     var isAuthenticated: Bool {
@@ -81,6 +84,7 @@ final class TrixAppModel: ObservableObject {
             await reloadRooms()
             await reloadDeviceVerificationStatus()
             await syncAPNsRegistrationIfPossible()
+            appLockViewModel.handleAuthenticatedSessionRestored()
         } catch {
             clearAuthenticatedState()
             try? sessionStore.clearSession()
@@ -114,6 +118,7 @@ final class TrixAppModel: ObservableObject {
             await reloadRooms()
             await reloadDeviceVerificationStatus()
             await syncAPNsRegistrationIfPossible()
+            appLockViewModel.noteServerLoginCompleted()
         } catch {
             if let newSession {
                 try? await trixService.logout(session: newSession)
@@ -171,6 +176,7 @@ final class TrixAppModel: ObservableObject {
             await reloadRooms()
             await reloadDeviceVerificationStatus()
             await syncAPNsRegistrationIfPossible()
+            appLockViewModel.noteServerLoginCompleted()
         } catch {
             if let newSession {
                 try? await trixService.logout(session: newSession)
@@ -276,9 +282,10 @@ final class TrixAppModel: ObservableObject {
         }
 
         let previousRooms = roomListViewModel.rooms
+        let canExposeSelectedRoom = applicationIsActive && !appLockViewModel.isLocked
         await refreshForeground(
-            markSelectedRoomRead: applicationIsActive,
-            reloadSelectedTimeline: applicationIsActive
+            markSelectedRoomRead: canExposeSelectedRoom,
+            reloadSelectedTimeline: canExposeSelectedRoom
         )
 
         let badgeCount = max(payload.badge ?? 0, totalUnreadCount)
@@ -354,7 +361,11 @@ final class TrixAppModel: ObservableObject {
                 return
             }
 
-            await refreshForeground()
+            let canExposeSelectedRoom = !appLockViewModel.isLocked
+            await refreshForeground(
+                markSelectedRoomRead: canExposeSelectedRoom,
+                reloadSelectedTimeline: canExposeSelectedRoom
+            )
         }
     }
 
@@ -986,6 +997,7 @@ final class TrixAppModel: ObservableObject {
         roomListViewModel.clear()
         timelineViewModel.clear()
         deviceVerificationViewModel.clear()
+        appLockViewModel.clearAuthenticatedSession()
     }
 }
 

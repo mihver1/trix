@@ -15,6 +15,27 @@ The MVP is for a small private group on a self-hosted server. The main risks are
 The MVP does not try to protect against compromised endpoints. If a phone or Mac
 is compromised, decrypted messages on that device are exposed.
 
+## Local App Lock
+
+The Apple clients provide an optional local app lock backed by Apple's system
+authentication policy. On iOS this means Face ID, Touch ID, or the device
+passcode; on macOS this means the system authentication prompt, such as Touch ID,
+Apple Watch, or the user password when available. Trix asks the system to
+authenticate the user and never receives biometric material directly.
+
+The app lock is a visual privacy control for casual device access. It hides room
+lists, timelines, previews, and settings while locked, including the separate
+macOS Settings scene, but it is not a defense against malware, a compromised
+endpoint, screenshots, filesystem access by the device owner, or a device that
+is already unlocked and controlled by an attacker. Failed local authentication
+does not delete the XMPP session or OMEMO state.
+
+Wake-only push handling remains generic while the app is locked. A valid APNs
+wake may still trigger local sync, but locked foreground handling must not mark
+the selected room read or expose decrypted message bodies, filenames, media
+keys, attachment metadata, APNs tokens, or OMEMO secrets in notifications,
+diagnostics, or logs.
+
 ## What E2EE Covers
 
 OMEMO should protect product DM and group message content from the XMPP server
