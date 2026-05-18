@@ -4098,7 +4098,7 @@ dependencies = [
 
 [[package]]
 name = "trix-bot"
-version = "0.2.0"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "argon2",
@@ -4118,7 +4118,7 @@ dependencies = [
 
 [[package]]
 name = "trix-botd"
-version = "0.2.0"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "serde",
@@ -4132,7 +4132,7 @@ dependencies = [
 
 [[package]]
 name = "trix-core"
-version = "0.2.0"
+version = "0.2.3"
 dependencies = [
  "aead",
  "anyhow",
@@ -4169,7 +4169,7 @@ dependencies = [
 
 [[package]]
 name = "trix-push"
-version = "0.2.0"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "http",
@@ -4184,7 +4184,7 @@ dependencies = [
 
 [[package]]
 name = "trix-push-gateway"
-version = "0.2.0"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "axum",
@@ -4202,7 +4202,7 @@ dependencies = [
 
 [[package]]
 name = "trix-server"
-version = "0.2.0"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "argon2",
@@ -4233,7 +4233,7 @@ dependencies = [
 
 [[package]]
 name = "trix-tui"
-version = "0.2.0"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -4248,7 +4248,7 @@ dependencies = [
 
 [[package]]
 name = "trix-types"
-version = "0.2.0"
+version = "0.2.3"
 dependencies = [
  "base64",
  "http",
@@ -4260,7 +4260,7 @@ dependencies = [
 
 [[package]]
 name = "trixd"
-version = "0.2.0"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "tokio",
