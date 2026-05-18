@@ -26,11 +26,14 @@ struct TrixTimelineView: View {
     @ObservedObject private var timelineViewModel: TimelineViewModel
     @State private var draft = ""
     @State private var isShowingFileImporter = false
-    @State private var isShowingPeerDevices = false
+    @State private var isShowingDeviceTrust = false
     @State private var isShowingGroupMembers = false
     @State private var isLoadingPeerDevices = false
     @State private var peerDevices: [TrixPeerDeviceIdentity] = []
     @State private var peerDeviceError: String?
+    @State private var isLoadingGroupDevices = false
+    @State private var groupDeviceEntries: [TrixGroupDeviceTrustEntry] = []
+    @State private var groupDeviceError: String?
     @State private var fileImportError: String?
     @State private var typingPauseTask: Task<Void, Never>?
     @State private var lastSentTypingState: TrixTypingState = .idle
@@ -165,23 +168,42 @@ struct TrixTimelineView: View {
                 TrixAttachmentPreviewView(attachment: attachment)
             }
         }
-        .sheet(isPresented: $isShowingPeerDevices) {
-            TrixPeerDeviceTrustView(
-                roomName: room.name,
-                devices: peerDevices,
-                isLoading: isLoadingPeerDevices,
-                errorMessage: peerDeviceError,
-                refresh: {
-                    Task {
-                        await loadPeerDevices(refresh: true)
+        .sheet(isPresented: $isShowingDeviceTrust) {
+            if room.kind == .group {
+                TrixGroupDeviceTrustView(
+                    roomName: room.name,
+                    entries: groupDeviceEntries,
+                    isLoading: isLoadingGroupDevices,
+                    errorMessage: groupDeviceError,
+                    refresh: {
+                        Task {
+                            await loadGroupDevices(refresh: true)
+                        }
+                    },
+                    trust: { device in
+                        Task {
+                            await trustGroupDevice(device)
+                        }
                     }
-                },
-                trust: { device in
-                    Task {
-                        await trustPeerDevice(device)
+                )
+            } else {
+                TrixPeerDeviceTrustView(
+                    roomName: room.name,
+                    devices: peerDevices,
+                    isLoading: isLoadingPeerDevices,
+                    errorMessage: peerDeviceError,
+                    refresh: {
+                        Task {
+                            await loadPeerDevices(refresh: true)
+                        }
+                    },
+                    trust: { device in
+                        Task {
+                            await trustPeerDevice(device)
+                        }
                     }
-                }
-            )
+                )
+            }
         }
         .sheet(isPresented: $isShowingGroupMembers) {
             TrixGroupMembersView(model: model, room: room)
@@ -227,6 +249,7 @@ struct TrixTimelineView: View {
             Text("A server-backed MUC leave is still blocked in this client slice. This only hides local room state and does not destroy the group.")
         }
         .task(id: room.id) {
+            resetDeviceTrustState()
             if timelineViewModel.roomID != room.id {
                 await model.selectRoom(room)
             }
@@ -249,7 +272,21 @@ struct TrixTimelineView: View {
     }
 
     private var canSendEncrypted: Bool {
-        room.isEncrypted || peerDevices.contains(where: \.canSendEncrypted)
+        if room.kind == .group,
+           let availability = currentAttachmentSendAvailability {
+            return availability.canSend
+        }
+
+        return room.isEncrypted || peerDevices.contains(where: \.canSendEncrypted)
+    }
+
+    private var currentAttachmentSendAvailability: TrixAttachmentSendAvailability? {
+        guard let availability = timelineViewModel.attachmentSendAvailability,
+              availability.roomID == room.id else {
+            return nil
+        }
+
+        return availability
     }
 
     private var timelineBottomControls: some View {
@@ -316,14 +353,14 @@ struct TrixTimelineView: View {
     private var encryptionRequiredBanner: some View {
         HStack(spacing: 10) {
             TrixBannerView(
-                text: "OMEMO is required for Trix chats. Trust a contact device before sending.",
+                text: encryptionRequiredMessage,
                 systemImage: "lock.slash.fill",
                 tint: .orange
             )
             .layoutPriority(1)
 
             Button {
-                showPeerDevices()
+                showDeviceTrust()
             } label: {
                 Image(systemName: "checkmark.shield")
             }
@@ -333,6 +370,24 @@ struct TrixTimelineView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
+    }
+
+    private var encryptionRequiredMessage: String {
+        if room.kind == .group,
+           let reason = currentAttachmentSendAvailability?.blockReason {
+            switch reason {
+            case .groupRecipientSetUnavailable:
+                return "Trix needs a validated member recipient set before sending encrypted group messages."
+            case .groupOmemoDeviceTrustRequired:
+                return "Trust an active OMEMO device for every group member before sending."
+            case .omemoDeviceTrustRequired:
+                return "Trust an active OMEMO device for every group member before sending."
+            case .unavailable:
+                return "Encrypted group messages are not available for this room yet."
+            }
+        }
+
+        return "OMEMO is required for Trix chats. Trust a contact device before sending."
     }
 
     private var composer: some View {
@@ -507,6 +562,7 @@ struct TrixTimelineView: View {
 
     private var attachmentBlockMessage: String? {
         guard room.kind == .group,
+              canSendEncrypted,
               !timelineViewModel.isLoadingAttachmentAvailability,
               let availability = timelineViewModel.attachmentSendAvailability,
               availability.roomID == room.id,
@@ -600,12 +656,19 @@ struct TrixTimelineView: View {
 
             if room.kind == .direct {
                 Button {
-                    showPeerDevices()
+                    showDeviceTrust()
                 } label: {
                     Image(systemName: "checkmark.shield")
                 }
                 .help("OMEMO devices")
             } else {
+                Button {
+                    showDeviceTrust()
+                } label: {
+                    Image(systemName: "checkmark.shield")
+                }
+                .help("Group OMEMO devices")
+
                 Button {
                     isShowingGroupMembers = true
                 } label: {
@@ -682,11 +745,35 @@ struct TrixTimelineView: View {
         }
     }
 
+    private func showDeviceTrust() {
+        if room.kind == .group {
+            showGroupDevices()
+        } else {
+            showPeerDevices()
+        }
+    }
+
     private func showPeerDevices() {
-        isShowingPeerDevices = true
+        isShowingDeviceTrust = true
         Task {
             await loadPeerDevices(refresh: true)
         }
+    }
+
+    private func showGroupDevices() {
+        isShowingDeviceTrust = true
+        Task {
+            await loadGroupDevices(refresh: true)
+        }
+    }
+
+    private func resetDeviceTrustState() {
+        peerDevices = []
+        peerDeviceError = nil
+        isLoadingPeerDevices = false
+        groupDeviceEntries = []
+        groupDeviceError = nil
+        isLoadingGroupDevices = false
     }
 
     private func importAttachment(from result: Result<[URL], Error>) {
@@ -950,6 +1037,76 @@ struct TrixTimelineView: View {
         }
     }
 
+    private func loadGroupDevices(refresh: Bool) async {
+        guard room.kind == .group else {
+            return
+        }
+
+        isLoadingGroupDevices = true
+        groupDeviceError = nil
+        defer { isLoadingGroupDevices = false }
+
+        do {
+            let members = try await model.members(roomID: room.id)
+            var loadedEntries: [TrixGroupDeviceTrustEntry] = []
+            for member in Self.sortedActiveMembers(members) {
+                do {
+                    let devices = try await model.peerDeviceIdentities(for: member.userID, refresh: refresh)
+                    loadedEntries.append(
+                        TrixGroupDeviceTrustEntry(
+                            member: member,
+                            devices: devices,
+                            isCurrentUser: isCurrentUser(member.userID),
+                            errorMessage: nil
+                        )
+                    )
+                } catch {
+                    loadedEntries.append(
+                        TrixGroupDeviceTrustEntry(
+                            member: member,
+                            devices: [],
+                            isCurrentUser: isCurrentUser(member.userID),
+                            errorMessage: error.trixUserFacingMessage
+                        )
+                    )
+                }
+            }
+            groupDeviceEntries = loadedEntries
+        } catch {
+            groupDeviceError = error.trixUserFacingMessage
+        }
+    }
+
+    private func trustGroupDevice(_ device: TrixPeerDeviceIdentity) async {
+        isLoadingGroupDevices = true
+        groupDeviceError = nil
+        defer { isLoadingGroupDevices = false }
+
+        do {
+            let trustedDevices = try await model.trustPeerDevice(userID: device.userID, deviceID: device.deviceID)
+            groupDeviceEntries = groupDeviceEntries.map { entry in
+                guard entry.matches(userID: device.userID) else {
+                    return entry
+                }
+
+                return TrixGroupDeviceTrustEntry(
+                    member: entry.member,
+                    devices: trustedDevices,
+                    isCurrentUser: entry.isCurrentUser,
+                    errorMessage: nil
+                )
+            }
+            await model.loadAttachmentSendAvailability(roomID: room.id)
+        } catch {
+            groupDeviceError = error.trixUserFacingMessage
+        }
+    }
+
+    private func isCurrentUser(_ userID: String) -> Bool {
+        let currentUserID = model.account?.userID ?? model.session?.userID ?? ""
+        return trixNormalizedUserKey(userID) == trixNormalizedUserKey(currentUserID)
+    }
+
     private static func displayName(from userID: String) -> String {
         let localpart = userID
             .split(separator: "@")
@@ -957,6 +1114,18 @@ struct TrixTimelineView: View {
             .map(String.init)
 
         return localpart?.capitalized ?? userID
+    }
+
+    private static func sortedActiveMembers(_ members: [TrixRoomMember]) -> [TrixRoomMember] {
+        members
+            .filter(\.membership.isActive)
+            .sorted { lhs, rhs in
+                if lhs.membership.sortOrder != rhs.membership.sortOrder {
+                    return lhs.membership.sortOrder < rhs.membership.sortOrder
+                }
+
+                return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            }
     }
 
     private static func timelineEntries(for items: [TrixTimelineItem]) -> [TrixTimelineEntry] {
@@ -1094,6 +1263,316 @@ private struct TrixTimelineDaySeparator: View {
         formatter.timeStyle = .none
         return formatter
     }()
+}
+
+private func trixNormalizedUserKey(_ userID: String) -> String {
+    let trimmed = userID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard trimmed.hasPrefix("@"),
+          let separator = trimmed.firstIndex(of: ":") else {
+        return trimmed
+    }
+
+    let localpart = trimmed[trimmed.index(after: trimmed.startIndex)..<separator]
+    let server = trimmed[trimmed.index(after: separator)...]
+    guard !localpart.isEmpty, !server.isEmpty else {
+        return trimmed
+    }
+
+    return "\(localpart)@\(server)"
+}
+
+private struct TrixGroupDeviceTrustEntry: Identifiable {
+    let member: TrixRoomMember
+    let devices: [TrixPeerDeviceIdentity]
+    let isCurrentUser: Bool
+    let errorMessage: String?
+
+    var id: String {
+        trixNormalizedUserKey(member.userID)
+    }
+
+    var trustedActiveDeviceCount: Int {
+        devices.filter(\.canSendEncrypted).count
+    }
+
+    var needsTrust: Bool {
+        !isCurrentUser && trustedActiveDeviceCount == 0
+    }
+
+    var statusLabel: String {
+        if isCurrentUser {
+            return "You"
+        }
+
+        if errorMessage != nil {
+            return "Refresh Failed"
+        }
+
+        if devices.isEmpty {
+            return "No Devices"
+        }
+
+        return needsTrust ? "Needs Trust" : "Ready"
+    }
+
+    var statusIcon: String {
+        if isCurrentUser || !needsTrust {
+            return "checkmark.shield.fill"
+        }
+
+        return "exclamationmark.shield"
+    }
+
+    var statusTint: Color {
+        if errorMessage != nil || needsTrust {
+            return .orange
+        }
+
+        return .green
+    }
+
+    func matches(userID: String) -> Bool {
+        let needle = trixNormalizedUserKey(userID)
+        return trixNormalizedUserKey(member.userID) == needle
+            || devices.contains { trixNormalizedUserKey($0.userID) == needle }
+    }
+}
+
+private struct TrixGroupDeviceTrustView: View {
+    let roomName: String
+    let entries: [TrixGroupDeviceTrustEntry]
+    let isLoading: Bool
+    let errorMessage: String?
+    let refresh: () -> Void
+    let trust: (TrixPeerDeviceIdentity) -> Void
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 16) {
+                summary
+
+                if isLoading && entries.isEmpty {
+                    ProgressView("Loading group OMEMO devices")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if entries.isEmpty {
+                    TrixEmptyStateView(
+                        title: "No Members",
+                        systemImage: "person.2",
+                        message: "Group members appear after the room is joined."
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    Button {
+                        refresh()
+                    } label: {
+                        Label("Refresh Devices", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isLoading)
+                    .frame(maxWidth: .infinity)
+                } else {
+                    ScrollView {
+                        VStack(spacing: 12) {
+                            ForEach(entries) { entry in
+                                TrixGroupDeviceTrustMemberView(
+                                    entry: entry,
+                                    isLoading: isLoading,
+                                    trust: trust
+                                )
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+
+                if let errorMessage {
+                    TrixBannerView(
+                        text: errorMessage,
+                        systemImage: "exclamationmark.triangle",
+                        tint: .red
+                    )
+                }
+
+                Text("Trust only after comparing fingerprints with each contact over an independent channel.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(20)
+            .navigationTitle("Trust \(roomName)")
+            .trixInlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        refresh()
+                    } label: {
+                        if isLoading {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                    .disabled(isLoading)
+                    .help("Refresh devices")
+                }
+            }
+        }
+        .trixDialogSurface(minWidth: 560, minHeight: 420)
+    }
+
+    private var summary: some View {
+        HStack(spacing: 10) {
+            Label(summaryLabel, systemImage: needsTrustCount == 0 ? "checkmark.shield.fill" : "exclamationmark.shield")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(needsTrustCount == 0 ? .green : .orange)
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            Text("\(entries.count) members")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(TrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
+        }
+    }
+
+    private var needsTrustCount: Int {
+        entries.filter(\.needsTrust).count
+    }
+
+    private var summaryLabel: String {
+        if entries.isEmpty {
+            return "Group OMEMO devices"
+        }
+
+        if needsTrustCount == 0 {
+            return "All required devices are trusted"
+        }
+
+        return "\(needsTrustCount) member\(needsTrustCount == 1 ? "" : "s") need trust"
+    }
+}
+
+private struct TrixGroupDeviceTrustMemberView: View {
+    let entry: TrixGroupDeviceTrustEntry
+    let isLoading: Bool
+    let trust: (TrixPeerDeviceIdentity) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                TrixAvatarView(
+                    title: entry.member.title,
+                    systemImage: "person.fill",
+                    size: 34,
+                    tint: entry.isCurrentUser ? .secondary : TrixDesign.accent
+                )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.member.title)
+                        .font(.callout.weight(.semibold))
+                        .lineLimit(1)
+
+                    Text(entry.isCurrentUser ? "You" : entry.member.userID)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+
+                Spacer(minLength: 8)
+
+                Label(entry.statusLabel, systemImage: entry.statusIcon)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(entry.statusTint)
+                    .lineLimit(1)
+            }
+
+            if let errorMessage = entry.errorMessage {
+                TrixBannerView(
+                    text: errorMessage,
+                    systemImage: "exclamationmark.triangle",
+                    tint: .orange
+                )
+            } else if entry.devices.isEmpty {
+                Text(entry.isCurrentUser ? "Account devices are managed in Settings." : "No published OMEMO devices were found for this member.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(entry.devices) { device in
+                        TrixGroupDeviceTrustDeviceRow(
+                            device: device,
+                            isLoading: isLoading,
+                            trust: trust
+                        )
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(TrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
+        }
+    }
+}
+
+private struct TrixGroupDeviceTrustDeviceRow: View {
+    let device: TrixPeerDeviceIdentity
+    let isLoading: Bool
+    let trust: (TrixPeerDeviceIdentity) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Label(device.trustState.label, systemImage: device.canSendEncrypted ? "checkmark.shield.fill" : "exclamationmark.shield")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(device.canSendEncrypted ? .green : .orange)
+                    .lineLimit(1)
+
+                Spacer(minLength: 8)
+
+                Text(device.deviceID)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(device.shortFingerprint)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .layoutPriority(1)
+
+                if !device.canSendEncrypted && device.isActive {
+                    Button {
+                        trust(device)
+                    } label: {
+                        Label("Trust Device", systemImage: "checkmark.shield")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isLoading)
+                }
+            }
+        }
+        .padding(10)
+        .background(TrixDesign.secondarySurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
 }
 
 private struct TrixPeerDeviceTrustView: View {
