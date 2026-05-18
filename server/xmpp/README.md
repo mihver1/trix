@@ -217,6 +217,16 @@ maintenance session. Passwords are read from files and are never printed.
 Disable uses ejabberd `ban_account`, which blocks login and kicks current
 sessions without deleting the account's roster/vCard/archive state. Enable uses
 ejabberd `unban_account` to clear that ban without changing the account secret.
+The script also keeps restrictive file-backed fixed-window counters before it
+calls the loopback API. By default each operator command is limited to 30 calls
+per 60-second window under
+`${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/trix-xmpp-operator-rate`. Tune with
+`TRIX_XMPP_OPERATOR_RATE_STATE_DIR`,
+`TRIX_XMPP_OPERATOR_RATE_WINDOW_SECONDS`,
+`TRIX_XMPP_OPERATOR_RATE_LIMIT_DEFAULT`, or a per-command
+`TRIX_XMPP_OPERATOR_RATE_LIMIT_<COMMAND>` variable where command dashes are
+converted to underscores. `TRIX_XMPP_OPERATOR_DISABLE_RATE_LIMIT=1` is reserved
+for explicit private maintenance and does not make `mod_http_api` public-safe.
 
 ## Invite Registration
 
@@ -272,6 +282,42 @@ password change, or Telegram sticker import are enabled, expose
 `/v1/operator/*` reachable only from an operator network or localhost. Do not
 log request bodies: they contain invite codes, XMPP passwords, and short-lived
 sticker file tokens.
+
+The wrapper enforces in-process fixed-window limits before expensive or
+state-changing work. Limits are scoped by source IP for every route and by
+signed-in account JID for authenticated invite, password, and sticker routes
+before `check_password` can loop against ejabberd. A limited request returns a
+generic `429` JSON response and may include `Retry-After`; it never includes
+the request body, credentials, invite code, or sticker file token. Defaults are
+conservative and can be tuned with:
+
+```bash
+TRIX_INVITE_RATE_WINDOW_SECONDS=60
+TRIX_INVITE_RATE_LIMIT_DEFAULT=60
+TRIX_INVITE_RATE_LIMIT_HEALTH=120
+TRIX_INVITE_RATE_LIMIT_OPERATOR_INVITES=20
+TRIX_INVITE_RATE_LIMIT_ACCOUNT_INVITES=20
+TRIX_INVITE_RATE_LIMIT_PASSWORD_CHANGE=10
+TRIX_INVITE_RATE_LIMIT_REDEEM=12
+TRIX_INVITE_RATE_LIMIT_STICKER_PACK=30
+TRIX_INVITE_RATE_LIMIT_STICKER_FILE=60
+```
+
+Treat these as defense-in-depth only. Keep raw `/api` loopback-only and add a
+reverse-proxy limiter on app-facing routes. For nginx, keep body logging off and
+put a small zone in front of the private wrapper:
+
+```nginx
+limit_req_zone $binary_remote_addr zone=trix_invite:10m rate=10r/m;
+
+location = /v1/registration/redeem {
+  limit_req zone=trix_invite burst=5 nodelay;
+  proxy_pass http://127.0.0.1:8091;
+}
+```
+
+For stock Caddy builds, use a vetted rate-limit handler/plugin or keep nginx in
+front for the limiter layer; do not proxy raw `/api` outside loopback.
 
 Enable Telegram sticker import only with deployment-local server secrets:
 

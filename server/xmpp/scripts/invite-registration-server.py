@@ -20,6 +20,19 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
+def env_int(name, default):
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise SystemExit(f"{name} must be an integer")
+    if value <= 0:
+        raise SystemExit(f"{name} must be positive")
+    return value
+
+
 HOST = os.environ.get("TRIX_XMPP_OPERATOR_HOST", "trix.selfhost.ru")
 API_URL = os.environ.get("TRIX_XMPP_API_URL", "http://127.0.0.1:5280/api").rstrip("/")
 BIND = os.environ.get("TRIX_INVITE_BIND", "127.0.0.1")
@@ -40,14 +53,56 @@ LOCALPART_RE = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,30}[a-z0-9])?$")
 MAX_BODY_BYTES = 16 * 1024
 MAX_STICKER_BYTES = 8 * 1024 * 1024
 TELEGRAM_PACK_NAME_RE = re.compile(r"^[A-Za-z0-9_]{1,128}$")
+RATE_WINDOW_SECONDS = env_int("TRIX_INVITE_RATE_WINDOW_SECONDS", 60)
+RATE_LIMIT_DEFAULT = env_int("TRIX_INVITE_RATE_LIMIT_DEFAULT", 60)
+RATE_LIMITS = {
+    "health": env_int("TRIX_INVITE_RATE_LIMIT_HEALTH", 120),
+    "operator_invites": env_int("TRIX_INVITE_RATE_LIMIT_OPERATOR_INVITES", 20),
+    "account_invites": env_int("TRIX_INVITE_RATE_LIMIT_ACCOUNT_INVITES", 20),
+    "password_change": env_int("TRIX_INVITE_RATE_LIMIT_PASSWORD_CHANGE", 10),
+    "registration_redeem": env_int("TRIX_INVITE_RATE_LIMIT_REDEEM", 12),
+    "sticker_pack": env_int("TRIX_INVITE_RATE_LIMIT_STICKER_PACK", 30),
+    "sticker_file": env_int("TRIX_INVITE_RATE_LIMIT_STICKER_FILE", 60),
+}
 
 
 class InviteError(Exception):
-    def __init__(self, status, code, message):
+    def __init__(self, status, code, message, retry_after=None):
         super().__init__(message)
         self.status = status
         self.code = code
         self.message = message
+        self.retry_after = retry_after
+
+
+class FixedWindowRateLimiter:
+    def __init__(self, window_seconds):
+        self.window_seconds = window_seconds
+        self.lock = threading.Lock()
+        self.buckets = {}
+
+    def check(self, scope, limit):
+        current_time = time.monotonic()
+        current_window = int(current_time // self.window_seconds)
+        key = tuple(scope)
+        with self.lock:
+            window, count = self.buckets.get(key, (current_window, 0))
+            if window != current_window:
+                window = current_window
+                count = 0
+            if count >= limit:
+                retry_after = int(((window + 1) * self.window_seconds) - current_time)
+                return False, max(1, retry_after)
+            self.buckets[key] = (window, count + 1)
+            if len(self.buckets) > 4096:
+                stale_windows = {bucket for bucket, _ in self.buckets.values() if bucket < current_window - 1}
+                if stale_windows:
+                    self.buckets = {
+                        bucket_key: bucket_value
+                        for bucket_key, bucket_value in self.buckets.items()
+                        if bucket_value[0] not in stale_windows
+                    }
+            return True, None
 
 
 class InviteStore:
@@ -166,45 +221,82 @@ class InviteStore:
 
 
 store = InviteStore(STORE_PATH)
+rate_limiter = FixedWindowRateLimiter(RATE_WINDOW_SECONDS)
+
+
+def enforce_rate_limit(scope, limit_name):
+    limit = RATE_LIMITS.get(limit_name, RATE_LIMIT_DEFAULT)
+    allowed, retry_after = rate_limiter.check(scope, limit)
+    if not allowed:
+        raise InviteError(
+            HTTPStatus.TOO_MANY_REQUESTS,
+            "rate_limited",
+            "Too many requests. Try again later.",
+            retry_after=retry_after,
+        )
+
+
+def retry_after_header(error):
+    if error.retry_after is None:
+        return None
+    return {"Retry-After": str(error.retry_after)}
 
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "TrixInviteRegistration/1.0"
 
     def do_GET(self):
-        if self.path == "/v1/system/health":
-            self.write_json(HTTPStatus.OK, {"status": "ok"})
-            return
-        self.write_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": "Unknown endpoint."})
+        try:
+            if self.path == "/v1/system/health":
+                self.enforce_source_rate("health")
+                self.write_json(HTTPStatus.OK, {"status": "ok"})
+                return
+            self.write_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": "Unknown endpoint."})
+        except InviteError as error:
+            self.write_json(
+                error.status,
+                {"error": error.code, "message": error.message},
+                extra_headers=retry_after_header(error),
+            )
 
     def do_POST(self):
         try:
             if self.path == "/v1/operator/invites":
+                self.enforce_source_rate("operator_invites")
                 self.require_operator_token()
                 self.create_invite()
                 return
             if self.path == "/v1/invites":
-                issuer = self.require_account_auth()
+                self.enforce_source_rate("account_invites")
+                issuer = self.require_account_auth("account_invites")
                 self.create_invite(issued_by=issuer)
                 return
             if self.path == "/v1/account/password":
-                issuer = self.require_account_auth()
+                self.enforce_source_rate("password_change")
+                issuer = self.require_account_auth("password_change")
                 self.change_account_password(issuer)
                 return
             if self.path == "/v1/stickers/telegram/packs":
-                self.require_account_auth()
+                self.enforce_source_rate("sticker_pack")
+                self.require_account_auth("sticker_pack")
                 self.import_telegram_sticker_pack()
                 return
             if self.path == "/v1/stickers/telegram/file":
-                self.require_account_auth()
+                self.enforce_source_rate("sticker_file")
+                self.require_account_auth("sticker_file")
                 self.download_telegram_sticker_file()
                 return
             if self.path == "/v1/registration/redeem":
+                self.enforce_source_rate("registration_redeem")
                 self.redeem_invite()
                 return
             self.write_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": "Unknown endpoint."})
         except InviteError as error:
-            self.write_json(error.status, {"error": error.code, "message": error.message})
+            self.write_json(
+                error.status,
+                {"error": error.code, "message": error.message},
+                extra_headers=retry_after_header(error),
+            )
         except Exception:
             self.write_json(
                 HTTPStatus.INTERNAL_SERVER_ERROR,
@@ -322,7 +414,7 @@ class Handler(BaseHTTPRequestHandler):
         if not expected or not hmac.compare_digest(provided, expected):
             raise InviteError(HTTPStatus.UNAUTHORIZED, "unauthorized", "Operator token is required.")
 
-    def require_account_auth(self):
+    def require_account_auth(self, limit_name):
         header = self.headers.get("Authorization", "")
         prefix = "Basic "
         if not header.startswith(prefix):
@@ -340,17 +432,28 @@ class Handler(BaseHTTPRequestHandler):
         localpart, host = normalized_jid_parts(user_id)
         if host != HOST or not password:
             raise InviteError(HTTPStatus.UNAUTHORIZED, "unauthorized", "Account credentials are invalid.")
+        issuer = f"{localpart}@{HOST}"
+        self.enforce_account_rate(limit_name, issuer)
         if not check_account_password(localpart, password):
             raise InviteError(HTTPStatus.UNAUTHORIZED, "unauthorized", "Account credentials are invalid.")
 
-        return f"{localpart}@{HOST}"
+        return issuer
 
-    def write_json(self, status, payload):
+    def enforce_source_rate(self, limit_name):
+        source_ip = self.client_address[0] if self.client_address else "unknown"
+        enforce_rate_limit(("source", source_ip, limit_name), limit_name)
+
+    def enforce_account_rate(self, limit_name, account_jid):
+        enforce_rate_limit(("account", account_jid, limit_name), limit_name)
+
+    def write_json(self, status, payload, extra_headers=None):
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         self.send_response(int(status))
         self.send_header("Content-Type", "application/json")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
+        for key, value in (extra_headers or {}).items():
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(body)
 
