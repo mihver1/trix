@@ -91,7 +91,7 @@ private struct TrixWorkspaceView: View {
         }
         .tint(TrixDesign.accent)
         .task(id: scenePhase) {
-            TrixAPNsCoordinator.shared.setApplicationIsActive(scenePhase == .active)
+            await model.setApplicationIsActive(scenePhase == .active)
             guard scenePhase == .active else {
                 return
             }
@@ -114,7 +114,7 @@ private struct TrixWorkspaceView: View {
         }
         .tint(TrixDesign.accent)
         .task(id: scenePhase) {
-            TrixAPNsCoordinator.shared.setApplicationIsActive(scenePhase == .active)
+            await model.setApplicationIsActive(scenePhase == .active)
             guard scenePhase == .active else {
                 return
             }

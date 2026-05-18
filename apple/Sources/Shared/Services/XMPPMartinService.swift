@@ -417,11 +417,13 @@ actor XMPPMartinService: TrixService {
         let carbonsModule: MessageCarbonsModule
         let deliveryReceiptsModule: MessageDeliveryReceiptsModule
         let chatStateModule: ChatStateNotificationsModule
+        let csiModule: ClientStateIndicationModule
         let mucModule: MucModule
         let bookmarksModule: PEPBookmarksModule
         let pushModule: TigasePushNotificationsModule
         let omemoStack: TrixOMEMOStack
         let createdAt: Date
+        var applicationIsActive: Bool?
         var cancellables: Set<AnyCancellable> = []
 
         init(
@@ -433,6 +435,7 @@ actor XMPPMartinService: TrixService {
             carbonsModule: MessageCarbonsModule,
             deliveryReceiptsModule: MessageDeliveryReceiptsModule,
             chatStateModule: ChatStateNotificationsModule,
+            csiModule: ClientStateIndicationModule,
             mucModule: MucModule,
             bookmarksModule: PEPBookmarksModule,
             pushModule: TigasePushNotificationsModule,
@@ -447,6 +450,7 @@ actor XMPPMartinService: TrixService {
             self.carbonsModule = carbonsModule
             self.deliveryReceiptsModule = deliveryReceiptsModule
             self.chatStateModule = chatStateModule
+            self.csiModule = csiModule
             self.mucModule = mucModule
             self.bookmarksModule = bookmarksModule
             self.pushModule = pushModule
@@ -711,6 +715,16 @@ actor XMPPMartinService: TrixService {
         } catch {
             throw TrixClientError.apnsRegistrationFailed
         }
+    }
+
+    func setApplicationActive(_ isActive: Bool, session: TrixSession) async {
+        let key = Self.sessionKey(session)
+        guard let connection = connections[key],
+              connection.client.isConnected else {
+            return
+        }
+
+        await sendClientState(isActive: isActive, connection: connection)
     }
 
     func rooms(session: TrixSession) async throws -> [TrixRoomSummary] {
@@ -1576,6 +1590,26 @@ actor XMPPMartinService: TrixService {
         let updatedVCard = Self.updatingVCard(currentVCard, userID: jid, update: update)
         try await publishVCardElement(updatedVCard, connection: connection)
         return Self.profile(from: updatedVCard, userID: jid)
+    }
+
+    private func sendClientState(isActive: Bool, connection: Connection) async {
+        guard connection.csiModule.available,
+              connection.applicationIsActive != isActive else {
+            return
+        }
+
+        let element = Element(
+            name: isActive ? "active" : "inactive",
+            xmlns: ClientStateIndicationModule.CSI_XMLNS
+        )
+        let stanza = Stanza.from(element: element)
+
+        do {
+            try await connection.csiModule.write(stanza: stanza)
+            connection.applicationIsActive = isActive
+        } catch {
+            connection.applicationIsActive = nil
+        }
     }
 
     private func ensureConnection(for session: TrixSession) async throws -> Connection {
@@ -3144,7 +3178,8 @@ actor XMPPMartinService: TrixService {
         let carbonsModule = MessageCarbonsModule()
         _ = client.modulesManager.register(carbonsModule)
         _ = client.modulesManager.register(StreamManagementModule())
-        _ = client.modulesManager.register(ClientStateIndicationModule())
+        let csiModule = ClientStateIndicationModule()
+        _ = client.modulesManager.register(csiModule)
         let mamModule = MessageArchiveManagementModule()
         _ = client.modulesManager.register(mamModule)
         let deliveryReceiptsModule = MessageDeliveryReceiptsModule()
@@ -3178,6 +3213,7 @@ actor XMPPMartinService: TrixService {
             carbonsModule: carbonsModule,
             deliveryReceiptsModule: deliveryReceiptsModule,
             chatStateModule: chatStateModule,
+            csiModule: csiModule,
             mucModule: mucModule,
             bookmarksModule: bookmarksModule,
             pushModule: pushModule,

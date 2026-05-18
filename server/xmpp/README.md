@@ -335,6 +335,11 @@ Martin's `register-device` command, stores the returned XEP-0357 node mapping
 locally, and sends only generic APNs alerts with `aps.content-available=1` plus
 `trix.type=sync` notifications.
 
+Apple clients should publish XEP-0352 Client State Indication when the app scene
+changes. Inactive CSI is the signal that lets ejabberd treat an otherwise
+connected or stream-resumable resource as push-eligible; device registration
+alone does not prove APNs delivery will be attempted.
+
 Do not commit the `.p8` key or related credentials. The XEP-0114 component port
 `5347` must stay private to the host or Docker network and must not be published
 through Compose. `iNPUTmice/up` was reviewed as a possible component reference,

@@ -118,4 +118,8 @@ protocol TrixPushRegistrationService: Sendable {
     ) async throws
 }
 
-typealias TrixService = TrixAuthService & TrixSyncService & TrixRoomService & TrixTypingService & TrixRoomMembershipService & TrixRoomBootstrapService & TrixDeviceVerificationService & TrixUserDirectoryService & TrixPushRegistrationService
+protocol TrixClientStateService: Sendable {
+    func setApplicationActive(_ isActive: Bool, session: TrixSession) async
+}
+
+typealias TrixService = TrixAuthService & TrixSyncService & TrixRoomService & TrixTypingService & TrixRoomMembershipService & TrixRoomBootstrapService & TrixDeviceVerificationService & TrixUserDirectoryService & TrixPushRegistrationService & TrixClientStateService

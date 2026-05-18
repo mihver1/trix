@@ -216,6 +216,12 @@ component mode that accepts Martin/Tigase `register-device`, stores XEP-0357
 node mappings outside the repo, and emits only the generic sync notification
 contract above.
 
+The Apple client must send XEP-0352 Client State Indication when the iOS/macOS
+scene becomes inactive or active. Without that inactive signal, an online or
+stream-resumable XMPP resource can remain eligible for normal delivery and
+ejabberd may not publish to the XEP-0357 push node, leaving APNs untouched even
+though device registration succeeded.
+
 On 2026-05-10 the XMPP push gateway was deployed on the VPS with
 deployment-local APNs token-auth material. The APNs `.p8` key is mounted into
 the container read-only, owned for the non-root gateway user, and not committed

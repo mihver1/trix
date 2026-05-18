@@ -88,8 +88,12 @@ copying old implementation details.
       component/store for Martin/XEP-0357 registration nodes. On 2026-05-10 the
       gateway was deployed on the VPS with deployment-local APNs token-auth
       material, bound its HTTP health endpoint to localhost only, and connected
-      to ejabberd as `push.trix.selfhost.ru`. Keep this open until signed-device
-      APNs smoke confirms visible generic delivery with no plaintext fields.
+      to ejabberd as `push.trix.selfhost.ru`. On 2026-05-18 live diagnostics
+      found stored XEP-0357 registrations but no APNs delivery attempts from the
+      gateway; the Apple client now forwards iOS/macOS scene active/inactive
+      state to XMPP through XEP-0352 CSI so ejabberd can publish inactive-client
+      pushes. Keep this open until signed-device APNs smoke confirms visible
+      generic delivery with no plaintext fields.
 - [x] Trix user directory search for new DM/group creation and add-member flows.
 - [x] Basic XMPP vCard-backed profile view/edit surface for display name, bio,
       status, and website.

@@ -209,6 +209,9 @@ actor MockTrixService: TrixService {
     ) async throws {
     }
 
+    func setApplicationActive(_ isActive: Bool, session: TrixSession) async {
+    }
+
     func searchUsers(
         _ searchTerm: String,
         limit: Int,

@@ -322,6 +322,16 @@ final class TrixAppModel: ObservableObject {
         await syncAPNsRegistrationIfPossible()
     }
 
+    func setApplicationIsActive(_ isActive: Bool) async {
+        TrixAPNsCoordinator.shared.setApplicationIsActive(isActive)
+
+        guard let session else {
+            return
+        }
+
+        await trixService.setApplicationActive(isActive, session: session)
+    }
+
     func handleRemoteNotification(
         userInfo: [AnyHashable: Any],
         applicationIsActive: Bool
