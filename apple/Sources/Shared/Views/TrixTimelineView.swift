@@ -2646,34 +2646,90 @@ private struct TrixStickerTile: View {
     let data: Data?
     let canSend: Bool
     let send: () -> Void
+    #if os(iOS)
+    @GestureState private var isLongPressing = false
+    #elseif os(macOS)
+    @State private var isHovering = false
+    #endif
 
     var body: some View {
-        Button(action: send) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(TrixDesign.secondarySurface)
-
-                if let data, let image = platformImage(from: data) {
-                    image
-                        .resizable()
-                        .scaledToFit()
-                        .padding(8)
-                } else {
-                    Image(systemName: "face.smiling")
-                        .font(.system(size: 28, weight: .semibold))
-                        .foregroundStyle(TrixDesign.accent)
+        stickerSurface
+            .scaleEffect(isMagnified ? Self.magnifiedScale : 1, anchor: .center)
+            .frame(width: Self.tileSize, height: Self.tileSize)
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .onTapGesture {
+                guard canInteract else {
+                    return
                 }
+
+                send()
             }
-            .frame(width: 72, height: 72)
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
+            .opacity(canInteract ? 1 : 0.52)
+            .help(sticker.emoji.map { "Send sticker \($0)" } ?? "Send sticker")
+            .accessibilityLabel(sticker.emoji.map { "Send sticker \($0)" } ?? "Send sticker")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                guard canInteract else {
+                    return
+                }
+
+                send()
+            }
+            .zIndex(isMagnified ? 1 : 0)
+            .animation(.spring(response: 0.18, dampingFraction: 0.82), value: isMagnified)
+            #if os(iOS)
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.22, maximumDistance: 18)
+                    .updating($isLongPressing) { value, state, _ in
+                        state = value
+                    }
+            )
+            #elseif os(macOS)
+            .onHover { isHovering in
+                self.isHovering = canInteract && isHovering
+            }
+            #endif
+    }
+
+    private var canInteract: Bool {
+        canSend && data != nil
+    }
+
+    private var isMagnified: Bool {
+        guard canInteract else {
+            return false
+        }
+
+        #if os(iOS)
+        return isLongPressing
+        #elseif os(macOS)
+        return isHovering
+        #else
+        return false
+        #endif
+    }
+
+    private var stickerSurface: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(TrixDesign.secondarySurface)
+
+            if let data, let image = platformImage(from: data) {
+                image
+                    .resizable()
+                    .scaledToFit()
+                    .padding(8)
+            } else {
+                Image(systemName: "face.smiling")
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(TrixDesign.accent)
             }
         }
-        .buttonStyle(.plain)
-        .disabled(!canSend || data == nil)
-        .help(sticker.emoji.map { "Send sticker \($0)" } ?? "Send sticker")
-        .accessibilityLabel(sticker.emoji.map { "Send sticker \($0)" } ?? "Send sticker")
+        .frame(width: Self.tileSize, height: Self.tileSize)
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
+        }
     }
 
     private func platformImage(from data: Data) -> Image? {
@@ -2691,6 +2747,9 @@ private struct TrixStickerTile: View {
         return nil
         #endif
     }
+
+    private static let tileSize: CGFloat = 72
+    private static let magnifiedScale: CGFloat = 2
 }
 
 private struct TrixReactionMenu: View {

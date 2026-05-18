@@ -583,6 +583,7 @@ actor XMPPMartinService: TrixService {
     private var dismissedGroupInvitations: [String: [String: Date]] = [:]
     private var invitationArchiveSyncConnectionDates: [String: Date] = [:]
     private let timelineCacheStore = TrixTimelineCacheStore()
+    private let roomSummaryCacheStore = TrixRoomSummaryCacheStore()
     private let groupRoomCacheStore = TrixGroupRoomCacheStore()
     private let mucInvitationCacheStore = TrixMUCInvitationCacheStore()
     private let omemoPersistence: TrixOMEMOPersistence
@@ -728,13 +729,19 @@ actor XMPPMartinService: TrixService {
         }
         summaries.append(contentsOf: groupRoomSummaries(accountJID: accountJID, connection: connection))
 
-        return summaries.sorted { lhs, rhs in
-            if lhs.lastActivityAt != rhs.lastActivityAt {
-                return lhs.lastActivityAt > rhs.lastActivityAt
-            }
+        let sortedSummaries = Self.sortedRoomSummaries(summaries)
+        try? roomSummaryCacheStore.save(sortedSummaries, accountJID: accountJID)
+        return sortedSummaries
+    }
 
-            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-        }
+    func cachedRooms(session: TrixSession) async throws -> [TrixRoomSummary] {
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+        let summaries = try roomSummaryCacheStore.load(accountJID: accountJID)
+        return Self.sortedRoomSummaries(
+            summaries.map { cachedSummary in
+                cachedRoomSummary(cachedSummary, accountJID: accountJID)
+            }
+        )
     }
 
     private func roomSummary(
@@ -760,6 +767,23 @@ actor XMPPMartinService: TrixService {
             unreadCount: 0,
             lastMessagePreview: Self.roomPreview(from: latestItem) ?? (hasTrustedDevice ? "Ready for OMEMO messages" : "Trust OMEMO device before sending"),
             lastActivityAt: latestItem?.timestamp ?? Date.distantPast
+        )
+    }
+
+    private func cachedRoomSummary(_ summary: TrixRoomSummary, accountJID: String) -> TrixRoomSummary {
+        _ = loadCachedTimelineItems(accountJID: accountJID, roomID: summary.id)
+        guard let latestItem = timelineItems(accountJID: accountJID, roomID: summary.id).last else {
+            return summary
+        }
+
+        return TrixRoomSummary(
+            id: summary.id,
+            name: summary.name,
+            kind: summary.kind,
+            isEncrypted: summary.isEncrypted,
+            unreadCount: summary.unreadCount,
+            lastMessagePreview: Self.roomPreview(from: latestItem) ?? summary.lastMessagePreview,
+            lastActivityAt: max(summary.lastActivityAt, latestItem.timestamp)
         )
     }
 
@@ -3756,6 +3780,16 @@ actor XMPPMartinService: TrixService {
         }
 
         return body
+    }
+
+    private static func sortedRoomSummaries(_ summaries: [TrixRoomSummary]) -> [TrixRoomSummary] {
+        summaries.sorted { lhs, rhs in
+            if lhs.lastActivityAt != rhs.lastActivityAt {
+                return lhs.lastActivityAt > rhs.lastActivityAt
+            }
+
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
     }
 
     private static func profile(from vCard: Element?, userID: String) -> TrixUserProfile {

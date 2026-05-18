@@ -277,6 +277,10 @@ actor MockTrixService: TrixService {
         }
     }
 
+    func cachedRooms(session: TrixSession) async throws -> [TrixRoomSummary] {
+        try await rooms(session: session)
+    }
+
     func deviceVerificationStatus(session: TrixSession) async throws -> TrixDeviceVerificationStatus {
         TrixDeviceVerificationStatus(
             userID: session.userID,

@@ -10,6 +10,23 @@ final class RoomListViewModel: ObservableObject {
     @Published private(set) var invitationActionRoomID: String?
     @Published private(set) var errorMessage: String?
 
+    func loadCached(
+        session: TrixSession,
+        service: TrixSyncService,
+        selectedRoomID: String? = nil
+    ) async {
+        do {
+            let cachedRooms = try await service.cachedRooms(session: session)
+            guard !cachedRooms.isEmpty else {
+                return
+            }
+
+            rooms = mergedRoomsAfterReload(cachedRooms, selectedRoomID: selectedRoomID)
+        } catch {
+            return
+        }
+    }
+
     func reload(
         session: TrixSession,
         service: TrixSyncService & TrixRoomBootstrapService,

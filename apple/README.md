@@ -300,8 +300,8 @@ The checked-in Apple code is now the first XMPP client slice:
   configuration, persistent pending invite accept/decline after reconnect,
   member list, add-member, and remove-member operations. New Apple-created
   groups grant invited members MUC admin affiliation for the MVP UI, and member
-  lists merge live occupants, affiliation results, and a Keychain known-member
-  cache;
+  lists merge live occupants, affiliation results, and an encrypted local
+  known-member file cache whose key is stored in Keychain;
 - macOS room inspector with contact/group people panels, common chat summaries,
   metadata, directory-backed member add/remove controls, and shared-media rows
   that can download encrypted attachments into the decrypted preview flow;
@@ -351,6 +351,9 @@ loads the room's local encrypted timeline file cache before querying MAM, then
 merges any decryptable encrypted archive items back into the same bounded cache.
 The file cache is encrypted with a small cache key stored in Keychain, while
 message history itself is not stored as Keychain generic-password blobs.
+Cold session restore also loads an encrypted room-summary file cache before the
+server room-list refresh starts. The room-list payload is stored in Application
+Support, not Keychain; Keychain stores only the room-summary cache key.
 The `timeline-restart` live-smoke mode exercises this through a fresh service
 instance and reports only counts. On 2026-05-10 the credentialed run passed with
 MAM available, local cache loaded after restart, overlapping item IDs, and no
@@ -381,7 +384,8 @@ The target protocol-neutral boundary is:
 - `TrixStickerImportService`: signed-in Telegram sticker-pack import and
   server-proxied sticker file download through the same app-facing wrapper.
 - `TrixAuthService`: login, logout, and session restore.
-- `TrixSyncService`: room list, account state, and sync lifecycle.
+- `TrixSyncService`: cached and live room list, account state, and sync
+  lifecycle.
 - `TrixRoomService`: timeline, text send, attachments, reactions, typing, and
   read/delivery state.
 - `TrixRoomMembershipService`: group member list, invite/add, remove, and the
@@ -430,7 +434,8 @@ join/configuration/invite/affiliation APIs, and MartinOMEMO exposes
 `encode(message:for:)` for multiple bare JIDs plus `decode(message:from:)` so
 non-anonymous MUC messages can be decoded against the real sender JID. The app
 uses those APIs only; it does not manipulate OMEMO keys directly. Group member
-visibility is backed by live MUC state plus a local Keychain known-member cache;
+visibility is backed by live MUC state plus a local encrypted known-member file
+cache whose key is stored in Keychain;
 older rooms where the current user is only a MUC member can still get forbidden
 from ejabberd for affiliation-changing add/remove operations. The remaining
 group blocker is broader restart/offline replay coverage, not live send/receive

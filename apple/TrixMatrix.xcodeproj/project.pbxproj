@@ -22,6 +22,7 @@
 		2BE3AB5258AC97A330B5C78B /* TrixTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABC8B3AFF8B256AD64163ED3 /* TrixTimelineView.swift */; };
 		2C3610063B8F38A9B73F8D6D /* TrixNewRoomView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CB7E28D9BE26DFDDF515848 /* TrixNewRoomView.swift */; };
 		2C6928BF2BC09651052611D8 /* TrixInviteIssueView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B42A6621D0BCD3B821EE035A /* TrixInviteIssueView.swift */; };
+		2C864C141108F66ABE20BA07 /* RoomListViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C2D59E85DDAC36B739AA246 /* RoomListViewModelTests.swift */; };
 		2E096CB7AF402E547D5F3F6E /* TrixUserDirectorySearchViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43722B0DE18EF6D1CA3D68AE /* TrixUserDirectorySearchViewModel.swift */; };
 		2E8181505E263CC7A7991096 /* TrixRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2B35075275B150F3A4E508B /* TrixRootView.swift */; };
 		32F7131F833CF232EBFBE76B /* TrixInlineAttachmentPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 337251558054A82A81447617 /* TrixInlineAttachmentPreview.swift */; };
@@ -55,9 +56,11 @@
 		807A17F604336D66B054C512 /* TrixLimitationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4219A1C95F0801F8E69645E1 /* TrixLimitationsView.swift */; };
 		86DE06F00D3EEF89A9087A6C /* TrixUserDirectoryPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DB3F0532BD6141816D4BA22 /* TrixUserDirectoryPickerView.swift */; };
 		86F51D72617511B1F9899F66 /* TrixGroupRoomCacheStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6CDAECFDAFCD702E0D47C71 /* TrixGroupRoomCacheStore.swift */; };
+		8BB219AB2BDA97EBEBD0A136 /* TrixRoomSummaryCacheStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 933861A15D006B5E3C9D96A0 /* TrixRoomSummaryCacheStore.swift */; };
 		8C6169B957900216C4377471 /* RoomListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CB4DE535EF97BB0D0B809CB /* RoomListViewModel.swift */; };
 		907B1EA79B4C0EF1F64763FD /* XMPPMartinService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 521137CC0E9C946883248810 /* XMPPMartinService.swift */; };
 		921F0FC41786273D87813408 /* TrixUserDirectoryPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DB3F0532BD6141816D4BA22 /* TrixUserDirectoryPickerView.swift */; };
+		936A4296DD7D9C7CFA5DE5D2 /* TrixRoomSummaryCacheStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 933861A15D006B5E3C9D96A0 /* TrixRoomSummaryCacheStore.swift */; };
 		9573B780604DFE02A180F489 /* TrixInviteRegistrationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76007C8FD94C5E153E5834F0 /* TrixInviteRegistrationService.swift */; };
 		964BC80E4B99470A6D6A6060 /* TrixServiceProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 626D2464543C7ED82085CD5B /* TrixServiceProtocols.swift */; };
 		9A4D2A750B168D3918B0D5CE /* KeychainTrixSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 982CA9963B78FB1D985AB7DD /* KeychainTrixSessionStore.swift */; };
@@ -113,6 +116,7 @@
 		0DB3F0532BD6141816D4BA22 /* TrixUserDirectoryPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixUserDirectoryPickerView.swift; sourceTree = "<group>"; };
 		0E361322ECEB6552681FC51E /* TrixStickerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixStickerTests.swift; sourceTree = "<group>"; };
 		1ACD907EF405BB7A2E6AB546 /* TrixLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixLoginView.swift; sourceTree = "<group>"; };
+		1C2D59E85DDAC36B739AA246 /* RoomListViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomListViewModelTests.swift; sourceTree = "<group>"; };
 		218F41815711F48C162BEE1D /* TrixGroupMembersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixGroupMembersView.swift; sourceTree = "<group>"; };
 		237D942B565A8A2F8001AAEF /* MockTrixService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockTrixService.swift; sourceTree = "<group>"; };
 		2B10D324394A6B45839BBBD3 /* TrixVisualDeviceVerificationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixVisualDeviceVerificationView.swift; sourceTree = "<group>"; };
@@ -138,6 +142,7 @@
 		8CB4DE535EF97BB0D0B809CB /* RoomListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomListViewModel.swift; sourceTree = "<group>"; };
 		8D29523C8CB988A1531D1D8E /* TrixMacRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMacRootView.swift; sourceTree = "<group>"; };
 		913784390EE11A5D409BF69B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		933861A15D006B5E3C9D96A0 /* TrixRoomSummaryCacheStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixRoomSummaryCacheStore.swift; sourceTree = "<group>"; };
 		944AC741D1613083D83D085A /* DeviceVerificationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceVerificationTests.swift; sourceTree = "<group>"; };
 		97D5FB80F688141C7F418525 /* TrixRemoteNotificationPayloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixRemoteNotificationPayloadTests.swift; sourceTree = "<group>"; };
 		982CA9963B78FB1D985AB7DD /* KeychainTrixSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainTrixSessionStore.swift; sourceTree = "<group>"; };
@@ -186,6 +191,7 @@
 			isa = PBXGroup;
 			children = (
 				944AC741D1613083D83D085A /* DeviceVerificationTests.swift */,
+				1C2D59E85DDAC36B739AA246 /* RoomListViewModelTests.swift */,
 				EEDCBB15AE4311F5FE32A774 /* TimelineViewModelTests.swift */,
 				97D5FB80F688141C7F418525 /* TrixRemoteNotificationPayloadTests.swift */,
 				0E361322ECEB6552681FC51E /* TrixStickerTests.swift */,
@@ -281,6 +287,7 @@
 				76007C8FD94C5E153E5834F0 /* TrixInviteRegistrationService.swift */,
 				C3B9CAC73BB4D740C2F79B3D /* TrixOMEMOStore.swift */,
 				2B266E20A0FA583A11BEEB89 /* TrixPasteboard.swift */,
+				933861A15D006B5E3C9D96A0 /* TrixRoomSummaryCacheStore.swift */,
 				626D2464543C7ED82085CD5B /* TrixServiceProtocols.swift */,
 				0A20B3F32A750F95F1336243 /* TrixStickerImportService.swift */,
 				55F7D8F50E34422F641CBC70 /* TrixStickerLibraryStore.swift */,
@@ -497,6 +504,7 @@
 				FF9932E70FC1B6D7BCE2CA2C /* TrixProfileViewModel.swift in Sources */,
 				B12D38D695C0CC7E8A1D0889 /* TrixRoomListView.swift in Sources */,
 				71F0476C58E284C111056AF1 /* TrixRoomSearchView.swift in Sources */,
+				936A4296DD7D9C7CFA5DE5D2 /* TrixRoomSummaryCacheStore.swift in Sources */,
 				2E8181505E263CC7A7991096 /* TrixRootView.swift in Sources */,
 				D15076EE9DE8A1252892154A /* TrixServiceProtocols.swift in Sources */,
 				6DB899B364A13A3B8507B857 /* TrixStickerImportService.swift in Sources */,
@@ -540,6 +548,7 @@
 				795F0AD58A17E90E4D5109B2 /* TrixProfileViewModel.swift in Sources */,
 				243EF5BA671A98313E711BA0 /* TrixRoomListView.swift in Sources */,
 				7F7FAB7503B931E6D188545F /* TrixRoomSearchView.swift in Sources */,
+				8BB219AB2BDA97EBEBD0A136 /* TrixRoomSummaryCacheStore.swift in Sources */,
 				7A4CED4537F4D2C5231A02E7 /* TrixRootView.swift in Sources */,
 				964BC80E4B99470A6D6A6060 /* TrixServiceProtocols.swift in Sources */,
 				19E413F7C05FB1DE94EC5076 /* TrixStickerImportService.swift in Sources */,
@@ -562,6 +571,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				9FC1867BEB447217B3C94D40 /* DeviceVerificationTests.swift in Sources */,
+				2C864C141108F66ABE20BA07 /* RoomListViewModelTests.swift in Sources */,
 				6D57E5D1FCB8F27CE604807D /* TimelineViewModelTests.swift in Sources */,
 				D1020333366101FD28A6BC76 /* TrixRemoteNotificationPayloadTests.swift in Sources */,
 				CFD02B00A99A6EB28089E5A7 /* TrixStickerTests.swift in Sources */,

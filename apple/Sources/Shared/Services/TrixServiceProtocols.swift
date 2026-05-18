@@ -24,7 +24,14 @@ protocol TrixAuthService: Sendable {
 }
 
 protocol TrixSyncService: Sendable {
+    func cachedRooms(session: TrixSession) async throws -> [TrixRoomSummary]
     func rooms(session: TrixSession) async throws -> [TrixRoomSummary]
+}
+
+extension TrixSyncService {
+    func cachedRooms(session: TrixSession) async throws -> [TrixRoomSummary] {
+        []
+    }
 }
 
 protocol TrixRoomService: Sendable {

@@ -130,12 +130,14 @@ final class TrixAppModel: ObservableObject {
             session = restoredSession
             account = restoredAccount
             startupStatus = .finishingRestore
-            isStarting = false
 
             loadStickerLibrary(for: restoredSession.userID)
-            await reloadRooms()
-            await reloadDeviceVerificationStatus()
-            await syncAPNsRegistrationIfPossible()
+            await loadCachedRoomsForCurrentSession()
+            isStarting = false
+
+            Task { [weak self] in
+                await self?.finishSessionRestoreInBackground()
+            }
         } catch {
             startupStatus = .restoreFailed
             isStarting = false
@@ -380,6 +382,26 @@ final class TrixAppModel: ObservableObject {
         if let selectedRoomID {
             await loadTimeline(roomID: selectedRoomID)
         }
+    }
+
+    private func loadCachedRoomsForCurrentSession() async {
+        guard let session else {
+            return
+        }
+
+        await roomListViewModel.loadCached(
+            session: session,
+            service: trixService,
+            selectedRoomID: selectedRoomID
+        )
+        refreshSelectedRoomSnapshot()
+        reconcileSelectedRoom()
+    }
+
+    private func finishSessionRestoreInBackground() async {
+        await reloadRooms()
+        await reloadDeviceVerificationStatus()
+        await syncAPNsRegistrationIfPossible()
     }
 
     func refreshForeground(

@@ -59,6 +59,9 @@ copying old implementation details.
       `mam=ok`, `cache_loaded=1`, `overlap=1`, and no missing local recipient
       key for the newly sent sender-side stanza. A full signed-app process
       quit/relaunch smoke is still tracked separately.
+- [x] Cold session restore shows cached room summaries before the live server
+      room-list refresh completes. The room-summary payload is an encrypted
+      Application Support file; Keychain stores only its cache key.
 - [x] Local unread badges and mark-read-on-open UI. Room lists cap large unread
       counts at `99+`, opening a room clears the local unread display, and
       room refreshes preserve/increment local unread state for inactive rooms
@@ -299,11 +302,12 @@ copying old implementation details.
 - [x] Add group member through the Apple XMPP client MUC path.
 - [x] Remove group member through the Apple XMPP client MUC path.
 - [x] List group members through the Apple XMPP client MUC path. The Apple
-      service merges live MUC occupants, affiliation results, and a Keychain
-      known-member cache so previously seen group members remain visible after
-      reconnect. New Apple-created private MUCs grant invited members MUC admin
-      affiliation for the MVP member-management UI; older member-only rooms may
-      still return forbidden for add/remove from non-admin accounts.
+      service merges live MUC occupants, affiliation results, and an encrypted
+      local known-member file cache so previously seen group members remain
+      visible after reconnect. Keychain stores only the cache key. New
+      Apple-created private MUCs grant invited members MUC admin affiliation for
+      the MVP member-management UI; older member-only rooms may still return
+      forbidden for add/remove from non-admin accounts.
 - [x] View server health.
 - [x] View archive/upload/push health through `operator-control.sh
       archive-upload-push-health`, which reports loopback API status, backup
@@ -388,7 +392,8 @@ copying old implementation details.
       Martin MUC primitives. Group text send now uses MartinOMEMO multi-recipient
       encode for known members, and live three-account send/receive/decrypt
       validation passed on 2026-05-09. Group member lists persist known members
-      in Keychain and the smoke checks owner, peer, and third-account visibility.
+      in an encrypted local file cache and the smoke checks owner, peer, and
+      third-account visibility.
 - [x] Matrix Rust SDK adapter and live smoke runner are removed from the new
       Apple target.
 - [x] Apple APNs tokens are never logged by the new XMPP app path and remote

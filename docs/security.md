@@ -81,10 +81,10 @@ identity keys, prekeys, signed prekeys, sessions, identities, sender keys, and
 trust decisions in the app Keychain. Logging out removes the saved XMPP login but
 does not erase OMEMO device state.
 
-The decrypted local timeline cache is stored outside Keychain in app-controlled
-Application Support storage and encrypted with an app-local cache key that is
-stored in Keychain. Keychain is used for small secret material, not as the
-message-history database.
+The decrypted local timeline cache and room-summary cache are stored outside
+Keychain in app-controlled Application Support storage and encrypted with
+app-local cache keys that are stored in Keychain. Keychain is used for small
+secret material, not as the message-history or room-list database.
 
 There is no validated server-side OMEMO key backup or account recovery path in
 this slice. If the app is deleted, the Keychain state is reset, or the account is
@@ -105,11 +105,12 @@ Trix group rooms must be members-only and non-anonymous. If the client cannot
 retrieve the member list or device bundles required for OMEMO, sending must be
 blocked instead of falling back to plaintext.
 
-The Apple client caches known MUC members in Keychain and merges that cache with
-live occupants and affiliation queries. This cache is used for display and
-recipient validation continuity after reconnect; it is not a server-side
-authorization source. New Apple-created MVP groups make invited members MUC
-admins so the current member-management UI can list and change room affiliations.
+The Apple client caches known MUC members in an encrypted Application Support
+file and merges that cache with live occupants and affiliation queries. Keychain
+stores only the cache key. This cache is used for display and recipient
+validation continuity after reconnect; it is not a server-side authorization
+source. New Apple-created MVP groups make invited members MUC admins so the
+current member-management UI can list and change room affiliations.
 
 The macOS `group-e2ee` live smoke passed with three accounts on 2026-05-09:
 private MUC create, invite/join, owner/peer/third member-list visibility,

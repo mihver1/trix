@@ -667,7 +667,7 @@ enum TrixRoomKind: String, Codable, Sendable {
     }
 }
 
-struct TrixRoomSummary: Identifiable, Equatable, Sendable {
+struct TrixRoomSummary: Identifiable, Codable, Equatable, Sendable {
     let id: String
     let name: String
     let kind: TrixRoomKind
