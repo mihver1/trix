@@ -7,10 +7,9 @@ bounded prompts under `docs/tasks/`.
 
 These items are valid MVP closeout work, not speculative feature expansion:
 
-- APNs wake-only signed-device smoke is still open. The gateway, app token
-  capture, and wake-only app handler exist, but `docs/mvp-checklist.md` keeps
-  APNs open until a signed device proves wake delivery with no plaintext payload
-  fields.
+- APNs generic signed-device smoke is still open. The gateway, app token capture,
+  and generic app handler exist, but `docs/mvp-checklist.md` keeps APNs open
+  until a signed device proves visible delivery with no plaintext payload fields.
 - Server-backed group leave is still open. The timeline UI currently says the
   checked-in action is local-only, and `TrixRoomMembershipService` has add,
   remove, and list operations but no server-backed leave operation.

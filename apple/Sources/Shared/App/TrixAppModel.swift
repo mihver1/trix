@@ -264,7 +264,7 @@ final class TrixAppModel: ObservableObject {
         applicationIsActive: Bool
     ) async -> TrixRemoteNotificationHandlingResult {
         let payload = TrixRemoteNotificationPayload(userInfo: userInfo)
-        guard payload.isWakeOnlySync,
+        guard payload.isSyncNotification,
               let session,
               !isLoggingOut else {
             return .ignored
@@ -282,12 +282,16 @@ final class TrixAppModel: ObservableObject {
         )
 
         let badgeCount = max(payload.badge ?? 0, totalUnreadCount)
-        let localNotification = applicationIsActive ? nil : Self.localNotificationRequest(
-            previousRooms: previousRooms,
-            currentRooms: roomListViewModel.rooms,
-            payload: payload,
-            badgeCount: badgeCount
-        )
+        let shouldScheduleLocalNotification = !applicationIsActive &&
+            !payload.presentsRemoteNotification
+        let localNotification = shouldScheduleLocalNotification
+            ? Self.localNotificationRequest(
+                previousRooms: previousRooms,
+                currentRooms: roomListViewModel.rooms,
+                payload: payload,
+                badgeCount: badgeCount
+            )
+            : nil
 
         return TrixRemoteNotificationHandlingResult(
             didProcess: true,

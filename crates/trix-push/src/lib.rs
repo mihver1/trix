@@ -15,7 +15,11 @@ use trix_types::ApplePushEnvironment;
 const APNS_AUTH_TOKEN_TTL_SECONDS: u64 = 50 * 60;
 const APNS_PUSH_TYPE_BACKGROUND: &str = "background";
 const APNS_PRIORITY_BACKGROUND: &str = "5";
+const APNS_PUSH_TYPE_ALERT: &str = "alert";
+const APNS_PRIORITY_ALERT: &str = "10";
 const APNS_COLLAPSE_ID: &str = "trix-inbox";
+const APNS_ALERT_TITLE: &str = "Trix";
+const APNS_ALERT_BODY_SINGLE: &str = "New encrypted message";
 
 #[derive(Clone)]
 pub struct ApnsPushConfig {
@@ -95,10 +99,40 @@ impl ApnsPushClient {
         })
     }
 
+    pub async fn deliver_notification(
+        &self,
+        target: ApnsPushTarget,
+        notification: TrixApnsNotificationPayload,
+    ) -> Result<ApnsDeliveryOutcome> {
+        self.deliver_payload(
+            target,
+            APNS_PUSH_TYPE_ALERT,
+            APNS_PRIORITY_ALERT,
+            notification,
+        )
+        .await
+    }
+
     pub async fn deliver_wake(
         &self,
         target: ApnsPushTarget,
         wake: TrixApnsWakePayload,
+    ) -> Result<ApnsDeliveryOutcome> {
+        self.deliver_payload(
+            target,
+            APNS_PUSH_TYPE_BACKGROUND,
+            APNS_PRIORITY_BACKGROUND,
+            wake,
+        )
+        .await
+    }
+
+    async fn deliver_payload<T: Serialize>(
+        &self,
+        target: ApnsPushTarget,
+        push_type: &'static str,
+        priority: &'static str,
+        payload: T,
     ) -> Result<ApnsDeliveryOutcome> {
         let authorization = self.authorization_header().await?;
         let url = format!(
@@ -111,10 +145,10 @@ impl ApnsPushClient {
             .post(url)
             .header("authorization", authorization)
             .header("apns-topic", &self.topic)
-            .header("apns-push-type", APNS_PUSH_TYPE_BACKGROUND)
-            .header("apns-priority", APNS_PRIORITY_BACKGROUND)
+            .header("apns-push-type", push_type)
+            .header("apns-priority", priority)
             .header("apns-collapse-id", APNS_COLLAPSE_ID)
-            .json(&wake)
+            .json(&payload)
             .send()
             .await
             .map_err(|_| anyhow::anyhow!("failed to send APNs request"))?;
@@ -187,19 +221,24 @@ pub enum ApnsDeliveryOutcome {
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
-pub struct TrixApnsWakePayload {
-    aps: ApnsPayloadAps,
-    trix: TrixWakeMetadata,
+pub struct TrixApnsNotificationPayload {
+    aps: ApnsNotificationAps,
+    trix: TrixSyncMetadata,
 }
 
-impl TrixApnsWakePayload {
+impl TrixApnsNotificationPayload {
     pub fn new(account: Option<String>, room: Option<String>, badge: Option<u32>) -> Self {
         Self {
-            aps: ApnsPayloadAps {
+            aps: ApnsNotificationAps {
+                alert: ApnsPayloadAlert {
+                    title: APNS_ALERT_TITLE,
+                    body: notification_body(badge),
+                },
                 content_available: 1,
+                sound: "default",
                 badge,
             },
-            trix: TrixWakeMetadata {
+            trix: TrixSyncMetadata {
                 payload_type: "sync",
                 version: 1,
                 account,
@@ -211,14 +250,62 @@ impl TrixApnsWakePayload {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct ApnsPayloadAps {
+struct ApnsNotificationAps {
+    alert: ApnsPayloadAlert,
+    #[serde(rename = "content-available")]
+    content_available: u8,
+    sound: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    badge: Option<u32>,
+}
+
+impl Default for ApnsNotificationAps {
+    fn default() -> Self {
+        Self {
+            alert: ApnsPayloadAlert {
+                title: APNS_ALERT_TITLE,
+                body: APNS_ALERT_BODY_SINGLE.to_owned(),
+            },
+            content_available: 1,
+            sound: "default",
+            badge: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct TrixApnsWakePayload {
+    aps: ApnsWakeAps,
+    trix: TrixSyncMetadata,
+}
+
+impl TrixApnsWakePayload {
+    pub fn new(account: Option<String>, room: Option<String>, badge: Option<u32>) -> Self {
+        Self {
+            aps: ApnsWakeAps {
+                content_available: 1,
+                badge,
+            },
+            trix: TrixSyncMetadata {
+                payload_type: "sync",
+                version: 1,
+                account,
+                room,
+                badge,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ApnsWakeAps {
     #[serde(rename = "content-available")]
     content_available: u8,
     #[serde(skip_serializing_if = "Option::is_none")]
     badge: Option<u32>,
 }
 
-impl Default for ApnsPayloadAps {
+impl Default for ApnsWakeAps {
     fn default() -> Self {
         Self {
             content_available: 1,
@@ -228,7 +315,13 @@ impl Default for ApnsPayloadAps {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct TrixWakeMetadata {
+struct ApnsPayloadAlert {
+    title: &'static str,
+    body: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TrixSyncMetadata {
     #[serde(rename = "type")]
     payload_type: &'static str,
     version: u8,
@@ -240,7 +333,7 @@ struct TrixWakeMetadata {
     badge: Option<u32>,
 }
 
-impl Default for TrixWakeMetadata {
+impl Default for TrixSyncMetadata {
     fn default() -> Self {
         Self {
             payload_type: "sync",
@@ -323,6 +416,13 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
+fn notification_body(badge: Option<u32>) -> String {
+    match badge {
+        Some(1) | None => APNS_ALERT_BODY_SINGLE.to_owned(),
+        Some(count) => format!("{count} unread encrypted messages"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -330,7 +430,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wake_payload_is_background_sync_only() {
+    fn notification_payload_is_generic_sync_only() {
+        let payload = TrixApnsNotificationPayload::new(
+            Some("alice@trix.selfhost.ru".to_owned()),
+            Some("room@example".to_owned()),
+            Some(3),
+        );
+
+        let value = serde_json::to_value(payload).expect("payload serializes");
+        assert_eq!(value["aps"]["alert"]["title"], json!("Trix"));
+        assert_eq!(
+            value["aps"]["alert"]["body"],
+            json!("3 unread encrypted messages")
+        );
+        assert_eq!(value["aps"]["sound"], json!("default"));
+        assert_eq!(value["aps"]["content-available"], json!(1));
+        assert_eq!(value["aps"]["badge"], json!(3));
+        assert_eq!(value["trix"]["type"], json!("sync"));
+        assert_eq!(value["trix"]["version"], json!(1));
+        assert_eq!(value["trix"]["account"], json!("alice@trix.selfhost.ru"));
+        assert_eq!(value["trix"]["room"], json!("room@example"));
+        assert!(value.get("body").is_none());
+        assert!(value.get("plaintext").is_none());
+    }
+
+    #[test]
+    fn wake_payload_remains_background_sync_only() {
         let payload = TrixApnsWakePayload::new(
             Some("alice@trix.selfhost.ru".to_owned()),
             Some("room@example".to_owned()),

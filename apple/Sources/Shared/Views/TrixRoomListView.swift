@@ -620,7 +620,7 @@ struct TrixSettingsView: View {
         case .waitingForAPNsToken:
             return "The app has not received an APNs device token in this run."
         case .waitingForSession:
-            return "Sign in before registering this device for wake-only pushes."
+            return "Sign in before registering this device for push notifications."
         case .pushGatewayUnavailable:
             return "The XMPP push gateway could not be reached from this client."
         case .registrationFailed:

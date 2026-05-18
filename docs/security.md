@@ -191,22 +191,25 @@ after sync and decryption.
 
 APNs keys, gateway tokens, and signing credentials must never be committed.
 
-The current Apple XMPP path accepts only wake-only pushes with
+The current Apple XMPP path accepts only sync pushes with
 `aps.content-available=1` and `trix.type=sync`. Optional account, room, and badge
-metadata is allowed. Alert, sound, plaintext/body, decrypted, filename, and
-attachment-name payload fields are rejected by the app handler, and the app does
-not create local notifications containing decrypted message or attachment text.
-When the app is inactive, it may turn a valid wake-only push plus local sync into
-a generic local notification such as a new encrypted-message/unread count alert.
-Those local notifications must not include decrypted text, filenames, or
-attachment names.
+metadata is allowed. The only accepted visible APNs alert is generic: title
+`Trix` with `New encrypted message` or unread-count wording. Plaintext/body
+outside that generic alert, decrypted content, filename, and attachment-name
+payload fields are rejected by the app handler, and the app does not create local
+notifications containing decrypted message or attachment text. When the app is
+inactive and receives an older silent sync payload, it may turn local sync into a
+generic local notification such as a new encrypted-message/unread count alert.
+Those remote or local notifications must not include decrypted text, filenames,
+or attachment names.
 
 ejabberd `mod_push` only exposes XMPP push semantics; it does not sign or send
 APNs requests by itself. APNs signing material has been verified on the legacy
 `trix-server` deployment, and the APNs sender code is extracted into the
 standalone `trix-push-gateway` binary. The gateway also has an XEP-0114
 component mode that accepts Martin/Tigase `register-device`, stores XEP-0357
-node mappings outside the repo, and emits only the wake contract above.
+node mappings outside the repo, and emits only the generic sync notification
+contract above.
 
 On 2026-05-10 the XMPP push gateway was deployed on the VPS with
 deployment-local APNs token-auth material. The APNs `.p8` key is mounted into

@@ -100,21 +100,25 @@ The checked-in Apple app now has fail-closed APNs plumbing:
   register the token through a discovered XMPP push component.
 - The XMPP path uses Martin's `TigasePushNotificationsModule`: ad-hoc
   `register-device`, then XEP-0357 `enable` for the returned node.
-- Remote pushes are accepted only as the Trix wake contract
-  `com.softgrid.trix.apns.wake.v1`: `aps.content-available=1` plus
-  `trix.type=sync`, optional `trix.account`, optional `trix.room`, and optional
-  badge metadata. Payloads with alert, sound, plaintext/body, decrypted,
-  filename, or attachment-name fields are ignored by the app.
+- Remote pushes are accepted only as the Trix sync notification contract:
+  `aps.content-available=1` plus `trix.type=sync`, optional `trix.account`,
+  optional `trix.room`, and optional badge metadata. The only accepted visible
+  APNs alert is generic: title `Trix` with `New encrypted message` or unread-count
+  wording. Payloads with plaintext/body outside that generic alert, decrypted
+  content, filename, or attachment-name fields are ignored by the app.
 - Foreground notification presentation is suppressed for this target; remote
-  pushes only wake and refresh local encrypted state.
+  pushes refresh local encrypted state. Inactive visible APNs are shown by the
+  system, while legacy silent sync payloads may still create a generic local
+  notification after local sync.
 
 Current MVP blocker: `server/xmpp` enables ejabberd `mod_push` and the checked-in
 `trix-push-gateway` provides the private XEP-0114 component that accepts
 Martin/Tigase APNs token registration, maps XEP-0357 nodes, signs APNs requests,
-and emits the wake-only payload contract above. On 2026-05-10 the gateway was
+and emits the generic sync notification contract above. On 2026-05-10 the gateway was
 deployed on the VPS with deployment-local APNs token-auth material and connected
 to ejabberd as `push.trix.selfhost.ru`. Keep signed-device APNs smoke open until
-the gateway sends a wake-only payload with no plaintext fields.
+the gateway sends a visible generic APNs payload with no plaintext message,
+filename, or attachment metadata fields.
 
 Optional live smoke modes are available through `TRIX_XMPP_LIVE_SMOKE_MODE`:
 `login`, `session-restore`, `roster`, `room-list`, `search`, `peer-devices`,
@@ -226,8 +230,8 @@ The checked-in Apple code is now the first XMPP client slice:
 - macOS-specific three-column workspace with dense room sidebar, selected-room
   timeline column, room inspector column, deterministic generated avatars, and
   Settings diagnostics for connection, push, and redacted local state;
-- iOS and macOS wake-only push handling that requests notification permission,
-  avoids marking rooms read while inactive, and shows only generic local
+- iOS and macOS generic push handling that requests notification permission,
+  avoids marking rooms read while inactive, and shows only generic
   encrypted-message/unread-count notifications without decrypted body text or
   attachment names;
 - login/session UI plus invite-code account creation from the login screen,

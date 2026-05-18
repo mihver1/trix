@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 use trix_push::{
-    ApnsDeliveryOutcome, ApnsPushClient, ApnsPushConfig, ApnsPushTarget, TrixApnsWakePayload,
-    normalize_apns_token_hex,
+    ApnsDeliveryOutcome, ApnsPushClient, ApnsPushConfig, ApnsPushTarget,
+    TrixApnsNotificationPayload, normalize_apns_token_hex,
 };
 use trix_types::{ApplePushEnvironment, ServiceStatus};
 
@@ -189,12 +189,17 @@ async fn send_wake(
         token_hex,
         environment: request.environment,
     };
-    let wake = TrixApnsWakePayload::new(request.account, request.room, request.badge);
+    let notification =
+        TrixApnsNotificationPayload::new(request.account, request.room, request.badge);
 
-    let outcome = state.apns.deliver_wake(target, wake).await.map_err(|_| {
-        warn!("failed to deliver APNs wake");
-        GatewayError::DeliveryFailed
-    })?;
+    let outcome = state
+        .apns
+        .deliver_notification(target, notification)
+        .await
+        .map_err(|_| {
+            warn!("failed to deliver APNs notification");
+            GatewayError::DeliveryFailed
+        })?;
 
     Ok(Json(match outcome {
         ApnsDeliveryOutcome::Delivered => WakeResponse {

@@ -78,6 +78,7 @@
 		CDF9E3EA955B8A666B9A1C57 /* TrixClientConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67180EC5D24D5F68AF4BF21D /* TrixClientConfiguration.swift */; };
 		CE7C59BA16D194F84A8F1B9E /* DeviceVerificationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A728389B09D31A93D5D10AF3 /* DeviceVerificationViewModel.swift */; };
 		CFD02B00A99A6EB28089E5A7 /* TrixStickerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E361322ECEB6552681FC51E /* TrixStickerTests.swift */; };
+		D1020333366101FD28A6BC76 /* TrixRemoteNotificationPayloadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97D5FB80F688141C7F418525 /* TrixRemoteNotificationPayloadTests.swift */; };
 		D15076EE9DE8A1252892154A /* TrixServiceProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 626D2464543C7ED82085CD5B /* TrixServiceProtocols.swift */; };
 		D2BB6E218817598EEEFAD659 /* TrixUIPrimitives.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE82DADDEFD49DFCE533A797 /* TrixUIPrimitives.swift */; };
 		D3EFAE1C80717ADAF66B9804 /* TrixOMEMOStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3B9CAC73BB4D740C2F79B3D /* TrixOMEMOStore.swift */; };
@@ -132,6 +133,7 @@
 		8CB4DE535EF97BB0D0B809CB /* RoomListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomListViewModel.swift; sourceTree = "<group>"; };
 		8D29523C8CB988A1531D1D8E /* TrixMacRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMacRootView.swift; sourceTree = "<group>"; };
 		913784390EE11A5D409BF69B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		97D5FB80F688141C7F418525 /* TrixRemoteNotificationPayloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixRemoteNotificationPayloadTests.swift; sourceTree = "<group>"; };
 		982CA9963B78FB1D985AB7DD /* KeychainTrixSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainTrixSessionStore.swift; sourceTree = "<group>"; };
 		A2B35075275B150F3A4E508B /* TrixRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixRootView.swift; sourceTree = "<group>"; };
 		A406E30E28EA61CB8EFF1247 /* TrixMacAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrixMacAppDelegate.swift; sourceTree = "<group>"; };
@@ -176,6 +178,7 @@
 		02B6E2ED9762411B61972286 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				97D5FB80F688141C7F418525 /* TrixRemoteNotificationPayloadTests.swift */,
 				0E361322ECEB6552681FC51E /* TrixStickerTests.swift */,
 			);
 			name = Shared;
@@ -546,6 +549,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D1020333366101FD28A6BC76 /* TrixRemoteNotificationPayloadTests.swift in Sources */,
 				CFD02B00A99A6EB28089E5A7 /* TrixStickerTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

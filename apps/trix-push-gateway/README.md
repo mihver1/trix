@@ -8,12 +8,13 @@ Current scope:
 
 - load APNs token-auth credentials from deployment environment or a mounted
   `.p8` file;
-- accept an internal bearer-authenticated wake request;
+- accept an internal bearer-authenticated notification request;
 - optionally connect to ejabberd as an XEP-0114 component and answer Martin's
   `register-device` ad-hoc command;
 - store Martin/XEP-0357 push nodes locally and map them to APNs device tokens;
-- send only the Trix wake-only APNs payload:
-  `aps.content-available=1` and `trix.type=sync`;
+- send only the Trix generic APNs notification payload: `aps.alert.title=Trix`,
+  `aps.alert.body=New encrypted message` or unread-count wording,
+  `aps.content-available=1`, and `trix.type=sync`;
 - return APNs success/rejection state without logging APNs tokens, APNs auth
   tokens, private keys, XMPP passwords, OMEMO secrets, or decrypted message
   bodies.
@@ -21,7 +22,7 @@ Current scope:
 This binary is the APNs transport layer for the XMPP pivot. In component mode it
 advertises a `pubsub/push` identity, accepts Martin/Tigase `apns-sandbox` and
 `apns-production` device registration commands, returns a stable XEP-0357 node,
-and sends wake-only APNs notifications when ejabberd publishes to that node.
+and sends generic APNs notifications when ejabberd publishes to that node.
 
 ## Local Run
 
@@ -65,7 +66,7 @@ Health:
 curl http://127.0.0.1:8090/v0/system/health
 ```
 
-Wake request shape:
+Notification request shape:
 
 ```json
 {
@@ -86,4 +87,5 @@ deployment-local APNs token-auth settings from `/opt/trix-xmpp/.env`, mounts the
 APNs `.p8` key read-only from `/opt/trix-xmpp/certs/apns`, keeps the HTTP health
 endpoint on `127.0.0.1:8090`, and connects to ejabberd as
 `push.trix.selfhost.ru`. APNs smoke remains open until a signed iOS or macOS
-device confirms a wake-only background push with no plaintext payload fields.
+device confirms a visible generic push with no plaintext message, filename, or
+attachment metadata fields.

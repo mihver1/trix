@@ -17,5 +17,5 @@ enum XMPPClientConfiguration {
 enum XMPPPushConfiguration {
     static let apnsSandboxProvider = "apns-sandbox"
     static let apnsProductionProvider = "apns-production"
-    static let payloadContract = "com.softgrid.trix.apns.wake.v1"
+    static let payloadContract = "com.softgrid.trix.apns.sync.v2"
 }

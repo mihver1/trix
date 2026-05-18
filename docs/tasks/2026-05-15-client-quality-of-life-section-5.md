@@ -21,7 +21,7 @@ These are good product-quality items, but they sit on different risk surfaces:
 - Notes-to-self is a useful private-messenger pattern, but it depends on the
   self-JID OMEMO path working as a real encrypted DM. Do not special-case it into
   plaintext or local-only messages.
-- Per-room mute/notification profiles fit the current wake-only APNs model. They
+- Per-room mute/notification profiles fit the current generic APNs model. They
   should filter local notification presentation after sync, not change push
   payload contents or unread semantics.
 
@@ -53,9 +53,8 @@ decrypt, media thumbnailing, and consent-gated network fetches.
 - Do not log decrypted message text, drafts, export contents, search queries,
   attachment filenames, local file paths, media keys, preview bytes, link URLs, or
   notification profile settings.
-- APNs payloads must remain wake-only and plaintext-free. Client QoL features may
+- APNs payloads must remain generic and plaintext-free. Client QoL features may
   use local decrypted state after sync, but remote payloads must not carry message
   bodies, filenames, URLs, or mention text.
 - Any feature that creates plaintext output or reaches a third-party URL needs a
   visible, explicit user action.
-

@@ -1,7 +1,7 @@
-# Task: APNs Wake-Only Signed-Device Smoke
+# Task: APNs Generic Signed-Device Smoke
 
 You are the next coding agent working in the Trix repo. Close the APNs MVP item
-only if a signed iOS or macOS device proves wake-only delivery without plaintext
+only if a signed iOS or macOS device proves generic APNs delivery without plaintext
 payload fields.
 
 ## Current Context
@@ -21,9 +21,9 @@ Relevant files:
 - `apple/project.yml`
 
 The app currently accepts only `aps.content-available=1` plus
-`trix.type=sync`, rejects alert/sound/plaintext/body/decrypted/filename style
-keys, and may create only generic local notifications after inactive sync. The
-gateway sends `TrixApnsWakePayload` and the XEP-0114 component returns
+`trix.type=sync`, rejects plaintext/body/decrypted/filename style keys, and
+allows only generic visible alert text. The gateway sends
+`TrixApnsNotificationPayload` and the XEP-0114 component returns
 `max-payload-size=0`.
 
 ## Goal
@@ -49,7 +49,7 @@ payload contains no plaintext fields.
    `apps/ios` lane.
 3. Register APNs from the signed app. Verify the app reaches an APNs registered
    state through UI/status or scrubbed logs without printing the token.
-4. Trigger a wake push through the real path:
+4. Trigger a generic push through the real path:
    - Prefer the XMPP path: app registers through Martin/XEP-0357,
      `ejabberd mod_push` publishes to `trix-push-gateway`, and the gateway
      delivers APNs.
@@ -58,25 +58,25 @@ payload contains no plaintext fields.
      APNs token out of output and shell history.
 5. Capture a sanitized payload proof. It is acceptable to add a temporary or
    permanent diagnostic that prints only field presence, for example
-   `content_available=1 alert=absent body=absent filename=absent media_key=absent
-   decrypted=absent`.
-6. Confirm the signed device receives the wake. If the app is inactive, the
-   local notification must be generic, such as `New encrypted message` or
-   `N unread encrypted messages`.
+   `content_available=1 alert=generic body_plaintext=absent filename=absent
+   media_key=absent decrypted=absent`.
+6. Confirm the signed device receives a visible generic notification, such as
+   `New encrypted message` or `N unread encrypted messages`.
 7. If code changes were needed, add focused tests around the changed code. Keep
-   `TrixApnsWakePayload` and `TrixRemoteNotificationPayload` fail-closed for
+   `TrixApnsNotificationPayload` and `TrixRemoteNotificationPayload` fail-closed for
    forbidden fields.
 8. Update `docs/mvp-checklist.md`, `docs/security.md`, and `server/xmpp/README.md`
    with exact dated evidence only after the signed-device proof passes.
 
 ## Acceptance Criteria
 
-- A signed iOS or macOS device receives an APNs wake for the XMPP Trix app.
+- A signed iOS or macOS device receives a visible APNs notification for the XMPP
+  Trix app.
 - The payload proof shows `aps.content-available=1` and `trix.type=sync`.
-- The payload proof shows no `aps.alert`, `aps.sound`, message body, plaintext,
-  decrypted content, filename, attachment name, media key, attachment URL, or
-  equivalent user-content field.
-- App handling remains wake-only and generic; no decrypted text or attachment
+- The payload proof shows only generic `aps.alert`/`aps.sound` and no message
+  body plaintext, decrypted content, filename, attachment name, media key,
+  attachment URL, or equivalent user-content field.
+- App handling remains generic; no decrypted text or attachment
   metadata appears in push or local notification output.
 - Gateway and app logs remain secret-safe.
 - `docs/mvp-checklist.md` is updated only if the live proof passes.

@@ -76,7 +76,8 @@ license review.
 - HTTP upload URLs are bearer-style; encrypted media requires client-side media
   wrapping and an explicit metadata exposure policy.
 - APNs uses `trix-push-gateway` behind XMPP push semantics. Server modules do
-  not send APNs directly; signed-device delivery smoke is still pending.
+  not send APNs directly; signed-device visible generic delivery smoke is still
+  pending.
 
 ## Required Smoke Tests
 

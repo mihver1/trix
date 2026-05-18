@@ -1,7 +1,7 @@
 # Task: Per-Room Mute And Notification Profiles
 
 You are the next coding agent working in the Trix repo. Add local per-room
-notification preferences without changing the wake-only APNs contract.
+notification preferences without adding plaintext to the generic APNs contract.
 
 ## Current Context
 
@@ -16,9 +16,9 @@ Relevant files:
 - `apple/Sources/Shared/App/TrixAppModel.swift`
 - `apple/Sources/Shared/App/TrixAPNsCoordinator.swift`
 
-The Apple client accepts only wake-only push payloads and schedules generic local
-notifications after inactive sync. Unread state is local and should be cleared
-only on explicit room open.
+The Apple client accepts only generic sync push payloads. Visible APNs and local
+silent-sync fallback notifications must stay generic and plaintext-free. Unread
+state is local and should be cleared only on explicit room open.
 
 ## Goal
 
@@ -58,10 +58,10 @@ Unread counts and timeline sync should continue to work regardless of profile.
    - visible muted indicator in room list and/or header;
    - settings sheet with the three profiles.
 5. Integrate with inactive notification handling:
-   - keep accepting only wake-only remote payloads;
-   - after local sync, decide whether to schedule a generic local notification
+   - keep accepting only generic sync remote payloads;
+   - after local sync, decide whether to present or suppress a generic notification
      based on the room profile;
-   - muted rooms do not schedule local banner/sound;
+   - muted rooms do not present banner/sound;
    - mentions-only rooms notify only when local decrypted state can determine a
      mention for the current account.
 6. Keep badge/unread behavior explicit:
@@ -80,7 +80,7 @@ Unread counts and timeline sync should continue to work regardless of profile.
    - profile persistence/isolation by account and room;
    - muted room suppresses local notification but keeps unread;
    - background sync does not mark muted rooms read;
-   - wake-only payload validation still rejects plaintext fields.
+   - generic payload validation still rejects plaintext fields.
 10. Update `docs/security.md` and `apple/README.md` after implementation.
 
 ## Acceptance Criteria
@@ -88,7 +88,7 @@ Unread counts and timeline sync should continue to work regardless of profile.
 - Users can set default, muted, and mentions-only profiles per room.
 - Muted rooms still sync and accumulate unread state but do not produce local
   notification banners/sounds.
-- APNs payload shape remains wake-only and plaintext-free.
+- APNs payload shape remains generic and plaintext-free.
 - Local notification copy remains generic and plaintext-free.
 - Room notification profile data is stored locally with encryption at rest.
 
@@ -101,6 +101,5 @@ xcodebuild -project apple/TrixMatrix.xcodeproj -scheme TrixMatrixMac -destinatio
 git diff --check
 ```
 
-Also run notification handling tests or a local fake wake-only push path that
+Also run notification handling tests or a local fake generic push path that
 proves muted rooms suppress only local presentation, not sync or unread state.
-

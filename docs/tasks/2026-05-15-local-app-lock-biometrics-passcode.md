@@ -35,7 +35,7 @@ authentication:
 
 - Do not build a custom passcode keypad in this slice.
 - Do not claim this protects against malware or a fully compromised endpoint.
-- Do not block APNs wake-only background sync solely because the visual app lock
+- Do not block APNs generic background sync solely because the visual app lock
   is active.
 - Do not delete sessions on failed local auth unless the user explicitly logs out
   or a later product decision adds wipe policy.
@@ -68,7 +68,7 @@ authentication:
    - show whether system auth is available;
    - manual "Lock Now" action.
 7. Keep background behavior safe:
-   - wake-only APNs can still trigger generic sync;
+   - APNs can still trigger generic sync;
    - local notifications remain generic and plaintext-free;
    - no decrypted content is shown while locked.
 8. Add unit tests for settings state and view-model transitions where practical.
@@ -79,7 +79,7 @@ authentication:
 - Returning from background locks visible chat content when configured.
 - Unlock uses system authentication and never receives biometric data directly.
 - macOS uses the same root-level content hiding behavior as iOS.
-- Push handling remains wake-only/generic and does not expose decrypted content
+- Push handling remains generic and does not expose decrypted content
   while the app is locked.
 
 ## Verification Commands

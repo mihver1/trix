@@ -308,7 +308,7 @@ cd server/xmpp
 podman compose up -d ejabberd
 ```
 
-5. To enable APNs wake pushes, set deployment-local APNs variables plus
+5. To enable APNs notifications, set deployment-local APNs variables plus
    `TRIX_XMPP_PUSH_COMPONENT_SECRET`, mount the `.p8` key through
    `TRIX_APNS_KEY_DIR`, and start the private component profile:
 
@@ -331,10 +331,10 @@ sender plus XEP-0114 component for Martin/Tigase registration.
 
 APNs signing material has been verified on the legacy `trix-server` deployment,
 outside this repository. The gateway loads APNs credentials from environment or
-a mounted `.p8` file, accepts only wake-only requests, advertises
+a mounted `.p8` file, accepts only generic notification requests, advertises
 `pubsub/push`, handles Martin's `register-device` command, stores the returned
-XEP-0357 node mapping locally, and sends only `aps.content-available=1` plus
-`trix.type=sync` notifications.
+XEP-0357 node mapping locally, and sends only generic APNs alerts with
+`aps.content-available=1` plus `trix.type=sync` notifications.
 
 Do not commit the `.p8` key or related credentials. The XEP-0114 component port
 `5347` must stay private to the host or Docker network and must not be published
@@ -349,9 +349,9 @@ material mounted from `/opt/trix-xmpp/certs/apns`, rejects checked-in default
 secrets, exposes HTTP health only on `127.0.0.1:8090`, and connects to ejabberd
 as the private XEP-0114 component `push.trix.selfhost.ru`. External checks keep
 `5222` reachable while `5269`, `5347`, and `8090` are not reachable from the
-internet. Do not mark APNs delivery complete until a signed-device wake-only
-smoke passes without alert, body, filename, media-key, or decrypted-content
-payload fields.
+internet. Do not mark APNs delivery complete until a signed-device visible
+generic smoke passes without plaintext message, filename, media-key, or
+decrypted-content payload fields.
 
 To verify a legacy `trixd` env file or process without printing values:
 

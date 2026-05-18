@@ -76,16 +76,17 @@ checklist, not by copying legacy implementation details.
       validation, but has not been run in this slice.
 - [x] Foreground room/invite/timeline refresh while the app scene is active.
 - [ ] APNs-backed notifications without plaintext payloads. Apple token capture,
-      XMPP push-component registration plumbing, and wake-only payload handling
-      are wired. Inactive iOS/macOS push handling now syncs room state without
-      marking the selected room read and may create a generic local notification
-      with only encrypted-message/unread-count wording. `trix-push-gateway` now
-      includes the APNs sender plus XEP-0114 component/store for Martin/XEP-0357
-      registration nodes. On 2026-05-10 the gateway was deployed on the VPS with
-      deployment-local APNs token-auth material, bound its HTTP health endpoint to
-      localhost only, and connected to ejabberd as `push.trix.selfhost.ru`. Keep
-      this open until signed-device APNs smoke confirms wake-only delivery with
-      no plaintext fields.
+      XMPP push-component registration plumbing, and generic sync payload
+      handling are wired. Inactive iOS/macOS push handling now syncs room state
+      without marking the selected room read. Visible APNs use only `Trix` plus
+      encrypted-message/unread-count wording, and legacy silent sync may create a
+      generic local notification with the same plaintext-free wording.
+      `trix-push-gateway` now includes the APNs sender plus XEP-0114
+      component/store for Martin/XEP-0357 registration nodes. On 2026-05-10 the
+      gateway was deployed on the VPS with deployment-local APNs token-auth
+      material, bound its HTTP health endpoint to localhost only, and connected
+      to ejabberd as `push.trix.selfhost.ru`. Keep this open until signed-device
+      APNs smoke confirms visible generic delivery with no plaintext fields.
 - [x] Trix user directory search for new DM/group creation and add-member flows.
 - [x] Basic XMPP vCard-backed profile view/edit surface for display name, bio,
       status, and website.
@@ -322,9 +323,9 @@ checklist, not by copying legacy implementation details.
 - [ ] Push notifications through APNs. The checked-in `trix-push-gateway`
       component is deployed behind ejabberd `mod_push`/XEP-0357 with
       deployment-local APNs signing material. The Apple app requests notification
-      authorization and creates only generic local notifications after inactive
-      wake-only sync. Keep this open until a signed iOS or macOS device confirms
-      wake-only APNs delivery with no plaintext payload fields.
+      authorization and accepts only generic APNs alerts or plaintext-free sync
+      hints. Keep this open until a signed iOS or macOS device confirms visible
+      generic APNs delivery with no plaintext payload fields.
 - [ ] Persistent tests around encrypted DM/group sync. `timeline-restart` now
       covers the DM restart/cache/MAM path in credentialed live smoke, but this
       still needs automated persistent coverage.
@@ -343,10 +344,11 @@ checklist, not by copying legacy implementation details.
 - [x] Repeatable archive/TestFlight script path for the new XMPP `apple/` app.
 - [x] Fail-closed Apple APNs registration plumbing exists for the new XMPP
       targets: platform token capture, service-bound XMPP push registration, and
-      wake-only remote push handling with inactive generic local notifications.
+      generic remote push handling with inactive generic local notifications for
+      silent sync fallback.
 - [x] Trix APNs gateway/push component exists as `trix-push-gateway`: it accepts
       Martin/Tigase registration, stores XEP-0357 node mappings, and calls the
-      APNs sender with wake-only payloads.
+      APNs sender with generic sync notification payloads.
 - [x] Trix APNs gateway/push component is deployed with deployment-local
       credentials outside the repo. On 2026-05-10 `trix-push-gateway` built on
       the VPS, started healthy, exposed `127.0.0.1:8090` only, and connected to
@@ -383,13 +385,13 @@ checklist, not by copying legacy implementation details.
 - [x] Matrix Rust SDK adapter and live smoke runner are removed from the new
       Apple target.
 - [x] Apple APNs tokens are never logged by the new XMPP app path and remote
-      pushes are handled as wake/sync hints only.
+      pushes are handled as generic sync notifications only.
 - [ ] APNs delivery is blocked only on signed-device smoke. ejabberd `mod_push`
       is wired to a private XEP-0114 component path, and `trix-push-gateway`
       owns APNs sender plus Martin/XEP-0357 registration mapping. On 2026-05-10
       the gateway deployed with APNs credentials and connected to ejabberd; the
-      remaining proof is a signed device receiving a wake-only APNs payload with
-      no alert, body, filename, media-key, or decrypted-content fields.
+      remaining proof is a signed device receiving a visible generic APNs payload
+      with no plaintext message, filename, media-key, or decrypted-content fields.
 - [x] Trix control-plane model is selected: for MVP closeout, checked-in
       operator scripts use loopback-only ejabberd `mod_http_api`; any non-local
       or multi-operator access still requires a small authenticated/audited Trix

@@ -1354,23 +1354,28 @@ struct TrixRemoteNotificationPayload: Equatable, Sendable {
     let accountID: String?
     let roomID: String?
     let badge: Int?
-    let isWakeOnlySync: Bool
+    let isSyncNotification: Bool
+    let presentsRemoteNotification: Bool
 
     init(userInfo: [AnyHashable: Any]) {
         let root = Self.stringKeyedDictionary(userInfo)
         let aps = Self.dictionary(root["aps"])
         let trix = Self.dictionary(root["trix"])
+        let alert = aps?["alert"]
+        let allowedGenericAlert = Self.isAllowedGenericAlert(alert)
+        let hasAlert = alert != nil
 
         self.accountID = Self.nonEmptyString(trix?["account"])
         self.roomID = Self.nonEmptyString(trix?["room"])
         self.badge = Self.integer(trix?["badge"]) ?? Self.integer(aps?["badge"])
+        self.presentsRemoteNotification = allowedGenericAlert
 
         let contentAvailable = Self.integer(aps?["content-available"]) == 1
         let type = Self.nonEmptyString(trix?["type"])
-        self.isWakeOnlySync = contentAvailable &&
+        self.isSyncNotification = contentAvailable &&
             type == "sync" &&
-            aps?["alert"] == nil &&
-            aps?["sound"] == nil &&
+            (!hasAlert || allowedGenericAlert) &&
+            Self.isAllowedGenericSound(aps?["sound"]) &&
             !Self.containsForbiddenPlaintextKey(root)
     }
 
@@ -1417,25 +1422,76 @@ struct TrixRemoteNotificationPayload: Equatable, Sendable {
         }
     }
 
-    private static func containsForbiddenPlaintextKey(_ dictionary: [String: Any]) -> Bool {
+    private static func isAllowedGenericAlert(_ value: Any?) -> Bool {
+        guard let value else {
+            return false
+        }
+
+        if let alert = value as? String {
+            return isAllowedGenericNotificationBody(alert)
+        }
+
+        guard let alert = Self.dictionary(value) else {
+            return false
+        }
+
+        let allowedKeys: Set<String> = ["title", "body"]
+        let keys = Set(alert.keys.map { $0.lowercased() })
+        guard keys.isSubset(of: allowedKeys) else {
+            return false
+        }
+
+        return Self.nonEmptyString(alert["title"]) == "Trix" &&
+            Self.nonEmptyString(alert["body"]).map(isAllowedGenericNotificationBody) == true
+    }
+
+    private static func isAllowedGenericSound(_ value: Any?) -> Bool {
+        guard let value else {
+            return true
+        }
+
+        return Self.nonEmptyString(value) == "default"
+    }
+
+    private static func isAllowedGenericNotificationBody(_ body: String) -> Bool {
+        if body == "New encrypted message" {
+            return true
+        }
+
+        return body.range(
+            of: #"^[1-9][0-9]* unread encrypted messages$"#,
+            options: .regularExpression
+        ) != nil
+    }
+
+    private static func containsForbiddenPlaintextKey(
+        _ dictionary: [String: Any],
+        path: [String] = []
+    ) -> Bool {
         for (key, value) in dictionary {
             let normalizedKey = key.lowercased()
-            if normalizedKey.contains("body") ||
+            let childPath = path + [normalizedKey]
+            if !isAllowedGenericAlertFieldPath(childPath) &&
+                (normalizedKey.contains("body") ||
                 normalizedKey.contains("plaintext") ||
                 normalizedKey.contains("decrypted") ||
                 normalizedKey.contains("filename") ||
                 normalizedKey.contains("attachmentname") ||
-                normalizedKey.contains("attachment-name") {
+                normalizedKey.contains("attachment-name")) {
                 return true
             }
 
             if let nested = Self.dictionary(value),
-               containsForbiddenPlaintextKey(nested) {
+               containsForbiddenPlaintextKey(nested, path: childPath) {
                 return true
             }
         }
 
         return false
+    }
+
+    private static func isAllowedGenericAlertFieldPath(_ path: [String]) -> Bool {
+        path == ["aps", "alert", "title"] || path == ["aps", "alert", "body"]
     }
 }
 

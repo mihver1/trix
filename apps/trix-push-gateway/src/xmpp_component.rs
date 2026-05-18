@@ -8,7 +8,7 @@ use tokio::{
     net::TcpStream,
 };
 use tracing::{info, warn};
-use trix_push::{ApnsDeliveryOutcome, ApnsPushClient, ApnsPushTarget, TrixApnsWakePayload};
+use trix_push::{ApnsDeliveryOutcome, ApnsPushClient, ApnsPushTarget, TrixApnsNotificationPayload};
 
 use crate::store::PushRegistrationStore;
 
@@ -231,7 +231,7 @@ async fn publish_result(
         environment: registration.environment,
     };
     match apns
-        .deliver_wake(target, TrixApnsWakePayload::default())
+        .deliver_notification(target, TrixApnsNotificationPayload::default())
         .await
     {
         Ok(ApnsDeliveryOutcome::Delivered) => {

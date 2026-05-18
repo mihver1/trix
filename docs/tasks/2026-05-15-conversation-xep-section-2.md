@@ -18,7 +18,7 @@ work:
   existing OMEMO attachment path and keep waveform data local or inside the
   encrypted descriptor.
 - Mentions with XEP-0372 are valid but experimental and metadata-visible. Strong
-  local notification handling must still keep APNs wake-only and plaintext-free.
+  local notification handling must still keep APNs generic and plaintext-free.
 - Server-side chat markers with XEP-0333 are valid for displayed/read markers,
   but do not rely on XEP-0333 alone as a complete same-account multi-device read
   cursor. Pair it with archived marker processing or a Trix-owned cursor if
