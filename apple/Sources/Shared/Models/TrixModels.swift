@@ -304,6 +304,7 @@ struct TrixPeerDeviceIdentity: Identifiable, Equatable, Sendable {
     let userID: String
     let deviceID: String
     let fingerprint: String
+    let visualVerification: TrixDeviceVisualVerification?
     let trustState: TrixPeerDeviceTrustState
     let isActive: Bool
     let isLocalDevice: Bool
@@ -365,15 +366,190 @@ struct TrixDeviceVerificationRequest: Identifiable, Equatable, Sendable {
 struct TrixDeviceVerificationEmoji: Identifiable, Equatable, Sendable {
     let symbol: String
     let description: String
+    let position: Int
+
+    init(symbol: String, description: String, position: Int = 0) {
+        self.symbol = symbol
+        self.description = description
+        self.position = position
+    }
 
     var id: String {
-        "\(symbol)-\(description)"
+        "\(position)-\(symbol)-\(description)"
     }
 }
 
 enum TrixDeviceVerificationChallenge: Equatable, Sendable {
     case emojis([TrixDeviceVerificationEmoji])
     case decimals([String])
+}
+
+enum TrixDeviceVisualVerificationKind: String, Codable, Equatable, Sendable {
+    case libsignalSafetyNumber
+    case fingerprintDisplayTransform
+
+    var label: String {
+        switch self {
+        case .libsignalSafetyNumber:
+            return "libsignal safety number"
+        case .fingerprintDisplayTransform:
+            return "visual fingerprint"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .libsignalSafetyNumber:
+            return "This is a deterministic display of the libsignal safety-number primitive, not an interactive SAS exchange."
+        case .fingerprintDisplayTransform:
+            return "This is a deterministic display transform over an OMEMO identity fingerprint, not an interactive SAS exchange."
+        }
+    }
+}
+
+struct TrixDeviceVisualVerification: Equatable, Sendable {
+    let kind: TrixDeviceVisualVerificationKind
+    let symbols: [TrixDeviceVerificationEmoji]
+    let decimalGroups: [String]
+    let sourceText: String
+
+    var challenge: TrixDeviceVerificationChallenge {
+        .emojis(symbols)
+    }
+
+    var groupedSourceText: String {
+        decimalGroups.joined(separator: " ")
+    }
+
+    var symbolSummary: String {
+        symbols.map(\.description).joined(separator: ", ")
+    }
+
+    static func libsignalSafetyNumber(_ displayableText: String) -> TrixDeviceVisualVerification? {
+        make(from: displayableText, kind: .libsignalSafetyNumber)
+    }
+
+    static func visualFingerprint(_ fingerprint: String) -> TrixDeviceVisualVerification? {
+        make(from: fingerprint, kind: .fingerprintDisplayTransform)
+    }
+
+    private static func make(
+        from sourceText: String,
+        kind: TrixDeviceVisualVerificationKind
+    ) -> TrixDeviceVisualVerification? {
+        let values = numericValues(from: sourceText, kind: kind)
+        guard values.count >= 10 else {
+            return nil
+        }
+
+        let normalizedSource = sourceText.filter { !$0.isWhitespace }
+        let decimalGroups = kind == .libsignalSafetyNumber
+            ? Self.decimalGroups(from: values)
+            : Self.sourceGroups(from: normalizedSource)
+        let symbols = Self.symbols(from: values)
+        guard !symbols.isEmpty else {
+            return nil
+        }
+
+        return TrixDeviceVisualVerification(
+            kind: kind,
+            symbols: symbols,
+            decimalGroups: decimalGroups,
+            sourceText: normalizedSource
+        )
+    }
+
+    private static func numericValues(
+        from sourceText: String,
+        kind: TrixDeviceVisualVerificationKind
+    ) -> [Int] {
+        sourceText.compactMap { character in
+            switch kind {
+            case .libsignalSafetyNumber:
+                return character.wholeNumberValue
+            case .fingerprintDisplayTransform:
+                return Int(String(character), radix: 16)
+            }
+        }
+    }
+
+    private static func decimalGroups(from digits: [Int]) -> [String] {
+        stride(from: 0, to: digits.count, by: 5).map { start in
+            let end = min(start + 5, digits.count)
+            return digits[start..<end].map { String($0) }.joined()
+        }
+    }
+
+    private static func sourceGroups(from sourceText: String) -> [String] {
+        let source = sourceText.filter { $0.isLetter || $0.isNumber }
+        return stride(from: 0, to: source.count, by: 8).compactMap { startOffset in
+            guard let start = source.index(source.startIndex, offsetBy: startOffset, limitedBy: source.endIndex) else {
+                return nil
+            }
+            let end = source.index(start, offsetBy: 8, limitedBy: source.endIndex) ?? source.endIndex
+            return String(source[start..<end])
+        }
+    }
+
+    private static func symbols(from digits: [Int]) -> [TrixDeviceVerificationEmoji] {
+        let symbolCount = min(5, max(4, digits.count / 6))
+        let chunkSize = max(1, digits.count / symbolCount)
+        var usedIndexes: Set<Int> = []
+
+        return (0..<symbolCount).map { position in
+            let start = min(position * chunkSize, digits.count - 1)
+            let end = position == symbolCount - 1 ? digits.count : min(start + chunkSize, digits.count)
+            let value = digits[start..<end].reduce(0) { partial, digit in
+                (partial * 10) + digit
+            }
+            var paletteIndex = value % emojiPalette.count
+            while usedIndexes.contains(paletteIndex) {
+                paletteIndex = (paletteIndex + 1) % emojiPalette.count
+            }
+            usedIndexes.insert(paletteIndex)
+            let item = emojiPalette[paletteIndex]
+            return TrixDeviceVerificationEmoji(
+                symbol: item.symbol,
+                description: item.description,
+                position: position
+            )
+        }
+    }
+
+    private static let emojiPalette: [(symbol: String, description: String)] = [
+        ("🌲", "Forest"),
+        ("⭐", "Star"),
+        ("🌊", "Wave"),
+        ("🔥", "Fire"),
+        ("🌙", "Moon"),
+        ("☀️", "Sun"),
+        ("🍎", "Apple"),
+        ("⚓", "Anchor"),
+        ("🎈", "Balloon"),
+        ("🔔", "Bell"),
+        ("🚲", "Bicycle"),
+        ("🧭", "Compass"),
+        ("💎", "Diamond"),
+        ("🪁", "Kite"),
+        ("🔑", "Key"),
+        ("🍋", "Lemon"),
+        ("⚡", "Lightning"),
+        ("🧲", "Magnet"),
+        ("🏔️", "Mountain"),
+        ("🎵", "Music"),
+        ("🪐", "Planet"),
+        ("🌧️", "Rain"),
+        ("🚀", "Rocket"),
+        ("🌹", "Rose"),
+        ("🧂", "Salt"),
+        ("🛡️", "Shield"),
+        ("❄️", "Snow"),
+        ("🧵", "Thread"),
+        ("🏕️", "Tent"),
+        ("🕯️", "Candle"),
+        ("🧱", "Brick"),
+        ("🧩", "Puzzle"),
+    ]
 }
 
 enum TrixDeviceVerificationFlowPhase: String, Codable, Sendable {
@@ -399,9 +575,9 @@ enum TrixDeviceVerificationFlowPhase: String, Codable, Sendable {
         case .accepted:
             return "Request accepted"
         case .sasStarted:
-            return "SAS verification started"
+            return "Visual comparison started"
         case .challengeReceived:
-            return "Compare verification codes"
+            return "Compare visual challenge"
         case .approved:
             return "Verification approved"
         case .finished:
@@ -448,16 +624,16 @@ struct TrixDeviceVerificationFlow: Equatable, Sendable {
             return "Another session is asking to verify this device. Accept only if you initiated this."
         case .accepted:
             if request != nil {
-                return "Waiting for the requesting device to start SAS verification."
+                return "Waiting for the requesting device to start visual comparison."
             }
 
-            return "Start SAS verification and compare the codes on both devices."
+            return "Start visual comparison and compare the challenge on both devices."
         case .sasStarted:
-            return "Waiting for OMEMO to provide comparison codes."
+            return "Waiting for OMEMO to provide comparison values."
         case .challengeReceived:
-            return "Compare these codes with the other device before approving."
+            return "Compare this visual challenge with the other device before approving."
         case .approved:
-            return "Codes approved. Waiting for OMEMO to finish verification."
+            return "Visual challenge approved. Waiting for OMEMO to finish verification."
         case .finished:
             return "OMEMO finished the verification flow. Refresh the device state."
         case .cancelled:

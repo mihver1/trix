@@ -1394,6 +1394,8 @@ private struct TrixGroupDeviceTrustEntry: Identifiable {
 }
 
 private struct TrixGroupDeviceTrustView: View {
+    @Environment(\.dismiss) private var dismiss
+
     let roomName: String
     let entries: [TrixGroupDeviceTrustEntry]
     let isLoading: Bool
@@ -1448,7 +1450,7 @@ private struct TrixGroupDeviceTrustView: View {
                     )
                 }
 
-                Text("Trust only after comparing fingerprints with each contact over an independent channel.")
+                Text("Trust only after comparing the visual fingerprint with each contact over an independent channel.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1457,6 +1459,16 @@ private struct TrixGroupDeviceTrustView: View {
             .navigationTitle("Trust \(roomName)")
             .trixInlineNavigationTitle()
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .accessibilityLabel("Close")
+                    .help("Close")
+                }
+
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         refresh()
@@ -1605,25 +1617,14 @@ private struct TrixGroupDeviceTrustDeviceRow: View {
                     .truncationMode(.middle)
             }
 
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(device.shortFingerprint)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.primary)
-                    .textSelection(.enabled)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .layoutPriority(1)
-
-                if !device.canSendEncrypted && device.isActive {
-                    Button {
-                        trust(device)
-                    } label: {
-                        Label("Trust Device", systemImage: "checkmark.shield")
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(isLoading)
+            TrixVisualDeviceVerificationView(
+                device: device,
+                canApprove: !device.canSendEncrypted && device.isActive,
+                isBusy: isLoading,
+                approve: {
+                    trust(device)
                 }
-            }
+            )
         }
         .padding(10)
         .background(TrixDesign.secondarySurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -1631,6 +1632,8 @@ private struct TrixGroupDeviceTrustDeviceRow: View {
 }
 
 private struct TrixPeerDeviceTrustView: View {
+    @Environment(\.dismiss) private var dismiss
+
     let roomName: String
     let devices: [TrixPeerDeviceIdentity]
     let isLoading: Bool
@@ -1680,22 +1683,14 @@ private struct TrixPeerDeviceTrustView: View {
                                             .truncationMode(.middle)
                                     }
 
-                                    Text(device.shortFingerprint)
-                                        .font(.caption.monospaced())
-                                        .foregroundStyle(.primary)
-                                        .textSelection(.enabled)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-
-                                    if !device.canSendEncrypted && device.isActive {
-                                        Button {
+                                    TrixVisualDeviceVerificationView(
+                                        device: device,
+                                        canApprove: !device.canSendEncrypted && device.isActive,
+                                        isBusy: isLoading,
+                                        approve: {
                                             trust(device)
-                                        } label: {
-                                            Label("Trust Device", systemImage: "checkmark.shield")
                                         }
-                                        .buttonStyle(.borderedProminent)
-                                        .disabled(isLoading)
-                                    }
+                                    )
                                 }
                                 .padding(12)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1718,7 +1713,7 @@ private struct TrixPeerDeviceTrustView: View {
                     )
                 }
 
-                Text("Trust only after comparing this fingerprint with the contact over an independent channel.")
+                Text("Trust only after comparing the visual fingerprint with the contact over an independent channel.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1727,6 +1722,16 @@ private struct TrixPeerDeviceTrustView: View {
             .navigationTitle("Trust \(roomName)")
             .trixInlineNavigationTitle()
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .accessibilityLabel("Close")
+                    .help("Close")
+                }
+
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         refresh()

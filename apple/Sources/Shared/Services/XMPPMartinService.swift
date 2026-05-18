@@ -3951,10 +3951,12 @@ actor XMPPMartinService: TrixService {
         identities
             .filter { !$0.own }
             .map { identity in
-                TrixPeerDeviceIdentity(
+                let deviceID = String(UInt32(bitPattern: identity.address.deviceId))
+                return TrixPeerDeviceIdentity(
                     userID: userID,
-                    deviceID: String(UInt32(bitPattern: identity.address.deviceId)),
+                    deviceID: deviceID,
                     fingerprint: identity.fingerprint,
+                    visualVerification: TrixDeviceVisualVerification.visualFingerprint(identity.fingerprint),
                     trustState: peerTrustState(from: identity.status.trust),
                     isActive: identity.status.isActive,
                     isLocalDevice: identity.own

@@ -92,8 +92,9 @@ copying old implementation details.
       status, and website.
 - [x] Device trust and broader device-management surfaces. Apple Settings now
       shows the current OMEMO device, published account devices discovered
-      through MartinOMEMO, fingerprints, active/trust state, and a manual
-      per-device trust action. It does not silently trust new devices.
+      through MartinOMEMO, active/trust state, a short visual fingerprint
+      challenge, hidden technical fingerprints, and a manual per-device trust
+      action. It does not silently trust new devices.
 - [x] Repeatable local archive/TestFlight script path for the new XMPP Apple
       app targets.
 
@@ -246,11 +247,12 @@ copying old implementation details.
       recipient. Scrubbed `dm-attachment` and `group-attachment` modes validate
       live server upload, peer download, decrypt, MIME, image flag, and byte
       equality; the 2026-05-10 credentialed runs passed for both DM and group.
-- [ ] Add a second device and confirm device list/fingerprint state is visible
+- [ ] Add a second device and confirm visual device verification state is visible
       in a live two-device run. The Apple Settings surface is wired to the
-      existing MartinOMEMO account-device discovery path and shows fingerprints,
+      existing MartinOMEMO account-device discovery path and shows visual
+      fingerprint challenges with raw fingerprints hidden behind a disclosure,
       but signed/second-device validation has not been run in this worker slice.
-- [x] Show peer OMEMO device fingerprints and manual trust controls for DMs.
+- [x] Show peer OMEMO device visual challenges and manual trust controls for DMs.
 - [x] Confirm untrusted or unknown device behavior is understandable.
 - [x] Confirm the app does not silently trust all devices.
 - [x] Confirm the composer blocks sending when required OMEMO state is missing.
@@ -312,10 +314,14 @@ copying old implementation details.
 ## Deferred MVP Items
 
 - [x] Production device trust UX for the MVP: current-account device list,
-      fingerprint visibility, active/trust labels, and explicit per-device
-      manual trust are wired through existing MartinOMEMO/store APIs. Reviewed
-      SAS verification and device revocation are not implemented; the UI keeps
-      those limitations visible instead of trusting devices automatically.
+      visual fingerprint challenge, active/trust labels, hidden technical
+      fingerprint disclosure, and explicit per-device manual trust are wired
+      through existing MartinOMEMO/store APIs. The visual challenge is a
+      deterministic display transform over the MartinOMEMO identity fingerprint;
+      the pinned libsignal source includes displayable/scannable fingerprint
+      primitives, but no reviewed Swift SAS flow is wired. Reviewed interactive
+      SAS verification and device revocation are not implemented, and the UI
+      keeps those limitations visible instead of trusting devices automatically.
 - [x] Account recovery/reinstall UX for the MVP: the app documents the current
       limitation in Settings and docs. Real server-side OMEMO key backup or
       recovery remains blocked until a reviewed MartinOMEMO recovery path is
@@ -375,7 +381,8 @@ copying old implementation details.
 - [x] Persistent local OMEMO store is wired.
 - [x] Product composer blocks plaintext sending while OMEMO state or peer trust
       is missing.
-- [x] Manual peer-device trust UI is wired for DMs.
+- [x] Manual peer-device trust UI is wired for DMs with a visual fingerprint
+      challenge instead of raw fingerprint comparison as the primary action.
 - [x] DM text send uses MartinOMEMO encode/write after peer trust.
 - [x] Apple XMPP group create/join/invite/member operations are wired through
       Martin MUC primitives. Group text send now uses MartinOMEMO multi-recipient

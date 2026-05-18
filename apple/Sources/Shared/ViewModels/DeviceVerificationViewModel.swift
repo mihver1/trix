@@ -174,6 +174,7 @@ final class DeviceVerificationViewModel: ObservableObject {
             userID: localStatus.userID,
             deviceID: localStatus.deviceID,
             fingerprint: localStatus.ed25519Fingerprint ?? "",
+            visualVerification: nil,
             trustState: localStatus.state == .verified ? .verified : .undecided,
             isActive: true,
             isLocalDevice: true

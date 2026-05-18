@@ -63,11 +63,16 @@ devices trusted locally just to make encrypted sending easier.
 
 The Apple Settings surface now shows the current account's OMEMO device list
 from the existing MartinOMEMO discovery/store path: current device, published
-account devices, device ids, fingerprints, active state, and local trust state.
-Trust is a per-device manual action and is only offered after the user can
-compare the fingerprint. The app still does not provide reviewed SAS
-cross-signing or device revocation in this slice; those remain blocked rather
-than replaced with custom crypto or silent trust-all behavior.
+account devices, device ids, active state, local trust state, and a short visual
+fingerprint challenge. Trust is a per-device manual action and is only offered
+after the user can compare the visual challenge. The challenge is a documented
+deterministic display transform over the MartinOMEMO identity fingerprint; the
+raw OMEMO fingerprint is hidden behind a technical disclosure. The pinned
+libsignal source includes displayable/scannable fingerprint primitives, but they
+are not exposed to the app target as a reviewed Swift verification flow here.
+The app still does not provide an interactive reviewed SAS exchange,
+cross-signing, QR scanning, or device revocation in this slice; those remain
+blocked rather than replaced with custom crypto or silent trust-all behavior.
 
 ## Recovery And Reinstall Risk
 

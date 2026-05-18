@@ -150,7 +150,8 @@ directory returns local users through `vjud.trix.selfhost.ru`, and the client
 does substring filtering locally so prefix queries such as `fri` can match
 `friend@trix.selfhost.ru`. The `peer-devices` mode requires
 `TRIX_XMPP_LIVE_SMOKE_PEER_ID` and refreshes the contact's published OMEMO
-devices without printing fingerprints. The `session-restore` mode saves the
+devices without printing fingerprints or visual fingerprint challenges. The
+`session-restore` mode saves the
 fresh session into a smoke-only Keychain item, loads it through a new service
 instance, restores the XMPP connection, logs out, clears that smoke item, and
 prints only status lines. The `trust-peer` mode requires
@@ -251,11 +252,12 @@ The checked-in Apple code is now the first XMPP client slice:
 - Keychain-backed local OMEMO state for the account's registration id, identity
   key pair, prekeys, signed prekeys, sessions, identities, and sender keys;
 - CryptoKit-backed AES-GCM engine for MartinOMEMO;
-- explicit peer-device inventory, fingerprint display, and manual trust for DMs;
+- explicit peer-device inventory, visual fingerprint display, hidden technical
+  fingerprint disclosure, and manual trust for DMs;
 - Settings-based account device management for the current account: the app
   refreshes published OMEMO devices through MartinOMEMO, shows device IDs,
-  fingerprints, active/trust state, and allows manual trust of one selected
-  active account device only after fingerprint comparison;
+  visual fingerprint challenges, active/trust state, and allows manual trust
+  of one selected active account device only after visual comparison;
 - OMEMO encrypted DM text send after at least one active contact device is
   trusted;
 - sender-side restart replay for new outbound messages is supported by including
@@ -361,8 +363,10 @@ current recovery limit. This MartinOMEMO slice does not provide a validated
 server-side OMEMO key backup/recovery path, and the app does not implement one
 itself. Reinstalling the app or resetting its Keychain state creates a new OMEMO
 device. Old encrypted history that was not encrypted for that device can remain
-unavailable, and replacement devices must be trusted only after comparing
-fingerprints from an existing trusted session.
+unavailable, and replacement devices must be trusted only after comparing the
+visual fingerprint from an existing trusted session. The current visual flow is
+a deterministic display transform over the MartinOMEMO identity fingerprint; it
+is not an interactive SAS exchange.
 
 ## Target Service Boundary
 
@@ -385,8 +389,8 @@ The target protocol-neutral boundary is:
   and says so in the confirmation dialog.
 - `TrixUserDirectoryService`: directory search and profile lookup/update through
   the Trix control plane.
-- `TrixDeviceVerificationService`: OMEMO device inventory, trust state, and
-  fingerprint presentation.
+- `TrixDeviceVerificationService`: OMEMO device inventory, trust state, visual
+  fingerprint presentation, and hidden technical fingerprint disclosure.
 - `TrixPushRegistrationService`: APNs token registration and unregister.
 - `TrixControlPlaneService`: account bootstrap, profile, group policy, and admin
   operations.
@@ -417,8 +421,8 @@ gates:
    received-pack import; live credentialed sticker-send smoke remains optional
    follow-up work.
 10. Live-validate the broader device trust UX with a second signed device. The
-   Settings surface and manual per-device trust are wired; live second-device
-   validation is still pending.
+   Settings surface and manual per-device visual fingerprint trust are wired;
+   live second-device validation is still pending.
 11. Validate APNs push without plaintext payloads.
 
 Group OMEMO evidence from the checked libraries: Martin exposes `MucModule`

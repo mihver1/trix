@@ -61,7 +61,12 @@ Current result:
 
 - MartinOMEMO is wired with a Keychain-backed local store and CryptoKit AES-GCM.
 - Remote devices are saved as undecided by default; the Apple client now exposes
-  DM device fingerprints and requires explicit manual trust before text send.
+  DM visual fingerprint challenges and requires explicit manual trust before
+  text send. Raw OMEMO fingerprints remain available only in technical
+  disclosures. The pinned libsignal source includes displayable/scannable
+  fingerprint primitives, but the current Apple flow is a deterministic display
+  transform over the MartinOMEMO identity fingerprint, not an interactive SAS
+  exchange.
 - DM text send is wired through MartinOMEMO encode/write after peer trust, and
   the checklist records live two-account send/receive validation.
 - Group OMEMO text send/receive passed the three-account `group-e2ee` macOS live

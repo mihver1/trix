@@ -105,7 +105,7 @@ struct TrixDeviceVerificationStatusView: View {
 
                 if status.lacksEligibleVerificationDevice {
                     Label {
-                        Text("No trusted session is available for interactive SAS. Recovery and account-level verification are still blocked in this client slice.")
+                        Text("No trusted session is available for reviewed interactive device verification. Recovery and account-level verification are still blocked in this client slice.")
                             .fixedSize(horizontal: false, vertical: true)
                     } icon: {
                         Image(systemName: "key.horizontal")
@@ -120,14 +120,15 @@ struct TrixDeviceVerificationStatusView: View {
                 }
 
                 if let fingerprint = status.ed25519Fingerprint {
-                    LabeledContent {
-                        Text(shortKey(fingerprint))
-                            .font(.caption.monospaced())
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .textSelection(.enabled)
-                    } label: {
-                        Text("Fingerprint")
+                    DisclosureGroup("Technical local identity") {
+                        LabeledContent {
+                            Text(fingerprint)
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } label: {
+                            Text("Raw fingerprint")
+                        }
                     }
                 }
 
@@ -188,14 +189,6 @@ struct TrixDeviceVerificationStatusView: View {
         case .unknown:
             return .secondary
         }
-    }
-
-    private func shortKey(_ key: String) -> String {
-        guard key.count > 16 else {
-            return key
-        }
-
-        return "\(key.prefix(8))...\(key.suffix(8))"
     }
 
     private func otherDeviceAvailabilityLabel(for status: TrixDeviceVerificationStatus) -> String {
@@ -309,7 +302,7 @@ struct TrixDeviceVerificationStatusView: View {
                 Button {
                     startSas()
                 } label: {
-                    actionLabel("Start SAS", systemImage: "number")
+                    actionLabel("Start Check", systemImage: "eye")
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isBusy)
@@ -325,7 +318,7 @@ struct TrixDeviceVerificationStatusView: View {
                 Button {
                     approve()
                 } label: {
-                    actionLabel("Codes Match", systemImage: "checkmark")
+                    actionLabel("Match", systemImage: "checkmark")
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isBusy)
@@ -396,7 +389,7 @@ struct TrixDeviceVerificationStatusView: View {
             Label("Recovery and reinstall", systemImage: "externaldrive.badge.exclamationmark")
                 .font(.subheadline.weight(.semibold))
 
-            Text("Server-side OMEMO key recovery is not wired in this client slice. Deleting the app or resetting Keychain creates a new OMEMO device; old encrypted history that was not encrypted for this device can remain unavailable. Trust replacement devices only after comparing fingerprints from an existing trusted session.")
+            Text("Server-side OMEMO key recovery is not wired in this client slice. Deleting the app or resetting Keychain creates a new OMEMO device; old encrypted history that was not encrypted for this device can remain unavailable. Trust replacement devices only after comparing the visual fingerprint from an existing trusted session.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -416,7 +409,7 @@ private struct TrixAccountDeviceManagementView: View {
             Label("Account OMEMO Devices", systemImage: "macbook.and.iphone")
                 .font(.subheadline.weight(.semibold))
 
-            Text("Published devices for this account are shown for fingerprint comparison. Trix does not trust new devices automatically.")
+            Text("Published devices for this account are shown with a visual fingerprint check. Trix does not trust new devices automatically.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -462,32 +455,18 @@ private struct TrixAccountDeviceManagementView: View {
 
             LabeledContent("Device ID", value: device.deviceID)
 
-            LabeledContent {
-                Text(device.shortFingerprint)
-                    .font(.caption.monospaced())
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-                    .foregroundStyle(device.hasFingerprint ? .primary : .secondary)
-            } label: {
-                Text("Fingerprint")
-            }
-
             Text(device.isActive ? "Published active OMEMO device" : "Inactive OMEMO device")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            if canTrust(device) {
-                Button {
+            TrixVisualDeviceVerificationView(
+                device: device,
+                canApprove: canTrust(device),
+                isBusy: actionInFlight != nil,
+                approve: {
                     trust(device)
-                } label: {
-                    Label("Trust This Device", systemImage: "checkmark.shield")
-                        .lineLimit(1)
                 }
-                .buttonStyle(.bordered)
-                .disabled(actionInFlight != nil)
-                .help("Trust only after comparing the fingerprint on this device with another trusted session.")
-            }
+            )
         }
         .padding(.vertical, 4)
     }
@@ -540,7 +519,7 @@ private struct TrixDeviceVerificationFlowView: View {
         case .incomingRequest:
             return "person.badge.key"
         case .accepted, .sasStarted:
-            return "number"
+            return "eye"
         case .challengeReceived:
             return "checklist"
         case .approved:
@@ -574,17 +553,7 @@ private struct TrixDeviceVerificationChallengeView: View {
     var body: some View {
         switch challenge {
         case .emojis(let emojis):
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(emojis) { emoji in
-                    HStack(spacing: 8) {
-                        Text(emoji.symbol)
-                            .font(.title3)
-                            .frame(width: 28)
-                        Text(emoji.description.capitalized)
-                            .font(.callout)
-                    }
-                }
-            }
+            TrixVisualChallengeSymbolsView(symbols: emojis)
 
         case .decimals(let values):
             HStack(spacing: 8) {

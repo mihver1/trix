@@ -9,6 +9,7 @@ actor MockTrixService: TrixService {
     private var timelines: [String: [TrixTimelineItem]]
     private var verificationState: TrixDeviceVerificationState
     private var verificationFlow: TrixDeviceVerificationFlow
+    private var trustedPeerDeviceIDs: Set<String>
     private var recoveryState: TrixRecoveryState
     private var backupState: TrixBackupState
     private var backupExistsOnServer: Bool
@@ -60,6 +61,7 @@ actor MockTrixService: TrixService {
         ]
         self.verificationState = .unverified
         self.verificationFlow = .idle
+        self.trustedPeerDeviceIDs = []
         self.recoveryState = .disabled
         self.backupState = .unknown
         self.backupExistsOnServer = false
@@ -304,7 +306,8 @@ actor MockTrixService: TrixService {
     }
 
     func trustPeerDevice(userID: String, deviceID: String, session: TrixSession) async throws -> [TrixPeerDeviceIdentity] {
-        [mockPeerDevice(for: userID, deviceID: deviceID)]
+        trustedPeerDeviceIDs.insert(Self.mockDeviceTrustKey(userID: userID, deviceID: deviceID))
+        return [mockPeerDevice(for: userID, deviceID: deviceID)]
     }
 
     func requestDeviceVerification(session: TrixSession) async throws -> TrixDeviceVerificationFlow {
@@ -334,7 +337,7 @@ actor MockTrixService: TrixService {
         verificationFlow = TrixDeviceVerificationFlow(
             phase: .challengeReceived,
             request: verificationFlow.request,
-            challenge: .decimals(["1812", "5821", "9197"]),
+            challenge: Self.mockVisualVerification.challenge,
             updatedAt: Date()
         )
         return verificationFlow
@@ -708,14 +711,35 @@ actor MockTrixService: TrixService {
     }
 
     private func mockPeerDevice(for userID: String, deviceID: String = "1001") -> TrixPeerDeviceIdentity {
-        TrixPeerDeviceIdentity(
+        let isTrusted = trustedPeerDeviceIDs.contains(Self.mockDeviceTrustKey(userID: userID, deviceID: deviceID))
+        return TrixPeerDeviceIdentity(
             userID: userID,
             deviceID: deviceID,
             fingerprint: "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99",
-            trustState: .trusted,
+            visualVerification: Self.mockVisualVerification,
+            trustState: isTrusted ? .trusted : .undecided,
             isActive: true,
             isLocalDevice: false
         )
+    }
+
+    private static let mockVisualVerification = TrixDeviceVisualVerification.visualFingerprint(
+        "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
+    ) ?? TrixDeviceVisualVerification(
+        kind: .fingerprintDisplayTransform,
+        symbols: [
+            TrixDeviceVerificationEmoji(symbol: "⭐", description: "Star", position: 0),
+            TrixDeviceVerificationEmoji(symbol: "🌊", description: "Wave", position: 1),
+            TrixDeviceVerificationEmoji(symbol: "🔑", description: "Key", position: 2),
+            TrixDeviceVerificationEmoji(symbol: "🌙", description: "Moon", position: 3),
+            TrixDeviceVerificationEmoji(symbol: "🛡️", description: "Shield", position: 4),
+        ],
+        decimalGroups: ["AABBCCDD", "EEFF0011", "22334455", "66778899"],
+        sourceText: "AABBCCDDEEFF00112233445566778899"
+    )
+
+    private static func mockDeviceTrustKey(userID: String, deviceID: String) -> String {
+        "\(userID.lowercased())|\(deviceID)"
     }
 
     private static func normalizedTrixUserID(_ userID: String) throws -> String {
