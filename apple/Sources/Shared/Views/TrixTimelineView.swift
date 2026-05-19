@@ -20,6 +20,14 @@ private enum TrixAttachmentImportError: LocalizedError {
     }
 }
 
+private struct TrixMentionProfileSelection: Identifiable {
+    let userID: String
+
+    var id: String {
+        trixNormalizedUserKey(userID)
+    }
+}
+
 struct TrixTimelineView: View {
     @ObservedObject var model: TrixAppModel
     let room: TrixRoomSummary
@@ -43,6 +51,16 @@ struct TrixTimelineView: View {
     @State private var isShowingStickerPicker = false
     @State private var isAttachmentDropTargeted = false
     @State private var isShowingNotificationSettings = false
+    @State private var mentionMembers: [TrixRoomMember] = []
+    @State private var isLoadingMentionMembers = false
+    @State private var selectedMentionTargets: [String: TrixRoomMember] = [:]
+    @State private var replyDraftTarget: TrixTimelineItem?
+    @State private var threadDraftTarget: TrixTimelineItem?
+    @State private var editingItem: TrixTimelineItem?
+    @State private var retractionCandidate: TrixTimelineItem?
+    @State private var activeThreadFilter: TrixTimelineThreadFilter?
+    @State private var lastDisplayedMarkerMessageID: String?
+    @State private var selectedMentionProfile: TrixMentionProfileSelection?
 
     init(model: TrixAppModel, room: TrixRoomSummary) {
         self.model = model
@@ -78,6 +96,11 @@ struct TrixTimelineView: View {
                             case .message(let presentation):
                                 TrixTimelineRow(
                                     presentation: presentation,
+                                    currentUserID: currentUserID,
+                                    roomKind: room.kind,
+                                    threadReplyCount: threadReplyCount(for: presentation.item),
+                                    canEdit: canEdit(presentation.item),
+                                    canRetract: canRetract(presentation.item),
                                     isDownloadingAttachment: timelineViewModel.downloadingAttachmentID == presentation.item.id,
                                     attachmentFailure: timelineViewModel.attachmentDownloadFailures[presentation.item.id],
                                     inlineAttachmentPreview: timelineViewModel.inlineAttachmentPreviews[presentation.item.id],
@@ -98,6 +121,24 @@ struct TrixTimelineView: View {
                                         Task {
                                             await model.setReaction(emoji, for: presentation.item)
                                         }
+                                    },
+                                    reply: {
+                                        startReply(to: presentation.item)
+                                    },
+                                    replyInThread: {
+                                        startThreadReply(to: presentation.item)
+                                    },
+                                    edit: {
+                                        startEditing(presentation.item)
+                                    },
+                                    retract: {
+                                        retractionCandidate = presentation.item
+                                    },
+                                    openThread: {
+                                        openThread(for: presentation.item)
+                                    },
+                                    openMention: { userID in
+                                        openMentionProfile(userID)
                                     },
                                     addStickerPack: { metadata in
                                         Task {
@@ -127,6 +168,7 @@ struct TrixTimelineView: View {
                     withAnimation(.snappy(duration: 0.24)) {
                         proxy.scrollTo(last.id, anchor: .bottom)
                     }
+                    markLatestVisibleMessageDisplayed(items)
                 }
             }
         }
@@ -230,6 +272,9 @@ struct TrixTimelineView: View {
         .sheet(isPresented: $isShowingNotificationSettings) {
             TrixRoomNotificationSettingsView(model: model, room: room)
         }
+        .sheet(item: $selectedMentionProfile) { selection in
+            TrixMentionProfileView(model: model, userID: selection.userID)
+        }
         .confirmationDialog(
             "Forget this DM locally?",
             isPresented: $isShowingLocalForgetConfirmation,
@@ -254,11 +299,41 @@ struct TrixTimelineView: View {
         } message: {
             Text("A server-backed MUC leave is still blocked in this client slice. This only hides local room state and does not destroy the group.")
         }
+        .confirmationDialog(
+            "Delete this message?",
+            isPresented: Binding(
+                get: { retractionCandidate != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        retractionCandidate = nil
+                    }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Message", role: .destructive) {
+                guard let item = retractionCandidate else {
+                    return
+                }
+                retractionCandidate = nil
+                Task {
+                    await model.retractMessage(item)
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                retractionCandidate = nil
+            }
+        } message: {
+            Text("Recipients may already have archived copies. Trix will show a tombstone where supported.")
+        }
         .task(id: room.id) {
             resetDeviceTrustState()
+            resetComposerState()
             if timelineViewModel.roomID != room.id {
                 await model.selectRoom(room)
             }
+            await loadMentionMembers()
+            markLatestVisibleMessageDisplayed(timelineViewModel.items)
             await loadPeerDevices(refresh: false)
             await model.loadAttachmentSendAvailability(roomID: room.id)
             await model.loadCallState(for: room)
@@ -315,6 +390,10 @@ struct TrixTimelineView: View {
         }
 
         return room.isEncrypted || peerDevices.contains(where: \.canSendEncrypted)
+    }
+
+    private var currentUserID: String? {
+        model.account?.userID ?? model.session?.userID
     }
 
     private var currentAttachmentSendAvailability: TrixAttachmentSendAvailability? {
@@ -381,6 +460,17 @@ struct TrixTimelineView: View {
                 )
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
+            }
+
+            if let activeThreadFilter {
+                TrixThreadFilterBar(
+                    filter: activeThreadFilter,
+                    close: {
+                        closeThread()
+                    }
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
             }
 
             composer
@@ -499,61 +589,100 @@ struct TrixTimelineView: View {
     }
 
     private var composer: some View {
-        HStack(spacing: 10) {
-            Button {
-                fileImportError = nil
-                isShowingFileImporter = true
-            } label: {
-                if timelineViewModel.isSendingAttachment {
-                    ProgressView()
-                } else {
-                    Image(systemName: "paperclip")
+        VStack(alignment: .leading, spacing: 8) {
+            if let editingItem {
+                TrixComposerContextBanner(
+                    systemImage: "pencil",
+                    title: "Edit message",
+                    subtitle: quotePreviewText(for: editingItem),
+                    tint: TrixDesign.accent,
+                    clear: cancelComposerContext
+                )
+            } else if activeThreadFilter == nil,
+                      let threadTarget = activeThreadComposerTarget {
+                TrixComposerContextBanner(
+                    systemImage: "text.bubble",
+                    title: "Thread",
+                    subtitle: quotePreviewText(for: threadTarget),
+                    tint: TrixDesign.groupAccent,
+                    clear: clearThreadContext
+                )
+            } else if let replyDraftTarget {
+                TrixComposerContextBanner(
+                    systemImage: "arrowshape.turn.up.left",
+                    title: "Reply",
+                    subtitle: quotePreviewText(for: replyDraftTarget),
+                    tint: TrixDesign.accent,
+                    clear: cancelComposerContext
+                )
+            }
+
+            if let mentionQuery = activeMentionQuery,
+               !filteredMentionMembers(for: mentionQuery).isEmpty {
+                TrixMentionPickerView(
+                    members: filteredMentionMembers(for: mentionQuery),
+                    isLoading: isLoadingMentionMembers,
+                    select: insertMention
+                )
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    fileImportError = nil
+                    isShowingFileImporter = true
+                } label: {
+                    if timelineViewModel.isSendingAttachment {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "paperclip")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(TrixDesign.accent)
+                            .frame(width: 38, height: 38)
+                    }
+                }
+                .buttonStyle(.borderless)
+                .disabled(timelineViewModel.isSendingAttachment || !canSendEncryptedAttachments || editingItem != nil)
+                .help(attachmentHelpText)
+
+                Button {
+                    isShowingStickerPicker = true
+                } label: {
+                    Image(systemName: "face.smiling")
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(TrixDesign.accent)
                         .frame(width: 38, height: 38)
                 }
-            }
-            .buttonStyle(.borderless)
-            .disabled(timelineViewModel.isSendingAttachment || !canSendEncryptedAttachments)
-            .help(attachmentHelpText)
+                .buttonStyle(.borderless)
+                .disabled(editingItem != nil)
+                .help("Stickers")
 
-            Button {
-                isShowingStickerPicker = true
-            } label: {
-                Image(systemName: "face.smiling")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(TrixDesign.accent)
-                    .frame(width: 38, height: 38)
-            }
-            .buttonStyle(.borderless)
-            .help("Stickers")
+                TextField(canSendEncrypted ? "Message" : "OMEMO required", text: $draft, axis: .vertical)
+                    .lineLimit(1...5)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(TrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
+                    }
+                    .layoutPriority(1)
+                    .trixMacComposerReturn(text: $draft, send: sendDraft)
 
-            TextField(canSendEncrypted ? "Message" : "OMEMO required", text: $draft, axis: .vertical)
-                .lineLimit(1...5)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(TrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
+                Button {
+                    sendDraft()
+                } label: {
+                    if timelineViewModel.isSending {
+                        ProgressView()
+                    } else {
+                        Image(systemName: draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "arrow.up.circle" : "arrow.up.circle.fill")
+                            .font(.system(size: 32, weight: .semibold))
+                            .foregroundStyle(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : TrixDesign.accent)
+                    }
                 }
-                .layoutPriority(1)
-                .trixMacComposerReturn(text: $draft, send: sendDraft)
-
-            Button {
-                sendDraft()
-            } label: {
-                if timelineViewModel.isSending {
-                    ProgressView()
-                } else {
-                    Image(systemName: draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "arrow.up.circle" : "arrow.up.circle.fill")
-                        .font(.system(size: 32, weight: .semibold))
-                        .foregroundStyle(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : TrixDesign.accent)
-                }
+                .buttonStyle(.borderless)
+                .disabled(timelineViewModel.isSending || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !canSendEncrypted)
+                .help(editingItem == nil ? "Send message" : "Save edit")
             }
-            .buttonStyle(.borderless)
-            .disabled(timelineViewModel.isSending || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !canSendEncrypted)
-            .help("Send message")
         }
         .padding(.horizontal, 12)
         .padding(.top, 10)
@@ -613,7 +742,15 @@ struct TrixTimelineView: View {
             return []
         }
 
-        return timelineViewModel.items
+        guard let activeThreadFilter else {
+            return timelineViewModel.items
+        }
+
+        return timelineViewModel.items.filter { item in
+            item.id == activeThreadFilter.rootMessageID ||
+                item.thread?.threadID == activeThreadFilter.threadID ||
+                item.thread?.rootMessageID == activeThreadFilter.rootMessageID
+        }
     }
 
     private var timelineToastMessage: String? {
@@ -697,19 +834,406 @@ struct TrixTimelineView: View {
         return timelineViewModel.attachmentSendAvailability?.blockReason?.message ?? "Encrypted attachments are not available yet"
     }
 
+    private var activeThreadComposerTarget: TrixTimelineItem? {
+        if let threadDraftTarget {
+            return threadDraftTarget
+        }
+
+        guard let activeThreadFilter else {
+            return nil
+        }
+
+        return timelineViewModel.items.first { item in
+            item.id == activeThreadFilter.rootMessageID
+        }
+    }
+
     private func sendDraft() {
-        let text = draft
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSendEncrypted,
               !timelineViewModel.isSending,
-              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+              !text.isEmpty else {
             return
         }
 
-        draft = ""
         sendTypingStateIfNeeded(.paused)
-        Task {
-            await model.send(text: text)
+
+        if let editingItem {
+            Task {
+                let didEdit = await model.editTextMessage(
+                    messageID: editingItem.id,
+                    newText: text
+                )
+                guard didEdit else {
+                    return
+                }
+
+                draft = ""
+                self.editingItem = nil
+                selectedMentionTargets = [:]
+            }
+            return
         }
+
+        let metadata = sendMetadata(for: text)
+        let shouldWaitForResult = !metadata.isEmpty
+        if !shouldWaitForResult {
+            draft = ""
+            selectedMentionTargets = [:]
+            replyDraftTarget = nil
+            threadDraftTarget = nil
+        }
+
+        Task {
+            let didSend = await model.send(text: text, metadata: metadata)
+            guard didSend, shouldWaitForResult else {
+                return
+            }
+
+            draft = ""
+            selectedMentionTargets = [:]
+            replyDraftTarget = nil
+            threadDraftTarget = nil
+        }
+    }
+
+    private func sendMetadata(for text: String) -> TrixTextMessageSendMetadata {
+        TrixTextMessageSendMetadata(
+            mentions: mentionReferences(in: text),
+            replyTo: replyDraftTarget.map(replyReference),
+            thread: activeThreadComposerTarget.map(threadReference)
+        )
+    }
+
+    private func mentionReferences(in text: String) -> [TrixMentionReference] {
+        selectedMentionTargets.values.flatMap { member in
+            let token = mentionToken(for: member)
+            var references: [TrixMentionReference] = []
+            var searchStart = text.startIndex
+
+            while searchStart < text.endIndex,
+                  let range = text.range(of: token, range: searchStart..<text.endIndex) {
+                let begin = range.lowerBound.utf16Offset(in: text)
+                let end = range.upperBound.utf16Offset(in: text)
+                let referenceRange = TrixTextReferenceRange(begin: begin, end: end)
+                if referenceRange.isValid(in: text) {
+                    references.append(
+                        TrixMentionReference(
+                            targetUserID: member.userID,
+                            displayText: token,
+                            range: referenceRange
+                        )
+                    )
+                }
+                searchStart = range.upperBound
+            }
+
+            return references
+        }
+        .sorted { lhs, rhs in
+            if lhs.range.begin != rhs.range.begin {
+                return lhs.range.begin < rhs.range.begin
+            }
+
+            return lhs.targetUserID < rhs.targetUserID
+        }
+    }
+
+    private func replyReference(for item: TrixTimelineItem) -> TrixReplyReference {
+        TrixReplyReference(
+            targetMessageID: item.id,
+            targetSenderID: item.sender,
+            targetRoomID: item.roomID,
+            preview: TrixReplyPreview(
+                senderID: item.sender,
+                body: item.attachment == nil && !item.isRetracted ? item.body : nil,
+                attachmentFilename: item.attachment?.filename,
+                isUnavailable: item.isRetracted
+            )
+        )
+    }
+
+    private func threadReference(for item: TrixTimelineItem) -> TrixThreadReference {
+        if let thread = item.thread {
+            return TrixThreadReference(
+                threadID: thread.threadID,
+                rootMessageID: thread.rootMessageID ?? item.id,
+                parentMessageID: item.id,
+                parentThreadID: thread.parentThreadID,
+                replyCount: threadReplyCount(for: item) + 1
+            )
+        }
+
+        return TrixThreadReference(
+            threadID: Self.threadID(rootMessageID: item.id),
+            rootMessageID: item.id,
+            parentMessageID: item.id,
+            replyCount: threadReplyCount(for: item) + 1
+        )
+    }
+
+    private func startReply(to item: TrixTimelineItem) {
+        guard !item.isRetracted else {
+            return
+        }
+
+        editingItem = nil
+        threadDraftTarget = nil
+        replyDraftTarget = item
+    }
+
+    private func startThreadReply(to item: TrixTimelineItem) {
+        guard room.kind == .group,
+              !item.isRetracted else {
+            return
+        }
+
+        editingItem = nil
+        replyDraftTarget = nil
+        threadDraftTarget = item
+        openThread(for: item)
+    }
+
+    private func startEditing(_ item: TrixTimelineItem) {
+        guard canEdit(item) else {
+            return
+        }
+
+        replyDraftTarget = nil
+        threadDraftTarget = nil
+        editingItem = item
+        selectedMentionTargets = mentionMembersByToken(in: item.body)
+        draft = item.body
+    }
+
+    private func cancelComposerContext() {
+        replyDraftTarget = nil
+        threadDraftTarget = nil
+        editingItem = nil
+        selectedMentionTargets = [:]
+        draft = ""
+    }
+
+    private func clearThreadContext() {
+        threadDraftTarget = nil
+        activeThreadFilter = nil
+    }
+
+    private func closeThread() {
+        withAnimation(.snappy(duration: 0.2)) {
+            clearThreadContext()
+        }
+    }
+
+    private func openMentionProfile(_ userID: String) {
+        selectedMentionProfile = TrixMentionProfileSelection(userID: userID)
+    }
+
+    private func resetComposerState() {
+        draft = ""
+        selectedMentionTargets = [:]
+        replyDraftTarget = nil
+        threadDraftTarget = nil
+        editingItem = nil
+        retractionCandidate = nil
+        activeThreadFilter = nil
+        lastDisplayedMarkerMessageID = nil
+    }
+
+    private func openThread(for item: TrixTimelineItem) {
+        guard room.kind == .group else {
+            return
+        }
+
+        let threadID = item.thread?.threadID ?? Self.threadID(rootMessageID: item.id)
+        let rootMessageID = item.thread?.rootMessageID ?? item.id
+        let rootItem = timelineViewModel.items.first { $0.id == rootMessageID } ?? item
+        withAnimation(.snappy(duration: 0.2)) {
+            activeThreadFilter = TrixTimelineThreadFilter(
+                threadID: threadID,
+                rootMessageID: rootMessageID,
+                title: quotePreviewText(for: rootItem)
+            )
+        }
+    }
+
+    private func canEdit(_ item: TrixTimelineItem) -> Bool {
+        isOwnTextMessage(item) &&
+            !item.isRetracted &&
+            item.id == lastEditableOwnTextMessageID
+    }
+
+    private func canRetract(_ item: TrixTimelineItem) -> Bool {
+        isOwnTextMessage(item) && !item.isRetracted
+    }
+
+    private func isOwnTextMessage(_ item: TrixTimelineItem) -> Bool {
+        item.isLocalEcho &&
+            item.attachment == nil &&
+            !item.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var lastEditableOwnTextMessageID: String? {
+        timelineViewModel.items.last(where: isOwnTextMessage)?.id
+    }
+
+    private func threadReplyCount(for item: TrixTimelineItem) -> Int {
+        let threadID = item.thread?.threadID ?? Self.threadID(rootMessageID: item.id)
+        let rootMessageID = item.thread?.rootMessageID ?? item.id
+        let localCount = timelineViewModel.items.filter { candidate in
+            candidate.id != item.id &&
+                (
+                    candidate.thread?.threadID == threadID ||
+                        candidate.thread?.rootMessageID == rootMessageID
+                )
+        }.count
+
+        return max(localCount, item.thread?.replyCount ?? 0)
+    }
+
+    private func quotePreviewText(for item: TrixTimelineItem) -> String {
+        if let retractionState = item.retractionState {
+            return retractionState.tombstoneBody
+        }
+
+        if let attachment = item.attachment {
+            return attachment.isSticker ? "Sticker" : attachment.filename
+        }
+
+        let trimmed = item.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return "Message unavailable"
+        }
+
+        if trimmed.count <= 120 {
+            return trimmed
+        }
+
+        return "\(trimmed.prefix(117))..."
+    }
+
+    private var activeMentionQuery: String? {
+        guard let range = activeMentionTokenRange(in: draft) else {
+            return nil
+        }
+
+        return String(draft[draft.index(after: range.lowerBound)..<range.upperBound])
+    }
+
+    private func activeMentionTokenRange(in text: String) -> Range<String.Index>? {
+        guard let atIndex = text.lastIndex(of: "@") else {
+            return nil
+        }
+
+        let suffix = text[atIndex..<text.endIndex]
+        guard !suffix.dropFirst().contains(where: \.isWhitespace) else {
+            return nil
+        }
+
+        if atIndex > text.startIndex {
+            let previousIndex = text.index(before: atIndex)
+            guard text[previousIndex].isWhitespace else {
+                return nil
+            }
+        }
+
+        return atIndex..<text.endIndex
+    }
+
+    private func filteredMentionMembers(for query: String) -> [TrixRoomMember] {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let activeMembers = mentionMembers.filter(\.membership.isActive)
+        let filteredMembers: [TrixRoomMember]
+        if normalizedQuery.isEmpty {
+            filteredMembers = activeMembers
+        } else {
+            filteredMembers = activeMembers.filter { member in
+                member.title.lowercased().contains(normalizedQuery) ||
+                    member.userID.lowercased().contains(normalizedQuery)
+            }
+        }
+
+        return filteredMembers
+            .filter { member in
+                guard let currentUserID else {
+                    return true
+                }
+                return trixNormalizedUserKey(member.userID) != trixNormalizedUserKey(currentUserID)
+            }
+            .sorted { lhs, rhs in
+                lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            }
+            .prefix(6)
+            .map(\.self)
+    }
+
+    private func insertMention(_ member: TrixRoomMember) {
+        let token = mentionToken(for: member)
+        if let range = activeMentionTokenRange(in: draft) {
+            draft.replaceSubrange(range, with: "\(token) ")
+        } else {
+            if !draft.isEmpty,
+               draft.last?.isWhitespace == false {
+                draft.append(" ")
+            }
+            draft.append("\(token) ")
+        }
+        selectedMentionTargets[member.userID] = member
+    }
+
+    private func pruneMentionTargets() {
+        selectedMentionTargets = selectedMentionTargets.filter { _, member in
+            draft.contains(mentionToken(for: member))
+        }
+    }
+
+    private func mentionMembersByToken(in text: String) -> [String: TrixRoomMember] {
+        Dictionary(
+            uniqueKeysWithValues: mentionMembers
+                .filter { text.contains(mentionToken(for: $0)) }
+                .map { ($0.userID, $0) }
+        )
+    }
+
+    private func mentionToken(for member: TrixRoomMember) -> String {
+        let compactTitle = member.title
+            .components(separatedBy: .whitespacesAndNewlines)
+            .joined()
+            .replacingOccurrences(of: "@", with: "")
+        let fallback = Self.displayName(from: member.userID)
+            .components(separatedBy: .whitespacesAndNewlines)
+            .joined()
+            .replacingOccurrences(of: "@", with: "")
+        let token = compactTitle.isEmpty ? fallback : compactTitle
+        return "@\(token)"
+    }
+
+    private func loadMentionMembers() async {
+        isLoadingMentionMembers = true
+        defer { isLoadingMentionMembers = false }
+
+        do {
+            mentionMembers = try await model.members(roomID: room.id)
+        } catch {
+            mentionMembers = []
+        }
+    }
+
+    private func markLatestVisibleMessageDisplayed(_ items: [TrixTimelineItem]) {
+        guard timelineViewModel.roomID == room.id,
+              let latest = items.last,
+              latest.id != lastDisplayedMarkerMessageID else {
+            return
+        }
+
+        lastDisplayedMarkerMessageID = latest.id
+        Task {
+            await model.markRoomDisplayed(roomID: room.id, messageID: latest.id)
+        }
+    }
+
+    private static func threadID(rootMessageID: String) -> String {
+        "trix-thread-\(rootMessageID)"
     }
 
     @MainActor
@@ -883,6 +1407,7 @@ struct TrixTimelineView: View {
     }
 
     private func handleDraftChange(_ value: String) {
+        pruneMentionTargets()
         typingPauseTask?.cancel()
         guard canSendEncrypted else {
             sendTypingStateIfNeeded(.paused)
@@ -1282,7 +1807,7 @@ struct TrixTimelineView: View {
         return trixNormalizedUserKey(userID) == trixNormalizedUserKey(currentUserID)
     }
 
-    private static func displayName(from userID: String) -> String {
+    fileprivate static func displayName(from userID: String) -> String {
         let localpart = userID
             .split(separator: "@")
             .first
@@ -1672,6 +2197,12 @@ private struct TrixTimelineMessagePresentation: Identifiable {
     var id: String {
         item.id
     }
+}
+
+private struct TrixTimelineThreadFilter: Equatable {
+    let threadID: String
+    let rootMessageID: String
+    let title: String
 }
 
 private struct TrixTimelineDaySeparator: View {
@@ -2150,8 +2681,345 @@ private struct TrixPeerDeviceTrustView: View {
     }
 }
 
+private struct TrixComposerContextBanner: View {
+    let systemImage: String
+    let title: String
+    let subtitle: String
+    let tint: Color
+    let clear: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(tint)
+                .frame(width: 28, height: 28)
+                .background(tint.opacity(0.12), in: Circle())
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            Button(action: clear) {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .help("Clear")
+            .accessibilityLabel("Clear composer context")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(TrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
+        }
+    }
+}
+
+private struct TrixMentionPickerView: View {
+    let members: [TrixRoomMember]
+    let isLoading: Bool
+    let select: (TrixRoomMember) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 30, height: 30)
+                }
+
+                ForEach(members) { member in
+                    Button {
+                        select(member)
+                    } label: {
+                        HStack(spacing: 7) {
+                            TrixAvatarView(
+                                title: member.title,
+                                systemImage: "person.fill",
+                                size: 24,
+                                tint: TrixDesign.accent
+                            )
+
+                            Text(member.title)
+                                .font(.caption.weight(.semibold))
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .background(TrixDesign.elevatedFieldSurface, in: Capsule())
+                        .overlay {
+                            Capsule()
+                                .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help("Mention \(member.title)")
+                    .accessibilityLabel("Mention \(member.title)")
+                }
+            }
+            .padding(.vertical, 1)
+        }
+    }
+}
+
+private struct TrixMentionProfileView: View {
+    @ObservedObject var model: TrixAppModel
+    let userID: String
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var viewModel = TrixProfileViewModel()
+    @State private var isOpeningDirectMessage = false
+    @State private var directMessageError: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    if viewModel.isLoading, viewModel.profile == nil {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+
+                    if let profile = viewModel.profile {
+                        profileDetails(profile)
+                    } else {
+                        LabeledContent("User", value: userID)
+                    }
+
+                    if let directMessageError {
+                        TrixBannerView(
+                            text: directMessageError,
+                            systemImage: "exclamationmark.triangle",
+                            tint: .red
+                        )
+                    }
+
+                    if let errorMessage = viewModel.errorMessage {
+                        TrixBannerView(
+                            text: errorMessage,
+                            systemImage: "exclamationmark.triangle",
+                            tint: .red
+                        )
+                    }
+                }
+                .padding(20)
+            }
+            .trixScrollContentBackgroundHidden()
+        }
+        .background(TrixDesign.screenBackground)
+        .task(id: userID) {
+            await viewModel.load {
+                try await model.profile(userID: userID)
+            }
+        }
+        .trixDialogSurface(minWidth: 420, minHeight: 300)
+    }
+
+    private var header: some View {
+        HStack(spacing: 14) {
+            TrixMentionProfileIconCircle(size: 42)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.headline)
+                    .lineLimit(1)
+
+                Text(userID)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer(minLength: 12)
+
+            Button {
+                Task {
+                    await openDirectMessage()
+                }
+            } label: {
+                if isOpeningDirectMessage {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 18, height: 18)
+                } else {
+                    Label("Message", systemImage: "bubble.left.and.bubble.right.fill")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isCurrentUser || isOpeningDirectMessage)
+            .help(isCurrentUser ? "This is you" : "Open direct message")
+
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.borderless)
+            .help("Close")
+            .accessibilityLabel("Close profile")
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .background(TrixDesign.primarySurface)
+    }
+
+    private var title: String {
+        viewModel.profile?.title ?? TrixTimelineView.displayName(from: userID)
+    }
+
+    private var isCurrentUser: Bool {
+        guard let currentUserID = model.account?.userID ?? model.session?.userID else {
+            return false
+        }
+
+        return trixNormalizedUserKey(currentUserID) == trixNormalizedUserKey(userID)
+    }
+
+    private func openDirectMessage() async {
+        guard !isCurrentUser, !isOpeningDirectMessage else {
+            return
+        }
+
+        isOpeningDirectMessage = true
+        directMessageError = nil
+        defer { isOpeningDirectMessage = false }
+
+        if let room = existingDirectRoom {
+            await model.selectRoom(room)
+            dismiss()
+            return
+        }
+
+        let didCreate = await model.createEncryptedDirectRoom(
+            inviteeUserID: userID,
+            roomName: title
+        )
+        guard didCreate else {
+            directMessageError = model.roomListViewModel.errorMessage ?? model.errorMessage ?? "Could not open direct message"
+            return
+        }
+
+        dismiss()
+    }
+
+    private var existingDirectRoom: TrixRoomSummary? {
+        model.roomListViewModel.rooms.first { room in
+            room.kind == .direct &&
+                room.id.caseInsensitiveCompare(userID) == .orderedSame
+        }
+    }
+
+    @ViewBuilder
+    private func profileDetails(_ profile: TrixUserProfile) -> some View {
+        LabeledContent("User", value: profile.userID)
+
+        if let statusMessage = profile.metadata.statusMessage {
+            LabeledContent("Status", value: statusMessage)
+        }
+
+        if let bio = profile.metadata.bio {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Bio")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Text(bio)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+        }
+
+        if let website = profile.metadata.website {
+            LabeledContent("Website", value: website)
+        }
+    }
+}
+
+private struct TrixMentionProfileIconCircle: View {
+    let size: CGFloat
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(TrixDesign.accent.opacity(0.15))
+
+            Image(systemName: "person.fill")
+                .font(.system(size: size * 0.42, weight: .semibold))
+                .foregroundStyle(TrixDesign.accent)
+        }
+        .frame(width: size, height: size)
+        .overlay {
+            Circle()
+                .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
+        }
+    }
+}
+
+private struct TrixThreadFilterBar: View {
+    let filter: TrixTimelineThreadFilter
+    let close: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "text.bubble")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(TrixDesign.groupAccent)
+                .frame(width: 28, height: 28)
+                .background(TrixDesign.groupAccent.opacity(0.12), in: Circle())
+
+            Text(filter.title)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            Button(action: close) {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .help("Close thread")
+            .accessibilityLabel("Close thread")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(TrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
+        }
+    }
+}
+
 private struct TrixTimelineRow: View {
     let presentation: TrixTimelineMessagePresentation
+    let currentUserID: String?
+    let roomKind: TrixRoomKind
+    let threadReplyCount: Int
+    let canEdit: Bool
+    let canRetract: Bool
     let isDownloadingAttachment: Bool
     let attachmentFailure: String?
     let inlineAttachmentPreview: TrixAttachmentDownload?
@@ -2161,6 +3029,12 @@ private struct TrixTimelineRow: View {
     let downloadAttachment: () -> Void
     let loadInlineAttachmentPreview: () -> Void
     let react: (String) -> Void
+    let reply: () -> Void
+    let replyInThread: () -> Void
+    let edit: () -> Void
+    let retract: () -> Void
+    let openThread: () -> Void
+    let openMention: (String) -> Void
     let addStickerPack: (TrixStickerAttachmentMetadata) -> Void
 
     private var item: TrixTimelineItem {
@@ -2204,7 +3078,19 @@ private struct TrixTimelineRow: View {
                     .frame(maxWidth: bubbleMaxWidth, alignment: item.isLocalEcho ? .trailing : .leading)
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
-                        if let attachment = item.attachment {
+                        if let replyTo = item.replyTo {
+                            TrixQuotePreviewView(
+                                reply: replyTo,
+                                isOutgoing: item.isLocalEcho
+                            )
+                        }
+
+                        if item.isRetracted {
+                            TrixRetractedMessageView(
+                                tombstone: item.retractionState?.tombstoneBody ?? "Message deleted",
+                                isOutgoing: item.isLocalEcho
+                            )
+                        } else if let attachment = item.attachment {
                             TrixAttachmentRow(
                                 attachment: attachment,
                                 itemID: item.id,
@@ -2221,24 +3107,44 @@ private struct TrixTimelineRow: View {
                         } else {
                             TrixCollapsibleMessageText(
                                 text: item.body,
-                                isOutgoing: item.isLocalEcho
+                                isOutgoing: item.isLocalEcho,
+                                mentions: item.mentions,
+                                currentUserID: currentUserID,
+                                openMention: openMention
                             )
                         }
 
-                        TrixReactionChips(
-                            aggregates: item.reactionAggregates,
-                            isOutgoing: item.isLocalEcho,
-                            react: react
-                        )
+                        if !item.isRetracted {
+                            TrixReactionChips(
+                                aggregates: item.reactionAggregates,
+                                isOutgoing: item.isLocalEcho,
+                                react: react
+                            )
+                        }
+
+                        if threadReplyCount > 0 {
+                            TrixThreadSummaryButton(
+                                count: threadReplyCount,
+                                isOutgoing: item.isLocalEcho,
+                                open: openThread
+                            )
+                        }
 
                         HStack {
                             Spacer(minLength: 0)
                             HStack(spacing: 4) {
-                                TrixReactionMenu(
-                                    isOutgoing: item.isLocalEcho,
-                                    isWorking: isReacting,
-                                    react: react
-                                )
+                                if !item.isRetracted {
+                                    TrixReactionMenu(
+                                        isOutgoing: item.isLocalEcho,
+                                        isWorking: isReacting,
+                                        react: react
+                                    )
+                                }
+
+                                if item.isEdited && !item.isRetracted {
+                                    Text("edited")
+                                        .font(.caption2.weight(.medium))
+                                }
 
                                 if item.isLocalEcho {
                                     Image(systemName: deliveryState.systemImage)
@@ -2278,6 +3184,41 @@ private struct TrixTimelineRow: View {
             }
         }
         .padding(.top, presentation.startsCluster ? 8 : 2)
+        .contextMenu {
+            if !item.isRetracted {
+                Button {
+                    reply()
+                } label: {
+                    Label("Reply", systemImage: "arrowshape.turn.up.left")
+                }
+
+                if roomKind == .group {
+                    Button {
+                        replyInThread()
+                    } label: {
+                        Label("Reply in Thread", systemImage: "text.bubble")
+                    }
+                }
+            }
+
+            if canEdit {
+                Divider()
+
+                Button {
+                    edit()
+                } label: {
+                    Label("Edit", systemImage: "pencil")
+                }
+            }
+
+            if canRetract {
+                Button(role: .destructive) {
+                    retract()
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+            }
+        }
     }
 
     private var displaySender: String {
@@ -2311,9 +3252,127 @@ private struct TrixTimelineRow: View {
     }
 }
 
+private struct TrixQuotePreviewView: View {
+    let reply: TrixReplyReference
+    let isOutgoing: Bool
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(accent)
+                .frame(width: 3)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(senderTitle)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+
+                Text(previewText)
+                    .font(.caption)
+                    .foregroundStyle(secondaryForeground)
+                    .lineLimit(2)
+            }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .background(previewBackground, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+    }
+
+    private var senderTitle: String {
+        guard let senderID = reply.targetSenderID ?? reply.preview?.senderID else {
+            return "Message"
+        }
+
+        return TrixTimelineView.displayName(from: senderID)
+    }
+
+    private var previewText: String {
+        if reply.preview?.isUnavailable == true {
+            return "Message unavailable"
+        }
+
+        if let body = reply.preview?.body,
+           !body.isEmpty {
+            return body
+        }
+
+        if let attachmentFilename = reply.preview?.attachmentFilename,
+           !attachmentFilename.isEmpty {
+            return attachmentFilename
+        }
+
+        return "Message unavailable"
+    }
+
+    private var accent: Color {
+        isOutgoing ? .white.opacity(0.82) : TrixDesign.accent
+    }
+
+    private var secondaryForeground: Color {
+        isOutgoing ? .white.opacity(0.78) : .secondary
+    }
+
+    private var previewBackground: Color {
+        isOutgoing ? Color.white.opacity(0.14) : TrixDesign.secondarySurface
+    }
+}
+
+private struct TrixRetractedMessageView: View {
+    let tombstone: String
+    let isOutgoing: Bool
+
+    var body: some View {
+        Label(tombstone, systemImage: "trash")
+            .font(.body.italic())
+            .foregroundStyle(isOutgoing ? .white.opacity(0.82) : .secondary)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct TrixThreadSummaryButton: View {
+    let count: Int
+    let isOutgoing: Bool
+    let open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 5) {
+                Image(systemName: "text.bubble")
+                    .font(.caption2.weight(.bold))
+                Text(summary)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(foreground)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(background, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Open thread")
+        .accessibilityLabel("Open thread")
+    }
+
+    private var summary: String {
+        count == 1 ? "1 reply" : "\(count) replies"
+    }
+
+    private var foreground: Color {
+        isOutgoing ? .white : TrixDesign.groupAccent
+    }
+
+    private var background: Color {
+        isOutgoing ? Color.white.opacity(0.18) : TrixDesign.groupAccent.opacity(0.12)
+    }
+}
+
 private struct TrixCollapsibleMessageText: View {
     let text: String
     let isOutgoing: Bool
+    let mentions: [TrixMentionReference]
+    let currentUserID: String?
+    let openMention: (String) -> Void
     @State private var isExpanded = false
 
     private let previewLineCount = 20
@@ -2396,12 +3455,125 @@ private struct TrixCollapsibleMessageText: View {
     }
 
     private func messageText(_ value: String, lineLimit: Int? = nil) -> some View {
-        Text(value)
+        Text(attributedMessageText(value))
             .font(.body)
-            .foregroundStyle(textColor)
             .lineLimit(lineLimit)
             .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
+            .environment(\.openURL, OpenURLAction { url in
+                guard let userID = Self.mentionUserID(from: url) else {
+                    return .systemAction
+                }
+
+                openMention(userID)
+                return .handled
+            })
+    }
+
+    private func attributedMessageText(_ value: String) -> AttributedString {
+        var attributed = AttributedString(value)
+        attributed.foregroundColor = textColor
+
+        let tokens = mentionTokens
+        guard !tokens.isEmpty else {
+            return attributed
+        }
+
+        for match in mentionMatches(in: value, tokens: tokens) {
+            guard let attributedRange = Range(match.range, in: attributed),
+                  let url = Self.mentionURL(for: match.targetUserID) else {
+                continue
+            }
+
+            attributed[attributedRange].link = url
+            attributed[attributedRange].font = .body.weight(.semibold)
+            attributed[attributedRange].underlineStyle = .single
+            attributed[attributedRange].foregroundColor = mentionColor(isCurrentUserMention: match.isCurrentUserMention)
+        }
+
+        return attributed
+    }
+
+    private var mentionTokens: [(token: String, targetUserID: String, isCurrentUserMention: Bool)] {
+        mentions.compactMap { mention in
+            let token = mention.displayText ?? mentionText(from: mention.range)
+            guard let token,
+                  !token.isEmpty else {
+                return nil
+            }
+
+            return (
+                token,
+                mention.targetUserID,
+                currentUserID.map {
+                    trixNormalizedUserKey($0) == trixNormalizedUserKey(mention.targetUserID)
+                } ?? false
+            )
+        }
+    }
+
+    private func mentionText(from range: TrixTextReferenceRange) -> String? {
+        guard range.isValid(in: text),
+              let start = text.index(text.startIndex, offsetBy: range.begin, limitedBy: text.endIndex),
+              let end = text.index(text.startIndex, offsetBy: range.end, limitedBy: text.endIndex),
+              start < end else {
+            return nil
+        }
+
+        return String(text[start..<end])
+    }
+
+    private func mentionMatches(
+        in value: String,
+        tokens: [(token: String, targetUserID: String, isCurrentUserMention: Bool)]
+    ) -> [(range: Range<String.Index>, targetUserID: String, isCurrentUserMention: Bool)] {
+        tokens.flatMap { token in
+            var matches: [(range: Range<String.Index>, targetUserID: String, isCurrentUserMention: Bool)] = []
+            var searchStart = value.startIndex
+
+            while searchStart < value.endIndex,
+                  let range = value.range(
+                    of: token.token,
+                    options: [.caseInsensitive],
+                    range: searchStart..<value.endIndex
+                  ) {
+                matches.append((range, token.targetUserID, token.isCurrentUserMention))
+                searchStart = range.upperBound
+            }
+
+            return matches
+        }
+        .sorted { lhs, rhs in
+            lhs.range.lowerBound < rhs.range.lowerBound
+        }
+    }
+
+    private func mentionColor(isCurrentUserMention: Bool) -> Color {
+        if isOutgoing {
+            return isCurrentUserMention ? .yellow : .white
+        }
+
+        return isCurrentUserMention ? TrixDesign.accent : TrixDesign.groupAccent
+    }
+
+    private static func mentionURL(for userID: String) -> URL? {
+        var components = URLComponents()
+        components.scheme = "trix"
+        components.host = "mention"
+        components.queryItems = [
+            URLQueryItem(name: "user_id", value: userID),
+        ]
+        return components.url
+    }
+
+    private static func mentionUserID(from url: URL) -> String? {
+        guard url.scheme == "trix",
+              url.host == "mention",
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+
+        return components.queryItems?.first { $0.name == "user_id" }?.value
     }
 
     private func unfoldButton(

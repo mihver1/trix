@@ -9,11 +9,13 @@ final class RoomListViewModel: ObservableObject {
     @Published private(set) var isCreatingGroupRoom = false
     @Published private(set) var invitationActionRoomID: String?
     @Published private(set) var errorMessage: String?
+    private var readMarkersByRoomID: [String: TrixRoomReadMarkerState] = [:]
 
     func loadCached(
         session: TrixSession,
         service: TrixSyncService,
-        selectedRoomID: String? = nil
+        selectedRoomID: String? = nil,
+        readMarkers: [TrixRoomReadMarkerState] = []
     ) async {
         do {
             let cachedRooms = try await service.cachedRooms(session: session)
@@ -21,7 +23,11 @@ final class RoomListViewModel: ObservableObject {
                 return
             }
 
-            rooms = mergedRoomsAfterReload(cachedRooms, selectedRoomID: selectedRoomID)
+            rooms = mergedRoomsAfterReload(
+                cachedRooms,
+                selectedRoomID: selectedRoomID,
+                readMarkers: readMarkers
+            )
         } catch {
             return
         }
@@ -31,7 +37,8 @@ final class RoomListViewModel: ObservableObject {
         session: TrixSession,
         service: TrixSyncService & TrixRoomBootstrapService,
         selectedRoomID: String? = nil,
-        showsLoading: Bool = true
+        showsLoading: Bool = true,
+        readMarkers: [TrixRoomReadMarkerState] = []
     ) async {
         if showsLoading {
             isLoading = true
@@ -45,7 +52,11 @@ final class RoomListViewModel: ObservableObject {
 
         do {
             let loadedRooms = try await service.rooms(session: session)
-            rooms = mergedRoomsAfterReload(loadedRooms, selectedRoomID: selectedRoomID)
+            rooms = mergedRoomsAfterReload(
+                loadedRooms,
+                selectedRoomID: selectedRoomID,
+                readMarkers: readMarkers
+            )
             invitations = try await service.invitations(session: session)
         } catch {
             errorMessage = error.trixUserFacingMessage
@@ -161,6 +172,25 @@ final class RoomListViewModel: ObservableObject {
         }
     }
 
+    func applyReadMarker(_ marker: TrixRoomReadMarkerState) {
+        let roomKey = marker.roomID.lowercased()
+        readMarkersByRoomID[roomKey] = marker
+        rooms = rooms.map { room in
+            guard room.id.lowercased() == roomKey,
+                  Self.readMarker(marker, covers: room) else {
+                return room
+            }
+
+            return room.markingRead()
+        }
+    }
+
+    func applyReadMarkers(_ markers: [TrixRoomReadMarkerState]) {
+        for marker in markers {
+            applyReadMarker(marker)
+        }
+    }
+
     func forgetRoomLocally(roomID: String) {
         rooms.removeAll { $0.id == roomID }
         invitations.removeAll { $0.id == roomID }
@@ -174,6 +204,7 @@ final class RoomListViewModel: ObservableObject {
         isCreatingGroupRoom = false
         invitationActionRoomID = nil
         errorMessage = nil
+        readMarkersByRoomID = [:]
     }
 
     private static func normalizedTrixUserID(_ userID: String) throws -> String {
@@ -240,17 +271,26 @@ final class RoomListViewModel: ObservableObject {
 
     private func mergedRoomsAfterReload(
         _ loadedRooms: [TrixRoomSummary],
-        selectedRoomID: String?
+        selectedRoomID: String?,
+        readMarkers: [TrixRoomReadMarkerState]
     ) -> [TrixRoomSummary] {
         let previousRoomsByID = Dictionary(
             rooms.map { ($0.id.lowercased(), $0) },
             uniquingKeysWith: { existing, _ in existing }
         )
         let selectedRoomKey = selectedRoomID?.lowercased()
+        for marker in readMarkers {
+            readMarkersByRoomID[marker.roomID.lowercased()] = marker
+        }
 
         return loadedRooms.map { loadedRoom in
             let roomKey = loadedRoom.id.lowercased()
             guard roomKey != selectedRoomKey else {
+                return loadedRoom.markingRead()
+            }
+
+            if let marker = readMarkersByRoomID[roomKey],
+               Self.readMarker(marker, covers: loadedRoom) {
                 return loadedRoom.markingRead()
             }
 
@@ -282,5 +322,12 @@ final class RoomListViewModel: ObservableObject {
 
         return loadedRoom.lastActivityAt == previousRoom.lastActivityAt &&
             loadedRoom.lastMessagePreview != previousRoom.lastMessagePreview
+    }
+
+    private static func readMarker(
+        _ marker: TrixRoomReadMarkerState,
+        covers room: TrixRoomSummary
+    ) -> Bool {
+        marker.displayedAt >= room.lastActivityAt
     }
 }

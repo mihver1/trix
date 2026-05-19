@@ -46,11 +46,16 @@ enum XMPPLiveSmokeRunner {
         case timelineRestart = "timeline-restart"
         case dmE2EE = "dm-e2ee"
         case dmReaction = "dm-reaction"
+        case dmReply = "dm-reply"
+        case dmEditRetract = "dm-edit-retract"
         case dmAttachment = "dm-attachment"
         case deliveryReceipt = "delivery-receipt"
         case typing
         case groupE2EE = "group-e2ee"
         case groupAttachment = "group-attachment"
+        case groupMention = "group-mention"
+        case groupThread = "group-thread"
+        case readMarkers = "read-markers"
     }
 
     private struct Configuration {
@@ -77,7 +82,8 @@ enum XMPPLiveSmokeRunner {
                 return .memory
             case .roster, .roomList, .search, .peerDevices, .trustPeer, .profile, .profileUpdate,
                  .blockedSend, .timeline, .sendTimeline, .timelineRestart, .dmE2EE, .dmAttachment,
-                 .dmReaction, .deliveryReceipt, .groupE2EE, .groupAttachment:
+                 .dmReaction, .dmReply, .dmEditRetract, .deliveryReceipt, .groupE2EE, .groupAttachment,
+                 .groupMention, .groupThread, .readMarkers:
                 return .keychain
             }
         }
@@ -300,6 +306,20 @@ enum XMPPLiveSmokeRunner {
                     session: session
                 )
 
+            case .dmReply:
+                try await runDMReplySmoke(
+                    configuration: configuration,
+                    service: service,
+                    session: session
+                )
+
+            case .dmEditRetract:
+                try await runDMEditRetractSmoke(
+                    configuration: configuration,
+                    service: service,
+                    session: session
+                )
+
             case .deliveryReceipt:
                 try await runDeliveryReceiptSmoke(
                     configuration: configuration,
@@ -323,6 +343,27 @@ enum XMPPLiveSmokeRunner {
 
             case .groupAttachment:
                 try await runGroupAttachmentSmoke(
+                    configuration: configuration,
+                    service: service,
+                    session: session
+                )
+
+            case .groupMention:
+                try await runGroupMentionSmoke(
+                    configuration: configuration,
+                    service: service,
+                    session: session
+                )
+
+            case .groupThread:
+                try await runGroupThreadSmoke(
+                    configuration: configuration,
+                    service: service,
+                    session: session
+                )
+
+            case .readMarkers:
+                try await runReadMarkersSmoke(
                     configuration: configuration,
                     service: service,
                     session: session
@@ -415,6 +456,336 @@ enum XMPPLiveSmokeRunner {
         }
 
         try? await restoredService.logout(session: session)
+    }
+
+    private static func runDMReplySmoke(
+        configuration: Configuration,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws {
+        guard configuration.allowSend else {
+            throw TrixClientError.e2eeUnavailable
+        }
+
+        let peerID = try requiredPeerID(configuration.peerID)
+        let peerPassword = try requiredPassword(configuration.peerPassword)
+        let peerService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+        let peerSession = try await peerService.login(
+            userID: peerID,
+            password: peerPassword,
+            serverURL: configuration.serverURL
+        )
+        status("dm-reply peer-login ok resource=\(peerSession.deviceID)")
+
+        do {
+            try await ensureTrustedPeer(
+                peerID: peerID,
+                service: service,
+                session: session,
+                allowTrust: configuration.allowTrust,
+                statusPrefix: "dm-reply"
+            )
+
+            let room = try await service.createEncryptedDirectRoom(
+                inviteeUserID: peerID,
+                name: "",
+                session: session
+            )
+            let rootBody = "smoke-reply-root-\(UUID().uuidString)"
+            let rootItem = try await service.sendText(rootBody, roomID: room.id, session: session)
+            status("dm-reply root-send ok id=\(rootItem.id)")
+
+            guard try await waitForDirectMessage(
+                messageID: rootItem.id,
+                expectedBody: rootBody,
+                expectedSender: session.userID,
+                roomID: session.userID,
+                role: "peer",
+                statusPrefix: "dm-reply",
+                service: peerService,
+                session: peerSession
+            ) else {
+                status("dm-reply failed root_receive=false role=peer")
+                throw TrixClientError.xmppConnectionFailed
+            }
+
+            let request = TrixTextMessageSendRequest(
+                text: "smoke-reply-\(UUID().uuidString)",
+                roomID: room.id,
+                metadata: TrixTextMessageSendMetadata(
+                    replyTo: TrixReplyReference(
+                        targetMessageID: rootItem.id,
+                        targetSenderID: session.userID,
+                        targetRoomID: room.id
+                    )
+                )
+            )
+            let roomService = service as any TrixRoomService
+            let replyItem: TrixTimelineItem
+            do {
+                replyItem = try await roomService.sendText(request, session: session)
+            } catch TrixClientError.messageMetadataUnavailable {
+                status("dm-reply blocked service_api=false reply_metadata=false target_id=true")
+                throw TrixClientError.messageMetadataUnavailable
+            }
+            status("dm-reply reply-send ok id=\(replyItem.id) target=\(rootItem.id)")
+
+            guard try await waitForDirectTimelineItem(
+                messageID: replyItem.id,
+                expectedSender: session.userID,
+                roomID: session.userID,
+                role: "peer",
+                statusPrefix: "dm-reply",
+                service: peerService,
+                session: peerSession,
+                predicate: { item in
+                    item.replyTo?.targetMessageID == rootItem.id
+                }
+            ) else {
+                status("dm-reply failed reply_metadata=false role=peer id=\(replyItem.id)")
+                throw TrixClientError.xmppConnectionFailed
+            }
+
+            try? await peerService.logout(session: peerSession)
+            status("dm-reply ok replies=1")
+        } catch {
+            try? await peerService.logout(session: peerSession)
+            throw error
+        }
+    }
+
+    private static func runDMEditRetractSmoke(
+        configuration: Configuration,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws {
+        guard configuration.allowSend else {
+            throw TrixClientError.e2eeUnavailable
+        }
+
+        let peerID = try requiredPeerID(configuration.peerID)
+        let peerPassword = try requiredPassword(configuration.peerPassword)
+        let peerService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+        let peerSession = try await peerService.login(
+            userID: peerID,
+            password: peerPassword,
+            serverURL: configuration.serverURL
+        )
+        status("dm-edit-retract peer-login ok resource=\(peerSession.deviceID)")
+
+        do {
+            try await ensureTrustedPeer(
+                peerID: peerID,
+                service: service,
+                session: session,
+                allowTrust: configuration.allowTrust,
+                statusPrefix: "dm-edit-retract"
+            )
+
+            let room = try await service.createEncryptedDirectRoom(
+                inviteeUserID: peerID,
+                name: "",
+                session: session
+            )
+            let rootBody = "smoke-edit-root-\(UUID().uuidString)"
+            let rootItem = try await service.sendText(rootBody, roomID: room.id, session: session)
+            status("dm-edit-retract root-send ok id=\(rootItem.id)")
+
+            guard try await waitForDirectMessage(
+                messageID: rootItem.id,
+                expectedBody: rootBody,
+                expectedSender: session.userID,
+                roomID: session.userID,
+                role: "peer",
+                statusPrefix: "dm-edit-retract",
+                service: peerService,
+                session: peerSession
+            ) else {
+                status("dm-edit-retract failed root_receive=false role=peer")
+                throw TrixClientError.xmppConnectionFailed
+            }
+
+            let roomService = service as any TrixRoomService
+            let editedItem: TrixTimelineItem
+            do {
+                editedItem = try await roomService.editText(
+                    TrixMessageEditRequest(
+                        messageID: rootItem.id,
+                        roomID: room.id,
+                        newText: "smoke-edited-\(UUID().uuidString)"
+                    ),
+                    session: session
+                )
+            } catch TrixClientError.messageEditUnavailable {
+                status("dm-edit-retract blocked service_api=false edit_api=false target_id=true")
+                throw TrixClientError.messageEditUnavailable
+            }
+            status("dm-edit-retract edit ok id=\(editedItem.id) target=\(rootItem.id) edited=\(editedItem.isEdited)")
+
+            guard try await waitForDirectTimelineItem(
+                messageID: rootItem.id,
+                expectedSender: session.userID,
+                roomID: session.userID,
+                role: "peer",
+                statusPrefix: "dm-edit-retract",
+                service: peerService,
+                session: peerSession,
+                predicate: { item in
+                    item.isEdited
+                }
+            ) else {
+                status("dm-edit-retract failed edit_receive=false role=peer id=\(rootItem.id)")
+                throw TrixClientError.xmppConnectionFailed
+            }
+
+            let retractedItem: TrixTimelineItem
+            do {
+                retractedItem = try await roomService.retractMessage(
+                    TrixMessageRetractionRequest(
+                        messageID: rootItem.id,
+                        roomID: room.id
+                    ),
+                    session: session
+                )
+            } catch TrixClientError.messageRetractionUnavailable {
+                status("dm-edit-retract blocked service_api=false retract_api=false target_id=true")
+                throw TrixClientError.messageRetractionUnavailable
+            }
+            status("dm-edit-retract retract ok id=\(retractedItem.id) target=\(rootItem.id) retracted=\(retractedItem.isRetracted)")
+
+            guard try await waitForDirectTimelineItem(
+                messageID: rootItem.id,
+                expectedSender: session.userID,
+                roomID: session.userID,
+                role: "peer",
+                statusPrefix: "dm-edit-retract",
+                service: peerService,
+                session: peerSession,
+                predicate: { item in
+                    item.isRetracted
+                }
+            ) else {
+                status("dm-edit-retract failed retract_receive=false role=peer id=\(rootItem.id)")
+                throw TrixClientError.xmppConnectionFailed
+            }
+
+            try? await peerService.logout(session: peerSession)
+            status("dm-edit-retract ok edits=1 retractions=1")
+        } catch {
+            try? await peerService.logout(session: peerSession)
+            throw error
+        }
+    }
+
+    private static func runReadMarkersSmoke(
+        configuration: Configuration,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws {
+        guard configuration.allowSend else {
+            throw TrixClientError.e2eeUnavailable
+        }
+
+        let peerID = try requiredPeerID(configuration.peerID)
+        let peerPassword = try requiredPassword(configuration.peerPassword)
+        let peerService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+        let secondaryService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+        let peerSession = try await peerService.login(
+            userID: peerID,
+            password: peerPassword,
+            serverURL: configuration.serverURL
+        )
+        status("read-markers peer-login ok resource=\(peerSession.deviceID)")
+
+        var secondarySession: TrixSession?
+        do {
+            let loggedInSecondarySession = try await secondaryService.login(
+                userID: configuration.userID,
+                password: configuration.password,
+                serverURL: configuration.serverURL
+            )
+            secondarySession = loggedInSecondarySession
+            status("read-markers secondary-login ok same_account=true resource=\(loggedInSecondarySession.deviceID)")
+
+            try await ensureTrustedPeer(
+                peerID: peerID,
+                service: service,
+                session: session,
+                allowTrust: configuration.allowTrust,
+                statusPrefix: "read-markers owner-peer"
+            )
+            try await ensureTrustedPeer(
+                peerID: session.userID,
+                service: peerService,
+                session: peerSession,
+                allowTrust: configuration.allowTrust,
+                statusPrefix: "read-markers peer-owner"
+            )
+
+            let room = try await peerService.createEncryptedDirectRoom(
+                inviteeUserID: session.userID,
+                name: "",
+                session: peerSession
+            )
+            let markerBody = "smoke-marker-\(UUID().uuidString)"
+            let sentItem = try await peerService.sendText(markerBody, roomID: room.id, session: peerSession)
+            status("read-markers send ok id=\(sentItem.id)")
+
+            guard try await waitForDirectMessage(
+                messageID: sentItem.id,
+                expectedBody: markerBody,
+                expectedSender: peerSession.userID,
+                roomID: peerID,
+                role: "owner",
+                statusPrefix: "read-markers",
+                service: service,
+                session: session
+            ) else {
+                status("read-markers failed receive=false role=owner")
+                throw TrixClientError.xmppConnectionFailed
+            }
+
+            let roomService = service as any TrixRoomService
+            let markerState: TrixRoomReadMarkerState
+            do {
+                markerState = try await roomService.markRoomDisplayed(
+                    TrixRoomDisplayedMarkerRequest(
+                        roomID: peerID,
+                        messageID: sentItem.id
+                    ),
+                    session: session
+                )
+            } catch TrixClientError.readMarkerUnavailable {
+                status("read-markers blocked service_api=false marker_api=false target_id=true")
+                throw TrixClientError.readMarkerUnavailable
+            }
+            status("read-markers mark ok id=\(markerState.displayedMessageID) same_account=false")
+
+            let secondaryRoomService = secondaryService as any TrixRoomService
+            let secondaryState = try await secondaryRoomService.readMarkerState(roomID: peerID, session: loggedInSecondarySession)
+            let secondaryConverged = secondaryState?.displayedMessageID == sentItem.id
+            status("read-markers secondary-state ok converged=\(secondaryConverged)")
+
+            let peerRoomService = peerService as any TrixRoomService
+            let peerState = try await peerRoomService.readMarkerState(roomID: session.userID, session: peerSession)
+            let peerObserved = peerState?.displayedMessageID == sentItem.id
+            status("read-markers peer-state ok observed=\(peerObserved)")
+
+            guard secondaryConverged else {
+                status("read-markers failed same_account_convergence=false id=\(sentItem.id)")
+                throw TrixClientError.readMarkerUnavailable
+            }
+
+            try? await secondaryService.logout(session: loggedInSecondarySession)
+            try? await peerService.logout(session: peerSession)
+            status("read-markers ok same_account_convergence=true peer_observed=\(peerObserved)")
+        } catch {
+            if let secondarySession {
+                try? await secondaryService.logout(session: secondarySession)
+            }
+            try? await peerService.logout(session: peerSession)
+            throw error
+        }
     }
 
     private static func runDME2EESmoke(
@@ -779,6 +1150,306 @@ enum XMPPLiveSmokeRunner {
             try? await thirdService.logout(session: loggedInThirdSession)
             try? await peerService.logout(session: peerSession)
             status("group-attachment ok downloaded_peers=2")
+        } catch {
+            if let thirdSession {
+                try? await thirdService.logout(session: thirdSession)
+            }
+            try? await peerService.logout(session: peerSession)
+            throw error
+        }
+    }
+
+    private static func runGroupMentionSmoke(
+        configuration: Configuration,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws {
+        guard configuration.allowSend else {
+            throw TrixClientError.e2eeUnavailable
+        }
+        guard configuration.allowTrust else {
+            throw TrixClientError.omemoDeviceTrustRequired
+        }
+
+        let peerID = try requiredPeerID(configuration.peerID)
+        let peerPassword = try requiredPassword(configuration.peerPassword)
+        let thirdID = try requiredPeerID(configuration.thirdID)
+        let thirdPassword = try requiredPassword(configuration.thirdPassword)
+        guard Set([session.userID, peerID, thirdID].map { $0.lowercased() }).count == 3 else {
+            throw TrixClientError.invalidTrixUserID
+        }
+
+        let peerService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+        let thirdService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+        let peerSession = try await peerService.login(
+            userID: peerID,
+            password: peerPassword,
+            serverURL: configuration.serverURL
+        )
+        status("group-mention login ok role=peer resource=\(peerSession.deviceID)")
+
+        var thirdSession: TrixSession?
+        do {
+            let loggedInThirdSession = try await thirdService.login(
+                userID: thirdID,
+                password: thirdPassword,
+                serverURL: configuration.serverURL
+            )
+            thirdSession = loggedInThirdSession
+            status("group-mention login ok role=third resource=\(loggedInThirdSession.deviceID)")
+
+            let room = try await service.createEncryptedGroupRoom(
+                name: "Trix Mention Smoke \(UUID().uuidString.prefix(8))",
+                inviteeUserIDs: [peerID, thirdID],
+                session: session
+            )
+            guard room.kind == .group, room.isEncrypted else {
+                throw TrixClientError.e2eeUnavailable
+            }
+            status("group-mention create ok room=\(room.id) invitees=2 encrypted=true")
+
+            let peerRoom = try await acceptGroupInvitation(
+                roomID: room.id,
+                role: "peer",
+                statusPrefix: "group-mention",
+                service: peerService,
+                session: peerSession
+            )
+            let thirdRoom = try await acceptGroupInvitation(
+                roomID: room.id,
+                role: "third",
+                statusPrefix: "group-mention",
+                service: thirdService,
+                session: loggedInThirdSession
+            )
+            guard peerRoom.id.lowercased() == room.id.lowercased(),
+                  thirdRoom.id.lowercased() == room.id.lowercased() else {
+                throw TrixClientError.roomUnavailable
+            }
+
+            let ownerMembers = try await waitForGroupMembers(
+                roomID: room.id,
+                expectedUserIDs: [session.userID, peerID, thirdID],
+                statusPrefix: "group-mention",
+                service: service,
+                session: session
+            )
+            status("group-mention members ok role=owner count=\(ownerMembers.count) joined=\(ownerMembers.filter { $0.membership == .joined }.count)")
+
+            try await ensureGroupTrustGraph(
+                ownerID: session.userID,
+                ownerService: service,
+                ownerSession: session,
+                peerID: peerID,
+                peerService: peerService,
+                peerSession: peerSession,
+                thirdID: thirdID,
+                thirdService: thirdService,
+                thirdSession: loggedInThirdSession,
+                allowTrust: configuration.allowTrust,
+                statusPrefix: "group-mention"
+            )
+
+            let mentionToken = "@peer"
+            let mentionText = "\(mentionToken) \(UUID().uuidString)"
+            let request = TrixTextMessageSendRequest(
+                text: mentionText,
+                roomID: room.id,
+                metadata: TrixTextMessageSendMetadata(
+                    mentions: [
+                        TrixMentionReference(
+                            targetUserID: peerID,
+                            range: TrixTextReferenceRange(begin: 0, end: mentionToken.count)
+                        )
+                    ]
+                )
+            )
+            let roomService = service as any TrixRoomService
+            let sentItem: TrixTimelineItem
+            do {
+                sentItem = try await roomService.sendText(request, session: session)
+            } catch TrixClientError.messageMetadataUnavailable {
+                status("group-mention blocked service_api=false mention_metadata=false target_jids=1")
+                throw TrixClientError.messageMetadataUnavailable
+            }
+            status("group-mention send ok id=\(sentItem.id) mentions=\(sentItem.mentions.count)")
+
+            guard try await waitForGroupTimelineItem(
+                messageID: sentItem.id,
+                expectedSender: session.userID,
+                roomID: room.id,
+                role: "peer",
+                statusPrefix: "group-mention",
+                service: peerService,
+                session: peerSession,
+                predicate: { item in
+                    item.mentions.contains { mention in
+                        mention.targetUserID.caseInsensitiveCompare(peerID) == .orderedSame
+                    }
+                }
+            ) else {
+                status("group-mention failed mention_receive=false role=peer id=\(sentItem.id)")
+                throw TrixClientError.xmppConnectionFailed
+            }
+
+            try? await thirdService.logout(session: loggedInThirdSession)
+            try? await peerService.logout(session: peerSession)
+            status("group-mention ok mentioned_peers=1")
+        } catch {
+            if let thirdSession {
+                try? await thirdService.logout(session: thirdSession)
+            }
+            try? await peerService.logout(session: peerSession)
+            throw error
+        }
+    }
+
+    private static func runGroupThreadSmoke(
+        configuration: Configuration,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws {
+        guard configuration.allowSend else {
+            throw TrixClientError.e2eeUnavailable
+        }
+        guard configuration.allowTrust else {
+            throw TrixClientError.omemoDeviceTrustRequired
+        }
+
+        let peerID = try requiredPeerID(configuration.peerID)
+        let peerPassword = try requiredPassword(configuration.peerPassword)
+        let thirdID = try requiredPeerID(configuration.thirdID)
+        let thirdPassword = try requiredPassword(configuration.thirdPassword)
+        guard Set([session.userID, peerID, thirdID].map { $0.lowercased() }).count == 3 else {
+            throw TrixClientError.invalidTrixUserID
+        }
+
+        let peerService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+        let thirdService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+        let peerSession = try await peerService.login(
+            userID: peerID,
+            password: peerPassword,
+            serverURL: configuration.serverURL
+        )
+        status("group-thread login ok role=peer resource=\(peerSession.deviceID)")
+
+        var thirdSession: TrixSession?
+        do {
+            let loggedInThirdSession = try await thirdService.login(
+                userID: thirdID,
+                password: thirdPassword,
+                serverURL: configuration.serverURL
+            )
+            thirdSession = loggedInThirdSession
+            status("group-thread login ok role=third resource=\(loggedInThirdSession.deviceID)")
+
+            let room = try await service.createEncryptedGroupRoom(
+                name: "Trix Thread Smoke \(UUID().uuidString.prefix(8))",
+                inviteeUserIDs: [peerID, thirdID],
+                session: session
+            )
+            guard room.kind == .group, room.isEncrypted else {
+                throw TrixClientError.e2eeUnavailable
+            }
+            status("group-thread create ok room=\(room.id) invitees=2 encrypted=true")
+
+            let peerRoom = try await acceptGroupInvitation(
+                roomID: room.id,
+                role: "peer",
+                statusPrefix: "group-thread",
+                service: peerService,
+                session: peerSession
+            )
+            let thirdRoom = try await acceptGroupInvitation(
+                roomID: room.id,
+                role: "third",
+                statusPrefix: "group-thread",
+                service: thirdService,
+                session: loggedInThirdSession
+            )
+            guard peerRoom.id.lowercased() == room.id.lowercased(),
+                  thirdRoom.id.lowercased() == room.id.lowercased() else {
+                throw TrixClientError.roomUnavailable
+            }
+
+            try await ensureGroupTrustGraph(
+                ownerID: session.userID,
+                ownerService: service,
+                ownerSession: session,
+                peerID: peerID,
+                peerService: peerService,
+                peerSession: peerSession,
+                thirdID: thirdID,
+                thirdService: thirdService,
+                thirdSession: loggedInThirdSession,
+                allowTrust: configuration.allowTrust,
+                statusPrefix: "group-thread"
+            )
+
+            let rootBody = "smoke-thread-root-\(UUID().uuidString)"
+            let rootItem = try await service.sendText(rootBody, roomID: room.id, session: session)
+            status("group-thread root-send ok id=\(rootItem.id)")
+
+            guard try await waitForGroupMessage(
+                messageID: rootItem.id,
+                expectedBody: rootBody,
+                expectedSender: session.userID,
+                roomID: room.id,
+                role: "peer",
+                statusPrefix: "group-thread",
+                service: peerService,
+                session: peerSession
+            ) else {
+                status("group-thread failed root_receive=false role=peer")
+                throw TrixClientError.xmppConnectionFailed
+            }
+
+            let threadID = "trix-thread-\(UUID().uuidString)"
+            let request = TrixTextMessageSendRequest(
+                text: "smoke-thread-\(UUID().uuidString)",
+                roomID: room.id,
+                metadata: TrixTextMessageSendMetadata(
+                    thread: TrixThreadReference(
+                        threadID: threadID,
+                        rootMessageID: rootItem.id,
+                        parentMessageID: rootItem.id
+                    )
+                )
+            )
+            let roomService = service as any TrixRoomService
+            let threadedItem: TrixTimelineItem
+            do {
+                threadedItem = try await roomService.sendText(request, session: session)
+            } catch TrixClientError.messageMetadataUnavailable {
+                status("group-thread blocked service_api=false thread_metadata=false root_id=true")
+                throw TrixClientError.messageMetadataUnavailable
+            }
+            status("group-thread send ok id=\(threadedItem.id) root=\(rootItem.id) thread_id=true")
+
+            for (role, roleService, roleSession) in [
+                ("peer", peerService, peerSession),
+                ("third", thirdService, loggedInThirdSession),
+            ] {
+                guard try await waitForGroupTimelineItem(
+                    messageID: threadedItem.id,
+                    expectedSender: session.userID,
+                    roomID: room.id,
+                    role: role,
+                    statusPrefix: "group-thread",
+                    service: roleService,
+                    session: roleSession,
+                    predicate: { item in
+                        item.thread?.threadID == threadID
+                    }
+                ) else {
+                    status("group-thread failed thread_receive=false role=\(role) id=\(threadedItem.id)")
+                    throw TrixClientError.xmppConnectionFailed
+                }
+            }
+
+            try? await thirdService.logout(session: loggedInThirdSession)
+            try? await peerService.logout(session: peerSession)
+            status("group-thread ok threaded_peers=2")
         } catch {
             if let thirdSession {
                 try? await thirdService.logout(session: thirdSession)
@@ -1239,6 +1910,7 @@ enum XMPPLiveSmokeRunner {
         expectedSender: String,
         roomID: String,
         role: String,
+        statusPrefix: String = "dm-e2ee",
         service: XMPPMartinService,
         session: TrixSession
     ) async throws -> Bool {
@@ -1253,7 +1925,7 @@ enum XMPPLiveSmokeRunner {
                 sawID = sawID || idMatches
                 return !item.isLocalEcho && senderMatches && idMatches && bodyMatches
             }) {
-                status("dm-e2ee receive ok role=\(role) id=\(messageID) decrypted=true")
+                status("\(statusPrefix) receive ok role=\(role) id=\(messageID) decrypted=true")
                 return true
             }
 
@@ -1261,7 +1933,40 @@ enum XMPPLiveSmokeRunner {
         }
 
         if sawID {
-            status("dm-e2ee failed receive_mismatch role=\(role) id=\(messageID)")
+            status("\(statusPrefix) failed receive_mismatch role=\(role) id=\(messageID)")
+        }
+        return false
+    }
+
+    private static func waitForDirectTimelineItem(
+        messageID: String,
+        expectedSender: String,
+        roomID: String,
+        role: String,
+        statusPrefix: String,
+        service: XMPPMartinService,
+        session: TrixSession,
+        predicate: (TrixTimelineItem) -> Bool
+    ) async throws -> Bool {
+        let expectedSenderKey = expectedSender.lowercased()
+        var sawID = false
+        for _ in 0..<40 {
+            let items = try await service.timeline(roomID: roomID, session: session)
+            if items.contains(where: { item in
+                let senderMatches = item.sender.lowercased() == expectedSenderKey
+                let idMatches = item.id == messageID
+                sawID = sawID || idMatches
+                return !item.isLocalEcho && senderMatches && idMatches && predicate(item)
+            }) {
+                status("\(statusPrefix) receive ok role=\(role) id=\(messageID) metadata=true")
+                return true
+            }
+
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+
+        if sawID {
+            status("\(statusPrefix) failed metadata_mismatch role=\(role) id=\(messageID)")
         }
         return false
     }
@@ -1356,6 +2061,7 @@ enum XMPPLiveSmokeRunner {
         expectedSender: String,
         roomID: String,
         role: String,
+        statusPrefix: String = "group-e2ee",
         service: XMPPMartinService,
         session: TrixSession
     ) async throws -> Bool {
@@ -1370,7 +2076,7 @@ enum XMPPLiveSmokeRunner {
                 sawID = sawID || idMatches
                 return !item.isLocalEcho && senderMatches && idMatches && bodyMatches
             }) {
-                status("group-e2ee receive ok role=\(role) id=\(messageID) decrypted=true")
+                status("\(statusPrefix) receive ok role=\(role) id=\(messageID) decrypted=true")
                 return true
             }
 
@@ -1378,7 +2084,40 @@ enum XMPPLiveSmokeRunner {
         }
 
         if sawID {
-            status("group-e2ee failed receive_mismatch role=\(role) id=\(messageID)")
+            status("\(statusPrefix) failed receive_mismatch role=\(role) id=\(messageID)")
+        }
+        return false
+    }
+
+    private static func waitForGroupTimelineItem(
+        messageID: String,
+        expectedSender: String,
+        roomID: String,
+        role: String,
+        statusPrefix: String,
+        service: XMPPMartinService,
+        session: TrixSession,
+        predicate: (TrixTimelineItem) -> Bool
+    ) async throws -> Bool {
+        let expectedSenderKey = expectedSender.lowercased()
+        var sawID = false
+        for _ in 0..<40 {
+            let items = try await service.timeline(roomID: roomID, session: session)
+            if items.contains(where: { item in
+                let senderMatches = item.sender.lowercased() == expectedSenderKey
+                let idMatches = item.id == messageID
+                sawID = sawID || idMatches
+                return !item.isLocalEcho && senderMatches && idMatches && predicate(item)
+            }) {
+                status("\(statusPrefix) receive ok role=\(role) id=\(messageID) metadata=true")
+                return true
+            }
+
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+
+        if sawID {
+            status("\(statusPrefix) failed metadata_mismatch role=\(role) id=\(messageID)")
         }
         return false
     }
@@ -1452,6 +2191,18 @@ enum XMPPLiveSmokeRunner {
 
     private static func safeError(_ error: Error) -> String {
         switch error {
+        case TrixClientError.messageMetadataUnavailable:
+            return "message_metadata_unavailable"
+        case TrixClientError.messageEditUnavailable:
+            return "message_edit_unavailable"
+        case TrixClientError.messageRetractionUnavailable:
+            return "message_retraction_unavailable"
+        case TrixClientError.readMarkerUnavailable:
+            return "read_marker_unavailable"
+        case TrixClientError.invalidMessageReference:
+            return "invalid_message_reference"
+        case TrixClientError.invalidMentionTarget:
+            return "invalid_mention_target"
         case let clientError as TrixClientError:
             return clientError.errorDescription ?? "client_error"
         default:

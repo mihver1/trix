@@ -130,9 +130,10 @@ filename, or attachment metadata fields.
 Optional live smoke modes are available through `TRIX_XMPP_LIVE_SMOKE_MODE`:
 `login`, `session-restore`, `roster`, `room-list`, `search`, `peer-devices`,
 `trust-peer`, `profile`, `profile-update`, `timeline`, `send-timeline`,
-`timeline-restart`, `dm-e2ee`, `dm-reaction`, `dm-attachment`,
-`delivery-receipt`, `typing`, `blocked-send`, `group-e2ee`, and
-`group-attachment`.
+`timeline-restart`, `dm-e2ee`, `dm-reaction`, `dm-reply`,
+`dm-edit-retract`, `dm-attachment`, `delivery-receipt`, `typing`,
+`blocked-send`, `group-e2ee`, `group-attachment`, `group-mention`,
+`group-thread`, and `read-markers`.
 Provide credentials only through temporary environment variables:
 
 ```bash
@@ -213,6 +214,22 @@ IDs/status. The `group-attachment` mode uses the same three-account variables,
 validates the MUC member recipient set and trust graph, sends one generated
 encrypted image attachment, waits for peer and third account download/decrypt,
 and prints only IDs/status, byte counts, and image booleans.
+
+The conversation-XEP smoke entrypoints `dm-reply`, `dm-edit-retract`,
+`group-mention`, `group-thread`, and `read-markers` are wired as scrubbed
+feature probes in this checkout. They validate required environment shape, use
+the shared metadata request APIs and Martin send/parse surfaces, and then
+validate live metadata when credentials are supplied:
+`dm-reply` requires the two-account DM variables; `dm-edit-retract` requires the
+same two-account DM variables; `group-mention` and `group-thread` require the
+three-account group variables; `read-markers` requires the owner account plus a
+peer account. These modes print only IDs/counts/booleans/status tokens and must
+not print message bodies, credentials, OMEMO secrets, filenames, local paths, or
+raw stanza payloads. `read-markers` sends XEP-0333 displayed markers and
+validates same-account convergence through the private Trix read-cursor node,
+because ejabberd/Martin marker archive/carbon delivery is not reliable enough
+for unread sync. The remaining proof is restart/reload coverage and stable
+group target ids for mention/thread metadata.
 
 From the repository root, the current Apple lanes are:
 

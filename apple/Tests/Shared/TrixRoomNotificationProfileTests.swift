@@ -133,6 +133,41 @@ final class TrixRoomNotificationPlannerTests: XCTestCase {
         )
     }
 
+    func testTimelineMentionDetectionPrefersParsedMentionMetadata() {
+        let itemWithNonMatchingMetadata = Self.item(
+            body: "ping @me",
+            timestamp: 7,
+            isLocalEcho: false,
+            mentions: [
+                TrixMentionReference(
+                    targetUserID: "alice@trix.selfhost.ru",
+                    displayText: "@me",
+                    range: TrixTextReferenceRange(begin: 5, end: 8)
+                ),
+            ]
+        )
+        let itemWithoutMetadata = Self.item(
+            body: "ping @me",
+            timestamp: 8,
+            isLocalEcho: false
+        )
+
+        XCTAssertFalse(
+            TrixRoomNotificationPlanner.timelineContainsMention(
+                [itemWithNonMatchingMetadata],
+                accountID: "me@trix.selfhost.ru",
+                newerThan: nil
+            )
+        )
+        XCTAssertTrue(
+            TrixRoomNotificationPlanner.timelineContainsMention(
+                [itemWithoutMetadata],
+                accountID: "me@trix.selfhost.ru",
+                newerThan: nil
+            )
+        )
+    }
+
     private static func room(id: String, unreadCount: Int, timestamp: TimeInterval) -> TrixRoomSummary {
         TrixRoomSummary(
             id: id,
@@ -148,7 +183,8 @@ final class TrixRoomNotificationPlannerTests: XCTestCase {
     private static func item(
         body: String,
         timestamp: TimeInterval,
-        isLocalEcho: Bool
+        isLocalEcho: Bool,
+        mentions: [TrixMentionReference] = []
     ) -> TrixTimelineItem {
         TrixTimelineItem(
             id: UUID().uuidString,
@@ -157,7 +193,8 @@ final class TrixRoomNotificationPlannerTests: XCTestCase {
             timestamp: Date(timeIntervalSince1970: timestamp),
             body: body,
             isLocalEcho: isLocalEcho,
-            attachment: nil
+            attachment: nil,
+            mentions: mentions
         )
     }
 

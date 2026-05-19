@@ -879,6 +879,256 @@ struct TrixReactionAggregate: Identifiable, Equatable, Sendable {
     }
 }
 
+struct TrixTextReferenceRange: Codable, Equatable, Sendable {
+    let begin: Int
+    let end: Int
+
+    init(begin: Int, end: Int) {
+        self.begin = begin
+        self.end = end
+    }
+
+    func isValid(in text: String) -> Bool {
+        begin >= 0 && end > begin && end <= text.utf16.count
+    }
+}
+
+struct TrixMentionReference: Identifiable, Codable, Equatable, Sendable {
+    let targetUserID: String
+    let displayText: String?
+    let range: TrixTextReferenceRange
+
+    init(
+        targetUserID: String,
+        displayText: String? = nil,
+        range: TrixTextReferenceRange
+    ) {
+        self.targetUserID = targetUserID
+        self.displayText = displayText?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.range = range
+    }
+
+    var id: String {
+        "\(targetUserID.lowercased())|\(range.begin)-\(range.end)"
+    }
+}
+
+struct TrixReplyPreview: Codable, Equatable, Sendable {
+    let senderID: String?
+    let body: String?
+    let attachmentFilename: String?
+    let isUnavailable: Bool
+
+    init(
+        senderID: String? = nil,
+        body: String? = nil,
+        attachmentFilename: String? = nil,
+        isUnavailable: Bool = false
+    ) {
+        self.senderID = senderID?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.body = body?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.attachmentFilename = attachmentFilename?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.isUnavailable = isUnavailable
+    }
+}
+
+struct TrixReplyReference: Codable, Equatable, Sendable {
+    let targetMessageID: String
+    let targetSenderID: String?
+    let targetRoomID: String?
+    let preview: TrixReplyPreview?
+
+    init(
+        targetMessageID: String,
+        targetSenderID: String? = nil,
+        targetRoomID: String? = nil,
+        preview: TrixReplyPreview? = nil
+    ) {
+        self.targetMessageID = targetMessageID
+        self.targetSenderID = targetSenderID?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.targetRoomID = targetRoomID?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.preview = preview
+    }
+}
+
+struct TrixThreadReference: Codable, Equatable, Sendable {
+    let threadID: String
+    let rootMessageID: String?
+    let parentMessageID: String?
+    let parentThreadID: String?
+    let replyCount: Int
+
+    init(
+        threadID: String,
+        rootMessageID: String? = nil,
+        parentMessageID: String? = nil,
+        parentThreadID: String? = nil,
+        replyCount: Int = 0
+    ) {
+        self.threadID = threadID
+        self.rootMessageID = rootMessageID?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.parentMessageID = parentMessageID?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.parentThreadID = parentThreadID?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.replyCount = max(replyCount, 0)
+    }
+
+    func withReplyCount(_ replyCount: Int) -> TrixThreadReference {
+        TrixThreadReference(
+            threadID: threadID,
+            rootMessageID: rootMessageID,
+            parentMessageID: parentMessageID,
+            parentThreadID: parentThreadID,
+            replyCount: replyCount
+        )
+    }
+}
+
+struct TrixThreadFilter: Codable, Equatable, Sendable {
+    let threadID: String
+    let rootMessageID: String
+
+    init(threadID: String, rootMessageID: String) {
+        self.threadID = threadID
+        self.rootMessageID = rootMessageID
+    }
+}
+
+struct TrixTimelineEditState: Codable, Equatable, Sendable {
+    let editedAt: Date
+    let editedBy: String
+    let replacementMessageID: String?
+
+    init(
+        editedAt: Date,
+        editedBy: String,
+        replacementMessageID: String? = nil
+    ) {
+        self.editedAt = editedAt
+        self.editedBy = editedBy
+        self.replacementMessageID = replacementMessageID?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    }
+}
+
+struct TrixTimelineRetractionState: Codable, Equatable, Sendable {
+    let retractedAt: Date
+    let retractedBy: String
+    let tombstoneBody: String
+
+    init(
+        retractedAt: Date,
+        retractedBy: String,
+        tombstoneBody: String = "Message deleted"
+    ) {
+        self.retractedAt = retractedAt
+        self.retractedBy = retractedBy
+        self.tombstoneBody = tombstoneBody.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Message deleted"
+    }
+}
+
+struct TrixReadMarkerReceipt: Identifiable, Codable, Equatable, Sendable {
+    let messageID: String
+    let senderID: String
+    let displayedAt: Date
+
+    var id: String {
+        "\(messageID)|\(senderID.lowercased())"
+    }
+}
+
+struct TrixTimelineReadState: Codable, Equatable, Sendable {
+    static let empty = TrixTimelineReadState(displayedBy: [])
+
+    let displayedBy: [TrixReadMarkerReceipt]
+
+    init(displayedBy: [TrixReadMarkerReceipt] = []) {
+        self.displayedBy = displayedBy
+    }
+
+    func withDisplayedReceipt(_ receipt: TrixReadMarkerReceipt) -> TrixTimelineReadState {
+        let filtered = displayedBy.filter { existing in
+            existing.senderID.caseInsensitiveCompare(receipt.senderID) != .orderedSame
+        }
+        return TrixTimelineReadState(displayedBy: filtered + [receipt])
+    }
+}
+
+struct TrixRoomReadMarkerState: Codable, Equatable, Sendable {
+    let roomID: String
+    let displayedMessageID: String
+    let senderID: String
+    let displayedAt: Date
+}
+
+struct TrixTextMessageSendMetadata: Codable, Equatable, Sendable {
+    static let empty = TrixTextMessageSendMetadata()
+
+    let mentions: [TrixMentionReference]
+    let replyTo: TrixReplyReference?
+    let thread: TrixThreadReference?
+
+    init(
+        mentions: [TrixMentionReference] = [],
+        replyTo: TrixReplyReference? = nil,
+        thread: TrixThreadReference? = nil
+    ) {
+        self.mentions = mentions
+        self.replyTo = replyTo
+        self.thread = thread
+    }
+
+    var isEmpty: Bool {
+        mentions.isEmpty && replyTo == nil && thread == nil
+    }
+}
+
+struct TrixTextMessageSendRequest: Codable, Equatable, Sendable {
+    let text: String
+    let roomID: String
+    let metadata: TrixTextMessageSendMetadata
+
+    init(
+        text: String,
+        roomID: String,
+        metadata: TrixTextMessageSendMetadata = .empty
+    ) {
+        self.text = text
+        self.roomID = roomID
+        self.metadata = metadata
+    }
+}
+
+struct TrixMessageEditRequest: Codable, Equatable, Sendable {
+    let messageID: String
+    let roomID: String
+    let newText: String
+
+    init(messageID: String, roomID: String, newText: String) {
+        self.messageID = messageID
+        self.roomID = roomID
+        self.newText = newText
+    }
+}
+
+struct TrixMessageRetractionRequest: Codable, Equatable, Sendable {
+    let messageID: String
+    let roomID: String
+
+    init(messageID: String, roomID: String) {
+        self.messageID = messageID
+        self.roomID = roomID
+    }
+}
+
+struct TrixRoomDisplayedMarkerRequest: Codable, Equatable, Sendable {
+    let roomID: String
+    let messageID: String
+
+    init(roomID: String, messageID: String) {
+        self.roomID = roomID
+        self.messageID = messageID
+    }
+}
+
 enum TrixTypingState: String, Codable, Equatable, Sendable {
     case idle
     case composing
@@ -998,6 +1248,12 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
         case attachment
         case deliveryState
         case reactions
+        case mentions
+        case replyTo
+        case thread
+        case editState
+        case retractionState
+        case readState
     }
 
     let id: String
@@ -1009,6 +1265,12 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
     let attachment: TrixTimelineAttachment?
     let deliveryState: TrixDeliveryState?
     let reactions: [TrixMessageReaction]
+    let mentions: [TrixMentionReference]
+    let replyTo: TrixReplyReference?
+    let thread: TrixThreadReference?
+    let editState: TrixTimelineEditState?
+    let retractionState: TrixTimelineRetractionState?
+    let readState: TrixTimelineReadState
 
     init(
         id: String,
@@ -1019,7 +1281,13 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
         isLocalEcho: Bool,
         attachment: TrixTimelineAttachment?,
         deliveryState: TrixDeliveryState? = nil,
-        reactions: [TrixMessageReaction] = []
+        reactions: [TrixMessageReaction] = [],
+        mentions: [TrixMentionReference] = [],
+        replyTo: TrixReplyReference? = nil,
+        thread: TrixThreadReference? = nil,
+        editState: TrixTimelineEditState? = nil,
+        retractionState: TrixTimelineRetractionState? = nil,
+        readState: TrixTimelineReadState = .empty
     ) {
         self.id = id
         self.roomID = roomID
@@ -1030,6 +1298,12 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
         self.attachment = attachment
         self.deliveryState = deliveryState
         self.reactions = reactions
+        self.mentions = mentions
+        self.replyTo = replyTo
+        self.thread = thread
+        self.editState = editState
+        self.retractionState = retractionState
+        self.readState = readState
     }
 
     init(from decoder: Decoder) throws {
@@ -1043,6 +1317,20 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
         self.attachment = try container.decodeIfPresent(TrixTimelineAttachment.self, forKey: .attachment)
         self.deliveryState = try container.decodeIfPresent(TrixDeliveryState.self, forKey: .deliveryState)
         self.reactions = try container.decodeIfPresent([TrixMessageReaction].self, forKey: .reactions) ?? []
+        self.mentions = try container.decodeIfPresent([TrixMentionReference].self, forKey: .mentions) ?? []
+        self.replyTo = try container.decodeIfPresent(TrixReplyReference.self, forKey: .replyTo)
+        self.thread = try container.decodeIfPresent(TrixThreadReference.self, forKey: .thread)
+        self.editState = try container.decodeIfPresent(TrixTimelineEditState.self, forKey: .editState)
+        self.retractionState = try container.decodeIfPresent(TrixTimelineRetractionState.self, forKey: .retractionState)
+        self.readState = try container.decodeIfPresent(TrixTimelineReadState.self, forKey: .readState) ?? .empty
+    }
+
+    var isEdited: Bool {
+        editState != nil
+    }
+
+    var isRetracted: Bool {
+        retractionState != nil
     }
 
     func withDeliveryState(_ deliveryState: TrixDeliveryState?) -> TrixTimelineItem {
@@ -1055,7 +1343,13 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
             isLocalEcho: isLocalEcho,
             attachment: attachment,
             deliveryState: deliveryState,
-            reactions: reactions
+            reactions: reactions,
+            mentions: mentions,
+            replyTo: replyTo,
+            thread: thread,
+            editState: editState,
+            retractionState: retractionState,
+            readState: readState
         )
     }
 
@@ -1069,7 +1363,116 @@ struct TrixTimelineItem: Identifiable, Codable, Equatable, Sendable {
             isLocalEcho: isLocalEcho,
             attachment: attachment,
             deliveryState: deliveryState,
-            reactions: reactions
+            reactions: reactions,
+            mentions: mentions,
+            replyTo: replyTo,
+            thread: thread,
+            editState: editState,
+            retractionState: retractionState,
+            readState: readState
+        )
+    }
+
+    func withEditedBody(
+        _ body: String,
+        editState: TrixTimelineEditState
+    ) -> TrixTimelineItem {
+        TrixTimelineItem(
+            id: id,
+            roomID: roomID,
+            sender: sender,
+            timestamp: timestamp,
+            body: body,
+            isLocalEcho: isLocalEcho,
+            attachment: attachment,
+            deliveryState: deliveryState,
+            reactions: reactions,
+            mentions: mentions,
+            replyTo: replyTo,
+            thread: thread,
+            editState: editState,
+            retractionState: retractionState,
+            readState: readState
+        )
+    }
+
+    func withRetractionState(_ retractionState: TrixTimelineRetractionState) -> TrixTimelineItem {
+        TrixTimelineItem(
+            id: id,
+            roomID: roomID,
+            sender: sender,
+            timestamp: timestamp,
+            body: retractionState.tombstoneBody,
+            isLocalEcho: isLocalEcho,
+            attachment: nil,
+            deliveryState: deliveryState,
+            reactions: [],
+            mentions: [],
+            replyTo: replyTo,
+            thread: thread,
+            editState: editState,
+            retractionState: retractionState,
+            readState: readState
+        )
+    }
+
+    func withMessageMetadata(_ metadata: TrixTextMessageSendMetadata) -> TrixTimelineItem {
+        TrixTimelineItem(
+            id: id,
+            roomID: roomID,
+            sender: sender,
+            timestamp: timestamp,
+            body: body,
+            isLocalEcho: isLocalEcho,
+            attachment: attachment,
+            deliveryState: deliveryState,
+            reactions: reactions,
+            mentions: metadata.mentions,
+            replyTo: metadata.replyTo,
+            thread: metadata.thread,
+            editState: editState,
+            retractionState: retractionState,
+            readState: readState
+        )
+    }
+
+    func withThread(_ thread: TrixThreadReference?) -> TrixTimelineItem {
+        TrixTimelineItem(
+            id: id,
+            roomID: roomID,
+            sender: sender,
+            timestamp: timestamp,
+            body: body,
+            isLocalEcho: isLocalEcho,
+            attachment: attachment,
+            deliveryState: deliveryState,
+            reactions: reactions,
+            mentions: mentions,
+            replyTo: replyTo,
+            thread: thread,
+            editState: editState,
+            retractionState: retractionState,
+            readState: readState
+        )
+    }
+
+    func withReadState(_ readState: TrixTimelineReadState) -> TrixTimelineItem {
+        TrixTimelineItem(
+            id: id,
+            roomID: roomID,
+            sender: sender,
+            timestamp: timestamp,
+            body: body,
+            isLocalEcho: isLocalEcho,
+            attachment: attachment,
+            deliveryState: deliveryState,
+            reactions: reactions,
+            mentions: mentions,
+            replyTo: replyTo,
+            thread: thread,
+            editState: editState,
+            retractionState: retractionState,
+            readState: readState
         )
     }
 
@@ -1805,6 +2208,12 @@ enum TrixClientError: LocalizedError {
     case callCameraPermissionRequired
     case callMicrophoneUnavailable
     case callCameraUnavailable
+    case messageMetadataUnavailable
+    case messageEditUnavailable
+    case messageRetractionUnavailable
+    case readMarkerUnavailable
+    case invalidMessageReference
+    case invalidMentionTarget
 
     var errorDescription: String? {
         switch self {
@@ -1920,6 +2329,18 @@ enum TrixClientError: LocalizedError {
             return "Microphone could not be started."
         case .callCameraUnavailable:
             return "Camera could not be started."
+        case .messageMetadataUnavailable:
+            return "This message metadata is not available on the current XMPP path yet."
+        case .messageEditUnavailable:
+            return "This message cannot be edited."
+        case .messageRetractionUnavailable:
+            return "This message cannot be deleted."
+        case .readMarkerUnavailable:
+            return "Read markers are not available for this room yet."
+        case .invalidMessageReference:
+            return "The referenced message is not available."
+        case .invalidMentionTarget:
+            return "Mention only known room members."
         }
     }
 }

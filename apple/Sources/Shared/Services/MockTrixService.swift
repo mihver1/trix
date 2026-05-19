@@ -18,6 +18,7 @@ actor MockTrixService: TrixService {
     private var notificationProfilesByAccountID: [String: TrixRoomNotificationProfileSnapshot]
     private var typingUserIDsByRoomID: [String: [String]]
     private var callDescriptorsByRoomID: [String: [TrixReceivedCallDescriptor]]
+    private var readMarkersByRoomAndUserID: [String: TrixRoomReadMarkerState]
 
     init(now: Date = Date()) {
         let directRoom = TrixRoomSummary(
@@ -73,6 +74,7 @@ actor MockTrixService: TrixService {
         ]
         self.typingUserIDsByRoomID = [:]
         self.callDescriptorsByRoomID = [:]
+        self.readMarkersByRoomAndUserID = [:]
         self.profilesByUserID = [
             "@me:trix.selfhost.ru": TrixUserProfile(userID: "@me:trix.selfhost.ru", displayName: "Me", avatarURL: nil),
             "@alice:trix.selfhost.ru": TrixUserProfile(userID: "@alice:trix.selfhost.ru", displayName: "Alice", avatarURL: nil),
@@ -448,25 +450,161 @@ actor MockTrixService: TrixService {
     }
 
     func sendText(_ text: String, roomID: String, session: TrixSession) async throws -> TrixTimelineItem {
-        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        try await sendText(
+            TrixTextMessageSendRequest(text: text, roomID: roomID),
+            session: session
+        )
+    }
+
+    func sendText(_ request: TrixTextMessageSendRequest, session: TrixSession) async throws -> TrixTimelineItem {
+        let body = request.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else {
             throw TrixClientError.emptyMessage
         }
+        guard roomSummary(roomID: request.roomID) != nil else {
+            throw TrixClientError.roomUnavailable
+        }
+
+        let metadata = try resolvedSendMetadata(
+            request.metadata,
+            body: body,
+            roomID: request.roomID
+        )
+        let messageID = "$local-\(UUID().uuidString)"
+        let thread = metadata.thread.map { thread in
+            if thread.rootMessageID == nil && thread.parentMessageID == nil {
+                return TrixThreadReference(
+                    threadID: thread.threadID,
+                    rootMessageID: messageID,
+                    parentThreadID: thread.parentThreadID,
+                    replyCount: thread.replyCount
+                )
+            }
+
+            return thread
+        }
 
         let item = TrixTimelineItem(
-            id: "$local-\(UUID().uuidString)",
-            roomID: roomID,
+            id: messageID,
+            roomID: request.roomID,
             sender: session.userID,
             timestamp: Date(),
             body: body,
             isLocalEcho: true,
             attachment: nil,
-            deliveryState: .sent
+            deliveryState: .sent,
+            mentions: metadata.mentions,
+            replyTo: metadata.replyTo,
+            thread: thread
         )
 
-        timelines[roomID, default: []].append(item)
-        updateRoomPreview(roomID: roomID, body: "You: \(body)", date: item.timestamp)
+        timelines[request.roomID, default: []].append(item)
+        if let thread {
+            recordThreadReply(thread, roomID: request.roomID, replyMessageID: item.id)
+        }
+        updateRoomPreview(roomID: request.roomID, body: "You: \(body)", date: item.timestamp)
         return item
+    }
+
+    func editText(_ request: TrixMessageEditRequest, session: TrixSession) async throws -> TrixTimelineItem {
+        let body = request.newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else {
+            throw TrixClientError.emptyMessage
+        }
+
+        var roomTimeline = timelines[request.roomID, default: []]
+        guard let itemIndex = roomTimeline.firstIndex(where: { $0.id == request.messageID }) else {
+            throw TrixClientError.invalidMessageReference
+        }
+
+        let item = roomTimeline[itemIndex]
+        guard isOwnTextMessage(item, session: session),
+              !item.isRetracted,
+              itemIndex == lastEditableOwnTextMessageIndex(in: roomTimeline, session: session) else {
+            throw TrixClientError.messageEditUnavailable
+        }
+
+        let editedAt = Date()
+        let edited = item.withEditedBody(
+            body,
+            editState: TrixTimelineEditState(
+                editedAt: editedAt,
+                editedBy: session.userID,
+                replacementMessageID: "$mock-edit-\(UUID().uuidString)"
+            )
+        )
+        roomTimeline[itemIndex] = edited
+        timelines[request.roomID] = roomTimeline
+        if itemIndex == roomTimeline.index(before: roomTimeline.endIndex) {
+            updateRoomPreview(roomID: request.roomID, body: "You: \(body)", date: editedAt)
+        }
+        return edited
+    }
+
+    func retractMessage(_ request: TrixMessageRetractionRequest, session: TrixSession) async throws -> TrixTimelineItem {
+        var roomTimeline = timelines[request.roomID, default: []]
+        guard let itemIndex = roomTimeline.firstIndex(where: { $0.id == request.messageID }) else {
+            throw TrixClientError.invalidMessageReference
+        }
+
+        let item = roomTimeline[itemIndex]
+        guard isOwnTextMessage(item, session: session), !item.isRetracted else {
+            throw TrixClientError.messageRetractionUnavailable
+        }
+
+        let retractedAt = Date()
+        let retracted = item.withRetractionState(
+            TrixTimelineRetractionState(
+                retractedAt: retractedAt,
+                retractedBy: session.userID
+            )
+        )
+        roomTimeline[itemIndex] = retracted
+        timelines[request.roomID] = roomTimeline
+        if itemIndex == roomTimeline.index(before: roomTimeline.endIndex) {
+            updateRoomPreview(roomID: request.roomID, body: "You: \(retracted.body)", date: retractedAt)
+        }
+        return retracted
+    }
+
+    func markRoomDisplayed(
+        _ request: TrixRoomDisplayedMarkerRequest,
+        session: TrixSession
+    ) async throws -> TrixRoomReadMarkerState {
+        guard roomSummary(roomID: request.roomID) != nil else {
+            throw TrixClientError.roomUnavailable
+        }
+
+        var roomTimeline = timelines[request.roomID, default: []]
+        guard let itemIndex = roomTimeline.firstIndex(where: { $0.id == request.messageID }) else {
+            throw TrixClientError.invalidMessageReference
+        }
+
+        let displayedAt = Date()
+        let receipt = TrixReadMarkerReceipt(
+            messageID: request.messageID,
+            senderID: session.userID,
+            displayedAt: displayedAt
+        )
+        let item = roomTimeline[itemIndex]
+        roomTimeline[itemIndex] = item.withReadState(item.readState.withDisplayedReceipt(receipt))
+        timelines[request.roomID] = roomTimeline
+
+        let state = TrixRoomReadMarkerState(
+            roomID: request.roomID,
+            displayedMessageID: request.messageID,
+            senderID: session.userID,
+            displayedAt: displayedAt
+        )
+        readMarkersByRoomAndUserID[readMarkerKey(roomID: request.roomID, userID: session.userID)] = state
+        roomSummaries = roomSummaries.map { room in
+            room.id == request.roomID ? room.markingRead() : room
+        }
+        return state
+    }
+
+    func readMarkerState(roomID: String, session: TrixSession) async throws -> TrixRoomReadMarkerState? {
+        readMarkersByRoomAndUserID[readMarkerKey(roomID: roomID, userID: session.userID)]
     }
 
     func setReaction(_ emoji: String, messageID: String, roomID: String, session: TrixSession) async throws -> [TrixMessageReaction] {
@@ -808,6 +946,163 @@ actor MockTrixService: TrixService {
         )
         callDescriptorsByRoomID[roomID, default: []].append(received)
         return received
+    }
+
+    private func resolvedSendMetadata(
+        _ metadata: TrixTextMessageSendMetadata,
+        body: String,
+        roomID: String
+    ) throws -> TrixTextMessageSendMetadata {
+        try validateMentions(metadata.mentions, body: body, roomID: roomID)
+        let replyTo = try metadata.replyTo.map { reply in
+            try resolvedReplyReference(reply, roomID: roomID)
+        }
+        let thread = try metadata.thread.map { thread in
+            try resolvedThreadReference(thread, roomID: roomID)
+        }
+
+        return TrixTextMessageSendMetadata(
+            mentions: metadata.mentions,
+            replyTo: replyTo,
+            thread: thread
+        )
+    }
+
+    private func validateMentions(
+        _ mentions: [TrixMentionReference],
+        body: String,
+        roomID: String
+    ) throws {
+        guard !mentions.isEmpty else {
+            return
+        }
+
+        let knownMemberIDs = Set(membersByRoomID[roomID, default: []].map { $0.userID.lowercased() })
+        for mention in mentions {
+            guard mention.range.isValid(in: body) else {
+                throw TrixClientError.invalidMessageReference
+            }
+            guard knownMemberIDs.contains(mention.targetUserID.lowercased()) else {
+                throw TrixClientError.invalidMentionTarget
+            }
+        }
+    }
+
+    private func resolvedReplyReference(
+        _ reply: TrixReplyReference,
+        roomID: String
+    ) throws -> TrixReplyReference {
+        guard let target = timelines[roomID, default: []].first(where: { $0.id == reply.targetMessageID }) else {
+            throw TrixClientError.invalidMessageReference
+        }
+
+        return TrixReplyReference(
+            targetMessageID: reply.targetMessageID,
+            targetSenderID: reply.targetSenderID ?? target.sender,
+            targetRoomID: reply.targetRoomID ?? target.roomID,
+            preview: reply.preview ?? Self.replyPreview(from: target)
+        )
+    }
+
+    private func resolvedThreadReference(
+        _ thread: TrixThreadReference,
+        roomID: String
+    ) throws -> TrixThreadReference {
+        guard roomSummary(roomID: roomID)?.kind == .group else {
+            throw TrixClientError.messageMetadataUnavailable
+        }
+
+        let threadID = thread.threadID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !threadID.isEmpty else {
+            throw TrixClientError.invalidMessageReference
+        }
+
+        let roomTimeline = timelines[roomID, default: []]
+        let rootMessageID = trimmedNonEmpty(thread.rootMessageID)
+        let parentMessageID = trimmedNonEmpty(thread.parentMessageID)
+        if let rootMessageID,
+           !roomTimeline.contains(where: { $0.id == rootMessageID }) {
+            throw TrixClientError.invalidMessageReference
+        }
+        if let parentMessageID,
+           !roomTimeline.contains(where: { $0.id == parentMessageID }) {
+            throw TrixClientError.invalidMessageReference
+        }
+
+        return TrixThreadReference(
+            threadID: threadID,
+            rootMessageID: rootMessageID,
+            parentMessageID: parentMessageID,
+            parentThreadID: trimmedNonEmpty(thread.parentThreadID),
+            replyCount: thread.replyCount
+        )
+    }
+
+    private func recordThreadReply(
+        _ thread: TrixThreadReference,
+        roomID: String,
+        replyMessageID: String
+    ) {
+        guard let rootMessageID = thread.rootMessageID ?? thread.parentMessageID,
+              rootMessageID != replyMessageID else {
+            return
+        }
+
+        var roomTimeline = timelines[roomID, default: []]
+        guard let rootIndex = roomTimeline.firstIndex(where: { $0.id == rootMessageID }) else {
+            return
+        }
+
+        let root = roomTimeline[rootIndex]
+        let rootThread = root.thread ?? TrixThreadReference(
+            threadID: thread.threadID,
+            rootMessageID: rootMessageID
+        )
+        roomTimeline[rootIndex] = root.withThread(rootThread.withReplyCount(rootThread.replyCount + 1))
+        timelines[roomID] = roomTimeline
+    }
+
+    private func isOwnTextMessage(_ item: TrixTimelineItem, session: TrixSession) -> Bool {
+        item.sender.caseInsensitiveCompare(session.userID) == .orderedSame && item.attachment == nil
+    }
+
+    private func lastEditableOwnTextMessageIndex(
+        in items: [TrixTimelineItem],
+        session: TrixSession
+    ) -> Int? {
+        items.lastIndex { item in
+            isOwnTextMessage(item, session: session) && !item.isRetracted
+        }
+    }
+
+    private func roomSummary(roomID: String) -> TrixRoomSummary? {
+        roomSummaries.first { $0.id == roomID }
+    }
+
+    private func readMarkerKey(roomID: String, userID: String) -> String {
+        "\(roomID.lowercased())|\(userID.lowercased())"
+    }
+
+    private func trimmedNonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else {
+            return nil
+        }
+
+        return trimmed
+    }
+
+    private static func replyPreview(from item: TrixTimelineItem) -> TrixReplyPreview {
+        if item.isRetracted {
+            return TrixReplyPreview(senderID: item.sender, isUnavailable: true)
+        }
+
+        return TrixReplyPreview(
+            senderID: item.sender,
+            body: item.attachment == nil ? item.body : nil,
+            attachmentFilename: item.attachment?.filename,
+            isUnavailable: false
+        )
     }
 
     private func updateRoomPreview(roomID: String, body: String, date: Date) {

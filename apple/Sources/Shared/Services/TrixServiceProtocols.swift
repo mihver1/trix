@@ -38,6 +38,14 @@ protocol TrixRoomService: Sendable {
     func cachedTimeline(roomID: String, session: TrixSession) async throws -> [TrixTimelineItem]
     func timeline(roomID: String, session: TrixSession) async throws -> [TrixTimelineItem]
     func sendText(_ text: String, roomID: String, session: TrixSession) async throws -> TrixTimelineItem
+    func sendText(_ request: TrixTextMessageSendRequest, session: TrixSession) async throws -> TrixTimelineItem
+    func editText(_ request: TrixMessageEditRequest, session: TrixSession) async throws -> TrixTimelineItem
+    func retractMessage(_ request: TrixMessageRetractionRequest, session: TrixSession) async throws -> TrixTimelineItem
+    func markRoomDisplayed(
+        _ request: TrixRoomDisplayedMarkerRequest,
+        session: TrixSession
+    ) async throws -> TrixRoomReadMarkerState
+    func readMarkerState(roomID: String, session: TrixSession) async throws -> TrixRoomReadMarkerState?
     func setReaction(_ emoji: String, messageID: String, roomID: String, session: TrixSession) async throws -> [TrixMessageReaction]
     func attachmentSendAvailability(roomID: String, session: TrixSession) async throws -> TrixAttachmentSendAvailability
     func sendAttachment(_ attachment: TrixAttachmentUpload, roomID: String, session: TrixSession) async throws -> TrixTimelineItem
@@ -47,6 +55,33 @@ protocol TrixRoomService: Sendable {
 extension TrixRoomService {
     func cachedTimeline(roomID: String, session: TrixSession) async throws -> [TrixTimelineItem] {
         []
+    }
+
+    func sendText(_ request: TrixTextMessageSendRequest, session: TrixSession) async throws -> TrixTimelineItem {
+        guard request.metadata.isEmpty else {
+            throw TrixClientError.messageMetadataUnavailable
+        }
+
+        return try await sendText(request.text, roomID: request.roomID, session: session)
+    }
+
+    func editText(_ request: TrixMessageEditRequest, session: TrixSession) async throws -> TrixTimelineItem {
+        throw TrixClientError.messageEditUnavailable
+    }
+
+    func retractMessage(_ request: TrixMessageRetractionRequest, session: TrixSession) async throws -> TrixTimelineItem {
+        throw TrixClientError.messageRetractionUnavailable
+    }
+
+    func markRoomDisplayed(
+        _ request: TrixRoomDisplayedMarkerRequest,
+        session: TrixSession
+    ) async throws -> TrixRoomReadMarkerState {
+        throw TrixClientError.readMarkerUnavailable
+    }
+
+    func readMarkerState(roomID: String, session: TrixSession) async throws -> TrixRoomReadMarkerState? {
+        nil
     }
 }
 

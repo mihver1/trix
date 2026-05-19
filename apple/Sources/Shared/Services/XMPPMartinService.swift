@@ -92,6 +92,51 @@ actor XMPPMartinService: TrixService {
         let timestamp: Date
     }
 
+    private struct CapturedMessageEditUpdate: Sendable {
+        let targetMessageID: String
+        let replacementMessageID: String?
+        let roomID: String
+        let senderJID: String
+        let body: String
+        let mentions: [TrixMentionReference]
+        let timestamp: Date
+    }
+
+    private struct CapturedMessageRetractionUpdate: Sendable {
+        let targetMessageID: String
+        let retractionMessageID: String?
+        let roomID: String
+        let senderJID: String
+        let timestamp: Date
+    }
+
+    private struct CapturedReadMarkerUpdate: Sendable {
+        let messageID: String
+        let roomID: String
+        let senderJID: String
+        let timestamp: Date
+    }
+
+    private enum CapturedTimelineMutation {
+        case reaction(CapturedReactionUpdate)
+        case edit(CapturedMessageEditUpdate)
+        case retraction(CapturedMessageRetractionUpdate)
+        case readMarker(CapturedReadMarkerUpdate)
+
+        var timestamp: Date {
+            switch self {
+            case .reaction(let update):
+                return update.timestamp
+            case .edit(let update):
+                return update.timestamp
+            case .retraction(let update):
+                return update.timestamp
+            case .readMarker(let update):
+                return update.timestamp
+            }
+        }
+    }
+
     private struct TypingRecord: Sendable {
         let userID: String
         let state: TrixTypingState
@@ -592,6 +637,7 @@ actor XMPPMartinService: TrixService {
     private var timelineDiagnostics: [String: [String: XMPPTimelineDiagnostics]] = [:]
     private var typingRecords: [String: [String: [String: TypingRecord]]] = [:]
     private var knownGroupRooms: [String: [String: KnownGroupRoom]] = [:]
+    private var readMarkersByRoomAndUserID: [String: TrixRoomReadMarkerState] = [:]
     private var pendingGroupInvitations: [String: [String: CapturedMUCInvitation]] = [:]
     private var dismissedGroupInvitations: [String: [String: Date]] = [:]
     private var invitationArchiveSyncConnectionDates: [String: Date] = [:]
@@ -609,8 +655,17 @@ actor XMPPMartinService: TrixService {
     private static let mucJoinTimeout: TimeInterval = 15
     private static let encryptedAttachmentDescriptorType = "com.softgrid.trix.xmpp.encrypted-attachment"
     private static let messageReactionsXMLNS = "urn:xmpp:reactions:0"
+    private static let messageReferencesXMLNS = "urn:xmpp:reference:0"
+    private static let replyXMLNS = "urn:xmpp:reply:0"
+    private static let messageCorrectionXMLNS = "urn:xmpp:message-correct:0"
+    private static let fasteningXMLNS = "urn:xmpp:fasten:0"
+    private static let messageRetractionXMLNS = "urn:xmpp:message-retract:0"
+    private static let alternateMessageRetractionXMLNS = "urn:xmpp:message-retract:1"
+    private static let chatMarkersXMLNS = "urn:xmpp:chat-markers:0"
     private static let notificationProfilesNode = "urn:softgrid:trix:notification-profiles:1"
     private static let notificationProfilesItemID = "profiles"
+    private static let readMarkersNode = "urn:softgrid:trix:read-markers:1"
+    private static let readMarkersItemID = "markers"
 
     init(omemoPersistence: TrixOMEMOPersistence = .keychain) {
         self.timelineCacheStore = TrixTimelineCacheStore()
@@ -858,6 +913,67 @@ actor XMPPMartinService: TrixService {
         }
     }
 
+    private func refreshReadMarkerStateFromCursor(accountJID: String, connection: Connection) async throws {
+        let states = try await readMarkerCursorStates(accountJID: accountJID, connection: connection)
+        for state in states.values {
+            _ = applyReadMarkerUpdate(
+                CapturedReadMarkerUpdate(
+                    messageID: state.displayedMessageID,
+                    roomID: state.roomID,
+                    senderJID: state.senderID,
+                    timestamp: state.displayedAt
+                ),
+                accountJID: accountJID
+            )
+        }
+    }
+
+    private func publishReadMarkerState(
+        _ state: TrixRoomReadMarkerState,
+        accountJID: String,
+        connection: Connection
+    ) async throws {
+        var states = try await readMarkerCursorStates(accountJID: accountJID, connection: connection)
+        states[state.roomID.lowercased()] = state
+        let payload = Self.readMarkersElement(from: Array(states.values))
+
+        do {
+            _ = try await connection.pubSubModule.publishItem(
+                at: nil,
+                to: Self.readMarkersNode,
+                itemId: Self.readMarkersItemID,
+                payload: payload
+            )
+        } catch let error as PubSubError where error.error == .item_not_found {
+            try await createReadMarkersNode(connection: connection, accountJID: accountJID)
+            _ = try await connection.pubSubModule.publishItem(
+                at: nil,
+                to: Self.readMarkersNode,
+                itemId: Self.readMarkersItemID,
+                payload: payload
+            )
+        }
+    }
+
+    private func readMarkerCursorStates(
+        accountJID: String,
+        connection: Connection
+    ) async throws -> [String: TrixRoomReadMarkerState] {
+        do {
+            let items = try await connection.pubSubModule.retrieveItems(
+                from: BareJID(accountJID),
+                for: Self.readMarkersNode,
+                limit: .items(withIds: [Self.readMarkersItemID])
+            )
+            guard let payload = items.items.first?.payload else {
+                return [:]
+            }
+            return Self.readMarkerStates(from: payload, accountJID: accountJID)
+        } catch let error as PubSubError where error.error == .item_not_found {
+            return [:]
+        }
+    }
+
     func setApplicationActive(_ isActive: Bool, session: TrixSession) async {
         let key = Self.sessionKey(session)
         guard let connection = connections[key],
@@ -1060,15 +1176,29 @@ actor XMPPMartinService: TrixService {
     }
 
     func sendText(_ text: String, roomID: String, session: TrixSession) async throws -> TrixTimelineItem {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        try await sendText(
+            TrixTextMessageSendRequest(text: text, roomID: roomID),
+            session: session
+        )
+    }
+
+    func sendText(_ request: TrixTextMessageSendRequest, session: TrixSession) async throws -> TrixTimelineItem {
+        guard !request.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw TrixClientError.emptyMessage
         }
 
-        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = request.text.trimmingCharacters(in: .whitespacesAndNewlines)
         let connection = try await ensureConnection(for: session)
-        let peerJID = try Self.normalizedRoomID(roomID)
+        let peerJID = try Self.normalizedRoomID(request.roomID)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
         if Self.isMUCJID(peerJID) {
-            return try await sendGroupText(body, roomID: peerJID, session: session, connection: connection)
+            return try await sendGroupText(
+                body,
+                roomID: peerJID,
+                metadata: request.metadata,
+                session: session,
+                connection: connection
+            )
         }
 
         guard connection.omemoStack.store.hasTrustedActiveDevice(forName: peerJID) else {
@@ -1076,12 +1206,24 @@ actor XMPPMartinService: TrixService {
             guard connection.omemoStack.store.hasTrustedActiveDevice(forName: peerJID) else {
                 throw TrixClientError.omemoDeviceTrustRequired
             }
-            return try await sendText(body, roomID: roomID, session: session)
+            return try await sendText(
+                TrixTextMessageSendRequest(text: body, roomID: request.roomID, metadata: request.metadata),
+                session: session
+            )
         }
 
+        let metadata = try resolvedSendMetadata(
+            request.metadata,
+            body: body,
+            roomID: peerJID,
+            accountJID: accountJID,
+            allowedMentionTargets: Set([peerJID.lowercased(), accountJID.lowercased()]),
+            allowThreads: false
+        )
         let messageID = "trix-\(UUID().uuidString)"
         let message = Message()
         message.id = messageID
+        message.originId = messageID
         message.type = .chat
         message.to = JID(peerJID)
         message.body = body
@@ -1089,6 +1231,7 @@ actor XMPPMartinService: TrixService {
 
         let encryptedMessage = try await encodeOMEMOMessage(message, peerJID: peerJID, connection: connection)
         encryptedMessage.messageDelivery = .request
+        Self.applyTextMetadata(metadata, to: encryptedMessage)
         guard encryptedMessage.body == nil,
               let encrypted = encryptedMessage.firstChild(name: "encrypted", xmlns: OMEMOModule.XMLNS),
               let header = encrypted.firstChild(name: "header"),
@@ -1101,15 +1244,194 @@ actor XMPPMartinService: TrixService {
         let item = TrixTimelineItem(
             id: messageID,
             roomID: peerJID,
-            sender: session.userID,
+            sender: accountJID,
             timestamp: Date(),
             body: body,
             isLocalEcho: true,
             attachment: nil,
-            deliveryState: .sent
+            deliveryState: .sent,
+            mentions: metadata.mentions,
+            replyTo: metadata.replyTo,
+            thread: metadata.thread
         )
-        storeTimelineItems([item], accountJID: session.userID, roomID: peerJID)
+        storeTimelineItems([item], accountJID: accountJID, roomID: peerJID)
         return item
+    }
+
+    func editText(_ request: TrixMessageEditRequest, session: TrixSession) async throws -> TrixTimelineItem {
+        let body = request.newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else {
+            throw TrixClientError.emptyMessage
+        }
+
+        let connection = try await ensureConnection(for: session)
+        let peerJID = try Self.normalizedRoomID(request.roomID)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+        _ = loadCachedTimelineItems(accountJID: accountJID, roomID: peerJID)
+        guard let target = lastEditableOwnTextMessage(
+            messageID: request.messageID,
+            roomID: peerJID,
+            accountJID: accountJID
+        ) else {
+            throw TrixClientError.messageEditUnavailable
+        }
+
+        let messageID = "trix-edit-\(UUID().uuidString)"
+        let message = Message()
+        message.id = messageID
+        message.originId = messageID
+        message.type = Self.isMUCJID(peerJID) ? .groupchat : .chat
+        message.to = JID(peerJID)
+        message.body = body
+
+        if Self.isMUCJID(peerJID) {
+            let room = try await joinedGroupRoom(roomID: peerJID, session: session, connection: connection)
+            let recipients = try await validatedGroupEncryptionRecipients(
+                room: room,
+                accountJID: accountJID,
+                session: session,
+                connection: connection
+            )
+            let encryptedMessage = try await encodeOMEMOMessage(message, recipientJIDs: recipients, connection: connection)
+            Self.applyMessageCorrection(target.id, to: encryptedMessage)
+            try Self.requireEncryptedOMEMOPayload(encryptedMessage)
+            try await connection.mucModule.write(stanza: encryptedMessage)
+            updateGroupActivity(roomID: peerJID, accountJID: accountJID, at: Date())
+        } else {
+            guard connection.omemoStack.store.hasTrustedActiveDevice(forName: peerJID) else {
+                _ = try? await refreshPeerDeviceIdentities(userID: peerJID, session: session)
+                guard connection.omemoStack.store.hasTrustedActiveDevice(forName: peerJID) else {
+                    throw TrixClientError.omemoDeviceTrustRequired
+                }
+                return try await editText(request, session: session)
+            }
+
+            message.messageDelivery = .request
+            let encryptedMessage = try await encodeOMEMOMessage(message, peerJID: peerJID, connection: connection)
+            encryptedMessage.messageDelivery = .request
+            Self.applyMessageCorrection(target.id, to: encryptedMessage)
+            try Self.requireEncryptedOMEMOPayload(encryptedMessage)
+            try await connection.omemoStack.module.write(stanza: encryptedMessage)
+        }
+
+        guard let edited = applyMessageEditUpdate(
+            CapturedMessageEditUpdate(
+                targetMessageID: target.id,
+                replacementMessageID: messageID,
+                roomID: peerJID,
+                senderJID: accountJID,
+                body: body,
+                mentions: [],
+                timestamp: Date()
+            ),
+            accountJID: accountJID
+        ) else {
+            throw TrixClientError.messageEditUnavailable
+        }
+        return edited
+    }
+
+    func retractMessage(_ request: TrixMessageRetractionRequest, session: TrixSession) async throws -> TrixTimelineItem {
+        let connection = try await ensureConnection(for: session)
+        let peerJID = try Self.normalizedRoomID(request.roomID)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+        _ = loadCachedTimelineItems(accountJID: accountJID, roomID: peerJID)
+        guard let target = ownRetractableTextMessage(
+            messageID: request.messageID,
+            roomID: peerJID,
+            accountJID: accountJID
+        ) else {
+            throw TrixClientError.messageRetractionUnavailable
+        }
+
+        let messageID = "trix-retract-\(UUID().uuidString)"
+        let message = Message()
+        message.id = messageID
+        message.type = Self.isMUCJID(peerJID) ? .groupchat : .chat
+        message.to = JID(peerJID)
+        Self.applyMessageRetraction(target.id, to: message)
+        message.addChild(Element(name: "store", xmlns: "urn:xmpp:hints"))
+
+        if Self.isMUCJID(peerJID) {
+            _ = try await joinedGroupRoom(roomID: peerJID, session: session, connection: connection)
+            try await connection.mucModule.write(stanza: message)
+            updateGroupActivity(roomID: peerJID, accountJID: accountJID, at: Date())
+        } else {
+            try await connection.messageCaptureModule.write(stanza: message)
+        }
+
+        guard let retracted = applyMessageRetractionUpdate(
+            CapturedMessageRetractionUpdate(
+                targetMessageID: target.id,
+                retractionMessageID: messageID,
+                roomID: peerJID,
+                senderJID: accountJID,
+                timestamp: Date()
+            ),
+            accountJID: accountJID
+        ) else {
+            throw TrixClientError.messageRetractionUnavailable
+        }
+        return retracted
+    }
+
+    func markRoomDisplayed(
+        _ request: TrixRoomDisplayedMarkerRequest,
+        session: TrixSession
+    ) async throws -> TrixRoomReadMarkerState {
+        let connection = try await ensureConnection(for: session)
+        let peerJID = try Self.normalizedRoomID(request.roomID)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+        _ = loadCachedTimelineItems(accountJID: accountJID, roomID: peerJID)
+        guard timelineItems(accountJID: accountJID, roomID: peerJID).contains(where: { $0.id == request.messageID }) else {
+            throw TrixClientError.invalidMessageReference
+        }
+
+        let message = Self.displayedMarkerMessage(
+            roomID: peerJID,
+            messageID: request.messageID,
+            isGroup: Self.isMUCJID(peerJID)
+        )
+        if Self.isMUCJID(peerJID) {
+            _ = try await joinedGroupRoom(roomID: peerJID, session: session, connection: connection)
+            try await connection.mucModule.write(stanza: message)
+        } else {
+            try await connection.messageCaptureModule.write(stanza: message)
+        }
+
+        let state = applyReadMarkerUpdate(
+            CapturedReadMarkerUpdate(
+                messageID: request.messageID,
+                roomID: peerJID,
+                senderJID: accountJID,
+                timestamp: Date()
+            ),
+            accountJID: accountJID
+        )
+        do {
+            try await publishReadMarkerState(state, accountJID: accountJID, connection: connection)
+        } catch {
+            throw TrixClientError.readMarkerUnavailable
+        }
+        return state
+    }
+
+    func readMarkerState(roomID: String, session: TrixSession) async throws -> TrixRoomReadMarkerState? {
+        let connection = try await ensureConnection(for: session)
+        let peerJID = try Self.normalizedRoomID(roomID)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+
+        try? await refreshReadMarkerStateFromCursor(accountJID: accountJID, connection: connection)
+
+        if !Self.isMUCJID(peerJID) {
+            try? await refreshReadMarkerStateFromArchive(
+                roomID: peerJID,
+                accountJID: accountJID,
+                connection: connection
+            )
+        }
+
+        return readMarkersByRoomAndUserID[readMarkerKey(roomID: peerJID, userID: accountJID)]
     }
 
     func setReaction(_ emoji: String, messageID: String, roomID: String, session: TrixSession) async throws -> [TrixMessageReaction] {
@@ -2033,7 +2355,7 @@ actor XMPPMartinService: TrixService {
         }
 
         var items: [TrixTimelineItem] = []
-        var reactionUpdates: [CapturedReactionUpdate] = []
+        var timelineMutations: [CapturedTimelineMutation] = []
         var encryptedCount = 0
         var localKeyCount = 0
         var accountSenderCount = 0
@@ -2061,6 +2383,18 @@ actor XMPPMartinService: TrixService {
             default:
                 break
             }
+            if let readMarker = Self.capturedReadMarkerUpdate(
+                from: archived.message,
+                accountJID: accountJID,
+                roomID: peerJID,
+                senderJID: nil,
+                carbonAction: nil,
+                timestamp: archived.timestamp
+            ) {
+                timelineMutations.append(.readMarker(readMarker))
+                continue
+            }
+
             if let reaction = Self.capturedReactionUpdate(
                 from: archived.message,
                 accountJID: accountJID,
@@ -2069,7 +2403,33 @@ actor XMPPMartinService: TrixService {
                 carbonAction: nil,
                 timestamp: archived.timestamp
             ) {
-                reactionUpdates.append(reaction)
+                timelineMutations.append(.reaction(reaction))
+                continue
+            }
+
+            if let retraction = Self.capturedMessageRetractionUpdate(
+                from: archived.message,
+                accountJID: accountJID,
+                roomID: peerJID,
+                senderJID: nil,
+                carbonAction: nil,
+                timestamp: archived.timestamp
+            ) {
+                timelineMutations.append(.retraction(retraction))
+                continue
+            }
+
+            if let edit = capturedMessageEditUpdate(
+                from: archived.message,
+                accountJID: accountJID,
+                roomID: peerJID,
+                senderJID: nil,
+                carbonAction: nil,
+                timestamp: archived.timestamp,
+                fallbackID: archived.messageID,
+                connection: connection
+            ) {
+                timelineMutations.append(.edit(edit))
                 continue
             }
 
@@ -2084,8 +2444,17 @@ actor XMPPMartinService: TrixService {
                 items.append(item)
             }
         }
-        for reactionUpdate in reactionUpdates {
-            items = Self.applyingReactionUpdate(reactionUpdate, to: items, accountJID: accountJID)
+        for mutation in timelineMutations.sorted(by: { $0.timestamp < $1.timestamp }) {
+            switch mutation {
+            case .reaction(let update):
+                items = Self.applyingReactionUpdate(update, to: items, accountJID: accountJID)
+            case .edit(let update):
+                items = Self.applyingMessageEditUpdate(update, to: items)
+            case .retraction(let update):
+                items = Self.applyingMessageRetractionUpdate(update, to: items)
+            case .readMarker(let update):
+                items = Self.applyingReadMarkerUpdate(update, to: items)
+            }
         }
 
         return ArchivedTimelineResult(
@@ -2173,6 +2542,18 @@ actor XMPPMartinService: TrixService {
             return
         }
 
+        if let readMarker = Self.capturedReadMarkerUpdate(
+            from: message,
+            accountJID: accountJID,
+            roomID: roomID,
+            senderJID: nil,
+            carbonAction: capturedMessage.carbonAction,
+            timestamp: Self.messageTimestamp(message, fallback: Date())
+        ) {
+            _ = applyReadMarkerUpdate(readMarker, accountJID: accountJID)
+            return
+        }
+
         if let reaction = Self.capturedReactionUpdate(
             from: message,
             accountJID: accountJID,
@@ -2182,6 +2563,32 @@ actor XMPPMartinService: TrixService {
             timestamp: Self.messageTimestamp(message, fallback: Date())
         ) {
             _ = applyReactionUpdate(reaction, accountJID: accountJID)
+            return
+        }
+
+        if let retraction = Self.capturedMessageRetractionUpdate(
+            from: message,
+            accountJID: accountJID,
+            roomID: roomID,
+            senderJID: nil,
+            carbonAction: capturedMessage.carbonAction,
+            timestamp: Self.messageTimestamp(message, fallback: Date())
+        ) {
+            _ = applyMessageRetractionUpdate(retraction, accountJID: accountJID)
+            return
+        }
+
+        if let edit = capturedMessageEditUpdate(
+            from: message,
+            accountJID: accountJID,
+            roomID: roomID,
+            senderJID: nil,
+            carbonAction: capturedMessage.carbonAction,
+            timestamp: Self.messageTimestamp(message, fallback: Date()),
+            fallbackID: nil,
+            connection: connection
+        ) {
+            _ = applyMessageEditUpdate(edit, accountJID: accountJID)
             return
         }
 
@@ -2348,6 +2755,19 @@ actor XMPPMartinService: TrixService {
         let senderJID = capturedMessage.senderJID
 
         if let senderJID,
+           let readMarker = Self.capturedReadMarkerUpdate(
+            from: message,
+            accountJID: accountJID,
+            roomID: roomID,
+            senderJID: senderJID,
+            carbonAction: nil,
+            timestamp: Self.messageTimestamp(message, fallback: Date())
+        ) {
+            _ = applyReadMarkerUpdate(readMarker, accountJID: accountJID)
+            return
+        }
+
+        if let senderJID,
            let reaction = Self.capturedReactionUpdate(
             from: message,
             accountJID: accountJID,
@@ -2357,6 +2777,36 @@ actor XMPPMartinService: TrixService {
             timestamp: Self.messageTimestamp(message, fallback: Date())
         ) {
             _ = applyReactionUpdate(reaction, accountJID: accountJID)
+            cacheGroupMembers([senderJID.lowercased()], roomID: roomID, accountJID: accountJID, name: nil)
+            return
+        }
+
+        if let senderJID,
+           let retraction = Self.capturedMessageRetractionUpdate(
+            from: message,
+            accountJID: accountJID,
+            roomID: roomID,
+            senderJID: senderJID,
+            carbonAction: nil,
+            timestamp: Self.messageTimestamp(message, fallback: Date())
+        ) {
+            _ = applyMessageRetractionUpdate(retraction, accountJID: accountJID)
+            cacheGroupMembers([senderJID.lowercased()], roomID: roomID, accountJID: accountJID, name: nil)
+            return
+        }
+
+        if let senderJID,
+           let edit = capturedMessageEditUpdate(
+            from: message,
+            accountJID: accountJID,
+            roomID: roomID,
+            senderJID: senderJID,
+            carbonAction: nil,
+            timestamp: Self.messageTimestamp(message, fallback: Date()),
+            fallbackID: nil,
+            connection: connection
+        ) {
+            _ = applyMessageEditUpdate(edit, accountJID: accountJID)
             cacheGroupMembers([senderJID.lowercased()], roomID: roomID, accountJID: accountJID, name: nil)
             return
         }
@@ -2379,6 +2829,9 @@ actor XMPPMartinService: TrixService {
         }
         cacheGroupMembers(knownMembers, roomID: roomID, accountJID: accountJID, name: nil)
         storeTimelineItems([item], accountJID: accountJID, roomID: roomID)
+        if let thread = item.thread {
+            recordThreadReply(thread, accountJID: accountJID, roomID: roomID, replyMessageID: item.id)
+        }
         updateGroupActivity(roomID: roomID, accountJID: accountJID, at: item.timestamp)
     }
 
@@ -2429,6 +2882,64 @@ actor XMPPMartinService: TrixService {
         )
     }
 
+    private func capturedMessageEditUpdate(
+        from message: Message,
+        accountJID: String,
+        roomID: String,
+        senderJID: String?,
+        carbonAction: MessageCarbonsModule.Action?,
+        timestamp: Date,
+        fallbackID: String?,
+        connection: Connection
+    ) -> CapturedMessageEditUpdate? {
+        guard let targetMessageID = Self.messageCorrectionTargetID(from: message) else {
+            return nil
+        }
+        guard message.firstChild(name: "encrypted", xmlns: OMEMOModule.XMLNS) != nil else {
+            return nil
+        }
+
+        let decoded: Message
+        let decodeResult = senderJID
+            .map { connection.omemoStack.module.decode(message: message, from: BareJID($0), serverMsgId: fallbackID) }
+            ?? connection.omemoStack.module.decode(message: message, serverMsgId: fallbackID)
+        switch decodeResult {
+        case .successMessage(let decryptedMessage, _):
+            decoded = decryptedMessage
+        case .successTransportKey, .failure:
+            return nil
+        }
+
+        guard let body = decoded.body?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !body.isEmpty,
+              Self.decodedCallDescriptor(from: body) == nil else {
+            return nil
+        }
+        let content = Self.decodedTimelineContent(from: body)
+        guard content.attachment == nil else {
+            return nil
+        }
+        guard let resolvedSenderJID = Self.resolvedSenderJID(
+            from: decoded,
+            accountJID: accountJID,
+            roomID: roomID,
+            senderJID: senderJID,
+            carbonAction: carbonAction
+        ) else {
+            return nil
+        }
+
+        return CapturedMessageEditUpdate(
+            targetMessageID: targetMessageID,
+            replacementMessageID: Self.timelineMessageID(from: decoded, fallbackID: fallbackID, roomID: roomID),
+            roomID: roomID,
+            senderJID: resolvedSenderJID,
+            body: content.body,
+            mentions: Self.timelineMetadata(from: message, body: content.body).mentions,
+            timestamp: timestamp
+        )
+    }
+
     private func timelineItem(
         from message: Message,
         accountJID: String,
@@ -2475,15 +2986,24 @@ actor XMPPMartinService: TrixService {
         }
 
         let content = Self.decodedTimelineContent(from: body)
+        let messageID = Self.timelineMessageID(from: decoded, fallbackID: fallbackID, roomID: roomID)
+        let metadata = resolvedIncomingTimelineMetadata(
+            Self.timelineMetadata(from: message, body: content.body),
+            roomID: roomID,
+            accountJID: accountJID
+        )
         return TrixTimelineItem(
-            id: decoded.id ?? fallbackID ?? "xmpp-\(UUID().uuidString)",
+            id: messageID,
             roomID: roomID,
             sender: isLocalEcho ? accountJID : resolvedSenderJID,
             timestamp: timestamp,
             body: content.body,
             isLocalEcho: isLocalEcho,
             attachment: content.attachment,
-            deliveryState: isLocalEcho ? .sent : nil
+            deliveryState: isLocalEcho ? .sent : nil,
+            mentions: metadata.mentions,
+            replyTo: metadata.replyTo,
+            thread: metadata.thread
         )
     }
 
@@ -2540,6 +3060,113 @@ actor XMPPMartinService: TrixService {
         timelineHistory[accountKey] = accountHistory
         try? timelineCacheStore.save(updatedItems, accountJID: accountJID, roomID: roomID)
         return updatedItem.reactions
+    }
+
+    @discardableResult
+    private func applyMessageEditUpdate(
+        _ update: CapturedMessageEditUpdate,
+        accountJID: String
+    ) -> TrixTimelineItem? {
+        let accountKey = accountJID.lowercased()
+        let roomKey = update.roomID.lowercased()
+        guard var accountHistory = timelineHistory[accountKey],
+              let existingItems = accountHistory[roomKey] else {
+            return nil
+        }
+
+        let updatedItems = Self.applyingMessageEditUpdate(update, to: existingItems)
+        guard updatedItems != existingItems,
+              let updatedItem = updatedItems.first(where: { $0.id == update.targetMessageID }) else {
+            return nil
+        }
+
+        accountHistory[roomKey] = updatedItems
+        timelineHistory[accountKey] = accountHistory
+        try? timelineCacheStore.save(updatedItems, accountJID: accountJID, roomID: update.roomID)
+        return updatedItem
+    }
+
+    @discardableResult
+    private func applyMessageRetractionUpdate(
+        _ update: CapturedMessageRetractionUpdate,
+        accountJID: String
+    ) -> TrixTimelineItem? {
+        let accountKey = accountJID.lowercased()
+        let roomKey = update.roomID.lowercased()
+        guard var accountHistory = timelineHistory[accountKey],
+              let existingItems = accountHistory[roomKey] else {
+            return nil
+        }
+
+        let updatedItems = Self.applyingMessageRetractionUpdate(update, to: existingItems)
+        guard updatedItems != existingItems,
+              let updatedItem = updatedItems.first(where: { $0.id == update.targetMessageID }) else {
+            return nil
+        }
+
+        accountHistory[roomKey] = updatedItems
+        timelineHistory[accountKey] = accountHistory
+        try? timelineCacheStore.save(updatedItems, accountJID: accountJID, roomID: update.roomID)
+        return updatedItem
+    }
+
+    @discardableResult
+    private func applyReadMarkerUpdate(
+        _ update: CapturedReadMarkerUpdate,
+        accountJID: String
+    ) -> TrixRoomReadMarkerState {
+        let state = TrixRoomReadMarkerState(
+            roomID: update.roomID,
+            displayedMessageID: update.messageID,
+            senderID: update.senderJID,
+            displayedAt: update.timestamp
+        )
+        readMarkersByRoomAndUserID[readMarkerKey(roomID: update.roomID, userID: update.senderJID)] = state
+
+        let accountKey = accountJID.lowercased()
+        let roomKey = update.roomID.lowercased()
+        guard var accountHistory = timelineHistory[accountKey],
+              let existingItems = accountHistory[roomKey] else {
+            return state
+        }
+
+        let updatedItems = Self.applyingReadMarkerUpdate(update, to: existingItems)
+        guard updatedItems != existingItems else {
+            return state
+        }
+
+        accountHistory[roomKey] = updatedItems
+        timelineHistory[accountKey] = accountHistory
+        try? timelineCacheStore.save(updatedItems, accountJID: accountJID, roomID: update.roomID)
+        return state
+    }
+
+    private func refreshReadMarkerStateFromArchive(
+        roomID: String,
+        accountJID: String,
+        connection: Connection
+    ) async throws {
+        var events = try await archiveEvents(peerJID: roomID, connection: connection)
+        if events.isEmpty {
+            events = try await archiveEvents(peerJID: nil, connection: connection).filter {
+                Self.messageMatchesPeer($0.message, peerJID: roomID, accountJID: accountJID)
+            }
+        }
+
+        let markers = events.compactMap { archived in
+            Self.capturedReadMarkerUpdate(
+                from: archived.message,
+                accountJID: accountJID,
+                roomID: roomID,
+                senderJID: nil,
+                carbonAction: nil,
+                timestamp: archived.timestamp
+            )
+        }
+
+        for marker in markers.sorted(by: { $0.timestamp < $1.timestamp }) {
+            _ = applyReadMarkerUpdate(marker, accountJID: accountJID)
+        }
     }
 
     @discardableResult
@@ -2654,6 +3281,71 @@ actor XMPPMartinService: TrixService {
 
     private func timelineItems(accountJID: String, roomID: String) -> [TrixTimelineItem] {
         timelineHistory[accountJID.lowercased()]?[roomID.lowercased()] ?? []
+    }
+
+    private func lastEditableOwnTextMessage(
+        messageID: String,
+        roomID: String,
+        accountJID: String
+    ) -> TrixTimelineItem? {
+        let items = timelineItems(accountJID: accountJID, roomID: roomID)
+        guard let lastEditable = items.last(where: { item in
+            item.sender.caseInsensitiveCompare(accountJID) == .orderedSame
+                && item.attachment == nil
+                && !item.isRetracted
+        }),
+              lastEditable.id == messageID else {
+            return nil
+        }
+
+        return lastEditable
+    }
+
+    private func ownRetractableTextMessage(
+        messageID: String,
+        roomID: String,
+        accountJID: String
+    ) -> TrixTimelineItem? {
+        timelineItems(accountJID: accountJID, roomID: roomID).first { item in
+            item.id == messageID
+                && item.sender.caseInsensitiveCompare(accountJID) == .orderedSame
+                && item.attachment == nil
+                && !item.isRetracted
+        }
+    }
+
+    private func recordThreadReply(
+        _ thread: TrixThreadReference,
+        accountJID: String,
+        roomID: String,
+        replyMessageID: String
+    ) {
+        guard let rootMessageID = thread.rootMessageID ?? thread.parentMessageID,
+              rootMessageID != replyMessageID else {
+            return
+        }
+
+        let accountKey = accountJID.lowercased()
+        let roomKey = roomID.lowercased()
+        guard var accountHistory = timelineHistory[accountKey],
+              var roomTimeline = accountHistory[roomKey],
+              let rootIndex = roomTimeline.firstIndex(where: { $0.id == rootMessageID }) else {
+            return
+        }
+
+        let root = roomTimeline[rootIndex]
+        let rootThread = root.thread ?? TrixThreadReference(
+            threadID: thread.threadID,
+            rootMessageID: rootMessageID
+        )
+        roomTimeline[rootIndex] = root.withThread(rootThread.withReplyCount(rootThread.replyCount + 1))
+        accountHistory[roomKey] = roomTimeline
+        timelineHistory[accountKey] = accountHistory
+        try? timelineCacheStore.save(roomTimeline, accountJID: accountJID, roomID: roomID)
+    }
+
+    private func readMarkerKey(roomID: String, userID: String) -> String {
+        "\(roomID.lowercased())|\(userID.lowercased())"
     }
 
     private func callDescriptorItems(accountJID: String, roomID: String) -> [TrixReceivedCallDescriptor] {
@@ -2819,6 +3511,7 @@ actor XMPPMartinService: TrixService {
     private func sendGroupText(
         _ body: String,
         roomID: String,
+        metadata requestedMetadata: TrixTextMessageSendMetadata,
         session: TrixSession,
         connection: Connection
     ) async throws -> TrixTimelineItem {
@@ -2830,15 +3523,25 @@ actor XMPPMartinService: TrixService {
             session: session,
             connection: connection
         )
+        let metadata = try resolvedSendMetadata(
+            requestedMetadata,
+            body: body,
+            roomID: roomID,
+            accountJID: accountJID,
+            allowedMentionTargets: Set((recipients + [accountJID]).map { $0.lowercased() }),
+            allowThreads: true
+        )
 
         let messageID = "trix-group-\(UUID().uuidString)"
         let message = Message()
         message.id = messageID
+        message.originId = messageID
         message.type = .groupchat
         message.to = JID(roomID)
         message.body = body
 
         let encryptedMessage = try await encodeOMEMOMessage(message, recipientJIDs: recipients, connection: connection)
+        Self.applyTextMetadata(metadata, to: encryptedMessage)
         guard encryptedMessage.body == nil,
               let encrypted = encryptedMessage.firstChild(name: "encrypted", xmlns: OMEMOModule.XMLNS),
               let header = encrypted.firstChild(name: "header"),
@@ -2856,9 +3559,15 @@ actor XMPPMartinService: TrixService {
             body: body,
             isLocalEcho: true,
             attachment: nil,
-            deliveryState: .sent
+            deliveryState: .sent,
+            mentions: metadata.mentions,
+            replyTo: metadata.replyTo,
+            thread: Self.localThreadReference(metadata.thread, messageID: messageID)
         )
         storeTimelineItems([item], accountJID: accountJID, roomID: roomID)
+        if let thread = item.thread {
+            recordThreadReply(thread, accountJID: accountJID, roomID: roomID, replyMessageID: item.id)
+        }
         updateGroupActivity(roomID: roomID, accountJID: accountJID, at: item.timestamp)
         return item
     }
@@ -3234,6 +3943,22 @@ actor XMPPMartinService: TrixService {
             connection.pubSubModule.createNode(
                 at: BareJID(accountJID),
                 node: Self.notificationProfilesNode,
+                with: config
+            ) { result in
+                continuation.resume(with: result.map { _ in () })
+            }
+        }
+    }
+
+    private func createReadMarkersNode(connection: Connection, accountJID: String) async throws {
+        let config = PubSubNodeConfig()
+        config.FORM_TYPE = "http://jabber.org/protocol/pubsub#node_config"
+        config.persistItems = true
+        config.accessModel = .whitelist
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.pubSubModule.createNode(
+                at: BareJID(accountJID),
+                node: Self.readMarkersNode,
                 with: config
             ) { result in
                 continuation.resume(with: result.map { _ in () })
@@ -3840,6 +4565,510 @@ actor XMPPMartinService: TrixService {
         })
     }
 
+    private func resolvedSendMetadata(
+        _ metadata: TrixTextMessageSendMetadata,
+        body: String,
+        roomID: String,
+        accountJID: String,
+        allowedMentionTargets: Set<String>,
+        allowThreads: Bool
+    ) throws -> TrixTextMessageSendMetadata {
+        if metadata.replyTo != nil || metadata.thread != nil {
+            _ = loadCachedTimelineItems(accountJID: accountJID, roomID: roomID)
+        }
+        let roomTimeline = timelineItems(accountJID: accountJID, roomID: roomID)
+        let mentions = try metadata.mentions.map { mention in
+            try resolvedMentionReference(
+                mention,
+                body: body,
+                allowedMentionTargets: allowedMentionTargets
+            )
+        }
+        let replyTo = try metadata.replyTo.map { reply in
+            try resolvedReplyReference(reply, roomID: roomID, roomTimeline: roomTimeline)
+        }
+        let thread = try metadata.thread.map { thread in
+            try resolvedThreadReference(thread, allowThreads: allowThreads, roomTimeline: roomTimeline)
+        }
+
+        return TrixTextMessageSendMetadata(
+            mentions: mentions,
+            replyTo: replyTo,
+            thread: thread
+        )
+    }
+
+    private func resolvedMentionReference(
+        _ mention: TrixMentionReference,
+        body: String,
+        allowedMentionTargets: Set<String>
+    ) throws -> TrixMentionReference {
+        guard mention.range.isValid(in: body) else {
+            throw TrixClientError.invalidMessageReference
+        }
+
+        let targetUserID = try Self.normalizedXMPPJID(mention.targetUserID)
+        guard allowedMentionTargets.contains(targetUserID.lowercased()) else {
+            throw TrixClientError.invalidMentionTarget
+        }
+
+        return TrixMentionReference(
+            targetUserID: targetUserID,
+            displayText: mention.displayText,
+            range: mention.range
+        )
+    }
+
+    private func resolvedReplyReference(
+        _ reply: TrixReplyReference,
+        roomID: String,
+        roomTimeline: [TrixTimelineItem]
+    ) throws -> TrixReplyReference {
+        guard let target = roomTimeline.first(where: { $0.id == reply.targetMessageID }) else {
+            throw TrixClientError.invalidMessageReference
+        }
+
+        return TrixReplyReference(
+            targetMessageID: target.id,
+            targetSenderID: try Self.normalizedXMPPJID(reply.targetSenderID ?? target.sender),
+            targetRoomID: reply.targetRoomID ?? roomID,
+            preview: reply.preview ?? Self.replyPreviewReference(from: target)
+        )
+    }
+
+    private func resolvedThreadReference(
+        _ thread: TrixThreadReference,
+        allowThreads: Bool,
+        roomTimeline: [TrixTimelineItem]
+    ) throws -> TrixThreadReference {
+        guard allowThreads else {
+            throw TrixClientError.messageMetadataUnavailable
+        }
+
+        guard let threadID = Self.trimmedNonEmpty(thread.threadID) else {
+            throw TrixClientError.invalidMessageReference
+        }
+
+        let rootMessageID = Self.trimmedNonEmpty(thread.rootMessageID)
+        let parentMessageID = Self.trimmedNonEmpty(thread.parentMessageID)
+        if let rootMessageID,
+           !roomTimeline.contains(where: { $0.id == rootMessageID }) {
+            throw TrixClientError.invalidMessageReference
+        }
+        if let parentMessageID,
+           !roomTimeline.contains(where: { $0.id == parentMessageID }) {
+            throw TrixClientError.invalidMessageReference
+        }
+
+        return TrixThreadReference(
+            threadID: threadID,
+            rootMessageID: rootMessageID,
+            parentMessageID: parentMessageID,
+            parentThreadID: Self.trimmedNonEmpty(thread.parentThreadID),
+            replyCount: thread.replyCount
+        )
+    }
+
+    private func resolvedIncomingTimelineMetadata(
+        _ metadata: TrixTextMessageSendMetadata,
+        roomID: String,
+        accountJID: String
+    ) -> TrixTextMessageSendMetadata {
+        guard let reply = metadata.replyTo,
+              reply.preview == nil,
+              let target = timelineItems(accountJID: accountJID, roomID: roomID).first(where: { $0.id == reply.targetMessageID }) else {
+            return metadata
+        }
+
+        return TrixTextMessageSendMetadata(
+            mentions: metadata.mentions,
+            replyTo: TrixReplyReference(
+                targetMessageID: reply.targetMessageID,
+                targetSenderID: reply.targetSenderID ?? target.sender,
+                targetRoomID: reply.targetRoomID ?? target.roomID,
+                preview: Self.replyPreviewReference(from: target)
+            ),
+            thread: metadata.thread
+        )
+    }
+
+    private static func applyTextMetadata(_ metadata: TrixTextMessageSendMetadata, to message: Message) {
+        for mention in metadata.mentions {
+            let reference = Element(name: "reference", xmlns: messageReferencesXMLNS)
+            reference.setAttribute("type", value: "mention")
+            reference.setAttribute("uri", value: "xmpp:\(mention.targetUserID)")
+            reference.setAttribute("begin", value: String(mention.range.begin))
+            reference.setAttribute("end", value: String(mention.range.end))
+            message.addChild(reference)
+        }
+
+        if let reply = metadata.replyTo {
+            let replyElement = Element(name: "reply", xmlns: replyXMLNS)
+            replyElement.setAttribute("id", value: reply.targetMessageID)
+            if let targetSenderID = reply.targetSenderID {
+                replyElement.setAttribute("to", value: targetSenderID)
+            }
+            message.addChild(replyElement)
+        }
+
+        if let thread = metadata.thread {
+            let threadElement = Element(name: "thread", cdata: thread.threadID)
+            if let parentThreadID = thread.parentThreadID {
+                threadElement.setAttribute("parent", value: parentThreadID)
+            }
+            message.addChild(threadElement)
+        }
+    }
+
+    private static func applyMessageCorrection(_ targetMessageID: String, to message: Message) {
+        let replace = Element(name: "replace", xmlns: messageCorrectionXMLNS)
+        replace.setAttribute("id", value: targetMessageID)
+        message.addChild(replace)
+        message.addChild(Element(name: "store", xmlns: "urn:xmpp:hints"))
+    }
+
+    private static func applyMessageRetraction(_ targetMessageID: String, to message: Message) {
+        let applyTo = Element(name: "apply-to", xmlns: fasteningXMLNS)
+        applyTo.setAttribute("id", value: targetMessageID)
+        applyTo.addChild(Element(name: "retract", xmlns: messageRetractionXMLNS))
+        message.addChild(applyTo)
+    }
+
+    private static func timelineMetadata(from message: Message, body: String) -> TrixTextMessageSendMetadata {
+        TrixTextMessageSendMetadata(
+            mentions: mentionReferences(from: message, body: body),
+            replyTo: replyReference(from: message),
+            thread: threadReference(from: message)
+        )
+    }
+
+    private static func mentionReferences(from message: Message, body: String) -> [TrixMentionReference] {
+        message
+            .filterChildren(name: "reference", xmlns: messageReferencesXMLNS)
+            .compactMap { reference in
+                guard reference.getAttribute("type") == "mention",
+                      let uri = reference.getAttribute("uri"),
+                      let targetUserID = userIDFromXMPPURI(uri),
+                      let beginValue = reference.getAttribute("begin"),
+                      let endValue = reference.getAttribute("end"),
+                      let begin = Int(beginValue),
+                      let end = Int(endValue),
+                      begin >= 0,
+                      end > begin,
+                      end <= body.unicodeScalars.count else {
+                    return nil
+                }
+
+                return TrixMentionReference(
+                    targetUserID: targetUserID,
+                    displayText: unicodeScalarSubstring(body, begin: begin, end: end),
+                    range: TrixTextReferenceRange(begin: begin, end: end)
+                )
+            }
+    }
+
+    private static func replyReference(from message: Message) -> TrixReplyReference? {
+        guard let reply = message.firstChild(name: "reply", xmlns: replyXMLNS),
+              let targetMessageID = trimmedNonEmpty(reply.getAttribute("id")) else {
+            return nil
+        }
+
+        let targetSenderID = reply
+            .getAttribute("to")
+            .flatMap { JID($0)?.bareJid.stringValue }
+        return TrixReplyReference(
+            targetMessageID: targetMessageID,
+            targetSenderID: targetSenderID
+        )
+    }
+
+    private static func threadReference(from message: Message) -> TrixThreadReference? {
+        guard let thread = message.firstChild(name: "thread", xmlns: nil),
+              let threadID = trimmedNonEmpty(thread.value) else {
+            return nil
+        }
+
+        return TrixThreadReference(
+            threadID: threadID,
+            parentThreadID: trimmedNonEmpty(thread.getAttribute("parent"))
+        )
+    }
+
+    private static func capturedReadMarkerUpdate(
+        from message: Message,
+        accountJID: String,
+        roomID: String,
+        senderJID: String?,
+        carbonAction: MessageCarbonsModule.Action?,
+        timestamp: Date
+    ) -> CapturedReadMarkerUpdate? {
+        guard let displayed = message.firstChild(name: "displayed", xmlns: chatMarkersXMLNS),
+              let targetMessageID = trimmedNonEmpty(displayed.getAttribute("id")),
+              let resolvedSenderJID = resolvedSenderJID(
+                from: message,
+                accountJID: accountJID,
+                roomID: roomID,
+                senderJID: senderJID,
+                carbonAction: carbonAction
+              ) else {
+            return nil
+        }
+
+        return CapturedReadMarkerUpdate(
+            messageID: targetMessageID,
+            roomID: roomID,
+            senderJID: resolvedSenderJID,
+            timestamp: timestamp
+        )
+    }
+
+    private static func capturedMessageRetractionUpdate(
+        from message: Message,
+        accountJID: String,
+        roomID: String,
+        senderJID: String?,
+        carbonAction: MessageCarbonsModule.Action?,
+        timestamp: Date
+    ) -> CapturedMessageRetractionUpdate? {
+        guard let targetMessageID = messageRetractionTargetID(from: message),
+              let resolvedSenderJID = resolvedSenderJID(
+                from: message,
+                accountJID: accountJID,
+                roomID: roomID,
+                senderJID: senderJID,
+                carbonAction: carbonAction
+              ) else {
+            return nil
+        }
+
+        return CapturedMessageRetractionUpdate(
+            targetMessageID: targetMessageID,
+            retractionMessageID: message.id,
+            roomID: roomID,
+            senderJID: resolvedSenderJID,
+            timestamp: timestamp
+        )
+    }
+
+    private static func applyingMessageEditUpdate(
+        _ update: CapturedMessageEditUpdate,
+        to items: [TrixTimelineItem]
+    ) -> [TrixTimelineItem] {
+        guard let itemIndex = items.firstIndex(where: { $0.id == update.targetMessageID }) else {
+            return items
+        }
+
+        let item = items[itemIndex]
+        guard item.sender.caseInsensitiveCompare(update.senderJID) == .orderedSame,
+              item.attachment == nil,
+              !item.isRetracted else {
+            return items
+        }
+
+        var updatedItems = items
+        updatedItems[itemIndex] = TrixTimelineItem(
+            id: item.id,
+            roomID: item.roomID,
+            sender: item.sender,
+            timestamp: item.timestamp,
+            body: update.body,
+            isLocalEcho: item.isLocalEcho,
+            attachment: item.attachment,
+            deliveryState: item.deliveryState,
+            reactions: item.reactions,
+            mentions: update.mentions,
+            replyTo: item.replyTo,
+            thread: item.thread,
+            editState: TrixTimelineEditState(
+                editedAt: update.timestamp,
+                editedBy: update.senderJID,
+                replacementMessageID: update.replacementMessageID
+            ),
+            retractionState: item.retractionState,
+            readState: item.readState
+        )
+        return updatedItems
+    }
+
+    private static func applyingMessageRetractionUpdate(
+        _ update: CapturedMessageRetractionUpdate,
+        to items: [TrixTimelineItem]
+    ) -> [TrixTimelineItem] {
+        guard let itemIndex = items.firstIndex(where: { $0.id == update.targetMessageID }) else {
+            return items
+        }
+
+        let item = items[itemIndex]
+        guard item.sender.caseInsensitiveCompare(update.senderJID) == .orderedSame,
+              item.attachment == nil,
+              !item.isRetracted else {
+            return items
+        }
+
+        var updatedItems = items
+        updatedItems[itemIndex] = item.withRetractionState(
+            TrixTimelineRetractionState(
+                retractedAt: update.timestamp,
+                retractedBy: update.senderJID
+            )
+        )
+        return updatedItems
+    }
+
+    private static func applyingReadMarkerUpdate(
+        _ update: CapturedReadMarkerUpdate,
+        to items: [TrixTimelineItem]
+    ) -> [TrixTimelineItem] {
+        guard let itemIndex = items.firstIndex(where: { $0.id == update.messageID }) else {
+            return items
+        }
+
+        let receipt = TrixReadMarkerReceipt(
+            messageID: update.messageID,
+            senderID: update.senderJID,
+            displayedAt: update.timestamp
+        )
+        var updatedItems = items
+        let item = updatedItems[itemIndex]
+        updatedItems[itemIndex] = item.withReadState(item.readState.withDisplayedReceipt(receipt))
+        return updatedItems
+    }
+
+    private static func displayedMarkerMessage(
+        roomID: String,
+        messageID: String,
+        isGroup: Bool
+    ) -> Message {
+        let message = Message()
+        message.id = "trix-displayed-\(UUID().uuidString)"
+        message.type = isGroup ? .groupchat : .chat
+        message.to = JID(roomID)
+        let displayed = Element(name: "displayed", xmlns: chatMarkersXMLNS)
+        displayed.setAttribute("id", value: messageID)
+        message.addChild(displayed)
+        message.addChild(Element(name: "store", xmlns: "urn:xmpp:hints"))
+        return message
+    }
+
+    private static func timelineMessageID(from message: Message, fallbackID: String?, roomID: String) -> String {
+        if let originID = trimmedNonEmpty(message.originId) {
+            return originID
+        }
+        if let id = trimmedNonEmpty(message.id) {
+            return id
+        }
+        if let stanzaID = message.stanzaId?[BareJID(roomID)] {
+            return stanzaID
+        }
+        if let stanzaID = message.stanzaId?.values.first {
+            return stanzaID
+        }
+        if let fallbackID = trimmedNonEmpty(fallbackID) {
+            return fallbackID
+        }
+        return "xmpp-\(UUID().uuidString)"
+    }
+
+    private static func localThreadReference(
+        _ thread: TrixThreadReference?,
+        messageID: String
+    ) -> TrixThreadReference? {
+        guard let thread else {
+            return nil
+        }
+        if thread.rootMessageID == nil && thread.parentMessageID == nil {
+            return TrixThreadReference(
+                threadID: thread.threadID,
+                rootMessageID: messageID,
+                parentThreadID: thread.parentThreadID,
+                replyCount: thread.replyCount
+            )
+        }
+        return thread
+    }
+
+    private static func messageCorrectionTargetID(from message: Message) -> String? {
+        return message
+            .firstChild(name: "replace", xmlns: messageCorrectionXMLNS)
+            .flatMap { trimmedNonEmpty($0.getAttribute("id")) }
+    }
+
+    private static func messageRetractionTargetID(from message: Message) -> String? {
+        if let applyTo = message.firstChild(name: "apply-to", xmlns: fasteningXMLNS),
+           let target = trimmedNonEmpty(applyTo.getAttribute("id")),
+           (applyTo.firstChild(name: "retract", xmlns: messageRetractionXMLNS) != nil
+            || applyTo.firstChild(name: "retract", xmlns: alternateMessageRetractionXMLNS) != nil) {
+            return target
+        }
+        if let retract = message.firstChild(name: "retract", xmlns: messageRetractionXMLNS)
+            ?? message.firstChild(name: "retract", xmlns: alternateMessageRetractionXMLNS),
+           let target = trimmedNonEmpty(retract.getAttribute("id")) {
+            return target
+        }
+        return nil
+    }
+
+    private static func unicodeScalarSubstring(_ value: String, begin: Int, end: Int) -> String? {
+        guard begin >= 0,
+              end > begin,
+              end <= value.unicodeScalars.count else {
+            return nil
+        }
+
+        let lowerScalar = value.unicodeScalars.index(value.unicodeScalars.startIndex, offsetBy: begin)
+        let upperScalar = value.unicodeScalars.index(value.unicodeScalars.startIndex, offsetBy: end)
+        guard let lower = String.Index(lowerScalar, within: value),
+              let upper = String.Index(upperScalar, within: value) else {
+            return nil
+        }
+
+        return String(value[lower..<upper])
+    }
+
+    private static func resolvedSenderJID(
+        from message: Message,
+        accountJID: String,
+        roomID: String,
+        senderJID: String?,
+        carbonAction: MessageCarbonsModule.Action?
+    ) -> String? {
+        if let senderJID {
+            return senderJID
+        }
+        if case .sent? = carbonAction {
+            return accountJID
+        }
+        if let from = message.from?.bareJid.stringValue,
+           from.lowercased() == accountJID.lowercased(),
+           let to = message.to?.bareJid.stringValue,
+           to.lowercased() == roomID.lowercased() {
+            return accountJID
+        }
+        return message.from?.bareJid.stringValue
+    }
+
+    private static func userIDFromXMPPURI(_ uri: String) -> String? {
+        guard uri.lowercased().hasPrefix("xmpp:") else {
+            return nil
+        }
+        let raw = String(uri.dropFirst(5)).split(separator: "?", maxSplits: 1).first.map(String.init) ?? ""
+        let decoded = raw.removingPercentEncoding ?? raw
+        return JID(decoded)?.bareJid.stringValue
+    }
+
+    private static func replyPreviewReference(from item: TrixTimelineItem) -> TrixReplyPreview {
+        if item.isRetracted {
+            return TrixReplyPreview(senderID: item.sender, isUnavailable: true)
+        }
+
+        return TrixReplyPreview(
+            senderID: item.sender,
+            body: item.attachment == nil ? item.body : nil,
+            attachmentFilename: item.attachment?.filename,
+            isUnavailable: false
+        )
+    }
+
     private static func capturedMUCInvitation(
         from message: Message,
         receivedAt: Date
@@ -3999,6 +5228,59 @@ actor XMPPMartinService: TrixService {
             profilesByRoomID: profilesByRoomID,
             updatedAt: updatedAt
         )
+    }
+
+    private static func readMarkersElement(from states: [TrixRoomReadMarkerState]) -> Element {
+        let element = Element(name: "read-markers", xmlns: readMarkersNode)
+        element.setAttribute("version", value: "1")
+        element.setAttribute("updated-at", value: ISO8601DateFormatter().string(from: Date()))
+
+        for state in states.sorted(by: { $0.roomID < $1.roomID }) {
+            let room = Element(name: "room")
+            room.setAttribute("id", value: state.roomID)
+            room.setAttribute("displayed-message-id", value: state.displayedMessageID)
+            room.setAttribute("sender", value: state.senderID)
+            room.setAttribute("displayed-at", value: ISO8601DateFormatter().string(from: state.displayedAt))
+            element.addChild(room)
+        }
+
+        return element
+    }
+
+    private static func readMarkerStates(
+        from element: Element,
+        accountJID: String
+    ) -> [String: TrixRoomReadMarkerState] {
+        guard element.name == "read-markers",
+              element.xmlns == readMarkersNode else {
+            return [:]
+        }
+
+        var states: [String: TrixRoomReadMarkerState] = [:]
+        element.forEachChild { child in
+            guard child.name == "room",
+                  let rawRoomID = child.getAttribute("id"),
+                  let roomID = try? normalizedRoomID(rawRoomID),
+                  let displayedMessageID = trimmedNonEmpty(child.getAttribute("displayed-message-id")) else {
+                return
+            }
+
+            let senderID = child
+                .getAttribute("sender")
+                .flatMap { try? normalizedXMPPJID($0) } ?? accountJID
+            let displayedAt = child
+                .getAttribute("displayed-at")
+                .flatMap { ISO8601DateFormatter().date(from: $0) } ?? Date.distantPast
+
+            states[roomID.lowercased()] = TrixRoomReadMarkerState(
+                roomID: roomID,
+                displayedMessageID: displayedMessageID,
+                senderID: senderID,
+                displayedAt: displayedAt
+            )
+        }
+
+        return states
     }
 
     private static func isMUCJID(_ roomID: String) -> Bool {
@@ -4239,9 +5521,10 @@ actor XMPPMartinService: TrixService {
                         item.deliveryState
                     )
                 )
-                byID[item.id] = mergedItem.withReactions(
+                let mergedWithReactions = mergedItem.withReactions(
                     item.reactions.isEmpty ? existingItem.reactions : item.reactions
                 )
+                byID[item.id] = mergedTimelineMetadata(mergedWithReactions, existingItem: existingItem)
             } else {
                 byID[item.id] = item
             }
@@ -4254,6 +5537,29 @@ actor XMPPMartinService: TrixService {
 
             return first.id < second.id
         }
+    }
+
+    private static func mergedTimelineMetadata(
+        _ item: TrixTimelineItem,
+        existingItem: TrixTimelineItem
+    ) -> TrixTimelineItem {
+        TrixTimelineItem(
+            id: item.id,
+            roomID: item.roomID,
+            sender: item.sender,
+            timestamp: item.timestamp,
+            body: item.body,
+            isLocalEcho: item.isLocalEcho,
+            attachment: item.attachment,
+            deliveryState: item.deliveryState,
+            reactions: item.reactions,
+            mentions: item.mentions.isEmpty ? existingItem.mentions : item.mentions,
+            replyTo: item.replyTo ?? existingItem.replyTo,
+            thread: item.thread ?? existingItem.thread,
+            editState: item.editState ?? existingItem.editState,
+            retractionState: item.retractionState ?? existingItem.retractionState,
+            readState: item.readState == .empty ? existingItem.readState : item.readState
+        )
     }
 
     private static func mergedCallDescriptors(
@@ -4469,6 +5775,10 @@ actor XMPPMartinService: TrixService {
         }
 
         return trimmed
+    }
+
+    private static func trimmedNonEmpty(_ value: String?) -> String? {
+        nonEmpty(value)
     }
 
     private static func addNonEmptyChild(name: String, value: String?, to parent: Element) {

@@ -33,6 +33,26 @@ Even with OMEMO, the server can still observe metadata, including:
 - MUC room membership.
 - Message timing and approximate sizes.
 - XEP-0444 reaction metadata, including the reacted-to message id and emoji.
+- XEP-0372 mention metadata, including mentioned target JIDs or `xmpp:` URIs
+  and begin/end reference offsets. The mentioned text itself must remain inside
+  the OMEMO-encrypted body.
+- XEP-0461 reply metadata, including reply target message ids and target JIDs.
+  Quote-preview text must be resolved locally after decrypt and must not be sent
+  as plaintext stanza content.
+- XEP-0308 edit and XEP-0424 retraction metadata, including target message ids,
+  edit/retraction event ids, and event timing. Edited replacement text remains
+  encrypted; retraction is a tombstone signal and does not erase server archives
+  or already-delivered device copies.
+- XEP-0201 thread metadata, including thread ids, parent/continuation
+  relationships, and timing. Thread metadata must not include plaintext message
+  bodies or snippets.
+- XEP-0333 chat/read marker metadata, including target message ids and
+  displayed/read timing. The server and participants may infer reading behavior
+  even though no decrypted message body is present.
+- Trix read-cursor metadata stored in the account-private PubSub node, including
+  room ids, displayed message ids, sender ids, and displayed timestamps. This is
+  server-visible cursor state only; decrypted message bodies and snippets must
+  stay out of the cursor payload.
 - IP addresses and user agents.
 - Media upload/download timing and sizes.
 - Push gateway interactions if push is enabled.
@@ -120,6 +140,18 @@ The macOS `group-e2ee` live smoke passed with three accounts on 2026-05-09:
 private MUC create, invite/join, owner/peer/third member-list visibility,
 explicit device trust, encrypted group send, and decrypt on both peers completed
 without printing message bodies or OMEMO secrets.
+
+Conversation-reference XEPs are partially implemented in this checkout. The
+scrubbed `dm-reply`, `dm-edit-retract`, `group-mention`, `group-thread`, and
+`read-markers` live-smoke entrypoints exercise the shared metadata request APIs
+and Martin send/parse surfaces without printing message bodies or secrets. The
+credentialed live smoke on 2026-05-19 validated DM reply metadata, DM edit and
+retraction metadata, group mention metadata, group thread metadata, and
+same-account read convergence through the private Trix read-cursor node.
+Participant-visible XEP-0333 marker observation remains best effort because the
+current ejabberd/Martin path did not expose the displayed marker to the peer
+during the live smoke. Remaining proof is restart/reload validation and stable
+group target ids across participants and reloads.
 
 ## Attachment Risk
 

@@ -89,7 +89,8 @@ enum TrixRoomNotificationPlanner {
         newerThan previousActivityAt: Date?
     ) -> Bool {
         let tokens = mentionTokens(for: accountID)
-        guard !tokens.isEmpty else {
+        let accountKeys = accountMentionKeys(for: accountID)
+        guard !tokens.isEmpty || !accountKeys.isEmpty else {
             return false
         }
 
@@ -97,6 +98,12 @@ enum TrixRoomNotificationPlanner {
             guard !item.isLocalEcho,
                   previousActivityAt.map({ item.timestamp > $0 }) ?? true else {
                 return false
+            }
+
+            if !item.mentions.isEmpty {
+                return item.mentions.contains { mention in
+                    accountKeys.contains(normalizedUserKey(mention.targetUserID))
+                }
             }
 
             let body = item.body.lowercased()
@@ -129,5 +136,47 @@ enum TrixRoomNotificationPlanner {
         }
 
         return [normalized, "@\(localpart):\(server)", "@\(localpart)"]
+    }
+
+    private static func accountMentionKeys(for accountID: String) -> Set<String> {
+        let normalized = accountID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else {
+            return []
+        }
+
+        var keys: Set<String> = [normalizedUserKey(normalized)]
+        if normalized.hasPrefix("@"),
+           let separator = normalized.firstIndex(of: ":") {
+            let localpart = String(normalized[normalized.index(after: normalized.startIndex)..<separator])
+            let server = String(normalized[normalized.index(after: separator)...])
+            keys.insert("\(localpart)@\(server)")
+        } else {
+            let parts = normalized.split(separator: "@", omittingEmptySubsequences: false)
+            if parts.count == 2,
+               let localpart = parts.first,
+               let server = parts.last,
+               !localpart.isEmpty,
+               !server.isEmpty {
+                keys.insert("@\(localpart):\(server)")
+            }
+        }
+
+        return keys
+    }
+
+    private static func normalizedUserKey(_ userID: String) -> String {
+        let trimmed = userID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard trimmed.hasPrefix("@"),
+              let separator = trimmed.firstIndex(of: ":") else {
+            return trimmed
+        }
+
+        let localpart = trimmed[trimmed.index(after: trimmed.startIndex)..<separator]
+        let server = trimmed[trimmed.index(after: separator)...]
+        guard !localpart.isEmpty, !server.isEmpty else {
+            return trimmed
+        }
+
+        return "\(localpart)@\(server)"
     }
 }

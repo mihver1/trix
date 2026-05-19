@@ -23,7 +23,11 @@ still spike gates.
 | Text send/receive | XMPP message stanzas wrapped by OMEMO | Timeline composer, pending/sent/failed states | DM/group text round trips, archive contains no plaintext body |
 | Attachments and media | HTTP Upload XEP-0363 plus encrypted references/media after Apple stack spike | iOS file/photo picker; macOS file importer; preview/open/share | Image and generic file round trip, metadata exposure documented, no decrypted bytes in logs |
 | Reactions | XEP-0444 reactions if selected stack supports it; otherwise explicit deferral | iOS long-press actions; macOS context menu; aggregate chips | Add/remove reaction in encrypted DM/group, survive restart |
-| Delivery/read/unread | XEP-0184 receipts, chat markers, local unread model | Room-list badges, timeline outgoing decorations, mark-read behavior | Open room clears unread, peer sees receipt where supported, restart coherence |
+| Reply/quote preview | XEP-0461 reply metadata; reply target ids/JIDs are server-visible while quote preview text stays encrypted/local | Timeline item reply metadata, composer reply banner, compact quote preview | `dm-reply` smoke exercises the shared request API and Martin metadata path; live proof still needs DM reply delivery plus MAM/restart reload |
+| Edit/retract | XEP-0308 last-message correction and XEP-0424 retraction; target ids and event timing are server-visible, replacement text stays OMEMO-encrypted | Own-message edit/delete actions, edited marker, tombstone state | `dm-edit-retract` smoke exercises edit/retract APIs; live proof still needs peer delivery plus reload, and group coverage needs stable group target ids |
+| Mentions | XEP-0372 references; mention target JIDs/`xmpp:` URIs and begin/end offsets are server-visible, mention context stays encrypted | Mention picker from known room members, timeline highlighting, generic local mention notification after decrypt | `group-mention` smoke exercises mention metadata; live proof must validate known-member-only insertion, stable group target ids, and no plaintext APNs context |
+| Threaded replies | XEP-0201 thread elements; thread ids and parent relationships are server-visible, message bodies/snippets stay encrypted | Group "reply in thread" action, thread summary/detail or filtered view | `group-thread` smoke exercises thread metadata; live proof still needs peer/third delivery, MAM/restart reload, and stable group target ids |
+| Delivery/read/unread | XEP-0184 receipts, XEP-0333 chat markers, local unread model, and a private Trix read cursor for same-account convergence when marker archive/carbon delivery is unreliable | Room-list badges, timeline outgoing decorations, explicit mark-read behavior | Delivery receipt smoke exists; `read-markers` live smoke validates XEP-0333 send plus same-account cursor convergence; peer-visible marker observation remains best effort |
 | Typing/composing | Chat State Notifications XEP-0085 | Debounced composer updates, compact incoming indicator | Typing in encrypted DM/group sends composing/paused and clears on leave |
 | Notifications | XEP-0357 or server-specific push integration plus Trix APNs gateway | APNs registration, push handling, badge sync | Background push with payload/log audit confirming no decrypted body |
 | Chat lifecycle | MUC leave/destroy where allowed, local hide/forget, XEP-0424 for message retraction only | Leave group, hide/remove DM with accurate wording | Leave from both platforms, wording does not promise impossible remote deletion |
@@ -42,3 +46,9 @@ still spike gates.
 - HTTP File Upload: XEP-0363.
 - Push Notifications: XEP-0357.
 - Message Reactions: XEP-0444.
+- Message Replies: XEP-0461.
+- Last Message Correction: XEP-0308.
+- Message Retraction: XEP-0424.
+- References/Mentions: XEP-0372.
+- Message Threads: XEP-0201.
+- Chat Markers: XEP-0333.

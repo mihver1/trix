@@ -449,7 +449,7 @@ final class TrixAppModel: ObservableObject {
 
         let previousRooms = roomListViewModel.rooms
         await refreshForeground(
-            markSelectedRoomRead: applicationIsActive,
+            markSelectedRoomRead: false,
             reloadSelectedTimeline: applicationIsActive
         )
 
@@ -483,8 +483,9 @@ final class TrixAppModel: ObservableObject {
         await roomListViewModel.reload(
             session: session,
             service: trixService,
-            selectedRoomID: selectedRoomID
+            selectedRoomID: nil
         )
+        await applyReadMarkerStatesForLoadedRooms(session: session)
         lastRoomRefreshAt = Date()
         refreshSelectedRoomSnapshot()
         reconcileSelectedRoom()
@@ -520,7 +521,7 @@ final class TrixAppModel: ObservableObject {
     }
 
     func refreshForeground(
-        markSelectedRoomRead: Bool = true,
+        markSelectedRoomRead: Bool = false,
         reloadSelectedTimeline: Bool = true
     ) async {
         guard let session, !isLoggingOut else {
@@ -533,6 +534,7 @@ final class TrixAppModel: ObservableObject {
             selectedRoomID: markSelectedRoomRead ? selectedRoomID : nil,
             showsLoading: false
         )
+        await applyReadMarkerStatesForLoadedRooms(session: session)
         lastRoomRefreshAt = Date()
         refreshSelectedRoomSnapshot()
         reconcileSelectedRoom()
@@ -567,8 +569,10 @@ final class TrixAppModel: ObservableObject {
 
     func selectRoom(_ room: TrixRoomSummary) async {
         prepareRoomSelection(room)
+        await refreshMentionCandidates(for: room)
         await loadTimeline(roomID: room.id)
         roomListViewModel.markRead(roomID: room.id)
+        await markLatestVisibleItemDisplayed(roomID: room.id)
     }
 
     func prepareRoomSelection(_ room: TrixRoomSummary) {
@@ -589,18 +593,31 @@ final class TrixAppModel: ObservableObject {
         await timelineViewModel.load(roomID: roomID, session: session, service: trixService)
     }
 
-    func send(text: String) async {
+    @discardableResult
+    func send(
+        text: String,
+        metadata: TrixTextMessageSendMetadata? = nil
+    ) async -> Bool {
         guard let session, let selectedRoomID else {
-            return
+            return false
+        }
+
+        if let room = selectedRoom {
+            await refreshMentionCandidates(for: room)
         }
 
         let roomID = selectedRoomID
-        await timelineViewModel.send(
+        let sentItem = await timelineViewModel.send(
             text: text,
             roomID: roomID,
             session: session,
-            service: trixService
+            service: trixService,
+            metadata: metadata
         )
+        guard sentItem != nil else {
+            return false
+        }
+
         try? await trixService.sendTypingState(.paused, roomID: roomID, session: session)
         await roomListViewModel.reload(
             session: session,
@@ -610,6 +627,149 @@ final class TrixAppModel: ObservableObject {
         )
         lastRoomRefreshAt = Date()
         refreshSelectedRoomSnapshot()
+        return true
+    }
+
+    @discardableResult
+    func editTextMessage(
+        messageID: String,
+        newText: String
+    ) async -> Bool {
+        guard let session, let selectedRoomID else {
+            return false
+        }
+
+        let didEdit = await timelineViewModel.editText(
+            messageID: messageID,
+            newText: newText,
+            roomID: selectedRoomID,
+            session: session,
+            service: trixService
+        )
+        guard didEdit else {
+            return false
+        }
+
+        await roomListViewModel.reload(
+            session: session,
+            service: trixService,
+            selectedRoomID: selectedRoomID,
+            showsLoading: false
+        )
+        lastRoomRefreshAt = Date()
+        refreshSelectedRoomSnapshot()
+        return true
+    }
+
+    @discardableResult
+    func retractMessage(_ item: TrixTimelineItem) async -> Bool {
+        guard let session, let selectedRoomID else {
+            return false
+        }
+
+        let didRetract = await timelineViewModel.retractMessage(
+            messageID: item.id,
+            roomID: selectedRoomID,
+            session: session,
+            service: trixService
+        )
+        guard didRetract else {
+            return false
+        }
+
+        await roomListViewModel.reload(
+            session: session,
+            service: trixService,
+            selectedRoomID: selectedRoomID,
+            showsLoading: false
+        )
+        lastRoomRefreshAt = Date()
+        refreshSelectedRoomSnapshot()
+        return true
+    }
+
+    func markRoomDisplayed(roomID: String, messageID: String) async {
+        guard let session else {
+            return
+        }
+
+        let marker = await timelineViewModel.markRoomDisplayed(
+            roomID: roomID,
+            messageID: messageID,
+            session: session,
+            service: trixService
+        )
+        if let marker {
+            roomListViewModel.applyReadMarker(marker)
+            refreshSelectedRoomSnapshot()
+        }
+    }
+
+    func markSelectedRoomDisplayed() async {
+        guard let selectedRoomID else {
+            return
+        }
+
+        await markLatestVisibleItemDisplayed(roomID: selectedRoomID)
+    }
+
+    func beginReply(to item: TrixTimelineItem) {
+        timelineViewModel.beginReply(to: item)
+    }
+
+    func cancelReply() {
+        timelineViewModel.clearReplyTarget()
+    }
+
+    func beginThread(from item: TrixTimelineItem) {
+        timelineViewModel.beginThread(from: item)
+    }
+
+    func continueThread(_ thread: TrixThreadReference) {
+        timelineViewModel.continueThread(thread)
+    }
+
+    func cancelThread() {
+        timelineViewModel.clearThreadTarget()
+    }
+
+    @discardableResult
+    func beginEditing(_ item: TrixTimelineItem) -> Bool {
+        guard let session else {
+            return false
+        }
+
+        return timelineViewModel.beginEditing(item, currentUserID: session.userID)
+    }
+
+    func cancelEditing() {
+        timelineViewModel.cancelEditing()
+    }
+
+    func refreshMentionCandidates(for room: TrixRoomSummary) async {
+        guard let session else {
+            timelineViewModel.setMentionCandidates([], for: room.id)
+            return
+        }
+
+        let candidates: [TrixMentionCandidate]
+        if room.kind == .direct {
+            candidates = Self.mentionCandidates(
+                from: [
+                    TrixRoomMember(
+                        userID: room.id,
+                        displayName: room.name,
+                        membership: .joined
+                    ),
+                ],
+                currentUserID: session.userID
+            )
+        } else {
+            let members = (try? await trixService.members(roomID: room.id, session: session)) ?? []
+            candidates = Self.mentionCandidates(from: members, currentUserID: session.userID)
+        }
+
+        timelineViewModel.setMentionCandidates(candidates, for: room.id)
     }
 
     func setReaction(_ emoji: String, for item: TrixTimelineItem) async {
@@ -1306,6 +1466,53 @@ final class TrixAppModel: ObservableObject {
             selectedRoomSnapshot = roomListViewModel.rooms.first
             timelineViewModel.clear()
         }
+    }
+
+    private func markLatestVisibleItemDisplayed(roomID: String) async {
+        guard let session else {
+            return
+        }
+
+        let marker = await timelineViewModel.markLatestVisibleItemDisplayed(
+            roomID: roomID,
+            session: session,
+            service: trixService
+        )
+        roomListViewModel.markRead(roomID: roomID)
+        if let marker {
+            roomListViewModel.applyReadMarker(marker)
+        }
+        refreshSelectedRoomSnapshot()
+    }
+
+    private func applyReadMarkerStatesForLoadedRooms(session: TrixSession) async {
+        var markers: [TrixRoomReadMarkerState] = []
+        for room in roomListViewModel.rooms {
+            if let marker = try? await trixService.readMarkerState(roomID: room.id, session: session) {
+                markers.append(marker)
+            }
+        }
+
+        guard !markers.isEmpty else {
+            return
+        }
+
+        roomListViewModel.applyReadMarkers(markers)
+    }
+
+    private static func mentionCandidates(
+        from members: [TrixRoomMember],
+        currentUserID: String
+    ) -> [TrixMentionCandidate] {
+        let currentUserKey = normalizedUserKey(currentUserID)
+        return members
+            .filter { member in
+                member.membership.isActive &&
+                    normalizedUserKey(member.userID) != currentUserKey
+            }
+            .map { member in
+                TrixMentionCandidate(userID: member.userID, displayName: member.title)
+            }
     }
 
     private func reconcileSelectedRoom() {
