@@ -405,12 +405,15 @@ The target protocol-neutral boundary is:
   fingerprint presentation, and hidden technical fingerprint disclosure.
 - `TrixPushRegistrationService`: APNs token registration and unregister.
 - `TrixCallControlService`: call-control authorization, LiveKit token requests,
-  and TURN credentials.
+  DM callee joins by opaque call ID, and TURN credentials.
 - `TrixCallDescriptorService`: OMEMO-encrypted call invite, answer, end, voice
   room state, and media-key rotation descriptors. Sends use the same recipient
   set and trust gates as encrypted chat sends.
 - `TrixMediaCallService`: LiveKit media connection lifecycle with client-side
   media E2EE required.
+- `TrixCallViewModel`: shared call UI state for the DM video button, incoming
+  accept/decline/end actions, and group voice-room join/leave participant state.
+  Group rooms publish voice-room state only; they do not surface ringing UI.
 - `TrixControlPlaneService`: account bootstrap, profile, group policy, and admin
   operations.
 

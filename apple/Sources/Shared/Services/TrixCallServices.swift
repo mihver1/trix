@@ -6,12 +6,14 @@ import LiveKit
 
 struct HTTPCallControlService: TrixCallControlService {
     private let directCallURL: URL
+    private let directCallJoinURL: URL
     private let groupVoiceURL: URL
     private let endCallURL: URL
     private let turnURL: URL
 
     init(baseURL: URL = TrixClientConfiguration.callControlAPIBaseURL) {
         self.directCallURL = baseURL.appending(path: "v1/calls/dm-video")
+        self.directCallJoinURL = baseURL.appending(path: "v1/calls/dm-video/join")
         self.groupVoiceURL = baseURL.appending(path: "v1/calls/group-voice/join")
         self.endCallURL = baseURL.appending(path: "v1/calls/end")
         self.turnURL = baseURL.appending(path: "v1/turn/credentials")
@@ -24,6 +26,17 @@ struct HTTPCallControlService: TrixCallControlService {
         try await sendCallRequest(
             url: directCallURL,
             payload: DirectCallPayload(peerUserID: peerUserID),
+            session: session
+        )
+    }
+
+    func joinDirectVideoCall(
+        callID: String,
+        session: TrixSession
+    ) async throws -> TrixCallJoinAuthorization {
+        try await sendCallRequest(
+            url: directCallJoinURL,
+            payload: DirectCallJoinPayload(callID: callID),
             session: session
         )
     }
@@ -241,6 +254,14 @@ private struct DirectCallPayload: Encodable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case peerUserID = "peer_user_id"
+    }
+}
+
+private struct DirectCallJoinPayload: Encodable, Sendable {
+    let callID: String
+
+    private enum CodingKeys: String, CodingKey {
+        case callID = "call_id"
     }
 }
 

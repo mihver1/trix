@@ -141,6 +141,10 @@ protocol TrixCallControlService: Sendable {
         peerUserID: String,
         session: TrixSession
     ) async throws -> TrixCallJoinAuthorization
+    func joinDirectVideoCall(
+        callID: String,
+        session: TrixSession
+    ) async throws -> TrixCallJoinAuthorization
     func joinGroupVoiceRoom(
         roomID: String,
         session: TrixSession

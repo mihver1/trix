@@ -47,6 +47,7 @@ async fn main() -> Result<()> {
     let router = Router::new()
         .route("/v1/system/health", get(health))
         .route("/v1/calls/dm-video", post(create_dm_video_call))
+        .route("/v1/calls/dm-video/join", post(join_dm_video_call))
         .route("/v1/calls/group-voice/join", post(join_group_voice_call))
         .route("/v1/calls/end", post(end_call))
         .route("/v1/turn/credentials", post(issue_turn_credentials))
@@ -64,7 +65,14 @@ async fn main() -> Result<()> {
 struct CallControlState {
     config: Arc<CallControlConfig>,
     http: Client,
-    active_calls: Arc<Mutex<HashMap<String, CallKind>>>,
+    active_calls: Arc<Mutex<HashMap<String, ActiveCall>>>,
+}
+
+#[derive(Debug, Clone)]
+struct ActiveCall {
+    kind: CallKind,
+    livekit_room: String,
+    participant_jids: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -206,6 +214,47 @@ async fn create_dm_video_call(
     remember_active_call(&state, &response).await;
     send_call_push(&state, &peer, &response.call_id).await;
     Ok(Json(response))
+}
+
+async fn join_dm_video_call(
+    State(state): State<CallControlState>,
+    headers: HeaderMap,
+    Json(request): Json<DirectCallJoinRequest>,
+) -> Result<Json<CallJoinResponse>, CallControlError> {
+    let account = authorize_xmpp_account(&state, &headers).await?;
+    let call_id = request.call_id.trim();
+    if call_id.is_empty() {
+        return Err(CallControlError::BadRequest(
+            "call_id must not be empty".to_owned(),
+        ));
+    }
+
+    let active_call = state
+        .active_calls
+        .lock()
+        .await
+        .get(call_id)
+        .cloned()
+        .ok_or(CallControlError::Forbidden)?;
+
+    if !matches!(active_call.kind, CallKind::DirectVideo)
+        || !active_call
+            .participant_jids
+            .iter()
+            .any(|jid| jid.eq_ignore_ascii_case(&account.bare_jid))
+    {
+        return Err(CallControlError::Forbidden);
+    }
+
+    Ok(Json(existing_call_join_response(
+        &state.config,
+        &account,
+        call_id,
+        active_call.kind,
+        active_call.livekit_room,
+        true,
+        true,
+    )?))
 }
 
 async fn join_group_voice_call(
@@ -403,6 +452,16 @@ fn call_join_response(
         peer.as_deref(),
         room.as_ref(),
     );
+    let participant_jids = match &kind {
+        CallKind::DirectVideo => {
+            let mut participants = vec![account.bare_jid.clone()];
+            if let Some(peer) = peer {
+                participants.push(peer);
+            }
+            participants
+        }
+        CallKind::GroupVoice => vec![account.bare_jid.clone()],
+    };
     let now = unix_now();
     let expires_at = now.saturating_add(config.token_ttl_seconds);
     let token = livekit_token(config, &account.bare_jid, &livekit_room, expires_at)?;
@@ -420,6 +479,37 @@ fn call_join_response(
         publish_video,
         subscribe_audio: true,
         subscribe_video: publish_video,
+        participant_jids,
+    })
+}
+
+fn existing_call_join_response(
+    config: &CallControlConfig,
+    account: &AuthorizedAccount,
+    call_id: &str,
+    kind: CallKind,
+    livekit_room: String,
+    publish_audio: bool,
+    publish_video: bool,
+) -> Result<CallJoinResponse, CallControlError> {
+    let now = unix_now();
+    let expires_at = now.saturating_add(config.token_ttl_seconds);
+    let token = livekit_token(config, &account.bare_jid, &livekit_room, expires_at)?;
+
+    Ok(CallJoinResponse {
+        call_id: call_id.to_owned(),
+        kind,
+        livekit_url: config.livekit_url.clone(),
+        livekit_room,
+        livekit_token: token,
+        livekit_token_expires_at_unix: expires_at,
+        turn: turn_credentials(config, account)?,
+        e2ee_required: true,
+        publish_audio,
+        publish_video,
+        subscribe_audio: true,
+        subscribe_video: publish_video,
+        participant_jids: vec![account.bare_jid.clone()],
     })
 }
 
@@ -428,7 +518,14 @@ async fn remember_active_call(state: &CallControlState, response: &CallJoinRespo
         .active_calls
         .lock()
         .await
-        .insert(response.call_id.clone(), response.kind.clone());
+        .insert(
+            response.call_id.clone(),
+            ActiveCall {
+                kind: response.kind.clone(),
+                livekit_room: response.livekit_room.clone(),
+                participant_jids: response.participant_jids.clone(),
+            },
+        );
 }
 
 async fn send_call_push(state: &CallControlState, account: &str, call_id: &str) {
@@ -637,6 +734,11 @@ struct DirectCallRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct DirectCallJoinRequest {
+    call_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct GroupVoiceRequest {
     room_id: String,
 }
@@ -679,6 +781,8 @@ struct CallJoinResponse {
     publish_video: bool,
     subscribe_audio: bool,
     subscribe_video: bool,
+    #[serde(skip)]
+    participant_jids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

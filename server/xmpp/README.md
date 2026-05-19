@@ -99,6 +99,10 @@ podman compose --profile media up -d livekit coturn call-control
 The call-control API binds to `127.0.0.1:8092` by default. It authenticates the
 existing XMPP account, verifies local MUC membership before group voice joins,
 mints short-lived LiveKit tokens, and issues ephemeral TURN REST credentials.
+For DM video calls, the caller creates the call and the callee joins the same
+LiveKit room by presenting the opaque `call_id`; the API still checks that the
+joining account is one of the original DM participants. Group voice joins do not
+send ringing pushes.
 It never accepts the client media E2EE key; Apple distributes call keys through
 OMEMO-encrypted call descriptors.
 

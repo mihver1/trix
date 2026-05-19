@@ -9,6 +9,7 @@ final class TrixVoIPPushCoordinator: NSObject {
     private let provider: CXProvider
     private var registry: PKPushRegistry?
     private var callUUIDByCallID: [String: UUID] = [:]
+    private var callIDByCallUUID: [UUID: String] = [:]
     private weak var model: TrixAppModel?
     private var latestToken: TrixVoIPDeviceToken?
 
@@ -68,6 +69,39 @@ final class TrixVoIPPushCoordinator: NSObject {
             await model.invalidateVoIPDeviceToken()
         }
     }
+
+    @MainActor
+    private func answer(callID: String, completion: TrixCallKitActionCompletion) async {
+        guard let model else {
+            completion.fail()
+            return
+        }
+
+        if await model.acceptIncomingCallKitCall(callID: callID) {
+            completion.fulfill()
+        } else {
+            completion.fail()
+        }
+    }
+
+    @MainActor
+    private func end(callID: String, completion: TrixCallKitActionCompletion) async {
+        guard let model else {
+            completion.fail()
+            return
+        }
+
+        if await model.endCallKitCall(callID: callID) {
+            let uuid = callUUIDByCallID[callID]
+            callUUIDByCallID[callID] = nil
+            if let uuid {
+                callIDByCallUUID[uuid] = nil
+            }
+            completion.fulfill()
+        } else {
+            completion.fail()
+        }
+    }
 }
 
 extension TrixVoIPPushCoordinator: PKPushRegistryDelegate {
@@ -112,6 +146,7 @@ extension TrixVoIPPushCoordinator: PKPushRegistryDelegate {
 
         let callUUID = callUUIDByCallID[callID] ?? UUID()
         callUUIDByCallID[callID] = callUUID
+        callIDByCallUUID[callUUID] = callID
 
         let update = CXCallUpdate()
         update.remoteHandle = CXHandle(type: .generic, value: "Trix")
@@ -125,7 +160,42 @@ extension TrixVoIPPushCoordinator: PKPushRegistryDelegate {
 }
 
 extension TrixVoIPPushCoordinator: CXProviderDelegate {
-    nonisolated func providerDidReset(_ provider: CXProvider) {}
+    nonisolated func providerDidReset(_ provider: CXProvider) {
+        Task { @MainActor in
+            TrixVoIPPushCoordinator.shared.callUUIDByCallID = [:]
+            TrixVoIPPushCoordinator.shared.callIDByCallUUID = [:]
+        }
+    }
+
+    nonisolated func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
+        guard let callID = callIDByCallUUID[action.callUUID] else {
+            action.fail()
+            return
+        }
+
+        let completion = TrixCallKitActionCompletion(
+            fulfill: { action.fulfill() },
+            fail: { action.fail() }
+        )
+        Task { @MainActor in
+            await TrixVoIPPushCoordinator.shared.answer(callID: callID, completion: completion)
+        }
+    }
+
+    nonisolated func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
+        guard let callID = callIDByCallUUID[action.callUUID] else {
+            action.fail()
+            return
+        }
+
+        let completion = TrixCallKitActionCompletion(
+            fulfill: { action.fulfill() },
+            fail: { action.fail() }
+        )
+        Task { @MainActor in
+            await TrixVoIPPushCoordinator.shared.end(callID: callID, completion: completion)
+        }
+    }
 }
 
 private struct TrixVoIPPushCompletion: @unchecked Sendable {
@@ -138,4 +208,9 @@ private struct TrixVoIPPushCompletion: @unchecked Sendable {
     func callAsFunction() {
         complete()
     }
+}
+
+private struct TrixCallKitActionCompletion: @unchecked Sendable {
+    let fulfill: () -> Void
+    let fail: () -> Void
 }

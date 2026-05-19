@@ -266,6 +266,11 @@ or decrypted content. For DM video calls it may make a bearer-authenticated
 best-effort request to the push gateway's internal VoIP endpoint using only the
 callee account and opaque call ID.
 
+For DM video calls, the callee obtains a short-lived LiveKit token by joining
+the existing call-control record with that opaque call ID. The join path must
+verify that the authenticated account is one of the original DM participants and
+must not accept media keys or user-visible call metadata.
+
 The Apple LiveKit adapter enables LiveKit `EncryptionOptions` with a client-side
 key supplied through Trix call descriptors. DM video and group voice calls must
 fail closed when that media key is missing. Group calls remain audio-only in v1;

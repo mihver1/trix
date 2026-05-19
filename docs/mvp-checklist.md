@@ -114,7 +114,10 @@ copying old implementation details.
       registration through the `apns-voip-sandbox`/`apns-voip-production`
       providers, and the push gateway exposes an internal call-push endpoint
       that sends only an opaque `call_id` plus optional account routing through
-      the distinct VoIP APNs topic. This is not launch-complete until a
+      the distinct VoIP APNs topic. The shared Apple UI now exposes a DM video
+      button, incoming accept/decline/end controls, and a group voice-room bar
+      with join/leave plus active participants; group rooms do not ring members.
+      This is not launch-complete until a
       signed-device DM video smoke and a 3-account group voice-room smoke prove
       LiveKit media E2EE, OMEMO descriptor/key delivery, membership checks, TURN
       fallback, and no media keys or LiveKit/TURN tokens in logs or pushes.

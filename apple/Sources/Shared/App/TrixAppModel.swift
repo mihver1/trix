@@ -949,6 +949,99 @@ final class TrixAppModel: ObservableObject {
         return try await trixService.members(roomID: roomID, session: session)
     }
 
+    func loadCallState(for room: TrixRoomSummary) async {
+        guard let session else {
+            callViewModel.clear()
+            return
+        }
+
+        await callViewModel.loadRoomCallState(room: room, session: session)
+    }
+
+    func refreshCallStateForRooms() async {
+        guard let session else {
+            callViewModel.clear()
+            return
+        }
+
+        for room in roomListViewModel.rooms {
+            await callViewModel.loadRoomCallState(room: room, session: session)
+        }
+    }
+
+    func startDirectVideoCall(in room: TrixRoomSummary) async {
+        guard let session, room.kind == .direct else {
+            return
+        }
+
+        let peerUserID = await directCallPeerUserID(for: room, session: session)
+        await callViewModel.startDirectVideoCall(
+            peerUserID: peerUserID,
+            roomID: room.id,
+            session: session
+        )
+    }
+
+    @discardableResult
+    func acceptIncomingDirectCall(_ call: TrixIncomingDirectCall) async -> Bool {
+        guard let session else {
+            return false
+        }
+
+        return await callViewModel.acceptIncomingDirectCall(call, session: session)
+    }
+
+    @discardableResult
+    func declineIncomingDirectCall(_ call: TrixIncomingDirectCall) async -> Bool {
+        guard let session else {
+            return false
+        }
+
+        return await callViewModel.declineIncomingDirectCall(call, session: session)
+    }
+
+    func joinGroupVoiceRoom(in room: TrixRoomSummary) async {
+        guard let session, room.kind == .group else {
+            return
+        }
+
+        await callViewModel.joinGroupVoiceRoom(roomID: room.id, session: session)
+    }
+
+    func leaveCall(in room: TrixRoomSummary) async {
+        _ = await callViewModel.endCall(roomID: room.id, session: session)
+    }
+
+    @discardableResult
+    func acceptIncomingCallKitCall(callID: String) async -> Bool {
+        guard let session else {
+            return false
+        }
+
+        await refreshCallStateForRooms()
+        return await callViewModel.acceptIncomingDirectCall(callID: callID, session: session)
+    }
+
+    @discardableResult
+    func endCallKitCall(callID: String) async -> Bool {
+        guard let session else {
+            return false
+        }
+
+        await refreshCallStateForRooms()
+
+        if let incomingCall = callViewModel.incomingDirectCall(callID: callID) {
+            return await callViewModel.declineIncomingDirectCall(incomingCall, session: session)
+        }
+
+        if callViewModel.activeCall?.callID == callID,
+           let activeRoomID = callViewModel.activeRoomID {
+            return await callViewModel.endCall(roomID: activeRoomID, session: session)
+        }
+
+        return false
+    }
+
     func peerDeviceIdentities(for userID: String, refresh: Bool = false) async throws -> [TrixPeerDeviceIdentity] {
         guard let session else {
             throw TrixClientError.missingSession
@@ -1410,6 +1503,38 @@ final class TrixAppModel: ObservableObject {
         }
     }
 
+    private func directCallPeerUserID(for room: TrixRoomSummary, session: TrixSession) async -> String {
+        guard room.kind == .direct else {
+            return room.id
+        }
+
+        guard let members = try? await trixService.members(roomID: room.id, session: session),
+              let peer = members.first(where: { member in
+                  member.membership.isActive &&
+                      Self.normalizedUserKey(member.userID) != Self.normalizedUserKey(session.userID)
+              }) else {
+            return room.id
+        }
+
+        return peer.userID
+    }
+
+    private static func normalizedUserKey(_ userID: String) -> String {
+        let trimmed = userID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard trimmed.hasPrefix("@"),
+              let separator = trimmed.firstIndex(of: ":") else {
+            return trimmed
+        }
+
+        let localpart = trimmed[trimmed.index(after: trimmed.startIndex)..<separator]
+        let server = trimmed[trimmed.index(after: separator)...]
+        guard !localpart.isEmpty, !server.isEmpty else {
+            return trimmed
+        }
+
+        return "\(localpart)@\(server)"
+    }
+
     private func applyRoomNotificationProfileSnapshot(_ snapshot: TrixRoomNotificationProfileSnapshot) {
         roomNotificationProfileSnapshot = snapshot
         roomNotificationProfiles = snapshot.profilesByRoomID
@@ -1485,6 +1610,7 @@ final class TrixAppModel: ObservableObject {
         roomListViewModel.clear()
         timelineViewModel.clear()
         deviceVerificationViewModel.clear()
+        callViewModel.clear()
     }
 }
 

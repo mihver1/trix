@@ -24,6 +24,7 @@ struct TrixTimelineView: View {
     @ObservedObject var model: TrixAppModel
     let room: TrixRoomSummary
     @ObservedObject private var timelineViewModel: TimelineViewModel
+    @ObservedObject private var callViewModel: TrixCallViewModel
     @State private var draft = ""
     @State private var isShowingFileImporter = false
     @State private var isShowingDeviceTrust = false
@@ -47,6 +48,7 @@ struct TrixTimelineView: View {
         self.model = model
         self.room = room
         self._timelineViewModel = ObservedObject(wrappedValue: model.timelineViewModel)
+        self._callViewModel = ObservedObject(wrappedValue: model.callViewModel)
     }
 
     var body: some View {
@@ -259,11 +261,18 @@ struct TrixTimelineView: View {
             }
             await loadPeerDevices(refresh: false)
             await model.loadAttachmentSendAvailability(roomID: room.id)
+            await model.loadCallState(for: room)
         }
         .task(id: "typing-\(room.id)") {
             while !Task.isCancelled {
                 await model.loadTypingState(roomID: room.id)
                 try? await Task.sleep(for: .seconds(2))
+            }
+        }
+        .task(id: "calls-\(room.id)") {
+            while !Task.isCancelled {
+                await model.loadCallState(for: room)
+                try? await Task.sleep(for: .seconds(4))
             }
         }
         .onChange(of: draft) { _, newValue in
@@ -347,6 +356,19 @@ struct TrixTimelineView: View {
                     .padding(.bottom, 8)
             }
 
+            if let callErrorMessage = callViewModel.errorMessage {
+                TrixBannerView(
+                    text: callErrorMessage,
+                    systemImage: "video.badge.exclamationmark",
+                    tint: .orange,
+                    dismissAction: callViewModel.dismissErrorMessage
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            }
+
+            callControls
+
             if !canSendEncrypted {
                 encryptionRequiredBanner
             }
@@ -418,6 +440,62 @@ struct TrixTimelineView: View {
         }
 
         return "OMEMO is required for Trix chats. Trust a contact device before sending."
+    }
+
+    @ViewBuilder
+    private var callControls: some View {
+        if room.kind == .direct {
+            if let incomingCall = callViewModel.incomingDirectCall(roomID: room.id) {
+                TrixIncomingDirectCallBar(
+                    callerTitle: callParticipantTitle(incomingCall.callerID),
+                    isWorking: callViewModel.isActing(roomID: room.id),
+                    accept: {
+                        Task {
+                            await model.acceptIncomingDirectCall(incomingCall)
+                        }
+                    },
+                    decline: {
+                        Task {
+                            await model.declineIncomingDirectCall(incomingCall)
+                        }
+                    }
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            } else if let activeCall = callViewModel.currentCall(roomID: room.id, kind: .directVideo) {
+                TrixDirectCallBar(
+                    title: "Video call",
+                    subtitle: activeCall.liveKitRoom,
+                    isWorking: callViewModel.isActing(roomID: room.id),
+                    end: {
+                        Task {
+                            await model.leaveCall(in: room)
+                        }
+                    }
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            }
+        } else {
+            TrixGroupVoiceRoomBar(
+                snapshot: callViewModel.groupVoiceRoom(roomID: room.id),
+                participantTitle: callParticipantTitle,
+                isJoined: callViewModel.currentCall(roomID: room.id, kind: .groupVoice) != nil,
+                isWorking: callViewModel.isActing(roomID: room.id),
+                join: {
+                    Task {
+                        await model.joinGroupVoiceRoom(in: room)
+                    }
+                },
+                leave: {
+                    Task {
+                        await model.leaveCall(in: room)
+                    }
+                }
+            )
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+        }
     }
 
     private var composer: some View {
@@ -686,6 +764,15 @@ struct TrixTimelineView: View {
         return "\(timelineViewModel.typingUserIDs.count) people are typing"
     }
 
+    private func callParticipantTitle(_ userID: String) -> String {
+        if let currentUserID = model.session?.userID,
+           trixNormalizedUserKey(userID) == trixNormalizedUserKey(currentUserID) {
+            return "You"
+        }
+
+        return Self.displayName(from: userID)
+    }
+
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
             TrixAvatarView(
@@ -719,6 +806,21 @@ struct TrixTimelineView: View {
             Spacer()
 
             if room.kind == .direct {
+                Button {
+                    Task {
+                        await model.startDirectVideoCall(in: room)
+                    }
+                } label: {
+                    Image(systemName: callViewModel.currentCall(roomID: room.id, kind: .directVideo) == nil ? "video" : "video.fill")
+                }
+                .disabled(
+                    !canSendEncrypted ||
+                        callViewModel.isActing(roomID: room.id) ||
+                        callViewModel.incomingDirectCall(roomID: room.id) != nil ||
+                        callViewModel.currentCall(roomID: room.id, kind: .directVideo) != nil
+                )
+                .help("Video call")
+
                 Button {
                     showDeviceTrust()
                 } label: {
@@ -1335,6 +1437,229 @@ private enum TrixTimelineEntry: Identifiable {
         case .message(let presentation):
             return presentation.item.id
         }
+    }
+}
+
+private struct TrixIncomingDirectCallBar: View {
+    let callerTitle: String
+    let isWorking: Bool
+    let accept: () -> Void
+    let decline: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "video.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(TrixDesign.accent)
+                .frame(width: 34, height: 34)
+                .background(TrixDesign.accent.opacity(0.13), in: Circle())
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Incoming video call")
+                    .font(.callout.weight(.semibold))
+                    .lineLimit(1)
+                Text(callerTitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            Button(action: decline) {
+                Image(systemName: "phone.down.fill")
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.red)
+            .disabled(isWorking)
+            .help("Decline")
+            .accessibilityLabel("Decline video call")
+
+            Button(action: accept) {
+                if isWorking {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 30, height: 30)
+                } else {
+                    Image(systemName: "video.fill")
+                        .frame(width: 30, height: 30)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isWorking)
+            .help("Accept")
+            .accessibilityLabel("Accept video call")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(TrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
+        }
+    }
+}
+
+private struct TrixDirectCallBar: View {
+    let title: String
+    let subtitle: String
+    let isWorking: Bool
+    let end: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "video.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.green)
+                .frame(width: 34, height: 34)
+                .background(Color.green.opacity(0.13), in: Circle())
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.callout.weight(.semibold))
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer(minLength: 8)
+
+            Button(action: end) {
+                if isWorking {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 30, height: 30)
+                } else {
+                    Image(systemName: "phone.down.fill")
+                        .frame(width: 30, height: 30)
+                }
+            }
+            .buttonStyle(.bordered)
+            .foregroundStyle(.red)
+            .disabled(isWorking)
+            .help("End")
+            .accessibilityLabel("End video call")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(TrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
+        }
+    }
+}
+
+private struct TrixGroupVoiceRoomBar: View {
+    let snapshot: TrixGroupVoiceRoomSnapshot
+    let participantTitle: (String) -> String
+    let isJoined: Bool
+    let isWorking: Bool
+    let join: () -> Void
+    let leave: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Image(systemName: "waveform.circle.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(TrixDesign.groupAccent)
+                    .frame(width: 34, height: 34)
+                    .background(TrixDesign.groupAccent.opacity(0.13), in: Circle())
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Voice room")
+                        .font(.callout.weight(.semibold))
+                        .lineLimit(1)
+                    Text(participantCountLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                actionButton
+            }
+
+            if snapshot.activeParticipantIDs.isEmpty {
+                Text("No one in voice")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(snapshot.activeParticipantIDs, id: \.self) { participantID in
+                            TrixVoiceParticipantChip(title: participantTitle(participantID))
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(TrixDesign.elevatedFieldSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
+        }
+    }
+
+    private var participantCountLabel: String {
+        let count = snapshot.activeParticipantCount
+        if count == 1 {
+            return "1 participant"
+        }
+
+        return "\(count) participants"
+    }
+
+    @ViewBuilder
+    private var actionButton: some View {
+        if isJoined {
+            Button(action: leave) {
+                if isWorking {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Label("Leave", systemImage: "phone.down.fill")
+                }
+            }
+            .buttonStyle(.bordered)
+            .foregroundStyle(.red)
+            .disabled(isWorking)
+            .help("Leave voice room")
+        } else {
+            Button(action: join) {
+                if isWorking {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Label("Join", systemImage: "waveform")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isWorking)
+            .help("Join voice room")
+        }
+    }
+}
+
+private struct TrixVoiceParticipantChip: View {
+    let title: String
+
+    var body: some View {
+        Label(title, systemImage: "person.fill")
+            .font(.caption.weight(.medium))
+            .lineLimit(1)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(TrixDesign.groupAccent.opacity(0.12), in: Capsule())
+            .foregroundStyle(TrixDesign.groupAccent)
     }
 }
 

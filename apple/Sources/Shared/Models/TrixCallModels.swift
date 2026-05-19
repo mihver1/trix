@@ -224,6 +224,35 @@ struct TrixReceivedCallDescriptor: Equatable, Sendable {
     let isLocalEcho: Bool
 }
 
+struct TrixIncomingDirectCall: Identifiable, Equatable, Sendable {
+    let callID: String
+    let roomID: String
+    let callerID: String
+    let liveKitRoom: String
+    let createdAt: Date
+    let expiresAt: Date
+    let mediaKey: TrixCallMediaKey
+
+    var id: String {
+        callID
+    }
+}
+
+struct TrixGroupVoiceRoomSnapshot: Identifiable, Equatable, Sendable {
+    let roomID: String
+    let callID: String?
+    let activeParticipantIDs: [String]
+    let updatedAt: Date?
+
+    var id: String {
+        roomID
+    }
+
+    var activeParticipantCount: Int {
+        activeParticipantIDs.count
+    }
+}
+
 struct TrixCallJoinAuthorization: Equatable, Sendable {
     let callID: String
     let kind: TrixCallKind
@@ -264,6 +293,10 @@ struct TrixPreparedCall: Equatable, Sendable {
     let authorization: TrixCallJoinAuthorization
     let mediaKey: TrixCallMediaKey
     let invite: TrixCallInvite
+
+    var roomID: String {
+        invite.roomID
+    }
 }
 
 struct TrixVoIPCallPayload: Equatable, Sendable {
