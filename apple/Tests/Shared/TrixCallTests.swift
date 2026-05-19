@@ -285,6 +285,52 @@ final class TrixCallTests: XCTestCase {
     }
 
     @MainActor
+    func testJoinGroupVoiceRoomRefreshesMediaKeyAfterAuthorization() async throws {
+        let callControl = RecordingCallControlService()
+        let room = Self.room(id: "friends@conference.trix.selfhost.ru", kind: .group)
+        let session = Self.session()
+        let existingMediaKey = try TrixCallMediaKey(
+            keyID: "group-key",
+            key: "base64-group-call-key",
+            keyIndex: 0,
+            createdAtUnix: 100
+        )
+        let existingState = TrixVoiceRoomState(
+            callID: "group-call",
+            roomID: room.id,
+            activeParticipantIDs: ["bob@trix.selfhost.ru"],
+            mediaKey: existingMediaKey,
+            updatedAtUnix: 100
+        )
+        let descriptors = DelayedGroupVoiceDescriptorService(
+            roomID: room.id,
+            senderID: "bob@trix.selfhost.ru",
+            descriptorAfterFirstRead: .voiceRoomState(existingState)
+        )
+        let media = RecordingMediaCallService()
+        let viewModel = TrixCallViewModel(
+            callControlService: callControl,
+            callDescriptorService: descriptors,
+            mediaCallService: media
+        )
+
+        await viewModel.joinGroupVoiceRoom(roomID: room.id, session: session)
+
+        let connectedMediaKeys = await media.connectedMediaKeys()
+        let sentDescriptors = await descriptors.sentDescriptors()
+        XCTAssertEqual(connectedMediaKeys, [existingMediaKey])
+        if case .voiceRoomState(let state) = sentDescriptors.last?.descriptor {
+            XCTAssertEqual(state.mediaKey, existingMediaKey)
+            XCTAssertEqual(
+                Set(state.activeParticipantIDs.map { $0.lowercased() }),
+                Set(["bob@trix.selfhost.ru", session.userID.lowercased()])
+            )
+        } else {
+            XCTFail("Expected the latest descriptor to be a voice-room state")
+        }
+    }
+
+    @MainActor
     func testForegroundRefreshLoadsIncomingCallDescriptorForUnselectedRoom() async throws {
         let accountID = "@me:trix.selfhost.ru"
         let directRoomID = "!dm-alice:trix.selfhost.ru"
@@ -537,6 +583,105 @@ private actor RecordingCallDescriptorService: TrixCallDescriptorService {
     }
 
     func appendRemote(
+        _ descriptor: TrixCallDescriptor,
+        roomID: String,
+        senderID: String
+    ) {
+        let item = TrixReceivedCallDescriptor(
+            id: "remote-descriptor-\(descriptors.count + 1)",
+            roomID: roomID,
+            senderID: senderID,
+            timestamp: Date(timeIntervalSince1970: Double(descriptors.count + 1)),
+            descriptor: descriptor,
+            isLocalEcho: false
+        )
+        descriptors.append(item)
+    }
+
+    private func store(
+        _ descriptor: TrixCallDescriptor,
+        roomID: String,
+        session: TrixSession
+    ) -> TrixReceivedCallDescriptor {
+        let item = TrixReceivedCallDescriptor(
+            id: "descriptor-\(descriptors.count + 1)",
+            roomID: roomID,
+            senderID: session.userID,
+            timestamp: Date(timeIntervalSince1970: Double(descriptors.count + 1)),
+            descriptor: descriptor,
+            isLocalEcho: true
+        )
+        descriptors.append(item)
+        return item
+    }
+}
+
+private actor DelayedGroupVoiceDescriptorService: TrixCallDescriptorService {
+    private let roomID: String
+    private let senderID: String
+    private let descriptorAfterFirstRead: TrixCallDescriptor
+    private var reads = 0
+    private var descriptors: [TrixReceivedCallDescriptor] = []
+
+    init(roomID: String, senderID: String, descriptorAfterFirstRead: TrixCallDescriptor) {
+        self.roomID = roomID
+        self.senderID = senderID
+        self.descriptorAfterFirstRead = descriptorAfterFirstRead
+    }
+
+    func callDescriptors(roomID: String, session: TrixSession) async throws -> [TrixReceivedCallDescriptor] {
+        reads += 1
+        if reads == 2, roomID == self.roomID {
+            appendRemote(descriptorAfterFirstRead, roomID: roomID, senderID: senderID)
+        }
+        return descriptors.filter { $0.roomID == roomID }
+    }
+
+    func sendCallInvite(
+        _ invite: TrixCallInvite,
+        roomID: String,
+        session: TrixSession
+    ) async throws -> TrixReceivedCallDescriptor {
+        store(.invite(invite), roomID: roomID, session: session)
+    }
+
+    func sendCallAnswer(
+        _ answer: TrixCallAnswer,
+        roomID: String,
+        session: TrixSession
+    ) async throws -> TrixReceivedCallDescriptor {
+        store(.answer(answer), roomID: roomID, session: session)
+    }
+
+    func sendCallEnd(
+        _ end: TrixCallEnd,
+        roomID: String,
+        session: TrixSession
+    ) async throws -> TrixReceivedCallDescriptor {
+        store(.end(end), roomID: roomID, session: session)
+    }
+
+    func sendVoiceRoomState(
+        _ state: TrixVoiceRoomState,
+        roomID: String,
+        session: TrixSession
+    ) async throws -> TrixReceivedCallDescriptor {
+        store(.voiceRoomState(state), roomID: roomID, session: session)
+    }
+
+    func sendCallKeyRotation(
+        _ rotation: TrixCallKeyRotation,
+        roomID: String,
+        session: TrixSession
+    ) async throws -> TrixReceivedCallDescriptor {
+        store(.keyRotation(rotation), roomID: roomID, session: session)
+    }
+
+    func sentDescriptors() -> [TrixReceivedCallDescriptor] {
+        descriptors
+    }
+
+    private func appendRemote(
         _ descriptor: TrixCallDescriptor,
         roomID: String,
         senderID: String

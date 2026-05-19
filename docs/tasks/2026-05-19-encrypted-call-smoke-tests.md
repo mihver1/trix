@@ -31,6 +31,13 @@ TURN smoke, and `server/xmpp/scripts/call-log-audit.sh` for post-smoke
 log-bundle scanning. The MVP checklist remains open because the required
 signed-device media proof has not passed yet.
 
+As of 2026-05-19, `server/xmpp/scripts/local-call-lab.sh` can start a loopback
+LiveKit/coturn/call-control lab and `apple/scripts/run-local-call-lab-macos.sh`
+can launch two isolated macOS profiles (`alice` and `bob`) against it. This is
+for local debugging only; it does not satisfy the signed-device smoke criteria.
+The local lab smoke has verified a sanitized `group_voice` call-control response
+shape without printing LiveKit JWTs or TURN credentials.
+
 ## Goal
 
 Produce repeatable smoke evidence for encrypted calls:
@@ -141,6 +148,15 @@ xcodebuild -project apple/TrixMatrix.xcodeproj -scheme TrixMatrixiOS -destinatio
 xcodebuild -project apple/TrixMatrix.xcodeproj -scheme TrixMatrixMac -destination 'platform=macOS' build CODE_SIGNING_ALLOWED=NO
 bash -n server/xmpp/scripts/*.sh apple/scripts/*.sh
 git diff --check
+```
+
+For local macOS media debugging before signed-device smoke:
+
+```bash
+server/xmpp/scripts/local-call-lab.sh start
+server/xmpp/scripts/local-call-lab.sh smoke
+apple/scripts/run-local-call-lab-macos.sh launch
+apple/scripts/run-local-call-lab-macos.sh logs
 ```
 
 After collecting signed-device call logs, run:

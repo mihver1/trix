@@ -596,11 +596,12 @@ actor XMPPMartinService: TrixService {
     private var dismissedGroupInvitations: [String: [String: Date]] = [:]
     private var invitationArchiveSyncConnectionDates: [String: Date] = [:]
     private var callDescriptorHistory: [String: [String: [TrixReceivedCallDescriptor]]] = [:]
-    private let timelineCacheStore = TrixTimelineCacheStore()
-    private let roomSummaryCacheStore = TrixRoomSummaryCacheStore()
-    private let groupRoomCacheStore = TrixGroupRoomCacheStore()
-    private let mucInvitationCacheStore = TrixMUCInvitationCacheStore()
+    private let timelineCacheStore: TrixTimelineCacheStore
+    private let roomSummaryCacheStore: TrixRoomSummaryCacheStore
+    private let groupRoomCacheStore: TrixGroupRoomCacheStore
+    private let mucInvitationCacheStore: TrixMUCInvitationCacheStore
     private let omemoPersistence: TrixOMEMOPersistence
+    private let omemoService: String
     private static let maxCachedTimelineItems = 200
     private static let maxCachedCallDescriptors = 100
     private static let typingRecordLifetime: TimeInterval = 6
@@ -612,8 +613,37 @@ actor XMPPMartinService: TrixService {
     private static let notificationProfilesItemID = "profiles"
 
     init(omemoPersistence: TrixOMEMOPersistence = .keychain) {
+        self.timelineCacheStore = TrixTimelineCacheStore()
+        self.roomSummaryCacheStore = TrixRoomSummaryCacheStore()
+        self.groupRoomCacheStore = TrixGroupRoomCacheStore()
+        self.mucInvitationCacheStore = TrixMUCInvitationCacheStore()
         self.omemoPersistence = omemoPersistence
+        self.omemoService = "com.softgrid.trix.xmpp.omemo"
     }
+
+    #if DEBUG
+    init(localProfile: TrixLocalProfileConfiguration) {
+        self.timelineCacheStore = TrixTimelineCacheStore(
+            legacyService: localProfile.keychainService("com.softgrid.trix.xmpp.timeline"),
+            keychainService: localProfile.keychainService("com.softgrid.trix.xmpp.timeline-cache-key"),
+            directoryName: localProfile.directoryName("TimelineCache")
+        )
+        self.roomSummaryCacheStore = TrixRoomSummaryCacheStore(
+            keychainService: localProfile.keychainService("com.softgrid.trix.xmpp.room-summary-cache-key"),
+            directoryName: localProfile.directoryName("RoomSummaryCache")
+        )
+        self.groupRoomCacheStore = TrixGroupRoomCacheStore(
+            legacyService: localProfile.keychainService("com.softgrid.trix.xmpp.group-members"),
+            keychainService: localProfile.keychainService("com.softgrid.trix.xmpp.group-members-cache-key"),
+            directoryName: localProfile.directoryName("GroupMemberCache")
+        )
+        self.mucInvitationCacheStore = TrixMUCInvitationCacheStore(
+            service: localProfile.keychainService("com.softgrid.trix.xmpp.muc-invitations")
+        )
+        self.omemoPersistence = .keychain
+        self.omemoService = localProfile.keychainService("com.softgrid.trix.xmpp.omemo")
+    }
+    #endif
 
     func login(userID: String, password: String, serverURL: URL) async throws -> TrixSession {
         let jid = try Self.normalizedXMPPJID(userID)
@@ -3449,7 +3479,11 @@ actor XMPPMartinService: TrixService {
     }
 
     private func makeConnection(jid: String, password: String, resource: String) throws -> Connection {
-        let omemoStack = try TrixOMEMOStore.makeStack(account: jid, persistence: omemoPersistence)
+        let omemoStack = try TrixOMEMOStore.makeStack(
+            account: jid,
+            service: omemoService,
+            persistence: omemoPersistence
+        )
         let client = XMPPClient()
         client.connectionConfiguration.userJid = BareJID(jid)
         client.connectionConfiguration.credentials = .password(password: password)

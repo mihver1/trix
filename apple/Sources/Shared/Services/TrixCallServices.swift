@@ -8,17 +8,55 @@ import LiveKit
 
 private let trixCallMediaLogger = Logger(subsystem: "com.softgrid.trixapp", category: "call-media")
 
+private func sanitizeCallMediaDescription(_ value: String) -> String {
+    let sensitivePatterns = [
+        #"(?i)(token|jwt|credential|password|secret|authorization)=\S+"#,
+        #"(?i)(token|jwt|credential|password|secret|authorization):\S+"#,
+        #"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"#,
+    ]
+
+    return sensitivePatterns.reduce(value) { result, pattern in
+        result.replacingOccurrences(
+            of: pattern,
+            with: "[REDACTED]",
+            options: .regularExpression
+        )
+    }
+}
+
 enum TrixCallMediaConfiguration {
     static let forceRelayEnvironmentKey = "TRIX_CALL_FORCE_RELAY_ONLY"
+    static let audioProbeEnvironmentKey = "TRIX_CALL_AUDIO_PROBE"
 
     static func forceRelayOnly(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
-        guard let value = environment[forceRelayEnvironmentKey] else {
+        truthyEnvironmentValue(environment[forceRelayEnvironmentKey])
+            || truthyInfoDictionaryValue("TrixCallForceRelayOnly")
+    }
+
+    static func audioProbeEnabled(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
+        truthyEnvironmentValue(environment[audioProbeEnvironmentKey])
+            || truthyInfoDictionaryValue("TrixCallAudioProbe")
+    }
+
+    private static func truthyEnvironmentValue(_ value: String?) -> Bool {
+        guard let value else {
             return false
         }
 
         switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "1", "true", "yes", "on":
             return true
+        default:
+            return false
+        }
+    }
+
+    private static func truthyInfoDictionaryValue(_ key: String) -> Bool {
+        switch Bundle.main.object(forInfoDictionaryKey: key) {
+        case let value as Bool:
+            return value
+        case let value as String:
+            return truthyEnvironmentValue(value)
         default:
             return false
         }
@@ -203,11 +241,16 @@ struct HTTPCallControlService: TrixCallControlService {
 
 #if canImport(LiveKit)
 actor TrixLiveKitMediaCallService: TrixMediaCallService {
-    private var roomsByCallID: [String: Room] = [:]
+    private var sessionsByCallID: [String: LiveKitCallSession] = [:]
     private let forceRelayOnly: Bool
+    private let audioProbeEnabled: Bool
 
-    init(forceRelayOnly: Bool = TrixCallMediaConfiguration.forceRelayOnly()) {
+    init(
+        forceRelayOnly: Bool = TrixCallMediaConfiguration.forceRelayOnly(),
+        audioProbeEnabled: Bool = TrixCallMediaConfiguration.audioProbeEnabled()
+    ) {
         self.forceRelayOnly = forceRelayOnly
+        self.audioProbeEnabled = audioProbeEnabled
     }
 
     func connect(
@@ -226,6 +269,8 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
         keyProvider.setCurrentKeyIndex(Int32(mediaKey.keyIndex))
 
         let room = Room()
+        let observer = TrixLiveKitRoomObserver(audioProbeEnabled: audioProbeEnabled)
+        room.add(delegate: observer)
         let roomOptions = RoomOptions(
             adaptiveStream: authorization.subscribeVideo,
             dynacast: authorization.publishVideo,
@@ -255,6 +300,7 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
                 roomOptions: roomOptions
             )
         } catch {
+            room.remove(delegate: observer)
             await room.disconnect()
             Self.logMediaFailure(context: "connect", error: error)
             throw TrixClientError.callMediaUnavailable
@@ -264,6 +310,7 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
             do {
                 try await room.localParticipant.setMicrophone(enabled: true)
             } catch {
+                room.remove(delegate: observer)
                 await room.disconnect()
                 Self.logMediaFailure(context: "microphone", error: error)
                 throw TrixClientError.callMicrophoneUnavailable
@@ -273,13 +320,15 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
             do {
                 try await room.localParticipant.setCamera(enabled: true)
             } catch {
+                room.remove(delegate: observer)
                 await room.disconnect()
                 Self.logMediaFailure(context: "camera", error: error)
                 throw TrixClientError.callCameraUnavailable
             }
         }
 
-        roomsByCallID[authorization.callID] = room
+        observer.attachExistingRemoteTracks(in: room)
+        sessionsByCallID[authorization.callID] = LiveKitCallSession(room: room, observer: observer)
         return TrixActiveMediaCall(
             callID: authorization.callID,
             kind: authorization.kind,
@@ -308,36 +357,175 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
     private static func logMediaFailure(context: String, error: Error) {
         let nsError = error as NSError
         trixCallMediaLogger.error(
-            "LiveKit media \(context, privacy: .public) failed domain=\(nsError.domain, privacy: .public) code=\(nsError.code, privacy: .public) description=\(sanitizeErrorDescription(nsError.localizedDescription), privacy: .public)"
+            "LiveKit media \(context, privacy: .public) failed domain=\(nsError.domain, privacy: .public) code=\(nsError.code, privacy: .public) description=\(sanitizeCallMediaDescription(nsError.localizedDescription), privacy: .public)"
         )
     }
 
-    private static func sanitizeErrorDescription(_ value: String) -> String {
-        let sensitivePatterns = [
-            #"(?i)(token|jwt|credential|password|secret|authorization)=\S+"#,
-            #"(?i)(token|jwt|credential|password|secret|authorization):\S+"#,
-            #"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"#,
-        ]
+    func disconnect(callID: String) async {
+        guard let session = sessionsByCallID.removeValue(forKey: callID) else {
+            return
+        }
+        session.room.remove(delegate: session.observer)
+        await session.room.disconnect()
+    }
+}
 
-        return sensitivePatterns.reduce(value) { result, pattern in
-            result.replacingOccurrences(
-                of: pattern,
-                with: "[REDACTED]",
-                options: .regularExpression
+private struct LiveKitCallSession {
+    let room: Room
+    let observer: TrixLiveKitRoomObserver
+}
+
+private final class TrixLiveKitRoomObserver: NSObject, RoomDelegate, @unchecked Sendable {
+    private let audioProbeEnabled: Bool
+    private var audioProbes: [String: TrixLiveKitAudioProbe] = [:]
+
+    init(audioProbeEnabled: Bool = false) {
+        self.audioProbeEnabled = audioProbeEnabled
+    }
+
+    func attachExistingRemoteTracks(in room: Room) {
+        for participant in room.remoteParticipants.values {
+            for publication in participant.trackPublications.values.compactMap({ $0 as? RemoteTrackPublication }) {
+                configureRemotePublication(publication, context: "existing")
+            }
+        }
+    }
+
+    func roomDidConnect(_ room: Room) {
+        trixCallMediaLogger.info("LiveKit room connected")
+    }
+
+    func room(_ room: Room, didDisconnectWithError error: LiveKitError?) {
+        if let error {
+            logLiveKitError(context: "disconnect", error: error)
+        } else {
+            trixCallMediaLogger.info("LiveKit room disconnected")
+        }
+    }
+
+    func room(_ room: Room, participantDidConnect participant: RemoteParticipant) {
+        trixCallMediaLogger.info("LiveKit remote participant connected")
+    }
+
+    func room(_ room: Room, participantDidDisconnect participant: RemoteParticipant) {
+        trixCallMediaLogger.info("LiveKit remote participant disconnected")
+    }
+
+    func room(_ room: Room, participant: RemoteParticipant, didPublishTrack publication: RemoteTrackPublication) {
+        trixCallMediaLogger.info(
+            "LiveKit remote track published kind=\(String(describing: publication.kind), privacy: .public) encrypted=\(publication.encryptionType != .none, privacy: .public) subscribed=\(publication.isSubscribed, privacy: .public)"
+        )
+    }
+
+    func room(_ room: Room, participant: RemoteParticipant, didSubscribeTrack publication: RemoteTrackPublication) {
+        configureRemotePublication(publication, context: "subscribe")
+    }
+
+    func room(_ room: Room, participant: RemoteParticipant, didUnsubscribeTrack publication: RemoteTrackPublication) {
+        audioProbes[String(describing: publication.sid)] = nil
+        trixCallMediaLogger.info(
+            "LiveKit remote track unsubscribed kind=\(String(describing: publication.kind), privacy: .public)"
+        )
+    }
+
+    func room(_ room: Room, participant: RemoteParticipant, didFailToSubscribeTrackWithSid trackSid: Track.Sid, error: LiveKitError) {
+        logLiveKitError(context: "subscribe", error: error)
+    }
+
+    func room(_ room: Room, trackPublication: TrackPublication, didUpdateE2EEState state: E2EEState) {
+        let stateDescription = state.toString()
+        switch state {
+        case .ok, .key_ratcheted:
+            trixCallMediaLogger.info(
+                "LiveKit track E2EE state=\(stateDescription, privacy: .public) kind=\(String(describing: trackPublication.kind), privacy: .public)"
+            )
+        default:
+            trixCallMediaLogger.error(
+                "LiveKit track E2EE state=\(stateDescription, privacy: .public) kind=\(String(describing: trackPublication.kind), privacy: .public)"
             )
         }
     }
 
-    func disconnect(callID: String) async {
-        guard let room = roomsByCallID.removeValue(forKey: callID) else {
+    func room(
+        _ room: Room,
+        participant: RemoteParticipant,
+        trackPublication: RemoteTrackPublication,
+        didUpdateStreamState streamState: StreamState
+    ) {
+        trixCallMediaLogger.info(
+            "LiveKit remote track stream state=\(String(describing: streamState), privacy: .public) kind=\(String(describing: trackPublication.kind), privacy: .public)"
+        )
+    }
+
+    func room(_ room: Room, didUpdateSpeakingParticipants participants: [Participant]) {
+        trixCallMediaLogger.info(
+            "LiveKit speaking participants count=\(participants.count, privacy: .public)"
+        )
+    }
+
+    private func configureRemotePublication(_ publication: RemoteTrackPublication, context: String) {
+        let audioReady: Bool
+        if let audioTrack = publication.track as? RemoteAudioTrack {
+            audioTrack.volume = 1.0
+            attachAudioProbeIfNeeded(to: audioTrack, publication: publication)
+            audioReady = true
+        } else {
+            audioReady = false
+        }
+
+        trixCallMediaLogger.info(
+            "LiveKit remote track \(context, privacy: .public) kind=\(String(describing: publication.kind), privacy: .public) encrypted=\(publication.encryptionType != .none, privacy: .public) muted=\(publication.isMuted, privacy: .public) stream=\(String(describing: publication.streamState), privacy: .public) audio_ready=\(audioReady, privacy: .public)"
+        )
+    }
+
+    private func attachAudioProbeIfNeeded(to audioTrack: RemoteAudioTrack, publication: RemoteTrackPublication) {
+        guard audioProbeEnabled else {
             return
         }
-        await room.disconnect()
+
+        let key = String(describing: publication.sid)
+        guard audioProbes[key] == nil else {
+            return
+        }
+
+        let probe = TrixLiveKitAudioProbe()
+        audioTrack.add(audioRenderer: probe)
+        audioProbes[key] = probe
+        trixCallMediaLogger.info("LiveKit remote audio probe attached")
+    }
+
+    private func logLiveKitError(context: String, error: LiveKitError) {
+        let nsError = error as NSError
+        trixCallMediaLogger.error(
+            "LiveKit media \(context, privacy: .public) failed domain=\(nsError.domain, privacy: .public) code=\(nsError.code, privacy: .public) description=\(sanitizeCallMediaDescription(nsError.localizedDescription), privacy: .public)"
+        )
+    }
+}
+
+private final class TrixLiveKitAudioProbe: NSObject, AudioRenderer, @unchecked Sendable {
+    private let lock = NSLock()
+    private var framesSinceLastLog: AVAudioFramePosition = 0
+
+    func render(pcmBuffer: AVAudioPCMBuffer) {
+        lock.lock()
+        framesSinceLastLog += AVAudioFramePosition(pcmBuffer.frameLength)
+        let shouldLog = framesSinceLastLog >= 48_000
+        if shouldLog {
+            framesSinceLastLog = 0
+        }
+        lock.unlock()
+
+        if shouldLog {
+            trixCallMediaLogger.info("LiveKit remote audio frames received")
+        }
     }
 }
 #else
 actor TrixLiveKitMediaCallService: TrixMediaCallService {
-    init(forceRelayOnly: Bool = TrixCallMediaConfiguration.forceRelayOnly()) {}
+    init(
+        forceRelayOnly: Bool = TrixCallMediaConfiguration.forceRelayOnly(),
+        audioProbeEnabled: Bool = TrixCallMediaConfiguration.audioProbeEnabled()
+    ) {}
 
     func connect(
         authorization: TrixCallJoinAuthorization,

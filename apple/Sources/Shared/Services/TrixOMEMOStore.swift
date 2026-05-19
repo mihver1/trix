@@ -78,9 +78,10 @@ final class TrixOMEMOStore: SignalSessionStoreProtocol,
 
     static func makeStack(
         account: String,
+        service: String = "com.softgrid.trix.xmpp.omemo",
         persistence: TrixOMEMOPersistence = .keychain
     ) throws -> TrixOMEMOStack {
-        let store = try TrixOMEMOStore(account: account, persistence: persistence)
+        let store = try TrixOMEMOStore(account: account, service: service, persistence: persistence)
         let signalStorage = SignalStorage(
             sessionStore: store,
             preKeyStore: store,

@@ -29,5 +29,6 @@ apps/ios/TrixiOS/Bridge/Artifacts/
 /.tmp-*
 /.warp/
 /server/xmpp/.state/
+/server/xmpp/.local-call-lab/
 /server/xmpp/livekit.yaml
 /server/xmpp/turnserver.conf

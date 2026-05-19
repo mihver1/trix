@@ -112,6 +112,26 @@ the bare XMPP JID, but uses the sanitized device id to scope the LiveKit
 participant identity. This allows two signed-in devices for the same XMPP account
 to join the same LiveKit room without replacing each other.
 
+For local media debugging without touching the live VPS routes, use the loopback
+call lab:
+
+```bash
+server/xmpp/scripts/local-call-lab.sh start
+server/xmpp/scripts/local-call-lab.sh smoke
+apple/scripts/run-local-call-lab-macos.sh launch
+```
+
+The lab writes generated local-only LiveKit/TURN secrets under the ignored
+`server/xmpp/.local-call-lab/` directory and does not print them. It binds
+LiveKit, coturn, and call-control to loopback. By default, LiveKit and coturn run
+through Compose while call-control runs from the local Rust debug binary with
+dry-run auth and skipped MUC membership so the Apple media path can be tested
+without disposable server credentials. Set `TRIX_LOCAL_CALL_CONTROL_MODE=container`
+to force the Compose call-control container instead. On 2026-05-19, the local
+lab `smoke` command returned a sanitized `group_voice` response shape with
+`e2ee_required=true`, publish-audio enabled, publish-video disabled, and TURN
+fields present without printing token or credential values.
+
 For ejabberd 26.4, group voice membership checks require `mod_muc_admin` and the
 `get_room_affiliations` admin API payload shape `room` plus `service`. On
 2026-05-19 the live VPS was updated after a group voice join returned

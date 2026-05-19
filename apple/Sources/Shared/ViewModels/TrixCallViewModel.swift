@@ -140,6 +140,20 @@ final class TrixCallViewModel: ObservableObject {
             }
 
             let authorization = try await callControlService.joinGroupVoiceRoom(roomID: roomID, session: session)
+            let refreshedDescriptors = try await callDescriptorService.callDescriptors(roomID: roomID, session: session)
+            let refreshedSnapshot = Self.groupVoiceRoomSnapshot(
+                from: refreshedDescriptors,
+                roomID: roomID,
+                currentUserID: session.userID,
+                activeCall: currentCall(roomID: roomID, kind: .groupVoice)
+            )
+            groupVoiceRoomsByRoomID[roomID] = refreshedSnapshot
+            if let refreshedMediaKey = Self.groupVoiceRoomMediaKey(from: refreshedDescriptors, roomID: roomID) {
+                groupVoiceMediaKeysByRoomID[roomID] = refreshedMediaKey
+            } else if !refreshedSnapshot.activeParticipantIDs.isEmpty {
+                throw TrixClientError.callE2EEKeyUnavailable
+            }
+
             let mediaKey: TrixCallMediaKey
             if let existingMediaKey = groupVoiceMediaKeysByRoomID[roomID] {
                 mediaKey = existingMediaKey

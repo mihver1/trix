@@ -1631,6 +1631,30 @@ extension TrixAppModel {
                 trixService: MockTrixService()
             )
         }
+        if let localProfile = TrixLocalProfileConfiguration.current() {
+            return TrixAppModel(
+                sessionStore: KeychainTrixSessionStore(
+                    service: localProfile.keychainService("com.softgrid.trix.session"),
+                    account: "trix-session"
+                ),
+                stickerLibraryStore: TrixStickerLibraryStore(
+                    keychainService: localProfile.keychainService("com.softgrid.trix.xmpp.sticker-library-key"),
+                    directoryName: localProfile.directoryName("StickerLibrary")
+                ),
+                mediaCacheStore: TrixMediaCacheStore(
+                    keychainService: localProfile.keychainService("com.softgrid.trix.xmpp.media-cache-key"),
+                    directoryName: localProfile.directoryName("MediaCache")
+                ),
+                mediaCacheSettingsStore: UserDefaultsTrixMediaCacheSettingsStore(
+                    userDefaults: localProfile.userDefaults(suiteName: "com.softgrid.trix.media-cache-settings")
+                ),
+                roomNotificationProfileStore: TrixRoomNotificationProfileStore(
+                    keychainService: localProfile.keychainService("com.softgrid.trix.xmpp.room-notification-profile-key"),
+                    directoryName: localProfile.directoryName("RoomNotificationProfiles")
+                ),
+                trixService: XMPPMartinService(localProfile: localProfile)
+            )
+        }
         #endif
 
         return TrixAppModel()
