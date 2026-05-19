@@ -446,7 +446,7 @@ struct TrixDeviceVisualVerification: Equatable, Sendable {
         let decimalGroups = kind == .libsignalSafetyNumber
             ? Self.decimalGroups(from: values)
             : Self.sourceGroups(from: normalizedSource)
-        let symbols = Self.symbols(from: values)
+        let symbols = Self.symbols(from: values, kind: kind)
         guard !symbols.isEmpty else {
             return nil
         }
@@ -491,30 +491,64 @@ struct TrixDeviceVisualVerification: Equatable, Sendable {
         }
     }
 
-    private static func symbols(from digits: [Int]) -> [TrixDeviceVerificationEmoji] {
-        let symbolCount = min(5, max(4, digits.count / 6))
-        let chunkSize = max(1, digits.count / symbolCount)
-        var usedIndexes: Set<Int> = []
+    private static func symbols(from digits: [Int], kind: TrixDeviceVisualVerificationKind) -> [TrixDeviceVerificationEmoji] {
+        switch kind {
+        case .libsignalSafetyNumber:
+            let symbolCount = min(5, max(4, digits.count / 6))
+            let chunkSize = max(1, digits.count / symbolCount)
+            var usedIndexes: Set<Int> = []
 
-        return (0..<symbolCount).map { position in
-            let start = min(position * chunkSize, digits.count - 1)
-            let end = position == symbolCount - 1 ? digits.count : min(start + chunkSize, digits.count)
-            let value = digits[start..<end].reduce(0) { partial, digit in
-                (partial * 10) + digit
+            return (0..<symbolCount).map { position in
+                let start = min(position * chunkSize, digits.count - 1)
+                let end = position == symbolCount - 1 ? digits.count : min(start + chunkSize, digits.count)
+                let value = digits[start..<end].reduce(0) { partial, digit in
+                    (partial * 10) + digit
+                }
+                var paletteIndex = value % emojiPalette.count
+                while usedIndexes.contains(paletteIndex) {
+                    paletteIndex = (paletteIndex + 1) % emojiPalette.count
+                }
+                usedIndexes.insert(paletteIndex)
+                let item = emojiPalette[paletteIndex]
+                return TrixDeviceVerificationEmoji(
+                    symbol: item.symbol,
+                    description: item.description,
+                    position: position
+                )
             }
-            var paletteIndex = value % emojiPalette.count
-            while usedIndexes.contains(paletteIndex) {
-                paletteIndex = (paletteIndex + 1) % emojiPalette.count
+        case .fingerprintDisplayTransform:
+            return digits.enumerated().map { position, nibble in
+                let paletteIndex = nibble % hexEmojiPalette.count
+                let item = hexEmojiPalette[paletteIndex]
+                return TrixDeviceVerificationEmoji(
+                    symbol: item.symbol,
+                    description: item.description,
+                    position: position
+                )
             }
-            usedIndexes.insert(paletteIndex)
-            let item = emojiPalette[paletteIndex]
-            return TrixDeviceVerificationEmoji(
-                symbol: item.symbol,
-                description: item.description,
-                position: position
-            )
         }
     }
+
+
+
+    private static let hexEmojiPalette: [(symbol: String, description: String)] = [
+        ("0️⃣", "Zero"),
+        ("1️⃣", "One"),
+        ("2️⃣", "Two"),
+        ("3️⃣", "Three"),
+        ("4️⃣", "Four"),
+        ("5️⃣", "Five"),
+        ("6️⃣", "Six"),
+        ("7️⃣", "Seven"),
+        ("8️⃣", "Eight"),
+        ("9️⃣", "Nine"),
+        ("🅰️", "A"),
+        ("🅱️", "B"),
+        ("🌜", "C"),
+        ("🎯", "D"),
+        ("📧", "E"),
+        ("🎏", "F"),
+    ]
 
     private static let emojiPalette: [(symbol: String, description: String)] = [
         ("🌲", "Forest"),
