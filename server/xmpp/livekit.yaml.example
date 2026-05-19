@@ -1,0 +1,18 @@
+# Copy to server/xmpp/livekit.yaml and replace keys with deployment-local values.
+# Do not commit the real file.
+
+port: 7880
+bind_addresses:
+  - 0.0.0.0
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: true
+
+turn:
+  enabled: false
+
+keys:
+  livekit-api-key-change-me: livekit-api-secret-change-me

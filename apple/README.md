@@ -404,6 +404,13 @@ The target protocol-neutral boundary is:
 - `TrixDeviceVerificationService`: OMEMO device inventory, trust state, visual
   fingerprint presentation, and hidden technical fingerprint disclosure.
 - `TrixPushRegistrationService`: APNs token registration and unregister.
+- `TrixCallControlService`: call-control authorization, LiveKit token requests,
+  and TURN credentials.
+- `TrixCallDescriptorService`: OMEMO-encrypted call invite, answer, end, voice
+  room state, and media-key rotation descriptors. Sends use the same recipient
+  set and trust gates as encrypted chat sends.
+- `TrixMediaCallService`: LiveKit media connection lifecycle with client-side
+  media E2EE required.
 - `TrixControlPlaneService`: account bootstrap, profile, group policy, and admin
   operations.
 

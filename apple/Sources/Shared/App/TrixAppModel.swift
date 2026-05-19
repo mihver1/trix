@@ -69,6 +69,7 @@ final class TrixAppModel: ObservableObject {
     let roomListViewModel: RoomListViewModel
     let timelineViewModel: TimelineViewModel
     let deviceVerificationViewModel: DeviceVerificationViewModel
+    let callViewModel: TrixCallViewModel
 
     private let sessionStore: TrixSessionStore
     private let registrationService: TrixRegistrationService
@@ -106,6 +107,7 @@ final class TrixAppModel: ObservableObject {
         self.roomListViewModel = RoomListViewModel()
         self.timelineViewModel = TimelineViewModel()
         self.deviceVerificationViewModel = DeviceVerificationViewModel()
+        self.callViewModel = TrixCallViewModel(callDescriptorService: trixService)
     }
 
     var isAuthenticated: Bool {

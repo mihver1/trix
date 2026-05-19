@@ -17,6 +17,7 @@ actor MockTrixService: TrixService {
     private var profilesByUserID: [String: TrixUserProfile]
     private var notificationProfilesByAccountID: [String: TrixRoomNotificationProfileSnapshot]
     private var typingUserIDsByRoomID: [String: [String]]
+    private var callDescriptorsByRoomID: [String: [TrixReceivedCallDescriptor]]
 
     init(now: Date = Date()) {
         let directRoom = TrixRoomSummary(
@@ -71,6 +72,7 @@ actor MockTrixService: TrixService {
             "mock://attachment/image": Self.mockImageData,
         ]
         self.typingUserIDsByRoomID = [:]
+        self.callDescriptorsByRoomID = [:]
         self.profilesByUserID = [
             "@me:trix.selfhost.ru": TrixUserProfile(userID: "@me:trix.selfhost.ru", displayName: "Me", avatarURL: nil),
             "@alice:trix.selfhost.ru": TrixUserProfile(userID: "@alice:trix.selfhost.ru", displayName: "Alice", avatarURL: nil),
@@ -548,6 +550,54 @@ actor MockTrixService: TrixService {
         )
     }
 
+    func callDescriptors(roomID: String, session: TrixSession) async throws -> [TrixReceivedCallDescriptor] {
+        guard roomSummaries.contains(where: { $0.id == roomID }) else {
+            throw TrixClientError.roomUnavailable
+        }
+
+        return callDescriptorsByRoomID[roomID, default: []]
+    }
+
+    func sendCallInvite(
+        _ invite: TrixCallInvite,
+        roomID: String,
+        session: TrixSession
+    ) async throws -> TrixReceivedCallDescriptor {
+        try storeCallDescriptor(.invite(invite), roomID: roomID, session: session)
+    }
+
+    func sendCallAnswer(
+        _ answer: TrixCallAnswer,
+        roomID: String,
+        session: TrixSession
+    ) async throws -> TrixReceivedCallDescriptor {
+        try storeCallDescriptor(.answer(answer), roomID: roomID, session: session)
+    }
+
+    func sendCallEnd(
+        _ end: TrixCallEnd,
+        roomID: String,
+        session: TrixSession
+    ) async throws -> TrixReceivedCallDescriptor {
+        try storeCallDescriptor(.end(end), roomID: roomID, session: session)
+    }
+
+    func sendVoiceRoomState(
+        _ state: TrixVoiceRoomState,
+        roomID: String,
+        session: TrixSession
+    ) async throws -> TrixReceivedCallDescriptor {
+        try storeCallDescriptor(.voiceRoomState(state), roomID: roomID, session: session)
+    }
+
+    func sendCallKeyRotation(
+        _ rotation: TrixCallKeyRotation,
+        roomID: String,
+        session: TrixSession
+    ) async throws -> TrixReceivedCallDescriptor {
+        try storeCallDescriptor(.keyRotation(rotation), roomID: roomID, session: session)
+    }
+
     func typingState(roomID: String, session: TrixSession) async throws -> TrixRoomTypingState {
         TrixRoomTypingState(
             roomID: roomID,
@@ -699,6 +749,27 @@ actor MockTrixService: TrixService {
             throw TrixClientError.roomUnavailable
         }
         return room
+    }
+
+    private func storeCallDescriptor(
+        _ descriptor: TrixCallDescriptor,
+        roomID: String,
+        session: TrixSession
+    ) throws -> TrixReceivedCallDescriptor {
+        guard roomSummaries.contains(where: { $0.id == roomID }) else {
+            throw TrixClientError.roomUnavailable
+        }
+
+        let received = TrixReceivedCallDescriptor(
+            id: "$mock-call-\(UUID().uuidString)",
+            roomID: roomID,
+            senderID: session.userID,
+            timestamp: Date(),
+            descriptor: descriptor,
+            isLocalEcho: true
+        )
+        callDescriptorsByRoomID[roomID, default: []].append(received)
+        return received
     }
 
     private func updateRoomPreview(roomID: String, body: String, date: Date) {

@@ -36,6 +36,8 @@ been removed from the active repo surface.
   service protocols and view models.
 - `apps/trix-push-gateway/` contains the private APNs sender and XEP-0114 XMPP
   push component used by the XMPP deployment.
+- `apps/trix-call-control/` contains the private call-control API for LiveKit
+  token minting, TURN credential issuance, and XMPP membership checks.
 - `crates/trix-push/` contains APNs payload/client support for the push gateway.
 - `docs/architecture.md` explains the XMPP + OMEMO direction.
 - `docs/security.md` captures the private deployment threat model.
@@ -106,6 +108,19 @@ TRIX_APNS_PRIVATE_KEY_PATH='/absolute/path/to/AuthKey_ABC123XYZ.p8' \
 cargo run -p trix-push-gateway
 ```
 
+## Run Call Control
+
+Calls use XMPP/OMEMO for call intent and key distribution, plus self-hosted
+LiveKit/coturn for media transport. Use deployment-local secrets only.
+
+```bash
+TRIX_LIVEKIT_URL='wss://calls.trix.selfhost.ru' \
+TRIX_LIVEKIT_API_KEY='...' \
+TRIX_LIVEKIT_API_SECRET='...' \
+TRIX_TURN_SHARED_SECRET='...' \
+cargo run -p trix-call-control
+```
+
 ## MVP Status
 
 Current target work:
@@ -117,6 +132,7 @@ Current target work:
 - Directory-backed DM/group creation.
 - Centralized operator control plane.
 - Push notifications through APNs without plaintext payloads.
+- DM video-call and group voice-room scaffolding with LiveKit media E2EE.
 - TestFlight archive path for the new iOS and macOS clients.
 
 Not production-ready:

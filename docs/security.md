@@ -249,6 +249,35 @@ APNs delivery is still not launch-complete until signed-device smoke confirms
 delivery and a payload/log audit confirms no alert, body, filename, media-key,
 or decrypted-content fields.
 
+## Call Media Risk
+
+Calls add metadata beyond message delivery: active call IDs, LiveKit room IDs,
+participant timing, IP addresses, relay use, bitrate, and device activity can be
+visible to the self-hosted media stack. This is acceptable for the private MVP,
+but media content still must be protected from the server.
+
+The checked-in call-control service authenticates existing XMPP accounts before
+minting short-lived LiveKit tokens or TURN REST credentials. It may call the
+loopback ejabberd API to verify passwords and MUC membership. It must not accept
+or log media keys, LiveKit tokens, TURN credentials, XMPP passwords, APNs tokens,
+or decrypted content.
+
+The Apple LiveKit adapter enables LiveKit `EncryptionOptions` with a client-side
+key supplied through Trix call descriptors. DM video and group voice calls must
+fail closed when that media key is missing. Group calls remain audio-only in v1;
+group video, recording, SIP/PSTN, server mixing, GPU acceleration, and
+transcoding are out of scope.
+
+Apple sends call invite, answer, end, voice-room-state, and key-rotation
+descriptors through OMEMO-encrypted XMPP messages. Descriptor sends use the same
+DM trusted-device gate and MUC recipient-set/trust gate as normal encrypted
+message sends; if those gates fail, the client must not start media.
+
+VoIP pushes must stay generic. A valid call push contains only an opaque call ID
+and optional account routing; it must not include caller names, room names,
+LiveKit tokens, TURN credentials, media keys, decrypted text, filenames, or
+attachment metadata.
+
 ## Registration And Provisioning Risk
 
 Public registration is out of scope. Users should be created by the operator

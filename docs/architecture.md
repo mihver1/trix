@@ -80,6 +80,10 @@ The target service boundary is protocol-neutral:
 - `TrixDeviceVerificationService`: OMEMO device inventory, trust state, and
   fingerprint presentation.
 - `TrixPushRegistrationService`: APNs token registration and unregister.
+- `TrixCallControlService`: LiveKit token minting, TURN credentials, and active
+  call authorization through the Trix control plane.
+- `TrixMediaCallService`: LiveKit media session lifecycle behind a client-side
+  E2EE gate.
 
 The checked-in `apple/` project now exposes the active target, service, model,
 and view boundary with protocol-neutral `Trix*` names. New work should keep that
@@ -101,6 +105,26 @@ all current joined members of the members-only, non-anonymous MUC room.
 Plaintext sending in product DM/group flows is not allowed. If the client cannot
 build the required OMEMO payload, the composer must block sending and explain the
 device/trust problem.
+
+### Calls
+
+Calls are a separate realtime-media surface layered beside XMPP, not a new chat
+transport. DM v1 supports direct video calls. Group v1 supports audio-only voice
+rooms for existing private MUCs.
+
+LiveKit is the first SFU candidate and coturn supplies STUN/TURN. The SFU must
+forward RTP and must not transcode, mix, record, or receive media encryption
+keys. Trix call control authenticates the existing XMPP account, checks local DM
+or MUC membership, issues short-lived LiveKit tokens, and issues TURN REST
+credentials. Call-control responses intentionally do not include the media E2EE
+key.
+
+The Apple client creates call media keys locally and distributes call invites,
+answers, voice-room state, and key rotations through OMEMO-encrypted XMPP
+descriptors. If OMEMO recipient validation, trusted devices, media-key delivery,
+LiveKit E2EE, or membership verification fails, call start and join fail closed.
+Group voice rooms are joinable state in the room, not a push that rings every
+member.
 
 ### Groups
 

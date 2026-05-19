@@ -130,4 +130,34 @@ protocol TrixClientStateService: Sendable {
     func setApplicationActive(_ isActive: Bool, session: TrixSession) async
 }
 
-typealias TrixService = TrixAuthService & TrixSyncService & TrixRoomService & TrixTypingService & TrixRoomMembershipService & TrixRoomBootstrapService & TrixDeviceVerificationService & TrixUserDirectoryService & TrixPushRegistrationService & TrixRoomNotificationProfileService & TrixClientStateService
+protocol TrixCallControlService: Sendable {
+    func prepareDirectVideoCall(
+        peerUserID: String,
+        session: TrixSession
+    ) async throws -> TrixCallJoinAuthorization
+    func joinGroupVoiceRoom(
+        roomID: String,
+        session: TrixSession
+    ) async throws -> TrixCallJoinAuthorization
+    func endCall(callID: String, session: TrixSession) async throws
+    func turnCredentials(session: TrixSession) async throws -> TrixTurnCredentials
+}
+
+protocol TrixCallDescriptorService: Sendable {
+    func callDescriptors(roomID: String, session: TrixSession) async throws -> [TrixReceivedCallDescriptor]
+    func sendCallInvite(_ invite: TrixCallInvite, roomID: String, session: TrixSession) async throws -> TrixReceivedCallDescriptor
+    func sendCallAnswer(_ answer: TrixCallAnswer, roomID: String, session: TrixSession) async throws -> TrixReceivedCallDescriptor
+    func sendCallEnd(_ end: TrixCallEnd, roomID: String, session: TrixSession) async throws -> TrixReceivedCallDescriptor
+    func sendVoiceRoomState(_ state: TrixVoiceRoomState, roomID: String, session: TrixSession) async throws -> TrixReceivedCallDescriptor
+    func sendCallKeyRotation(_ rotation: TrixCallKeyRotation, roomID: String, session: TrixSession) async throws -> TrixReceivedCallDescriptor
+}
+
+protocol TrixMediaCallService: Sendable {
+    func connect(
+        authorization: TrixCallJoinAuthorization,
+        mediaKey: TrixCallMediaKey
+    ) async throws -> TrixActiveMediaCall
+    func disconnect(callID: String) async
+}
+
+typealias TrixService = TrixAuthService & TrixSyncService & TrixRoomService & TrixTypingService & TrixRoomMembershipService & TrixRoomBootstrapService & TrixDeviceVerificationService & TrixUserDirectoryService & TrixPushRegistrationService & TrixRoomNotificationProfileService & TrixClientStateService & TrixCallDescriptorService

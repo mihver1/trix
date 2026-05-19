@@ -1688,6 +1688,11 @@ struct TrixRemoteNotificationPayload: Equatable, Sendable {
                 normalizedKey.contains("decrypted") ||
                 compactKey.contains("notificationprofile") ||
                 compactKey.contains("notificationpreferences") ||
+                compactKey.contains("livekittoken") ||
+                compactKey.contains("turncredential") ||
+                compactKey.contains("mediakey") ||
+                compactKey.contains("callkey") ||
+                compactKey.contains("e2eekey") ||
                 compactKey.contains("mute") ||
                 compactKey.contains("muted") ||
                 compactKey.contains("mentionsonly") ||
@@ -1756,6 +1761,10 @@ enum TrixClientError: LocalizedError {
     case apnsGatewayUnavailable
     case apnsRegistrationFailed
     case reactionsUnavailable
+    case callControlUnavailable
+    case callMembershipUnavailable
+    case callE2EEKeyUnavailable
+    case callMediaUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -1845,6 +1854,14 @@ enum TrixClientError: LocalizedError {
             return "APNs registration failed."
         case .reactionsUnavailable:
             return "Message reactions are not available on this XMPP path yet."
+        case .callControlUnavailable:
+            return "Encrypted calls are not available yet."
+        case .callMembershipUnavailable:
+            return "Call membership could not be verified."
+        case .callE2EEKeyUnavailable:
+            return "Call media encryption key setup failed."
+        case .callMediaUnavailable:
+            return "Encrypted media connection failed."
         }
     }
 }

@@ -1,0 +1,21 @@
+# Copy to server/xmpp/turnserver.conf and replace static-auth-secret with a
+# deployment-local value that also goes into TRIX_TURN_SHARED_SECRET.
+# Do not commit the real file.
+
+realm=trix.selfhost.ru
+server-name=trix.selfhost.ru
+listening-port=3478
+tls-listening-port=5349
+min-port=49160
+max-port=49200
+fingerprint
+lt-cred-mech
+use-auth-secret
+static-auth-secret=turn-shared-secret-change-me
+cert=/etc/coturn/certs/fullchain.pem
+pkey=/etc/coturn/certs/privkey.pem
+no-multicast-peers
+no-cli
+no-tlsv1
+no-tlsv1_1
+log-file=stdout

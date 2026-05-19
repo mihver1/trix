@@ -9,6 +9,7 @@ final class TrixiOSAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificat
         UNUserNotificationCenter.current().delegate = self
         application.registerForRemoteNotifications()
         Task { @MainActor in
+            TrixVoIPPushCoordinator.shared.start()
             await TrixAPNsCoordinator.shared.requestUserNotificationAuthorization()
         }
         return true

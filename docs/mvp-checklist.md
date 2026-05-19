@@ -104,6 +104,16 @@ copying old implementation details.
       state to XMPP through XEP-0352 CSI so ejabberd can publish inactive-client
       pushes. Keep this open until signed-device APNs smoke confirms visible
       generic delivery with no plaintext fields.
+- [ ] Encrypted calls. The first checked-in slice adds the LiveKit/coturn media
+      deployment profile, `trix-call-control`, Apple call descriptors,
+      `TrixCallControlService`, `TrixMediaCallService`, LiveKit Swift dependency,
+      iOS CallKit/PushKit entrypoint, and an OMEMO descriptor service for invite,
+      answer, end, voice-room state, and key rotation events. Descriptor sends
+      fail closed on the same DM trust and MUC recipient-set gates as encrypted
+      chat sends. This is not launch-complete until a signed-device DM video
+      smoke and a 3-account group voice-room smoke prove LiveKit media E2EE,
+      OMEMO descriptor/key delivery, membership checks, TURN fallback, and no
+      media keys or LiveKit/TURN tokens in logs or pushes.
 - [x] Trix user directory search for new DM/group creation and add-member flows.
 - [x] Basic XMPP vCard-backed profile view/edit surface for display name, bio,
       status, and website.

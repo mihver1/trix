@@ -16,7 +16,8 @@ committed.
 
 ## Files
 
-- `docker-compose.yml`: ejabberd by default, plus a `prosody-fallback` profile.
+- `docker-compose.yml`: ejabberd by default, plus `push-gateway`, `media`, and
+  `prosody-fallback` profiles.
 - `certs/README.md`: keeps the local certificate mount directory present without
   committing real certificates or private keys.
 - `ejabberd.yml`: private non-federated ejabberd config for
@@ -44,6 +45,8 @@ committed.
 - `scripts/restore-verify.sh`: fresh-instance restore verifier using
   ejabberd-native Mnesia backup/restore for account state plus a compose-scoped
   upload-volume archive.
+- `livekit.yaml.example`: copy to `livekit.yaml` for the private LiveKit SFU.
+- `turnserver.conf.example`: copy to `turnserver.conf` for coturn STUN/TURN.
 
 ## Default: ejabberd
 
@@ -66,6 +69,38 @@ Key decisions:
 
 OMEMO is client-side end-to-end encryption. This scaffold does not implement
 custom cryptography, custom key exchange, or server-side message encryption.
+
+## Media Calls Profile
+
+The optional `media` Compose profile starts LiveKit, coturn, and the
+`trix-call-control` wrapper. It is separate from ejabberd so XMPP remains the
+chat/control plane and LiveKit remains media forwarding only.
+
+Prepare deployment-local media configs and secrets:
+
+```bash
+cd server/xmpp
+cp livekit.yaml.example livekit.yaml
+cp turnserver.conf.example turnserver.conf
+```
+
+Replace the example API key, LiveKit API secret, and TURN shared secret before
+starting the profile. The same TURN shared secret must be set as
+`TRIX_TURN_SHARED_SECRET` for `trix-call-control`. Do not commit the copied
+files.
+
+```bash
+TRIX_LIVEKIT_API_KEY='...' \
+TRIX_LIVEKIT_API_SECRET='...' \
+TRIX_TURN_SHARED_SECRET='...' \
+podman compose --profile media up -d livekit coturn call-control
+```
+
+The call-control API binds to `127.0.0.1:8092` by default. It authenticates the
+existing XMPP account, verifies local MUC membership before group voice joins,
+mints short-lived LiveKit tokens, and issues ephemeral TURN REST credentials.
+It never accepts the client media E2EE key; Apple distributes call keys through
+OMEMO-encrypted call descriptors.
 
 ## Prosody Fallback
 

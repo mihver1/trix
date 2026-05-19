@@ -49,6 +49,64 @@ services:
       - push-gateway-data:/var/lib/trix-push-gateway
       - ${TRIX_APNS_KEY_DIR:-./certs/apns}:/run/secrets/apns:ro
 
+  livekit:
+    profiles:
+      - media
+    image: ${TRIX_LIVEKIT_IMAGE:-livekit/livekit-server:latest}
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    ports:
+      - "${TRIX_LIVEKIT_HTTP_BIND:-127.0.0.1}:${TRIX_LIVEKIT_HTTP_PORT:-7880}:7880"
+      - "${TRIX_LIVEKIT_RTC_TCP_BIND:-0.0.0.0}:${TRIX_LIVEKIT_RTC_TCP_PORT:-7881}:7881"
+      - "${TRIX_LIVEKIT_RTC_UDP_BIND:-0.0.0.0}:50000-50100:50000-50100/udp"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+
+  coturn:
+    profiles:
+      - media
+    image: ${TRIX_COTURN_IMAGE:-coturn/coturn:latest}
+    restart: unless-stopped
+    command: -c /etc/coturn/turnserver.conf --no-cli
+    ports:
+      - "${TRIX_TURN_BIND:-0.0.0.0}:${TRIX_TURN_PORT:-3478}:3478/tcp"
+      - "${TRIX_TURN_BIND:-0.0.0.0}:${TRIX_TURN_PORT:-3478}:3478/udp"
+      - "${TRIX_TURNS_BIND:-0.0.0.0}:${TRIX_TURNS_PORT:-5349}:5349/tcp"
+      - "${TRIX_TURNS_BIND:-0.0.0.0}:${TRIX_TURNS_PORT:-5349}:5349/udp"
+      - "${TRIX_TURN_RELAY_BIND:-0.0.0.0}:49160-49200:49160-49200/udp"
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - ./certs:/etc/coturn/certs:ro
+
+  call-control:
+    profiles:
+      - media
+    build:
+      context: ${TRIX_CALL_CONTROL_BUILD_CONTEXT:-../..}
+      dockerfile: ${TRIX_CALL_CONTROL_DOCKERFILE:-Dockerfile}
+      args:
+        TRIX_BIN: trix-call-control
+    depends_on:
+      - ejabberd
+      - livekit
+      - coturn
+    restart: unless-stopped
+    ports:
+      - "${TRIX_CALL_BIND:-127.0.0.1}:${TRIX_CALL_PORT:-8092}:8092"
+    environment:
+      TRIX_CALL_BIND_ADDR: 0.0.0.0:8092
+      TRIX_CALL_LOG: ${TRIX_CALL_LOG:-info,trix_call_control=debug}
+      TRIX_XMPP_API_URL: http://ejabberd:5280/api
+      TRIX_XMPP_HOST: ${TRIX_XMPP_HOST:-trix.selfhost.ru}
+      TRIX_XMPP_CONFERENCE_HOST: ${TRIX_XMPP_CONFERENCE_HOST:-conference.trix.selfhost.ru}
+      TRIX_LIVEKIT_URL: ${TRIX_LIVEKIT_URL:-wss://calls.trix.selfhost.ru}
+      TRIX_LIVEKIT_API_KEY: ${TRIX_LIVEKIT_API_KEY:-}
+      TRIX_LIVEKIT_API_SECRET: ${TRIX_LIVEKIT_API_SECRET:-}
+      TRIX_TURN_SHARED_SECRET: ${TRIX_TURN_SHARED_SECRET:-}
+      TRIX_TURN_URIS: ${TRIX_TURN_URIS:-turn:trix.selfhost.ru:3478?transport=udp,turns:trix.selfhost.ru:5349?transport=tcp}
+      TRIX_CALL_TOKEN_TTL_SECONDS: ${TRIX_CALL_TOKEN_TTL_SECONDS:-900}
+      TRIX_TURN_TTL_SECONDS: ${TRIX_TURN_TTL_SECONDS:-900}
+
   prosody:
     profiles:
       - prosody-fallback

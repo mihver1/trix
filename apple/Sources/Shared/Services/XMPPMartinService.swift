@@ -112,6 +112,12 @@ actor XMPPMartinService: TrixService {
         let stickerMetadata: TrixStickerAttachmentMetadata?
     }
 
+    private struct EncryptedCallDescriptorEnvelope: Codable, Equatable, Sendable {
+        let type: String
+        let version: Int
+        let payload: Data
+    }
+
     private struct DecodedTimelineContent {
         let body: String
         let attachment: TrixTimelineAttachment?
@@ -589,12 +595,14 @@ actor XMPPMartinService: TrixService {
     private var pendingGroupInvitations: [String: [String: CapturedMUCInvitation]] = [:]
     private var dismissedGroupInvitations: [String: [String: Date]] = [:]
     private var invitationArchiveSyncConnectionDates: [String: Date] = [:]
+    private var callDescriptorHistory: [String: [String: [TrixReceivedCallDescriptor]]] = [:]
     private let timelineCacheStore = TrixTimelineCacheStore()
     private let roomSummaryCacheStore = TrixRoomSummaryCacheStore()
     private let groupRoomCacheStore = TrixGroupRoomCacheStore()
     private let mucInvitationCacheStore = TrixMUCInvitationCacheStore()
     private let omemoPersistence: TrixOMEMOPersistence
     private static let maxCachedTimelineItems = 200
+    private static let maxCachedCallDescriptors = 100
     private static let typingRecordLifetime: TimeInterval = 6
     private static let xmppConnectionTimeout: TimeInterval = 15
     private static let mucJoinTimeout: TimeInterval = 15
@@ -1230,6 +1238,53 @@ actor XMPPMartinService: TrixService {
         case .failure:
             throw TrixClientError.attachmentDecryptionFailed
         }
+    }
+
+    func callDescriptors(roomID: String, session: TrixSession) async throws -> [TrixReceivedCallDescriptor] {
+        let normalizedRoomID = try Self.normalizedRoomID(roomID)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+        _ = try await timeline(roomID: normalizedRoomID, session: session)
+        return callDescriptorItems(accountJID: accountJID, roomID: normalizedRoomID)
+    }
+
+    func sendCallInvite(
+        _ invite: TrixCallInvite,
+        roomID: String,
+        session: TrixSession
+    ) async throws -> TrixReceivedCallDescriptor {
+        try await sendCallDescriptor(.invite(invite), roomID: roomID, session: session)
+    }
+
+    func sendCallAnswer(
+        _ answer: TrixCallAnswer,
+        roomID: String,
+        session: TrixSession
+    ) async throws -> TrixReceivedCallDescriptor {
+        try await sendCallDescriptor(.answer(answer), roomID: roomID, session: session)
+    }
+
+    func sendCallEnd(
+        _ end: TrixCallEnd,
+        roomID: String,
+        session: TrixSession
+    ) async throws -> TrixReceivedCallDescriptor {
+        try await sendCallDescriptor(.end(end), roomID: roomID, session: session)
+    }
+
+    func sendVoiceRoomState(
+        _ state: TrixVoiceRoomState,
+        roomID: String,
+        session: TrixSession
+    ) async throws -> TrixReceivedCallDescriptor {
+        try await sendCallDescriptor(.voiceRoomState(state), roomID: roomID, session: session)
+    }
+
+    func sendCallKeyRotation(
+        _ rotation: TrixCallKeyRotation,
+        roomID: String,
+        session: TrixSession
+    ) async throws -> TrixReceivedCallDescriptor {
+        try await sendCallDescriptor(.keyRotation(rotation), roomID: roomID, session: session)
     }
 
     func typingState(roomID: String, session: TrixSession) async throws -> TrixRoomTypingState {
@@ -2320,10 +2375,23 @@ actor XMPPMartinService: TrixService {
             return nil
         }
 
-        let content = Self.decodedTimelineContent(from: body)
         let resolvedSenderJID = senderJID ?? decoded.from?.bareJid.stringValue ?? roomID
         let normalizedAccountJID = accountJID.lowercased()
         let isLocalEcho = resolvedSenderJID.lowercased() == normalizedAccountJID
+        if let descriptor = Self.decodedCallDescriptor(from: body) {
+            let item = TrixReceivedCallDescriptor(
+                id: decoded.id ?? fallbackID ?? "xmpp-call-\(UUID().uuidString)",
+                roomID: roomID,
+                senderID: isLocalEcho ? accountJID : resolvedSenderJID,
+                timestamp: timestamp,
+                descriptor: descriptor,
+                isLocalEcho: isLocalEcho
+            )
+            storeCallDescriptors([item], accountJID: accountJID, roomID: roomID)
+            return nil
+        }
+
+        let content = Self.decodedTimelineContent(from: body)
         return TrixTimelineItem(
             id: decoded.id ?? fallbackID ?? "xmpp-\(UUID().uuidString)",
             roomID: roomID,
@@ -2505,6 +2573,28 @@ actor XMPPMartinService: TrixService {
         timelineHistory[accountJID.lowercased()]?[roomID.lowercased()] ?? []
     }
 
+    private func callDescriptorItems(accountJID: String, roomID: String) -> [TrixReceivedCallDescriptor] {
+        callDescriptorHistory[accountJID.lowercased()]?[roomID.lowercased()] ?? []
+    }
+
+    private func storeCallDescriptors(
+        _ descriptors: [TrixReceivedCallDescriptor],
+        accountJID: String,
+        roomID: String
+    ) {
+        guard !descriptors.isEmpty else {
+            return
+        }
+
+        let accountKey = accountJID.lowercased()
+        let roomKey = roomID.lowercased()
+        let existingDescriptors = callDescriptorHistory[accountKey]?[roomKey] ?? []
+        var accountDescriptors = callDescriptorHistory[accountKey] ?? [:]
+        let mergedDescriptors = Array(Self.mergedCallDescriptors(existingDescriptors, descriptors).suffix(Self.maxCachedCallDescriptors))
+        accountDescriptors[roomKey] = mergedDescriptors
+        callDescriptorHistory[accountKey] = accountDescriptors
+    }
+
     @discardableResult
     private func loadCachedTimelineItems(accountJID: String, roomID: String) -> Int {
         let accountKey = accountJID.lowercased()
@@ -2547,6 +2637,100 @@ actor XMPPMartinService: TrixService {
                 }
             }
         }
+    }
+
+    private func sendCallDescriptor(
+        _ descriptor: TrixCallDescriptor,
+        roomID: String,
+        session: TrixSession
+    ) async throws -> TrixReceivedCallDescriptor {
+        let connection = try await ensureConnection(for: session)
+        let normalizedRoomID = try Self.normalizedRoomID(roomID)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+        let body = try Self.encodedCallDescriptor(descriptor)
+
+        if Self.isMUCJID(normalizedRoomID) {
+            return try await sendGroupCallDescriptor(
+                descriptor,
+                body: body,
+                roomID: normalizedRoomID,
+                accountJID: accountJID,
+                session: session,
+                connection: connection
+            )
+        }
+
+        guard connection.omemoStack.store.hasTrustedActiveDevice(forName: normalizedRoomID) else {
+            _ = try? await refreshPeerDeviceIdentities(userID: normalizedRoomID, session: session)
+            guard connection.omemoStack.store.hasTrustedActiveDevice(forName: normalizedRoomID) else {
+                throw TrixClientError.omemoDeviceTrustRequired
+            }
+            return try await sendCallDescriptor(descriptor, roomID: normalizedRoomID, session: session)
+        }
+
+        let messageID = "trix-call-\(descriptor.event.rawValue)-\(UUID().uuidString)"
+        let message = Message()
+        message.id = messageID
+        message.type = .chat
+        message.to = JID(normalizedRoomID)
+        message.body = body
+        message.messageDelivery = .request
+
+        let encryptedMessage = try await encodeOMEMOMessage(message, peerJID: normalizedRoomID, connection: connection)
+        encryptedMessage.messageDelivery = .request
+        try Self.requireEncryptedOMEMOPayload(encryptedMessage)
+        try await connection.omemoStack.module.write(stanza: encryptedMessage)
+
+        let received = TrixReceivedCallDescriptor(
+            id: messageID,
+            roomID: normalizedRoomID,
+            senderID: accountJID,
+            timestamp: Date(),
+            descriptor: descriptor,
+            isLocalEcho: true
+        )
+        storeCallDescriptors([received], accountJID: accountJID, roomID: normalizedRoomID)
+        return received
+    }
+
+    private func sendGroupCallDescriptor(
+        _ descriptor: TrixCallDescriptor,
+        body: String,
+        roomID: String,
+        accountJID: String,
+        session: TrixSession,
+        connection: Connection
+    ) async throws -> TrixReceivedCallDescriptor {
+        let room = try await joinedGroupRoom(roomID: roomID, session: session, connection: connection)
+        let recipients = try await validatedGroupEncryptionRecipients(
+            room: room,
+            accountJID: accountJID,
+            session: session,
+            connection: connection
+        )
+
+        let messageID = "trix-call-\(descriptor.event.rawValue)-\(UUID().uuidString)"
+        let message = Message()
+        message.id = messageID
+        message.type = .groupchat
+        message.to = JID(roomID)
+        message.body = body
+
+        let encryptedMessage = try await encodeOMEMOMessage(message, recipientJIDs: recipients, connection: connection)
+        try Self.requireEncryptedOMEMOPayload(encryptedMessage)
+        try await connection.mucModule.write(stanza: encryptedMessage)
+
+        let received = TrixReceivedCallDescriptor(
+            id: messageID,
+            roomID: roomID,
+            senderID: accountJID,
+            timestamp: Date(),
+            descriptor: descriptor,
+            isLocalEcho: true
+        )
+        storeCallDescriptors([received], accountJID: accountJID, roomID: roomID)
+        updateGroupActivity(roomID: roomID, accountJID: accountJID, at: received.timestamp)
+        return received
     }
 
     private func sendGroupText(
@@ -3349,6 +3533,74 @@ actor XMPPMartinService: TrixService {
         return json
     }
 
+    private static func encodedCallDescriptor(_ descriptor: TrixCallDescriptor) throws -> String {
+        let envelope = EncryptedCallDescriptorEnvelope(
+            type: callDescriptorContentType(descriptor),
+            version: 1,
+            payload: try callDescriptorPayload(descriptor)
+        )
+        let data = try JSONEncoder().encode(envelope)
+        guard let json = String(data: data, encoding: .utf8) else {
+            throw TrixClientError.callControlUnavailable
+        }
+
+        return json
+    }
+
+    private static func decodedCallDescriptor(from sourceJSON: String?) -> TrixCallDescriptor? {
+        guard let data = sourceJSON?.data(using: .utf8),
+              let envelope = try? JSONDecoder().decode(EncryptedCallDescriptorEnvelope.self, from: data),
+              envelope.version == 1,
+              !envelope.payload.isEmpty else {
+            return nil
+        }
+
+        switch envelope.type {
+        case TrixCallInvite.contentType:
+            return (try? JSONDecoder().decode(TrixCallInvite.self, from: envelope.payload)).map(TrixCallDescriptor.invite)
+        case TrixCallAnswer.contentType:
+            return (try? JSONDecoder().decode(TrixCallAnswer.self, from: envelope.payload)).map(TrixCallDescriptor.answer)
+        case TrixCallEnd.contentType:
+            return (try? JSONDecoder().decode(TrixCallEnd.self, from: envelope.payload)).map(TrixCallDescriptor.end)
+        case TrixVoiceRoomState.contentType:
+            return (try? JSONDecoder().decode(TrixVoiceRoomState.self, from: envelope.payload)).map(TrixCallDescriptor.voiceRoomState)
+        case TrixCallKeyRotation.contentType:
+            return (try? JSONDecoder().decode(TrixCallKeyRotation.self, from: envelope.payload)).map(TrixCallDescriptor.keyRotation)
+        default:
+            return nil
+        }
+    }
+
+    private static func callDescriptorContentType(_ descriptor: TrixCallDescriptor) -> String {
+        switch descriptor {
+        case .invite:
+            return TrixCallInvite.contentType
+        case .answer:
+            return TrixCallAnswer.contentType
+        case .end:
+            return TrixCallEnd.contentType
+        case .voiceRoomState:
+            return TrixVoiceRoomState.contentType
+        case .keyRotation:
+            return TrixCallKeyRotation.contentType
+        }
+    }
+
+    private static func callDescriptorPayload(_ descriptor: TrixCallDescriptor) throws -> Data {
+        switch descriptor {
+        case .invite(let value):
+            return try JSONEncoder().encode(value)
+        case .answer(let value):
+            return try JSONEncoder().encode(value)
+        case .end(let value):
+            return try JSONEncoder().encode(value)
+        case .voiceRoomState(let value):
+            return try JSONEncoder().encode(value)
+        case .keyRotation(let value):
+            return try JSONEncoder().encode(value)
+        }
+    }
+
     private static func decodedAttachmentDescriptor(from sourceJSON: String?) -> EncryptedAttachmentDescriptor? {
         guard let data = sourceJSON?.data(using: .utf8),
               let descriptor = try? JSONDecoder().decode(EncryptedAttachmentDescriptor.self, from: data),
@@ -3914,6 +4166,36 @@ actor XMPPMartinService: TrixService {
             }
 
             return first.id < second.id
+        }
+    }
+
+    private static func mergedCallDescriptors(
+        _ lhs: [TrixReceivedCallDescriptor],
+        _ rhs: [TrixReceivedCallDescriptor]
+    ) -> [TrixReceivedCallDescriptor] {
+        var byID: [String: TrixReceivedCallDescriptor] = [:]
+        for descriptor in lhs {
+            byID[descriptor.id] = descriptor
+        }
+        for descriptor in rhs {
+            byID[descriptor.id] = descriptor
+        }
+
+        return byID.values.sorted { first, second in
+            if first.timestamp != second.timestamp {
+                return first.timestamp < second.timestamp
+            }
+
+            return first.id < second.id
+        }
+    }
+
+    private static func requireEncryptedOMEMOPayload(_ message: Message) throws {
+        guard message.body == nil,
+              let encrypted = message.firstChild(name: "encrypted", xmlns: OMEMOModule.XMLNS),
+              let header = encrypted.firstChild(name: "header"),
+              !header.filterChildren(name: "key", xmlns: nil as String?).isEmpty else {
+            throw TrixClientError.omemoEncryptionFailed
         }
     }
 
