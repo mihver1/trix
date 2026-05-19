@@ -3,15 +3,33 @@ import XCTest
 
 @MainActor
 final class DeviceVerificationTests: XCTestCase {
-    func testVisualFingerprintBuildsFiveHumanCheckableSymbols() {
+    func testVisualFingerprintBuildsLosslessSymbolSequence() {
         let visual = TrixDeviceVisualVerification.visualFingerprint(
             "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
         )
 
         XCTAssertEqual(visual?.kind, .fingerprintDisplayTransform)
-        XCTAssertEqual(visual?.symbols.count, 5)
+        XCTAssertEqual(visual?.symbols.count, 32)
         XCTAssertEqual(visual?.decimalGroups.count, 4)
         XCTAssertFalse(visual?.symbolSummary.isEmpty ?? true)
+
+        let rendered = visual?.symbols.map(\.symbol).joined()
+        XCTAssertEqual(rendered, "🅰️🅰️🅱️🅱️🌜🌜🎯🎯📧📧🎏🎏0️⃣0️⃣1️⃣1️⃣2️⃣2️⃣3️⃣3️⃣4️⃣4️⃣5️⃣5️⃣6️⃣6️⃣7️⃣7️⃣8️⃣8️⃣9️⃣9️⃣")
+    }
+
+
+
+    func testVisualFingerprintDiffersForDifferentRawFingerprints() {
+        let left = TrixDeviceVisualVerification.visualFingerprint(
+            "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
+        )
+        let right = TrixDeviceVisualVerification.visualFingerprint(
+            "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:98"
+        )
+
+        XCTAssertNotNil(left)
+        XCTAssertNotNil(right)
+        XCTAssertNotEqual(left?.symbols.map(\.symbol), right?.symbols.map(\.symbol))
     }
 
     func testMockVerificationFlowUsesVisualChallengeAndExplicitTrust() async throws {
