@@ -4,6 +4,23 @@ import Foundation
 import LiveKit
 #endif
 
+enum TrixCallMediaConfiguration {
+    static let forceRelayEnvironmentKey = "TRIX_CALL_FORCE_RELAY_ONLY"
+
+    static func forceRelayOnly(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
+        guard let value = environment[forceRelayEnvironmentKey] else {
+            return false
+        }
+
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
+    }
+}
+
 struct HTTPCallControlService: TrixCallControlService {
     private let directCallURL: URL
     private let directCallJoinURL: URL
@@ -180,6 +197,11 @@ struct HTTPCallControlService: TrixCallControlService {
 #if canImport(LiveKit)
 actor TrixLiveKitMediaCallService: TrixMediaCallService {
     private var roomsByCallID: [String: Room] = [:]
+    private let forceRelayOnly: Bool
+
+    init(forceRelayOnly: Bool = TrixCallMediaConfiguration.forceRelayOnly()) {
+        self.forceRelayOnly = forceRelayOnly
+    }
 
     func connect(
         authorization: TrixCallJoinAuthorization,
@@ -202,11 +224,15 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
             dynacast: authorization.publishVideo,
             encryptionOptions: EncryptionOptions(keyProvider: keyProvider)
         )
+        let connectOptions = ConnectOptions(
+            iceTransportPolicy: forceRelayOnly ? .relay : .all
+        )
 
         do {
             try await room.connect(
                 url: authorization.liveKitURL.absoluteString,
                 token: authorization.liveKitToken,
+                connectOptions: connectOptions,
                 roomOptions: roomOptions
             )
             if authorization.publishAudio {
@@ -238,6 +264,8 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
 }
 #else
 actor TrixLiveKitMediaCallService: TrixMediaCallService {
+    init(forceRelayOnly: Bool = TrixCallMediaConfiguration.forceRelayOnly()) {}
+
     func connect(
         authorization: TrixCallJoinAuthorization,
         mediaKey: TrixCallMediaKey

@@ -70,6 +70,22 @@ final class TrixCallTests: XCTestCase {
         XCTAssertFalse(payload.isSyncNotification)
     }
 
+    func testCallMediaRelayOnlySmokeFlagIsOptIn() {
+        XCTAssertFalse(TrixCallMediaConfiguration.forceRelayOnly(environment: [:]))
+        XCTAssertFalse(TrixCallMediaConfiguration.forceRelayOnly(environment: [
+            TrixCallMediaConfiguration.forceRelayEnvironmentKey: "0",
+        ]))
+        XCTAssertFalse(TrixCallMediaConfiguration.forceRelayOnly(environment: [
+            TrixCallMediaConfiguration.forceRelayEnvironmentKey: "false",
+        ]))
+        XCTAssertTrue(TrixCallMediaConfiguration.forceRelayOnly(environment: [
+            TrixCallMediaConfiguration.forceRelayEnvironmentKey: "1",
+        ]))
+        XCTAssertTrue(TrixCallMediaConfiguration.forceRelayOnly(environment: [
+            TrixCallMediaConfiguration.forceRelayEnvironmentKey: " yes ",
+        ]))
+    }
+
     @MainActor
     func testPrepareDirectVideoCallSendsInviteDescriptorBeforeMediaConnect() async throws {
         let callControl = RecordingCallControlService()

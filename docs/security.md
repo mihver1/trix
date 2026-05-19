@@ -289,6 +289,14 @@ attachment metadata. The gateway sends those pushes through
 `TRIX_APNS_VOIP_TOPIC`, which must be distinct from the regular
 `TRIX_APNS_TOPIC`.
 
+Encrypted calls are not launch-complete until signed-device smoke proves DM
+video on two signed devices with incoming CallKit/PushKit, bidirectional
+audio/video, and reconnect; group voice with three accounts and then ten
+participants; a relay-only TURN media path; and a log audit across Apple app,
+call-control, push-gateway, LiveKit/coturn, proxy, and push logs. That audit must
+report LiveKit tokens, TURN credentials, media keys, XMPP passwords, APNs tokens,
+OMEMO secrets, and decrypted content absent without echoing matched values.
+
 ## Registration And Provisioning Risk
 
 Public registration is out of scope. Users should be created by the operator

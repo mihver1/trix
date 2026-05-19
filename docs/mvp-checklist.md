@@ -117,10 +117,15 @@ copying old implementation details.
       the distinct VoIP APNs topic. The shared Apple UI now exposes a DM video
       button, incoming accept/decline/end controls, and a group voice-room bar
       with join/leave plus active participants; group rooms do not ring members.
-      This is not launch-complete until a
-      signed-device DM video smoke and a 3-account group voice-room smoke prove
-      LiveKit media E2EE, OMEMO descriptor/key delivery, membership checks, TURN
-      fallback, and no media keys or LiveKit/TURN tokens in logs or pushes.
+      This is not launch-complete until signed-device smoke proves: DM video on
+      two signed devices with incoming CallKit/PushKit, answer, bidirectional
+      audio/video, and reconnect; group voice with three accounts first and then
+      ten authenticated participants; a forced TURN relay-only media path; and a
+      log audit showing no LiveKit tokens, TURN credentials, media keys, XMPP
+      passwords, APNs tokens, OMEMO secrets, or decrypted content in app,
+      call-control, push-gateway, LiveKit/coturn, proxy, or push logs. Track the
+      exact smoke plan in
+      `docs/tasks/2026-05-19-encrypted-call-smoke-tests.md`.
 - [x] Trix user directory search for new DM/group creation and add-member flows.
 - [x] Basic XMPP vCard-backed profile view/edit surface for display name, bio,
       status, and website.

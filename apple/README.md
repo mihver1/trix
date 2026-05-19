@@ -410,7 +410,9 @@ The target protocol-neutral boundary is:
   room state, and media-key rotation descriptors. Sends use the same recipient
   set and trust gates as encrypted chat sends.
 - `TrixMediaCallService`: LiveKit media connection lifecycle with client-side
-  media E2EE required.
+  media E2EE required. For signed-device TURN smoke only, launching the app with
+  `TRIX_CALL_FORCE_RELAY_ONLY=1` makes the LiveKit adapter request relay-only
+  ICE transport policy; normal product launches keep the default ICE policy.
 - `TrixCallViewModel`: shared call UI state for the DM video button, incoming
   accept/decline/end actions, and group voice-room join/leave participant state.
   Group rooms publish voice-room state only; they do not surface ringing UI.

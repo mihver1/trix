@@ -106,6 +106,19 @@ send ringing pushes.
 It never accepts the client media E2EE key; Apple distributes call keys through
 OMEMO-encrypted call descriptors.
 
+After signed-device call smoke, collect the Apple app, call-control,
+push-gateway, LiveKit/coturn, and proxy logs into a local bundle and run:
+
+```bash
+cd server/xmpp
+./scripts/call-log-audit.sh /path/to/call-smoke-logs
+```
+
+The audit reports only forbidden value classes, file paths, and line counts. It
+must not print matched secrets. The encrypted-calls MVP item stays open until the
+DM video, group voice, relay-only TURN, and log-audit smoke passes on signed
+devices.
+
 ## Prosody Fallback
 
 Prosody is still present for a fast shell-managed spike:
