@@ -413,6 +413,9 @@ The target protocol-neutral boundary is:
   media E2EE required. For signed-device TURN smoke only, launching the app with
   `TRIX_CALL_FORCE_RELAY_ONLY=1` makes the LiveKit adapter request relay-only
   ICE transport policy; normal product launches keep the default ICE policy.
+  The macOS app entitlement set includes outgoing and incoming network access,
+  camera, and microphone because signed macOS WebRTC media sockets need the
+  sandbox network capability in both directions.
 - `TrixCallViewModel`: shared call UI state for the DM video button, incoming
   accept/decline/end actions, and group voice-room join/leave participant state.
   Group rooms publish voice-room state only; they do not surface ringing UI.

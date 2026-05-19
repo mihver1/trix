@@ -3594,7 +3594,7 @@ actor XMPPMartinService: TrixService {
         )
         let data = try JSONEncoder().encode(envelope)
         guard let json = String(data: data, encoding: .utf8) else {
-            throw TrixClientError.callControlUnavailable
+            throw TrixClientError.callDescriptorUnavailable
         }
 
         return json

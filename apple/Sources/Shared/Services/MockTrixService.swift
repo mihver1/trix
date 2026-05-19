@@ -615,6 +615,27 @@ actor MockTrixService: TrixService {
         try storeCallDescriptor(.keyRotation(rotation), roomID: roomID, session: session)
     }
 
+    func appendRemoteCallDescriptor(
+        _ descriptor: TrixCallDescriptor,
+        roomID: String,
+        senderID: String
+    ) throws -> TrixReceivedCallDescriptor {
+        guard roomSummaries.contains(where: { $0.id == roomID }) else {
+            throw TrixClientError.roomUnavailable
+        }
+
+        let received = TrixReceivedCallDescriptor(
+            id: "$mock-remote-call-\(UUID().uuidString)",
+            roomID: roomID,
+            senderID: senderID,
+            timestamp: Date(),
+            descriptor: descriptor,
+            isLocalEcho: false
+        )
+        callDescriptorsByRoomID[roomID, default: []].append(received)
+        return received
+    }
+
     func typingState(roomID: String, session: TrixSession) async throws -> TrixRoomTypingState {
         TrixRoomTypingState(
             roomID: roomID,

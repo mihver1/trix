@@ -1,3 +1,5 @@
+import Foundation
+import Security
 import XCTest
 @testable import Trix
 
@@ -84,6 +86,29 @@ final class TrixCallTests: XCTestCase {
         XCTAssertTrue(TrixCallMediaConfiguration.forceRelayOnly(environment: [
             TrixCallMediaConfiguration.forceRelayEnvironmentKey: " yes ",
         ]))
+    }
+
+    func testCallControlFailuresExposeLayerSpecificMessages() {
+        let removedGenericMessage = "Encrypted calls are not available yet."
+
+        XCTAssertNotEqual(TrixClientError.callAuthenticationUnavailable.trixUserFacingMessage, removedGenericMessage)
+        XCTAssertNotEqual(TrixClientError.callControlNetworkUnavailable.trixUserFacingMessage, removedGenericMessage)
+        XCTAssertNotEqual(TrixClientError.callControlInvalidResponse.trixUserFacingMessage, removedGenericMessage)
+        XCTAssertNotEqual(TrixClientError.callControlRejected(422).trixUserFacingMessage, removedGenericMessage)
+        XCTAssertNotEqual(TrixClientError.callDescriptorUnavailable.trixUserFacingMessage, removedGenericMessage)
+        XCTAssertNotEqual(TrixClientError.callUnavailable.trixUserFacingMessage, removedGenericMessage)
+        XCTAssertNotEqual(TrixClientError.callMicrophonePermissionRequired.trixUserFacingMessage, removedGenericMessage)
+        XCTAssertNotEqual(TrixClientError.callCameraPermissionRequired.trixUserFacingMessage, removedGenericMessage)
+        XCTAssertNotEqual(TrixClientError.callMicrophoneUnavailable.trixUserFacingMessage, removedGenericMessage)
+        XCTAssertNotEqual(TrixClientError.callCameraUnavailable.trixUserFacingMessage, removedGenericMessage)
+        XCTAssertEqual(
+            TrixClientError.callControlRejected(422).trixUserFacingMessage,
+            "Call control rejected the request (HTTP 422)."
+        )
+        XCTAssertEqual(
+            TrixClientError.callMicrophonePermissionRequired.trixUserFacingMessage,
+            "Allow microphone access before joining encrypted calls."
+        )
     }
 
     @MainActor
@@ -204,9 +229,136 @@ final class TrixCallTests: XCTestCase {
         XCTAssertEqual(mediaConnects, ["call-1"])
         if case .voiceRoomState(let state) = sentDescriptors.first?.descriptor {
             XCTAssertEqual(state.activeParticipantIDs, [session.userID])
+            let mediaKey = try XCTUnwrap(state.mediaKey)
+            let connectedMediaKeys = await media.connectedMediaKeys()
+            XCTAssertEqual(connectedMediaKeys, [mediaKey])
         } else {
             XCTFail("Expected a voice-room state descriptor")
         }
+    }
+
+    @MainActor
+    func testJoinGroupVoiceRoomReusesExistingEncryptedMediaKey() async throws {
+        let callControl = RecordingCallControlService()
+        let descriptors = RecordingCallDescriptorService()
+        let media = RecordingMediaCallService()
+        let viewModel = TrixCallViewModel(
+            callControlService: callControl,
+            callDescriptorService: descriptors,
+            mediaCallService: media
+        )
+        let session = Self.session()
+        let room = Self.room(id: "friends@conference.trix.selfhost.ru", kind: .group)
+        let existingMediaKey = try TrixCallMediaKey(
+            keyID: "group-key",
+            key: "base64-group-call-key",
+            keyIndex: 0,
+            createdAtUnix: 100
+        )
+        let existingState = TrixVoiceRoomState(
+            callID: "group-call",
+            roomID: room.id,
+            activeParticipantIDs: ["bob@trix.selfhost.ru"],
+            mediaKey: existingMediaKey,
+            updatedAtUnix: 100
+        )
+        await descriptors.appendRemote(
+            .voiceRoomState(existingState),
+            roomID: room.id,
+            senderID: "bob@trix.selfhost.ru"
+        )
+
+        await viewModel.joinGroupVoiceRoom(roomID: room.id, session: session)
+
+        let sentDescriptors = await descriptors.sentDescriptors()
+        let connectedMediaKeys = await media.connectedMediaKeys()
+        XCTAssertEqual(connectedMediaKeys, [existingMediaKey])
+        if case .voiceRoomState(let state) = sentDescriptors.last?.descriptor {
+            XCTAssertEqual(state.mediaKey, existingMediaKey)
+            XCTAssertEqual(
+                Set(state.activeParticipantIDs.map { $0.lowercased() }),
+                Set(["bob@trix.selfhost.ru", session.userID.lowercased()])
+            )
+        } else {
+            XCTFail("Expected the latest descriptor to be a voice-room state")
+        }
+    }
+
+    @MainActor
+    func testForegroundRefreshLoadsIncomingCallDescriptorForUnselectedRoom() async throws {
+        let accountID = "@me:trix.selfhost.ru"
+        let directRoomID = "!dm-alice:trix.selfhost.ru"
+        let service = MockTrixService(now: Date(timeIntervalSince1970: 100))
+        let stickerKeychainService = "com.softgrid.trix.tests.calls.stickers.\(UUID().uuidString)"
+        let mediaKeychainService = "com.softgrid.trix.tests.calls.media.\(UUID().uuidString)"
+        let notificationKeychainService = "com.softgrid.trix.tests.calls.notifications.\(UUID().uuidString)"
+        let mediaSettingsSuiteName = "com.softgrid.trix.tests.calls.media-settings.\(UUID().uuidString)"
+        let mediaSettingsUserDefaults = try XCTUnwrap(UserDefaults(suiteName: mediaSettingsSuiteName))
+        let stickerStore = TrixStickerLibraryStore(
+            keychainService: stickerKeychainService,
+            keychainAccount: "key",
+            directoryName: "CallStickerLibraryTests-\(UUID().uuidString)"
+        )
+        let mediaStore = TrixMediaCacheStore(
+            keychainService: mediaKeychainService,
+            keychainAccount: "key",
+            directoryName: "CallMediaCacheTests-\(UUID().uuidString)"
+        )
+        let notificationStore = TrixRoomNotificationProfileStore(
+            keychainService: notificationKeychainService,
+            keychainAccount: "key",
+            directoryName: "CallNotificationProfileTests-\(UUID().uuidString)"
+        )
+        defer {
+            try? stickerStore.clear(accountID: accountID)
+            _ = try? mediaStore.clearAll(accountID: accountID)
+            try? notificationStore.clear(accountID: accountID)
+            mediaSettingsUserDefaults.removePersistentDomain(forName: mediaSettingsSuiteName)
+            deleteCallTestKeychainItem(service: stickerKeychainService)
+            deleteCallTestKeychainItem(service: mediaKeychainService)
+            deleteCallTestKeychainItem(service: notificationKeychainService)
+        }
+
+        let model = TrixAppModel(
+            sessionStore: CallTestSessionStore(),
+            registrationService: MockInviteRegistrationService(),
+            stickerLibraryStore: stickerStore,
+            mediaCacheStore: mediaStore,
+            mediaCacheSettingsStore: UserDefaultsTrixMediaCacheSettingsStore(userDefaults: mediaSettingsUserDefaults),
+            roomNotificationProfileStore: notificationStore,
+            trixService: service
+        )
+        await model.login(userID: accountID, password: "test-password")
+        XCTAssertNil(model.errorMessage)
+
+        let mediaKey = try TrixCallMediaKey(
+            keyID: "incoming-key",
+            key: "base64-call-key",
+            keyIndex: 0,
+            createdAtUnix: 100
+        )
+        let invite = TrixCallInvite(
+            callID: "incoming-call",
+            kind: .directVideo,
+            roomID: directRoomID,
+            senderID: "@alice:trix.selfhost.ru",
+            liveKitRoom: "dm-room",
+            createdAtUnix: 100,
+            expiresAtUnix: UInt64(Date().addingTimeInterval(60).timeIntervalSince1970),
+            mediaKey: mediaKey
+        )
+        _ = try await service.appendRemoteCallDescriptor(
+            .invite(invite),
+            roomID: directRoomID,
+            senderID: invite.senderID
+        )
+
+        XCTAssertNil(model.callViewModel.incomingDirectCall(roomID: directRoomID))
+        await model.refreshForeground(markSelectedRoomRead: false, reloadSelectedTimeline: false)
+
+        let incomingCall = try XCTUnwrap(model.callViewModel.incomingDirectCall(roomID: directRoomID))
+        XCTAssertEqual(incomingCall.callID, "incoming-call")
+        XCTAssertEqual(incomingCall.callerID, "@alice:trix.selfhost.ru")
     }
 
     private static func session() -> TrixSession {
@@ -233,6 +385,30 @@ final class TrixCallTests: XCTestCase {
             lastActivityAt: Date(timeIntervalSince1970: 1)
         )
     }
+}
+
+private final class CallTestSessionStore: TrixSessionStore {
+    private var savedSession: TrixSession?
+
+    func loadSession() throws -> TrixSession? {
+        savedSession
+    }
+
+    func saveSession(_ session: TrixSession) throws {
+        savedSession = session
+    }
+
+    func clearSession() throws {
+        savedSession = nil
+    }
+}
+
+private func deleteCallTestKeychainItem(service: String) {
+    SecItemDelete([
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: service,
+        kSecAttrAccount as String: "key",
+    ] as CFDictionary)
 }
 
 private actor RecordingCallControlService: TrixCallControlService {
@@ -396,6 +572,7 @@ private actor RecordingCallDescriptorService: TrixCallDescriptorService {
 
 private actor RecordingMediaCallService: TrixMediaCallService {
     private var connectedIDs: [String] = []
+    private var connectedKeys: [TrixCallMediaKey] = []
     private var disconnectedIDs: [String] = []
 
     func connect(
@@ -403,6 +580,7 @@ private actor RecordingMediaCallService: TrixMediaCallService {
         mediaKey: TrixCallMediaKey
     ) async throws -> TrixActiveMediaCall {
         connectedIDs.append(authorization.callID)
+        connectedKeys.append(mediaKey)
         return TrixActiveMediaCall(
             callID: authorization.callID,
             kind: authorization.kind,
@@ -417,6 +595,10 @@ private actor RecordingMediaCallService: TrixMediaCallService {
 
     func connectedCallIDs() -> [String] {
         connectedIDs
+    }
+
+    func connectedMediaKeys() -> [TrixCallMediaKey] {
+        connectedKeys
     }
 
     func disconnectedCallIDs() -> [String] {

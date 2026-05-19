@@ -1,8 +1,12 @@
 import Foundation
+import OSLog
 
 #if canImport(LiveKit)
+import AVFoundation
 import LiveKit
 #endif
+
+private let trixCallMediaLogger = Logger(subsystem: "com.softgrid.trixapp", category: "call-media")
 
 enum TrixCallMediaConfiguration {
     static let forceRelayEnvironmentKey = "TRIX_CALL_FORCE_RELAY_ONLY"
@@ -98,7 +102,7 @@ struct HTTPCallControlService: TrixCallControlService {
         guard response.e2eeRequired,
               let liveKitURL = URL(string: response.liveKitURL),
               !response.liveKitToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw TrixClientError.callControlUnavailable
+            throw TrixClientError.callControlInvalidResponse
         }
 
         return TrixCallJoinAuthorization(
@@ -133,24 +137,27 @@ struct HTTPCallControlService: TrixCallControlService {
         do {
             (data, response) = try await URLSession.shared.data(for: request)
         } catch {
-            throw TrixClientError.callControlUnavailable
+            throw TrixClientError.callControlNetworkUnavailable
         }
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw TrixClientError.callControlUnavailable
+            throw TrixClientError.callControlInvalidResponse
         }
 
         guard (200..<300).contains(httpResponse.statusCode) else {
+            if httpResponse.statusCode == 401 {
+                throw TrixClientError.callAuthenticationUnavailable
+            }
             if httpResponse.statusCode == 403 {
                 throw TrixClientError.callMembershipUnavailable
             }
-            throw TrixClientError.callControlUnavailable
+            throw TrixClientError.callControlRejected(httpResponse.statusCode)
         }
 
         do {
             return try JSONDecoder().decode(U.self, from: data)
         } catch {
-            throw TrixClientError.callControlUnavailable
+            throw TrixClientError.callControlInvalidResponse
         }
     }
 
@@ -158,12 +165,12 @@ struct HTTPCallControlService: TrixCallControlService {
         let userID = try normalizedXMPPUserID(session.userID)
         let password = session.accessToken
         guard !password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw TrixClientError.callControlUnavailable
+            throw TrixClientError.callAuthenticationUnavailable
         }
 
         let credentials = "\(userID):\(password)"
         guard let data = credentials.data(using: .utf8) else {
-            throw TrixClientError.callControlUnavailable
+            throw TrixClientError.callAuthenticationUnavailable
         }
 
         return "Basic \(data.base64EncodedString())"
@@ -225,8 +232,20 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
             encryptionOptions: EncryptionOptions(keyProvider: keyProvider)
         )
         let connectOptions = ConnectOptions(
+            iceServers: Self.iceServers(from: authorization.turn),
             iceTransportPolicy: forceRelayOnly ? .relay : .all
         )
+
+        if authorization.publishAudio {
+            guard await LiveKitSDK.ensureDeviceAccess(for: [.audio]) else {
+                throw TrixClientError.callMicrophonePermissionRequired
+            }
+        }
+        if authorization.publishVideo {
+            guard await LiveKitSDK.ensureDeviceAccess(for: [.video]) else {
+                throw TrixClientError.callCameraPermissionRequired
+            }
+        }
 
         do {
             try await room.connect(
@@ -235,15 +254,29 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
                 connectOptions: connectOptions,
                 roomOptions: roomOptions
             )
-            if authorization.publishAudio {
-                try await room.localParticipant.setMicrophone(enabled: true)
-            }
-            if authorization.publishVideo {
-                try await room.localParticipant.setCamera(enabled: true)
-            }
         } catch {
             await room.disconnect()
+            Self.logMediaFailure(context: "connect", error: error)
             throw TrixClientError.callMediaUnavailable
+        }
+
+        if authorization.publishAudio {
+            do {
+                try await room.localParticipant.setMicrophone(enabled: true)
+            } catch {
+                await room.disconnect()
+                Self.logMediaFailure(context: "microphone", error: error)
+                throw TrixClientError.callMicrophoneUnavailable
+            }
+        }
+        if authorization.publishVideo {
+            do {
+                try await room.localParticipant.setCamera(enabled: true)
+            } catch {
+                await room.disconnect()
+                Self.logMediaFailure(context: "camera", error: error)
+                throw TrixClientError.callCameraUnavailable
+            }
         }
 
         roomsByCallID[authorization.callID] = room
@@ -253,6 +286,46 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
             liveKitRoom: authorization.liveKitRoom,
             startedAt: Date()
         )
+    }
+
+    private static func iceServers(from credentials: TrixTurnCredentials) -> [IceServer] {
+        let urls = credentials.uris
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !urls.isEmpty else {
+            return []
+        }
+
+        return [
+            IceServer(
+                urls: urls,
+                username: credentials.username,
+                credential: credentials.credential
+            )
+        ]
+    }
+
+    private static func logMediaFailure(context: String, error: Error) {
+        let nsError = error as NSError
+        trixCallMediaLogger.error(
+            "LiveKit media \(context, privacy: .public) failed domain=\(nsError.domain, privacy: .public) code=\(nsError.code, privacy: .public) description=\(sanitizeErrorDescription(nsError.localizedDescription), privacy: .public)"
+        )
+    }
+
+    private static func sanitizeErrorDescription(_ value: String) -> String {
+        let sensitivePatterns = [
+            #"(?i)(token|jwt|credential|password|secret|authorization)=\S+"#,
+            #"(?i)(token|jwt|credential|password|secret|authorization):\S+"#,
+            #"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"#,
+        ]
+
+        return sensitivePatterns.reduce(value) { result, pattern in
+            result.replacingOccurrences(
+                of: pattern,
+                with: "[REDACTED]",
+                options: .regularExpression
+            )
+        }
     }
 
     func disconnect(callID: String) async {

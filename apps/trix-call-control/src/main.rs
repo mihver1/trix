@@ -392,14 +392,18 @@ async fn is_muc_member(
     let value = ejabberd_api_post(
         state,
         "get_room_affiliations",
-        json!({
-            "name": room_localpart,
-            "service": state.config.conference_host,
-        }),
+        muc_affiliations_payload(room_localpart, &state.config.conference_host),
     )
     .await?;
 
     Ok(json_contains_jid(&value, &account.bare_jid))
+}
+
+fn muc_affiliations_payload(room_localpart: &str, conference_host: &str) -> Value {
+    json!({
+        "room": room_localpart,
+        "service": conference_host,
+    })
 }
 
 async fn ejabberd_api_post(
@@ -893,6 +897,15 @@ mod tests {
 
         assert!(json_contains_jid(&payload, "alice@trix.selfhost.ru"));
         assert!(!json_contains_jid(&payload, "other@trix.selfhost.ru"));
+    }
+
+    #[test]
+    fn muc_affiliations_payload_matches_ejabberd_24_12_api_shape() {
+        let payload = muc_affiliations_payload("friends", "conference.trix.selfhost.ru");
+
+        assert_eq!(payload["room"], "friends");
+        assert_eq!(payload["service"], "conference.trix.selfhost.ru");
+        assert!(payload.get("name").is_none());
     }
 
     #[test]

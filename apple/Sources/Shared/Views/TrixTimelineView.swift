@@ -450,12 +450,12 @@ struct TrixTimelineView: View {
                     callerTitle: callParticipantTitle(incomingCall.callerID),
                     isWorking: callViewModel.isActing(roomID: room.id),
                     accept: {
-                        Task {
+                        Task.detached(priority: .userInitiated) {
                             await model.acceptIncomingDirectCall(incomingCall)
                         }
                     },
                     decline: {
-                        Task {
+                        Task.detached(priority: .userInitiated) {
                             await model.declineIncomingDirectCall(incomingCall)
                         }
                     }
@@ -468,7 +468,7 @@ struct TrixTimelineView: View {
                     subtitle: activeCall.liveKitRoom,
                     isWorking: callViewModel.isActing(roomID: room.id),
                     end: {
-                        Task {
+                        Task.detached(priority: .userInitiated) {
                             await model.leaveCall(in: room)
                         }
                     }
@@ -483,12 +483,12 @@ struct TrixTimelineView: View {
                 isJoined: callViewModel.currentCall(roomID: room.id, kind: .groupVoice) != nil,
                 isWorking: callViewModel.isActing(roomID: room.id),
                 join: {
-                    Task {
+                    Task.detached(priority: .userInitiated) {
                         await model.joinGroupVoiceRoom(in: room)
                     }
                 },
                 leave: {
-                    Task {
+                    Task.detached(priority: .userInitiated) {
                         await model.leaveCall(in: room)
                     }
                 }
@@ -807,7 +807,7 @@ struct TrixTimelineView: View {
 
             if room.kind == .direct {
                 Button {
-                    Task {
+                    Task.detached(priority: .userInitiated) {
                         await model.startDirectVideoCall(in: room)
                     }
                 } label: {

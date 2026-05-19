@@ -1792,10 +1792,19 @@ enum TrixClientError: LocalizedError {
     case apnsGatewayUnavailable
     case apnsRegistrationFailed
     case reactionsUnavailable
-    case callControlUnavailable
+    case callAuthenticationUnavailable
+    case callControlNetworkUnavailable
+    case callControlInvalidResponse
+    case callControlRejected(Int)
+    case callDescriptorUnavailable
+    case callUnavailable
     case callMembershipUnavailable
     case callE2EEKeyUnavailable
     case callMediaUnavailable
+    case callMicrophonePermissionRequired
+    case callCameraPermissionRequired
+    case callMicrophoneUnavailable
+    case callCameraUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -1885,14 +1894,32 @@ enum TrixClientError: LocalizedError {
             return "APNs registration failed."
         case .reactionsUnavailable:
             return "Message reactions are not available on this XMPP path yet."
-        case .callControlUnavailable:
-            return "Encrypted calls are not available yet."
+        case .callAuthenticationUnavailable:
+            return "Sign in again before starting encrypted calls."
+        case .callControlNetworkUnavailable:
+            return "Call control could not be reached. Check the server connection and try again."
+        case .callControlInvalidResponse:
+            return "Call control returned an unexpected response."
+        case .callControlRejected(let statusCode):
+            return "Call control rejected the request (HTTP \(statusCode))."
+        case .callDescriptorUnavailable:
+            return "Encrypted call descriptor could not be prepared."
+        case .callUnavailable:
+            return "The call is no longer available."
         case .callMembershipUnavailable:
             return "Call membership could not be verified."
         case .callE2EEKeyUnavailable:
             return "Call media encryption key setup failed."
         case .callMediaUnavailable:
             return "Encrypted media connection failed."
+        case .callMicrophonePermissionRequired:
+            return "Allow microphone access before joining encrypted calls."
+        case .callCameraPermissionRequired:
+            return "Allow camera access before starting encrypted video calls."
+        case .callMicrophoneUnavailable:
+            return "Microphone could not be started."
+        case .callCameraUnavailable:
+            return "Camera could not be started."
         }
     }
 }

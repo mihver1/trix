@@ -135,12 +135,14 @@ struct TrixVoiceRoomState: Codable, Equatable, Sendable {
     let callID: String
     let roomID: String
     let activeParticipantIDs: [String]
+    let mediaKey: TrixCallMediaKey?
     let updatedAtUnix: UInt64
 
     init(
         callID: String,
         roomID: String,
         activeParticipantIDs: [String],
+        mediaKey: TrixCallMediaKey? = nil,
         updatedAtUnix: UInt64
     ) {
         self.version = 1
@@ -148,6 +150,7 @@ struct TrixVoiceRoomState: Codable, Equatable, Sendable {
         self.callID = callID
         self.roomID = roomID
         self.activeParticipantIDs = activeParticipantIDs
+        self.mediaKey = mediaKey
         self.updatedAtUnix = updatedAtUnix
     }
 }

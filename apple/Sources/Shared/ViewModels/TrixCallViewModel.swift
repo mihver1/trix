@@ -16,6 +16,7 @@ final class TrixCallViewModel: ObservableObject {
     private let callControlService: TrixCallControlService
     private let callDescriptorService: TrixCallDescriptorService
     private let mediaCallService: TrixMediaCallService
+    private var groupVoiceMediaKeysByRoomID: [String: TrixCallMediaKey] = [:]
 
     init(
         callControlService: TrixCallControlService = HTTPCallControlService(),
@@ -60,12 +61,18 @@ final class TrixCallViewModel: ObservableObject {
         actionRoomID == roomID || isPreparing || isConnecting
     }
 
-    func loadRoomCallState(room: TrixRoomSummary, session: TrixSession) async {
+    func loadRoomCallState(
+        room: TrixRoomSummary,
+        session: TrixSession,
+        reportsErrors: Bool = true
+    ) async {
         do {
             let descriptors = try await callDescriptorService.callDescriptors(roomID: room.id, session: session)
             applyCallDescriptors(descriptors, room: room, session: session)
         } catch {
-            errorMessage = error.trixUserFacingMessage
+            if reportsErrors {
+                errorMessage = error.trixUserFacingMessage
+            }
         }
     }
 
@@ -117,11 +124,28 @@ final class TrixCallViewModel: ObservableObject {
         }
 
         do {
+            let descriptors = try await callDescriptorService.callDescriptors(roomID: roomID, session: session)
+            let snapshot = Self.groupVoiceRoomSnapshot(
+                from: descriptors,
+                roomID: roomID,
+                currentUserID: session.userID,
+                activeCall: currentCall(roomID: roomID, kind: .groupVoice)
+            )
+            groupVoiceRoomsByRoomID[roomID] = snapshot
+
+            if let descriptorMediaKey = Self.groupVoiceRoomMediaKey(from: descriptors, roomID: roomID) {
+                groupVoiceMediaKeysByRoomID[roomID] = descriptorMediaKey
+            } else if !snapshot.activeParticipantIDs.isEmpty {
+                throw TrixClientError.callE2EEKeyUnavailable
+            }
+
             let authorization = try await callControlService.joinGroupVoiceRoom(roomID: roomID, session: session)
-            let mediaKey = try TrixCallMediaKey.generate()
-            activeCall = try await mediaCallService.connect(authorization: authorization, mediaKey: mediaKey)
-            activeRoomID = roomID
-            preparedCall = nil
+            let mediaKey: TrixCallMediaKey
+            if let existingMediaKey = groupVoiceMediaKeysByRoomID[roomID] {
+                mediaKey = existingMediaKey
+            } else {
+                mediaKey = try TrixCallMediaKey.generate()
+            }
 
             let participantIDs = Self.addingParticipant(
                 session.userID,
@@ -131,10 +155,22 @@ final class TrixCallViewModel: ObservableObject {
                 callID: authorization.callID,
                 roomID: roomID,
                 activeParticipantIDs: participantIDs,
+                mediaKey: mediaKey,
                 updatedAtUnix: Self.unixNow()
             )
             _ = try await callDescriptorService.sendVoiceRoomState(state, roomID: roomID, session: session)
+            groupVoiceMediaKeysByRoomID[roomID] = mediaKey
             groupVoiceRoomsByRoomID[roomID] = Self.groupVoiceRoomSnapshot(from: state)
+
+            do {
+                activeCall = try await mediaCallService.connect(authorization: authorization, mediaKey: mediaKey)
+                activeRoomID = roomID
+                preparedCall = nil
+            } catch {
+                await sendGroupVoiceLeaveState(callID: authorization.callID, roomID: roomID, session: session)
+                _ = try? await callControlService.endCall(callID: authorization.callID, session: session)
+                throw error
+            }
         } catch {
             errorMessage = error.trixUserFacingMessage
         }
@@ -142,7 +178,7 @@ final class TrixCallViewModel: ObservableObject {
 
     func connectPreparedCall() async {
         guard let preparedCall else {
-            errorMessage = TrixClientError.callControlUnavailable.trixUserFacingMessage
+            errorMessage = TrixClientError.callUnavailable.trixUserFacingMessage
             return
         }
 
@@ -179,7 +215,7 @@ final class TrixCallViewModel: ObservableObject {
                 session: session
             )
             guard authorization.kind == .directVideo else {
-                throw TrixClientError.callControlUnavailable
+                throw TrixClientError.callControlInvalidResponse
             }
 
             activeCall = try await mediaCallService.connect(
@@ -206,7 +242,7 @@ final class TrixCallViewModel: ObservableObject {
     @discardableResult
     func acceptIncomingDirectCall(callID: String, session: TrixSession) async -> Bool {
         guard let call = incomingDirectCall(callID: callID) else {
-            errorMessage = TrixClientError.callControlUnavailable.trixUserFacingMessage
+            errorMessage = TrixClientError.callUnavailable.trixUserFacingMessage
             return false
         }
 
@@ -291,6 +327,7 @@ final class TrixCallViewModel: ObservableObject {
         preparedCall = nil
         incomingDirectCallsByRoomID = [:]
         groupVoiceRoomsByRoomID = [:]
+        groupVoiceMediaKeysByRoomID = [:]
         isPreparing = false
         isConnecting = false
         actionRoomID = nil
@@ -353,12 +390,19 @@ final class TrixCallViewModel: ObservableObject {
                 now: Date()
             )
         case .group:
-            groupVoiceRoomsByRoomID[room.id] = Self.groupVoiceRoomSnapshot(
+            let snapshot = Self.groupVoiceRoomSnapshot(
                 from: descriptors,
                 roomID: room.id,
                 currentUserID: session.userID,
                 activeCall: currentCall(roomID: room.id, kind: .groupVoice)
             )
+            groupVoiceRoomsByRoomID[room.id] = snapshot
+
+            if let mediaKey = Self.groupVoiceRoomMediaKey(from: descriptors, roomID: room.id) {
+                groupVoiceMediaKeysByRoomID[room.id] = mediaKey
+            } else if snapshot.activeParticipantIDs.isEmpty {
+                groupVoiceMediaKeysByRoomID[room.id] = nil
+            }
         }
     }
 
@@ -369,10 +413,14 @@ final class TrixCallViewModel: ObservableObject {
             callID: previous.callID ?? callID,
             roomID: roomID,
             activeParticipantIDs: participantIDs,
+            mediaKey: participantIDs.isEmpty ? nil : groupVoiceMediaKeysByRoomID[roomID],
             updatedAtUnix: Self.unixNow()
         )
         _ = try? await callDescriptorService.sendVoiceRoomState(state, roomID: roomID, session: session)
         groupVoiceRoomsByRoomID[roomID] = Self.groupVoiceRoomSnapshot(from: state)
+        if participantIDs.isEmpty {
+            groupVoiceMediaKeysByRoomID[roomID] = nil
+        }
     }
 
     private static func incomingDirectCall(
@@ -463,6 +511,39 @@ final class TrixCallViewModel: ObservableObject {
             activeParticipantIDs: normalizedParticipants(state.activeParticipantIDs),
             updatedAt: Date(timeIntervalSince1970: TimeInterval(state.updatedAtUnix))
         )
+    }
+
+    private static func groupVoiceRoomMediaKey(
+        from descriptors: [TrixReceivedCallDescriptor],
+        roomID: String
+    ) -> TrixCallMediaKey? {
+        guard let latestState = descriptors
+            .compactMap({ descriptor -> (Date, TrixVoiceRoomState)? in
+                guard case .voiceRoomState(let state) = descriptor.descriptor,
+                      state.roomID == roomID else {
+                    return nil
+                }
+                return (descriptor.timestamp, state)
+            })
+            .max(by: { lhs, rhs in lhs.1.updatedAtUnix < rhs.1.updatedAtUnix }),
+              !latestState.1.activeParticipantIDs.isEmpty else {
+            return nil
+        }
+
+        let rotatedKey = descriptors
+            .compactMap { descriptor -> (Date, TrixCallMediaKey)? in
+                switch descriptor.descriptor {
+                case .keyRotation(let rotation)
+                    where rotation.callID == latestState.1.callID && descriptor.timestamp >= latestState.0:
+                    return (descriptor.timestamp, rotation.mediaKey)
+                case .invite, .answer, .end, .voiceRoomState, .keyRotation:
+                    return nil
+                }
+            }
+            .max { lhs, rhs in lhs.0 < rhs.0 }?
+            .1
+
+        return rotatedKey ?? latestState.1.mediaKey
     }
 
     private static func addingParticipant(_ userID: String, to participantIDs: [String]) -> [String] {

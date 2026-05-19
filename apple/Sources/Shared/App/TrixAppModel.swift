@@ -488,6 +488,7 @@ final class TrixAppModel: ObservableObject {
         lastRoomRefreshAt = Date()
         refreshSelectedRoomSnapshot()
         reconcileSelectedRoom()
+        await refreshCallStateForRooms(reportingErrors: false)
 
         if let selectedRoomID {
             await loadTimeline(roomID: selectedRoomID)
@@ -535,6 +536,7 @@ final class TrixAppModel: ObservableObject {
         lastRoomRefreshAt = Date()
         refreshSelectedRoomSnapshot()
         reconcileSelectedRoom()
+        await refreshCallStateForRooms(reportingErrors: false)
 
         if reloadSelectedTimeline, let selectedRoomID {
             await timelineViewModel.load(
@@ -958,14 +960,18 @@ final class TrixAppModel: ObservableObject {
         await callViewModel.loadRoomCallState(room: room, session: session)
     }
 
-    func refreshCallStateForRooms() async {
+    func refreshCallStateForRooms(reportingErrors: Bool = false) async {
         guard let session else {
             callViewModel.clear()
             return
         }
 
         for room in roomListViewModel.rooms {
-            await callViewModel.loadRoomCallState(room: room, session: session)
+            await callViewModel.loadRoomCallState(
+                room: room,
+                session: session,
+                reportsErrors: reportingErrors
+            )
         }
     }
 

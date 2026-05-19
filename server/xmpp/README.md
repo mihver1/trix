@@ -106,6 +106,22 @@ send ringing pushes.
 It never accepts the client media E2EE key; Apple distributes call keys through
 OMEMO-encrypted call descriptors.
 
+For ejabberd 26.4, group voice membership checks require `mod_muc_admin` and the
+`get_room_affiliations` admin API payload shape `room` plus `service`. On
+2026-05-19 the live VPS was updated after a group voice join returned
+call-control `502` from the older, unregistered `name` argument path.
+
+On the live VPS, nginx proxies only the app-facing call-control routes
+`/v1/calls/dm-video`, `/v1/calls/dm-video/join`,
+`/v1/calls/group-voice/join`, `/v1/calls/end`, and
+`/v1/turn/credentials` to the loopback service. Keep raw `8092` closed
+externally. On 2026-05-19 these five routes were verified externally as
+auth-gated `401` responses instead of `404`, while raw `8092`, `8091`, `5280`,
+and `5269` timed out from outside the host. After the membership-check fix, the
+same five app-facing routes were rechecked with valid unauthenticated payload
+shapes and returned `401` JSON responses; the call-control health endpoint
+returned `200` on loopback.
+
 After signed-device call smoke, collect the Apple app, call-control,
 push-gateway, LiveKit/coturn, and proxy logs into a local bundle and run:
 

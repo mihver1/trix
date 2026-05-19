@@ -280,7 +280,11 @@ transcoding are out of scope.
 Apple sends call invite, answer, end, voice-room-state, and key-rotation
 descriptors through OMEMO-encrypted XMPP messages. Descriptor sends use the same
 DM trusted-device gate and MUC recipient-set/trust gate as normal encrypted
-message sends; if those gates fail, the client must not start media.
+message sends; if those gates fail, the client must not start media. As of the
+2026-05-19 client follow-up, group voice-room-state descriptors may carry the
+group call media key so later participants can use the same LiveKit E2EE key;
+that key remains inside the OMEMO-encrypted descriptor and must not appear in
+call-control, LiveKit, coturn, proxy, push, or app logs.
 
 VoIP pushes must stay generic. A valid call push contains only an opaque call ID
 and optional account routing; it must not include caller names, room names,
@@ -296,6 +300,9 @@ participants; a relay-only TURN media path; and a log audit across Apple app,
 call-control, push-gateway, LiveKit/coturn, proxy, and push logs. That audit must
 report LiveKit tokens, TURN credentials, media keys, XMPP passwords, APNs tokens,
 OMEMO secrets, and decrypted content absent without echoing matched values.
+On macOS, the app sandbox must include both outgoing and incoming network
+entitlements for WebRTC media sockets; this does not change the requirement that
+media content is protected with LiveKit E2EE and client-supplied keys.
 
 ## Registration And Provisioning Risk
 

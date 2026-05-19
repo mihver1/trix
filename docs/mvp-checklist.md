@@ -117,8 +117,37 @@ copying old implementation details.
       the distinct VoIP APNs topic. The shared Apple UI now exposes a DM video
       button, incoming accept/decline/end controls, and a group voice-room bar
       with join/leave plus active participants; group rooms do not ring members.
-      This is not launch-complete until signed-device smoke proves: DM video on
-      two signed devices with incoming CallKit/PushKit, answer, bidirectional
+      On 2026-05-19 the live VPS nginx route was wired for the app-facing
+      call-control endpoints while keeping raw `8092` externally closed. A
+      follow-up client pass on 2026-05-19 maps call-control `401` responses to
+      credential errors instead of the generic unavailable banner, passes TURN
+      REST credentials into LiveKit ICE servers, keeps macOS camera/microphone
+      privacy strings in the generated app metadata, refreshes incoming call
+      descriptors for unselected rooms during foreground/push refresh, and
+      shares group voice media keys only inside OMEMO-encrypted voice-room-state
+      descriptors. The same follow-up removes the old generic
+      `Encrypted calls are not available yet` client error from app sources so
+      the next failed smoke reports auth, network, HTTP status, descriptor, or
+      response-shape blockers directly. A live group voice retry then exposed a
+      call-control `502`: on 2026-05-19 the VPS ejabberd config was updated to
+      enable `mod_muc_admin`, and `trix-call-control` was updated for the
+      ejabberd 26.4 `get_room_affiliations` API shape (`room` plus `service`,
+      not the older `name` key). The rebuilt VPS call-control service reports
+      health `200`; externally, valid unauthenticated call payloads return
+      `401` JSON responses on all five app-facing routes, and raw `8092`,
+      `8091`, `5280`, and `5269` remain closed or filtered. A later 2026-05-19
+      macOS retry reached the LiveKit layer and initially failed as
+      `Encrypted media connection failed`; sanitized LiveKit logs showed the
+      participant session start and then close before RTC connection. The
+      follow-up fix added the macOS incoming-network sandbox entitlement needed
+      by WebRTC media sockets. A signed Debug macOS group voice smoke then
+      connected to the LiveKit room, selected UDP ICE, and published the local
+      microphone track with LiveKit `GCM` encryption. The Apple media adapter
+      now preflights microphone/camera access before `Room.connect` and reports
+      permission or local device-start failures separately from LiveKit
+      connection failures. The item remains open until
+      signed-device smoke proves DM video on two signed devices with incoming
+      CallKit/PushKit, answer, bidirectional
       audio/video, and reconnect; group voice with three accounts first and then
       ten authenticated participants; a forced TURN relay-only media path; and a
       log audit showing no LiveKit tokens, TURN credentials, media keys, XMPP

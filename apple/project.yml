@@ -73,6 +73,8 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         LSApplicationCategoryType: public.app-category.social-networking
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSCameraUsageDescription: Trix uses the camera for encrypted direct video calls.
+        NSMicrophoneUsageDescription: Trix uses the microphone for encrypted direct and group voice calls.
     sources:
       - path: Sources/Shared
       - path: Sources/macOS
