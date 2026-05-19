@@ -81,6 +81,8 @@ struct CallControlConfig {
     turn_shared_secret: String,
     token_ttl_seconds: u64,
     turn_ttl_seconds: u64,
+    call_push_url: Option<String>,
+    call_push_token: Option<String>,
     skip_muc_membership_check: bool,
     dry_run_auth: bool,
 }
@@ -119,6 +121,24 @@ impl CallControlConfig {
             anyhow::bail!("TRIX_TURN_URIS must contain at least one URI");
         }
 
+        let call_push_token = env::var("TRIX_CALL_PUSH_GATEWAY_TOKEN")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        if let Some(token) = call_push_token.as_deref() {
+            if is_insecure_default_secret(token) {
+                anyhow::bail!("TRIX_CALL_PUSH_GATEWAY_TOKEN must be a non-default secret");
+            }
+        }
+        let call_push_url = if call_push_token.is_some() {
+            Some(env_or(
+                "TRIX_CALL_PUSH_GATEWAY_URL",
+                "http://push-gateway:8090/v0/apns/voip/call",
+            )?)
+        } else {
+            None
+        };
+
         Ok(Self {
             bind_addr,
             log_filter,
@@ -130,12 +150,20 @@ impl CallControlConfig {
             livekit_api_secret,
             turn_uris,
             turn_shared_secret,
-            token_ttl_seconds: env_or("TRIX_CALL_TOKEN_TTL_SECONDS", &DEFAULT_TOKEN_TTL_SECONDS.to_string())?
-                .parse()
-                .context("invalid TRIX_CALL_TOKEN_TTL_SECONDS")?,
-            turn_ttl_seconds: env_or("TRIX_TURN_TTL_SECONDS", &DEFAULT_TURN_TTL_SECONDS.to_string())?
-                .parse()
-                .context("invalid TRIX_TURN_TTL_SECONDS")?,
+            token_ttl_seconds: env_or(
+                "TRIX_CALL_TOKEN_TTL_SECONDS",
+                &DEFAULT_TOKEN_TTL_SECONDS.to_string(),
+            )?
+            .parse()
+            .context("invalid TRIX_CALL_TOKEN_TTL_SECONDS")?,
+            turn_ttl_seconds: env_or(
+                "TRIX_TURN_TTL_SECONDS",
+                &DEFAULT_TURN_TTL_SECONDS.to_string(),
+            )?
+            .parse()
+            .context("invalid TRIX_TURN_TTL_SECONDS")?,
+            call_push_url,
+            call_push_token,
             skip_muc_membership_check: env_truthy("TRIX_CALL_SKIP_MUC_MEMBERSHIP_CHECK"),
             dry_run_auth: env_truthy("TRIX_CALL_DRY_RUN_AUTH"),
         })
@@ -156,8 +184,10 @@ async fn create_dm_video_call(
     Json(request): Json<DirectCallRequest>,
 ) -> Result<Json<CallJoinResponse>, CallControlError> {
     let account = authorize_xmpp_account(&state, &headers).await?;
-    let peer = normalize_local_jid(&request.peer_user_id, &state.config.xmpp_host)
-        .ok_or_else(|| CallControlError::BadRequest("peer_user_id must be a local Trix JID".to_owned()))?;
+    let peer =
+        normalize_local_jid(&request.peer_user_id, &state.config.xmpp_host).ok_or_else(|| {
+            CallControlError::BadRequest("peer_user_id must be a local Trix JID".to_owned())
+        })?;
     if peer == account.bare_jid {
         return Err(CallControlError::BadRequest(
             "peer_user_id must be different from the caller".to_owned(),
@@ -168,12 +198,13 @@ async fn create_dm_video_call(
         &state.config,
         &account,
         CallKind::DirectVideo,
-        Some(peer),
+        Some(peer.clone()),
         None,
         true,
         true,
     )?;
     remember_active_call(&state, &response).await;
+    send_call_push(&state, &peer, &response.call_id).await;
     Ok(Json(response))
 }
 
@@ -183,8 +214,10 @@ async fn join_group_voice_call(
     Json(request): Json<GroupVoiceRequest>,
 ) -> Result<Json<CallJoinResponse>, CallControlError> {
     let account = authorize_xmpp_account(&state, &headers).await?;
-    let room = parse_muc_room_id(&request.room_id, &state.config.conference_host)
-        .ok_or_else(|| CallControlError::BadRequest("room_id must be a local Trix MUC JID".to_owned()))?;
+    let room =
+        parse_muc_room_id(&request.room_id, &state.config.conference_host).ok_or_else(|| {
+            CallControlError::BadRequest("room_id must be a local Trix MUC JID".to_owned())
+        })?;
 
     if !state.config.skip_muc_membership_check
         && !is_muc_member(&state, &room.localpart, &account).await?
@@ -213,7 +246,9 @@ async fn end_call(
     let _account = authorize_xmpp_account(&state, &headers).await?;
     let call_id = request.call_id.trim();
     if call_id.is_empty() {
-        return Err(CallControlError::BadRequest("call_id must not be empty".to_owned()));
+        return Err(CallControlError::BadRequest(
+            "call_id must not be empty".to_owned(),
+        ));
     }
 
     let ended = state.active_calls.lock().await.remove(call_id).is_some();
@@ -361,7 +396,13 @@ fn call_join_response(
     publish_video: bool,
 ) -> Result<CallJoinResponse, CallControlError> {
     let call_id = Uuid::new_v4().to_string();
-    let livekit_room = livekit_room_name(&kind, &call_id, &account.bare_jid, peer.as_deref(), room.as_ref());
+    let livekit_room = livekit_room_name(
+        &kind,
+        &call_id,
+        &account.bare_jid,
+        peer.as_deref(),
+        room.as_ref(),
+    );
     let now = unix_now();
     let expires_at = now.saturating_add(config.token_ttl_seconds);
     let token = livekit_token(config, &account.bare_jid, &livekit_room, expires_at)?;
@@ -383,10 +424,35 @@ fn call_join_response(
 }
 
 async fn remember_active_call(state: &CallControlState, response: &CallJoinResponse) {
-    state.active_calls.lock().await.insert(
-        response.call_id.clone(),
-        response.kind.clone(),
-    );
+    state
+        .active_calls
+        .lock()
+        .await
+        .insert(response.call_id.clone(), response.kind.clone());
+}
+
+async fn send_call_push(state: &CallControlState, account: &str, call_id: &str) {
+    let (Some(url), Some(token)) = (
+        state.config.call_push_url.as_deref(),
+        state.config.call_push_token.as_deref(),
+    ) else {
+        return;
+    };
+
+    let response = state
+        .http
+        .post(url)
+        .bearer_auth(token)
+        .json(&CallPushRequest { account, call_id })
+        .send()
+        .await;
+
+    match response {
+        Ok(response)
+            if response.status().is_success() || response.status() == StatusCode::NOT_FOUND => {}
+        Ok(_) => warn!("call push gateway rejected VoIP call push"),
+        Err(_) => warn!("failed to reach call push gateway"),
+    }
 }
 
 fn livekit_token(
@@ -455,7 +521,10 @@ fn livekit_room_name(
         }
         CallKind::GroupVoice => {
             hasher.update(room.map(|room| room.room_id.as_str()).unwrap_or_default());
-            format!("trix-group-{}", hex_prefix(hasher.finalize().as_slice(), 24))
+            format!(
+                "trix-group-{}",
+                hex_prefix(hasher.finalize().as_slice(), 24)
+            )
         }
     }
 }
@@ -499,16 +568,15 @@ fn parse_muc_room_id(value: &str, expected_host: &str) -> Option<MucRoom> {
         return None;
     }
     let localpart = localpart.to_owned();
-    Some(MucRoom {
-        room_id,
-        localpart,
-    })
+    Some(MucRoom { room_id, localpart })
 }
 
 fn json_contains_jid(value: &Value, bare_jid: &str) -> bool {
     match value {
         Value::String(value) => value.eq_ignore_ascii_case(bare_jid),
-        Value::Array(values) => values.iter().any(|value| json_contains_jid(value, bare_jid)),
+        Value::Array(values) => values
+            .iter()
+            .any(|value| json_contains_jid(value, bare_jid)),
         Value::Object(map) => map.values().any(|value| json_contains_jid(value, bare_jid)),
         _ => false,
     }
@@ -546,6 +614,7 @@ fn is_insecure_default_secret(value: &str) -> bool {
         value.trim(),
         "" | "replace-me"
             | "change-me"
+            | "dev-local-push-gateway-token-change-me"
             | "dev-local-livekit-api-secret-change-me"
             | "dev-local-turn-shared-secret-change-me"
     )
@@ -581,6 +650,12 @@ struct EndCallRequest {
 struct EndCallResponse {
     call_id: String,
     ended: bool,
+}
+
+#[derive(Serialize)]
+struct CallPushRequest<'a> {
+    account: &'a str,
+    call_id: &'a str,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -699,7 +774,10 @@ mod tests {
             normalize_local_jid("Alice@trix.selfhost.ru", "trix.selfhost.ru").as_deref(),
             Some("alice@trix.selfhost.ru")
         );
-        assert_eq!(normalize_local_jid("alice@example.org", "trix.selfhost.ru"), None);
+        assert_eq!(
+            normalize_local_jid("alice@example.org", "trix.selfhost.ru"),
+            None
+        );
     }
 
     #[test]
@@ -717,7 +795,12 @@ mod tests {
     fn rejects_placeholder_secrets() {
         assert!(is_insecure_default_secret(""));
         assert!(is_insecure_default_secret("replace-me"));
-        assert!(is_insecure_default_secret("dev-local-livekit-api-secret-change-me"));
+        assert!(is_insecure_default_secret(
+            "dev-local-push-gateway-token-change-me"
+        ));
+        assert!(is_insecure_default_secret(
+            "dev-local-livekit-api-secret-change-me"
+        ));
         assert!(!is_insecure_default_secret("deployment-local-secret"));
     }
 }

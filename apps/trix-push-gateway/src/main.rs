@@ -13,7 +13,7 @@ use tracing::warn;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 use trix_push::{
     ApnsDeliveryOutcome, ApnsPushClient, ApnsPushConfig, ApnsPushTarget, ApplePushEnvironment,
-    TrixApnsNotificationPayload, normalize_apns_token_hex,
+    TrixApnsNotificationPayload, TrixApnsVoipCallPayload, normalize_apns_token_hex,
 };
 
 mod store;
@@ -31,6 +31,7 @@ async fn main() -> Result<()> {
         .init();
 
     let apns = Arc::new(ApnsPushClient::new(config.apns.clone())?);
+    let voip_apns = Arc::new(ApnsPushClient::new(config.voip_apns.clone())?);
     let store = Arc::new(PushRegistrationStore::open(config.store_path.clone()).await?);
 
     if let Some(component) = config.xmpp_component.clone() {
@@ -47,11 +48,14 @@ async fn main() -> Result<()> {
     let state = GatewayState {
         shared_token: Arc::new(config.shared_token),
         apns,
+        voip_apns,
+        store,
     };
 
     let router = Router::new()
         .route("/v0/system/health", get(health))
         .route("/v0/apns/wake", post(send_wake))
+        .route("/v0/apns/voip/call", post(send_voip_call))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr)
@@ -66,6 +70,8 @@ async fn main() -> Result<()> {
 struct GatewayState {
     shared_token: Arc<String>,
     apns: Arc<ApnsPushClient>,
+    voip_apns: Arc<ApnsPushClient>,
+    store: Arc<PushRegistrationStore>,
 }
 
 #[derive(Clone)]
@@ -74,6 +80,7 @@ struct GatewayConfig {
     log_filter: String,
     shared_token: String,
     apns: ApnsPushConfig,
+    voip_apns: ApnsPushConfig,
     store_path: PathBuf,
     xmpp_component: Option<XmppComponentConfig>,
 }
@@ -110,13 +117,25 @@ impl GatewayConfig {
             }
         };
 
+        let team_id = env_required("TRIX_APNS_TEAM_ID")?.trim().to_owned();
+        let key_id = env_required("TRIX_APNS_KEY_ID")?.trim().to_owned();
+        let apns_topic = env_required("TRIX_APNS_TOPIC")?.trim().to_owned();
+        let voip_topic = env_or("TRIX_APNS_VOIP_TOPIC", &format!("{apns_topic}.voip"))?
+            .trim()
+            .to_owned();
+        if voip_topic == apns_topic {
+            anyhow::bail!("TRIX_APNS_VOIP_TOPIC must be distinct from TRIX_APNS_TOPIC");
+        }
+
         let apns = ApnsPushConfig::new(
-            env_required("TRIX_APNS_TEAM_ID")?.trim().to_owned(),
-            env_required("TRIX_APNS_KEY_ID")?.trim().to_owned(),
-            env_required("TRIX_APNS_TOPIC")?.trim().to_owned(),
-            private_key_pem,
+            team_id.clone(),
+            key_id.clone(),
+            apns_topic,
+            private_key_pem.clone(),
         );
         apns.validate()?;
+        let voip_apns = ApnsPushConfig::new(team_id, key_id, voip_topic, private_key_pem);
+        voip_apns.validate()?;
 
         let store_path = PathBuf::from(env_or(
             "TRIX_PUSH_STORE_PATH",
@@ -130,6 +149,7 @@ impl GatewayConfig {
             log_filter,
             shared_token,
             apns,
+            voip_apns,
             store_path,
             xmpp_component,
         })
@@ -217,6 +237,78 @@ async fn send_wake(
     }))
 }
 
+async fn send_voip_call(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<VoipCallRequest>,
+) -> Result<Json<VoipCallResponse>, GatewayError> {
+    authorize(&headers, &state.shared_token)?;
+
+    let account = normalize_account(&request.account)
+        .ok_or_else(|| GatewayError::BadRequest("account must not be empty".to_owned()))?;
+    let call_id = request.call_id.trim();
+    if call_id.is_empty() {
+        return Err(GatewayError::BadRequest(
+            "call_id must not be empty".to_owned(),
+        ));
+    }
+
+    let registrations = state.store.voip_registrations_for_owner(&account).await;
+    if registrations.is_empty() {
+        return Err(GatewayError::NotFound(
+            "no VoIP push registration for account".to_owned(),
+        ));
+    }
+
+    let attempted = registrations.len();
+    let mut delivered = 0usize;
+    let mut failed = 0usize;
+    let mut disabled = 0usize;
+
+    for registration in registrations {
+        let target = ApnsPushTarget {
+            token_hex: registration.token_hex.clone(),
+            environment: registration.environment,
+        };
+        let payload = TrixApnsVoipCallPayload::new(call_id.to_owned(), Some(account.clone()));
+
+        match state.voip_apns.deliver_voip_call(target, payload).await {
+            Ok(ApnsDeliveryOutcome::Delivered) => {
+                delivered += 1;
+                let _ = state.store.mark_success(&registration.node).await;
+            }
+            Ok(ApnsDeliveryOutcome::Rejected {
+                reason,
+                disable_registration,
+            }) => {
+                failed += 1;
+                if disable_registration {
+                    disabled += 1;
+                }
+                let _ = state
+                    .store
+                    .mark_failure(&registration.node, &reason, disable_registration)
+                    .await;
+            }
+            Err(_) => {
+                failed += 1;
+                let _ = state
+                    .store
+                    .mark_failure(&registration.node, "delivery_failed", false)
+                    .await;
+                warn!("failed to deliver VoIP APNs call push");
+            }
+        }
+    }
+
+    Ok(Json(VoipCallResponse {
+        attempted,
+        delivered,
+        failed,
+        disabled,
+    }))
+}
+
 fn authorize(headers: &HeaderMap, expected_token: &str) -> Result<(), GatewayError> {
     let Some(header) = headers.get(axum::http::header::AUTHORIZATION) else {
         return Err(GatewayError::Unauthorized);
@@ -253,6 +345,20 @@ struct WakeResponse {
     reason: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct VoipCallRequest {
+    account: String,
+    call_id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct VoipCallResponse {
+    attempted: usize,
+    delivered: usize,
+    failed: usize,
+    disabled: usize,
+}
+
 #[derive(Debug, Serialize)]
 struct HealthResponse {
     service: &'static str,
@@ -263,6 +369,7 @@ struct HealthResponse {
 enum GatewayError {
     Unauthorized,
     BadRequest(String),
+    NotFound(String),
     DeliveryFailed,
 }
 
@@ -275,6 +382,7 @@ impl IntoResponse for GatewayError {
                 "missing or invalid gateway authorization".to_owned(),
             ),
             Self::BadRequest(message) => (StatusCode::BAD_REQUEST, "bad_request", message),
+            Self::NotFound(message) => (StatusCode::NOT_FOUND, "not_found", message),
             Self::DeliveryFailed => (
                 StatusCode::BAD_GATEWAY,
                 "delivery_failed",
@@ -313,6 +421,22 @@ fn env_truthy_value(value: &str) -> bool {
     )
 }
 
+fn normalize_account(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let bare = trimmed
+        .split_once('/')
+        .map(|(bare, _)| bare)
+        .unwrap_or(trimmed);
+    if bare.is_empty() {
+        None
+    } else {
+        Some(bare.to_ascii_lowercase())
+    }
+}
+
 fn is_insecure_default_secret(value: &str) -> bool {
     matches!(
         value.trim(),
@@ -337,5 +461,14 @@ mod tests {
             "dev-local-push-component-secret-change-me"
         ));
         assert!(!is_insecure_default_secret("deployment-local-secret"));
+    }
+
+    #[test]
+    fn normalizes_voip_call_account_without_token_logging() {
+        assert_eq!(
+            normalize_account("Alice@trix.selfhost.ru/iOS").as_deref(),
+            Some("alice@trix.selfhost.ru")
+        );
+        assert_eq!(normalize_account("   "), None);
     }
 }

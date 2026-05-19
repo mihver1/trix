@@ -48,12 +48,12 @@ impl PushRegistrationStore {
         let environment = provider_environment(provider)?;
         let normalized_token =
             normalize_apns_token_hex(token_hex).map_err(|err| anyhow::anyhow!(err.to_string()))?;
-        let owner_jid = bare_jid(owner_jid);
-        let node = registration_node(owner_jid, provider, &normalized_token);
+        let owner_jid = bare_jid(owner_jid).to_ascii_lowercase();
+        let node = registration_node(&owner_jid, provider, &normalized_token);
 
         let registration = StoredRegistration {
             node: node.clone(),
-            owner_jid: owner_jid.to_owned(),
+            owner_jid,
             provider: provider.to_owned(),
             token_hex: normalized_token,
             environment,
@@ -73,8 +73,8 @@ impl PushRegistrationStore {
     pub async fn unregister(&self, owner_jid: &str, provider: &str, token_hex: &str) -> Result<()> {
         let normalized_token =
             normalize_apns_token_hex(token_hex).map_err(|err| anyhow::anyhow!(err.to_string()))?;
-        let owner_jid = bare_jid(owner_jid);
-        let node = registration_node(owner_jid, provider, &normalized_token);
+        let owner_jid = bare_jid(owner_jid).to_ascii_lowercase();
+        let node = registration_node(&owner_jid, provider, &normalized_token);
 
         let mut state = self.state.lock().await;
         state.registrations.remove(&node);
@@ -86,8 +86,22 @@ impl PushRegistrationStore {
         state
             .registrations
             .get(node)
+            .filter(|registration| registration.is_sync_registration())
             .filter(|registration| registration.disabled_at_unix.is_none())
             .cloned()
+    }
+
+    pub async fn voip_registrations_for_owner(&self, owner_jid: &str) -> Vec<StoredRegistration> {
+        let owner_jid = bare_jid(owner_jid).to_ascii_lowercase();
+        let state = self.state.lock().await;
+        state
+            .registrations
+            .values()
+            .filter(|registration| registration.owner_jid == owner_jid)
+            .filter(|registration| registration.is_voip_registration())
+            .filter(|registration| registration.disabled_at_unix.is_none())
+            .cloned()
+            .collect()
     }
 
     pub async fn mark_success(&self, node: &str) -> Result<()> {
@@ -173,11 +187,35 @@ pub struct StoredRegistration {
     failure_reason: Option<String>,
 }
 
+impl StoredRegistration {
+    fn is_sync_registration(&self) -> bool {
+        provider_kind(&self.provider) == Some(PushProviderKind::Sync)
+    }
+
+    fn is_voip_registration(&self) -> bool {
+        provider_kind(&self.provider) == Some(PushProviderKind::Voip)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PushProviderKind {
+    Sync,
+    Voip,
+}
+
 fn provider_environment(provider: &str) -> Result<ApplePushEnvironment> {
     match provider {
-        "apns-sandbox" => Ok(ApplePushEnvironment::Sandbox),
-        "apns-production" => Ok(ApplePushEnvironment::Production),
+        "apns-sandbox" | "apns-voip-sandbox" => Ok(ApplePushEnvironment::Sandbox),
+        "apns-production" | "apns-voip-production" => Ok(ApplePushEnvironment::Production),
         _ => anyhow::bail!("unsupported push provider"),
+    }
+}
+
+fn provider_kind(provider: &str) -> Option<PushProviderKind> {
+    match provider {
+        "apns-sandbox" | "apns-production" => Some(PushProviderKind::Sync),
+        "apns-voip-sandbox" | "apns-voip-production" => Some(PushProviderKind::Voip),
+        _ => None,
     }
 }
 
@@ -189,7 +227,11 @@ fn registration_node(owner_jid: &str, provider: &str, token_hex: &str) -> String
     hasher.update([0]);
     hasher.update(token_hex.as_bytes());
     let digest = hasher.finalize();
-    format!("trix-push/{}", hex_lower(&digest[..16]))
+    let prefix = match provider_kind(provider) {
+        Some(PushProviderKind::Voip) => "trix-voip",
+        _ => "trix-push",
+    };
+    format!("{prefix}/{}", hex_lower(&digest[..16]))
 }
 
 fn bare_jid(jid: &str) -> &str {
@@ -246,4 +288,23 @@ async fn set_file_permissions(path: &Path) -> Result<()> {
 #[cfg(not(unix))]
 async fn set_file_permissions(_path: &Path) -> Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn voip_providers_use_distinct_registration_namespace() {
+        let sync_node = registration_node("alice@trix.selfhost.ru", "apns-sandbox", "001122");
+        let voip_node = registration_node("alice@trix.selfhost.ru", "apns-voip-sandbox", "001122");
+
+        assert!(sync_node.starts_with("trix-push/"));
+        assert!(voip_node.starts_with("trix-voip/"));
+        assert_ne!(sync_node, voip_node);
+        assert_eq!(
+            provider_environment("apns-voip-production").expect("voip provider"),
+            ApplePushEnvironment::Production
+        );
+    }
 }

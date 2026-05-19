@@ -18,5 +18,8 @@ enum XMPPClientConfiguration {
 enum XMPPPushConfiguration {
     static let apnsSandboxProvider = "apns-sandbox"
     static let apnsProductionProvider = "apns-production"
+    static let apnsVoIPSandboxProvider = "apns-voip-sandbox"
+    static let apnsVoIPProductionProvider = "apns-voip-production"
     static let payloadContract = "com.softgrid.trix.apns.sync.v2"
+    static let voipPayloadContract = "com.softgrid.trix.apns.voip-call.v1"
 }

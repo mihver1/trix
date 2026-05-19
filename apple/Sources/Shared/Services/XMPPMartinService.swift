@@ -730,6 +730,59 @@ actor XMPPMartinService: TrixService {
         }
     }
 
+    func registerVoIPToken(_ token: TrixVoIPDeviceToken, session: TrixSession) async throws -> TrixVoIPPushRegistration {
+        let connection = try await ensureConnection(for: session)
+        let gatewayJID = try await pushGatewayJID(connection: connection)
+        let provider = token.environment.xmppVoIPPushProvider
+
+        do {
+            let registration = try await connection.pushModule.registerDevice(
+                serviceJid: gatewayJID,
+                provider: provider,
+                deviceId: token.hexString
+            )
+
+            return TrixVoIPPushRegistration(
+                environment: token.environment,
+                provider: provider,
+                gatewayJID: gatewayJID.stringValue,
+                node: registration.node,
+                registeredAt: Date()
+            )
+        } catch let error as TrixClientError {
+            throw error
+        } catch {
+            throw TrixClientError.apnsRegistrationFailed
+        }
+    }
+
+    func unregisterVoIPToken(
+        _ token: TrixVoIPDeviceToken,
+        registration: TrixVoIPPushRegistration?,
+        session: TrixSession
+    ) async throws {
+        let connection = try await ensureConnection(for: session)
+        let provider = token.environment.xmppVoIPPushProvider
+        let gatewayJID: JID
+        if let registration {
+            gatewayJID = JID(registration.gatewayJID)
+        } else {
+            gatewayJID = try await pushGatewayJID(connection: connection)
+        }
+
+        do {
+            try await connection.pushModule.unregisterDevice(
+                serviceJid: gatewayJID,
+                provider: provider,
+                deviceId: token.hexString
+            )
+        } catch let error as TrixClientError {
+            throw error
+        } catch {
+            throw TrixClientError.apnsRegistrationFailed
+        }
+    }
+
     func roomNotificationProfiles(session: TrixSession) async throws -> TrixRoomNotificationProfileSnapshot? {
         let connection = try await ensureConnection(for: session)
         let accountJID = try Self.normalizedXMPPJID(session.userID)

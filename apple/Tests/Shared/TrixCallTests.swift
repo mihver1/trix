@@ -32,8 +32,7 @@ final class TrixCallTests: XCTestCase {
         let payload = TrixVoIPCallPayload(userInfo: [
             "aps": [:],
             "trix": [
-                "type": "call",
-                "call": "call-opaque-id",
+                "call_id": "call-opaque-id",
                 "account": "alice@trix.selfhost.ru",
             ],
         ])
@@ -47,8 +46,7 @@ final class TrixCallTests: XCTestCase {
         let payload = TrixVoIPCallPayload(userInfo: [
             "aps": [:],
             "trix": [
-                "type": "call",
-                "call": "call-opaque-id",
+                "call_id": "call-opaque-id",
                 "livekit_token": "server-token",
                 "media_key": "secret",
                 "room": "friend@trix.selfhost.ru",

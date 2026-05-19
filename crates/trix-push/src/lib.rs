@@ -16,6 +16,8 @@ const APNS_PUSH_TYPE_BACKGROUND: &str = "background";
 const APNS_PRIORITY_BACKGROUND: &str = "5";
 const APNS_PUSH_TYPE_ALERT: &str = "alert";
 const APNS_PRIORITY_ALERT: &str = "10";
+const APNS_PUSH_TYPE_VOIP: &str = "voip";
+const APNS_PRIORITY_VOIP: &str = "10";
 const APNS_COLLAPSE_ID: &str = "trix-inbox";
 const APNS_ALERT_TITLE: &str = "Trix";
 const APNS_ALERT_BODY_SINGLE: &str = "New encrypted message";
@@ -107,6 +109,7 @@ impl ApnsPushClient {
             target,
             APNS_PUSH_TYPE_ALERT,
             APNS_PRIORITY_ALERT,
+            Some(APNS_COLLAPSE_ID),
             notification,
         )
         .await
@@ -121,9 +124,19 @@ impl ApnsPushClient {
             target,
             APNS_PUSH_TYPE_BACKGROUND,
             APNS_PRIORITY_BACKGROUND,
+            Some(APNS_COLLAPSE_ID),
             wake,
         )
         .await
+    }
+
+    pub async fn deliver_voip_call(
+        &self,
+        target: ApnsPushTarget,
+        call: TrixApnsVoipCallPayload,
+    ) -> Result<ApnsDeliveryOutcome> {
+        self.deliver_payload(target, APNS_PUSH_TYPE_VOIP, APNS_PRIORITY_VOIP, None, call)
+            .await
     }
 
     async fn deliver_payload<T: Serialize>(
@@ -131,6 +144,7 @@ impl ApnsPushClient {
         target: ApnsPushTarget,
         push_type: &'static str,
         priority: &'static str,
+        collapse_id: Option<&'static str>,
         payload: T,
     ) -> Result<ApnsDeliveryOutcome> {
         let authorization = self.authorization_header().await?;
@@ -139,14 +153,19 @@ impl ApnsPushClient {
             apns_host_for_environment(target.environment),
             target.token_hex
         );
-        let response = self
+        let request = self
             .client
             .post(url)
             .header("authorization", authorization)
             .header("apns-topic", &self.topic)
             .header("apns-push-type", push_type)
-            .header("apns-priority", priority)
-            .header("apns-collapse-id", APNS_COLLAPSE_ID)
+            .header("apns-priority", priority);
+        let request = if let Some(collapse_id) = collapse_id {
+            request.header("apns-collapse-id", collapse_id)
+        } else {
+            request
+        };
+        let response = request
             .json(&payload)
             .send()
             .await
@@ -351,6 +370,34 @@ impl Default for TrixSyncMetadata {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct TrixApnsVoipCallPayload {
+    aps: ApnsVoipAps,
+    trix: TrixVoipCallMetadata,
+}
+
+impl TrixApnsVoipCallPayload {
+    pub fn new(call_id: impl Into<String>, account: Option<String>) -> Self {
+        Self {
+            aps: ApnsVoipAps::default(),
+            trix: TrixVoipCallMetadata {
+                call_id: call_id.into(),
+                account,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+struct ApnsVoipAps {}
+
+#[derive(Debug, Clone, Serialize)]
+struct TrixVoipCallMetadata {
+    call_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account: Option<String>,
+}
+
 #[derive(Serialize)]
 struct ApnsTokenClaims {
     iss: String,
@@ -475,6 +522,25 @@ mod tests {
         assert_eq!(value["trix"]["version"], json!(1));
         assert_eq!(value["trix"]["account"], json!("alice@trix.selfhost.ru"));
         assert_eq!(value["trix"]["room"], json!("room@example"));
+        assert!(value["aps"].get("alert").is_none());
+        assert!(value["aps"].get("sound").is_none());
+    }
+
+    #[test]
+    fn voip_call_payload_contains_only_opaque_call_routing() {
+        let payload = TrixApnsVoipCallPayload::new(
+            "opaque-call-id",
+            Some("alice@trix.selfhost.ru".to_owned()),
+        );
+
+        let value = serde_json::to_value(payload).expect("payload serializes");
+        assert_eq!(value["aps"], json!({}));
+        assert_eq!(value["trix"]["call_id"], json!("opaque-call-id"));
+        assert_eq!(value["trix"]["account"], json!("alice@trix.selfhost.ru"));
+        assert!(value["trix"].get("room").is_none());
+        assert!(value["trix"].get("caller").is_none());
+        assert!(value["trix"].get("token").is_none());
+        assert!(value["trix"].get("key").is_none());
         assert!(value["aps"].get("alert").is_none());
         assert!(value["aps"].get("sound").is_none());
     }

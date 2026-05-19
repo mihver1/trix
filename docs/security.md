@@ -231,7 +231,9 @@ APNs requests by itself. APNs signing is handled by the standalone
 `trix-push-gateway` binary. The gateway also has an XEP-0114
 component mode that accepts Martin/Tigase `register-device`, stores XEP-0357
 node mappings outside the repo, and emits only the generic sync notification
-contract above.
+contract above. PushKit/VoIP tokens are registered separately with
+`apns-voip-sandbox` or `apns-voip-production`, stored under a distinct
+`trix-voip/` node namespace, and are not enabled for XEP-0357 sync publishes.
 
 The Apple client must send XEP-0352 Client State Indication when the iOS/macOS
 scene becomes inactive or active. Without that inactive signal, an online or
@@ -260,7 +262,9 @@ The checked-in call-control service authenticates existing XMPP accounts before
 minting short-lived LiveKit tokens or TURN REST credentials. It may call the
 loopback ejabberd API to verify passwords and MUC membership. It must not accept
 or log media keys, LiveKit tokens, TURN credentials, XMPP passwords, APNs tokens,
-or decrypted content.
+or decrypted content. For DM video calls it may make a bearer-authenticated
+best-effort request to the push gateway's internal VoIP endpoint using only the
+callee account and opaque call ID.
 
 The Apple LiveKit adapter enables LiveKit `EncryptionOptions` with a client-side
 key supplied through Trix call descriptors. DM video and group voice calls must
@@ -276,7 +280,9 @@ message sends; if those gates fail, the client must not start media.
 VoIP pushes must stay generic. A valid call push contains only an opaque call ID
 and optional account routing; it must not include caller names, room names,
 LiveKit tokens, TURN credentials, media keys, decrypted text, filenames, or
-attachment metadata.
+attachment metadata. The gateway sends those pushes through
+`TRIX_APNS_VOIP_TOPIC`, which must be distinct from the regular
+`TRIX_APNS_TOPIC`.
 
 ## Registration And Provisioning Risk
 

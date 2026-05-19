@@ -213,6 +213,23 @@ actor MockTrixService: TrixService {
     ) async throws {
     }
 
+    func registerVoIPToken(_ token: TrixVoIPDeviceToken, session: TrixSession) async throws -> TrixVoIPPushRegistration {
+        TrixVoIPPushRegistration(
+            environment: token.environment,
+            provider: token.environment.xmppVoIPPushProvider,
+            gatewayJID: "push.trix.selfhost.ru",
+            node: "mock-voip-\(session.deviceID)",
+            registeredAt: Date()
+        )
+    }
+
+    func unregisterVoIPToken(
+        _ token: TrixVoIPDeviceToken,
+        registration: TrixVoIPPushRegistration?,
+        session: TrixSession
+    ) async throws {
+    }
+
     func roomNotificationProfiles(session: TrixSession) async throws -> TrixRoomNotificationProfileSnapshot? {
         notificationProfilesByAccountID[session.userID.lowercased()]
     }

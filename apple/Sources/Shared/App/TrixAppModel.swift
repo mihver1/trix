@@ -53,6 +53,8 @@ final class TrixAppModel: ObservableObject {
     @Published private(set) var lastRoomRefreshAt: Date?
     @Published private(set) var pushRegistration: TrixPushRegistration?
     @Published private(set) var pushRegistrationBlocker: TrixPushRegistrationBlocker? = .waitingForAPNsToken
+    @Published private(set) var voipPushRegistration: TrixVoIPPushRegistration?
+    @Published private(set) var voipPushRegistrationBlocker: TrixPushRegistrationBlocker? = .waitingForAPNsToken
     @Published private(set) var stickerPacks: [TrixStickerPack] = []
     @Published private(set) var isImportingStickerPack = false
     @Published private(set) var stickerImportMessage: String?
@@ -81,6 +83,7 @@ final class TrixAppModel: ObservableObject {
     private let trixService: TrixService
     private var stickerAssetDataByID: [String: Data] = [:]
     private var apnsDeviceToken: TrixAPNsDeviceToken?
+    private var voipDeviceToken: TrixVoIPDeviceToken?
     private var roomNotificationProfileSnapshot = TrixRoomNotificationProfileSnapshot.empty
     private var hasStarted = false
     private let foregroundRefreshInterval: Duration = .seconds(10)
@@ -203,6 +206,7 @@ final class TrixAppModel: ObservableObject {
             await reloadDeviceVerificationStatus()
             await syncRoomNotificationProfilesFromServerIfPossible(for: authenticatedSession)
             await syncAPNsRegistrationIfPossible()
+            await syncVoIPPushRegistrationIfPossible()
         } catch {
             if let newSession {
                 try? await trixService.logout(session: newSession)
@@ -263,6 +267,7 @@ final class TrixAppModel: ObservableObject {
             await reloadDeviceVerificationStatus()
             await syncRoomNotificationProfilesFromServerIfPossible(for: authenticatedSession)
             await syncAPNsRegistrationIfPossible()
+            await syncVoIPPushRegistrationIfPossible()
         } catch {
             if let newSession {
                 try? await trixService.logout(session: newSession)
@@ -327,6 +332,7 @@ final class TrixAppModel: ObservableObject {
         defer { isLoggingOut = false }
 
         if let session {
+            await unregisterVoIPPushRegistrationIfPossible(session: session)
             await unregisterAPNsRegistrationIfPossible(session: session)
 
             do {
@@ -349,6 +355,34 @@ final class TrixAppModel: ObservableObject {
     func registerAPNsDeviceToken(_ token: TrixAPNsDeviceToken) async {
         apnsDeviceToken = token
         await syncAPNsRegistrationIfPossible()
+    }
+
+    func registerVoIPDeviceToken(_ token: TrixVoIPDeviceToken) async {
+        voipDeviceToken = token
+        await syncVoIPPushRegistrationIfPossible()
+    }
+
+    func invalidateVoIPDeviceToken() async {
+        guard let token = voipDeviceToken else {
+            voipPushRegistration = nil
+            voipPushRegistrationBlocker = .waitingForAPNsToken
+            return
+        }
+
+        voipDeviceToken = nil
+        guard let session else {
+            voipPushRegistration = nil
+            voipPushRegistrationBlocker = .waitingForAPNsToken
+            return
+        }
+
+        try? await trixService.unregisterVoIPToken(
+            token,
+            registration: voipPushRegistration,
+            session: session
+        )
+        voipPushRegistration = nil
+        voipPushRegistrationBlocker = .waitingForAPNsToken
     }
 
     func setApplicationIsActive(_ isActive: Bool) async {
@@ -481,6 +515,7 @@ final class TrixAppModel: ObservableObject {
             await syncRoomNotificationProfilesFromServerIfPossible(for: session)
         }
         await syncAPNsRegistrationIfPossible()
+        await syncVoIPPushRegistrationIfPossible()
     }
 
     func refreshForeground(
@@ -1301,6 +1336,47 @@ final class TrixAppModel: ObservableObject {
         pushRegistrationBlocker = .waitingForSession
     }
 
+    private func syncVoIPPushRegistrationIfPossible() async {
+        guard let voipDeviceToken else {
+            voipPushRegistration = nil
+            voipPushRegistrationBlocker = .waitingForAPNsToken
+            return
+        }
+
+        guard let session else {
+            voipPushRegistration = nil
+            voipPushRegistrationBlocker = .waitingForSession
+            return
+        }
+
+        do {
+            voipPushRegistration = try await trixService.registerVoIPToken(voipDeviceToken, session: session)
+            voipPushRegistrationBlocker = nil
+        } catch TrixClientError.apnsGatewayUnavailable {
+            voipPushRegistration = nil
+            voipPushRegistrationBlocker = .pushGatewayUnavailable
+        } catch {
+            voipPushRegistration = nil
+            voipPushRegistrationBlocker = .registrationFailed
+        }
+    }
+
+    private func unregisterVoIPPushRegistrationIfPossible(session: TrixSession) async {
+        guard let voipDeviceToken else {
+            voipPushRegistration = nil
+            voipPushRegistrationBlocker = .waitingForAPNsToken
+            return
+        }
+
+        try? await trixService.unregisterVoIPToken(
+            voipDeviceToken,
+            registration: voipPushRegistration,
+            session: session
+        )
+        voipPushRegistration = nil
+        voipPushRegistrationBlocker = .waitingForSession
+    }
+
     private func loadRoomNotificationProfiles(for accountID: String) {
         do {
             applyRoomNotificationProfileSnapshot(
@@ -1391,6 +1467,8 @@ final class TrixAppModel: ObservableObject {
         selectedRoomSnapshot = nil
         pushRegistration = nil
         pushRegistrationBlocker = apnsDeviceToken == nil ? .waitingForAPNsToken : .waitingForSession
+        voipPushRegistration = nil
+        voipPushRegistrationBlocker = voipDeviceToken == nil ? .waitingForAPNsToken : .waitingForSession
         lastRoomRefreshAt = nil
         stickerPacks = []
         stickerAssetDataByID = [:]

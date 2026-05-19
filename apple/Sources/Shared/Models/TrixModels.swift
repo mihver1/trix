@@ -1495,6 +1495,15 @@ enum TrixAPNsEnvironment: String, Codable, Equatable, Sendable {
             return XMPPPushConfiguration.apnsProductionProvider
         }
     }
+
+    var xmppVoIPPushProvider: String {
+        switch self {
+        case .sandbox:
+            return XMPPPushConfiguration.apnsVoIPSandboxProvider
+        case .production:
+            return XMPPPushConfiguration.apnsVoIPProductionProvider
+        }
+    }
 }
 
 struct TrixAPNsDeviceToken: Equatable, Sendable {
@@ -1511,7 +1520,29 @@ struct TrixAPNsDeviceToken: Equatable, Sendable {
     }
 }
 
+struct TrixVoIPDeviceToken: Equatable, Sendable {
+    let data: Data
+    let environment: TrixAPNsEnvironment
+
+    init(data: Data, environment: TrixAPNsEnvironment = .current) {
+        self.data = data
+        self.environment = environment
+    }
+
+    var hexString: String {
+        data.map { String(format: "%02x", $0) }.joined()
+    }
+}
+
 struct TrixPushRegistration: Equatable, Sendable {
+    let environment: TrixAPNsEnvironment
+    let provider: String
+    let gatewayJID: String
+    let node: String
+    let registeredAt: Date
+}
+
+struct TrixVoIPPushRegistration: Equatable, Sendable {
     let environment: TrixAPNsEnvironment
     let provider: String
     let gatewayJID: String

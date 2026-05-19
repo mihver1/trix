@@ -11,9 +11,15 @@ Current scope:
 - optionally connect to ejabberd as an XEP-0114 component and answer Martin's
   `register-device` ad-hoc command;
 - store Martin/XEP-0357 push nodes locally and map them to APNs device tokens;
+- store separate VoIP PushKit tokens through the `apns-voip-sandbox` and
+  `apns-voip-production` providers without enabling those tokens for XEP-0357
+  sync notifications;
 - send only the Trix generic APNs notification payload: `aps.alert.title=Trix`,
   `aps.alert.body=New encrypted message` or unread-count wording,
   `aps.content-available=1`, and `trix.type=sync`;
+- send only the Trix VoIP call payload through the separate APNs VoIP topic:
+  `trix.call_id=<opaque-call-id>` and optional `trix.account`; no room, caller,
+  LiveKit token, TURN credential, media key, or decrypted text is included;
 - return APNs success/rejection state without logging APNs tokens, APNs auth
   tokens, private keys, XMPP passwords, OMEMO secrets, or decrypted message
   bodies.
@@ -21,7 +27,10 @@ Current scope:
 This binary is the APNs transport layer for the XMPP pivot. In component mode it
 advertises a `pubsub/push` identity, accepts Martin/Tigase `apns-sandbox` and
 `apns-production` device registration commands, returns a stable XEP-0357 node,
-and sends generic APNs notifications when ejabberd publishes to that node.
+and sends generic APNs notifications when ejabberd publishes to that node. The
+same private component accepts `apns-voip-sandbox` and `apns-voip-production`
+registration commands for PushKit tokens, but those nodes use the `trix-voip/`
+namespace and are only used by the internal call-push endpoint.
 
 ## Local Run
 
@@ -32,6 +41,7 @@ TRIX_PUSH_GATEWAY_TOKEN='...' \
 TRIX_APNS_TEAM_ID='...' \
 TRIX_APNS_KEY_ID='...' \
 TRIX_APNS_TOPIC='com.softgrid.trixapp' \
+TRIX_APNS_VOIP_TOPIC='com.softgrid.trixapp.voip' \
 TRIX_APNS_PRIVATE_KEY_PATH='/absolute/path/to/AuthKey_ABC123XYZ.p8' \
 cargo run -p trix-push-gateway
 ```
@@ -43,6 +53,7 @@ TRIX_PUSH_GATEWAY_TOKEN='...' \
 TRIX_APNS_TEAM_ID='...' \
 TRIX_APNS_KEY_ID='...' \
 TRIX_APNS_TOPIC='com.softgrid.trixapp' \
+TRIX_APNS_VOIP_TOPIC='com.softgrid.trixapp.voip' \
 TRIX_APNS_PRIVATE_KEY_PATH='/absolute/path/to/AuthKey_ABC123XYZ.p8' \
 TRIX_PUSH_STORE_PATH='/var/lib/trix-push-gateway/registrations.json' \
 TRIX_XMPP_COMPONENT_ENABLED=1 \
@@ -78,6 +89,20 @@ Notification request shape:
 ```
 
 Callers must send `Authorization: Bearer <TRIX_PUSH_GATEWAY_TOKEN>`.
+
+VoIP call request shape:
+
+```json
+{
+  "account": "callee@trix.selfhost.ru",
+  "call_id": "opaque-call-id"
+}
+```
+
+Callers must send `Authorization: Bearer <TRIX_PUSH_GATEWAY_TOKEN>` to
+`POST /v0/apns/voip/call`. The endpoint sends to registered VoIP tokens for the
+account through `TRIX_APNS_VOIP_TOPIC`; it never sends the regular APNs token or
+topic for CallKit/PushKit delivery.
 
 ## Deployment Status
 

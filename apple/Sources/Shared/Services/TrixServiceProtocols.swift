@@ -116,6 +116,12 @@ protocol TrixPushRegistrationService: Sendable {
         registration: TrixPushRegistration?,
         session: TrixSession
     ) async throws
+    func registerVoIPToken(_ token: TrixVoIPDeviceToken, session: TrixSession) async throws -> TrixVoIPPushRegistration
+    func unregisterVoIPToken(
+        _ token: TrixVoIPDeviceToken,
+        registration: TrixVoIPPushRegistration?,
+        session: TrixSession
+    ) async throws
 }
 
 protocol TrixRoomNotificationProfileService: Sendable {

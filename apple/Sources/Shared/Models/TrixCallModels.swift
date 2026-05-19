@@ -274,11 +274,11 @@ struct TrixVoIPCallPayload: Equatable, Sendable {
     init(userInfo: [AnyHashable: Any]) {
         let root = Self.stringKeyedDictionary(userInfo)
         let trix = Self.dictionary(root["trix"])
-        let type = Self.nonEmptyString(trix?["type"])
-        self.callID = Self.nonEmptyString(trix?["call"])
+        self.callID = Self.nonEmptyString(trix?["call_id"])
         self.accountID = Self.nonEmptyString(trix?["account"])
-        self.isCallNotification = type == "call" &&
+        self.isCallNotification =
             callID != nil &&
+            Self.isAllowedVoIPPayloadShape(root, trix: trix) &&
             !Self.containsForbiddenPlaintextKey(root)
     }
 
@@ -310,6 +310,26 @@ struct TrixVoIPCallPayload: Equatable, Sendable {
 
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func isAllowedVoIPPayloadShape(_ root: [String: Any], trix: [String: Any]?) -> Bool {
+        guard let trix else {
+            return false
+        }
+
+        let rootKeys = Set(root.keys.map { $0.lowercased() })
+        guard rootKeys.isSubset(of: ["aps", "trix"]) else {
+            return false
+        }
+
+        if let aps = root["aps"] {
+            guard let apsDictionary = Self.dictionary(aps), apsDictionary.isEmpty else {
+                return false
+            }
+        }
+
+        let trixKeys = Set(trix.keys.map { $0.lowercased() })
+        return trixKeys.isSubset(of: ["call_id", "account"])
     }
 
     private static func containsForbiddenPlaintextKey(_ dictionary: [String: Any]) -> Bool {

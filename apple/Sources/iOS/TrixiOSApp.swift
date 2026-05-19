@@ -15,6 +15,7 @@ struct TrixiOSApp: App {
             TrixRootView(model: model)
                 .task {
                     TrixAPNsCoordinator.shared.attach(model: model)
+                    TrixVoIPPushCoordinator.shared.attach(model: model)
                 }
         }
     }

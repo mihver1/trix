@@ -9,6 +9,8 @@ final class TrixVoIPPushCoordinator: NSObject {
     private let provider: CXProvider
     private var registry: PKPushRegistry?
     private var callUUIDByCallID: [String: UUID] = [:]
+    private weak var model: TrixAppModel?
+    private var latestToken: TrixVoIPDeviceToken?
 
     private override init() {
         let configuration = CXProviderConfiguration()
@@ -30,6 +32,42 @@ final class TrixVoIPPushCoordinator: NSObject {
         registry.desiredPushTypes = [.voIP]
         self.registry = registry
     }
+
+    func attach(model: TrixAppModel) {
+        self.model = model
+
+        guard let latestToken else {
+            return
+        }
+
+        Task {
+            await model.registerVoIPDeviceToken(latestToken)
+        }
+    }
+
+    private func register(token: TrixVoIPDeviceToken) {
+        latestToken = token
+
+        guard let model else {
+            return
+        }
+
+        Task {
+            await model.registerVoIPDeviceToken(token)
+        }
+    }
+
+    private func invalidateToken() {
+        latestToken = nil
+
+        guard let model else {
+            return
+        }
+
+        Task {
+            await model.invalidateVoIPDeviceToken()
+        }
+    }
 }
 
 extension TrixVoIPPushCoordinator: PKPushRegistryDelegate {
@@ -38,15 +76,25 @@ extension TrixVoIPPushCoordinator: PKPushRegistryDelegate {
         didUpdate pushCredentials: PKPushCredentials,
         for type: PKPushType
     ) {
-        // The token is intentionally not logged. Server registration is wired
-        // separately from normal APNs because VoIP tokens use a different topic.
+        guard type == .voIP else {
+            return
+        }
+        let token = TrixVoIPDeviceToken(data: pushCredentials.token)
+        Task { @MainActor in
+            TrixVoIPPushCoordinator.shared.register(token: token)
+        }
     }
 
     nonisolated func pushRegistry(
         _ registry: PKPushRegistry,
         didInvalidatePushTokenFor type: PKPushType
     ) {
-        // The token is intentionally not logged.
+        guard type == .voIP else {
+            return
+        }
+        Task { @MainActor in
+            TrixVoIPPushCoordinator.shared.invalidateToken()
+        }
     }
 
     nonisolated func pushRegistry(

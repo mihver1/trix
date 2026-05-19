@@ -44,6 +44,7 @@ services:
       TRIX_APNS_TEAM_ID: ${TRIX_APNS_TEAM_ID:-}
       TRIX_APNS_KEY_ID: ${TRIX_APNS_KEY_ID:-}
       TRIX_APNS_TOPIC: ${TRIX_APNS_TOPIC:-com.softgrid.trixapp}
+      TRIX_APNS_VOIP_TOPIC: ${TRIX_APNS_VOIP_TOPIC:-com.softgrid.trixapp.voip}
       TRIX_APNS_PRIVATE_KEY_PATH: ${TRIX_APNS_PRIVATE_KEY_PATH:-/run/secrets/apns/AuthKey.p8}
     volumes:
       - push-gateway-data:/var/lib/trix-push-gateway
@@ -106,6 +107,8 @@ services:
       TRIX_TURN_URIS: ${TRIX_TURN_URIS:-turn:trix.selfhost.ru:3478?transport=udp,turns:trix.selfhost.ru:5349?transport=tcp}
       TRIX_CALL_TOKEN_TTL_SECONDS: ${TRIX_CALL_TOKEN_TTL_SECONDS:-900}
       TRIX_TURN_TTL_SECONDS: ${TRIX_TURN_TTL_SECONDS:-900}
+      TRIX_CALL_PUSH_GATEWAY_URL: ${TRIX_CALL_PUSH_GATEWAY_URL:-http://push-gateway:8090/v0/apns/voip/call}
+      TRIX_CALL_PUSH_GATEWAY_TOKEN: ${TRIX_PUSH_GATEWAY_TOKEN:-}
 
   prosody:
     profiles:

@@ -110,10 +110,14 @@ copying old implementation details.
       iOS CallKit/PushKit entrypoint, and an OMEMO descriptor service for invite,
       answer, end, voice-room state, and key rotation events. Descriptor sends
       fail closed on the same DM trust and MUC recipient-set gates as encrypted
-      chat sends. This is not launch-complete until a signed-device DM video
-      smoke and a 3-account group voice-room smoke prove LiveKit media E2EE,
-      OMEMO descriptor/key delivery, membership checks, TURN fallback, and no
-      media keys or LiveKit/TURN tokens in logs or pushes.
+      chat sends. PushKit token registration is separate from regular APNs sync
+      registration through the `apns-voip-sandbox`/`apns-voip-production`
+      providers, and the push gateway exposes an internal call-push endpoint
+      that sends only an opaque `call_id` plus optional account routing through
+      the distinct VoIP APNs topic. This is not launch-complete until a
+      signed-device DM video smoke and a 3-account group voice-room smoke prove
+      LiveKit media E2EE, OMEMO descriptor/key delivery, membership checks, TURN
+      fallback, and no media keys or LiveKit/TURN tokens in logs or pushes.
 - [x] Trix user directory search for new DM/group creation and add-member flows.
 - [x] Basic XMPP vCard-backed profile view/edit surface for display name, bio,
       status, and website.
@@ -381,8 +385,9 @@ copying old implementation details.
       generic remote push handling with inactive generic local notifications for
       silent sync fallback.
 - [x] Trix APNs gateway/push component exists as `trix-push-gateway`: it accepts
-      Martin/Tigase registration, stores XEP-0357 node mappings, and calls the
-      APNs sender with generic sync notification payloads.
+      Martin/Tigase registration, stores XEP-0357 node mappings, stores separate
+      VoIP PushKit registrations under `trix-voip/`, and calls the APNs sender
+      with generic sync notification payloads or opaque call-push payloads.
 - [x] Trix APNs gateway/push component is deployed with deployment-local
       credentials outside the repo. On 2026-05-10 `trix-push-gateway` built on
       the VPS, started healthy, exposed `127.0.0.1:8090` only, and connected to
