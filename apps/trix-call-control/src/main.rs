@@ -205,6 +205,7 @@ async fn create_dm_video_call(
     let response = call_join_response(
         &state.config,
         &account,
+        request.device_id.as_deref(),
         CallKind::DirectVideo,
         Some(peer.clone()),
         None,
@@ -249,6 +250,7 @@ async fn join_dm_video_call(
     Ok(Json(existing_call_join_response(
         &state.config,
         &account,
+        request.device_id.as_deref(),
         call_id,
         active_call.kind,
         active_call.livekit_room,
@@ -277,6 +279,7 @@ async fn join_group_voice_call(
     let response = call_join_response(
         &state.config,
         &account,
+        request.device_id.as_deref(),
         CallKind::GroupVoice,
         None,
         Some(room),
@@ -442,6 +445,7 @@ async fn ejabberd_api_post(
 fn call_join_response(
     config: &CallControlConfig,
     account: &AuthorizedAccount,
+    device_id: Option<&str>,
     kind: CallKind,
     peer: Option<String>,
     room: Option<MucRoom>,
@@ -468,7 +472,8 @@ fn call_join_response(
     };
     let now = unix_now();
     let expires_at = now.saturating_add(config.token_ttl_seconds);
-    let token = livekit_token(config, &account.bare_jid, &livekit_room, expires_at)?;
+    let livekit_identity = livekit_participant_identity(account, device_id);
+    let token = livekit_token(config, &livekit_identity, &livekit_room, expires_at)?;
 
     Ok(CallJoinResponse {
         call_id,
@@ -490,6 +495,7 @@ fn call_join_response(
 fn existing_call_join_response(
     config: &CallControlConfig,
     account: &AuthorizedAccount,
+    device_id: Option<&str>,
     call_id: &str,
     kind: CallKind,
     livekit_room: String,
@@ -498,7 +504,8 @@ fn existing_call_join_response(
 ) -> Result<CallJoinResponse, CallControlError> {
     let now = unix_now();
     let expires_at = now.saturating_add(config.token_ttl_seconds);
-    let token = livekit_token(config, &account.bare_jid, &livekit_room, expires_at)?;
+    let livekit_identity = livekit_participant_identity(account, device_id);
+    let token = livekit_token(config, &livekit_identity, &livekit_room, expires_at)?;
 
     Ok(CallJoinResponse {
         call_id: call_id.to_owned(),
@@ -602,6 +609,45 @@ fn turn_credentials(
         credential,
         expires_at_unix: expires_at,
     })
+}
+
+fn livekit_participant_identity(account: &AuthorizedAccount, device_id: Option<&str>) -> String {
+    sanitized_device_id(device_id)
+        .map(|device_id| format!("{}/{}", account.bare_jid, device_id))
+        .unwrap_or_else(|| account.bare_jid.clone())
+}
+
+fn sanitized_device_id(value: Option<&str>) -> Option<String> {
+    let trimmed = value?.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut sanitized = String::with_capacity(trimmed.len().min(64));
+    let mut previous_was_separator = false;
+    for character in trimmed.chars().take(64) {
+        let next = if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
+            character
+        } else {
+            '-'
+        };
+        if next == '-' {
+            if previous_was_separator {
+                continue;
+            }
+            previous_was_separator = true;
+        } else {
+            previous_was_separator = false;
+        }
+        sanitized.push(next);
+    }
+
+    let sanitized = sanitized.trim_matches('-').to_owned();
+    if sanitized.is_empty() {
+        None
+    } else {
+        Some(sanitized)
+    }
 }
 
 fn livekit_room_name(
@@ -735,16 +781,19 @@ struct MucRoom {
 #[derive(Debug, Deserialize)]
 struct DirectCallRequest {
     peer_user_id: String,
+    device_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct DirectCallJoinRequest {
     call_id: String,
+    device_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct GroupVoiceRequest {
     room_id: String,
+    device_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -919,5 +968,21 @@ mod tests {
             "dev-local-livekit-api-secret-change-me"
         ));
         assert!(!is_insecure_default_secret("deployment-local-secret"));
+    }
+
+    #[test]
+    fn livekit_identity_is_device_scoped_without_changing_membership_jid() {
+        let account = AuthorizedAccount {
+            bare_jid: "alice@trix.selfhost.ru".to_owned(),
+        };
+
+        assert_eq!(
+            livekit_participant_identity(&account, Some("Trix macOS/01")),
+            "alice@trix.selfhost.ru/Trix-macOS-01"
+        );
+        assert_eq!(
+            livekit_participant_identity(&account, Some("   ")),
+            "alice@trix.selfhost.ru"
+        );
     }
 }

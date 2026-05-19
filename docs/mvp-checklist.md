@@ -145,7 +145,16 @@ copying old implementation details.
       microphone track with LiveKit `GCM` encryption. The Apple media adapter
       now preflights microphone/camera access before `Room.connect` and reports
       permission or local device-start failures separately from LiveKit
-      connection failures. The item remains open until
+      connection failures. A same-account iOS plus macOS group voice retry later
+      connected only one audible participant: sanitized LiveKit logs showed both
+      clients using the same participant identity and the earlier iOS session
+      closing with `DUPLICATE_IDENTITY`. On 2026-05-19 Apple started sending the
+      non-secret XMPP session device id in call-control create/join payloads, and
+      `trix-call-control` started minting LiveKit tokens with a device-scoped
+      participant identity while keeping auth and membership checks on the bare
+      JID. The updated call-control service was deployed on the VPS; external
+      valid unauthenticated payloads still return `401` and raw `8092` still
+      times out from outside the host. The item remains open until
       signed-device smoke proves DM video on two signed devices with incoming
       CallKit/PushKit, answer, bidirectional
       audio/video, and reconnect; group voice with three accounts first and then

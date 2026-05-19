@@ -46,7 +46,7 @@ struct HTTPCallControlService: TrixCallControlService {
     ) async throws -> TrixCallJoinAuthorization {
         try await sendCallRequest(
             url: directCallURL,
-            payload: DirectCallPayload(peerUserID: peerUserID),
+            payload: DirectCallPayload(peerUserID: peerUserID, deviceID: session.deviceID),
             session: session
         )
     }
@@ -57,7 +57,7 @@ struct HTTPCallControlService: TrixCallControlService {
     ) async throws -> TrixCallJoinAuthorization {
         try await sendCallRequest(
             url: directCallJoinURL,
-            payload: DirectCallJoinPayload(callID: callID),
+            payload: DirectCallJoinPayload(callID: callID, deviceID: session.deviceID),
             session: session
         )
     }
@@ -68,7 +68,7 @@ struct HTTPCallControlService: TrixCallControlService {
     ) async throws -> TrixCallJoinAuthorization {
         try await sendCallRequest(
             url: groupVoiceURL,
-            payload: GroupVoicePayload(roomID: roomID),
+            payload: GroupVoicePayload(roomID: roomID, deviceID: session.deviceID),
             session: session
         )
     }
@@ -352,25 +352,31 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
 
 private struct DirectCallPayload: Encodable, Sendable {
     let peerUserID: String
+    let deviceID: String
 
     private enum CodingKeys: String, CodingKey {
         case peerUserID = "peer_user_id"
+        case deviceID = "device_id"
     }
 }
 
 private struct DirectCallJoinPayload: Encodable, Sendable {
     let callID: String
+    let deviceID: String
 
     private enum CodingKeys: String, CodingKey {
         case callID = "call_id"
+        case deviceID = "device_id"
     }
 }
 
 private struct GroupVoicePayload: Encodable, Sendable {
     let roomID: String
+    let deviceID: String
 
     private enum CodingKeys: String, CodingKey {
         case roomID = "room_id"
+        case deviceID = "device_id"
     }
 }
 

@@ -266,6 +266,12 @@ or decrypted content. For DM video calls it may make a bearer-authenticated
 best-effort request to the push gateway's internal VoIP endpoint using only the
 callee account and opaque call ID.
 
+The optional call-control `device_id` request field is not a trust or
+authorization input. It is sanitized and used only to make the LiveKit
+participant identity unique per signed-in XMPP resource. Password validation,
+DM participant checks, and MUC membership checks remain based on the
+authenticated bare JID.
+
 For DM video calls, the callee obtains a short-lived LiveKit token by joining
 the existing call-control record with that opaque call ID. The join path must
 verify that the authenticated account is one of the original DM participants and

@@ -106,6 +106,12 @@ send ringing pushes.
 It never accepts the client media E2EE key; Apple distributes call keys through
 OMEMO-encrypted call descriptors.
 
+As of 2026-05-19, clients may include a non-secret `device_id` in call create
+and join requests. Call-control still authenticates and checks membership using
+the bare XMPP JID, but uses the sanitized device id to scope the LiveKit
+participant identity. This allows two signed-in devices for the same XMPP account
+to join the same LiveKit room without replacing each other.
+
 For ejabberd 26.4, group voice membership checks require `mod_muc_admin` and the
 `get_room_affiliations` admin API payload shape `room` plus `service`. On
 2026-05-19 the live VPS was updated after a group voice join returned
@@ -120,7 +126,10 @@ auth-gated `401` responses instead of `404`, while raw `8092`, `8091`, `5280`,
 and `5269` timed out from outside the host. After the membership-check fix, the
 same five app-facing routes were rechecked with valid unauthenticated payload
 shapes and returned `401` JSON responses; the call-control health endpoint
-returned `200` on loopback.
+returned `200` on loopback. After the device-scoped participant identity fix,
+the rebuilt call-control container again returned loopback health `200`; valid
+unauthenticated app-route payloads still returned `401`, and raw external
+`8092` still timed out.
 
 After signed-device call smoke, collect the Apple app, call-control,
 push-gateway, LiveKit/coturn, and proxy logs into a local bundle and run:
