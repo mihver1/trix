@@ -68,7 +68,7 @@ services:
       - media
     image: ${TRIX_COTURN_IMAGE:-coturn/coturn:latest}
     restart: unless-stopped
-    command: -c /etc/coturn/turnserver.conf --no-cli
+    command: -c /etc/coturn/turnserver.conf
     ports:
       - "${TRIX_TURN_BIND:-0.0.0.0}:${TRIX_TURN_PORT:-3478}:3478/tcp"
       - "${TRIX_TURN_BIND:-0.0.0.0}:${TRIX_TURN_PORT:-3478}:3478/udp"
