@@ -34,6 +34,13 @@ Environment:
   TRIX_XMPP_UPLOAD_HEALTH_URL       default: http://127.0.0.1:5280/upload
   TRIX_PUSH_HEALTH_URL              default: http://127.0.0.1:8090/v0/system/health
   TRIX_XMPP_OPERATOR_ALLOW_NON_LOOPBACK=1 permits a non-loopback API URL.
+  TRIX_XMPP_OPERATOR_RATE_STATE_DIR stores local anti-loop counters.
+  TRIX_XMPP_OPERATOR_RATE_WINDOW_SECONDS default: 60
+  TRIX_XMPP_OPERATOR_RATE_LIMIT_DEFAULT  default: 30 per command/window
+  TRIX_XMPP_OPERATOR_RATE_LIMIT_<COMMAND> overrides one command, with dashes
+                                    converted to underscores.
+  TRIX_XMPP_OPERATOR_DISABLE_RATE_LIMIT=1 disables the local limiter for an
+                                    explicit private maintenance session.
 
 Passwords are read from files and are never printed.
 EOF
@@ -57,6 +64,89 @@ ensure_loopback_api() {
       fi
       ;;
   esac
+}
+
+rate_env_suffix() {
+  printf '%s' "$1" | LC_ALL=C tr '[:lower:]-' '[:upper:]_'
+}
+
+operator_rate_limit() {
+  local command_name="$1"
+  if [ "${TRIX_XMPP_OPERATOR_DISABLE_RATE_LIMIT:-0}" = "1" ]; then
+    return
+  fi
+
+  local suffix
+  suffix="$(rate_env_suffix "$command_name")"
+  local command_limit_var="TRIX_XMPP_OPERATOR_RATE_LIMIT_${suffix}"
+  local limit="${!command_limit_var:-${TRIX_XMPP_OPERATOR_RATE_LIMIT_DEFAULT:-30}}"
+  local window="${TRIX_XMPP_OPERATOR_RATE_WINDOW_SECONDS:-60}"
+  local state_base="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
+  local state_dir="${TRIX_XMPP_OPERATOR_RATE_STATE_DIR:-${state_base%/}/trix-xmpp-operator-rate}"
+
+  umask 077
+  mkdir -p "$state_dir"
+  chmod 700 "$state_dir" 2>/dev/null || true
+
+  python3 - "$state_dir" "$command_name" "$window" "$limit" <<'PY'
+import json
+import os
+import pathlib
+import re
+import sys
+import time
+
+try:
+    import fcntl
+except ImportError as exc:
+    raise SystemExit("operator rate limiter requires a POSIX file lock") from exc
+
+state_dir = pathlib.Path(sys.argv[1])
+command_name = sys.argv[2]
+
+try:
+    window_seconds = int(sys.argv[3])
+    limit = int(sys.argv[4])
+except ValueError:
+    raise SystemExit("operator rate limit values must be integers")
+
+if window_seconds <= 0 or limit <= 0:
+    raise SystemExit("operator rate limit values must be positive")
+
+safe_command = re.sub(r"[^A-Za-z0-9_.-]+", "_", command_name).strip("._-") or "command"
+now = int(time.time())
+window_start = now - (now % window_seconds)
+state_path = state_dir / f"{safe_command}.json"
+lock_path = state_dir / ".rate-limit.lock"
+
+with lock_path.open("a+", encoding="utf-8") as lock_file:
+    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+    try:
+        current = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        current = {}
+
+    count = int(current.get("count", 0)) if current.get("window_start") == window_start else 0
+    if count >= limit:
+        retry_after = max(1, window_start + window_seconds - now)
+        print(
+            f"operator rate limit exceeded for {command_name}; retry after {retry_after}s",
+            file=sys.stderr,
+        )
+        raise SystemExit(75)
+
+    next_state = {
+        "command": command_name,
+        "window_start": window_start,
+        "window_seconds": window_seconds,
+        "limit": limit,
+        "count": count + 1,
+    }
+    temp_path = state_dir / f".{safe_command}.{os.getpid()}.tmp"
+    temp_path.write_text(json.dumps(next_state, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+    os.chmod(temp_path, 0o600)
+    os.replace(temp_path, state_path)
+PY
 }
 
 json_file() {
@@ -273,6 +363,12 @@ main() {
   require_command curl
   require_command python3
   ensure_loopback_api
+
+  case "${1:-}" in
+    health|archive-upload-push-health|provision-user|reset-password|disable-user|enable-user|search-directory)
+      operator_rate_limit "$1"
+      ;;
+  esac
 
   case "${1:-}" in
     health)

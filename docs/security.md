@@ -376,6 +376,13 @@ TLS policy; `/v1/operator/*` remains operator-only. Request bodies include invit
 codes, XMPP passwords, and short-lived sticker file tokens, so reverse proxy and
 service logs must not capture bodies.
 
+The current wrappers add rate-limit and anti-loop protection as defense-in-depth:
+the invite-registration service uses fixed-window limits scoped by source IP and
+signed-in account JID, while `operator-control.sh` uses restrictive file-backed
+per-command counters before calling the loopback API. Limited requests return
+generic errors without request bodies, credentials, invite codes, or sticker file
+tokens. These limits do not make raw `mod_http_api` safe for public exposure.
+
 ## Local Diagnostics Risk
 
 The Apple Settings diagnostics surface is intentionally local and redacted. It

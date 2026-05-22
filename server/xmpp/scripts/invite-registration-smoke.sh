@@ -3,8 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STORE_FILE="$(mktemp "${TMPDIR:-/tmp}/trix-invites.XXXXXX")"
+RATE_STORE_FILE="$(mktemp "${TMPDIR:-/tmp}/trix-invites-rate.XXXXXX")"
 LOG_FILE="$(mktemp "${TMPDIR:-/tmp}/trix-invite-server.XXXXXX")"
 STICKER_FILE="$(mktemp "${TMPDIR:-/tmp}/trix-sticker.XXXXXX")"
+RATE_LIMIT_BODY_FILE="$(mktemp "${TMPDIR:-/tmp}/trix-rate-limit-body.XXXXXX")"
 TOKEN="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32 || true)"
 TELEGRAM_TOKEN="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32 || true)"
 STICKER_SECRET="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32 || true)"
@@ -26,7 +28,7 @@ cleanup() {
     kill "$SERVER_PID" >/dev/null 2>&1 || true
     wait "$SERVER_PID" >/dev/null 2>&1 || true
   fi
-  rm -f "$STORE_FILE" "$LOG_FILE" "$STICKER_FILE"
+  rm -f "$STORE_FILE" "$RATE_STORE_FILE" "$LOG_FILE" "$STICKER_FILE" "$RATE_LIMIT_BODY_FILE"
   exit "$status"
 }
 
@@ -37,23 +39,140 @@ if [ -z "$TOKEN" ] || [ -z "$TELEGRAM_TOKEN" ] || [ -z "$STICKER_SECRET" ] || [ 
   exit 2
 fi
 
-TRIX_INVITE_BIND=127.0.0.1 \
-TRIX_INVITE_PORT="$PORT" \
-TRIX_INVITE_STORE_PATH="$STORE_FILE" \
-TRIX_INVITE_OPERATOR_TOKEN="$TOKEN" \
-TRIX_TELEGRAM_BOT_TOKEN="$TELEGRAM_TOKEN" \
-TRIX_STICKER_TOKEN_SECRET="$STICKER_SECRET" \
-TRIX_TELEGRAM_FAKE=1 \
-TRIX_INVITE_DRY_RUN=1 \
-python3 "$SCRIPT_DIR/invite-registration-server.py" >"$LOG_FILE" 2>&1 &
-SERVER_PID=$!
+start_server() {
+  local store_path="$1"
+  shift
+  env \
+    TRIX_INVITE_BIND=127.0.0.1 \
+    TRIX_INVITE_PORT="$PORT" \
+    TRIX_INVITE_STORE_PATH="$store_path" \
+    TRIX_INVITE_OPERATOR_TOKEN="$TOKEN" \
+    TRIX_TELEGRAM_BOT_TOKEN="$TELEGRAM_TOKEN" \
+    TRIX_STICKER_TOKEN_SECRET="$STICKER_SECRET" \
+    TRIX_TELEGRAM_FAKE=1 \
+    TRIX_INVITE_DRY_RUN=1 \
+    "$@" \
+    python3 "$SCRIPT_DIR/invite-registration-server.py" >"$LOG_FILE" 2>&1 &
+  SERVER_PID=$!
+}
 
-for _ in $(seq 1 50); do
-  if curl -fsS "http://127.0.0.1:${PORT}/v1/system/health" >/dev/null 2>&1; then
-    break
+stop_server() {
+  if [ -n "$SERVER_PID" ]; then
+    kill "$SERVER_PID" >/dev/null 2>&1 || true
+    wait "$SERVER_PID" >/dev/null 2>&1 || true
+    SERVER_PID=""
   fi
-  sleep 0.1
+}
+
+wait_for_server() {
+  for _ in $(seq 1 50); do
+    if curl -fsS "http://127.0.0.1:${PORT}/v1/system/health" >/dev/null 2>&1; then
+      return
+    fi
+    sleep 0.1
+  done
+  curl -fsS "http://127.0.0.1:${PORT}/v1/system/health" >/dev/null
+}
+
+start_server "$RATE_STORE_FILE" \
+  TRIX_INVITE_RATE_WINDOW_SECONDS=1 \
+  TRIX_INVITE_RATE_LIMIT_ACCOUNT_INVITES=2 \
+  TRIX_INVITE_RATE_LIMIT_REDEEM=2 \
+  TRIX_INVITE_RATE_LIMIT_OPERATOR_INVITES=5
+wait_for_server
+
+BAD_AUTH_STATUS_1="$(curl -sS \
+  -o /dev/null \
+  -w '%{http_code}' \
+  -H 'Content-Type: application/json' \
+  --data-binary '{"localpart":"rateone","ttl_seconds":300}' \
+  "http://127.0.0.1:${PORT}/v1/invites")"
+BAD_AUTH_STATUS_2="$(curl -sS \
+  -o /dev/null \
+  -w '%{http_code}' \
+  -H 'Content-Type: application/json' \
+  --data-binary '{"localpart":"ratetwo","ttl_seconds":300}' \
+  "http://127.0.0.1:${PORT}/v1/invites")"
+BAD_AUTH_STATUS_3="$(curl -sS \
+  -o "$RATE_LIMIT_BODY_FILE" \
+  -w '%{http_code}' \
+  -H 'Content-Type: application/json' \
+  --data-binary '{"localpart":"ratethree","ttl_seconds":300}' \
+  "http://127.0.0.1:${PORT}/v1/invites")"
+
+if [ "$BAD_AUTH_STATUS_1" != "401" ] || [ "$BAD_AUTH_STATUS_2" != "401" ] || [ "$BAD_AUTH_STATUS_3" != "429" ]; then
+  echo "expected repeated bad auth to return 401,401,429; got ${BAD_AUTH_STATUS_1},${BAD_AUTH_STATUS_2},${BAD_AUTH_STATUS_3}" >&2
+  exit 1
+fi
+
+python3 - "$RATE_LIMIT_BODY_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+if payload.get("error") != "rate_limited":
+    raise SystemExit("expected generic rate_limited error")
+message = payload.get("message", "")
+if "Bearer" in message or "Basic" in message or "invite" in message.lower() or "password" in message.lower():
+    raise SystemExit("rate limit message leaked sensitive request context")
+PY
+
+RATE_CREATE_RESPONSE="$(curl -fsS \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H 'Content-Type: application/json' \
+  --data-binary '{"localpart":"ratelimit","display_name":"Rate Limit","ttl_seconds":300}' \
+  "http://127.0.0.1:${PORT}/v1/operator/invites")"
+RATE_INVITE_CODE="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["invite_code"])' <<<"$RATE_CREATE_RESPONSE")"
+
+for expected_status in 400 400 429; do
+  current_status="$(python3 - "$RATE_INVITE_CODE" <<'PY' | curl -sS \
+    -o /dev/null \
+    -w '%{http_code}' \
+    -H 'Content-Type: application/json' \
+    --data-binary @- \
+    "http://127.0.0.1:${PORT}/v1/registration/redeem"
+import json
+import sys
+
+print(json.dumps({
+    "invite_code": sys.argv[1],
+    "password": "short",
+}, separators=(",", ":")))
+PY
+)"
+  if [ "$current_status" != "$expected_status" ]; then
+    echo "expected repeated redeem attempts to reach HTTP ${expected_status}, got ${current_status}" >&2
+    exit 1
+  fi
 done
+
+sleep 2
+
+RATE_REDEEM_RESPONSE="$(python3 - "$RATE_INVITE_CODE" "$PASSWORD" <<'PY' | curl -fsS \
+  -H 'Content-Type: application/json' \
+  --data-binary @- \
+  "http://127.0.0.1:${PORT}/v1/registration/redeem"
+import json
+import sys
+
+print(json.dumps({
+    "invite_code": sys.argv[1],
+    "password": sys.argv[2],
+}, separators=(",", ":")))
+PY
+)"
+
+python3 -c 'import json,sys
+response = json.load(sys.stdin)
+if response.get("user_id") != "ratelimit@trix.selfhost.ru":
+    raise SystemExit("rate-limited invite was consumed before successful redeem")
+' <<<"$RATE_REDEEM_RESPONSE"
+
+stop_server
+
+start_server "$STORE_FILE"
+wait_for_server
 
 curl -fsS "http://127.0.0.1:${PORT}/v1/system/health" >/dev/null
 
