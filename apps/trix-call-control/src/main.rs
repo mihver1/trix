@@ -88,6 +88,7 @@ struct CallControlConfig {
     turn_uris: Vec<String>,
     turn_shared_secret: String,
     token_ttl_seconds: u64,
+    token_not_before_leeway_seconds: u64,
     turn_ttl_seconds: u64,
     call_push_url: Option<String>,
     call_push_token: Option<String>,
@@ -164,6 +165,9 @@ impl CallControlConfig {
             )?
             .parse()
             .context("invalid TRIX_CALL_TOKEN_TTL_SECONDS")?,
+            token_not_before_leeway_seconds: env_or("TRIX_CALL_TOKEN_NBF_LEEWAY_SECONDS", "5")?
+                .parse()
+                .context("invalid TRIX_CALL_TOKEN_NBF_LEEWAY_SECONDS")?,
             turn_ttl_seconds: env_or(
                 "TRIX_TURN_TTL_SECONDS",
                 &DEFAULT_TURN_TTL_SECONDS.to_string(),
@@ -572,7 +576,7 @@ fn livekit_token(
     let claims = LiveKitClaims {
         iss: config.livekit_api_key.clone(),
         sub: identity.to_owned(),
-        nbf: unix_now().saturating_sub(5),
+        nbf: unix_now().saturating_sub(config.token_not_before_leeway_seconds),
         exp: expires_at,
         video: LiveKitVideoGrant {
             room_join: true,

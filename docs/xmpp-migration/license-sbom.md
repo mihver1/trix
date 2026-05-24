@@ -29,6 +29,23 @@ This acceptance is conditional:
 - do not ship a proprietary or commercial distribution on this stack without
   separate legal review or a commercial/permissive license path.
 
+## Ship/No-Ship Recommendation
+
+- Ship recommendation: proceed for private friend-group MVP and TestFlight
+  validation only, with this license record tracked in-repo.
+- No-ship recommendation: block broader/public/proprietary distribution on this
+  dependency stack until GPL/AGPL notice and source-availability obligations are
+  implemented and reviewed.
+
+## Remaining Compliance Blocker
+
+- Blocker: distribution beyond the trusted private test group is not approved on
+  the current stack yet.
+- Owner: CTO with product owner/legal reviewer input.
+- Unblock action: complete and review a release compliance pack (third-party
+  notices, source-availability plan, and distribution-channel decision), then
+  re-evaluate ship scope.
+
 ## Operational Impact
 
 The license decision does not change the security rules: product chats must

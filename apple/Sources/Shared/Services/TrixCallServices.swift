@@ -269,7 +269,10 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
         keyProvider.setCurrentKeyIndex(Int32(mediaKey.keyIndex))
 
         let room = Room()
-        let observer = TrixLiveKitRoomObserver(audioProbeEnabled: audioProbeEnabled)
+        let observer = TrixLiveKitRoomObserver(
+            callID: authorization.callID,
+            audioProbeEnabled: audioProbeEnabled
+        )
         room.add(delegate: observer)
         let roomOptions = RoomOptions(
             adaptiveStream: authorization.subscribeVideo,
@@ -280,8 +283,16 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
             iceServers: Self.iceServers(from: authorization.turn),
             iceTransportPolicy: forceRelayOnly ? .relay : .all
         )
+        trixCallMediaLogger.info(
+            "LiveKit media connect start kind=\(authorization.kind.rawValue, privacy: .public) relay_only=\(self.forceRelayOnly, privacy: .public) publish_audio=\(authorization.publishAudio, privacy: .public) publish_video=\(authorization.publishVideo, privacy: .public) subscribe_audio=\(authorization.subscribeAudio, privacy: .public) subscribe_video=\(authorization.subscribeVideo, privacy: .public) turn_uris=\(authorization.turn.uris.count, privacy: .public)"
+        )
 
-        if authorization.publishAudio {
+        let shouldPublishMicrophone = authorization.publishAudio && !audioProbeEnabled
+        if authorization.publishAudio && audioProbeEnabled {
+            trixCallMediaLogger.info("LiveKit media microphone skipped audio_probe=true")
+        }
+
+        if shouldPublishMicrophone {
             guard await LiveKitSDK.ensureDeviceAccess(for: [.audio]) else {
                 throw TrixClientError.callMicrophonePermissionRequired
             }
@@ -306,7 +317,7 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
             throw TrixClientError.callMediaUnavailable
         }
 
-        if authorization.publishAudio {
+        if shouldPublishMicrophone {
             do {
                 try await room.localParticipant.setMicrophone(enabled: true)
             } catch {
@@ -327,13 +338,17 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
             }
         }
 
-        observer.attachExistingRemoteTracks(in: room)
+        observer.attachExistingTracks(in: room)
         sessionsByCallID[authorization.callID] = LiveKitCallSession(room: room, observer: observer)
         return TrixActiveMediaCall(
             callID: authorization.callID,
             kind: authorization.kind,
             liveKitRoom: authorization.liveKitRoom,
-            startedAt: Date()
+            startedAt: Date(),
+            publishesLocalAudio: shouldPublishMicrophone,
+            publishesLocalVideo: authorization.publishVideo,
+            subscribesRemoteAudio: authorization.subscribeAudio,
+            subscribesRemoteVideo: authorization.subscribeVideo
         )
     }
 
@@ -367,6 +382,42 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
         }
         session.room.remove(delegate: session.observer)
         await session.room.disconnect()
+        await MainActor.run {
+            TrixLiveKitVideoTrackRegistry.shared.clear(callID: callID)
+        }
+    }
+
+    func setMicrophoneEnabled(_ enabled: Bool, callID: String) async throws {
+        guard let session = sessionsByCallID[callID] else {
+            throw TrixClientError.callUnavailable
+        }
+
+        do {
+            try await session.room.localParticipant.setMicrophone(enabled: enabled)
+        } catch {
+            Self.logMediaFailure(context: "microphone-toggle", error: error)
+            throw TrixClientError.callMicrophoneUnavailable
+        }
+    }
+
+    func setCameraEnabled(_ enabled: Bool, callID: String) async throws {
+        guard let session = sessionsByCallID[callID] else {
+            throw TrixClientError.callUnavailable
+        }
+
+        do {
+            try await session.room.localParticipant.setCamera(enabled: enabled)
+            if enabled {
+                session.observer.attachExistingLocalVideoTrack(in: session.room)
+            } else {
+                await MainActor.run {
+                    TrixLiveKitVideoTrackRegistry.shared.setLocalTrack(nil, callID: callID)
+                }
+            }
+        } catch {
+            Self.logMediaFailure(context: "camera-toggle", error: error)
+            throw TrixClientError.callCameraUnavailable
+        }
     }
 }
 
@@ -376,14 +427,29 @@ private struct LiveKitCallSession {
 }
 
 private final class TrixLiveKitRoomObserver: NSObject, RoomDelegate, @unchecked Sendable {
+    private let callID: String
     private let audioProbeEnabled: Bool
     private var audioProbes: [String: TrixLiveKitAudioProbe] = [:]
 
-    init(audioProbeEnabled: Bool = false) {
+    init(callID: String, audioProbeEnabled: Bool = false) {
+        self.callID = callID
         self.audioProbeEnabled = audioProbeEnabled
     }
 
-    func attachExistingRemoteTracks(in room: Room) {
+    func attachExistingTracks(in room: Room) {
+        attachExistingLocalVideoTrack(in: room)
+        attachExistingRemoteTracks(in: room)
+    }
+
+    func attachExistingLocalVideoTrack(in room: Room) {
+        let track = room.localParticipant.trackPublications.values
+            .compactMap { $0 as? LocalTrackPublication }
+            .compactMap { $0.track as? VideoTrack }
+            .first
+        setLocalVideoTrack(track)
+    }
+
+    private func attachExistingRemoteTracks(in room: Room) {
         for participant in room.remoteParticipants.values {
             for publication in participant.trackPublications.values.compactMap({ $0 as? RemoteTrackPublication }) {
                 configureRemotePublication(publication, context: "existing")
@@ -411,6 +477,14 @@ private final class TrixLiveKitRoomObserver: NSObject, RoomDelegate, @unchecked 
         trixCallMediaLogger.info("LiveKit remote participant disconnected")
     }
 
+    func room(_ room: Room, participant: LocalParticipant, didPublishTrack publication: LocalTrackPublication) {
+        guard let track = publication.track as? VideoTrack else {
+            return
+        }
+
+        setLocalVideoTrack(track)
+    }
+
     func room(_ room: Room, participant: RemoteParticipant, didPublishTrack publication: RemoteTrackPublication) {
         trixCallMediaLogger.info(
             "LiveKit remote track published kind=\(String(describing: publication.kind), privacy: .public) encrypted=\(publication.encryptionType != .none, privacy: .public) subscribed=\(publication.isSubscribed, privacy: .public)"
@@ -423,6 +497,9 @@ private final class TrixLiveKitRoomObserver: NSObject, RoomDelegate, @unchecked 
 
     func room(_ room: Room, participant: RemoteParticipant, didUnsubscribeTrack publication: RemoteTrackPublication) {
         audioProbes[String(describing: publication.sid)] = nil
+        if publication.track is VideoTrack {
+            setRemoteVideoTrack(nil)
+        }
         trixCallMediaLogger.info(
             "LiveKit remote track unsubscribed kind=\(String(describing: publication.kind), privacy: .public)"
         )
@@ -472,10 +549,25 @@ private final class TrixLiveKitRoomObserver: NSObject, RoomDelegate, @unchecked 
         } else {
             audioReady = false
         }
+        if let videoTrack = publication.track as? VideoTrack {
+            setRemoteVideoTrack(videoTrack)
+        }
 
         trixCallMediaLogger.info(
             "LiveKit remote track \(context, privacy: .public) kind=\(String(describing: publication.kind), privacy: .public) encrypted=\(publication.encryptionType != .none, privacy: .public) muted=\(publication.isMuted, privacy: .public) stream=\(String(describing: publication.streamState), privacy: .public) audio_ready=\(audioReady, privacy: .public)"
         )
+    }
+
+    private func setLocalVideoTrack(_ track: VideoTrack?) {
+        Task { @MainActor [callID] in
+            TrixLiveKitVideoTrackRegistry.shared.setLocalTrack(track, callID: callID)
+        }
+    }
+
+    private func setRemoteVideoTrack(_ track: VideoTrack?) {
+        Task { @MainActor [callID] in
+            TrixLiveKitVideoTrackRegistry.shared.setRemoteTrack(track, callID: callID)
+        }
     }
 
     private func attachAudioProbeIfNeeded(to audioTrack: RemoteAudioTrack, publication: RemoteTrackPublication) {
@@ -531,6 +623,14 @@ actor TrixLiveKitMediaCallService: TrixMediaCallService {
         authorization: TrixCallJoinAuthorization,
         mediaKey: TrixCallMediaKey
     ) async throws -> TrixActiveMediaCall {
+        throw TrixClientError.callMediaUnavailable
+    }
+
+    func setMicrophoneEnabled(_ enabled: Bool, callID: String) async throws {
+        throw TrixClientError.callMediaUnavailable
+    }
+
+    func setCameraEnabled(_ enabled: Bool, callID: String) async throws {
         throw TrixClientError.callMediaUnavailable
     }
 

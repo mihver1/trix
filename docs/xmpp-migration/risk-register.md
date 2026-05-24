@@ -164,10 +164,15 @@ Mitigation:
 - Expose encryption/device blocked states clearly.
 - Include multi-device in the spike checklist.
 - Avoid silent trust-all behavior as a finished UX.
+- Keep account-device fingerprints visible and manual trust explicit in Settings.
+- Support safe own-device revocation for non-current devices through the
+  reviewed MartinOMEMO device-list/bundle removal API.
+- Keep scrubbed `second-device-fingerprint` and `own-device-revocation` smoke
+  entrypoints for repeatable verification.
 
 Owner: Apple implementation lead.
 
-Status: Open.
+Status: Mitigated in part; signed-device live proof still pending.
 
 ### Server Backup Does Not Restore Crypto-Critical State
 

@@ -8,6 +8,7 @@ enum TrixRoomListMode {
 struct TrixRoomListView: View {
     @ObservedObject var model: TrixAppModel
     @ObservedObject private var roomListViewModel: RoomListViewModel
+    @ObservedObject private var callViewModel: TrixCallViewModel
     @State private var isShowingNewRoom = false
     @State private var phoneSelectedRoomID: String?
     @State private var directSearchUserIDInProgress: String?
@@ -18,6 +19,7 @@ struct TrixRoomListView: View {
         self.model = model
         self.mode = mode
         self._roomListViewModel = ObservedObject(wrappedValue: model.roomListViewModel)
+        self._callViewModel = ObservedObject(wrappedValue: model.callViewModel)
     }
 
     var body: some View {
@@ -271,6 +273,7 @@ struct TrixRoomListView: View {
                 TrixRoomRow(
                     room: room,
                     notificationProfile: model.roomNotificationProfile(for: room.id),
+                    callIndicator: TrixRoomCallIndicator(state: callViewModel.callLifecycleState(roomID: room.id)),
                     mode: mode
                 )
             }
@@ -281,6 +284,7 @@ struct TrixRoomListView: View {
             TrixRoomRow(
                 room: room,
                 notificationProfile: model.roomNotificationProfile(for: room.id),
+                callIndicator: TrixRoomCallIndicator(state: callViewModel.callLifecycleState(roomID: room.id)),
                 mode: mode
             )
                 .tag(room.id as String?)
@@ -544,6 +548,11 @@ struct TrixSettingsView: View {
                             await model.trustAccountDevice(device)
                         }
                     },
+                    revokeOwnDevice: { device in
+                        Task {
+                            await model.revokeOwnDevice(device)
+                        }
+                    },
                     setUpRecovery: {
                         Task {
                             await model.setUpRecovery()
@@ -735,6 +744,7 @@ private struct TrixInboxAccountHeader: View {
 private struct TrixRoomRow: View {
     let room: TrixRoomSummary
     let notificationProfile: TrixRoomNotificationProfile
+    let callIndicator: TrixRoomCallIndicator?
     let mode: TrixRoomListMode
 
     var body: some View {
@@ -765,6 +775,10 @@ private struct TrixRoomRow: View {
 
                     TrixRoomNotificationProfileMark(profile: notificationProfile, size: 18)
 
+                    if let callIndicator, mode != .phoneInbox {
+                        TrixRoomCallIndicatorMark(indicator: callIndicator)
+                    }
+
                     Spacer(minLength: 8)
 
                     if mode == .phoneInbox {
@@ -793,6 +807,10 @@ private struct TrixRoomRow: View {
                     }
                 }
 
+                if let callIndicator, mode == .phoneInbox {
+                    TrixRoomCallIndicatorMark(indicator: callIndicator)
+                }
+
                 if mode != .phoneInbox {
                     Text(room.subtitle)
                         .font(.caption)
@@ -811,7 +829,8 @@ private struct TrixRoomRow: View {
         let unread = room.unreadCount > 0 ? ", \(cappedUnreadCount) unread" : ", no unread messages"
         let encrypted = room.isEncrypted ? ", encrypted" : ", not encrypted"
         let notifications = notificationProfile == .defaultProfile ? "" : ", \(notificationProfile.label)"
-        return "\(roomTitle), \(room.kind.label)\(unread)\(encrypted)\(notifications), \(room.lastMessagePreview)"
+        let call = callIndicator.map { ", \($0.accessibilityLabel)" } ?? ""
+        return "\(roomTitle), \(room.kind.label)\(unread)\(encrypted)\(notifications)\(call), \(room.lastMessagePreview)"
     }
 
     private var roomTitle: String {

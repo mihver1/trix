@@ -28,6 +28,29 @@ targets:
     type: application
     platform: iOS
     deploymentTarget: "17.0"
+    info:
+      path: Sources/iOS/Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ITSAppUsesNonExemptEncryption: false
+        NSCameraUsageDescription: Trix uses the camera for encrypted direct video calls.
+        NSMicrophoneUsageDescription: Trix uses the microphone for encrypted direct and group voice calls.
+        UILaunchScreen: {}
+        UIBackgroundModes:
+          - audio
+          - voip
+          - remote-notification
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        "UISupportedInterfaceOrientations~ipad":
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
     sources:
       - path: Sources/Shared
       - path: Sources/iOS
@@ -42,17 +65,9 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.softgrid.trixapp
         PRODUCT_NAME: Trix
-        GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: TrixiOS.entitlements
         DEVELOPMENT_TEAM: HGY33KYKQ2
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_UIBackgroundModes: "audio voip remote-notification"
-        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
-        INFOPLIST_KEY_NSCameraUsageDescription: Trix uses the camera for encrypted direct video calls.
-        INFOPLIST_KEY_NSMicrophoneUsageDescription: Trix uses the microphone for encrypted direct and group voice calls.
-        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
-        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         TARGETED_DEVICE_FAMILY: "1,2"
       configs:
         Debug:

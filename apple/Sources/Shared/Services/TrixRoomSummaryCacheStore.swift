@@ -18,6 +18,7 @@ final class TrixRoomSummaryCacheStore: @unchecked Sendable {
     private let keychainService: String
     private let keychainAccount: String
     private let directoryName: String
+    private let keySource: TrixEncryptedCacheKeySource
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private var cachedEncryptionKey: SymmetricKey?
@@ -25,11 +26,13 @@ final class TrixRoomSummaryCacheStore: @unchecked Sendable {
     init(
         keychainService: String = "com.softgrid.trix.xmpp.room-summary-cache-key",
         keychainAccount: String = "room-summary-cache-key:v1",
-        directoryName: String = "RoomSummaryCache"
+        directoryName: String = "RoomSummaryCache",
+        keySource: TrixEncryptedCacheKeySource = .keychain
     ) {
         self.keychainService = keychainService
         self.keychainAccount = keychainAccount
         self.directoryName = directoryName
+        self.keySource = keySource
         encoder.dateEncodingStrategy = .iso8601
         decoder.dateDecodingStrategy = .iso8601
     }
@@ -83,6 +86,12 @@ final class TrixRoomSummaryCacheStore: @unchecked Sendable {
     private func encryptionKey() throws -> SymmetricKey {
         if let cachedEncryptionKey {
             return cachedEncryptionKey
+        }
+
+        if case .memory(let data) = keySource {
+            let key = SymmetricKey(data: data)
+            cachedEncryptionKey = key
+            return key
         }
 
         if let data = try loadEncryptionKeyData() {

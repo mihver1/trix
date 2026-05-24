@@ -288,16 +288,18 @@ struct TrixTimelineView: View {
             Text("This removes the room from local navigation state only. It does not delete the conversation for the other account.")
         }
         .confirmationDialog(
-            "Leave this group locally?",
+            "Leave this group?",
             isPresented: $isShowingGroupLeaveConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Leave Locally", role: .destructive) {
-                model.forgetRoomLocally(room)
+            Button("Leave Group", role: .destructive) {
+                Task {
+                    await model.leaveGroup(room)
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("A server-backed MUC leave is still blocked in this client slice. This only hides local room state and does not destroy the group.")
+            Text("You will leave this private group and stop receiving updates unless someone adds you again. Other members keep the group.")
         }
         .confirmationDialog(
             "Delete this message?",
@@ -534,11 +536,13 @@ struct TrixTimelineView: View {
 
     @ViewBuilder
     private var callControls: some View {
+        let callState = callViewModel.callLifecycleState(roomID: room.id)
         if room.kind == .direct {
-            if let incomingCall = callViewModel.incomingDirectCall(roomID: room.id) {
+            if callState.phase == .incomingRinging,
+               let incomingCall = callViewModel.incomingDirectCall(roomID: room.id) {
                 TrixIncomingDirectCallBar(
                     callerTitle: callParticipantTitle(incomingCall.callerID),
-                    isWorking: callViewModel.isActing(roomID: room.id),
+                    isWorking: callState.isActing || callViewModel.isActing(roomID: room.id),
                     accept: {
                         Task.detached(priority: .userInitiated) {
                             await model.acceptIncomingDirectCall(incomingCall)
@@ -552,11 +556,24 @@ struct TrixTimelineView: View {
                 )
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
-            } else if let activeCall = callViewModel.currentCall(roomID: room.id, kind: .directVideo) {
+            } else if callState.platformSurfaceState == .directCallBar || callState.phase == .connecting {
+                let activeCall = callViewModel.currentCall(roomID: room.id, kind: .directVideo)
                 TrixDirectCallBar(
-                    title: "Video call",
-                    subtitle: activeCall.liveKitRoom,
-                    isWorking: callViewModel.isActing(roomID: room.id),
+                    title: directCallTitle(for: callState),
+                    subtitle: activeCall?.liveKitRoom ?? directCallSubtitle(for: callState),
+                    activeCall: activeCall,
+                    state: callState,
+                    isWorking: callState.isActing || callViewModel.isActing(roomID: room.id),
+                    setMicrophoneMuted: { muted in
+                        Task.detached(priority: .userInitiated) {
+                            await model.setCallMicrophoneMuted(muted, in: room)
+                        }
+                    },
+                    setCameraEnabled: { enabled in
+                        Task.detached(priority: .userInitiated) {
+                            await model.setCallCameraEnabled(enabled, in: room)
+                        }
+                    },
                     end: {
                         Task.detached(priority: .userInitiated) {
                             await model.leaveCall(in: room)
@@ -570,8 +587,8 @@ struct TrixTimelineView: View {
             TrixGroupVoiceRoomBar(
                 snapshot: callViewModel.groupVoiceRoom(roomID: room.id),
                 participantTitle: callParticipantTitle,
-                isJoined: callViewModel.currentCall(roomID: room.id, kind: .groupVoice) != nil,
-                isWorking: callViewModel.isActing(roomID: room.id),
+                isJoined: callState.kind == .groupVoice && callViewModel.currentCall(roomID: room.id, kind: .groupVoice) != nil,
+                isWorking: callState.isActing || callViewModel.isActing(roomID: room.id),
                 join: {
                     Task.detached(priority: .userInitiated) {
                         await model.joinGroupVoiceRoom(in: room)
@@ -585,6 +602,39 @@ struct TrixTimelineView: View {
             )
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
+        }
+    }
+
+    private func directCallTitle(for state: TrixCallLifecycleState) -> String {
+        switch state.phase {
+        case .connecting:
+            return "Connecting video call"
+        case .reconnecting:
+            return "Reconnecting video call"
+        case .ending:
+            return "Ending video call"
+        default:
+            return "Video call"
+        }
+    }
+
+    private func directCallSubtitle(for state: TrixCallLifecycleState) -> String {
+        switch state.remoteMediaReadiness {
+        case .ready:
+            return "Encrypted media ready"
+        case .waiting:
+            return "Waiting for encrypted media"
+        case .none:
+            return state.callID ?? "Encrypted media"
+        }
+    }
+
+    private func canStartDirectVideoCall(with state: TrixCallLifecycleState) -> Bool {
+        switch state.phase {
+        case .idle, .ended, .failed:
+            return true
+        case .outgoingPreparing, .outgoingRinging, .incomingRinging, .connecting, .active, .reconnecting, .ending:
+            return false
         }
     }
 
@@ -1330,18 +1380,18 @@ struct TrixTimelineView: View {
             Spacer()
 
             if room.kind == .direct {
+                let callState = callViewModel.callLifecycleState(roomID: room.id)
                 Button {
                     Task.detached(priority: .userInitiated) {
                         await model.startDirectVideoCall(in: room)
                     }
                 } label: {
-                    Image(systemName: callViewModel.currentCall(roomID: room.id, kind: .directVideo) == nil ? "video" : "video.fill")
+                    Image(systemName: callState.phase.isActiveLike && callState.kind == .directVideo ? "video.fill" : "video")
                 }
                 .disabled(
                     !canSendEncrypted ||
                         callViewModel.isActing(roomID: room.id) ||
-                        callViewModel.incomingDirectCall(roomID: room.id) != nil ||
-                        callViewModel.currentCall(roomID: room.id, kind: .directVideo) != nil
+                        !canStartDirectVideoCall(with: callState)
                 )
                 .help("Video call")
 
@@ -2029,45 +2079,55 @@ private struct TrixIncomingDirectCallBar: View {
 private struct TrixDirectCallBar: View {
     let title: String
     let subtitle: String
+    let activeCall: TrixActiveMediaCall?
+    let state: TrixCallLifecycleState
     let isWorking: Bool
+    let setMicrophoneMuted: (Bool) -> Void
+    let setCameraEnabled: (Bool) -> Void
     let end: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "video.fill")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.green)
-                .frame(width: 34, height: 34)
-                .background(Color.green.opacity(0.13), in: Circle())
+        VStack(alignment: .leading, spacing: 10) {
+            TrixCallVideoStage(activeCall: activeCall, state: state)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.callout.weight(.semibold))
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
+            HStack(spacing: 12) {
+                Image(systemName: "video.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.green)
+                    .frame(width: 34, height: 34)
+                    .background(Color.green.opacity(0.13), in: Circle())
 
-            Spacer(minLength: 8)
-
-            Button(action: end) {
-                if isWorking {
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(width: 30, height: 30)
-                } else {
-                    Image(systemName: "phone.down.fill")
-                        .frame(width: 30, height: 30)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.callout.weight(.semibold))
+                        .lineLimit(1)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
+
+                Spacer(minLength: 8)
+
+                mediaControls
+
+                Button(action: end) {
+                    if isWorking {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(width: 30, height: 30)
+                    } else {
+                        Image(systemName: "phone.down.fill")
+                            .frame(width: 30, height: 30)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .foregroundStyle(.red)
+                .disabled(isWorking)
+                .help("End")
+                .accessibilityLabel("End video call")
             }
-            .buttonStyle(.bordered)
-            .foregroundStyle(.red)
-            .disabled(isWorking)
-            .help("End")
-            .accessibilityLabel("End video call")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -2075,6 +2135,33 @@ private struct TrixDirectCallBar: View {
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(TrixDesign.surfaceStroke, lineWidth: 1)
+        }
+    }
+
+    @ViewBuilder
+    private var mediaControls: some View {
+        HStack(spacing: 6) {
+            Button {
+                setMicrophoneMuted(state.localAudioState != .muted)
+            } label: {
+                Image(systemName: state.localAudioState == .muted ? "mic.slash.fill" : "mic.fill")
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.bordered)
+            .disabled(isWorking || state.localAudioState == .unavailable)
+            .help(state.localAudioState == .muted ? "Unmute microphone" : "Mute microphone")
+            .accessibilityLabel(state.localAudioState == .muted ? "Unmute microphone" : "Mute microphone")
+
+            Button {
+                setCameraEnabled(state.localCameraState != .on)
+            } label: {
+                Image(systemName: state.localCameraState == .on ? "video.fill" : "video.slash.fill")
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.bordered)
+            .disabled(isWorking || state.localCameraState == .unavailable)
+            .help(state.localCameraState == .on ? "Turn camera off" : "Turn camera on")
+            .accessibilityLabel(state.localCameraState == .on ? "Turn camera off" : "Turn camera on")
         }
     }
 }

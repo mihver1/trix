@@ -94,6 +94,7 @@ protocol TrixRoomMembershipService: Sendable {
     func members(roomID: String, session: TrixSession) async throws -> [TrixRoomMember]
     func inviteUser(_ userID: String, roomID: String, session: TrixSession) async throws
     func removeUser(_ userID: String, roomID: String, session: TrixSession) async throws
+    func leaveGroup(roomID: String, session: TrixSession) async throws
 }
 
 protocol TrixRoomBootstrapService: Sendable {
@@ -120,6 +121,7 @@ protocol TrixDeviceVerificationService: Sendable {
     func peerDeviceIdentities(userID: String, session: TrixSession) async throws -> [TrixPeerDeviceIdentity]
     func refreshPeerDeviceIdentities(userID: String, session: TrixSession) async throws -> [TrixPeerDeviceIdentity]
     func trustPeerDevice(userID: String, deviceID: String, session: TrixSession) async throws -> [TrixPeerDeviceIdentity]
+    func revokeOwnDevice(deviceID: String, session: TrixSession) async throws -> [TrixPeerDeviceIdentity]
     func requestDeviceVerification(session: TrixSession) async throws -> TrixDeviceVerificationFlow
     func acceptDeviceVerificationRequest(
         _ request: TrixDeviceVerificationRequest,
@@ -202,6 +204,8 @@ protocol TrixMediaCallService: Sendable {
         authorization: TrixCallJoinAuthorization,
         mediaKey: TrixCallMediaKey
     ) async throws -> TrixActiveMediaCall
+    func setMicrophoneEnabled(_ enabled: Bool, callID: String) async throws
+    func setCameraEnabled(_ enabled: Bool, callID: String) async throws
     func disconnect(callID: String) async
 }
 

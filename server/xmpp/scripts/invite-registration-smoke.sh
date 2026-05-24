@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STORE_FILE="$(mktemp "${TMPDIR:-/tmp}/trix-invites.XXXXXX")"
+PURGE_STORE_FILE="$(mktemp "${TMPDIR:-/tmp}/trix-invites-purge.XXXXXX")"
+PURGE_ERROR_FILE="$(mktemp "${TMPDIR:-/tmp}/trix-invites-purge-error.XXXXXX")"
 LOG_FILE="$(mktemp "${TMPDIR:-/tmp}/trix-invite-server.XXXXXX")"
 STICKER_FILE="$(mktemp "${TMPDIR:-/tmp}/trix-sticker.XXXXXX")"
 TOKEN="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32 || true)"
@@ -26,7 +28,7 @@ cleanup() {
     kill "$SERVER_PID" >/dev/null 2>&1 || true
     wait "$SERVER_PID" >/dev/null 2>&1 || true
   fi
-  rm -f "$STORE_FILE" "$LOG_FILE" "$STICKER_FILE"
+  rm -f "$STORE_FILE" "$PURGE_STORE_FILE" "$PURGE_ERROR_FILE" "$LOG_FILE" "$STICKER_FILE"
   exit "$status"
 }
 
@@ -35,6 +37,85 @@ trap cleanup EXIT
 if [ -z "$TOKEN" ] || [ -z "$TELEGRAM_TOKEN" ] || [ -z "$STICKER_SECRET" ] || [ -z "$PASSWORD" ]; then
   echo "failed to generate disposable invite smoke secrets" >&2
   exit 2
+fi
+
+python3 - "$PURGE_STORE_FILE" <<'PY'
+import json
+import sys
+from datetime import datetime, timedelta, timezone
+
+
+def iso(days):
+    return (datetime.now(timezone.utc) + timedelta(days=days)).isoformat().replace("+00:00", "Z")
+
+
+records = [
+    {
+        "id": "redeemed-old",
+        "code_hash": "sha256-redeemed-old",
+        "expires_at": iso(-40),
+        "redeemed_at": iso(-31),
+    },
+    {
+        "id": "expired-old",
+        "code_hash": "sha256-expired-old",
+        "expires_at": iso(-31),
+        "redeemed_at": None,
+    },
+    {
+        "id": "redeemed-recent",
+        "code_hash": "sha256-redeemed-recent",
+        "expires_at": iso(-40),
+        "redeemed_at": iso(-29),
+    },
+    {
+        "id": "expired-recent",
+        "code_hash": "sha256-expired-recent",
+        "expires_at": iso(-29),
+        "redeemed_at": None,
+    },
+    {
+        "id": "active-unused",
+        "code_hash": "sha256-active-unused",
+        "expires_at": iso(1),
+        "redeemed_at": None,
+    },
+]
+
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump({"version": 1, "invites": records}, handle, separators=(",", ":"))
+    handle.write("\n")
+PY
+
+PURGE_OUTPUT="$(TRIX_INVITE_STORE_PATH="$PURGE_STORE_FILE" \
+  python3 "$SCRIPT_DIR/invite-registration-server.py" --purge-invite-metadata)"
+
+python3 - "$PURGE_STORE_FILE" "$PURGE_OUTPUT" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    store = json.load(handle)
+
+remaining_ids = {invite.get("id") for invite in store.get("invites", [])}
+expected = {"redeemed-recent", "expired-recent", "active-unused"}
+if remaining_ids != expected:
+    raise SystemExit(f"unexpected invite purge survivors: {sorted(remaining_ids)}")
+
+output = sys.argv[2]
+if "removed=2" not in output or "remaining=3" not in output:
+    raise SystemExit(f"unexpected invite purge output: {output}")
+PY
+
+PURGE_RETENTION_STATUS=0
+TRIX_INVITE_STORE_PATH="$PURGE_STORE_FILE" \
+  TRIX_INVITE_METADATA_RETENTION_SECONDS=2592001 \
+  python3 "$SCRIPT_DIR/invite-registration-server.py" --purge-invite-metadata \
+  >/dev/null 2>"$PURGE_ERROR_FILE" || PURGE_RETENTION_STATUS=$?
+
+if [ "$PURGE_RETENTION_STATUS" = "0" ]; then
+  echo "expected invite metadata retention above 30 days to fail" >&2
+  exit 1
 fi
 
 TRIX_INVITE_BIND=127.0.0.1 \
@@ -116,6 +197,33 @@ raw = f"issuer@trix.selfhost.ru:{sys.argv[1]}".encode("utf-8")
 print("Basic " + base64.b64encode(raw).decode("ascii"))
 PY
 )"
+
+GROUP_LEAVE_AUTH_STATUS="$(curl -sS \
+  -o /dev/null \
+  -w '%{http_code}' \
+  -H 'Content-Type: application/json' \
+  --data-binary '{"room_id":"smoke@conference.trix.selfhost.ru"}' \
+  "http://127.0.0.1:${PORT}/v1/groups/leave")"
+
+if [ "$GROUP_LEAVE_AUTH_STATUS" != "401" ]; then
+  echo "expected unauthenticated group leave to fail with HTTP 401, got ${GROUP_LEAVE_AUTH_STATUS}" >&2
+  exit 1
+fi
+
+GROUP_LEAVE_RESPONSE="$(curl -fsS \
+  -H "Authorization: ${AUTH_HEADER}" \
+  -H 'Content-Type: application/json' \
+  --data-binary '{"room_id":"smoke@conference.trix.selfhost.ru"}' \
+  "http://127.0.0.1:${PORT}/v1/groups/leave")"
+
+python3 -c 'import json,sys
+response = json.load(sys.stdin)
+if response.get("room_id") != "smoke@conference.trix.selfhost.ru":
+    raise SystemExit("unexpected group leave room id")
+if response.get("left") is not True:
+    raise SystemExit("group leave did not report success")
+' <<<"$GROUP_LEAVE_RESPONSE"
+
 APP_CREATE_BODY='{"localpart":"appsmoke","display_name":"App Smoke","ttl_seconds":300}'
 APP_CREATE_RESPONSE="$(curl -fsS \
   -H "Authorization: ${AUTH_HEADER}" \
@@ -299,4 +407,4 @@ if grep -q "$TELEGRAM_TOKEN\|$STICKER_SECRET\|$STICKER_FILE_TOKEN" "$LOG_FILE"; 
   exit 1
 fi
 
-echo "invite registration, password, and sticker import smoke passed in dry-run mode"
+echo "invite registration, password, group leave, and sticker import smoke passed in dry-run mode"

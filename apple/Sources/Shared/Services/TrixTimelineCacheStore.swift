@@ -2,6 +2,55 @@ import CryptoKit
 import Foundation
 import Security
 
+enum TrixEncryptedCacheKeySource: Sendable {
+    case keychain
+    case memory(Data)
+}
+
+struct TrixLiveSmokeStorageConfiguration: Sendable {
+    static let modeEnvironmentKey = "TRIX_XMPP_LIVE_SMOKE_MODE"
+    static let useKeychainEnvironmentKey = "TRIX_XMPP_LIVE_SMOKE_USE_KEYCHAIN"
+
+    private static let processRunIdentifier = UUID().uuidString.lowercased()
+
+    let runIdentifier: String
+
+    static func usesVolatileStorage(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        guard let mode = environment[modeEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !mode.isEmpty else {
+            return false
+        }
+
+        return environment[useKeychainEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines) != "1"
+    }
+
+    static func current(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        runIdentifier: String = processRunIdentifier
+    ) -> TrixLiveSmokeStorageConfiguration? {
+        guard usesVolatileStorage(environment: environment) else {
+            return nil
+        }
+
+        return TrixLiveSmokeStorageConfiguration(runIdentifier: sanitizedIdentifier(runIdentifier))
+    }
+
+    func cacheKeySource(_ name: String) -> TrixEncryptedCacheKeySource {
+        let keyMaterial = "trix-live-smoke-cache:\(runIdentifier):\(name)"
+        return .memory(Data(SHA256.hash(data: Data(keyMaterial.utf8))))
+    }
+
+    func directoryName(_ base: String) -> String {
+        "\(base)-LiveSmoke-\(runIdentifier)"
+    }
+
+    private static func sanitizedIdentifier(_ value: String) -> String {
+        TrixLocalProfileConfiguration(rawName: value)?.name ?? "volatile"
+    }
+}
+
 final class TrixTimelineCacheStore: @unchecked Sendable {
     private struct CachedTimeline: Codable {
         let version: Int
@@ -19,6 +68,8 @@ final class TrixTimelineCacheStore: @unchecked Sendable {
     private let keychainService: String
     private let keychainAccount: String
     private let directoryName: String
+    private let keySource: TrixEncryptedCacheKeySource
+    private let migratesLegacyKeychainItems: Bool
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private var cachedEncryptionKey: SymmetricKey?
@@ -27,12 +78,16 @@ final class TrixTimelineCacheStore: @unchecked Sendable {
         legacyService: String = "com.softgrid.trix.xmpp.timeline",
         keychainService: String = "com.softgrid.trix.xmpp.timeline-cache-key",
         keychainAccount: String = "timeline-cache-key:v1",
-        directoryName: String = "TimelineCache"
+        directoryName: String = "TimelineCache",
+        keySource: TrixEncryptedCacheKeySource = .keychain,
+        migratesLegacyKeychainItems: Bool = true
     ) {
         self.legacyService = legacyService
         self.keychainService = keychainService
         self.keychainAccount = keychainAccount
         self.directoryName = directoryName
+        self.keySource = keySource
+        self.migratesLegacyKeychainItems = migratesLegacyKeychainItems
         encoder.dateEncodingStrategy = .iso8601
         decoder.dateDecodingStrategy = .iso8601
     }
@@ -104,6 +159,10 @@ final class TrixTimelineCacheStore: @unchecked Sendable {
     }
 
     private func loadLegacyData(accountJID: String, roomID: String) throws -> Data? {
+        guard migratesLegacyKeychainItems else {
+            return nil
+        }
+
         var query = legacyTimelineQuery(accountJID: accountJID, roomID: roomID)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -125,6 +184,10 @@ final class TrixTimelineCacheStore: @unchecked Sendable {
     }
 
     private func clearLegacyItems(accountJID: String, roomID: String) throws {
+        guard migratesLegacyKeychainItems else {
+            return
+        }
+
         let status = SecItemDelete(legacyTimelineQuery(accountJID: accountJID, roomID: roomID) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw TrixClientError.keychainFailure(status.description)
@@ -134,6 +197,12 @@ final class TrixTimelineCacheStore: @unchecked Sendable {
     private func encryptionKey() throws -> SymmetricKey {
         if let cachedEncryptionKey {
             return cachedEncryptionKey
+        }
+
+        if case .memory(let data) = keySource {
+            let key = SymmetricKey(data: data)
+            cachedEncryptionKey = key
+            return key
         }
 
         if let data = try loadEncryptionKeyData() {

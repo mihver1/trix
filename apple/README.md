@@ -118,22 +118,24 @@ The checked-in Apple app now has fail-closed APNs plumbing:
   a private XMPP PEP item under `urn:softgrid:trix:notification-profiles:1`.
   They are never copied into APNs payloads.
 
-Current MVP blocker: `server/xmpp` enables ejabberd `mod_push` and the checked-in
+Current MVP status: `server/xmpp` enables ejabberd `mod_push` and the checked-in
 `trix-push-gateway` provides the private XEP-0114 component that accepts
 Martin/Tigase APNs token registration, maps XEP-0357 nodes, signs APNs requests,
 and emits the generic sync notification contract above. On 2026-05-10 the gateway was
 deployed on the VPS with deployment-local APNs token-auth material and connected
-to ejabberd as `push.trix.selfhost.ru`. Keep signed-device APNs smoke open until
-the gateway sends a visible generic APNs payload with no plaintext message,
-filename, or attachment metadata fields.
+to ejabberd as `push.trix.selfhost.ru`. Signed macOS APNs smoke passed on
+2026-05-20 with gateway/APNs provider acceptance and QA-visible notification
+text limited to the generic Trix alert.
 
 Optional live smoke modes are available through `TRIX_XMPP_LIVE_SMOKE_MODE`:
 `login`, `session-restore`, `roster`, `room-list`, `search`, `peer-devices`,
-`trust-peer`, `profile`, `profile-update`, `timeline`, `send-timeline`,
-`timeline-restart`, `dm-e2ee`, `dm-reaction`, `dm-reply`,
-`dm-edit-retract`, `dm-attachment`, `delivery-receipt`, `typing`,
-`blocked-send`, `group-e2ee`, `group-attachment`, `group-mention`,
-`group-thread`, and `read-markers`.
+`second-device-fingerprint`, `own-device-revocation`, `trust-peer`, `profile`,
+`profile-update`, `timeline`, `send-timeline`, `timeline-restart`,
+`group-timeline-restart`, `timeline-relaunch-seed`, `timeline-relaunch-verify`,
+`dm-e2ee`, `dm-reaction`, `dm-reply`, `dm-edit-retract`, `dm-attachment`,
+`delivery-receipt`, `typing`, `blocked-send`, `group-e2ee`,
+`group-attachment`, `group-mention`, `group-thread`, `group-leave`,
+`group-call-lab-media`, and `read-markers`.
 Provide credentials only through temporary environment variables:
 
 ```bash
@@ -150,6 +152,29 @@ TRIX_XMPP_LIVE_SMOKE_PASSWORD='...' \
 /tmp/trix-xmpp-smoke-mac/Build/Products/Debug/Trix.app/Contents/MacOS/Trix
 ```
 
+Persistent encrypted sync and process-relaunch gate:
+
+```bash
+cd apple
+
+TRIX_XMPP_LIVE_SMOKE_USER_ID=test@trix.selfhost.ru \
+TRIX_XMPP_LIVE_SMOKE_PASSWORD='...' \
+TRIX_XMPP_LIVE_SMOKE_PEER_ID=friend@trix.selfhost.ru \
+TRIX_XMPP_LIVE_SMOKE_PEER_PASSWORD='...' \
+TRIX_XMPP_LIVE_SMOKE_THIRD_ID=third@trix.selfhost.ru \
+TRIX_XMPP_LIVE_SMOKE_THIRD_PASSWORD='...' \
+./scripts/run-persistent-sync-gate.sh
+```
+
+The wrapper runs `timeline-restart` and `group-timeline-restart` without
+Keychain-backed smoke storage by default. The Keychain-specific process
+quit/relaunch proof (`timeline-relaunch-seed` then `timeline-relaunch-verify`)
+is skipped unless `--include-keychain-relaunch` is provided; that opt-in sets
+`TRIX_XMPP_LIVE_SMOKE_USE_KEYCHAIN=1` for the relaunch processes only. The
+wrapper self-skips with an explicit status line when required credentials are
+missing. The relaunch proof requires a signed macOS app executable by default;
+pass `--allow-unsigned` only for local non-release debugging.
+
 The runner prints only `TRIX_XMPP_LIVE_SMOKE` status lines and must not print
 passwords, auth tokens, OMEMO secrets, or decrypted message bodies. The
 `room-list` mode follows the UI reload path by loading rooms and invitations.
@@ -159,6 +184,15 @@ does substring filtering locally so prefix queries such as `fri` can match
 `friend@trix.selfhost.ru`. The `peer-devices` mode requires
 `TRIX_XMPP_LIVE_SMOKE_PEER_ID` and refreshes the contact's published OMEMO
 devices without printing fingerprints or visual fingerprint challenges. The
+`second-device-fingerprint` mode logs into the same account through a second
+isolated local profile (`TRIX_XMPP_LIVE_SMOKE_SECOND_DEVICE_PROFILE` base name),
+verifies two distinct OMEMO device IDs, checks local/second fingerprint
+presence, and fails if the second device is silently trusted. The
+`own-device-revocation` mode uses the same isolated second-device setup, revokes
+the second account device through the reviewed MartinOMEMO revocation API, and
+verifies the target device is removed or marked inactive in refreshed published
+device state. It accepts optional
+`TRIX_XMPP_LIVE_SMOKE_REVOKE_DEVICE_ID` to target a specific own device ID. The
 `session-restore` mode saves the
 fresh session into a smoke-only Keychain item, loads it through a new service
 instance, restores the XMPP connection, logs out, clears that smoke item, and
@@ -185,7 +219,20 @@ sent/delivered counts. The `timeline-restart` mode also requires
 then reloads MAM/cache, disconnects the service, restores through a fresh
 service instance, and requires overlapping item IDs after restart. It prints
 only IDs and MAM/cache counts, including whether archived sender stanzas are
-missing a local recipient key. The `dm-e2ee` mode also requires
+missing a local recipient key. The `group-timeline-restart` mode uses the same
+three-account variables as `group-e2ee`, sends one OMEMO group message, restores
+through a fresh service instance, and requires timeline overlap after restart.
+`timeline-relaunch-seed` stores a scrubbed overlap marker plus a smoke Keychain
+session, while `timeline-relaunch-verify` runs in a second process, restores from
+that saved session without requiring a password variable, and requires overlap.
+Those relaunch modes are the explicit Keychain smoke lane and should be run with
+`TRIX_XMPP_LIVE_SMOKE_USE_KEYCHAIN=1` or
+`./scripts/run-persistent-sync-gate.sh --include-keychain-relaunch`. The
+relaunch modes accept
+`TRIX_XMPP_LIVE_SMOKE_RELAUNCH_MARKER_PATH`,
+`TRIX_XMPP_LIVE_SMOKE_RELAUNCH_SESSION_SERVICE`,
+`TRIX_XMPP_LIVE_SMOKE_RELAUNCH_SESSION_ACCOUNT`, and optional
+`TRIX_XMPP_LIVE_SMOKE_RELAUNCH_CLEANUP=0` for debug retention. The `dm-e2ee` mode also requires
 `TRIX_XMPP_LIVE_SMOKE_PEER_ID`, `TRIX_XMPP_LIVE_SMOKE_PEER_PASSWORD`,
 `TRIX_XMPP_LIVE_SMOKE_ALLOW_SEND=1`, and, when trust is not already present,
 `TRIX_XMPP_LIVE_SMOKE_ALLOW_TRUST=1`; it keeps the peer online, sends one
@@ -216,20 +263,48 @@ encrypted image attachment, waits for peer and third account download/decrypt,
 and prints only IDs/status, byte counts, and image booleans.
 
 The conversation-XEP smoke entrypoints `dm-reply`, `dm-edit-retract`,
-`group-mention`, `group-thread`, and `read-markers` are wired as scrubbed
+`group-mention`, `group-thread`, `group-leave`, and `read-markers` are wired as scrubbed
 feature probes in this checkout. They validate required environment shape, use
 the shared metadata request APIs and Martin send/parse surfaces, and then
 validate live metadata when credentials are supplied:
 `dm-reply` requires the two-account DM variables; `dm-edit-retract` requires the
-same two-account DM variables; `group-mention` and `group-thread` require the
-three-account group variables; `read-markers` requires the owner account plus a
-peer account. These modes print only IDs/counts/booleans/status tokens and must
-not print message bodies, credentials, OMEMO secrets, filenames, local paths, or
-raw stanza payloads. `read-markers` sends XEP-0333 displayed markers and
+same two-account DM variables; `group-mention`, `group-thread`, and
+`group-leave` require the three-account group variables; `read-markers` requires
+the owner account plus a peer account. `group-leave` validates non-owner leave,
+room removal from the leaver account, remaining-member visibility, and blocked
+sends after leave. These modes print only IDs/counts/booleans/status tokens and
+must not print message bodies, credentials, OMEMO secrets, filenames, local
+paths, or raw stanza payloads. `read-markers` sends XEP-0333 displayed markers and
 validates same-account convergence through the private Trix read-cursor node,
 because ejabberd/Martin marker archive/carbon delivery is not reliable enough
 for unread sync. The remaining proof is restart/reload coverage and stable
 group target ids for mention/thread metadata.
+
+The `group-call-lab-media` mode is the deterministic reduced macOS call-lab
+driver. It requires the same three-account variables as `group-e2ee`, creates a
+fresh private MUC, joins all accounts before call control, explicitly trusts the
+active OMEMO devices when `TRIX_XMPP_LIVE_SMOKE_ALLOW_TRUST=1`, and then drives
+the existing `TrixCallViewModel`, `HTTPCallControlService`, encrypted call
+descriptor, and `TrixLiveKitMediaCallService` path for two group-voice
+participants. The Apple-side local lab wrapper runs it with relay-only ICE and
+audio probes enabled:
+
+```bash
+cd apple
+
+TRIX_XMPP_LIVE_SMOKE_USER_ID=test@trix.selfhost.ru \
+TRIX_XMPP_LIVE_SMOKE_PASSWORD='...' \
+TRIX_XMPP_LIVE_SMOKE_PEER_ID=friend@trix.selfhost.ru \
+TRIX_XMPP_LIVE_SMOKE_PEER_PASSWORD='...' \
+TRIX_XMPP_LIVE_SMOKE_THIRD_ID=third@trix.selfhost.ru \
+TRIX_XMPP_LIVE_SMOKE_THIRD_PASSWORD='...' \
+./scripts/run-local-call-lab-macos.sh evidence
+```
+
+The wrapper starts the loopback LiveKit/coturn/call-control lab, captures an
+evidence bundle under `apple/build/LocalCallLabEvidence/`, and runs
+`server/xmpp/scripts/call-log-audit.sh` against it. The bundle must contain only
+scrubbed smoke lines and sanitized app/call-control/LiveKit/coturn logs.
 
 From the repository root, the current Apple lanes are:
 
@@ -379,12 +454,13 @@ message history itself is not stored as Keychain generic-password blobs.
 Cold session restore also loads an encrypted room-summary file cache before the
 server room-list refresh starts. The room-list payload is stored in Application
 Support, not Keychain; Keychain stores only the room-summary cache key.
-The `timeline-restart` live-smoke mode exercises this through a fresh service
-instance and reports only counts. On 2026-05-10 the credentialed run passed with
-MAM available, local cache loaded after restart, overlapping item IDs, and no
-missing local recipient key for the newly sent sender-side stanza. This is a
-fresh service/session restore check, not yet a full signed-app OS process
-quit/relaunch harness.
+The `timeline-restart` and `group-timeline-restart` live-smoke modes exercise
+DM and group overlap through fresh service restore and report only scrubbed
+counts/IDs/booleans. `timeline-relaunch-seed` and
+`timeline-relaunch-verify` provide the process-level quit/relaunch harness by
+persisting a smoke Keychain session and marker in one process and verifying
+overlap in a second process. Keep MVP checklist items open until this wrapper
+is run successfully with disposable live credentials on a signed app build.
 
 The Device Verification And Recovery settings surface is explicit about the
 current recovery limit. This MartinOMEMO slice does not provide a validated
@@ -413,9 +489,10 @@ The target protocol-neutral boundary is:
   lifecycle.
 - `TrixRoomService`: timeline, text send, attachments, reactions, typing, and
   read/delivery state.
-- `TrixRoomMembershipService`: group member list, invite/add, remove, and the
-  future server-backed leave path. The current group leave action is local-only
-  and says so in the confirmation dialog.
+- `TrixRoomMembershipService`: group member list, invite/add, remove, and
+  server-backed leave. Non-owner group leave goes through the Trix
+  control-plane wrapper before local MUC leave so the room is hidden only after
+  server membership removal succeeds.
 - `TrixUserDirectoryService`: directory search and profile lookup/update through
   the Trix control plane.
 - `TrixDeviceVerificationService`: OMEMO device inventory, trust state, visual
@@ -435,7 +512,11 @@ The target protocol-neutral boundary is:
   sandbox network capability in both directions.
 - `TrixCallViewModel`: shared call UI state for the DM video button, incoming
   accept/decline/end actions, and group voice-room join/leave participant state.
-  Group rooms publish voice-room state only; they do not surface ringing UI.
+  Its lifecycle contract is the UI source of truth for idle, ringing,
+  connecting, active, reconnecting, ending, ended, and failed states so stale
+  incoming bars, active room indicators, and platform call surfaces clear from
+  one state path. Group rooms publish voice-room state only; they do not surface
+  ringing UI.
 - `TrixControlPlaneService`: account bootstrap, profile, group policy, and admin
   operations.
 
@@ -477,9 +558,10 @@ uses those APIs only; it does not manipulate OMEMO keys directly. Group member
 visibility is backed by live MUC state plus a local encrypted known-member file
 cache whose key is stored in Keychain;
 older rooms where the current user is only a MUC member can still get forbidden
-from ejabberd for affiliation-changing add/remove operations. The remaining
-group blocker is broader restart/offline replay coverage, not live send/receive
-or a custom crypto gap.
+from ejabberd for owner-only add/remove operations. Non-owner leave is
+owner-assisted through the Trix control-plane wrapper. The remaining group
+blocker is broader restart/offline replay coverage, not live send/receive or a
+custom crypto gap.
 
 See [../docs/xmpp-migration/apple-omemo-feasibility.md](../docs/xmpp-migration/apple-omemo-feasibility.md)
 and [../docs/xmpp-migration/spike-checklist.md](../docs/xmpp-migration/spike-checklist.md).

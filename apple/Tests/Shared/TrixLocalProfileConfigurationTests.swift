@@ -48,4 +48,15 @@ final class TrixLocalProfileConfigurationTests: XCTestCase {
 
         XCTAssertEqual(url.absoluteString, "https://trix.selfhost.ru")
     }
+
+    func testLiveSmokeStorageAvoidsKeychainUnlessExplicitlyOptedIn() {
+        XCTAssertFalse(TrixLiveSmokeStorageConfiguration.usesVolatileStorage(environment: [:]))
+        XCTAssertTrue(TrixLiveSmokeStorageConfiguration.usesVolatileStorage(environment: [
+            "TRIX_XMPP_LIVE_SMOKE_MODE": "timeline-restart",
+        ]))
+        XCTAssertFalse(TrixLiveSmokeStorageConfiguration.usesVolatileStorage(environment: [
+            "TRIX_XMPP_LIVE_SMOKE_MODE": "timeline-restart",
+            "TRIX_XMPP_LIVE_SMOKE_USE_KEYCHAIN": "1",
+        ]))
+    }
 }

@@ -22,20 +22,31 @@ struct TrixMacRootView: View {
 
 private struct TrixMacWorkspaceView: View {
     @ObservedObject var model: TrixAppModel
+    @ObservedObject private var callViewModel: TrixCallViewModel
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openWindow) private var openWindow
     @State private var isShowingNewRoom = false
 
+    init(model: TrixAppModel) {
+        self.model = model
+        self._callViewModel = ObservedObject(wrappedValue: model.callViewModel)
+    }
+
     var body: some View {
-        NavigationSplitView {
-            TrixMacRoomListView(model: model)
-                .navigationTitle("Trix")
-                .navigationSplitViewColumnWidth(min: 250, ideal: 300, max: 360)
-        } content: {
-            TrixMacTimelineColumn(model: model)
-                .navigationSplitViewColumnWidth(min: 480, ideal: 640)
-        } detail: {
-            TrixMacRoomContextView(model: model, room: model.selectedRoom)
-                .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 380)
+        VStack(spacing: 0) {
+            TrixActiveCallSurfaceHost(model: model, placement: .workspace)
+
+            NavigationSplitView {
+                TrixMacRoomListView(model: model)
+                    .navigationTitle("Trix")
+                    .navigationSplitViewColumnWidth(min: 250, ideal: 300, max: 360)
+            } content: {
+                TrixMacTimelineColumn(model: model)
+                    .navigationSplitViewColumnWidth(min: 480, ideal: 640)
+            } detail: {
+                TrixMacRoomContextView(model: model, room: model.selectedRoom)
+                    .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 380)
+            }
         }
         .toolbar {
             ToolbarItemGroup {
@@ -63,18 +74,31 @@ private struct TrixMacWorkspaceView: View {
 
             await model.runForegroundRefreshLoop()
         }
+        .task(id: activeCallWindowToken) {
+            guard activeCallWindowToken != nil else {
+                return
+            }
+
+            openWindow(id: TrixActiveCallWindowID)
+        }
+    }
+
+    private var activeCallWindowToken: String? {
+        TrixActiveCallPresentation.presentation(model: model)?.id
     }
 }
 
 private struct TrixMacRoomListView: View {
     @ObservedObject var model: TrixAppModel
     @ObservedObject private var roomListViewModel: RoomListViewModel
+    @ObservedObject private var callViewModel: TrixCallViewModel
     @State private var directSearchUserIDInProgress: String?
     @StateObject private var roomSearchViewModel = TrixUserDirectorySearchViewModel()
 
     init(model: TrixAppModel) {
         self.model = model
         self._roomListViewModel = ObservedObject(wrappedValue: model.roomListViewModel)
+        self._callViewModel = ObservedObject(wrappedValue: model.callViewModel)
     }
 
     var body: some View {
@@ -97,7 +121,8 @@ private struct TrixMacRoomListView: View {
                     ForEach(visibleRooms) { room in
                         TrixMacRoomRow(
                             room: room,
-                            notificationProfile: model.roomNotificationProfile(for: room.id)
+                            notificationProfile: model.roomNotificationProfile(for: room.id),
+                            callIndicator: TrixRoomCallIndicator(state: callViewModel.callLifecycleState(roomID: room.id))
                         )
                             .tag(room.id as String?)
                             .contentShape(Rectangle())
@@ -956,6 +981,7 @@ private struct TrixMacMetadataRow: View {
 private struct TrixMacRoomRow: View {
     let room: TrixRoomSummary
     let notificationProfile: TrixRoomNotificationProfile
+    let callIndicator: TrixRoomCallIndicator?
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -973,6 +999,9 @@ private struct TrixMacRoomRow: View {
                         .lineLimit(1)
                     TrixRoomSecurityMark(isEncrypted: room.isEncrypted, size: 20)
                     TrixRoomNotificationProfileMark(profile: notificationProfile, size: 18)
+                    if let callIndicator {
+                        TrixRoomCallIndicatorMark(indicator: callIndicator)
+                    }
                 }
 
                 Text(room.subtitle)
@@ -1232,6 +1261,11 @@ struct TrixMacSettingsView: View {
                     trustAccountDevice: { device in
                         Task {
                             await model.trustAccountDevice(device)
+                        }
+                    },
+                    revokeOwnDevice: { device in
+                        Task {
+                            await model.revokeOwnDevice(device)
                         }
                     },
                     setUpRecovery: {

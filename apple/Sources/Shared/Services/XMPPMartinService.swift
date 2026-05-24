@@ -19,6 +19,21 @@ struct XMPPTimelineDiagnostics: Sendable {
     let usedUnfilteredFallback: Bool
 }
 
+struct XMPPGroupAffiliationMember: Equatable, Sendable {
+    let userID: String
+    let displayName: String?
+
+    init(userID: String, displayName: String? = nil) {
+        self.userID = userID
+        self.displayName = displayName
+    }
+}
+
+struct XMPPGroupMemberRefresh: Equatable, Sendable {
+    let members: [TrixRoomMember]
+    let shouldReplaceCachedMembers: Bool
+}
+
 actor XMPPMartinService: TrixService {
     private final class TrixMessageCaptureModule: XmppModuleBase, XmppModule {
         static let ID = "trix-message-capture"
@@ -394,7 +409,8 @@ actor XMPPMartinService: TrixService {
     }
 
     private final class TrixMUCInvitationCacheStore: @unchecked Sendable {
-        private let service: String
+        private let service: String?
+        private var memoryStateByAccountJID: [String: StoredMUCInvitationState] = [:]
         private let encoder = JSONEncoder()
         private let decoder = JSONDecoder()
 
@@ -404,7 +420,17 @@ actor XMPPMartinService: TrixService {
             decoder.dateDecodingStrategy = .iso8601
         }
 
+        init(memoryOnly: Bool) {
+            self.service = nil
+            encoder.dateEncodingStrategy = .iso8601
+            decoder.dateDecodingStrategy = .iso8601
+        }
+
         func load(accountJID: String) throws -> StoredMUCInvitationState {
+            guard service != nil else {
+                return memoryStateByAccountJID[accountJID.lowercased()] ?? .empty
+            }
+
             var query = baseQuery(accountJID: accountJID)
             query[kSecReturnData as String] = true
             query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -426,6 +452,11 @@ actor XMPPMartinService: TrixService {
         }
 
         func save(_ state: StoredMUCInvitationState, accountJID: String) throws {
+            guard service != nil else {
+                memoryStateByAccountJID[accountJID.lowercased()] = state
+                return
+            }
+
             let data = try encoder.encode(state)
             let query = baseQuery(accountJID: accountJID)
             let attributes = [kSecValueData as String: data]
@@ -451,7 +482,11 @@ actor XMPPMartinService: TrixService {
         }
 
         private func baseQuery(accountJID: String) -> [String: Any] {
-            [
+            guard let service else {
+                return [:]
+            }
+
+            return [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: service,
                 kSecAttrAccount as String: "muc-invitations:\(accountJID.lowercased())",
@@ -646,6 +681,7 @@ actor XMPPMartinService: TrixService {
     private let roomSummaryCacheStore: TrixRoomSummaryCacheStore
     private let groupRoomCacheStore: TrixGroupRoomCacheStore
     private let mucInvitationCacheStore: TrixMUCInvitationCacheStore
+    private let groupControlPlaneService: any TrixGroupControlPlaneService
     private let omemoPersistence: TrixOMEMOPersistence
     private let omemoService: String
     private static let maxCachedTimelineItems = 200
@@ -667,17 +703,70 @@ actor XMPPMartinService: TrixService {
     private static let readMarkersNode = "urn:softgrid:trix:read-markers:1"
     private static let readMarkersItemID = "markers"
 
-    init(omemoPersistence: TrixOMEMOPersistence = .keychain) {
+    init(
+        omemoPersistence: TrixOMEMOPersistence = .keychain,
+        groupControlPlaneService: any TrixGroupControlPlaneService = HTTPGroupControlPlaneService()
+    ) {
+        #if DEBUG
+        if let smokeStorage = TrixLiveSmokeStorageConfiguration.current() {
+            self.timelineCacheStore = TrixTimelineCacheStore(
+                directoryName: smokeStorage.directoryName("TimelineCache"),
+                keySource: smokeStorage.cacheKeySource("timeline"),
+                migratesLegacyKeychainItems: false
+            )
+            self.roomSummaryCacheStore = TrixRoomSummaryCacheStore(
+                directoryName: smokeStorage.directoryName("RoomSummaryCache"),
+                keySource: smokeStorage.cacheKeySource("room-summary")
+            )
+            self.groupRoomCacheStore = TrixGroupRoomCacheStore(
+                directoryName: smokeStorage.directoryName("GroupMemberCache"),
+                keySource: smokeStorage.cacheKeySource("group-members"),
+                migratesLegacyKeychainItems: false
+            )
+            self.mucInvitationCacheStore = TrixMUCInvitationCacheStore(memoryOnly: true)
+            self.groupControlPlaneService = groupControlPlaneService
+            self.omemoPersistence = .memory
+            self.omemoService = "com.softgrid.trix.xmpp.omemo.live-smoke.\(smokeStorage.runIdentifier)"
+            return
+        }
+        #endif
+
         self.timelineCacheStore = TrixTimelineCacheStore()
         self.roomSummaryCacheStore = TrixRoomSummaryCacheStore()
         self.groupRoomCacheStore = TrixGroupRoomCacheStore()
         self.mucInvitationCacheStore = TrixMUCInvitationCacheStore()
+        self.groupControlPlaneService = groupControlPlaneService
         self.omemoPersistence = omemoPersistence
         self.omemoService = "com.softgrid.trix.xmpp.omemo"
     }
 
     #if DEBUG
-    init(localProfile: TrixLocalProfileConfiguration) {
+    init(
+        localProfile: TrixLocalProfileConfiguration,
+        groupControlPlaneService: any TrixGroupControlPlaneService = HTTPGroupControlPlaneService()
+    ) {
+        if let smokeStorage = TrixLiveSmokeStorageConfiguration.current() {
+            self.timelineCacheStore = TrixTimelineCacheStore(
+                directoryName: smokeStorage.directoryName("TimelineCache-\(localProfile.name)"),
+                keySource: smokeStorage.cacheKeySource("timeline-\(localProfile.name)"),
+                migratesLegacyKeychainItems: false
+            )
+            self.roomSummaryCacheStore = TrixRoomSummaryCacheStore(
+                directoryName: smokeStorage.directoryName("RoomSummaryCache-\(localProfile.name)"),
+                keySource: smokeStorage.cacheKeySource("room-summary-\(localProfile.name)")
+            )
+            self.groupRoomCacheStore = TrixGroupRoomCacheStore(
+                directoryName: smokeStorage.directoryName("GroupMemberCache-\(localProfile.name)"),
+                keySource: smokeStorage.cacheKeySource("group-members-\(localProfile.name)"),
+                migratesLegacyKeychainItems: false
+            )
+            self.mucInvitationCacheStore = TrixMUCInvitationCacheStore(memoryOnly: true)
+            self.groupControlPlaneService = groupControlPlaneService
+            self.omemoPersistence = .memory
+            self.omemoService = "com.softgrid.trix.xmpp.omemo.live-smoke.\(smokeStorage.runIdentifier).\(localProfile.name)"
+            return
+        }
+
         self.timelineCacheStore = TrixTimelineCacheStore(
             legacyService: localProfile.keychainService("com.softgrid.trix.xmpp.timeline"),
             keychainService: localProfile.keychainService("com.softgrid.trix.xmpp.timeline-cache-key"),
@@ -695,6 +784,7 @@ actor XMPPMartinService: TrixService {
         self.mucInvitationCacheStore = TrixMUCInvitationCacheStore(
             service: localProfile.keychainService("com.softgrid.trix.xmpp.muc-invitations")
         )
+        self.groupControlPlaneService = groupControlPlaneService
         self.omemoPersistence = .keychain
         self.omemoService = localProfile.keychainService("com.softgrid.trix.xmpp.omemo")
     }
@@ -1731,9 +1821,15 @@ actor XMPPMartinService: TrixService {
             let connection = try await ensureConnection(for: session)
             let room = try await joinedGroupRoom(roomID: peerJID, session: session, connection: connection)
             let accountJID = try Self.normalizedXMPPJID(session.userID)
-            let members = try await groupMembers(room: room, accountJID: accountJID, connection: connection)
-            cacheGroupMembers(members.map(\.userID), roomID: peerJID, accountJID: accountJID, name: nil)
-            return members
+            let refresh = try await groupMemberRefresh(room: room, accountJID: accountJID, connection: connection)
+            cacheGroupMembers(
+                refresh.members.map(\.userID),
+                roomID: peerJID,
+                accountJID: accountJID,
+                name: nil,
+                replacingExistingMembers: refresh.shouldReplaceCachedMembers
+            )
+            return refresh.members
         }
 
         return [
@@ -1775,6 +1871,35 @@ actor XMPPMartinService: TrixService {
             connection: connection
         )
         removeCachedGroupMember(removedJID, roomID: normalizedRoomID, accountJID: session.userID)
+    }
+
+    func leaveGroup(roomID: String, session: TrixSession) async throws {
+        let normalizedRoomID = try Self.normalizedRoomID(roomID)
+        guard Self.isMUCJID(normalizedRoomID) else {
+            throw TrixClientError.roomUnavailable
+        }
+
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+        let connection = activeConnection(for: session)
+        let operation = TrixGroupLeaveOperation(
+            controlPlaneLeave: { [groupControlPlaneService] roomID, session in
+                try await groupControlPlaneService.leaveGroup(roomID: roomID, session: session)
+            },
+            localMUCLeave: {
+                guard let connection else {
+                    return
+                }
+
+                try await Self.leaveLocalMUCIfPresent(roomID: normalizedRoomID, connection: connection)
+            }
+        )
+
+        try await operation.leave(roomID: normalizedRoomID, session: session)
+        if let connection {
+            try? await unbookmarkGroupRoom(roomID: normalizedRoomID, connection: connection)
+        }
+        clearCachedGroup(roomID: normalizedRoomID, accountJID: accountJID)
+        try? timelineCacheStore.clear(accountJID: accountJID, roomID: normalizedRoomID)
     }
 
     func createEncryptedDirectRoom(
@@ -1992,6 +2117,45 @@ actor XMPPMartinService: TrixService {
         return Self.peerDeviceIdentities(from: connection.omemoStack.store.identities(forName: peerJID), userID: peerJID)
     }
 
+    func revokeOwnDevice(deviceID: String, session: TrixSession) async throws -> [TrixPeerDeviceIdentity] {
+        let connection = try await ensureConnection(for: session)
+        let accountJID = try Self.normalizedXMPPJID(session.userID)
+        guard let targetDeviceID = UInt32(deviceID) else {
+            throw TrixClientError.ownDeviceUnavailable
+        }
+
+        let localDeviceID = connection.omemoStack.store.localRegistrationId()
+        guard targetDeviceID != localDeviceID else {
+            throw TrixClientError.currentDeviceRevocationUnavailable
+        }
+
+        let devicesBeforeRevocation = try await refreshPeerDeviceIdentities(userID: accountJID, session: session)
+        guard devicesBeforeRevocation.contains(where: { $0.deviceID == String(targetDeviceID) && $0.isActive }) else {
+            throw TrixClientError.ownDeviceUnavailable
+        }
+
+        let targetAddress = SignalAddress(name: accountJID, deviceId: Int32(bitPattern: targetDeviceID))
+        _ = connection.omemoStack.store.setStatus(active: false, forIdentity: targetAddress)
+        connection.omemoStack.module.removeDevices(withIds: [Int32(bitPattern: targetDeviceID)])
+
+        var latestDevices = devicesBeforeRevocation
+        for attempt in 0..<20 {
+            latestDevices = try await refreshPeerDeviceIdentities(userID: accountJID, session: session)
+            guard let target = latestDevices.first(where: { $0.deviceID == String(targetDeviceID) }) else {
+                return latestDevices
+            }
+            if !target.isActive {
+                return latestDevices
+            }
+
+            if attempt < 19 {
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+
+        throw TrixClientError.ownDeviceRevocationFailed
+    }
+
     func requestDeviceVerification(session: TrixSession) async throws -> TrixDeviceVerificationFlow {
         _ = try await ensureConnection(for: session)
         throw TrixClientError.e2eeUnavailable
@@ -2027,12 +2191,12 @@ actor XMPPMartinService: TrixService {
 
     func setUpRecovery(session: TrixSession) async throws -> String {
         _ = try await ensureConnection(for: session)
-        throw TrixClientError.e2eeUnavailable
+        throw TrixClientError.recoverySetupUnavailable
     }
 
     func confirmRecoveryKey(_ recoveryKey: String, session: TrixSession) async throws -> TrixDeviceVerificationStatus {
         _ = try await ensureConnection(for: session)
-        throw TrixClientError.e2eeUnavailable
+        throw TrixClientError.recoveryKeyConfirmationUnavailable
     }
 
     func searchUsers(
@@ -2134,6 +2298,15 @@ actor XMPPMartinService: TrixService {
         }
 
         return try await openConnection(for: session)
+    }
+
+    private func activeConnection(for session: TrixSession) -> Connection? {
+        let key = Self.sessionKey(session)
+        guard let connection = connections[key],
+              connection.client.isConnected else {
+            return nil
+        }
+        return connection
     }
 
     private func refreshedRosterConnection(for session: TrixSession) async throws -> Connection {
@@ -3727,6 +3900,19 @@ actor XMPPMartinService: TrixService {
         return Self.room(from: result)
     }
 
+    private static func leaveLocalMUCIfPresent(roomID: String, connection: Connection) async throws {
+        guard let room = connection.mucModule.roomManager.room(for: connection.client, with: BareJID(roomID)) else {
+            return
+        }
+        defer {
+            connection.mucModule.roomManager.close(room: room)
+        }
+
+        if room.state == .joined {
+            try await connection.mucModule.leave(room: room)
+        }
+    }
+
     private func joinMucRoom(_ room: RoomProtocol, connection: Connection) async throws -> RoomJoinResult {
         try await withCheckedThrowingContinuation { continuation in
             let waitState = XMPPMUCJoinWaitState(
@@ -3786,7 +3972,7 @@ actor XMPPMartinService: TrixService {
         }
 
         members.formUnion(Self.memberUserIDs(from: room, fallbackAccountJID: accountJID))
-        cacheGroupMembers(members, roomID: roomID, accountJID: accountJID, name: nil)
+        cacheGroupMembers(members, roomID: roomID, accountJID: accountJID, name: nil, replacingExistingMembers: true)
 
         let recipients = members
             .filter { $0.lowercased() != accountKey }
@@ -3805,56 +3991,90 @@ actor XMPPMartinService: TrixService {
         return recipients
     }
 
-    private func groupMembers(room: RoomProtocol, accountJID: String, connection: Connection) async throws -> [TrixRoomMember] {
-        var membersByID: [String: TrixRoomMember] = [:]
+    private func groupMemberRefresh(room: RoomProtocol, accountJID: String, connection: Connection) async throws -> XMPPGroupMemberRefresh {
         let roomID = room.jid.stringValue
-        if let cached = cachedGroup(roomID: roomID, accountJID: accountJID) {
-            for jid in cached.memberUserIDs {
-                membersByID[jid.lowercased()] = TrixRoomMember(
-                    userID: jid,
-                    displayName: Self.displayName(from: jid),
-                    membership: .joined
-                )
-            }
-        }
+        let cachedMemberUserIDs = cachedGroup(roomID: roomID, accountJID: accountJID)?.memberUserIDs ?? []
 
-        for occupant in Self.occupants(from: room) {
-            guard let jid = occupant.jid?.bareJid.stringValue else {
-                continue
-            }
-            membersByID[jid.lowercased()] = TrixRoomMember(
-                userID: jid,
-                displayName: Self.displayName(from: jid),
-                membership: .joined
-            )
-        }
+        let occupantUserIDs = Set(Self.occupants(from: room).compactMap { occupant in
+            occupant.jid?.bareJid.stringValue
+        })
 
+        var affiliationMembers: [XMPPGroupAffiliationMember] = []
+        var affiliationsComplete = true
         for affiliation in [MucAffiliation.owner, .admin, .member] {
-            let affiliations = (try? await roomAffiliations(room: room, affiliation: affiliation, connection: connection)) ?? []
-            for item in affiliations {
-                let jid = item.userID
-                membersByID[jid.lowercased()] = TrixRoomMember(
-                    userID: jid,
-                    displayName: item.nickname ?? Self.displayName(from: jid),
-                    membership: .joined
+            do {
+                let affiliations = try await roomAffiliations(room: room, affiliation: affiliation, connection: connection)
+                affiliationMembers.append(
+                    contentsOf: affiliations.map { item in
+                        XMPPGroupAffiliationMember(
+                            userID: item.userID,
+                            displayName: item.nickname ?? Self.displayName(from: item.userID)
+                        )
+                    }
                 )
+            } catch {
+                affiliationsComplete = false
             }
         }
 
-        if membersByID[accountJID.lowercased()] == nil {
-            membersByID[accountJID.lowercased()] = TrixRoomMember(
-                userID: accountJID,
-                displayName: Self.displayName(from: accountJID),
+        return Self.mergedGroupMemberRefresh(
+            cachedMemberUserIDs: cachedMemberUserIDs,
+            occupantUserIDs: occupantUserIDs,
+            affiliationMembers: affiliationMembers,
+            accountJID: accountJID,
+            affiliationsComplete: affiliationsComplete
+        )
+    }
+
+    static func mergedGroupMemberRefresh(
+        cachedMemberUserIDs: Set<String>,
+        occupantUserIDs: Set<String>,
+        affiliationMembers: [XMPPGroupAffiliationMember],
+        accountJID: String,
+        affiliationsComplete: Bool
+    ) -> XMPPGroupMemberRefresh {
+        var membersByID: [String: TrixRoomMember] = [:]
+
+        func addMember(userID: String, displayName: String? = nil) {
+            let normalizedUserID = userID.lowercased()
+            guard !normalizedUserID.isEmpty else {
+                return
+            }
+
+            membersByID[normalizedUserID] = TrixRoomMember(
+                userID: normalizedUserID,
+                displayName: displayName ?? Self.displayName(from: normalizedUserID),
                 membership: .joined
             )
         }
 
-        return membersByID.values.sorted { lhs, rhs in
+        if !affiliationsComplete {
+            for jid in cachedMemberUserIDs {
+                addMember(userID: jid)
+            }
+        }
+
+        for jid in occupantUserIDs {
+            addMember(userID: jid)
+        }
+
+        for member in affiliationMembers {
+            addMember(userID: member.userID, displayName: member.displayName)
+        }
+
+        addMember(userID: accountJID)
+
+        let members = membersByID.values.sorted { lhs, rhs in
             if lhs.membership.sortOrder != rhs.membership.sortOrder {
                 return lhs.membership.sortOrder < rhs.membership.sortOrder
             }
             return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
         }
+
+        return XMPPGroupMemberRefresh(
+            members: members,
+            shouldReplaceCachedMembers: affiliationsComplete
+        )
     }
 
     private func roomConfiguration(roomJID: JID, connection: Connection) async throws -> RoomConfig {
@@ -3932,6 +4152,15 @@ actor XMPPMartinService: TrixService {
             password: nil
         )
         try await connection.bookmarksModule.addOrUpdate(bookmark: bookmark)
+    }
+
+    private func unbookmarkGroupRoom(roomID: String, connection: Connection) async throws {
+        let roomJID = JID(roomID)
+        guard let bookmark = connection.bookmarksModule.currentBookmarks.conference(for: roomJID) else {
+            return
+        }
+
+        try await connection.bookmarksModule.remove(bookmark: bookmark)
     }
 
     private func createNotificationProfilesNode(connection: Connection, accountJID: String) async throws {
@@ -4031,17 +4260,42 @@ actor XMPPMartinService: TrixService {
         try await connection.rosterModule.requestRoster()
     }
 
-    private func cacheGroupMembers(_ memberUserIDs: [String], roomID: String, accountJID: String, name: String?) {
-        cacheGroupMembers(Set(memberUserIDs), roomID: roomID, accountJID: accountJID, name: name)
+    private func cacheGroupMembers(
+        _ memberUserIDs: [String],
+        roomID: String,
+        accountJID: String,
+        name: String?,
+        replacingExistingMembers: Bool = false
+    ) {
+        cacheGroupMembers(
+            Set(memberUserIDs),
+            roomID: roomID,
+            accountJID: accountJID,
+            name: name,
+            replacingExistingMembers: replacingExistingMembers
+        )
     }
 
-    private func cacheGroupMembers(_ memberUserIDs: Set<String>, roomID: String, accountJID: String, name: String?) {
+    private func cacheGroupMembers(
+        _ memberUserIDs: Set<String>,
+        roomID: String,
+        accountJID: String,
+        name: String?,
+        replacingExistingMembers: Bool = false
+    ) {
         let accountKey = accountJID.lowercased()
         let roomKey = roomID.lowercased()
         var groups = knownGroupRooms[accountKey] ?? [:]
         let existing = groups[roomKey] ?? loadCachedGroup(roomID: roomID, accountJID: accountJID)
-        var mergedMembers = existing?.memberUserIDs ?? []
-        mergedMembers.formUnion(memberUserIDs.map { $0.lowercased() })
+        let normalizedMembers = Set(memberUserIDs.map { $0.lowercased() })
+        let mergedMembers: Set<String>
+        if replacingExistingMembers {
+            mergedMembers = normalizedMembers
+        } else {
+            var existingMembers = existing?.memberUserIDs ?? []
+            existingMembers.formUnion(normalizedMembers)
+            mergedMembers = existingMembers
+        }
         let group = KnownGroupRoom(
             roomID: roomID,
             name: name ?? existing?.name ?? Self.displayName(from: roomID),
@@ -4065,6 +4319,15 @@ actor XMPPMartinService: TrixService {
         groups[roomKey] = group
         knownGroupRooms[accountKey] = groups
         saveCachedGroup(group, accountJID: accountJID)
+    }
+
+    private func clearCachedGroup(roomID: String, accountJID: String) {
+        let accountKey = accountJID.lowercased()
+        let roomKey = roomID.lowercased()
+        var groups = knownGroupRooms[accountKey] ?? [:]
+        groups.removeValue(forKey: roomKey)
+        knownGroupRooms[accountKey] = groups
+        try? groupRoomCacheStore.clear(accountJID: accountJID, roomID: roomID)
     }
 
     private func cachedGroup(roomID: String, accountJID: String) -> KnownGroupRoom? {

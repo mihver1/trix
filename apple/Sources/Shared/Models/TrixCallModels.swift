@@ -256,6 +256,207 @@ struct TrixGroupVoiceRoomSnapshot: Identifiable, Equatable, Sendable {
     }
 }
 
+enum TrixCallLifecyclePhase: String, Codable, Equatable, Sendable {
+    case idle
+    case outgoingPreparing = "outgoing_preparing"
+    case outgoingRinging = "outgoing_ringing"
+    case incomingRinging = "incoming_ringing"
+    case connecting
+    case active
+    case reconnecting
+    case ending
+    case ended
+    case failed
+
+    var isTransient: Bool {
+        switch self {
+        case .outgoingPreparing, .connecting, .reconnecting, .ending:
+            return true
+        case .idle, .outgoingRinging, .incomingRinging, .active, .ended, .failed:
+            return false
+        }
+    }
+
+    var isActiveLike: Bool {
+        switch self {
+        case .active, .reconnecting:
+            return true
+        case .idle, .outgoingPreparing, .outgoingRinging, .incomingRinging, .connecting, .ending, .ended, .failed:
+            return false
+        }
+    }
+}
+
+enum TrixCallLocalAudioState: String, Codable, Equatable, Sendable {
+    case unavailable
+    case muted
+    case unmuted
+}
+
+enum TrixCallLocalCameraState: String, Codable, Equatable, Sendable {
+    case unavailable
+    case off
+    case on
+}
+
+enum TrixCallRemoteMediaReadiness: String, Codable, Equatable, Sendable {
+    case none
+    case waiting
+    case ready
+}
+
+enum TrixCallE2EEState: String, Codable, Equatable, Sendable {
+    case none
+    case required
+    case active
+    case failed
+}
+
+enum TrixCallPlatformSurfaceState: String, Codable, Equatable, Sendable {
+    case none
+    case incomingDirectCallBar
+    case directCallBar
+    case groupVoiceRoomBar
+    case callKitIncoming
+    case floatingWindow
+}
+
+enum TrixRoomCallIndicatorKind: Equatable, Sendable {
+    case incomingDirect
+    case directCall
+    case groupVoice
+}
+
+struct TrixRoomCallIndicator: Equatable, Sendable {
+    let kind: TrixRoomCallIndicatorKind
+    let title: String
+    let accessibilityLabel: String
+    let participantCount: Int?
+    let isRinging: Bool
+
+    init?(state: TrixCallLifecycleState) {
+        switch state.kind {
+        case .directVideo:
+            switch state.phase {
+            case .incomingRinging:
+                self.kind = .incomingDirect
+                self.title = "Incoming"
+                self.accessibilityLabel = "Incoming encrypted call"
+                self.participantCount = nil
+                self.isRinging = true
+            case .outgoingRinging:
+                self.kind = .directCall
+                self.title = "Calling"
+                self.accessibilityLabel = "Encrypted call ringing"
+                self.participantCount = nil
+                self.isRinging = false
+            case .connecting:
+                self.kind = .directCall
+                self.title = "Connecting"
+                self.accessibilityLabel = "Encrypted call connecting"
+                self.participantCount = nil
+                self.isRinging = false
+            case .active:
+                self.kind = .directCall
+                self.title = "In call"
+                self.accessibilityLabel = "Encrypted call active"
+                self.participantCount = nil
+                self.isRinging = false
+            case .reconnecting:
+                self.kind = .directCall
+                self.title = "Reconnecting"
+                self.accessibilityLabel = "Encrypted call reconnecting"
+                self.participantCount = nil
+                self.isRinging = false
+            case .ending:
+                self.kind = .directCall
+                self.title = "Ending"
+                self.accessibilityLabel = "Encrypted call ending"
+                self.participantCount = nil
+                self.isRinging = false
+            case .idle, .outgoingPreparing, .ended, .failed:
+                return nil
+            }
+        case .groupVoice:
+            guard state.phase.isActiveLike, !state.participantIDs.isEmpty else {
+                return nil
+            }
+
+            self.kind = .groupVoice
+            self.title = state.phase == .reconnecting ? "Reconnecting" : "Voice live"
+            self.accessibilityLabel = "\(state.participantIDs.count) in encrypted group voice"
+            self.participantCount = state.participantIDs.count
+            self.isRinging = false
+        case nil:
+            return nil
+        }
+    }
+}
+
+struct TrixCallLifecycleState: Equatable, Sendable {
+    let phase: TrixCallLifecyclePhase
+    let roomID: String
+    let callID: String?
+    let kind: TrixCallKind?
+    let startedAt: Date?
+    let updatedAt: Date?
+    let expiresAt: Date?
+    let participantIDs: [String]
+    let localAudioState: TrixCallLocalAudioState
+    let localCameraState: TrixCallLocalCameraState
+    let remoteMediaReadiness: TrixCallRemoteMediaReadiness
+    let platformSurfaceState: TrixCallPlatformSurfaceState
+
+    var isActing: Bool {
+        phase.isTransient
+    }
+
+    var foregroundCue: TrixCallForegroundCue {
+        guard phase == .incomingRinging,
+              kind == .directVideo,
+              let callID else {
+            return .none
+        }
+
+        return .incomingDirectCall(callID: callID)
+    }
+
+    var e2eeState: TrixCallE2EEState {
+        switch phase {
+        case .idle, .ended:
+            return .none
+        case .failed:
+            return .failed
+        case .active:
+            return .active
+        case .outgoingPreparing, .outgoingRinging, .incomingRinging, .connecting, .reconnecting, .ending:
+            return .required
+        }
+    }
+
+    static func idle(roomID: String) -> TrixCallLifecycleState {
+        TrixCallLifecycleState(
+            phase: .idle,
+            roomID: roomID,
+            callID: nil,
+            kind: nil,
+            startedAt: nil,
+            updatedAt: nil,
+            expiresAt: nil,
+            participantIDs: [],
+            localAudioState: .unavailable,
+            localCameraState: .unavailable,
+            remoteMediaReadiness: .none,
+            platformSurfaceState: .none
+        )
+    }
+}
+
+enum TrixCallForegroundCue: Equatable, Sendable {
+    case none
+    case incomingDirectCall(callID: String)
+}
+
 struct TrixCallJoinAuthorization: Equatable, Sendable {
     let callID: String
     let kind: TrixCallKind
@@ -290,6 +491,10 @@ struct TrixActiveMediaCall: Equatable, Sendable {
     let kind: TrixCallKind
     let liveKitRoom: String
     let startedAt: Date
+    let publishesLocalAudio: Bool
+    let publishesLocalVideo: Bool
+    let subscribesRemoteAudio: Bool
+    let subscribesRemoteVideo: Bool
 }
 
 struct TrixPreparedCall: Equatable, Sendable {

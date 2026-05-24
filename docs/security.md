@@ -25,6 +25,18 @@ before they reach the server.
 Trix must rely on a reviewed OMEMO implementation. Do not implement custom
 cryptography, custom key exchange, or manual key handling in the app.
 
+## Apple OMEMO License And SBOM Gate
+
+The current Apple OMEMO path is Tigase Martin `3.2.4` + MartinOMEMO `2.2.3` +
+Tigase libsignal `1.0.0` + tigase-logging.swift `1.0.0`, all pinned in SwiftPM
+and tracked with local license evidence in
+`docs/xmpp-migration/license-sbom.md`.
+
+For the private non-commercial MVP, this stack is accepted with GPL/AGPL
+obligations. Broader/public/proprietary distribution is a compliance blocker
+until release notices and source-availability obligations are implemented and
+reviewed.
+
 ## Metadata Still Visible To The Server
 
 Even with OMEMO, the server can still observe metadata, including:
@@ -91,8 +103,12 @@ raw OMEMO fingerprint is hidden behind a technical disclosure. The pinned
 libsignal source includes displayable/scannable fingerprint primitives, but they
 are not exposed to the app target as a reviewed Swift verification flow here.
 The app still does not provide an interactive reviewed SAS exchange,
-cross-signing, QR scanning, or device revocation in this slice; those remain
-blocked rather than replaced with custom crypto or silent trust-all behavior.
+cross-signing, or QR scanning in this slice; those remain blocked rather than
+replaced with custom crypto or silent trust-all behavior. The same Settings
+surface now supports revoking one of the account's own non-current OMEMO
+devices through MartinOMEMO's reviewed device-list/bundle removal API path.
+Revocation stops future fan-out to that device after published-state refresh,
+but does not remove ciphertext that was already delivered to it.
 
 ## Recovery And Reinstall Risk
 
@@ -111,13 +127,16 @@ file names, and exposes Settings controls for size, age, per-chat media depth,
 forever retention, and full or partial deletion.
 
 There is no validated server-side OMEMO key backup or account recovery path in
-this slice. If the app is deleted, the Keychain state is reset, or the account is
-restored onto a fresh device, the client creates a new OMEMO device. Old
-ciphertext archived in MAM or stored in local caches can remain unavailable when
-it was not encrypted for the replacement device. Trix must not add custom key
-recovery or manually move OMEMO private key material to work around this; the
-limitation must remain visible until a reviewed MartinOMEMO recovery path is
-selected.
+this slice. The current decision record
+`docs/tasks/2026-05-20-reviewed-omemo-recovery-decision.md` confirms that pinned Martin `3.2.4`, MartinOMEMO `2.2.3`,
+and libsignal `1.0.0` expose no reviewed backup/export/import recovery API for
+restoring OMEMO private state to a fresh device. If the app is deleted, the
+Keychain state is reset, or the account is restored onto a fresh device, the
+client creates a new OMEMO device. Old ciphertext archived in MAM or stored in
+local caches can remain unavailable when it was not encrypted for the
+replacement device. Trix must not add custom key recovery or manually move OMEMO
+private key material to work around this; the limitation must remain visible
+until a reviewed MartinOMEMO recovery path is selected.
 
 ## Group E2EE Risk
 
@@ -279,9 +298,10 @@ the container read-only, owned for the non-root gateway user, and not committed
 to the repository. `trix-push-gateway` is healthy, binds its HTTP endpoint to
 `127.0.0.1:8090`, connects to ejabberd as the private XEP-0114 component
 `push.trix.selfhost.ru`, and the component port is not externally reachable.
-APNs delivery is still not launch-complete until signed-device smoke confirms
-delivery and a payload/log audit confirms no alert, body, filename, media-key,
-or decrypted-content fields.
+Signed macOS APNs smoke passed on 2026-05-20: the gateway returned provider
+delivery success for a generic sync wake, and QA confirmed the visible
+notification remained generic with no plaintext message, filename, media-key, or
+decrypted-content fields.
 
 ## Call Media Risk
 
@@ -370,11 +390,12 @@ through the loopback ejabberd API. It also allows signed-in app users to change
 their own password through `POST /v1/account/password`; the wrapper validates the
 current password with `check_password` before calling loopback `change_password`.
 Only `POST /v1/invites`, `POST /v1/account/password`,
-`POST /v1/registration/redeem`, `POST /v1/stickers/telegram/packs`, and
-`POST /v1/stickers/telegram/file` should be reachable by clients through private
-TLS policy; `/v1/operator/*` remains operator-only. Request bodies include invite
-codes, XMPP passwords, and short-lived sticker file tokens, so reverse proxy and
-service logs must not capture bodies.
+`POST /v1/groups/leave`, `POST /v1/registration/redeem`,
+`POST /v1/stickers/telegram/packs`, and `POST /v1/stickers/telegram/file`
+should be reachable by clients through private TLS policy; `/v1/operator/*`
+remains operator-only. Request bodies include invite codes, XMPP passwords, group
+room ids, and short-lived sticker file tokens, so reverse proxy and service logs
+must not capture bodies.
 
 ## Local Diagnostics Risk
 

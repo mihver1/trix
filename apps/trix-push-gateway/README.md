@@ -104,12 +104,53 @@ Callers must send `Authorization: Bearer <TRIX_PUSH_GATEWAY_TOKEN>` to
 account through `TRIX_APNS_VOIP_TOPIC`; it never sends the regular APNs token or
 topic for CallKit/PushKit delivery.
 
+## Private Deployment Prerequisites
+
+Before production startup, confirm all of the following:
+
+- APNs token-auth material is deployment-local only:
+  `TRIX_APNS_TEAM_ID`, `TRIX_APNS_KEY_ID`, `TRIX_APNS_TOPIC`,
+  `TRIX_APNS_VOIP_TOPIC`, and `TRIX_APNS_PRIVATE_KEY_PATH` (or inline
+  `TRIX_APNS_PRIVATE_KEY_PEM`).
+- Gateway bearer token and XEP-0114 component secret are non-default deployment
+  secrets: `TRIX_PUSH_GATEWAY_TOKEN` and `TRIX_XMPP_COMPONENT_SECRET`.
+- Gateway registration store path is persistent and host-private:
+  `TRIX_PUSH_STORE_PATH` (default `/var/lib/trix-push-gateway/registrations.json`).
+- ejabberd is configured with private `ejabberd_service` listener and
+  `mod_push` route to component JID `push.trix.selfhost.ru`.
+- Component network path is private (loopback or internal Docker network only):
+  `TRIX_XMPP_COMPONENT_HOST`, `TRIX_XMPP_COMPONENT_PORT`, and
+  `TRIX_XMPP_COMPONENT_JID`.
+
+## Suggested Bring-Up Sequence
+
+1. Start ejabberd first and verify it is healthy with federation still disabled.
+2. Start `trix-push-gateway` with component mode enabled and confirm
+   `/v0/system/health` on loopback.
+3. Confirm component handshake success in logs (without printing secrets).
+4. Register one APNs token via Martin/Tigase `register-device` and verify the
+   store contains the derived node mapping.
+5. Trigger a controlled push through ejabberd `mod_push` (preferred) or the
+   loopback gateway endpoint and confirm generic/sanitized payload behavior.
+
+## Open MVP Risks
+
+- Signed-device APNs delivery proof passed on 2026-05-20 with a signed macOS
+  token handoff, generic APNs provider acceptance, and QA-visible generic
+  notification text. Keep this as a regression smoke before launch changes.
+- APNs key rotation and component-secret rotation need a short maintenance
+  procedure so ejabberd/gateway restarts happen in the right order.
+- Registration-store durability depends on host volume backup/restore; losing
+  `registrations.json` will require fresh client registration.
+- There is no external/public listener by design; operator diagnostics must
+  continue through private shell/control-plane paths only.
+
 ## Deployment Status
 
 The 2026-05-10 XMPP deploy runs this gateway on the VPS. The container loads
 deployment-local APNs token-auth settings from `/opt/trix-xmpp/.env`, mounts the
 APNs `.p8` key read-only from `/opt/trix-xmpp/certs/apns`, keeps the HTTP health
 endpoint on `127.0.0.1:8090`, and connects to ejabberd as
-`push.trix.selfhost.ru`. APNs smoke remains open until a signed iOS or macOS
-device confirms a visible generic push with no plaintext message, filename, or
-attachment metadata fields.
+`push.trix.selfhost.ru`. Signed macOS APNs smoke passed on 2026-05-20 with a
+visible generic push and no plaintext message, filename, or attachment metadata
+fields.

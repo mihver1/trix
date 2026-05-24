@@ -12,12 +12,16 @@ final class DeviceVerificationTests: XCTestCase {
         XCTAssertEqual(visual?.symbols.count, 32)
         XCTAssertEqual(visual?.decimalGroups.count, 4)
         XCTAssertFalse(visual?.symbolSummary.isEmpty ?? true)
+        XCTAssertEqual(visual?.pixelArt.colorIndexes.count, 25)
+        XCTAssertGreaterThan(visual?.pixelArt.filledCellCount ?? 0, 0)
+        XCTAssertEqual(
+            visual?.pixelArt.colorIndex(row: 0, column: 0),
+            visual?.pixelArt.colorIndex(row: 0, column: 4)
+        )
 
         let rendered = visual?.symbols.map(\.symbol).joined()
         XCTAssertEqual(rendered, "🅰️🅰️🅱️🅱️🌜🌜🎯🎯📧📧🎏🎏0️⃣0️⃣1️⃣1️⃣2️⃣2️⃣3️⃣3️⃣4️⃣4️⃣5️⃣5️⃣6️⃣6️⃣7️⃣7️⃣8️⃣8️⃣9️⃣9️⃣")
     }
-
-
 
     func testVisualFingerprintDiffersForDifferentRawFingerprints() {
         let left = TrixDeviceVisualVerification.visualFingerprint(
@@ -30,6 +34,15 @@ final class DeviceVerificationTests: XCTestCase {
         XCTAssertNotNil(left)
         XCTAssertNotNil(right)
         XCTAssertNotEqual(left?.symbols.map(\.symbol), right?.symbols.map(\.symbol))
+        XCTAssertNotEqual(left?.pixelArt.colorIndexes, right?.pixelArt.colorIndexes)
+    }
+
+    func testRawFingerprintsAreGroupedForNarrowLayouts() {
+        let grouped = TrixFingerprintFormatting.grouped(
+            "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
+        )
+
+        XCTAssertEqual(grouped, "AABBCCDD EEFF0011\n22334455 66778899")
     }
 
     func testMockVerificationFlowUsesVisualChallengeAndExplicitTrust() async throws {
@@ -86,6 +99,35 @@ final class DeviceVerificationTests: XCTestCase {
         XCTAssertNotNil(viewModel.errorMessage)
     }
 
+    func testMockServiceRevokesOwnDevice() async throws {
+        let service = MockTrixService(now: Date(timeIntervalSince1970: 0))
+        let session = Self.session
+
+        let before = try await service.refreshPeerDeviceIdentities(userID: session.userID, session: session)
+        XCTAssertTrue(before.contains(where: { $0.deviceID == "1001" && $0.isActive }))
+        XCTAssertTrue(before.contains(where: { $0.deviceID == "2002" && $0.isActive }))
+
+        let after = try await service.revokeOwnDevice(deviceID: "1001", session: session)
+        XCTAssertFalse(after.contains(where: { $0.deviceID == "1001" && $0.isActive }))
+        XCTAssertTrue(after.contains(where: { $0.deviceID == "2002" && $0.isActive }))
+    }
+
+    func testViewModelRevokeOwnDeviceUpdatesList() async {
+        let viewModel = DeviceVerificationViewModel()
+        let service = MockTrixService(now: Date(timeIntervalSince1970: 0))
+        let session = Self.session
+
+        await viewModel.reload(session: session, service: service)
+        guard let target = viewModel.accountDevices.first(where: { !$0.isLocalDevice && $0.deviceID == "1001" }) else {
+            return XCTFail("Expected an own non-current device to revoke")
+        }
+
+        await viewModel.revokeOwnDevice(target, session: session, service: service)
+
+        XCTAssertFalse(viewModel.accountDevices.contains(where: { $0.deviceID == "1001" && $0.isActive }))
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
     private static let session = TrixSession(
         userID: "@me:trix.selfhost.ru",
         deviceID: "TEST",
@@ -125,6 +167,10 @@ private struct FailingDeviceVerificationService: TrixDeviceVerificationService {
     }
 
     func trustPeerDevice(userID: String, deviceID: String, session: TrixSession) async throws -> [TrixPeerDeviceIdentity] {
+        throw TrixClientError.e2eeUnavailable
+    }
+
+    func revokeOwnDevice(deviceID: String, session: TrixSession) async throws -> [TrixPeerDeviceIdentity] {
         throw TrixClientError.e2eeUnavailable
     }
 

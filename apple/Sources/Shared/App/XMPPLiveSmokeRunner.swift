@@ -30,6 +30,10 @@ enum XMPPLiveSmokeRunner {
 
     private static let statusOutput = StatusOutput()
 
+    static var isRequested: Bool {
+        ProcessInfo.processInfo.environment["TRIX_XMPP_LIVE_SMOKE_MODE"] != nil
+    }
+
     private enum Mode: String {
         case login
         case sessionRestore = "session-restore"
@@ -37,6 +41,8 @@ enum XMPPLiveSmokeRunner {
         case roomList = "room-list"
         case search
         case peerDevices = "peer-devices"
+        case secondDeviceFingerprint = "second-device-fingerprint"
+        case ownDeviceRevocation = "own-device-revocation"
         case trustPeer = "trust-peer"
         case profile
         case profileUpdate = "profile-update"
@@ -44,6 +50,9 @@ enum XMPPLiveSmokeRunner {
         case timeline
         case sendTimeline = "send-timeline"
         case timelineRestart = "timeline-restart"
+        case groupTimelineRestart = "group-timeline-restart"
+        case timelineRelaunchSeed = "timeline-relaunch-seed"
+        case timelineRelaunchVerify = "timeline-relaunch-verify"
         case dmE2EE = "dm-e2ee"
         case dmReaction = "dm-reaction"
         case dmReply = "dm-reply"
@@ -55,7 +64,48 @@ enum XMPPLiveSmokeRunner {
         case groupAttachment = "group-attachment"
         case groupMention = "group-mention"
         case groupThread = "group-thread"
+        case groupLeave = "group-leave"
+        case groupCallLabMedia = "group-call-lab-media"
         case readMarkers = "read-markers"
+
+        var requiresKeychainStorage: Bool {
+            switch self {
+            case .sessionRestore, .timelineRelaunchSeed, .timelineRelaunchVerify:
+                return true
+            case .login, .roster, .roomList, .search, .peerDevices,
+                 .secondDeviceFingerprint, .ownDeviceRevocation, .trustPeer, .profile,
+                 .profileUpdate, .blockedSend, .timeline, .sendTimeline, .timelineRestart,
+                 .groupTimelineRestart, .dmE2EE, .dmReaction, .dmReply, .dmEditRetract,
+                 .dmAttachment, .deliveryReceipt, .typing, .groupE2EE, .groupAttachment,
+                 .groupMention, .groupThread, .groupLeave, .groupCallLabMedia, .readMarkers:
+                return false
+            }
+        }
+
+        var requiresCredentials: Bool {
+            switch self {
+            case .timelineRelaunchVerify:
+                return false
+            case .login, .sessionRestore, .roster, .roomList, .search, .peerDevices,
+                 .secondDeviceFingerprint, .ownDeviceRevocation, .trustPeer, .profile,
+                 .profileUpdate, .blockedSend, .timeline, .sendTimeline, .timelineRestart,
+                 .groupTimelineRestart, .timelineRelaunchSeed, .dmE2EE, .dmReaction, .dmReply,
+                 .dmEditRetract, .dmAttachment, .deliveryReceipt, .typing, .groupE2EE,
+                 .groupAttachment, .groupMention, .groupThread, .groupLeave,
+                 .groupCallLabMedia, .readMarkers:
+                return true
+            }
+        }
+    }
+
+    private struct RelaunchMarker: Codable {
+        let version: Int
+        let roomID: String
+        let beforeCount: Int
+        let beforeIDs: [String]
+        let seededMessageID: String?
+        let seededAt: Date
+        let seedPID: Int32
     }
 
     private struct Configuration {
@@ -75,15 +125,31 @@ enum XMPPLiveSmokeRunner {
         let allowTrust: Bool
         let allowProfileUpdate: Bool
         let serverURL: URL
+        let relaunchMarkerPath: String
+        let relaunchSessionService: String
+        let relaunchSessionAccount: String
+        let relaunchCleanup: Bool
+        let secondDeviceProfile: String
+        let ownDeviceRevocationTarget: String?
+        let callLabProfilePrefix: String
+        let callLabHoldSeconds: TimeInterval
+        let usesKeychainStorage: Bool
 
         var omemoPersistence: TrixOMEMOPersistence {
+            guard usesKeychainStorage else {
+                return .memory
+            }
+
             switch mode {
             case .login, .sessionRestore, .typing:
                 return .memory
-            case .roster, .roomList, .search, .peerDevices, .trustPeer, .profile, .profileUpdate,
-                 .blockedSend, .timeline, .sendTimeline, .timelineRestart, .dmE2EE, .dmAttachment,
-                 .dmReaction, .dmReply, .dmEditRetract, .deliveryReceipt, .groupE2EE, .groupAttachment,
-                 .groupMention, .groupThread, .readMarkers:
+            case .roster, .roomList, .search, .peerDevices, .secondDeviceFingerprint,
+                 .ownDeviceRevocation, .trustPeer, .profile, .profileUpdate, .blockedSend,
+                 .timeline, .sendTimeline, .timelineRestart, .groupTimelineRestart,
+                 .timelineRelaunchSeed, .timelineRelaunchVerify, .dmE2EE, .dmAttachment,
+                 .dmReaction, .dmReply, .dmEditRetract, .deliveryReceipt, .groupE2EE,
+                 .groupAttachment, .groupMention, .groupThread, .groupLeave,
+                 .groupCallLabMedia, .readMarkers:
                 return .keychain
             }
         }
@@ -95,16 +161,29 @@ enum XMPPLiveSmokeRunner {
                 return nil
             }
 
-            guard let userID = environment["TRIX_XMPP_LIVE_SMOKE_USER_ID"],
-                  let password = environment["TRIX_XMPP_LIVE_SMOKE_PASSWORD"],
-                  !userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  !password.isEmpty else {
-                status("configuration missing_credentials")
-                return nil
+            let userID: String
+            let password: String
+            if mode.requiresCredentials {
+                guard let configuredUserID = environment["TRIX_XMPP_LIVE_SMOKE_USER_ID"],
+                      let configuredPassword = environment["TRIX_XMPP_LIVE_SMOKE_PASSWORD"],
+                      !configuredUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      !configuredPassword.isEmpty else {
+                    status("configuration missing_credentials")
+                    return nil
+                }
+                userID = configuredUserID
+                password = configuredPassword
+            } else {
+                userID = environment["TRIX_XMPP_LIVE_SMOKE_USER_ID"] ?? ""
+                password = environment["TRIX_XMPP_LIVE_SMOKE_PASSWORD"] ?? ""
             }
 
             let serverURL = environment["TRIX_XMPP_LIVE_SMOKE_SERVER_URL"]
                 .flatMap(URL.init(string:)) ?? XMPPClientConfiguration.connectionURL
+            let relaunchMarkerPath = environment["TRIX_XMPP_LIVE_SMOKE_RELAUNCH_MARKER_PATH"] ??
+                URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("trix-xmpp-timeline-relaunch-marker.json")
+                .path
 
             return Self(
                 mode: mode,
@@ -122,17 +201,45 @@ enum XMPPLiveSmokeRunner {
                 allowSend: environment["TRIX_XMPP_LIVE_SMOKE_ALLOW_SEND"] == "1",
                 allowTrust: environment["TRIX_XMPP_LIVE_SMOKE_ALLOW_TRUST"] == "1",
                 allowProfileUpdate: environment["TRIX_XMPP_LIVE_SMOKE_ALLOW_PROFILE_UPDATE"] == "1",
-                serverURL: serverURL
+                serverURL: serverURL,
+                relaunchMarkerPath: relaunchMarkerPath,
+                relaunchSessionService: environment["TRIX_XMPP_LIVE_SMOKE_RELAUNCH_SESSION_SERVICE"] ??
+                    "com.softgrid.trix.live-smoke.relaunch-session",
+                relaunchSessionAccount: environment["TRIX_XMPP_LIVE_SMOKE_RELAUNCH_SESSION_ACCOUNT"] ??
+                    "timeline-relaunch",
+                relaunchCleanup: environment["TRIX_XMPP_LIVE_SMOKE_RELAUNCH_CLEANUP"] != "0",
+                secondDeviceProfile: environment["TRIX_XMPP_LIVE_SMOKE_SECOND_DEVICE_PROFILE"] ?? "second-device",
+                ownDeviceRevocationTarget: environment["TRIX_XMPP_LIVE_SMOKE_REVOKE_DEVICE_ID"],
+                callLabProfilePrefix: environment["TRIX_XMPP_LIVE_SMOKE_CALL_LAB_PROFILE_PREFIX"] ?? "call-lab",
+                callLabHoldSeconds: Self.positiveTimeInterval(
+                    environment["TRIX_XMPP_LIVE_SMOKE_CALL_LAB_HOLD_SECONDS"],
+                    fallback: 10
+                ),
+                usesKeychainStorage: environment["TRIX_XMPP_LIVE_SMOKE_USE_KEYCHAIN"] == "1"
             )
+        }
+
+        private static func positiveTimeInterval(_ value: String?, fallback: TimeInterval) -> TimeInterval {
+            guard let value,
+                  let parsed = TimeInterval(value.trimmingCharacters(in: .whitespacesAndNewlines)),
+                  parsed > 0 else {
+                return fallback
+            }
+            return parsed
         }
     }
 
     static func installIfRequested() {
         guard let configuration = Configuration.environment else {
-            if ProcessInfo.processInfo.environment["TRIX_XMPP_LIVE_SMOKE_MODE"] != nil {
+            if isRequested {
                 exit(1)
             }
             return
+        }
+
+        if configuration.mode.requiresKeychainStorage && !configuration.usesKeychainStorage {
+            status("skip reason=keychain_smoke_default_disabled mode=\(configuration.mode.rawValue)")
+            exit(0)
         }
 
         statusOutput.silenceStandardStreams()
@@ -160,9 +267,14 @@ enum XMPPLiveSmokeRunner {
     private static func run(_ configuration: Configuration) async {
         status("start mode=\(configuration.mode.rawValue)")
 
-        let service = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
-
         do {
+            if configuration.mode == .timelineRelaunchVerify {
+                try await runTimelineRelaunchVerifySmoke(configuration: configuration)
+                status("finish ok")
+                exit(0)
+            }
+
+            let service = primarySmokeService(configuration: configuration)
             let session = try await service.login(
                 userID: configuration.userID,
                 password: configuration.password,
@@ -170,6 +282,7 @@ enum XMPPLiveSmokeRunner {
             )
             status("login ok user=\(session.userID) resource=\(session.deviceID)")
 
+            var shouldLogout = true
             switch configuration.mode {
             case .login:
                 break
@@ -204,6 +317,20 @@ enum XMPPLiveSmokeRunner {
                 let trustedCount = devices.filter(\.canSendEncrypted).count
                 let activeCount = devices.filter(\.isActive).count
                 status("peer-devices ok count=\(devices.count) active=\(activeCount) trusted=\(trustedCount)")
+
+            case .secondDeviceFingerprint:
+                try await Self.runSecondDeviceFingerprintSmoke(
+                    configuration: configuration,
+                    service: service,
+                    session: session
+                )
+
+            case .ownDeviceRevocation:
+                try await Self.runOwnDeviceRevocationSmoke(
+                    configuration: configuration,
+                    service: service,
+                    session: session
+                )
 
             case .trustPeer:
                 guard configuration.allowTrust else {
@@ -285,6 +412,24 @@ enum XMPPLiveSmokeRunner {
                     session: session
                 )
 
+            case .groupTimelineRestart:
+                try await runGroupTimelineRestartSmoke(
+                    configuration: configuration,
+                    service: service,
+                    session: session
+                )
+
+            case .timelineRelaunchSeed:
+                try await runTimelineRelaunchSeedSmoke(
+                    configuration: configuration,
+                    service: service,
+                    session: session
+                )
+                shouldLogout = false
+
+            case .timelineRelaunchVerify:
+                try await runTimelineRelaunchVerifySmoke(configuration: configuration)
+
             case .dmE2EE:
                 try await runDME2EESmoke(
                     configuration: configuration,
@@ -362,6 +507,20 @@ enum XMPPLiveSmokeRunner {
                     session: session
                 )
 
+            case .groupLeave:
+                try await runGroupLeaveSmoke(
+                    configuration: configuration,
+                    service: service,
+                    session: session
+                )
+
+            case .groupCallLabMedia:
+                try await runGroupCallLabMediaSmoke(
+                    configuration: configuration,
+                    service: service,
+                    session: session
+                )
+
             case .readMarkers:
                 try await runReadMarkersSmoke(
                     configuration: configuration,
@@ -388,7 +547,9 @@ enum XMPPLiveSmokeRunner {
                 status("blocked-send roster count=\(rooms.count)")
             }
 
-            try? await service.logout(session: session)
+            if shouldLogout {
+                try? await service.logout(session: session)
+            }
             status("finish ok")
             exit(0)
         } catch {
@@ -456,6 +617,407 @@ enum XMPPLiveSmokeRunner {
         }
 
         try? await restoredService.logout(session: session)
+    }
+
+    private static func runSecondDeviceFingerprintSmoke(
+        configuration: Configuration,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws {
+        let secondProfileName = smokeSecondDeviceProfileName(configuration.secondDeviceProfile)
+        let secondService = smokeService(configuration: configuration, profileName: secondProfileName)
+        let secondSession = try await secondService.login(
+            userID: configuration.userID,
+            password: configuration.password,
+            serverURL: configuration.serverURL
+        )
+        status("second-device-fingerprint second-login ok profile=\(secondProfileName) resource=\(secondSession.deviceID)")
+
+        do {
+            let primaryStatus = try await service.deviceVerificationStatus(session: session)
+            let secondStatus = try await secondService.deviceVerificationStatus(session: secondSession)
+            guard primaryStatus.deviceID != secondStatus.deviceID else {
+                status("second-device-fingerprint failed distinct_local_devices=false")
+                throw TrixClientError.ownDeviceUnavailable
+            }
+
+            let publishedDevices = try await service.refreshPeerDeviceIdentities(userID: session.userID, session: session)
+            guard let secondDevice = publishedDevices.first(where: { $0.deviceID == secondStatus.deviceID }) else {
+                status("second-device-fingerprint failed second_device_missing=true")
+                throw TrixClientError.ownDeviceUnavailable
+            }
+
+            let activePublishedDeviceCount = publishedDevices.filter(\.isActive).count
+            let allKnownActiveDeviceIDs = Set([primaryStatus.deviceID] + publishedDevices.filter(\.isActive).map(\.deviceID))
+            let localFingerprintPresent = !(primaryStatus.ed25519Fingerprint?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            let secondFingerprintPresent = secondDevice.hasFingerprint
+            let manualTrustRequired = !secondDevice.canSendEncrypted
+
+            guard allKnownActiveDeviceIDs.count >= 2 else {
+                status("second-device-fingerprint failed active_count=\(allKnownActiveDeviceIDs.count)")
+                throw TrixClientError.ownDeviceUnavailable
+            }
+            guard secondDevice.isActive else {
+                status("second-device-fingerprint failed second_active=false")
+                throw TrixClientError.ownDeviceUnavailable
+            }
+            guard localFingerprintPresent && secondFingerprintPresent else {
+                status("second-device-fingerprint failed fingerprint_present=false local=\(localFingerprintPresent) second=\(secondFingerprintPresent)")
+                throw TrixClientError.ownDeviceUnavailable
+            }
+            guard manualTrustRequired else {
+                status("second-device-fingerprint failed manual_trust_required=false")
+                throw TrixClientError.ownDeviceUnavailable
+            }
+
+            status(
+                "second-device-fingerprint ok local=\(primaryStatus.deviceID) second=\(secondStatus.deviceID) active=\(activePublishedDeviceCount) fingerprint_local=\(localFingerprintPresent) fingerprint_second=\(secondFingerprintPresent) manual_trust_required=\(manualTrustRequired)"
+            )
+            try? await secondService.logout(session: secondSession)
+        } catch {
+            try? await secondService.logout(session: secondSession)
+            throw error
+        }
+    }
+
+    private static func runOwnDeviceRevocationSmoke(
+        configuration: Configuration,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws {
+        let secondProfileName = smokeSecondDeviceProfileName(configuration.secondDeviceProfile)
+        let secondService = smokeService(configuration: configuration, profileName: secondProfileName)
+        let secondSession = try await secondService.login(
+            userID: configuration.userID,
+            password: configuration.password,
+            serverURL: configuration.serverURL
+        )
+        status("own-device-revocation second-login ok profile=\(secondProfileName) resource=\(secondSession.deviceID)")
+
+        do {
+            let localStatus = try await service.deviceVerificationStatus(session: session)
+            let secondStatus = try await secondService.deviceVerificationStatus(session: secondSession)
+            guard localStatus.deviceID != secondStatus.deviceID else {
+                status("own-device-revocation failed distinct_local_devices=false")
+                throw TrixClientError.ownDeviceUnavailable
+            }
+
+            let preDevices = try await service.refreshPeerDeviceIdentities(userID: session.userID, session: session)
+            let explicitTarget = configuration.ownDeviceRevocationTarget?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let targetDeviceID = (explicitTarget?.isEmpty == false ? explicitTarget! : secondStatus.deviceID)
+            guard preDevices.contains(where: { $0.deviceID == targetDeviceID && $0.isActive }) else {
+                status("own-device-revocation failed target_active=false target=\(targetDeviceID)")
+                throw TrixClientError.ownDeviceUnavailable
+            }
+
+            status("own-device-revocation pre ok active=\(preDevices.filter(\.isActive).count) target=\(targetDeviceID)")
+            let postDevices = try await service.revokeOwnDevice(deviceID: targetDeviceID, session: session)
+            let stillActive = postDevices.contains(where: { $0.deviceID == targetDeviceID && $0.isActive })
+            guard !stillActive else {
+                status("own-device-revocation failed target_still_active=true target=\(targetDeviceID)")
+                throw TrixClientError.ownDeviceRevocationFailed
+            }
+
+            let removed = !postDevices.contains(where: { $0.deviceID == targetDeviceID })
+            let markedInactive = postDevices.contains(where: { $0.deviceID == targetDeviceID && !$0.isActive })
+            status(
+                "own-device-revocation ok target=\(targetDeviceID) removed=\(removed) inactive=\(markedInactive) remaining_active=\(postDevices.filter(\.isActive).count)"
+            )
+            try? await secondService.logout(session: secondSession)
+        } catch {
+            try? await secondService.logout(session: secondSession)
+            throw error
+        }
+    }
+
+    private static func runGroupTimelineRestartSmoke(
+        configuration: Configuration,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws {
+        guard configuration.allowSend else {
+            throw TrixClientError.e2eeUnavailable
+        }
+        guard configuration.allowTrust else {
+            throw TrixClientError.omemoDeviceTrustRequired
+        }
+
+        let peerID = try requiredPeerID(configuration.peerID)
+        let peerPassword = try requiredPassword(configuration.peerPassword)
+        let thirdID = try requiredPeerID(configuration.thirdID)
+        let thirdPassword = try requiredPassword(configuration.thirdPassword)
+        guard Set([session.userID, peerID, thirdID].map { $0.lowercased() }).count == 3 else {
+            throw TrixClientError.invalidTrixUserID
+        }
+
+        let peerService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+        let thirdService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+        let peerSession = try await peerService.login(
+            userID: peerID,
+            password: peerPassword,
+            serverURL: configuration.serverURL
+        )
+        status("group-timeline-restart login ok role=peer resource=\(peerSession.deviceID)")
+
+        var thirdSession: TrixSession?
+        do {
+            let loggedInThirdSession = try await thirdService.login(
+                userID: thirdID,
+                password: thirdPassword,
+                serverURL: configuration.serverURL
+            )
+            thirdSession = loggedInThirdSession
+            status("group-timeline-restart login ok role=third resource=\(loggedInThirdSession.deviceID)")
+
+            let room = try await service.createEncryptedGroupRoom(
+                name: "Trix Group Restart Smoke \(UUID().uuidString.prefix(8))",
+                inviteeUserIDs: [peerID, thirdID],
+                session: session
+            )
+            guard room.kind == .group, room.isEncrypted else {
+                throw TrixClientError.e2eeUnavailable
+            }
+            status("group-timeline-restart create ok room=\(room.id) invitees=2 encrypted=true")
+
+            let peerRoom = try await acceptGroupInvitation(
+                roomID: room.id,
+                role: "peer",
+                statusPrefix: "group-timeline-restart",
+                service: peerService,
+                session: peerSession
+            )
+            let thirdRoom = try await acceptGroupInvitation(
+                roomID: room.id,
+                role: "third",
+                statusPrefix: "group-timeline-restart",
+                service: thirdService,
+                session: loggedInThirdSession
+            )
+            guard peerRoom.id.lowercased() == room.id.lowercased(),
+                  thirdRoom.id.lowercased() == room.id.lowercased() else {
+                throw TrixClientError.roomUnavailable
+            }
+
+            let ownerMembers = try await waitForGroupMembers(
+                roomID: room.id,
+                expectedUserIDs: [session.userID, peerID, thirdID],
+                statusPrefix: "group-timeline-restart",
+                service: service,
+                session: session
+            )
+            status(
+                "group-timeline-restart members ok role=owner count=\(ownerMembers.count) joined=\(ownerMembers.filter { $0.membership == .joined }.count)"
+            )
+            let peerMembers = try await waitForGroupMembers(
+                roomID: room.id,
+                expectedUserIDs: [session.userID, peerID, thirdID],
+                statusPrefix: "group-timeline-restart",
+                service: peerService,
+                session: peerSession
+            )
+            status(
+                "group-timeline-restart members ok role=peer count=\(peerMembers.count) joined=\(peerMembers.filter { $0.membership == .joined }.count)"
+            )
+            let thirdMembers = try await waitForGroupMembers(
+                roomID: room.id,
+                expectedUserIDs: [session.userID, peerID, thirdID],
+                statusPrefix: "group-timeline-restart",
+                service: thirdService,
+                session: loggedInThirdSession
+            )
+            status(
+                "group-timeline-restart members ok role=third count=\(thirdMembers.count) joined=\(thirdMembers.filter { $0.membership == .joined }.count)"
+            )
+
+            try await ensureGroupTrustGraph(
+                ownerID: session.userID,
+                ownerService: service,
+                ownerSession: session,
+                peerID: peerID,
+                peerService: peerService,
+                peerSession: peerSession,
+                thirdID: thirdID,
+                thirdService: thirdService,
+                thirdSession: loggedInThirdSession,
+                allowTrust: configuration.allowTrust,
+                statusPrefix: "group-timeline-restart"
+            )
+
+            let messageBody = "smoke-group-restart-\(UUID().uuidString)"
+            let sentItem = try await service.sendText(messageBody, roomID: room.id, session: session)
+            status("group-timeline-restart send ok id=\(sentItem.id)")
+
+            guard try await waitForGroupMessage(
+                messageID: sentItem.id,
+                expectedBody: messageBody,
+                expectedSender: session.userID,
+                roomID: room.id,
+                role: "peer",
+                statusPrefix: "group-timeline-restart",
+                service: peerService,
+                session: peerSession
+            ) else {
+                status("group-timeline-restart failed receive=false role=peer")
+                throw TrixClientError.xmppConnectionFailed
+            }
+
+            guard try await waitForGroupMessage(
+                messageID: sentItem.id,
+                expectedBody: messageBody,
+                expectedSender: session.userID,
+                roomID: room.id,
+                role: "third",
+                statusPrefix: "group-timeline-restart",
+                service: thirdService,
+                session: loggedInThirdSession
+            ) else {
+                status("group-timeline-restart failed receive=false role=third")
+                throw TrixClientError.xmppConnectionFailed
+            }
+
+            let beforeItems = try await service.timeline(roomID: room.id, session: session)
+            guard !beforeItems.isEmpty else {
+                status("group-timeline-restart failed empty_before")
+                throw TrixClientError.roomUnavailable
+            }
+            if let diagnostics = try await service.timelineDiagnostics(roomID: room.id, session: session) {
+                status("group-timeline-restart before diagnostics \(timelineDiagnosticsSummary(diagnostics))")
+            }
+
+            try? await service.logout(session: session)
+            let restoredService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+            let restoredAccount = try await restoredService.restore(session: session)
+            status("group-timeline-restart restore ok user=\(restoredAccount.userID) resource=\(restoredAccount.deviceID)")
+
+            let afterItems = try await restoredService.timeline(roomID: room.id, session: session)
+            let overlapCount = Set(beforeItems.map(\.id)).intersection(Set(afterItems.map(\.id))).count
+            guard overlapCount > 0 else {
+                status("group-timeline-restart failed overlap=0 after=\(afterItems.count)")
+                try? await restoredService.logout(session: session)
+                throw TrixClientError.roomUnavailable
+            }
+
+            let localEchoCount = afterItems.filter(\.isLocalEcho).count
+            let sentCount = afterItems.filter { $0.deliveryState == .sent }.count
+            let deliveredCount = afterItems.filter { $0.deliveryState == .delivered }.count
+            status(
+                "group-timeline-restart ok before=\(beforeItems.count) after=\(afterItems.count) overlap=\(overlapCount) local=\(localEchoCount) sent=\(sentCount) delivered=\(deliveredCount)"
+            )
+            if let diagnostics = try await restoredService.timelineDiagnostics(roomID: room.id, session: session) {
+                status("group-timeline-restart after diagnostics \(timelineDiagnosticsSummary(diagnostics))")
+            }
+            try? await restoredService.logout(session: session)
+
+            try? await thirdService.logout(session: loggedInThirdSession)
+            try? await peerService.logout(session: peerSession)
+        } catch {
+            if let thirdSession {
+                try? await thirdService.logout(session: thirdSession)
+            }
+            try? await peerService.logout(session: peerSession)
+            throw error
+        }
+    }
+
+    private static func runTimelineRelaunchSeedSmoke(
+        configuration: Configuration,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws {
+        let peerID = try requiredPeerID(configuration.peerID)
+        let room = try await service.createEncryptedDirectRoom(
+            inviteeUserID: peerID,
+            name: "",
+            session: session
+        )
+
+        var sentMessageID: String?
+        if configuration.allowSend {
+            try await ensureTrustedPeer(
+                peerID: peerID,
+                service: service,
+                session: session,
+                allowTrust: configuration.allowTrust,
+                statusPrefix: "timeline-relaunch-seed"
+            )
+            let sentItem = try await service.sendText(
+                "smoke-relaunch-\(UUID().uuidString)",
+                roomID: room.id,
+                session: session
+            )
+            sentMessageID = sentItem.id
+            status("timeline-relaunch-seed send ok id=\(sentItem.id)")
+        }
+
+        let beforeItems = try await service.timeline(roomID: peerID, session: session)
+        guard !beforeItems.isEmpty else {
+            status("timeline-relaunch-seed failed empty_before")
+            throw TrixClientError.roomUnavailable
+        }
+        if let diagnostics = try await service.timelineDiagnostics(roomID: peerID, session: session) {
+            status("timeline-relaunch-seed diagnostics \(timelineDiagnosticsSummary(diagnostics))")
+        }
+
+        let marker = RelaunchMarker(
+            version: 1,
+            roomID: peerID,
+            beforeCount: beforeItems.count,
+            beforeIDs: Array(beforeItems.map(\.id).prefix(64)),
+            seededMessageID: sentMessageID,
+            seededAt: Date(),
+            seedPID: getpid()
+        )
+        try writeRelaunchMarker(marker, path: configuration.relaunchMarkerPath)
+
+        let store = makeRelaunchSessionStore(configuration: configuration)
+        try? store.clearSession()
+        try store.saveSession(session)
+        status("timeline-relaunch-seed marker ok before=\(beforeItems.count) ids=\(marker.beforeIDs.count)")
+        status("timeline-relaunch-seed save ok path=\(configuration.relaunchMarkerPath)")
+        status("timeline-relaunch-seed ready pid=\(getpid())")
+    }
+
+    private static func runTimelineRelaunchVerifySmoke(
+        configuration: Configuration
+    ) async throws {
+        status("timeline-relaunch-verify start pid=\(getpid())")
+
+        let marker = try readRelaunchMarker(path: configuration.relaunchMarkerPath)
+        let store = makeRelaunchSessionStore(configuration: configuration)
+        guard let restoredSession = try store.loadSession() else {
+            status("timeline-relaunch-verify failed missing_saved_session")
+            throw TrixClientError.missingSession
+        }
+
+        let restoredService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+        let restoredAccount = try await restoredService.restore(session: restoredSession)
+        status("timeline-relaunch-verify restore ok user=\(restoredAccount.userID) resource=\(restoredAccount.deviceID)")
+
+        let afterItems = try await restoredService.timeline(roomID: marker.roomID, session: restoredSession)
+        let overlapCount = Set(marker.beforeIDs).intersection(Set(afterItems.map(\.id))).count
+        guard overlapCount > 0 else {
+            status("timeline-relaunch-verify failed overlap=0 before=\(marker.beforeCount) after=\(afterItems.count)")
+            try? await restoredService.logout(session: restoredSession)
+            throw TrixClientError.roomUnavailable
+        }
+
+        let localEchoCount = afterItems.filter(\.isLocalEcho).count
+        let sentCount = afterItems.filter { $0.deliveryState == .sent }.count
+        let deliveredCount = afterItems.filter { $0.deliveryState == .delivered }.count
+        status(
+            "timeline-relaunch-verify ok before=\(marker.beforeCount) after=\(afterItems.count) overlap=\(overlapCount) local=\(localEchoCount) sent=\(sentCount) delivered=\(deliveredCount)"
+        )
+        if let diagnostics = try await restoredService.timelineDiagnostics(roomID: marker.roomID, session: restoredSession) {
+            status("timeline-relaunch-verify diagnostics \(timelineDiagnosticsSummary(diagnostics))")
+        }
+
+        try? await restoredService.logout(session: restoredSession)
+        if configuration.relaunchCleanup {
+            try? store.clearSession()
+            try? FileManager.default.removeItem(atPath: configuration.relaunchMarkerPath)
+            status("timeline-relaunch-verify cleanup ok marker_removed=true keychain_cleared=true")
+        }
     }
 
     private static func runDMReplySmoke(
@@ -1459,6 +2021,199 @@ enum XMPPLiveSmokeRunner {
         }
     }
 
+    private static func runGroupLeaveSmoke(
+        configuration: Configuration,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws {
+        guard configuration.allowTrust else {
+            throw TrixClientError.omemoDeviceTrustRequired
+        }
+
+        let peerID = try requiredPeerID(configuration.peerID)
+        let peerPassword = try requiredPassword(configuration.peerPassword)
+        let thirdID = try requiredPeerID(configuration.thirdID)
+        let thirdPassword = try requiredPassword(configuration.thirdPassword)
+        guard Set([session.userID, peerID, thirdID].map { $0.lowercased() }).count == 3 else {
+            throw TrixClientError.invalidTrixUserID
+        }
+
+        let peerService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+        let thirdService = XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+        let peerSession = try await peerService.login(
+            userID: peerID,
+            password: peerPassword,
+            serverURL: configuration.serverURL
+        )
+        status("group-leave login ok role=peer resource=\(peerSession.deviceID)")
+
+        var thirdSession: TrixSession?
+        do {
+            let loggedInThirdSession = try await thirdService.login(
+                userID: thirdID,
+                password: thirdPassword,
+                serverURL: configuration.serverURL
+            )
+            thirdSession = loggedInThirdSession
+            status("group-leave login ok role=third resource=\(loggedInThirdSession.deviceID)")
+
+            let room = try await service.createEncryptedGroupRoom(
+                name: "Trix Leave Smoke \(UUID().uuidString.prefix(8))",
+                inviteeUserIDs: [peerID, thirdID],
+                session: session
+            )
+            guard room.kind == .group, room.isEncrypted else {
+                throw TrixClientError.e2eeUnavailable
+            }
+            status("group-leave create ok room=\(room.id) invitees=2 encrypted=true")
+
+            let peerRoom = try await acceptGroupInvitation(
+                roomID: room.id,
+                role: "peer",
+                statusPrefix: "group-leave",
+                service: peerService,
+                session: peerSession
+            )
+            let thirdRoom = try await acceptGroupInvitation(
+                roomID: room.id,
+                role: "third",
+                statusPrefix: "group-leave",
+                service: thirdService,
+                session: loggedInThirdSession
+            )
+            guard peerRoom.id.lowercased() == room.id.lowercased(),
+                  thirdRoom.id.lowercased() == room.id.lowercased() else {
+                throw TrixClientError.roomUnavailable
+            }
+
+            let expectedBeforeLeave = [session.userID, peerID, thirdID]
+            let ownerMembers = try await waitForGroupMembers(
+                roomID: room.id,
+                expectedUserIDs: expectedBeforeLeave,
+                statusPrefix: "group-leave",
+                service: service,
+                session: session
+            )
+            status("group-leave members ok role=owner count=\(ownerMembers.count) joined=\(ownerMembers.filter { $0.membership == .joined }.count)")
+            let peerMembers = try await waitForGroupMembers(
+                roomID: room.id,
+                expectedUserIDs: expectedBeforeLeave,
+                statusPrefix: "group-leave",
+                service: peerService,
+                session: peerSession
+            )
+            status("group-leave members ok role=peer count=\(peerMembers.count) joined=\(peerMembers.filter { $0.membership == .joined }.count)")
+            let thirdMembers = try await waitForGroupMembers(
+                roomID: room.id,
+                expectedUserIDs: expectedBeforeLeave,
+                statusPrefix: "group-leave",
+                service: thirdService,
+                session: loggedInThirdSession
+            )
+            status("group-leave members ok role=third count=\(thirdMembers.count) joined=\(thirdMembers.filter { $0.membership == .joined }.count)")
+
+            try await ensureGroupTrustGraph(
+                ownerID: session.userID,
+                ownerService: service,
+                ownerSession: session,
+                peerID: peerID,
+                peerService: peerService,
+                peerSession: peerSession,
+                thirdID: thirdID,
+                thirdService: thirdService,
+                thirdSession: loggedInThirdSession,
+                allowTrust: configuration.allowTrust,
+                statusPrefix: "group-leave"
+            )
+
+            try await peerService.leaveGroup(roomID: room.id, session: peerSession)
+            status("group-leave leave ok role=peer room=\(room.id)")
+
+            guard try await Self.waitForGroupRoomVisibility(
+                roomID: room.id,
+                expectedVisible: false,
+                role: "peer",
+                statusPrefix: "group-leave",
+                service: peerService,
+                session: peerSession
+            ) else {
+                status("group-leave failed room_visible=true role=peer")
+                throw TrixClientError.roomUnavailable
+            }
+            status("group-leave rooms ok role=peer visible=false")
+
+            guard try await Self.waitForGroupRoomVisibility(
+                roomID: room.id,
+                expectedVisible: true,
+                role: "owner",
+                statusPrefix: "group-leave",
+                service: service,
+                session: session
+            ) else {
+                status("group-leave failed room_missing=true role=owner")
+                throw TrixClientError.roomUnavailable
+            }
+            guard try await Self.waitForGroupRoomVisibility(
+                roomID: room.id,
+                expectedVisible: true,
+                role: "third",
+                statusPrefix: "group-leave",
+                service: thirdService,
+                session: loggedInThirdSession
+            ) else {
+                status("group-leave failed room_missing=true role=third")
+                throw TrixClientError.roomUnavailable
+            }
+            status("group-leave rooms ok role=owner visible=true")
+            status("group-leave rooms ok role=third visible=true")
+
+            let expectedAfterLeave = [session.userID, thirdID]
+            let ownerMembersAfterLeave = try await waitForGroupMembers(
+                roomID: room.id,
+                expectedUserIDs: expectedAfterLeave,
+                statusPrefix: "group-leave",
+                service: service,
+                session: session
+            )
+            if ownerMembersAfterLeave.contains(where: { $0.userID.lowercased() == peerID.lowercased() }) {
+                status("group-leave failed leaver_still_member=true role=owner")
+                throw TrixClientError.roomUnavailable
+            }
+
+            let thirdMembersAfterLeave = try await waitForGroupMembers(
+                roomID: room.id,
+                expectedUserIDs: expectedAfterLeave,
+                statusPrefix: "group-leave",
+                service: thirdService,
+                session: loggedInThirdSession
+            )
+            if thirdMembersAfterLeave.contains(where: { $0.userID.lowercased() == peerID.lowercased() }) {
+                status("group-leave failed leaver_still_member=true role=third")
+                throw TrixClientError.roomUnavailable
+            }
+            status("group-leave members ok role=owner retained=2")
+            status("group-leave members ok role=third retained=2")
+
+            do {
+                _ = try await peerService.sendText("smoke-after-leave-\(UUID().uuidString)", roomID: room.id, session: peerSession)
+                status("group-leave failed send_after_leave=true")
+                throw TrixClientError.roomUnavailable
+            } catch {
+                status("group-leave send ok blocked=true")
+            }
+
+            try? await thirdService.logout(session: loggedInThirdSession)
+            try? await peerService.logout(session: peerSession)
+            status("group-leave ok leaver_removed=true remaining_members=2")
+        } catch {
+            if let thirdSession {
+                try? await thirdService.logout(session: thirdSession)
+            }
+            try? await peerService.logout(session: peerSession)
+            throw error
+        }
+    }
+
     private static func runGroupE2EESmoke(
         configuration: Configuration,
         service: XMPPMartinService,
@@ -1594,6 +2349,181 @@ enum XMPPLiveSmokeRunner {
             try? await peerService.logout(session: peerSession)
             status("group-e2ee ok decrypted_peers=2")
         } catch {
+            if let thirdSession {
+                try? await thirdService.logout(session: thirdSession)
+            }
+            try? await peerService.logout(session: peerSession)
+            throw error
+        }
+    }
+
+    @MainActor
+    private static func runGroupCallLabMediaSmoke(
+        configuration: Configuration,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws {
+        guard configuration.allowSend else {
+            throw TrixClientError.e2eeUnavailable
+        }
+        guard configuration.allowTrust else {
+            throw TrixClientError.omemoDeviceTrustRequired
+        }
+
+        let peerID = try requiredPeerID(configuration.peerID)
+        let peerPassword = try requiredPassword(configuration.peerPassword)
+        let thirdID = try requiredPeerID(configuration.thirdID)
+        let thirdPassword = try requiredPassword(configuration.thirdPassword)
+        guard Set([session.userID, peerID, thirdID].map { $0.lowercased() }).count == 3 else {
+            throw TrixClientError.invalidTrixUserID
+        }
+
+        let peerService = smokeService(
+            configuration: configuration,
+            profileName: callLabProfileName(prefix: configuration.callLabProfilePrefix, role: "peer")
+        )
+        let thirdService = smokeService(
+            configuration: configuration,
+            profileName: callLabProfileName(prefix: configuration.callLabProfilePrefix, role: "third")
+        )
+        let peerSession = try await peerService.login(
+            userID: peerID,
+            password: peerPassword,
+            serverURL: configuration.serverURL
+        )
+        status("group-call-lab-media login ok role=peer resource=\(peerSession.deviceID)")
+
+        var thirdSession: TrixSession?
+        var ownerViewModel: TrixCallViewModel?
+        var peerViewModel: TrixCallViewModel?
+        var roomID: String?
+        do {
+            let loggedInThirdSession = try await thirdService.login(
+                userID: thirdID,
+                password: thirdPassword,
+                serverURL: configuration.serverURL
+            )
+            thirdSession = loggedInThirdSession
+            status("group-call-lab-media login ok role=third resource=\(loggedInThirdSession.deviceID)")
+
+            let room = try await service.createEncryptedGroupRoom(
+                name: "Trix Call Lab \(UUID().uuidString.prefix(8))",
+                inviteeUserIDs: [peerID, thirdID],
+                session: session
+            )
+            roomID = room.id
+            guard room.kind == .group, room.isEncrypted else {
+                throw TrixClientError.e2eeUnavailable
+            }
+            status("group-call-lab-media create ok room=\(room.id) invitees=2 encrypted=true")
+
+            let peerRoom = try await acceptGroupInvitation(
+                roomID: room.id,
+                role: "peer",
+                statusPrefix: "group-call-lab-media",
+                service: peerService,
+                session: peerSession
+            )
+            let thirdRoom = try await acceptGroupInvitation(
+                roomID: room.id,
+                role: "third",
+                statusPrefix: "group-call-lab-media",
+                service: thirdService,
+                session: loggedInThirdSession
+            )
+            guard peerRoom.id.lowercased() == room.id.lowercased(),
+                  thirdRoom.id.lowercased() == room.id.lowercased() else {
+                throw TrixClientError.roomUnavailable
+            }
+
+            let ownerMembers = try await waitForGroupMembers(
+                roomID: room.id,
+                expectedUserIDs: [session.userID, peerID, thirdID],
+                statusPrefix: "group-call-lab-media",
+                service: service,
+                session: session
+            )
+            status("group-call-lab-media members ok role=owner count=\(ownerMembers.count) joined=\(ownerMembers.filter { $0.membership == .joined }.count)")
+            let peerMembers = try await waitForGroupMembers(
+                roomID: room.id,
+                expectedUserIDs: [session.userID, peerID, thirdID],
+                statusPrefix: "group-call-lab-media",
+                service: peerService,
+                session: peerSession
+            )
+            status("group-call-lab-media members ok role=peer count=\(peerMembers.count) joined=\(peerMembers.filter { $0.membership == .joined }.count)")
+            let thirdMembers = try await waitForGroupMembers(
+                roomID: room.id,
+                expectedUserIDs: [session.userID, peerID, thirdID],
+                statusPrefix: "group-call-lab-media",
+                service: thirdService,
+                session: loggedInThirdSession
+            )
+            status("group-call-lab-media members ok role=third count=\(thirdMembers.count) joined=\(thirdMembers.filter { $0.membership == .joined }.count)")
+
+            try await ensureGroupTrustGraph(
+                ownerID: session.userID,
+                ownerService: service,
+                ownerSession: session,
+                peerID: peerID,
+                peerService: peerService,
+                peerSession: peerSession,
+                thirdID: thirdID,
+                thirdService: thirdService,
+                thirdSession: loggedInThirdSession,
+                allowTrust: configuration.allowTrust,
+                statusPrefix: "group-call-lab-media"
+            )
+
+            let ownerCalls = TrixCallViewModel(
+                callControlService: HTTPCallControlService(),
+                callDescriptorService: service,
+                mediaCallService: TrixLiveKitMediaCallService(forceRelayOnly: true, audioProbeEnabled: true)
+            )
+            let peerCalls = TrixCallViewModel(
+                callControlService: HTTPCallControlService(),
+                callDescriptorService: peerService,
+                mediaCallService: TrixLiveKitMediaCallService(forceRelayOnly: true, audioProbeEnabled: true)
+            )
+            ownerViewModel = ownerCalls
+            peerViewModel = peerCalls
+
+            let holdSeconds = min(max(configuration.callLabHoldSeconds, 1), 60)
+            status("group-call-lab-media media config relay_only=true audio_probe=true hold_seconds=\(Int(holdSeconds))")
+
+            await ownerCalls.joinGroupVoiceRoom(roomID: room.id, session: session)
+            try requireActiveGroupCall(ownerCalls, roomID: room.id, role: "owner")
+            status("group-call-lab-media media join ok role=owner active_call=true")
+
+            _ = try await waitForGroupVoiceState(
+                roomID: room.id,
+                expectedParticipantID: session.userID,
+                service: peerService,
+                session: peerSession
+            )
+
+            await peerCalls.joinGroupVoiceRoom(roomID: room.id, session: peerSession)
+            try requireActiveGroupCall(peerCalls, roomID: room.id, role: "peer")
+            status("group-call-lab-media media join ok role=peer active_call=true")
+
+            try await Task.sleep(nanoseconds: UInt64(holdSeconds * 1_000_000_000))
+            status("group-call-lab-media media hold ok participants=2 relay_only=true")
+
+            _ = await peerCalls.endCall(roomID: room.id, session: peerSession)
+            _ = await ownerCalls.endCall(roomID: room.id, session: session)
+            status("group-call-lab-media ok media_evidence_window=true relay_only=true")
+
+            try? await thirdService.logout(session: loggedInThirdSession)
+            try? await peerService.logout(session: peerSession)
+        } catch {
+            if let roomID {
+                if let peerViewModel {
+                    _ = await peerViewModel.endCall(roomID: roomID, session: peerSession)
+                }
+                if let ownerViewModel {
+                    _ = await ownerViewModel.endCall(roomID: roomID, session: session)
+                }
+            }
             if let thirdSession {
                 try? await thirdService.logout(session: thirdSession)
             }
@@ -1904,6 +2834,29 @@ enum XMPPLiveSmokeRunner {
         throw TrixClientError.roomUnavailable
     }
 
+    private static func waitForGroupRoomVisibility(
+        roomID: String,
+        expectedVisible: Bool,
+        role: String,
+        statusPrefix: String,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws -> Bool {
+        let roomKey = roomID.lowercased()
+        for _ in 0..<20 {
+            let rooms = try await service.rooms(session: session)
+            let isVisible = rooms.contains { $0.id.lowercased() == roomKey }
+            if isVisible == expectedVisible {
+                return true
+            }
+
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+
+        status("\(statusPrefix) failed room_visibility role=\(role) expected_visible=\(expectedVisible)")
+        return false
+    }
+
     private static func waitForDirectMessage(
         messageID: String,
         expectedBody: String,
@@ -2171,6 +3124,113 @@ enum XMPPLiveSmokeRunner {
         return false
     }
 
+    private static func makeRelaunchSessionStore(configuration: Configuration) -> KeychainTrixSessionStore {
+        KeychainTrixSessionStore(
+            service: configuration.relaunchSessionService,
+            account: configuration.relaunchSessionAccount,
+            legacyService: nil,
+            legacyAccount: nil
+        )
+    }
+
+    private static func writeRelaunchMarker(_ marker: RelaunchMarker, path: String) throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(marker)
+        try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
+
+    private static func readRelaunchMarker(path: String) throws -> RelaunchMarker {
+        let data = try Data(contentsOf: URL(fileURLWithPath: path))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(RelaunchMarker.self, from: data)
+    }
+
+    private static func primarySmokeService(configuration: Configuration) -> XMPPMartinService {
+        if configuration.mode == .groupCallLabMedia {
+            return smokeService(
+                configuration: configuration,
+                profileName: callLabProfileName(prefix: configuration.callLabProfilePrefix, role: "owner")
+            )
+        }
+
+        return XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+    }
+
+    private static func smokeService(configuration: Configuration, profileName: String?) -> XMPPMartinService {
+        #if DEBUG
+        if let profileName,
+           let profile = TrixLocalProfileConfiguration(rawName: profileName) {
+            return XMPPMartinService(localProfile: profile)
+        }
+        #endif
+        return XMPPMartinService(omemoPersistence: configuration.omemoPersistence)
+    }
+
+    private static func callLabProfileName(prefix: String, role: String) -> String {
+        let normalizedPrefix = TrixLocalProfileConfiguration(rawName: prefix)?.name ?? "call-lab"
+        return "\(normalizedPrefix)-\(role)"
+    }
+
+    @MainActor
+    private static func requireActiveGroupCall(
+        _ viewModel: TrixCallViewModel,
+        roomID: String,
+        role: String
+    ) throws {
+        guard viewModel.currentCall(roomID: roomID, kind: .groupVoice) != nil else {
+            status("group-call-lab-media failed active_call=false role=\(role)")
+            throw TrixClientError.callMediaUnavailable
+        }
+    }
+
+    private static func waitForGroupVoiceState(
+        roomID: String,
+        expectedParticipantID: String,
+        service: XMPPMartinService,
+        session: TrixSession
+    ) async throws -> TrixVoiceRoomState {
+        let participantKey = expectedParticipantID.lowercased()
+        for attempt in 0..<30 {
+            let descriptors = try await service.callDescriptors(roomID: roomID, session: session)
+            let state = descriptors
+                .compactMap { descriptor -> TrixVoiceRoomState? in
+                    guard case .voiceRoomState(let state) = descriptor.descriptor,
+                          state.roomID.lowercased() == roomID.lowercased(),
+                          state.mediaKey != nil,
+                          state.activeParticipantIDs.contains(where: { $0.lowercased() == participantKey }) else {
+                        return nil
+                    }
+                    return state
+                }
+                .max { lhs, rhs in
+                    lhs.updatedAtUnix < rhs.updatedAtUnix
+                }
+            if let state {
+                status("group-call-lab-media descriptor ok voice_state=true")
+                return state
+            }
+
+            if attempt < 29 {
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+        }
+
+        status("group-call-lab-media failed voice_state=false")
+        throw TrixClientError.callDescriptorUnavailable
+    }
+
+    private static func smokeSecondDeviceProfileName(_ configuredProfile: String) -> String {
+        let base = configuredProfile.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffix = String(UUID().uuidString.prefix(8)).lowercased()
+        if base.isEmpty {
+            return "second-device-\(suffix)"
+        }
+
+        return "\(base)-\(suffix)"
+    }
+
     private static func requiredPeerID(_ peerID: String?) throws -> String {
         guard let peerID,
               !peerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -2203,6 +3263,12 @@ enum XMPPLiveSmokeRunner {
             return "invalid_message_reference"
         case TrixClientError.invalidMentionTarget:
             return "invalid_mention_target"
+        case TrixClientError.ownDeviceUnavailable:
+            return "own_device_unavailable"
+        case TrixClientError.currentDeviceRevocationUnavailable:
+            return "current_device_revocation_unavailable"
+        case TrixClientError.ownDeviceRevocationFailed:
+            return "own_device_revocation_failed"
         case let clientError as TrixClientError:
             return clientError.errorDescription ?? "client_error"
         default:

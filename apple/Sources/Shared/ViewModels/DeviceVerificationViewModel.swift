@@ -107,6 +107,27 @@ final class DeviceVerificationViewModel: ObservableObject {
         }
     }
 
+    func revokeOwnDevice(
+        _ device: TrixPeerDeviceIdentity,
+        session: TrixSession,
+        service: TrixDeviceVerificationService
+    ) async {
+        guard !device.isLocalDevice else {
+            return
+        }
+
+        await perform(.revokeOwnDevice) {
+            let updatedDevices = try await service.revokeOwnDevice(deviceID: device.deviceID, session: session)
+            let loadedStatus = try await service.deviceVerificationStatus(session: session)
+            status = loadedStatus
+            accountDevices = Self.mergedAccountDevices(
+                localStatus: loadedStatus,
+                remoteDevices: updatedDevices
+            )
+            accountDeviceRefreshMessage = nil
+        }
+    }
+
     func dismissRecoveryKey() {
         displayedRecoveryKey = nil
     }
@@ -170,11 +191,12 @@ final class DeviceVerificationViewModel: ObservableObject {
         localStatus: TrixDeviceVerificationStatus,
         remoteDevices: [TrixPeerDeviceIdentity]
     ) -> [TrixPeerDeviceIdentity] {
+        let localFingerprint = localStatus.ed25519Fingerprint ?? ""
         let localDevice = TrixPeerDeviceIdentity(
             userID: localStatus.userID,
             deviceID: localStatus.deviceID,
-            fingerprint: localStatus.ed25519Fingerprint ?? "",
-            visualVerification: nil,
+            fingerprint: localFingerprint,
+            visualVerification: TrixDeviceVisualVerification.visualFingerprint(localFingerprint),
             trustState: localStatus.state == .verified ? .verified : .undecided,
             isActive: true,
             isLocalDevice: true
@@ -214,4 +236,5 @@ enum TrixDeviceVerificationAction: Equatable {
     case setUpRecovery
     case confirmRecoveryKey
     case trustAccountDevice
+    case revokeOwnDevice
 }

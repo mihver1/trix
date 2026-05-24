@@ -85,7 +85,7 @@ copying old implementation details.
       The `dm-reaction` live-smoke mode is wired for credentialed two-account
       validation, but has not been run in this slice.
 - [x] Foreground room/invite/timeline refresh while the app scene is active.
-- [ ] APNs-backed notifications without plaintext payloads. Apple token capture,
+- [x] APNs-backed notifications without plaintext payloads. Apple token capture,
       XMPP push-component registration plumbing, and generic sync payload
       handling are wired. Inactive iOS/macOS push handling now syncs room state
       without marking the selected room read. Visible APNs use only `Trix` plus
@@ -102,8 +102,12 @@ copying old implementation details.
       found stored XEP-0357 registrations but no APNs delivery attempts from the
       gateway; the Apple client now forwards iOS/macOS scene active/inactive
       state to XMPP through XEP-0352 CSI so ejabberd can publish inactive-client
-      pushes. Keep this open until signed-device APNs smoke confirms visible
-      generic delivery with no plaintext fields.
+      pushes. On 2026-05-20 signed macOS APNs smoke passed: `trix-push-gateway`
+      returned `delivered=true` and HTTP 200 for a generic sync wake, and QA
+      confirmed the visible macOS notification showed title `Trix`, body
+      `New encrypted message`, timestamp-only extra text, and no plaintext
+      message, filename, attachment metadata, media key, token, credential, or
+      decrypted-content fields.
 - [ ] Encrypted calls. The first checked-in slice adds the LiveKit/coturn media
       deployment profile, `trix-call-control`, Apple call descriptors,
       `TrixCallControlService`, `TrixMediaCallService`, LiveKit Swift dependency,
@@ -287,9 +291,18 @@ copying old implementation details.
 - [x] Select existing-group add-member users from Trix directory search results.
 - [x] Hide/forget a DM locally with confirmation and accurate wording that it is
       not a global delete.
-- [ ] Server-backed group leave. The timeline action surface now has a
-      confirmation flow, but the checked-in action is local-only and says so
-      until the Martin MUC leave path is validated.
+- [x] Server-backed group leave. The Apple timeline now calls the Trix
+      control-plane `POST /v1/groups/leave` path before local `mucModule.leave`;
+      the wrapper validates the signed-in account, checks MUC affiliation, and
+      removes non-owner members by setting server affiliation to `none`. Local
+      hiding happens only after that server-backed path succeeds, and selected
+      room state is cleared after leave. Dry-run wrapper smoke plus focused
+      Apple tests/builds passed on 2026-05-20. A hosted three-account
+      `group-leave` smoke passed again on 2026-05-21 after the wrapper route
+      and member refresh fixes: the peer left and no longer saw the room, owner
+      and third retained room visibility, owner and third each retained two live
+      members, send-after-leave was blocked, and the final smoke status was
+      `group-leave ok leaver_removed=true remaining_members=2`.
 - [x] Keep newly decrypted or locally sent DM timeline items visible after app
       restart through the local encrypted timeline cache. The cache file lives
       outside Keychain and is encrypted with a small Keychain-held cache key.
@@ -327,8 +340,18 @@ copying old implementation details.
 - [ ] Add a second device and confirm visual device verification state is visible
       in a live two-device run. The Apple Settings surface is wired to the
       existing MartinOMEMO account-device discovery path and shows visual
-      fingerprint challenges with raw fingerprints hidden behind a disclosure,
-      but signed/second-device validation has not been run in this worker slice.
+      fingerprint challenges with raw fingerprints hidden behind a disclosure.
+      The scrubbed `second-device-fingerprint` smoke mode now proves distinct
+      OMEMO local device IDs, fingerprint presence, and no silent trust in an
+      isolated local-profile run, but credentialed signed-device validation is
+      still pending in this worker slice.
+- [x] Add own-device revocation for non-current account devices. Apple Settings
+      now exposes a destructive confirmation flow that revokes the selected own
+      device through MartinOMEMO's reviewed `removeDevices(withIds:)` path,
+      refreshes published account-device state, and keeps clear wording that
+      old ciphertext already delivered to the revoked device cannot be removed.
+      The scrubbed `own-device-revocation` smoke mode validates the
+      publish/remove/refresh behavior without printing secrets.
 - [x] Show peer OMEMO device visual challenges and manual trust controls for DMs.
 - [x] Confirm untrusted or unknown device behavior is understandable.
 - [x] Confirm the app does not silently trust all devices.
@@ -398,24 +421,31 @@ copying old implementation details.
       deterministic display transform over the MartinOMEMO identity fingerprint;
       the pinned libsignal source includes displayable/scannable fingerprint
       primitives, but no reviewed Swift SAS flow is wired. Reviewed interactive
-      SAS verification and device revocation are not implemented, and the UI
-      keeps those limitations visible instead of trusting devices automatically.
+      SAS verification and QR/cross-signing flows are still not implemented.
+      Own-device revocation for non-current devices is implemented through the
+      reviewed MartinOMEMO publish/remove API path, and the UI keeps remaining
+      trust limitations visible instead of trusting devices automatically.
 - [x] Account recovery/reinstall UX for the MVP: the app documents the current
       limitation in Settings and docs. Real server-side OMEMO key backup or
       recovery remains blocked until a reviewed MartinOMEMO recovery path is
-      selected; no custom key recovery was added.
-- [ ] Push notifications through APNs. The checked-in `trix-push-gateway`
+      selected; no custom key recovery was added. Decision record:
+      `docs/tasks/2026-05-20-reviewed-omemo-recovery-decision.md`.
+- [x] Push notifications through APNs. The checked-in `trix-push-gateway`
       component is deployed behind ejabberd `mod_push`/XEP-0357 with
       deployment-local APNs signing material. The Apple app requests notification
       authorization and accepts only generic APNs alerts or plaintext-free sync
-      hints. Keep this open until a signed iOS or macOS device confirms visible
-      generic APNs delivery with no plaintext payload fields.
-- [ ] Persistent tests around encrypted DM/group sync. `timeline-restart` now
-      covers the DM restart/cache/MAM path in credentialed live smoke, but this
-      still needs automated persistent coverage.
-- [ ] Full signed-app quit/relaunch timeline smoke. Current `timeline-restart`
-      proves a fresh `XMPPMartinService` restore in-process; it does not yet
-      prove a complete OS app process quit/relaunch.
+      hints. On 2026-05-20 signed macOS APNs smoke passed with provider response
+      `delivered=true` and QA-visible notification text limited to `Trix`,
+      `New encrypted message`, and timestamp-only system text.
+- [x] Persistent tests around encrypted DM/group sync. On 2026-05-20 the signed
+      macOS persistent gate passed with scrubbed output: DM restart overlap was
+      nonzero, encrypted group MUC restart overlap was nonzero, and no
+      credentials or decrypted message bodies were printed.
+- [x] Full signed-app quit/relaunch timeline smoke. On 2026-05-20 the signed
+      macOS persistent gate ran `timeline-relaunch-seed` and
+      `timeline-relaunch-verify` in separate processes, restored from the
+      smoke Keychain session, found nonzero overlap, and cleaned up the smoke
+      marker/session state.
 - [x] Persistent smoke coverage around directory/profile/control-plane flows:
       Apple live-smoke modes cover directory/profile, and
       `server/xmpp/scripts/operator-api-smoke.sh` now exercises provision,
@@ -473,12 +503,17 @@ copying old implementation details.
       Apple target.
 - [x] Apple APNs tokens are never logged by the new XMPP app path and remote
       pushes are handled as generic sync notifications only.
-- [ ] APNs delivery is blocked only on signed-device smoke. ejabberd `mod_push`
+- [x] APNs delivery is no longer blocked on signed-device smoke. ejabberd `mod_push`
       is wired to a private XEP-0114 component path, and `trix-push-gateway`
       owns APNs sender plus Martin/XEP-0357 registration mapping. On 2026-05-10
-      the gateway deployed with APNs credentials and connected to ejabberd; the
-      remaining proof is a signed device receiving a visible generic APNs payload
-      with no plaintext message, filename, media-key, or decrypted-content fields.
+      the gateway deployed with APNs credentials and connected to ejabberd.
+      On 2026-05-20 the push crates (`trix-push`, `trix-push-gateway`) passed
+      targeted `cargo check` and `cargo test`, and the gateway README now
+      documents private deployment prerequisites, bring-up sequencing, and open
+      operational risks for CTO/TPM review. Later on 2026-05-20 a signed macOS
+      APNs token handoff produced a generic sync wake accepted by APNs through
+      `trix-push-gateway` with `delivered=true` and HTTP 200; QA then confirmed
+      the visible notification remained generic and plaintext-free.
 - [x] Trix control-plane model is selected: for MVP closeout, checked-in
       operator scripts use loopback-only ejabberd `mod_http_api`; any non-local
       or multi-operator access still requires a small authenticated/audited Trix

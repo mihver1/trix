@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import CoreGraphics
 import ImageIO
@@ -332,6 +333,43 @@ struct TrixPeerDeviceIdentity: Identifiable, Equatable, Sendable {
 
         return "\(fingerprint.prefix(8))...\(fingerprint.suffix(8))"
     }
+
+    var groupedFingerprint: String {
+        TrixFingerprintFormatting.grouped(fingerprint)
+    }
+}
+
+enum TrixFingerprintFormatting {
+    static func grouped(
+        _ sourceText: String,
+        groupSize: Int = 8,
+        groupsPerLine: Int = 2
+    ) -> String {
+        let source = sourceText.filter { $0.isLetter || $0.isNumber }
+        guard !source.isEmpty else {
+            return sourceText
+        }
+
+        let chunkSize = max(1, groupSize)
+        var groups: [String] = []
+        var start = source.startIndex
+        while start < source.endIndex {
+            let end = source.index(start, offsetBy: chunkSize, limitedBy: source.endIndex) ?? source.endIndex
+            groups.append(String(source[start..<end]))
+            start = end
+        }
+
+        let lineSize = max(1, groupsPerLine)
+        var lines: [String] = []
+        var lineStart = 0
+        while lineStart < groups.count {
+            let lineEnd = min(lineStart + lineSize, groups.count)
+            lines.append(groups[lineStart..<lineEnd].joined(separator: " "))
+            lineStart = lineEnd
+        }
+
+        return lines.joined(separator: "\n")
+    }
 }
 
 struct TrixDeviceVerificationRequest: Identifiable, Equatable, Sendable {
@@ -407,11 +445,100 @@ enum TrixDeviceVisualVerificationKind: String, Codable, Equatable, Sendable {
     }
 }
 
+struct TrixDeviceFingerprintPixelArt: Equatable, Sendable {
+    static let gridSize = 5
+    static let paletteSize = 8
+
+    let colorIndexes: [Int?]
+
+    var filledCellCount: Int {
+        colorIndexes.compactMap { $0 }.count
+    }
+
+    func colorIndex(row: Int, column: Int) -> Int? {
+        let index = (row * Self.gridSize) + column
+        guard colorIndexes.indices.contains(index) else {
+            return nil
+        }
+
+        return colorIndexes[index]
+    }
+
+    static func make(
+        from sourceText: String,
+        kind: TrixDeviceVisualVerificationKind
+    ) -> TrixDeviceFingerprintPixelArt {
+        let normalizedSource = sourceText
+            .filter { $0.isLetter || $0.isNumber }
+            .uppercased()
+        let digestInput = "\(kind.rawValue):\(normalizedSource)"
+        let digest = Array(SHA256.hash(data: Data(digestInput.utf8)))
+        return make(from: digest.isEmpty ? [0] : digest)
+    }
+
+    private static func make(from digest: [UInt8]) -> TrixDeviceFingerprintPixelArt {
+        let leftColumnCount = (gridSize / 2) + 1
+        var colors: [Int?] = []
+
+        for row in 0..<gridSize {
+            for column in 0..<gridSize {
+                let mirroredColumn = column < leftColumnCount ? column : (gridSize - 1 - column)
+                let linear = (row * leftColumnCount) + mirroredColumn
+                let value = digest[linear % digest.count]
+                let pairValue = digest[((linear * 7) + 13) % digest.count]
+                let fillSeed = Int(value ^ pairValue) + row + mirroredColumn
+                let isFilled = (row == gridSize / 2 && column == gridSize / 2) || fillSeed % 4 != 0
+
+                if isFilled {
+                    colors.append(Int(value &+ pairValue) % paletteSize)
+                } else {
+                    colors.append(nil)
+                }
+            }
+        }
+
+        return TrixDeviceFingerprintPixelArt(colorIndexes: colors)
+    }
+
+    private static func numericValues(
+        from sourceText: String,
+        kind: TrixDeviceVisualVerificationKind
+    ) -> [Int] {
+        sourceText.compactMap { character in
+            switch kind {
+            case .libsignalSafetyNumber:
+                return character.wholeNumberValue
+            case .fingerprintDisplayTransform:
+                return Int(String(character), radix: 16)
+            }
+        }
+    }
+
+    private static func fallbackValues(from sourceText: String) -> [Int] {
+        sourceText.unicodeScalars.map { Int($0.value % 16) }
+    }
+}
+
 struct TrixDeviceVisualVerification: Equatable, Sendable {
     let kind: TrixDeviceVisualVerificationKind
     let symbols: [TrixDeviceVerificationEmoji]
     let decimalGroups: [String]
     let sourceText: String
+    let pixelArt: TrixDeviceFingerprintPixelArt
+
+    init(
+        kind: TrixDeviceVisualVerificationKind,
+        symbols: [TrixDeviceVerificationEmoji],
+        decimalGroups: [String],
+        sourceText: String,
+        pixelArt: TrixDeviceFingerprintPixelArt? = nil
+    ) {
+        self.kind = kind
+        self.symbols = symbols
+        self.decimalGroups = decimalGroups
+        self.sourceText = sourceText
+        self.pixelArt = pixelArt ?? TrixDeviceFingerprintPixelArt.make(from: sourceText, kind: kind)
+    }
 
     var challenge: TrixDeviceVerificationChallenge {
         .emojis(symbols)
@@ -419,6 +546,22 @@ struct TrixDeviceVisualVerification: Equatable, Sendable {
 
     var groupedSourceText: String {
         decimalGroups.joined(separator: " ")
+    }
+
+    var wrappedSourceText: String {
+        TrixFingerprintFormatting.grouped(sourceText)
+    }
+
+    var compactSourceText: String {
+        guard let first = decimalGroups.first else {
+            return ""
+        }
+
+        guard let last = decimalGroups.last, decimalGroups.count > 1 else {
+            return first
+        }
+
+        return "\(first) \(last)"
     }
 
     var symbolSummary: String {
@@ -2203,11 +2346,15 @@ enum TrixClientError: LocalizedError {
     case unsupportedStickerPack
     case groupOmemoRecipientSetUnavailable
     case groupOmemoDeviceTrustRequired
+    case groupLeaveUnavailable
     case missingSession
     case roomUnavailable
     case inviteUnavailable
     case roomJoinTimedOut
     case noEligibleDeviceForVerification
+    case ownDeviceUnavailable
+    case currentDeviceRevocationUnavailable
+    case ownDeviceRevocationFailed
     case recoverySetupUnavailable
     case recoveryKeyConfirmationUnavailable
     case recoveryKeyRequired
@@ -2285,6 +2432,8 @@ enum TrixClientError: LocalizedError {
             return "Group OMEMO sends require a validated MUC member recipient set before sending."
         case .groupOmemoDeviceTrustRequired:
             return "Trust an active OMEMO device for every group member before sending."
+        case .groupLeaveUnavailable:
+            return "Group leave could not be completed. Refresh membership and try again."
         case .missingSession:
             return "No saved Trix session is available."
         case .roomUnavailable:
@@ -2295,6 +2444,12 @@ enum TrixClientError: LocalizedError {
             return "Joining the room timed out. Refresh invites and try again."
         case .noEligibleDeviceForVerification:
             return "No trusted OMEMO device is available to verify this device."
+        case .ownDeviceUnavailable:
+            return "The selected account device is not available for revocation."
+        case .currentDeviceRevocationUnavailable:
+            return "Revoking the current device is not available in this flow. Sign out and rotate from another trusted session."
+        case .ownDeviceRevocationFailed:
+            return "Device revocation did not finish yet. Refresh account devices and try again."
         case .recoverySetupUnavailable:
             return "OMEMO recovery is not available in this client slice yet."
         case .recoveryKeyConfirmationUnavailable:

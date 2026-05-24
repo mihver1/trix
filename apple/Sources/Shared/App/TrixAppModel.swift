@@ -522,7 +522,8 @@ final class TrixAppModel: ObservableObject {
 
     func refreshForeground(
         markSelectedRoomRead: Bool = false,
-        reloadSelectedTimeline: Bool = true
+        reloadSelectedTimeline: Bool = true,
+        reportingCallStateErrors: Bool = false
     ) async {
         guard let session, !isLoggingOut else {
             return
@@ -538,7 +539,7 @@ final class TrixAppModel: ObservableObject {
         lastRoomRefreshAt = Date()
         refreshSelectedRoomSnapshot()
         reconcileSelectedRoom()
-        await refreshCallStateForRooms(reportingErrors: false)
+        await refreshCallStateForRooms(reportingErrors: reportingCallStateErrors)
 
         if reloadSelectedTimeline, let selectedRoomID {
             await timelineViewModel.load(
@@ -550,12 +551,13 @@ final class TrixAppModel: ObservableObject {
         }
     }
 
-    func runForegroundRefreshLoop() async {
+    func runForegroundRefreshLoop(reportingCallStateErrorsOnFirstRefresh: Bool = false) async {
         guard isAuthenticated else {
             return
         }
 
-        await refreshForeground()
+        callViewModel.expireStaleCallInvites()
+        await refreshForeground(reportingCallStateErrors: reportingCallStateErrorsOnFirstRefresh)
 
         while !Task.isCancelled && isAuthenticated {
             try? await Task.sleep(for: foregroundRefreshInterval)
@@ -1178,6 +1180,20 @@ final class TrixAppModel: ObservableObject {
         _ = await callViewModel.endCall(roomID: room.id, session: session)
     }
 
+    func leaveCall(roomID: String) async {
+        _ = await callViewModel.endCall(roomID: roomID, session: session)
+    }
+
+    @discardableResult
+    func setCallMicrophoneMuted(_ muted: Bool, in room: TrixRoomSummary) async -> Bool {
+        await callViewModel.setMicrophoneMuted(muted, roomID: room.id)
+    }
+
+    @discardableResult
+    func setCallCameraEnabled(_ enabled: Bool, in room: TrixRoomSummary) async -> Bool {
+        await callViewModel.setCameraEnabled(enabled, roomID: room.id)
+    }
+
     @discardableResult
     func acceptIncomingCallKitCall(callID: String) async -> Bool {
         guard let session else {
@@ -1200,9 +1216,9 @@ final class TrixAppModel: ObservableObject {
             return await callViewModel.declineIncomingDirectCall(incomingCall, session: session)
         }
 
-        if callViewModel.activeCall?.callID == callID,
-           let activeRoomID = callViewModel.activeRoomID {
-            return await callViewModel.endCall(roomID: activeRoomID, session: session)
+        if let callState = callViewModel.callLifecycleState(callID: callID),
+           callState.phase.isActiveLike || callState.phase == .connecting || callState.phase == .outgoingRinging {
+            return await callViewModel.endCall(roomID: callState.roomID, session: session)
         }
 
         return false
@@ -1240,6 +1256,18 @@ final class TrixAppModel: ObservableObject {
         }
 
         await deviceVerificationViewModel.trustAccountDevice(
+            device,
+            session: session,
+            service: trixService
+        )
+    }
+
+    func revokeOwnDevice(_ device: TrixPeerDeviceIdentity) async {
+        guard let session else {
+            return
+        }
+
+        await deviceVerificationViewModel.revokeOwnDevice(
             device,
             session: session,
             service: trixService
@@ -1456,6 +1484,30 @@ final class TrixAppModel: ObservableObject {
 
         if didDecline {
             await reloadRooms()
+        }
+    }
+
+    func leaveGroup(_ room: TrixRoomSummary) async {
+        guard let session, room.kind == .group else {
+            return
+        }
+
+        errorMessage = nil
+        do {
+            let leavingSelectedRoom = selectedRoomID?.caseInsensitiveCompare(room.id) == .orderedSame
+            try await trixService.leaveGroup(roomID: room.id, session: session)
+            roomListViewModel.forgetRoomLocally(roomID: room.id)
+            if leavingSelectedRoom {
+                selectedRoomID = roomListViewModel.rooms.first?.id
+                selectedRoomSnapshot = roomListViewModel.rooms.first
+                timelineViewModel.clear()
+            }
+            await reloadRooms()
+            if selectedRoomID == nil {
+                timelineViewModel.clear()
+            }
+        } catch {
+            errorMessage = error.trixUserFacingMessage
         }
     }
 

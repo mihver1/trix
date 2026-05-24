@@ -3,20 +3,62 @@ import Foundation
 
 @MainActor
 final class TrixCallViewModel: ObservableObject {
-    @Published private(set) var activeCall: TrixActiveMediaCall?
-    @Published private(set) var activeRoomID: String?
-    @Published private(set) var preparedCall: TrixPreparedCall?
-    @Published private(set) var incomingDirectCallsByRoomID: [String: TrixIncomingDirectCall] = [:]
-    @Published private(set) var groupVoiceRoomsByRoomID: [String: TrixGroupVoiceRoomSnapshot] = [:]
-    @Published private(set) var isPreparing = false
-    @Published private(set) var isConnecting = false
+    @Published private(set) var lifecycleStatesByRoomID: [String: TrixCallLifecycleState] = [:]
     @Published private(set) var actionRoomID: String?
     @Published private(set) var errorMessage: String?
 
     private let callControlService: TrixCallControlService
     private let callDescriptorService: TrixCallDescriptorService
     private let mediaCallService: TrixMediaCallService
+    private var activeMediaCallsByRoomID: [String: TrixActiveMediaCall] = [:]
+    private var preparedCallsByRoomID: [String: TrixPreparedCall] = [:]
+    private var incomingDirectCallDetailsByRoomID: [String: TrixIncomingDirectCall] = [:]
     private var groupVoiceMediaKeysByRoomID: [String: TrixCallMediaKey] = [:]
+
+    var activeCall: TrixActiveMediaCall? {
+        guard let activeRoomID else {
+            return nil
+        }
+
+        return activeMediaCallsByRoomID[activeRoomID]
+    }
+
+    var activeRoomID: String? {
+        activeMediaCallsByRoomID.keys
+            .sorted()
+            .first { roomID in
+                callLifecycleState(roomID: roomID).phase.isActiveLike
+            }
+    }
+
+    var preparedCall: TrixPreparedCall? {
+        preparedCallsByRoomID
+            .sorted { $0.key < $1.key }
+            .first?
+            .value
+    }
+
+    var incomingDirectCallsByRoomID: [String: TrixIncomingDirectCall] {
+        incomingDirectCallDetailsByRoomID
+    }
+
+    var groupVoiceRoomsByRoomID: [String: TrixGroupVoiceRoomSnapshot] {
+        lifecycleStatesByRoomID.reduce(into: [:]) { result, pair in
+            guard pair.value.kind == .groupVoice else {
+                return
+            }
+
+            result[pair.key] = Self.groupVoiceRoomSnapshot(from: pair.value)
+        }
+    }
+
+    var isPreparing: Bool {
+        lifecycleStatesByRoomID.values.contains { $0.phase == .outgoingPreparing }
+    }
+
+    var isConnecting: Bool {
+        lifecycleStatesByRoomID.values.contains { $0.phase == .connecting || $0.phase == .reconnecting }
+    }
 
     init(
         callControlService: TrixCallControlService = HTTPCallControlService(),
@@ -28,25 +70,45 @@ final class TrixCallViewModel: ObservableObject {
         self.mediaCallService = mediaCallService
     }
 
+    func callLifecycleState(roomID: String) -> TrixCallLifecycleState {
+        lifecycleStatesByRoomID[roomID] ?? .idle(roomID: roomID)
+    }
+
+    func callLifecycleState(callID: String) -> TrixCallLifecycleState? {
+        lifecycleStatesByRoomID.values.first { $0.callID == callID }
+    }
+
     func incomingDirectCall(roomID: String) -> TrixIncomingDirectCall? {
-        incomingDirectCallsByRoomID[roomID]
+        guard callLifecycleState(roomID: roomID).phase == .incomingRinging else {
+            return nil
+        }
+
+        return incomingDirectCallDetailsByRoomID[roomID]
     }
 
     func incomingDirectCall(callID: String) -> TrixIncomingDirectCall? {
-        incomingDirectCallsByRoomID.values.first { $0.callID == callID }
+        incomingDirectCallDetailsByRoomID.values.first { call in
+            call.callID == callID && callLifecycleState(roomID: call.roomID).phase == .incomingRinging
+        }
     }
 
     func groupVoiceRoom(roomID: String) -> TrixGroupVoiceRoomSnapshot {
-        groupVoiceRoomsByRoomID[roomID] ?? TrixGroupVoiceRoomSnapshot(
-            roomID: roomID,
-            callID: nil,
-            activeParticipantIDs: [],
-            updatedAt: nil
-        )
+        let state = callLifecycleState(roomID: roomID)
+        guard state.kind == .groupVoice else {
+            return TrixGroupVoiceRoomSnapshot(
+                roomID: roomID,
+                callID: nil,
+                activeParticipantIDs: [],
+                updatedAt: nil
+            )
+        }
+
+        return Self.groupVoiceRoomSnapshot(from: state)
     }
 
     func currentCall(roomID: String, kind: TrixCallKind? = nil) -> TrixActiveMediaCall? {
-        guard activeRoomID == roomID, let activeCall else {
+        guard let activeCall = activeMediaCallsByRoomID[roomID],
+              callLifecycleState(roomID: roomID).phase.isActiveLike else {
             return nil
         }
 
@@ -58,7 +120,57 @@ final class TrixCallViewModel: ObservableObject {
     }
 
     func isActing(roomID: String) -> Bool {
-        actionRoomID == roomID || isPreparing || isConnecting
+        actionRoomID == roomID || callLifecycleState(roomID: roomID).isActing
+    }
+
+    @discardableResult
+    func setMicrophoneMuted(_ muted: Bool, roomID: String) async -> Bool {
+        guard let activeCall = currentCall(roomID: roomID),
+              callLifecycleState(roomID: roomID).localAudioState != .unavailable else {
+            errorMessage = TrixClientError.callMicrophoneUnavailable.trixUserFacingMessage
+            return false
+        }
+
+        do {
+            try await mediaCallService.setMicrophoneEnabled(!muted, callID: activeCall.callID)
+            updateLocalMediaState(
+                roomID: roomID,
+                localAudioState: muted ? .muted : .unmuted
+            )
+            return true
+        } catch {
+            errorMessage = error.trixUserFacingMessage
+            return false
+        }
+    }
+
+    @discardableResult
+    func setCameraEnabled(_ enabled: Bool, roomID: String) async -> Bool {
+        guard let activeCall = currentCall(roomID: roomID, kind: .directVideo),
+              callLifecycleState(roomID: roomID).localCameraState != .unavailable else {
+            errorMessage = TrixClientError.callCameraUnavailable.trixUserFacingMessage
+            return false
+        }
+
+        do {
+            try await mediaCallService.setCameraEnabled(enabled, callID: activeCall.callID)
+            updateLocalMediaState(
+                roomID: roomID,
+                localCameraState: enabled ? .on : .off
+            )
+            return true
+        } catch {
+            errorMessage = error.trixUserFacingMessage
+            return false
+        }
+    }
+
+    func expireStaleCallInvites(now: Date = Date()) {
+        for state in lifecycleStatesByRoomID.values where isExpiredRingingState(state, now: now) {
+            incomingDirectCallDetailsByRoomID[state.roomID] = nil
+            preparedCallsByRoomID[state.roomID] = nil
+            setLifecycleState(endedState(from: state, updatedAt: now))
+        }
     }
 
     func loadRoomCallState(
@@ -72,6 +184,7 @@ final class TrixCallViewModel: ObservableObject {
         } catch {
             if reportsErrors {
                 errorMessage = error.trixUserFacingMessage
+                setLifecycleState(failedState(roomID: room.id, previous: callLifecycleState(roomID: room.id)))
             }
         }
     }
@@ -94,6 +207,7 @@ final class TrixCallViewModel: ObservableObject {
         roomID: String,
         session: TrixSession
     ) async {
+        await endActiveCallIfNeeded(beforeStartingRoomID: roomID, session: session)
         guard currentCall(roomID: roomID) == nil else {
             return
         }
@@ -111,15 +225,21 @@ final class TrixCallViewModel: ObservableObject {
     }
 
     func joinGroupVoiceRoom(roomID: String, session: TrixSession) async {
+        await endActiveCallIfNeeded(beforeStartingRoomID: roomID, session: session)
         guard currentCall(roomID: roomID, kind: .groupVoice) == nil else {
             return
         }
 
         actionRoomID = roomID
-        isConnecting = true
         errorMessage = nil
+        setLifecycleState(connectingState(
+            roomID: roomID,
+            callID: callLifecycleState(roomID: roomID).callID,
+            kind: .groupVoice,
+            participantIDs: groupVoiceRoom(roomID: roomID).activeParticipantIDs,
+            surface: .groupVoiceRoomBar
+        ))
         defer {
-            isConnecting = false
             actionRoomID = nil
         }
 
@@ -131,7 +251,9 @@ final class TrixCallViewModel: ObservableObject {
                 currentUserID: session.userID,
                 activeCall: currentCall(roomID: roomID, kind: .groupVoice)
             )
-            groupVoiceRoomsByRoomID[roomID] = snapshot
+            if !snapshot.activeParticipantIDs.isEmpty {
+                setGroupVoiceLifecycleState(snapshot, activeCall: currentCall(roomID: roomID, kind: .groupVoice))
+            }
 
             if let descriptorMediaKey = Self.groupVoiceRoomMediaKey(from: descriptors, roomID: roomID) {
                 groupVoiceMediaKeysByRoomID[roomID] = descriptorMediaKey
@@ -140,6 +262,14 @@ final class TrixCallViewModel: ObservableObject {
             }
 
             let authorization = try await callControlService.joinGroupVoiceRoom(roomID: roomID, session: session)
+            setLifecycleState(connectingState(
+                roomID: roomID,
+                callID: authorization.callID,
+                kind: .groupVoice,
+                participantIDs: groupVoiceRoom(roomID: roomID).activeParticipantIDs,
+                surface: .groupVoiceRoomBar
+            ))
+
             let refreshedDescriptors = try await callDescriptorService.callDescriptors(roomID: roomID, session: session)
             let refreshedSnapshot = Self.groupVoiceRoomSnapshot(
                 from: refreshedDescriptors,
@@ -147,7 +277,9 @@ final class TrixCallViewModel: ObservableObject {
                 currentUserID: session.userID,
                 activeCall: currentCall(roomID: roomID, kind: .groupVoice)
             )
-            groupVoiceRoomsByRoomID[roomID] = refreshedSnapshot
+            if !refreshedSnapshot.activeParticipantIDs.isEmpty {
+                setGroupVoiceLifecycleState(refreshedSnapshot, activeCall: currentCall(roomID: roomID, kind: .groupVoice))
+            }
             if let refreshedMediaKey = Self.groupVoiceRoomMediaKey(from: refreshedDescriptors, roomID: roomID) {
                 groupVoiceMediaKeysByRoomID[roomID] = refreshedMediaKey
             } else if !refreshedSnapshot.activeParticipantIDs.isEmpty {
@@ -174,12 +306,17 @@ final class TrixCallViewModel: ObservableObject {
             )
             _ = try await callDescriptorService.sendVoiceRoomState(state, roomID: roomID, session: session)
             groupVoiceMediaKeysByRoomID[roomID] = mediaKey
-            groupVoiceRoomsByRoomID[roomID] = Self.groupVoiceRoomSnapshot(from: state)
+            setGroupVoiceLifecycleState(Self.groupVoiceRoomSnapshot(from: state), activeCall: nil)
 
             do {
-                activeCall = try await mediaCallService.connect(authorization: authorization, mediaKey: mediaKey)
-                activeRoomID = roomID
-                preparedCall = nil
+                let activeCall = try await mediaCallService.connect(authorization: authorization, mediaKey: mediaKey)
+                activeMediaCallsByRoomID[roomID] = activeCall
+                preparedCallsByRoomID[roomID] = nil
+                setLifecycleState(activeState(
+                    roomID: roomID,
+                    activeCall: activeCall,
+                    participantIDs: participantIDs
+                ))
             } catch {
                 await sendGroupVoiceLeaveState(callID: authorization.callID, roomID: roomID, session: session)
                 _ = try? await callControlService.endCall(callID: authorization.callID, session: session)
@@ -187,39 +324,59 @@ final class TrixCallViewModel: ObservableObject {
             }
         } catch {
             errorMessage = error.trixUserFacingMessage
+            setLifecycleState(failedState(roomID: roomID, previous: callLifecycleState(roomID: roomID)))
         }
     }
 
     func connectPreparedCall() async {
-        guard let preparedCall else {
+        guard let (roomID, preparedCall) = preparedCallsByRoomID.sorted(by: { $0.key < $1.key }).first else {
             errorMessage = TrixClientError.callUnavailable.trixUserFacingMessage
             return
         }
 
-        isConnecting = true
         errorMessage = nil
-        defer {
-            isConnecting = false
-        }
+        setLifecycleState(connectingState(
+            roomID: roomID,
+            callID: preparedCall.authorization.callID,
+            kind: preparedCall.authorization.kind,
+            participantIDs: callLifecycleState(roomID: roomID).participantIDs,
+            surface: preparedCall.authorization.kind == .groupVoice ? .groupVoiceRoomBar : .directCallBar,
+            expiresAt: Date(timeIntervalSince1970: TimeInterval(preparedCall.invite.expiresAtUnix))
+        ))
 
         do {
-            activeCall = try await mediaCallService.connect(
+            let activeCall = try await mediaCallService.connect(
                 authorization: preparedCall.authorization,
                 mediaKey: preparedCall.mediaKey
             )
-            activeRoomID = preparedCall.roomID
+            activeMediaCallsByRoomID[roomID] = activeCall
+            preparedCallsByRoomID[roomID] = nil
+            setLifecycleState(activeState(
+                roomID: roomID,
+                activeCall: activeCall,
+                participantIDs: callLifecycleState(roomID: roomID).participantIDs
+            ))
         } catch {
+            preparedCallsByRoomID[roomID] = nil
             errorMessage = error.trixUserFacingMessage
+            setLifecycleState(failedState(roomID: roomID, previous: callLifecycleState(roomID: roomID)))
         }
     }
 
     @discardableResult
     func acceptIncomingDirectCall(_ call: TrixIncomingDirectCall, session: TrixSession) async -> Bool {
+        await endActiveCallIfNeeded(beforeStartingRoomID: call.roomID, session: session)
         actionRoomID = call.roomID
-        isConnecting = true
         errorMessage = nil
+        setLifecycleState(connectingState(
+            roomID: call.roomID,
+            callID: call.callID,
+            kind: .directVideo,
+            participantIDs: [call.callerID],
+            surface: .incomingDirectCallBar,
+            expiresAt: call.expiresAt
+        ))
         defer {
-            isConnecting = false
             actionRoomID = nil
         }
 
@@ -232,12 +389,12 @@ final class TrixCallViewModel: ObservableObject {
                 throw TrixClientError.callControlInvalidResponse
             }
 
-            activeCall = try await mediaCallService.connect(
+            let activeCall = try await mediaCallService.connect(
                 authorization: authorization,
                 mediaKey: call.mediaKey
             )
-            activeRoomID = call.roomID
-            preparedCall = nil
+            activeMediaCallsByRoomID[call.roomID] = activeCall
+            preparedCallsByRoomID[call.roomID] = nil
 
             let answer = TrixCallAnswer(
                 callID: call.callID,
@@ -245,10 +402,16 @@ final class TrixCallViewModel: ObservableObject {
                 answeredAtUnix: Self.unixNow()
             )
             _ = try await callDescriptorService.sendCallAnswer(answer, roomID: call.roomID, session: session)
-            incomingDirectCallsByRoomID[call.roomID] = nil
+            incomingDirectCallDetailsByRoomID[call.roomID] = nil
+            setLifecycleState(activeState(
+                roomID: call.roomID,
+                activeCall: activeCall,
+                participantIDs: [call.callerID, session.userID]
+            ))
             return true
         } catch {
             errorMessage = error.trixUserFacingMessage
+            setLifecycleState(failedState(roomID: call.roomID, previous: callLifecycleState(roomID: call.roomID)))
             return false
         }
     }
@@ -267,6 +430,14 @@ final class TrixCallViewModel: ObservableObject {
     func declineIncomingDirectCall(_ call: TrixIncomingDirectCall, session: TrixSession) async -> Bool {
         actionRoomID = call.roomID
         errorMessage = nil
+        setLifecycleState(endingState(
+            roomID: call.roomID,
+            callID: call.callID,
+            kind: .directVideo,
+            participantIDs: [call.callerID],
+            surface: .incomingDirectCallBar,
+            expiresAt: call.expiresAt
+        ))
         defer {
             actionRoomID = nil
         }
@@ -278,10 +449,12 @@ final class TrixCallViewModel: ObservableObject {
                 answeredAtUnix: Self.unixNow()
             )
             _ = try await callDescriptorService.sendCallAnswer(answer, roomID: call.roomID, session: session)
-            incomingDirectCallsByRoomID[call.roomID] = nil
+            incomingDirectCallDetailsByRoomID[call.roomID] = nil
+            setLifecycleState(endedState(from: callLifecycleState(roomID: call.roomID)))
             return true
         } catch {
             errorMessage = error.trixUserFacingMessage
+            setLifecycleState(failedState(roomID: call.roomID, previous: callLifecycleState(roomID: call.roomID)))
             return false
         }
     }
@@ -289,12 +462,13 @@ final class TrixCallViewModel: ObservableObject {
     @discardableResult
     func endCall(roomID: String, session: TrixSession?) async -> Bool {
         let activeCall = currentCall(roomID: roomID)
-        let preparedCall = preparedCall?.roomID == roomID ? preparedCall : nil
+        let preparedCall = preparedCallsByRoomID[roomID]
         guard activeCall != nil || preparedCall != nil else {
             return false
         }
 
         actionRoomID = roomID
+        setLifecycleState(endingState(from: callLifecycleState(roomID: roomID)))
         defer {
             actionRoomID = nil
         }
@@ -304,8 +478,9 @@ final class TrixCallViewModel: ObservableObject {
         }
 
         let callID = activeCall?.callID ?? preparedCall?.authorization.callID
+        let isGroupVoiceCall = activeCall?.kind == .groupVoice || preparedCall?.authorization.kind == .groupVoice
         if let session, let callID {
-            if activeCall?.kind == .groupVoice || preparedCall?.authorization.kind == .groupVoice {
+            if isGroupVoiceCall {
                 await sendGroupVoiceLeaveState(callID: callID, roomID: roomID, session: session)
             } else {
                 let end = TrixCallEnd(
@@ -317,18 +492,24 @@ final class TrixCallViewModel: ObservableObject {
             _ = try? await callControlService.endCall(callID: callID, session: session)
         }
 
-        if activeRoomID == roomID {
-            self.activeCall = nil
-            activeRoomID = nil
-        }
-        if self.preparedCall?.roomID == roomID {
-            self.preparedCall = nil
+        activeMediaCallsByRoomID[roomID] = nil
+        preparedCallsByRoomID[roomID] = nil
+        incomingDirectCallDetailsByRoomID[roomID] = nil
+
+        if isGroupVoiceCall, !groupVoiceRoom(roomID: roomID).activeParticipantIDs.isEmpty {
+            setGroupVoiceLifecycleState(groupVoiceRoom(roomID: roomID), activeCall: nil)
+        } else {
+            setLifecycleState(endedState(
+                roomID: roomID,
+                callID: callID,
+                kind: activeCall?.kind ?? preparedCall?.authorization.kind
+            ))
         }
         return true
     }
 
     func disconnect(session: TrixSession?) async {
-        guard let roomID = activeRoomID ?? preparedCall?.roomID else {
+        guard let roomID = activeRoomID ?? preparedCallsByRoomID.keys.sorted().first else {
             return
         }
 
@@ -336,14 +517,11 @@ final class TrixCallViewModel: ObservableObject {
     }
 
     func clear() {
-        activeCall = nil
-        activeRoomID = nil
-        preparedCall = nil
-        incomingDirectCallsByRoomID = [:]
-        groupVoiceRoomsByRoomID = [:]
+        activeMediaCallsByRoomID = [:]
+        preparedCallsByRoomID = [:]
+        incomingDirectCallDetailsByRoomID = [:]
         groupVoiceMediaKeysByRoomID = [:]
-        isPreparing = false
-        isConnecting = false
+        lifecycleStatesByRoomID = [:]
         actionRoomID = nil
         errorMessage = nil
     }
@@ -357,11 +535,21 @@ final class TrixCallViewModel: ObservableObject {
         session: TrixSession,
         authorization: () async throws -> TrixCallJoinAuthorization
     ) async -> TrixPreparedCall? {
-        isPreparing = true
         errorMessage = nil
-        defer {
-            isPreparing = false
-        }
+        setLifecycleState(TrixCallLifecycleState(
+            phase: .outgoingPreparing,
+            roomID: roomID,
+            callID: nil,
+            kind: .directVideo,
+            startedAt: nil,
+            updatedAt: Date(),
+            expiresAt: nil,
+            participantIDs: [session.userID],
+            localAudioState: .unavailable,
+            localCameraState: .unavailable,
+            remoteMediaReadiness: .none,
+            platformSurfaceState: .none
+        ))
 
         do {
             let authorization = try await authorization()
@@ -382,10 +570,26 @@ final class TrixCallViewModel: ObservableObject {
                 mediaKey: mediaKey,
                 invite: invite
             )
-            self.preparedCall = prepared
+            preparedCallsByRoomID = [roomID: prepared]
+            setLifecycleState(TrixCallLifecycleState(
+                phase: .outgoingRinging,
+                roomID: roomID,
+                callID: authorization.callID,
+                kind: authorization.kind,
+                startedAt: nil,
+                updatedAt: Date(),
+                expiresAt: Date(timeIntervalSince1970: TimeInterval(invite.expiresAtUnix)),
+                participantIDs: [session.userID],
+                localAudioState: .unavailable,
+                localCameraState: authorization.publishVideo ? .off : .unavailable,
+                remoteMediaReadiness: .none,
+                platformSurfaceState: authorization.kind == .groupVoice ? .groupVoiceRoomBar : .none
+            ))
             return prepared
         } catch {
             errorMessage = error.trixUserFacingMessage
+            preparedCallsByRoomID[roomID] = nil
+            setLifecycleState(failedState(roomID: roomID, previous: callLifecycleState(roomID: roomID)))
             return nil
         }
     }
@@ -397,26 +601,72 @@ final class TrixCallViewModel: ObservableObject {
     ) {
         switch room.kind {
         case .direct:
-            incomingDirectCallsByRoomID[room.id] = Self.incomingDirectCall(
-                from: descriptors,
-                roomID: room.id,
-                session: session,
-                now: Date()
-            )
+            applyDirectCallDescriptors(descriptors, room: room, session: session)
         case .group:
-            let snapshot = Self.groupVoiceRoomSnapshot(
-                from: descriptors,
-                roomID: room.id,
-                currentUserID: session.userID,
-                activeCall: currentCall(roomID: room.id, kind: .groupVoice)
-            )
-            groupVoiceRoomsByRoomID[room.id] = snapshot
+            applyGroupVoiceDescriptors(descriptors, room: room, session: session)
+        }
+    }
 
-            if let mediaKey = Self.groupVoiceRoomMediaKey(from: descriptors, roomID: room.id) {
-                groupVoiceMediaKeysByRoomID[room.id] = mediaKey
-            } else if snapshot.activeParticipantIDs.isEmpty {
-                groupVoiceMediaKeysByRoomID[room.id] = nil
-            }
+    private func applyDirectCallDescriptors(
+        _ descriptors: [TrixReceivedCallDescriptor],
+        room: TrixRoomSummary,
+        session: TrixSession
+    ) {
+        if let activeCall = activeMediaCallsByRoomID[room.id],
+           Self.containsEndDescriptor(for: activeCall.callID, descriptors: descriptors) {
+            activeMediaCallsByRoomID[room.id] = nil
+            setLifecycleState(endedState(
+                roomID: room.id,
+                callID: activeCall.callID,
+                kind: activeCall.kind
+            ))
+            return
+        }
+
+        if let incomingCall = Self.incomingDirectCall(
+            from: descriptors,
+            roomID: room.id,
+            session: session,
+            now: Date()
+        ) {
+            incomingDirectCallDetailsByRoomID[room.id] = incomingCall
+            setLifecycleState(incomingDirectCallState(incomingCall))
+            return
+        }
+
+        incomingDirectCallDetailsByRoomID[room.id] = nil
+        guard currentCall(roomID: room.id) == nil,
+              preparedCallsByRoomID[room.id] == nil else {
+            return
+        }
+
+        let previous = callLifecycleState(roomID: room.id)
+        if previous.phase == .idle {
+            setLifecycleState(.idle(roomID: room.id))
+        } else if previous.kind == .directVideo {
+            setLifecycleState(endedState(from: previous))
+        } else {
+            setLifecycleState(.idle(roomID: room.id))
+        }
+    }
+
+    private func applyGroupVoiceDescriptors(
+        _ descriptors: [TrixReceivedCallDescriptor],
+        room: TrixRoomSummary,
+        session: TrixSession
+    ) {
+        let snapshot = Self.groupVoiceRoomSnapshot(
+            from: descriptors,
+            roomID: room.id,
+            currentUserID: session.userID,
+            activeCall: currentCall(roomID: room.id, kind: .groupVoice)
+        )
+        setGroupVoiceLifecycleState(snapshot, activeCall: currentCall(roomID: room.id, kind: .groupVoice))
+
+        if let mediaKey = Self.groupVoiceRoomMediaKey(from: descriptors, roomID: room.id) {
+            groupVoiceMediaKeysByRoomID[room.id] = mediaKey
+        } else if snapshot.activeParticipantIDs.isEmpty {
+            groupVoiceMediaKeysByRoomID[room.id] = nil
         }
     }
 
@@ -431,10 +681,247 @@ final class TrixCallViewModel: ObservableObject {
             updatedAtUnix: Self.unixNow()
         )
         _ = try? await callDescriptorService.sendVoiceRoomState(state, roomID: roomID, session: session)
-        groupVoiceRoomsByRoomID[roomID] = Self.groupVoiceRoomSnapshot(from: state)
+        setGroupVoiceLifecycleState(Self.groupVoiceRoomSnapshot(from: state), activeCall: nil)
         if participantIDs.isEmpty {
             groupVoiceMediaKeysByRoomID[roomID] = nil
         }
+    }
+
+    private func endActiveCallIfNeeded(beforeStartingRoomID roomID: String, session: TrixSession) async {
+        guard let activeRoomID, activeRoomID != roomID else {
+            return
+        }
+
+        _ = await endCall(roomID: activeRoomID, session: session)
+    }
+
+    private func setGroupVoiceLifecycleState(
+        _ snapshot: TrixGroupVoiceRoomSnapshot,
+        activeCall: TrixActiveMediaCall?
+    ) {
+        if snapshot.activeParticipantIDs.isEmpty, activeCall == nil {
+            let previous = callLifecycleState(roomID: snapshot.roomID)
+            if previous.kind == .groupVoice, previous.phase != .idle {
+                setLifecycleState(endedState(from: previous, updatedAt: snapshot.updatedAt ?? Date()))
+            } else {
+                setLifecycleState(.idle(roomID: snapshot.roomID))
+            }
+            return
+        }
+
+        setLifecycleState(TrixCallLifecycleState(
+            phase: .active,
+            roomID: snapshot.roomID,
+            callID: snapshot.callID ?? activeCall?.callID,
+            kind: .groupVoice,
+            startedAt: activeCall?.startedAt,
+            updatedAt: snapshot.updatedAt ?? Date(),
+            expiresAt: nil,
+            participantIDs: snapshot.activeParticipantIDs,
+            localAudioState: activeCall?.publishesLocalAudio == true ? .unmuted : .unavailable,
+            localCameraState: .unavailable,
+            remoteMediaReadiness: Self.remoteReadiness(for: activeCall),
+            platformSurfaceState: .groupVoiceRoomBar
+        ))
+    }
+
+    private func setLifecycleState(_ state: TrixCallLifecycleState) {
+        var states = lifecycleStatesByRoomID
+        states[state.roomID] = state
+        lifecycleStatesByRoomID = states
+    }
+
+    private func isExpiredRingingState(_ state: TrixCallLifecycleState, now: Date) -> Bool {
+        guard state.phase == .incomingRinging || state.phase == .outgoingRinging,
+              let expiresAt = state.expiresAt else {
+            return false
+        }
+
+        return expiresAt <= now
+    }
+
+    private func incomingDirectCallState(_ call: TrixIncomingDirectCall) -> TrixCallLifecycleState {
+        TrixCallLifecycleState(
+            phase: .incomingRinging,
+            roomID: call.roomID,
+            callID: call.callID,
+            kind: .directVideo,
+            startedAt: call.createdAt,
+            updatedAt: Date(),
+            expiresAt: call.expiresAt,
+            participantIDs: [call.callerID],
+            localAudioState: .unavailable,
+            localCameraState: .off,
+            remoteMediaReadiness: .none,
+            platformSurfaceState: .incomingDirectCallBar
+        )
+    }
+
+    private func connectingState(
+        roomID: String,
+        callID: String?,
+        kind: TrixCallKind,
+        participantIDs: [String],
+        surface: TrixCallPlatformSurfaceState,
+        expiresAt: Date? = nil
+    ) -> TrixCallLifecycleState {
+        TrixCallLifecycleState(
+            phase: .connecting,
+            roomID: roomID,
+            callID: callID,
+            kind: kind,
+            startedAt: nil,
+            updatedAt: Date(),
+            expiresAt: expiresAt,
+            participantIDs: Self.normalizedParticipants(participantIDs),
+            localAudioState: .unavailable,
+            localCameraState: kind == .directVideo ? .off : .off,
+            remoteMediaReadiness: .none,
+            platformSurfaceState: surface
+        )
+    }
+
+    private func activeState(
+        roomID: String,
+        activeCall: TrixActiveMediaCall,
+        participantIDs: [String]
+    ) -> TrixCallLifecycleState {
+        TrixCallLifecycleState(
+            phase: .active,
+            roomID: roomID,
+            callID: activeCall.callID,
+            kind: activeCall.kind,
+            startedAt: activeCall.startedAt,
+            updatedAt: Date(),
+            expiresAt: nil,
+            participantIDs: Self.normalizedParticipants(participantIDs),
+            localAudioState: activeCall.publishesLocalAudio ? .unmuted : .unavailable,
+            localCameraState: activeCall.publishesLocalVideo ? .on : .unavailable,
+            remoteMediaReadiness: Self.remoteReadiness(for: activeCall),
+            platformSurfaceState: activeCall.kind == .groupVoice ? .groupVoiceRoomBar : .directCallBar
+        )
+    }
+
+    private func updateLocalMediaState(
+        roomID: String,
+        localAudioState: TrixCallLocalAudioState? = nil,
+        localCameraState: TrixCallLocalCameraState? = nil
+    ) {
+        let state = callLifecycleState(roomID: roomID)
+        setLifecycleState(TrixCallLifecycleState(
+            phase: state.phase,
+            roomID: state.roomID,
+            callID: state.callID,
+            kind: state.kind,
+            startedAt: state.startedAt,
+            updatedAt: Date(),
+            expiresAt: state.expiresAt,
+            participantIDs: state.participantIDs,
+            localAudioState: localAudioState ?? state.localAudioState,
+            localCameraState: localCameraState ?? state.localCameraState,
+            remoteMediaReadiness: state.remoteMediaReadiness,
+            platformSurfaceState: state.platformSurfaceState
+        ))
+    }
+
+    private static func remoteReadiness(for activeCall: TrixActiveMediaCall?) -> TrixCallRemoteMediaReadiness {
+        guard let activeCall else {
+            return .none
+        }
+
+        return activeCall.subscribesRemoteAudio || activeCall.subscribesRemoteVideo ? .waiting : .none
+    }
+
+    private func endingState(
+        from state: TrixCallLifecycleState
+    ) -> TrixCallLifecycleState {
+        endingState(
+            roomID: state.roomID,
+            callID: state.callID,
+            kind: state.kind,
+            participantIDs: state.participantIDs,
+            surface: state.platformSurfaceState,
+            expiresAt: state.expiresAt
+        )
+    }
+
+    private func endingState(
+        roomID: String,
+        callID: String?,
+        kind: TrixCallKind?,
+        participantIDs: [String],
+        surface: TrixCallPlatformSurfaceState,
+        expiresAt: Date?
+    ) -> TrixCallLifecycleState {
+        TrixCallLifecycleState(
+            phase: .ending,
+            roomID: roomID,
+            callID: callID,
+            kind: kind,
+            startedAt: callLifecycleState(roomID: roomID).startedAt,
+            updatedAt: Date(),
+            expiresAt: expiresAt,
+            participantIDs: Self.normalizedParticipants(participantIDs),
+            localAudioState: .unavailable,
+            localCameraState: kind == .directVideo ? .off : .off,
+            remoteMediaReadiness: .none,
+            platformSurfaceState: surface
+        )
+    }
+
+    private func endedState(
+        from state: TrixCallLifecycleState,
+        updatedAt: Date = Date()
+    ) -> TrixCallLifecycleState {
+        endedState(roomID: state.roomID, callID: state.callID, kind: state.kind, updatedAt: updatedAt)
+    }
+
+    private func endedState(
+        roomID: String,
+        callID: String?,
+        kind: TrixCallKind?,
+        updatedAt: Date = Date()
+    ) -> TrixCallLifecycleState {
+        TrixCallLifecycleState(
+            phase: .ended,
+            roomID: roomID,
+            callID: callID,
+            kind: kind,
+            startedAt: nil,
+            updatedAt: updatedAt,
+            expiresAt: nil,
+            participantIDs: [],
+            localAudioState: .unavailable,
+            localCameraState: .off,
+            remoteMediaReadiness: .none,
+            platformSurfaceState: .none
+        )
+    }
+
+    private func failedState(roomID: String, previous: TrixCallLifecycleState) -> TrixCallLifecycleState {
+        TrixCallLifecycleState(
+            phase: .failed,
+            roomID: roomID,
+            callID: previous.callID,
+            kind: previous.kind,
+            startedAt: previous.startedAt,
+            updatedAt: Date(),
+            expiresAt: previous.expiresAt,
+            participantIDs: previous.participantIDs,
+            localAudioState: .unavailable,
+            localCameraState: previous.kind == .directVideo ? .off : .off,
+            remoteMediaReadiness: .none,
+            platformSurfaceState: .none
+        )
+    }
+
+    private static func groupVoiceRoomSnapshot(from state: TrixCallLifecycleState) -> TrixGroupVoiceRoomSnapshot {
+        TrixGroupVoiceRoomSnapshot(
+            roomID: state.roomID,
+            callID: state.kind == .groupVoice ? state.callID : nil,
+            activeParticipantIDs: state.kind == .groupVoice ? state.participantIDs : [],
+            updatedAt: state.updatedAt
+        )
     }
 
     private static func incomingDirectCall(
@@ -485,6 +972,19 @@ final class TrixCallViewModel: ObservableObject {
                 )
             }
             .first
+    }
+
+    private static func containsEndDescriptor(
+        for callID: String,
+        descriptors: [TrixReceivedCallDescriptor]
+    ) -> Bool {
+        descriptors.contains { descriptor in
+            if case .end(let end) = descriptor.descriptor {
+                return end.callID == callID
+            }
+
+            return false
+        }
     }
 
     private static func groupVoiceRoomSnapshot(

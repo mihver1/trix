@@ -13,7 +13,7 @@ HOST_CALL_CONTROL_LOG="${LAB_DIR}/call-control.log"
 
 usage() {
   cat <<'EOF'
-Usage: server/xmpp/scripts/local-call-lab.sh [start|status|smoke|logs|down]
+Usage: server/xmpp/scripts/local-call-lab.sh [start|status|smoke|logs|log-snapshot|down]
 
 Starts a loopback-only LiveKit + coturn + trix-call-control stack for local
 Apple call testing. Generated secrets stay under server/xmpp/.local-call-lab
@@ -63,6 +63,7 @@ TRIX_LIVEKIT_URL=ws://127.0.0.1:7880
 TRIX_TURN_URIS=turn:127.0.0.1:3478?transport=udp,turn:127.0.0.1:3478?transport=tcp
 TRIX_CALL_DRY_RUN_AUTH=1
 TRIX_CALL_SKIP_MUC_MEMBERSHIP_CHECK=1
+TRIX_CALL_TOKEN_NBF_LEEWAY_SECONDS=86400
 TRIX_CALL_BIND=127.0.0.1
 TRIX_LIVEKIT_HTTP_BIND=127.0.0.1
 TRIX_LIVEKIT_RTC_TCP_BIND=127.0.0.1
@@ -77,6 +78,10 @@ EOF
   set -a
   . "${ENV_FILE}"
   set +a
+  if [[ -z "${TRIX_CALL_TOKEN_NBF_LEEWAY_SECONDS:-}" ]]; then
+    TRIX_CALL_TOKEN_NBF_LEEWAY_SECONDS=86400
+    printf '\nTRIX_CALL_TOKEN_NBF_LEEWAY_SECONDS=%s\n' "${TRIX_CALL_TOKEN_NBF_LEEWAY_SECONDS}" >>"${ENV_FILE}"
+  fi
 
   umask 077
   cat >"${LIVEKIT_FILE}" <<EOF
@@ -159,8 +164,8 @@ host_call_control_running() {
 
 start_host_call_control() {
   if host_call_control_running; then
-    echo "host call-control: already running pid=$(cat "${HOST_CALL_CONTROL_PID_FILE}")"
-    return 0
+    echo "host call-control: restarting pid=$(cat "${HOST_CALL_CONTROL_PID_FILE}")"
+    stop_host_call_control
   fi
 
   : >"${HOST_CALL_CONTROL_LOG}"
@@ -175,6 +180,7 @@ start_host_call_control() {
     TRIX_LIVEKIT_URL="${TRIX_LIVEKIT_URL}" \
     TRIX_LIVEKIT_API_KEY="${TRIX_LIVEKIT_API_KEY}" \
     TRIX_LIVEKIT_API_SECRET="${TRIX_LIVEKIT_API_SECRET}" \
+    TRIX_CALL_TOKEN_NBF_LEEWAY_SECONDS="${TRIX_CALL_TOKEN_NBF_LEEWAY_SECONDS}" \
     TRIX_TURN_SHARED_SECRET="${TRIX_TURN_SHARED_SECRET}" \
     TRIX_TURN_URIS="${TRIX_TURN_URIS}" \
     TRIX_CALL_PUSH_GATEWAY_TOKEN= \
@@ -244,6 +250,31 @@ logs_stack() {
   (cd "${ROOT_DIR}" && compose_lab logs --tail=120 -f livekit coturn)
 }
 
+sanitize_call_lab_logs() {
+  sed -E \
+    -e 's/eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/[REDACTED_JWT]/g' \
+    -e 's/[0-9]{10,}:[A-Za-z0-9._%+-]+@trix\.selfhost\.ru/[REDACTED_TURN_USERNAME]/g' \
+    -e 's/([Tt][Oo][Kk][Ee][Nn]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])=[^[:space:]}]+/\\1=[REDACTED]/g' \
+    -e 's/([Tt][Oo][Kk][Ee][Nn]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]):[^[:space:]}]+/\\1:[REDACTED]/g'
+}
+
+log_snapshot_stack() {
+  local output_dir="${1:-}"
+  if [[ -z "${output_dir}" ]]; then
+    echo "output directory is required for log-snapshot" >&2
+    return 2
+  fi
+
+  ensure_files
+  mkdir -p "${output_dir}"
+  if [[ -f "${HOST_CALL_CONTROL_LOG}" ]]; then
+    cp "${HOST_CALL_CONTROL_LOG}" "${output_dir}/call-control.log"
+  else
+    : >"${output_dir}/call-control.log"
+  fi
+  (cd "${ROOT_DIR}" && compose_lab logs --no-color livekit coturn 2>&1 | sanitize_call_lab_logs >"${output_dir}/livekit-coturn.log") || true
+}
+
 shape_summary() {
   python3 - "$1" <<'PY'
 import json
@@ -296,6 +327,7 @@ smoke_stack() {
 }
 
 command="${1:-start}"
+shift || true
 case "${command}" in
   start)
     start_stack
@@ -308,6 +340,9 @@ case "${command}" in
     ;;
   logs)
     logs_stack
+    ;;
+  log-snapshot)
+    log_snapshot_stack "$@"
     ;;
   down)
     down_stack

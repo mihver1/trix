@@ -12,16 +12,35 @@ struct TrixMacApp: App {
 
     var body: some Scene {
         WindowGroup {
-            TrixMacRootView(model: model)
-                .frame(minWidth: 1120, minHeight: 680)
-                .task {
-                    TrixAPNsCoordinator.shared.attach(model: model)
-                }
+            if XMPPLiveSmokeRunner.isRequested {
+                EmptyView()
+                    .frame(width: 1, height: 1)
+            } else {
+                TrixMacRootView(model: model)
+                    .frame(minWidth: 1120, minHeight: 680)
+                    .task {
+                        TrixAPNsCoordinator.shared.attach(model: model)
+                    }
+            }
         }
         .defaultSize(width: 1240, height: 760)
 
+        Window("Active Call", id: TrixActiveCallWindowID) {
+            if XMPPLiveSmokeRunner.isRequested {
+                EmptyView()
+            } else {
+                TrixMacActiveCallWindow(model: model)
+            }
+        }
+        .defaultSize(width: 380, height: 168)
+        .windowResizability(.contentSize)
+
         Settings {
-            TrixMacSettingsView(model: model)
+            if XMPPLiveSmokeRunner.isRequested {
+                EmptyView()
+            } else {
+                TrixMacSettingsView(model: model)
+            }
         }
         .defaultSize(width: 760, height: 620)
     }

@@ -29,6 +29,8 @@ final class TrixGroupRoomCacheStore: @unchecked Sendable {
     private let keychainService: String
     private let keychainAccount: String
     private let directoryName: String
+    private let keySource: TrixEncryptedCacheKeySource
+    private let migratesLegacyKeychainItems: Bool
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private var cachedEncryptionKey: SymmetricKey?
@@ -37,12 +39,16 @@ final class TrixGroupRoomCacheStore: @unchecked Sendable {
         legacyService: String = "com.softgrid.trix.xmpp.group-members",
         keychainService: String = "com.softgrid.trix.xmpp.group-members-cache-key",
         keychainAccount: String = "group-members-cache-key:v1",
-        directoryName: String = "GroupMemberCache"
+        directoryName: String = "GroupMemberCache",
+        keySource: TrixEncryptedCacheKeySource = .keychain,
+        migratesLegacyKeychainItems: Bool = true
     ) {
         self.legacyService = legacyService
         self.keychainService = keychainService
         self.keychainAccount = keychainAccount
         self.directoryName = directoryName
+        self.keySource = keySource
+        self.migratesLegacyKeychainItems = migratesLegacyKeychainItems
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys]
         decoder.dateDecodingStrategy = .iso8601
@@ -127,6 +133,12 @@ final class TrixGroupRoomCacheStore: @unchecked Sendable {
             return cachedEncryptionKey
         }
 
+        if case .memory(let data) = keySource {
+            let key = SymmetricKey(data: data)
+            cachedEncryptionKey = key
+            return key
+        }
+
         if let data = try loadEncryptionKeyData() {
             let key = SymmetricKey(data: data)
             cachedEncryptionKey = key
@@ -191,6 +203,10 @@ final class TrixGroupRoomCacheStore: @unchecked Sendable {
     }
 
     private func loadLegacyData(accountJID: String, roomID: String) throws -> Data? {
+        guard migratesLegacyKeychainItems else {
+            return nil
+        }
+
         var query = legacyGroupQuery(accountJID: accountJID, roomID: roomID)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -212,6 +228,10 @@ final class TrixGroupRoomCacheStore: @unchecked Sendable {
     }
 
     private func clearLegacy(accountJID: String, roomID: String) throws {
+        guard migratesLegacyKeychainItems else {
+            return
+        }
+
         let status = SecItemDelete(legacyGroupQuery(accountJID: accountJID, roomID: roomID) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw TrixClientError.keychainFailure(status.description)

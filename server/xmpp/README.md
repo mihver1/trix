@@ -132,6 +132,25 @@ lab `smoke` command returned a sanitized `group_voice` response shape with
 `e2ee_required=true`, publish-audio enabled, publish-video disabled, and TURN
 fields present without printing token or credential values.
 
+For reduced macOS media evidence, use the deterministic evidence wrapper instead
+of manually selecting a room in the app:
+
+```bash
+TRIX_XMPP_LIVE_SMOKE_USER_ID=test@trix.selfhost.ru \
+TRIX_XMPP_LIVE_SMOKE_PASSWORD='...' \
+TRIX_XMPP_LIVE_SMOKE_PEER_ID=friend@trix.selfhost.ru \
+TRIX_XMPP_LIVE_SMOKE_PEER_PASSWORD='...' \
+TRIX_XMPP_LIVE_SMOKE_THIRD_ID=third@trix.selfhost.ru \
+TRIX_XMPP_LIVE_SMOKE_THIRD_PASSWORD='...' \
+apple/scripts/run-local-call-lab-macos.sh evidence
+```
+
+That path creates a fresh joined private MUC through reviewed app services,
+drives the existing encrypted group-voice call path for two macOS participants,
+forces LiveKit relay-only ICE, captures app/call-control/LiveKit/coturn logs
+under `apple/build/LocalCallLabEvidence/`, and runs
+`server/xmpp/scripts/call-log-audit.sh` on the bundle.
+
 For ejabberd 26.4, group voice membership checks require `mod_muc_admin` and the
 `get_room_affiliations` admin API payload shape `room` plus `service`. On
 2026-05-19 the live VPS was updated after a group voice join returned
@@ -329,6 +348,11 @@ Trix wrapper instead:
   `POST /v1/account/password` using the current XMPP JID/password over private
   TLS; the wrapper validates the current password through `check_password` and
   then calls ejabberd `change_password` through the loopback API.
+- Signed-in Apple clients leave private groups with `POST /v1/groups/leave`
+  using the same XMPP JID/password Basic auth pattern. The wrapper validates the
+  account, checks the current MUC affiliation through `mod_muc_admin`, rejects
+  owners until transfer is implemented, and removes only that authenticated
+  account by setting its affiliation to `none`.
 - Signed-in Apple clients import static public Telegram sticker packs with
   `POST /v1/stickers/telegram/packs` and fetch individual sticker bytes through
   `POST /v1/stickers/telegram/file`. Both endpoints use the same XMPP
@@ -337,6 +361,13 @@ Trix wrapper instead:
   invite code, handle, display name, and user-chosen password.
 - The wrapper stores only invite-code hashes and redemption metadata; it does
   not store user passwords.
+- Invite TTL defaults to 7 days and the wrapper rejects TTLs over 30 days.
+  Redeemed invite metadata and expired unused invite metadata are eligible for
+  operator purge 30 days after `redeemed_at` or `expires_at`; backup copies may
+  remain until the XMPP backup rotation ages them out.
+- Purge retention is controlled with
+  `TRIX_INVITE_METADATA_RETENTION_SECONDS` (default 30 days). Operators may
+  lower it for a purge run, but values over 30 days are rejected.
 - Redemption provisions the account through the localhost ejabberd API command
   `register`; `mod_http_api` remains a backend only and must not be exposed.
 
@@ -360,15 +391,38 @@ curl -fsS \
   http://127.0.0.1:8091/v1/operator/invites
 ```
 
+Purge invite metadata that has passed the configured post-redemption or
+post-expiration retention window:
+
+```bash
+TRIX_INVITE_STORE_PATH=/var/lib/trix-xmpp/invites.json \
+TRIX_INVITE_METADATA_RETENTION_SECONDS=2592000 \
+./scripts/invite-registration-server.py --purge-invite-metadata
+```
+
+Schedule that command from the XMPP host or operator sidecar. It prints only
+removed/remaining counts and must not be run with raw invite codes, passwords,
+or bearer tokens on the command line. The purge window cannot exceed 30 days.
+
 Expose only the app-facing `/v1/registration/redeem` endpoint through the
 private TLS reverse proxy used by the Apple clients. If in-app invite issuing,
-password change, or Telegram sticker import are enabled, expose
-`POST /v1/invites`, `POST /v1/account/password`,
+password change, server-backed group leave, or Telegram sticker import are
+enabled, expose `POST /v1/invites`, `POST /v1/account/password`,
+`POST /v1/groups/leave`,
 `POST /v1/stickers/telegram/packs`, and
 `POST /v1/stickers/telegram/file` through the same private TLS policy. Keep
 `/v1/operator/*` reachable only from an operator network or localhost. Do not
-log request bodies: they contain invite codes, XMPP passwords, and short-lived
-sticker file tokens.
+log request bodies: they contain invite codes, XMPP passwords, group room ids,
+and short-lived sticker file tokens.
+
+On 2026-05-20, the live VPS wrapper and nginx allowlist were updated for
+`POST /v1/groups/leave`. The rollback handles are
+`/opt/trix-xmpp/scripts/invite-registration-server.py.backup-before-group-leave-20260520T200114Z`,
+`/opt/trix-xmpp/scripts/invite-registration-smoke.sh.backup-before-group-leave-20260520T200114Z`,
+and `/etc/nginx/sites-available/trix.backup-before-group-leave-20260520T195950Z`.
+Post-change checks returned hosted JSON `401` for unauthenticated
+`POST /v1/groups/leave`, kept `/v1/operator/invites` at nginx `404`, kept raw
+external `8091` unreachable, and passed the deployed wrapper dry-run smoke.
 
 Enable Telegram sticker import only with deployment-local server secrets:
 
@@ -450,8 +504,9 @@ material mounted from `/opt/trix-xmpp/certs/apns`, rejects checked-in default
 secrets, exposes HTTP health only on `127.0.0.1:8090`, and connects to ejabberd
 as the private XEP-0114 component `push.trix.selfhost.ru`. External checks keep
 `5222` reachable while `5269`, `5347`, and `8090` are not reachable from the
-internet. Do not mark APNs delivery complete until a signed-device visible
-generic smoke passes without plaintext message, filename, media-key, or
+internet. Signed macOS APNs smoke passed on 2026-05-20 with provider delivery
+success for a generic sync wake and QA-visible notification text limited to the
+generic Trix alert, with no plaintext message, filename, media-key, or
 decrypted-content payload fields.
 
 Mount the `.p8` into the XMPP deployment, set matching `TRIX_APNS_*` values for

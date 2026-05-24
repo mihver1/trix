@@ -185,6 +185,57 @@ struct TrixRoomNotificationProfileMark: View {
     }
 }
 
+struct TrixRoomCallIndicatorMark: View {
+    let indicator: TrixRoomCallIndicator
+
+    var body: some View {
+        Label {
+            HStack(spacing: 4) {
+                Text(indicator.title)
+                if let participantCount = indicator.participantCount {
+                    Text("\(participantCount)")
+                        .monospacedDigit()
+                }
+            }
+        } icon: {
+            Image(systemName: systemImage)
+        }
+        .font(.caption.weight(.semibold))
+        .lineLimit(1)
+        .foregroundStyle(tint)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(tint.opacity(0.12), in: Capsule())
+        .overlay {
+            Capsule()
+                .stroke(tint.opacity(0.20), lineWidth: 1)
+        }
+        .accessibilityLabel(indicator.accessibilityLabel)
+    }
+
+    private var tint: Color {
+        switch indicator.kind {
+        case .incomingDirect:
+            return Color.orange
+        case .directCall:
+            return TrixDesign.accent
+        case .groupVoice:
+            return TrixDesign.groupAccent
+        }
+    }
+
+    private var systemImage: String {
+        switch indicator.kind {
+        case .incomingDirect:
+            return "phone.down.waves.left.and.right"
+        case .directCall:
+            return "phone.fill"
+        case .groupVoice:
+            return "waveform"
+        }
+    }
+}
+
 enum TrixTransientBanner {
     static let autoDismissDelay: Duration = .seconds(60)
 }

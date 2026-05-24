@@ -10,6 +10,7 @@ actor MockTrixService: TrixService {
     private var verificationState: TrixDeviceVerificationState
     private var verificationFlow: TrixDeviceVerificationFlow
     private var trustedPeerDeviceIDs: Set<String>
+    private var publishedOwnDeviceIDs: Set<String>
     private var recoveryState: TrixRecoveryState
     private var backupState: TrixBackupState
     private var backupExistsOnServer: Bool
@@ -65,6 +66,7 @@ actor MockTrixService: TrixService {
         self.verificationState = .unverified
         self.verificationFlow = .idle
         self.trustedPeerDeviceIDs = []
+        self.publishedOwnDeviceIDs = ["1001", "2002"]
         self.recoveryState = .disabled
         self.backupState = .unknown
         self.backupExistsOnServer = false
@@ -339,16 +341,40 @@ actor MockTrixService: TrixService {
     }
 
     func peerDeviceIdentities(userID: String, session: TrixSession) async throws -> [TrixPeerDeviceIdentity] {
-        [mockPeerDevice(for: userID)]
+        if userID.caseInsensitiveCompare(session.userID) == .orderedSame {
+            return mockOwnAccountDevices(userID: session.userID)
+        }
+
+        return [mockPeerDevice(for: userID)]
     }
 
     func refreshPeerDeviceIdentities(userID: String, session: TrixSession) async throws -> [TrixPeerDeviceIdentity] {
-        [mockPeerDevice(for: userID)]
+        if userID.caseInsensitiveCompare(session.userID) == .orderedSame {
+            return mockOwnAccountDevices(userID: session.userID)
+        }
+
+        return [mockPeerDevice(for: userID)]
     }
 
     func trustPeerDevice(userID: String, deviceID: String, session: TrixSession) async throws -> [TrixPeerDeviceIdentity] {
         trustedPeerDeviceIDs.insert(Self.mockDeviceTrustKey(userID: userID, deviceID: deviceID))
+        if userID.caseInsensitiveCompare(session.userID) == .orderedSame {
+            return mockOwnAccountDevices(userID: session.userID)
+        }
+
         return [mockPeerDevice(for: userID, deviceID: deviceID)]
+    }
+
+    func revokeOwnDevice(deviceID: String, session: TrixSession) async throws -> [TrixPeerDeviceIdentity] {
+        guard deviceID.caseInsensitiveCompare(session.deviceID) != .orderedSame else {
+            throw TrixClientError.currentDeviceRevocationUnavailable
+        }
+        guard publishedOwnDeviceIDs.remove(deviceID) != nil else {
+            throw TrixClientError.ownDeviceUnavailable
+        }
+
+        trustedPeerDeviceIDs.remove(Self.mockDeviceTrustKey(userID: session.userID, deviceID: deviceID))
+        return mockOwnAccountDevices(userID: session.userID)
     }
 
     func requestDeviceVerification(session: TrixSession) async throws -> TrixDeviceVerificationFlow {
@@ -378,7 +404,7 @@ actor MockTrixService: TrixService {
         verificationFlow = TrixDeviceVerificationFlow(
             phase: .challengeReceived,
             request: verificationFlow.request,
-            challenge: Self.mockVisualVerification.challenge,
+            challenge: Self.mockSASChallenge,
             updatedAt: Date()
         )
         return verificationFlow
@@ -824,6 +850,22 @@ actor MockTrixService: TrixService {
         membersByRoomID[roomID, default: []].removeAll { $0.userID.lowercased() == normalizedUserID.lowercased() }
     }
 
+    func leaveGroup(roomID: String, session: TrixSession) async throws {
+        guard let room = roomSummaries.first(where: { $0.id == roomID }),
+              room.kind == .group else {
+            throw TrixClientError.roomUnavailable
+        }
+
+        roomSummaries.removeAll { $0.id == roomID }
+        membersByRoomID.removeValue(forKey: roomID)
+        timelines.removeValue(forKey: roomID)
+        callDescriptorsByRoomID.removeValue(forKey: roomID)
+        typingUserIDsByRoomID.removeValue(forKey: roomID)
+        readMarkersByRoomAndUserID = readMarkersByRoomAndUserID.filter { key, _ in
+            !key.hasPrefix("\(roomID.lowercased())|")
+        }
+    }
+
     func createEncryptedDirectRoom(
         inviteeUserID: String,
         name: String,
@@ -1147,6 +1189,22 @@ actor MockTrixService: TrixService {
         )
     }
 
+    private func mockOwnAccountDevices(userID: String) -> [TrixPeerDeviceIdentity] {
+        publishedOwnDeviceIDs.sorted().map { deviceID in
+            let isTrusted = trustedPeerDeviceIDs.contains(Self.mockDeviceTrustKey(userID: userID, deviceID: deviceID))
+            let fingerprint = Self.mockFingerprint(for: deviceID)
+            return TrixPeerDeviceIdentity(
+                userID: userID,
+                deviceID: deviceID,
+                fingerprint: fingerprint,
+                visualVerification: TrixDeviceVisualVerification.visualFingerprint(fingerprint),
+                trustState: isTrusted ? .trusted : .undecided,
+                isActive: true,
+                isLocalDevice: false
+            )
+        }
+    }
+
     private static let mockVisualVerification = TrixDeviceVisualVerification.visualFingerprint(
         "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
     ) ?? TrixDeviceVisualVerification(
@@ -1162,8 +1220,27 @@ actor MockTrixService: TrixService {
         sourceText: "AABBCCDDEEFF00112233445566778899"
     )
 
+    private static let mockSASChallenge: TrixDeviceVerificationChallenge = .emojis([
+        TrixDeviceVerificationEmoji(symbol: "⭐", description: "Star", position: 0),
+        TrixDeviceVerificationEmoji(symbol: "🌊", description: "Wave", position: 1),
+        TrixDeviceVerificationEmoji(symbol: "🔑", description: "Key", position: 2),
+        TrixDeviceVerificationEmoji(symbol: "🌙", description: "Moon", position: 3),
+        TrixDeviceVerificationEmoji(symbol: "🛡️", description: "Shield", position: 4),
+    ])
+
     private static func mockDeviceTrustKey(userID: String, deviceID: String) -> String {
         "\(userID.lowercased())|\(deviceID)"
+    }
+
+    private static func mockFingerprint(for deviceID: String) -> String {
+        switch deviceID {
+        case "1001":
+            return "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
+        case "2002":
+            return "10:32:54:76:98:BA:DC:FE:01:23:45:67:89:AB:CD:EF"
+        default:
+            return "AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB"
+        }
     }
 
     private static func normalizedTrixUserID(_ userID: String) throws -> String {

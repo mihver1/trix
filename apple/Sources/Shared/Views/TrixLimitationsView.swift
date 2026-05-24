@@ -5,7 +5,6 @@ struct TrixLimitationsView: View {
         "signed-device APNs delivery",
         "server-backed read markers",
         "live XEP-0444 reactions",
-        "server-backed group leave",
         "full app relaunch smoke",
         "persistent encrypted sync tests",
     ]
@@ -64,6 +63,7 @@ struct TrixDeviceVerificationNoticeView: View {
 struct TrixDeviceVerificationStatusView: View {
     @ObservedObject var viewModel: DeviceVerificationViewModel
     @State private var hasCopiedRecoveryKey = false
+    @State private var pendingOwnDeviceRevocation: TrixPeerDeviceIdentity?
 
     let requestVerification: () -> Void
     let acceptRequest: (TrixDeviceVerificationRequest) -> Void
@@ -72,6 +72,7 @@ struct TrixDeviceVerificationStatusView: View {
     let decline: () -> Void
     let cancel: () -> Void
     let trustAccountDevice: (TrixPeerDeviceIdentity) -> Void
+    let revokeOwnDevice: (TrixPeerDeviceIdentity) -> Void
     let setUpRecovery: () -> Void
     let confirmRecoveryKey: () -> Void
     let dismissRecoveryKey: () -> Void
@@ -121,14 +122,12 @@ struct TrixDeviceVerificationStatusView: View {
 
                 if let fingerprint = status.ed25519Fingerprint {
                     DisclosureGroup("Technical local identity") {
-                        LabeledContent {
-                            Text(fingerprint)
-                                .font(.caption.monospaced())
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
-                        } label: {
-                            Text("Raw fingerprint")
-                        }
+                        TrixFingerprintTechnicalText(
+                            title: "Raw fingerprint",
+                            value: TrixFingerprintFormatting.grouped(fingerprint),
+                            unavailableLabel: "Unavailable"
+                        )
+                        .padding(.top, 4)
                     }
                 }
 
@@ -136,7 +135,10 @@ struct TrixDeviceVerificationStatusView: View {
                     devices: viewModel.accountDevices,
                     refreshMessage: viewModel.accountDeviceRefreshMessage,
                     actionInFlight: viewModel.actionInFlight,
-                    trust: trustAccountDevice
+                    trust: trustAccountDevice,
+                    revoke: { device in
+                        pendingOwnDeviceRevocation = device
+                    }
                 )
 
                 if viewModel.isLoading {
@@ -166,6 +168,16 @@ struct TrixDeviceVerificationStatusView: View {
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+        .alert(item: $pendingOwnDeviceRevocation) { device in
+            Alert(
+                title: Text("Revoke this device?"),
+                message: Text("Device \(device.deviceID) will stop receiving future encrypted sends after server state refresh. Messages already delivered to that device cannot be clawed back."),
+                primaryButton: .destructive(Text("Revoke")) {
+                    revokeOwnDevice(device)
+                },
+                secondaryButton: .cancel()
+            )
         }
     }
 
@@ -403,6 +415,7 @@ private struct TrixAccountDeviceManagementView: View {
     let refreshMessage: String?
     let actionInFlight: TrixDeviceVerificationAction?
     let trust: (TrixPeerDeviceIdentity) -> Void
+    let revoke: (TrixPeerDeviceIdentity) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -467,12 +480,31 @@ private struct TrixAccountDeviceManagementView: View {
                     trust(device)
                 }
             )
+
+            if canRevoke(device) {
+                Button(role: .destructive) {
+                    revoke(device)
+                } label: {
+                    Label("Revoke Device", systemImage: "trash")
+                }
+                .buttonStyle(.bordered)
+                .disabled(actionInFlight != nil)
+
+                Text("Future encrypted sends stop targeting this device after the published OMEMO list refreshes. Old delivered ciphertext cannot be removed from it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(.vertical, 4)
     }
 
     private func canTrust(_ device: TrixPeerDeviceIdentity) -> Bool {
         !device.isLocalDevice && device.isActive && !device.canSendEncrypted
+    }
+
+    private func canRevoke(_ device: TrixPeerDeviceIdentity) -> Bool {
+        !device.isLocalDevice && device.isActive
     }
 
     private func deviceIcon(for device: TrixPeerDeviceIdentity) -> String {

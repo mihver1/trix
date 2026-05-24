@@ -12,11 +12,15 @@ struct TrixiOSApp: App {
 
     var body: some Scene {
         WindowGroup {
-            TrixRootView(model: model)
-                .task {
-                    TrixAPNsCoordinator.shared.attach(model: model)
-                    TrixVoIPPushCoordinator.shared.attach(model: model)
-                }
+            if XMPPLiveSmokeRunner.isRequested {
+                EmptyView()
+            } else {
+                TrixRootView(model: model)
+                    .task {
+                        TrixAPNsCoordinator.shared.attach(model: model)
+                        TrixVoIPPushCoordinator.shared.attach(model: model)
+                    }
+            }
         }
     }
 }

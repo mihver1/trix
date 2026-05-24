@@ -112,6 +112,368 @@ final class TrixCallTests: XCTestCase {
     }
 
     @MainActor
+    func testExpiredIncomingInviteProducesIdleLifecycleState() async throws {
+        let callControl = RecordingCallControlService()
+        let descriptors = RecordingCallDescriptorService()
+        let media = RecordingMediaCallService()
+        let viewModel = TrixCallViewModel(
+            callControlService: callControl,
+            callDescriptorService: descriptors,
+            mediaCallService: media
+        )
+        let session = Self.session()
+        let room = Self.room(id: "bob@trix.selfhost.ru", kind: .direct)
+        let mediaKey = try TrixCallMediaKey(
+            keyID: "expired-key",
+            key: "base64-call-key",
+            keyIndex: 0,
+            createdAtUnix: 10
+        )
+        let invite = TrixCallInvite(
+            callID: "expired-call",
+            kind: .directVideo,
+            roomID: room.id,
+            senderID: "bob@trix.selfhost.ru",
+            liveKitRoom: "dm-room",
+            createdAtUnix: 10,
+            expiresAtUnix: 11,
+            mediaKey: mediaKey
+        )
+        await descriptors.appendRemote(.invite(invite), roomID: room.id, senderID: invite.senderID)
+
+        await viewModel.loadRoomCallState(room: room, session: session)
+
+        let state = viewModel.callLifecycleState(roomID: room.id)
+        XCTAssertEqual(state.phase, .idle)
+        XCTAssertNil(state.callID)
+        XCTAssertEqual(state.platformSurfaceState, .none)
+        XCTAssertNil(viewModel.incomingDirectCall(roomID: room.id))
+    }
+
+    @MainActor
+    func testAcceptIncomingDirectCallAndEndTransitionsLifecycleAndClearsIncomingSurface() async throws {
+        let callControl = RecordingCallControlService()
+        let descriptors = RecordingCallDescriptorService()
+        let media = RecordingMediaCallService()
+        let viewModel = TrixCallViewModel(
+            callControlService: callControl,
+            callDescriptorService: descriptors,
+            mediaCallService: media
+        )
+        let session = Self.session()
+        let room = Self.room(id: "bob@trix.selfhost.ru", kind: .direct)
+        let mediaKey = try TrixCallMediaKey(
+            keyID: "incoming-key",
+            key: "base64-call-key",
+            keyIndex: 0,
+            createdAtUnix: 100
+        )
+        let invite = TrixCallInvite(
+            callID: "incoming-call",
+            kind: .directVideo,
+            roomID: room.id,
+            senderID: "bob@trix.selfhost.ru",
+            liveKitRoom: "dm-room",
+            createdAtUnix: 100,
+            expiresAtUnix: UInt64(Date().addingTimeInterval(60).timeIntervalSince1970),
+            mediaKey: mediaKey
+        )
+        await descriptors.appendRemote(.invite(invite), roomID: room.id, senderID: invite.senderID)
+
+        await viewModel.loadRoomCallState(room: room, session: session)
+        let ringingState = viewModel.callLifecycleState(roomID: room.id)
+        XCTAssertEqual(ringingState.phase, .incomingRinging)
+        XCTAssertEqual(ringingState.callID, "incoming-call")
+        XCTAssertEqual(ringingState.kind, .directVideo)
+        XCTAssertEqual(ringingState.platformSurfaceState, .incomingDirectCallBar)
+
+        let incomingCall = try XCTUnwrap(viewModel.incomingDirectCall(roomID: room.id))
+        let accepted = await viewModel.acceptIncomingDirectCall(incomingCall, session: session)
+
+        let activeState = viewModel.callLifecycleState(roomID: room.id)
+        XCTAssertTrue(accepted)
+        XCTAssertEqual(activeState.phase, .active)
+        XCTAssertEqual(activeState.callID, "incoming-call")
+        XCTAssertEqual(activeState.startedAt, Date(timeIntervalSince1970: 10))
+        XCTAssertEqual(activeState.localAudioState, .unmuted)
+        XCTAssertEqual(activeState.localCameraState, .on)
+        XCTAssertEqual(activeState.remoteMediaReadiness, .waiting)
+        XCTAssertEqual(activeState.platformSurfaceState, .directCallBar)
+        XCTAssertNil(viewModel.incomingDirectCall(roomID: room.id))
+
+        let ended = await viewModel.endCall(roomID: room.id, session: session)
+        let endedState = viewModel.callLifecycleState(roomID: room.id)
+        XCTAssertTrue(ended)
+        XCTAssertEqual(endedState.phase, .ended)
+        XCTAssertEqual(endedState.callID, "incoming-call")
+        XCTAssertEqual(endedState.platformSurfaceState, .none)
+        XCTAssertNil(viewModel.currentCall(roomID: room.id, kind: .directVideo))
+    }
+
+    @MainActor
+    func testStartingCallInAnotherRoomEndsPreviousLifecycleAndActivatesNewRoom() async throws {
+        let callControl = RecordingCallControlService()
+        let descriptors = RecordingCallDescriptorService()
+        let media = RecordingMediaCallService()
+        let viewModel = TrixCallViewModel(
+            callControlService: callControl,
+            callDescriptorService: descriptors,
+            mediaCallService: media
+        )
+        let session = Self.session()
+
+        await viewModel.startDirectVideoCall(
+            peerUserID: "bob@trix.selfhost.ru",
+            roomID: "bob@trix.selfhost.ru",
+            session: session
+        )
+        await viewModel.startDirectVideoCall(
+            peerUserID: "carol@trix.selfhost.ru",
+            roomID: "carol@trix.selfhost.ru",
+            session: session
+        )
+
+        let firstState = viewModel.callLifecycleState(roomID: "bob@trix.selfhost.ru")
+        let secondState = viewModel.callLifecycleState(roomID: "carol@trix.selfhost.ru")
+        let endedCallIDs = await callControl.endedCallIDs()
+        let disconnectedCallIDs = await media.disconnectedCallIDs()
+        XCTAssertEqual(firstState.phase, .ended)
+        XCTAssertEqual(firstState.callID, "call-1")
+        XCTAssertEqual(secondState.phase, .active)
+        XCTAssertEqual(secondState.callID, "call-2")
+        XCTAssertEqual(viewModel.currentCall(roomID: "carol@trix.selfhost.ru", kind: .directVideo)?.callID, "call-2")
+        XCTAssertEqual(endedCallIDs, ["call-1"])
+        XCTAssertEqual(disconnectedCallIDs, ["call-1"])
+    }
+
+    @MainActor
+    func testGroupVoiceLifecycleConvergesParticipantsFromLatestDescriptor() async throws {
+        let callControl = RecordingCallControlService()
+        let descriptors = RecordingCallDescriptorService()
+        let media = RecordingMediaCallService()
+        let viewModel = TrixCallViewModel(
+            callControlService: callControl,
+            callDescriptorService: descriptors,
+            mediaCallService: media
+        )
+        let session = Self.session()
+        let room = Self.room(id: "friends@conference.trix.selfhost.ru", kind: .group)
+        let mediaKey = try TrixCallMediaKey(
+            keyID: "group-key",
+            key: "base64-group-call-key",
+            keyIndex: 0,
+            createdAtUnix: 100
+        )
+        let staleState = TrixVoiceRoomState(
+            callID: "group-call",
+            roomID: room.id,
+            activeParticipantIDs: ["alice@trix.selfhost.ru"],
+            mediaKey: mediaKey,
+            updatedAtUnix: 100
+        )
+        let latestState = TrixVoiceRoomState(
+            callID: "group-call",
+            roomID: room.id,
+            activeParticipantIDs: [
+                " bob@trix.selfhost.ru ",
+                "BOB@trix.selfhost.ru",
+                "carol@trix.selfhost.ru",
+            ],
+            mediaKey: mediaKey,
+            updatedAtUnix: 200
+        )
+        await descriptors.appendRemote(.voiceRoomState(staleState), roomID: room.id, senderID: "alice@trix.selfhost.ru")
+        await descriptors.appendRemote(.voiceRoomState(latestState), roomID: room.id, senderID: "bob@trix.selfhost.ru")
+
+        await viewModel.loadRoomCallState(room: room, session: session)
+
+        let state = viewModel.callLifecycleState(roomID: room.id)
+        XCTAssertEqual(state.phase, .active)
+        XCTAssertEqual(state.callID, "group-call")
+        XCTAssertEqual(state.kind, .groupVoice)
+        XCTAssertEqual(state.participantIDs, ["bob@trix.selfhost.ru", "carol@trix.selfhost.ru"])
+        XCTAssertEqual(state.platformSurfaceState, .groupVoiceRoomBar)
+    }
+
+    @MainActor
+    func testDirectVideoMediaControlsUpdateLifecycleWithoutDisconnecting() async throws {
+        let callControl = RecordingCallControlService()
+        let descriptors = RecordingCallDescriptorService()
+        let media = RecordingMediaCallService()
+        let viewModel = TrixCallViewModel(
+            callControlService: callControl,
+            callDescriptorService: descriptors,
+            mediaCallService: media
+        )
+        let session = Self.session()
+        let roomID = "bob@trix.selfhost.ru"
+
+        await viewModel.startDirectVideoCall(
+            peerUserID: "bob@trix.selfhost.ru",
+            roomID: roomID,
+            session: session
+        )
+
+        let didMuteMicrophone = await viewModel.setMicrophoneMuted(true, roomID: roomID)
+        let didDisableCamera = await viewModel.setCameraEnabled(false, roomID: roomID)
+        let didUnmuteMicrophone = await viewModel.setMicrophoneMuted(false, roomID: roomID)
+        let didEnableCamera = await viewModel.setCameraEnabled(true, roomID: roomID)
+        XCTAssertTrue(didMuteMicrophone)
+        XCTAssertTrue(didDisableCamera)
+        XCTAssertTrue(didUnmuteMicrophone)
+        XCTAssertTrue(didEnableCamera)
+
+        let state = viewModel.callLifecycleState(roomID: roomID)
+        let microphoneChanges = await media.microphoneChanges()
+        let cameraChanges = await media.cameraChanges()
+        let disconnectedCallIDs = await media.disconnectedCallIDs()
+        XCTAssertEqual(state.phase, .active)
+        XCTAssertEqual(state.localAudioState, .unmuted)
+        XCTAssertEqual(state.localCameraState, .on)
+        XCTAssertEqual(microphoneChanges, [
+            RecordingMediaChange(callID: "call-1", enabled: false),
+            RecordingMediaChange(callID: "call-1", enabled: true),
+        ])
+        XCTAssertEqual(cameraChanges, [
+            RecordingMediaChange(callID: "call-1", enabled: false),
+            RecordingMediaChange(callID: "call-1", enabled: true),
+        ])
+        XCTAssertEqual(disconnectedCallIDs, [])
+    }
+
+    @MainActor
+    func testActiveMediaStateMapsPublishSubscribeCapabilities() async throws {
+        let callControl = RecordingCallControlService(
+            directVideoAuthorization: RecordingCallControlService.authorization(
+                kind: .directVideo,
+                liveKitRoom: "dm-room",
+                publishAudio: false,
+                publishVideo: true,
+                subscribeAudio: false,
+                subscribeVideo: false
+            )
+        )
+        let descriptors = RecordingCallDescriptorService()
+        let media = RecordingMediaCallService()
+        let viewModel = TrixCallViewModel(
+            callControlService: callControl,
+            callDescriptorService: descriptors,
+            mediaCallService: media
+        )
+
+        await viewModel.startDirectVideoCall(
+            peerUserID: "bob@trix.selfhost.ru",
+            roomID: "bob@trix.selfhost.ru",
+            session: Self.session()
+        )
+
+        let state = viewModel.callLifecycleState(roomID: "bob@trix.selfhost.ru")
+        XCTAssertEqual(state.phase, .active)
+        XCTAssertEqual(state.localAudioState, .unavailable)
+        XCTAssertEqual(state.localCameraState, .on)
+        XCTAssertEqual(state.remoteMediaReadiness, .none)
+    }
+
+    func testForegroundCallCueRingsOnlyForIncomingDirectCalls() {
+        let incomingDirect = TrixCallLifecycleState(
+            phase: .incomingRinging,
+            roomID: "bob@trix.selfhost.ru",
+            callID: "incoming-call",
+            kind: .directVideo,
+            startedAt: Date(timeIntervalSince1970: 100),
+            updatedAt: Date(timeIntervalSince1970: 101),
+            expiresAt: Date(timeIntervalSince1970: 160),
+            participantIDs: ["bob@trix.selfhost.ru"],
+            localAudioState: .unavailable,
+            localCameraState: .off,
+            remoteMediaReadiness: .none,
+            platformSurfaceState: .incomingDirectCallBar
+        )
+        let groupVoice = TrixCallLifecycleState(
+            phase: .active,
+            roomID: "friends@conference.trix.selfhost.ru",
+            callID: "group-call",
+            kind: .groupVoice,
+            startedAt: nil,
+            updatedAt: Date(timeIntervalSince1970: 200),
+            expiresAt: nil,
+            participantIDs: ["bob@trix.selfhost.ru"],
+            localAudioState: .unavailable,
+            localCameraState: .unavailable,
+            remoteMediaReadiness: .none,
+            platformSurfaceState: .groupVoiceRoomBar
+        )
+
+        XCTAssertEqual(incomingDirect.foregroundCue, .incomingDirectCall(callID: "incoming-call"))
+        XCTAssertEqual(groupVoice.foregroundCue, .none)
+    }
+
+    func testRoomListCallIndicatorShowsIncomingAndActiveDirectCalls() {
+        let incomingState = TrixCallLifecycleState(
+            phase: .incomingRinging,
+            roomID: "bob@trix.selfhost.ru",
+            callID: "incoming-call",
+            kind: .directVideo,
+            startedAt: Date(timeIntervalSince1970: 100),
+            updatedAt: Date(timeIntervalSince1970: 101),
+            expiresAt: Date(timeIntervalSince1970: 160),
+            participantIDs: ["bob@trix.selfhost.ru"],
+            localAudioState: .unavailable,
+            localCameraState: .off,
+            remoteMediaReadiness: .none,
+            platformSurfaceState: .incomingDirectCallBar
+        )
+        let activeState = TrixCallLifecycleState(
+            phase: .active,
+            roomID: "carol@trix.selfhost.ru",
+            callID: "active-call",
+            kind: .directVideo,
+            startedAt: Date(timeIntervalSince1970: 120),
+            updatedAt: Date(timeIntervalSince1970: 121),
+            expiresAt: nil,
+            participantIDs: ["alice@trix.selfhost.ru", "carol@trix.selfhost.ru"],
+            localAudioState: .unmuted,
+            localCameraState: .on,
+            remoteMediaReadiness: .waiting,
+            platformSurfaceState: .directCallBar
+        )
+
+        XCTAssertEqual(TrixRoomCallIndicator(state: incomingState)?.kind, .incomingDirect)
+        XCTAssertEqual(TrixRoomCallIndicator(state: incomingState)?.title, "Incoming")
+        XCTAssertTrue(TrixRoomCallIndicator(state: incomingState)?.isRinging == true)
+        XCTAssertEqual(TrixRoomCallIndicator(state: activeState)?.kind, .directCall)
+        XCTAssertEqual(TrixRoomCallIndicator(state: activeState)?.title, "In call")
+        XCTAssertFalse(TrixRoomCallIndicator(state: activeState)?.isRinging == true)
+    }
+
+    func testRoomListCallIndicatorShowsJoinableGroupVoiceWithoutRinging() {
+        let state = TrixCallLifecycleState(
+            phase: .active,
+            roomID: "friends@conference.trix.selfhost.ru",
+            callID: "group-call",
+            kind: .groupVoice,
+            startedAt: nil,
+            updatedAt: Date(timeIntervalSince1970: 200),
+            expiresAt: nil,
+            participantIDs: [
+                "bob@trix.selfhost.ru",
+                "carol@trix.selfhost.ru",
+            ],
+            localAudioState: .unavailable,
+            localCameraState: .off,
+            remoteMediaReadiness: .none,
+            platformSurfaceState: .groupVoiceRoomBar
+        )
+
+        let indicator = TrixRoomCallIndicator(state: state)
+
+        XCTAssertEqual(indicator?.kind, .groupVoice)
+        XCTAssertEqual(indicator?.title, "Voice live")
+        XCTAssertEqual(indicator?.participantCount, 2)
+        XCTAssertFalse(indicator?.isRinging == true)
+    }
+
+    @MainActor
     func testPrepareDirectVideoCallSendsInviteDescriptorBeforeMediaConnect() async throws {
         let callControl = RecordingCallControlService()
         let descriptors = RecordingCallDescriptorService()
@@ -131,10 +493,14 @@ final class TrixCallTests: XCTestCase {
 
         let sentDescriptors = await descriptors.sentDescriptors()
         let mediaConnects = await media.connectedCallIDs()
+        let state = viewModel.callLifecycleState(roomID: "bob@trix.selfhost.ru")
         XCTAssertNotNil(prepared)
         XCTAssertEqual(sentDescriptors.map(\.descriptor.event), [.invite])
         XCTAssertEqual(sentDescriptors.first?.roomID, "bob@trix.selfhost.ru")
         XCTAssertEqual(mediaConnects, [])
+        XCTAssertEqual(state.phase, .outgoingRinging)
+        XCTAssertEqual(state.callID, "call-1")
+        XCTAssertEqual(state.kind, .directVideo)
     }
 
     @MainActor
@@ -458,14 +824,24 @@ private func deleteCallTestKeychainItem(service: String) {
 }
 
 private actor RecordingCallControlService: TrixCallControlService {
+    private let directVideoAuthorization: TrixCallJoinAuthorization?
     private var endedIDs: [String] = []
     private var joinedDirectIDs: [String] = []
+    private var preparedDirectCount = 0
+
+    init(directVideoAuthorization: TrixCallJoinAuthorization? = nil) {
+        self.directVideoAuthorization = directVideoAuthorization
+    }
 
     func prepareDirectVideoCall(
         peerUserID: String,
         session: TrixSession
     ) async throws -> TrixCallJoinAuthorization {
-        authorization(kind: .directVideo, liveKitRoom: "dm-room")
+        preparedDirectCount += 1
+        if let directVideoAuthorization {
+            return directVideoAuthorization
+        }
+        return authorization(callID: "call-\(preparedDirectCount)", kind: .directVideo, liveKitRoom: "dm-room")
     }
 
     func joinDirectVideoCall(
@@ -504,10 +880,14 @@ private actor RecordingCallControlService: TrixCallControlService {
         joinedDirectIDs
     }
 
-    private func authorization(
+    static func authorization(
         callID: String = "call-1",
         kind: TrixCallKind,
-        liveKitRoom: String
+        liveKitRoom: String,
+        publishAudio: Bool = true,
+        publishVideo: Bool? = nil,
+        subscribeAudio: Bool = true,
+        subscribeVideo: Bool? = nil
     ) -> TrixCallJoinAuthorization {
         TrixCallJoinAuthorization(
             callID: callID,
@@ -523,11 +903,19 @@ private actor RecordingCallControlService: TrixCallControlService {
                 expiresAtUnix: 200
             ),
             e2eeRequired: true,
-            publishAudio: true,
-            publishVideo: kind == .directVideo,
-            subscribeAudio: true,
-            subscribeVideo: kind == .directVideo
+            publishAudio: publishAudio,
+            publishVideo: publishVideo ?? (kind == .directVideo),
+            subscribeAudio: subscribeAudio,
+            subscribeVideo: subscribeVideo ?? (kind == .directVideo)
         )
+    }
+
+    private func authorization(
+        callID: String = "call-1",
+        kind: TrixCallKind,
+        liveKitRoom: String
+    ) -> TrixCallJoinAuthorization {
+        Self.authorization(callID: callID, kind: kind, liveKitRoom: liveKitRoom)
     }
 }
 
@@ -715,10 +1103,17 @@ private actor DelayedGroupVoiceDescriptorService: TrixCallDescriptorService {
     }
 }
 
+private struct RecordingMediaChange: Equatable {
+    let callID: String
+    let enabled: Bool
+}
+
 private actor RecordingMediaCallService: TrixMediaCallService {
     private var connectedIDs: [String] = []
     private var connectedKeys: [TrixCallMediaKey] = []
     private var disconnectedIDs: [String] = []
+    private var microphoneUpdates: [RecordingMediaChange] = []
+    private var cameraUpdates: [RecordingMediaChange] = []
 
     func connect(
         authorization: TrixCallJoinAuthorization,
@@ -730,12 +1125,24 @@ private actor RecordingMediaCallService: TrixMediaCallService {
             callID: authorization.callID,
             kind: authorization.kind,
             liveKitRoom: authorization.liveKitRoom,
-            startedAt: Date(timeIntervalSince1970: 10)
+            startedAt: Date(timeIntervalSince1970: 10),
+            publishesLocalAudio: authorization.publishAudio,
+            publishesLocalVideo: authorization.publishVideo,
+            subscribesRemoteAudio: authorization.subscribeAudio,
+            subscribesRemoteVideo: authorization.subscribeVideo
         )
     }
 
     func disconnect(callID: String) async {
         disconnectedIDs.append(callID)
+    }
+
+    func setMicrophoneEnabled(_ enabled: Bool, callID: String) async throws {
+        microphoneUpdates.append(RecordingMediaChange(callID: callID, enabled: enabled))
+    }
+
+    func setCameraEnabled(_ enabled: Bool, callID: String) async throws {
+        cameraUpdates.append(RecordingMediaChange(callID: callID, enabled: enabled))
     }
 
     func connectedCallIDs() -> [String] {
@@ -748,5 +1155,13 @@ private actor RecordingMediaCallService: TrixMediaCallService {
 
     func disconnectedCallIDs() -> [String] {
         disconnectedIDs
+    }
+
+    func microphoneChanges() -> [RecordingMediaChange] {
+        microphoneUpdates
+    }
+
+    func cameraChanges() -> [RecordingMediaChange] {
+        cameraUpdates
     }
 }

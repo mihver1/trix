@@ -21,6 +21,7 @@ from pathlib import Path
 
 
 HOST = os.environ.get("TRIX_XMPP_OPERATOR_HOST", "trix.selfhost.ru")
+CONFERENCE_HOST = os.environ.get("TRIX_XMPP_CONFERENCE_HOST", f"conference.{HOST}")
 API_URL = os.environ.get("TRIX_XMPP_API_URL", "http://127.0.0.1:5280/api").rstrip("/")
 BIND = os.environ.get("TRIX_INVITE_BIND", "127.0.0.1")
 PORT = int(os.environ.get("TRIX_INVITE_PORT", "8091"))
@@ -37,9 +38,20 @@ TELEGRAM_FILE_BASE_URL = os.environ.get("TRIX_TELEGRAM_FILE_BASE_URL", "https://
 TELEGRAM_FAKE = os.environ.get("TRIX_TELEGRAM_FAKE", "0") == "1"
 STICKER_FILE_TOKEN_TTL_SECONDS = int(os.environ.get("TRIX_STICKER_FILE_TOKEN_TTL_SECONDS", "900"))
 LOCALPART_RE = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,30}[a-z0-9])?$")
+MUC_LOCALPART_RE = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$")
 MAX_BODY_BYTES = 16 * 1024
 MAX_STICKER_BYTES = 8 * 1024 * 1024
 TELEGRAM_PACK_NAME_RE = re.compile(r"^[A-Za-z0-9_]{1,128}$")
+MAX_INVITE_METADATA_RETENTION_SECONDS = 30 * 24 * 60 * 60
+INVITE_METADATA_RETENTION_SECONDS = MAX_INVITE_METADATA_RETENTION_SECONDS
+try:
+    INVITE_METADATA_RETENTION_SECONDS = int(
+        os.environ.get("TRIX_INVITE_METADATA_RETENTION_SECONDS", str(INVITE_METADATA_RETENTION_SECONDS))
+    )
+except ValueError:
+    raise SystemExit("TRIX_INVITE_METADATA_RETENTION_SECONDS must be an integer")
+if INVITE_METADATA_RETENTION_SECONDS > MAX_INVITE_METADATA_RETENTION_SECONDS:
+    raise SystemExit("TRIX_INVITE_METADATA_RETENTION_SECONDS must be no greater than 2592000")
 
 
 class InviteError(Exception):
@@ -128,6 +140,25 @@ class InviteStore:
                 invite["redeemed_user"] = None
                 self._save(store)
 
+    def purge_metadata(self, retention_seconds=INVITE_METADATA_RETENTION_SECONDS, now_epoch=None):
+        cutoff_epoch = (now_epoch if now_epoch is not None else time.time()) - retention_seconds
+        with self.lock:
+            store = self._load()
+            retained = []
+            removed = 0
+            for invite in store.get("invites", []):
+                if should_purge_invite_metadata(invite, cutoff_epoch):
+                    removed += 1
+                else:
+                    retained.append(invite)
+            if removed:
+                store["invites"] = retained
+                self._save(store)
+            return {
+                "removed": removed,
+                "remaining": len(retained),
+            }
+
     def _load(self):
         if not self.path.exists() or self.path.stat().st_size == 0:
             return {"version": 1, "invites": []}
@@ -191,6 +222,10 @@ class Handler(BaseHTTPRequestHandler):
                 issuer = self.require_account_auth()
                 self.change_account_password(issuer)
                 return
+            if self.path == "/v1/groups/leave":
+                issuer = self.require_account_auth()
+                self.leave_group(issuer)
+                return
             if self.path == "/v1/stickers/telegram/packs":
                 self.require_account_auth()
                 self.import_telegram_sticker_pack()
@@ -243,6 +278,24 @@ class Handler(BaseHTTPRequestHandler):
             {
                 "user_id": issuer,
                 "changed_at": now_iso(),
+            },
+        )
+
+    def leave_group(self, issuer):
+        body = self.read_json_body()
+        room_localpart, room_host = normalized_muc_room_parts(body.get("room_id"))
+        try:
+            remove_user_from_muc(room_localpart, issuer)
+        except InviteError:
+            raise
+        except Exception:
+            raise InviteError(HTTPStatus.BAD_GATEWAY, "group_leave_failed", "Group leave failed.")
+
+        self.write_json(
+            HTTPStatus.OK,
+            {
+                "room_id": f"{room_localpart}@{room_host}",
+                "left": True,
             },
         )
 
@@ -417,6 +470,68 @@ def change_account_password(localpart, new_password):
             "newpass": new_password,
         },
     )
+
+
+def remove_user_from_muc(room_localpart, user_jid):
+    affiliation = muc_affiliation(room_localpart, user_jid)
+    if affiliation == "owner":
+        raise InviteError(
+            HTTPStatus.CONFLICT,
+            "owner_leave_requires_transfer",
+            "Room owners must transfer ownership before leaving.",
+        )
+    if affiliation not in {"admin", "member"}:
+        raise InviteError(HTTPStatus.FORBIDDEN, "not_group_member", "Account is not a member of this group.")
+
+    user, host = normalized_jid_parts(user_jid)
+    if DRY_RUN:
+        return
+    response = api_post(
+        "set_room_affiliation",
+        {
+            "room": room_localpart,
+            "service": CONFERENCE_HOST,
+            "user": user,
+            "host": host,
+            "affiliation": "none",
+        },
+    )
+    if not api_success_response(response):
+        raise RuntimeError("ejabberd set_room_affiliation returned failure")
+
+
+def muc_affiliation(room_localpart, user_jid):
+    if DRY_RUN:
+        return "admin"
+    response = api_post(
+        "get_room_affiliation",
+        {
+            "room": room_localpart,
+            "service": CONFERENCE_HOST,
+            "jid": user_jid,
+        },
+    )
+    parsed = parsed_api_response(response)
+    if isinstance(parsed, dict):
+        affiliation = parsed.get("affiliation")
+    else:
+        affiliation = parsed
+    return str(affiliation or "none").strip().lower()
+
+
+def api_success_response(response):
+    parsed = parsed_api_response(response)
+    return parsed in (None, "", 0)
+
+
+def parsed_api_response(response):
+    normalized = (response or "").strip()
+    if not normalized or normalized == '""':
+        return None
+    try:
+        return json.loads(normalized)
+    except json.JSONDecodeError:
+        return normalized.strip('"')
 
 
 def api_post(command, payload):
@@ -774,6 +889,16 @@ def normalized_jid_parts(value):
     return normalize_localpart(localpart), host
 
 
+def normalized_muc_room_parts(value):
+    room_id = normalized_required_string(value, "room_id").lower()
+    if room_id.count("@") != 1:
+        raise InviteError(HTTPStatus.BAD_REQUEST, "invalid_room", "Group room id must be a local MUC JID.")
+    localpart, host = room_id.split("@", 1)
+    if host != CONFERENCE_HOST or not MUC_LOCALPART_RE.fullmatch(localpart):
+        raise InviteError(HTTPStatus.BAD_REQUEST, "invalid_room", "Group room id must be a local MUC JID.")
+    return localpart, host
+
+
 def normalized_required_string(value, field):
     normalized = normalized_optional_string(value)
     if normalized is None:
@@ -803,8 +928,29 @@ def iso_from_epoch(epoch):
 
 
 def is_expired(expires_at):
-    parsed = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-    return parsed.timestamp() <= time.time()
+    parsed_epoch = parse_iso_epoch(expires_at)
+    return parsed_epoch is not None and parsed_epoch <= time.time()
+
+
+def should_purge_invite_metadata(invite, cutoff_epoch):
+    redeemed_epoch = parse_iso_epoch(invite.get("redeemed_at"))
+    if redeemed_epoch is not None:
+        return redeemed_epoch <= cutoff_epoch
+
+    expires_epoch = parse_iso_epoch(invite.get("expires_at"))
+    return expires_epoch is not None and expires_epoch <= cutoff_epoch
+
+
+def parse_iso_epoch(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
 
 
 def ensure_safe_configuration():
@@ -818,6 +964,21 @@ def ensure_safe_configuration():
 
 
 def main():
+    if len(sys.argv) > 1:
+        if sys.argv == [sys.argv[0], "--purge-invite-metadata"]:
+            if INVITE_METADATA_RETENTION_SECONDS <= 0:
+                raise SystemExit("TRIX_INVITE_METADATA_RETENTION_SECONDS must be greater than 0")
+            result = store.purge_metadata(INVITE_METADATA_RETENTION_SECONDS)
+            print(
+                f"invite_metadata_purge removed={result['removed']} remaining={result['remaining']}",
+                flush=True,
+            )
+            return
+        raise SystemExit(
+            "usage: invite-registration-server.py [--purge-invite-metadata] (configure "
+            "TRIX_INVITE_METADATA_RETENTION_SECONDS to set purge window)"
+        )
+
     ensure_safe_configuration()
     httpd = ThreadingHTTPServer((BIND, PORT), Handler)
     print(f"invite_registration_server=ready bind={BIND} port={PORT} store={STORE_PATH}", flush=True)

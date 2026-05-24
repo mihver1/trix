@@ -69,24 +69,34 @@ struct TrixStartupRestoreView: View {
 #if os(iOS)
 private struct TrixWorkspaceView: View {
     @ObservedObject var model: TrixAppModel
+    @ObservedObject private var callViewModel: TrixCallViewModel
     @Environment(\.scenePhase) private var scenePhase
 
-    var body: some View {
-        TabView {
-            NavigationStack {
-                TrixRoomListView(model: model, mode: .phoneInbox)
-                    .navigationTitle("Chats")
-            }
-            .tabItem {
-                Label("Chats", systemImage: "bubble.left.and.bubble.right.fill")
-            }
+    init(model: TrixAppModel) {
+        self.model = model
+        self._callViewModel = ObservedObject(wrappedValue: model.callViewModel)
+    }
 
-            NavigationStack {
-                TrixSettingsView(model: model)
-                    .navigationTitle("Settings")
-            }
-            .tabItem {
-                Label("Settings", systemImage: "gearshape.fill")
+    var body: some View {
+        VStack(spacing: 0) {
+            TrixActiveCallSurfaceHost(model: model, placement: .workspace)
+
+            TabView {
+                NavigationStack {
+                    TrixRoomListView(model: model, mode: .phoneInbox)
+                        .navigationTitle("Chats")
+                }
+                .tabItem {
+                    Label("Chats", systemImage: "bubble.left.and.bubble.right.fill")
+                }
+
+                NavigationStack {
+                    TrixSettingsView(model: model)
+                        .navigationTitle("Settings")
+                }
+                .tabItem {
+                    Label("Settings", systemImage: "gearshape.fill")
+                }
             }
         }
         .tint(TrixDesign.accent)
@@ -96,21 +106,31 @@ private struct TrixWorkspaceView: View {
                 return
             }
 
-            await model.runForegroundRefreshLoop()
+            await model.runForegroundRefreshLoop(reportingCallStateErrorsOnFirstRefresh: true)
         }
     }
 }
 #else
 private struct TrixWorkspaceView: View {
     @ObservedObject var model: TrixAppModel
+    @ObservedObject private var callViewModel: TrixCallViewModel
     @Environment(\.scenePhase) private var scenePhase
 
+    init(model: TrixAppModel) {
+        self.model = model
+        self._callViewModel = ObservedObject(wrappedValue: model.callViewModel)
+    }
+
     var body: some View {
-        NavigationSplitView {
-            TrixRoomListView(model: model, mode: .sidebar)
-                .navigationTitle("Trix")
-        } detail: {
-            TrixWorkspaceDetailView(model: model)
+        VStack(spacing: 0) {
+            TrixActiveCallSurfaceHost(model: model, placement: .workspace)
+
+            NavigationSplitView {
+                TrixRoomListView(model: model, mode: .sidebar)
+                    .navigationTitle("Trix")
+            } detail: {
+                TrixWorkspaceDetailView(model: model)
+            }
         }
         .tint(TrixDesign.accent)
         .task(id: scenePhase) {
