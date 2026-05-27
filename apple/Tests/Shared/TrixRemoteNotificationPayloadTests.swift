@@ -94,4 +94,22 @@ final class TrixRemoteNotificationPayloadTests: XCTestCase {
         XCTAssertFalse(payload.isSyncNotification)
         XCTAssertFalse(payload.presentsRemoteNotification)
     }
+
+    func testForegroundPresentationOnlyAllowsLocalUnreadNotifications() {
+        XCTAssertTrue(
+            TrixUserNotificationPresentation.shouldPresentForegroundNotification(userInfo: [
+                "trix": [
+                    "type": "local-unread",
+                    "thread": "bob@trix.selfhost.ru",
+                ],
+            ])
+        )
+        XCTAssertFalse(
+            TrixUserNotificationPresentation.shouldPresentForegroundNotification(userInfo: [
+                "trix": [
+                    "type": "sync",
+                ],
+            ])
+        )
+    }
 }

@@ -1,12 +1,26 @@
 import AppKit
 import UserNotifications
 
-final class TrixMacAppDelegate: NSObject, NSApplicationDelegate {
+final class TrixMacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UNUserNotificationCenter.current().delegate = self
         NSApplication.shared.registerForRemoteNotifications(matching: [.alert, .badge, .sound])
         Task { @MainActor in
             await TrixAPNsCoordinator.shared.requestUserNotificationAuthorization()
         }
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        let userInfo = notification.request.content.userInfo
+        completionHandler(
+            TrixUserNotificationPresentation.shouldPresentForegroundNotification(userInfo: userInfo)
+                ? TrixUserNotificationPresentation.foregroundOptions
+                : []
+        )
     }
 
     func application(

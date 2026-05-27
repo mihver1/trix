@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct TrixMacRootView: View {
@@ -27,6 +28,7 @@ private struct TrixMacWorkspaceView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
     @State private var isShowingNewRoom = false
+    @State private var isWorkspaceWindowActive = true
 
     init(model: TrixAppModel) {
         self.model = model
@@ -67,6 +69,11 @@ private struct TrixMacWorkspaceView: View {
         .sheet(isPresented: $isShowingNewRoom) {
             TrixNewRoomView(model: model)
         }
+        .background {
+            TrixMacWindowActivityObserver { isActive in
+                isWorkspaceWindowActive = isActive
+            }
+        }
         .task(id: scenePhase) {
             await model.setApplicationIsActive(scenePhase == .active)
             guard scenePhase == .active else {
@@ -86,11 +93,139 @@ private struct TrixMacWorkspaceView: View {
     }
 
     private var activeCallWindowToken: String? {
-        guard scenePhase != .active else {
+        guard !isWorkspaceWindowActive else {
             return nil
         }
 
         return TrixActiveCallPresentation.presentation(model: model)?.id
+    }
+}
+
+private struct TrixMacWindowActivityObserver: NSViewRepresentable {
+    let onChange: (Bool) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onChange: onChange)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        context.coordinator.attachSoon(to: view)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.onChange = onChange
+        context.coordinator.attachSoon(to: nsView)
+    }
+
+    @MainActor
+    final class Coordinator: @unchecked Sendable {
+        var onChange: (Bool) -> Void
+        private weak var observedWindow: NSWindow?
+        private var observers: [NSObjectProtocol] = []
+
+        init(onChange: @escaping (Bool) -> Void) {
+            self.onChange = onChange
+        }
+
+        func attachSoon(to view: NSView) {
+            DispatchQueue.main.async { @MainActor [weak self, weak view] in
+                guard let self, let window = view?.window else {
+                    return
+                }
+
+                self.attach(to: window)
+            }
+        }
+
+        private func attach(to window: NSWindow) {
+            guard observedWindow !== window else {
+                publish(window)
+                return
+            }
+
+            removeObservers()
+            observedWindow = window
+
+            let center = NotificationCenter.default
+            observers = [
+                center.addObserver(
+                    forName: NSWindow.didBecomeKeyNotification,
+                    object: window,
+                    queue: .main
+                ) { [weak self] _ in
+                    Task { @MainActor in
+                        self?.publishObservedWindow()
+                    }
+                },
+                center.addObserver(
+                    forName: NSWindow.didResignKeyNotification,
+                    object: window,
+                    queue: .main
+                ) { [weak self] _ in
+                    Task { @MainActor in
+                        self?.publishObservedWindow()
+                    }
+                },
+                center.addObserver(
+                    forName: NSWindow.didMiniaturizeNotification,
+                    object: window,
+                    queue: .main
+                ) { [weak self] _ in
+                    Task { @MainActor in
+                        self?.publishObservedWindow()
+                    }
+                },
+                center.addObserver(
+                    forName: NSWindow.didDeminiaturizeNotification,
+                    object: window,
+                    queue: .main
+                ) { [weak self] _ in
+                    Task { @MainActor in
+                        self?.publishObservedWindow()
+                    }
+                },
+                center.addObserver(
+                    forName: NSApplication.didBecomeActiveNotification,
+                    object: NSApplication.shared,
+                    queue: .main
+                ) { [weak self] _ in
+                    Task { @MainActor in
+                        self?.publishObservedWindow()
+                    }
+                },
+                center.addObserver(
+                    forName: NSApplication.didResignActiveNotification,
+                    object: NSApplication.shared,
+                    queue: .main
+                ) { [weak self] _ in
+                    Task { @MainActor in
+                        self?.publishObservedWindow()
+                    }
+                },
+            ]
+
+            publish(window)
+        }
+
+        private func publishObservedWindow() {
+            guard let observedWindow else {
+                return
+            }
+
+            publish(observedWindow)
+        }
+
+        private func publish(_ window: NSWindow) {
+            onChange(NSApplication.shared.isActive && window.isKeyWindow && !window.isMiniaturized)
+        }
+
+        private func removeObservers() {
+            let center = NotificationCenter.default
+            observers.forEach(center.removeObserver)
+            observers.removeAll()
+        }
     }
 }
 

@@ -156,3 +156,35 @@ final class TrixAPNsCoordinator {
         try? await notificationCenter.add(request)
     }
 }
+
+enum TrixUserNotificationPresentation {
+    static func shouldPresentForegroundNotification(userInfo: [AnyHashable: Any]) -> Bool {
+        guard let trix = stringKeyedDictionary(userInfo["trix"]),
+              trix["type"] as? String == "local-unread" else {
+            return false
+        }
+
+        return true
+    }
+
+    static var foregroundOptions: UNNotificationPresentationOptions {
+        [.banner, .sound, .badge]
+    }
+
+    private static func stringKeyedDictionary(_ value: Any?) -> [String: Any]? {
+        if let dictionary = value as? [String: Any] {
+            return dictionary
+        }
+
+        if let dictionary = value as? [AnyHashable: Any] {
+            return dictionary.reduce(into: [:]) { partialResult, pair in
+                guard let key = pair.key as? String else {
+                    return
+                }
+                partialResult[key] = pair.value
+            }
+        }
+
+        return nil
+    }
+}

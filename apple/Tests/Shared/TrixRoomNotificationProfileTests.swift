@@ -104,6 +104,46 @@ final class TrixRoomNotificationPlannerTests: XCTestCase {
         XCTAssertNil(nonMentionRequest)
     }
 
+    func testForegroundNotificationExcludesOpenRoomButKeepsOtherUnreadRooms() {
+        let openRoom = Self.room(id: "alice@trix.selfhost.ru", unreadCount: 1, timestamp: 2)
+        let otherRoom = Self.room(id: "bob@trix.selfhost.ru", unreadCount: 1, timestamp: 2)
+        let payload = Self.silentPayload()
+
+        let mixedRequest = TrixRoomNotificationPlanner.localNotificationRequest(
+            candidates: [
+                TrixRoomNotificationCandidate(
+                    room: openRoom,
+                    profile: .defaultProfile,
+                    hasMention: false
+                ),
+                TrixRoomNotificationCandidate(
+                    room: otherRoom,
+                    profile: .defaultProfile,
+                    hasMention: false
+                ),
+            ],
+            payload: payload,
+            badgeCount: 2,
+            excludingRoomID: openRoom.id
+        )
+        let openOnlyRequest = TrixRoomNotificationPlanner.localNotificationRequest(
+            candidates: [
+                TrixRoomNotificationCandidate(
+                    room: openRoom,
+                    profile: .defaultProfile,
+                    hasMention: false
+                ),
+            ],
+            payload: payload,
+            badgeCount: 1,
+            excludingRoomID: openRoom.id
+        )
+
+        XCTAssertEqual(mixedRequest?.body, "New encrypted message")
+        XCTAssertEqual(mixedRequest?.threadIdentifier, otherRoom.id)
+        XCTAssertNil(openOnlyRequest)
+    }
+
     func testTimelineMentionDetectionUsesIncomingDecryptedContentOnly() {
         let previousActivityAt = Date(timeIntervalSince1970: 5)
         let items = [

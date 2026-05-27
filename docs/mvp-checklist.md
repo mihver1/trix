@@ -90,7 +90,9 @@ copying old implementation details.
       handling are wired. Inactive iOS/macOS push handling now syncs room state
       without marking the selected room read. Visible APNs use only `Trix` plus
       encrypted-message/unread-count wording, and older silent sync may create a
-      generic local notification with the same plaintext-free wording. Per-room
+      generic local notification with the same plaintext-free wording. Foreground
+      APNs/local presentation is suppressed for the open room but may show the
+      same generic local alert for newly unread unselected rooms. Per-room
       default/muted/mentions-only profiles are available in rooms, stored locally
       with encryption at rest, backed by a private XMPP PEP item, and used to
       suppress only local fallback notification presentation after sync.
@@ -100,9 +102,11 @@ copying old implementation details.
       material, bound its HTTP health endpoint to localhost only, and connected
       to ejabberd as `push.trix.selfhost.ru`. On 2026-05-18 live diagnostics
       found stored XEP-0357 registrations but no APNs delivery attempts from the
-      gateway; the Apple client now forwards iOS/macOS scene active/inactive
-      state to XMPP through XEP-0352 CSI so ejabberd can publish inactive-client
-      pushes. On 2026-05-20 signed macOS APNs smoke passed: `trix-push-gateway`
+      gateway; the Apple client now keeps XMPP CSI push-eligible instead of
+      advertising foreground activity as a global push suppressor, and
+      `mod_client_state` queueing is disabled so live chat state/presence is not
+      delayed by that push signal. On 2026-05-20 signed macOS APNs smoke passed:
+      `trix-push-gateway`
       returned `delivered=true` and HTTP 200 for a generic sync wake, and QA
       confirmed the visible macOS notification showed title `Trix`, body
       `New encrypted message`, timestamp-only extra text, and no plaintext
@@ -434,9 +438,11 @@ copying old implementation details.
       component is deployed behind ejabberd `mod_push`/XEP-0357 with
       deployment-local APNs signing material. The Apple app requests notification
       authorization and accepts only generic APNs alerts or plaintext-free sync
-      hints. On 2026-05-20 signed macOS APNs smoke passed with provider response
-      `delivered=true` and QA-visible notification text limited to `Trix`,
-      `New encrypted message`, and timestamp-only system text.
+      hints. Foreground handling now filters presentation locally, allowing
+      generic local alerts for newly unread unselected rooms while suppressing
+      the open room. On 2026-05-20 signed macOS APNs smoke passed with provider
+      response `delivered=true` and QA-visible notification text limited to
+      `Trix`, `New encrypted message`, and timestamp-only system text.
 - [x] Persistent tests around encrypted DM/group sync. On 2026-05-20 the signed
       macOS persistent gate passed with scrubbed output: DM restart overlap was
       nonzero, encrypted group MUC restart overlap was nonzero, and no
@@ -459,7 +465,8 @@ copying old implementation details.
 - [x] Fail-closed Apple APNs registration plumbing exists for the new XMPP
       targets: platform token capture, service-bound XMPP push registration, and
       generic remote push handling with inactive generic local notifications for
-      silent sync fallback.
+      silent sync fallback plus foreground generic local notifications for
+      newly unread unselected rooms.
 - [x] Trix APNs gateway/push component exists as `trix-push-gateway`: it accepts
       Martin/Tigase registration, stores XEP-0357 node mappings, stores separate
       VoIP PushKit registrations under `trix-voip/`, and calls the APNs sender
@@ -513,7 +520,10 @@ copying old implementation details.
       operational risks for CTO/TPM review. Later on 2026-05-20 a signed macOS
       APNs token handoff produced a generic sync wake accepted by APNs through
       `trix-push-gateway` with `delivered=true` and HTTP 200; QA then confirmed
-      the visible notification remained generic and plaintext-free.
+      the visible notification remained generic and plaintext-free. The Apple
+      client now keeps the XMPP session push-eligible in foreground and handles
+      open-room suppression locally rather than using app-wide active state as a
+      push suppressor.
 - [x] Trix control-plane model is selected: for MVP closeout, checked-in
       operator scripts use loopback-only ejabberd `mod_http_api`; any non-local
       or multi-operator access still requires a small authenticated/audited Trix

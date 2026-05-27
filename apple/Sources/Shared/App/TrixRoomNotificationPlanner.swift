@@ -36,14 +36,21 @@ enum TrixRoomNotificationPlanner {
     static func localNotificationRequest(
         candidates: [TrixRoomNotificationCandidate],
         payload: TrixRemoteNotificationPayload,
-        badgeCount: Int
+        badgeCount: Int,
+        excludingRoomID: String? = nil
     ) -> TrixLocalNotificationRequest? {
         let payloadRoomKey = payload.roomID.map(TrixRoomNotificationProfileSnapshot.normalizedRoomID)
+        let excludedRoomKey = excludingRoomID.map(TrixRoomNotificationProfileSnapshot.normalizedRoomID)
         let notifyingCandidates = candidates.filter { candidate in
+            let roomKey = TrixRoomNotificationProfileSnapshot.normalizedRoomID(candidate.room.id)
+            guard roomKey != excludedRoomKey else {
+                return false
+            }
+
             switch candidate.profile {
             case .defaultProfile:
                 return max(candidate.room.unreadCount, 0) > 0 ||
-                    TrixRoomNotificationProfileSnapshot.normalizedRoomID(candidate.room.id) == payloadRoomKey
+                    roomKey == payloadRoomKey
             case .muted:
                 return false
             case .mentionsOnly:

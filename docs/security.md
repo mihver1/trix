@@ -264,7 +264,10 @@ state is also rejected if it appears in APNs metadata. The app does not create
 local notifications containing decrypted message or attachment text. When the app
 is inactive and receives an older silent sync payload, it may turn local sync
 into a generic local notification such as a new encrypted-message/unread count
-alert. Those local fallback notifications are filtered by per-room default,
+alert. When the app is foregrounded, remote generic alerts are not presented
+directly; after sync, the client may create the same generic local notification
+for newly unread unselected rooms and suppress the currently open room. Those
+local fallback or foreground notifications are filtered by per-room default,
 muted, or mentions-only profiles after sync. Mentions-only currently uses local
 decrypted content matching for the account JID or localpart mention token until
 the dedicated XMPP mentions work lands; if no local mention can be identified,
@@ -286,11 +289,12 @@ contract above. PushKit/VoIP tokens are registered separately with
 `apns-voip-sandbox` or `apns-voip-production`, stored under a distinct
 `trix-voip/` node namespace, and are not enabled for XEP-0357 sync publishes.
 
-The Apple client must send XEP-0352 Client State Indication when the iOS/macOS
-scene becomes inactive or active. Without that inactive signal, an online or
-stream-resumable XMPP resource can remain eligible for normal delivery and
-ejabberd may not publish to the XEP-0357 push node, leaving APNs untouched even
-though device registration succeeded.
+The Apple client deliberately keeps its XEP-0352 Client State Indication
+push-eligible after APNs registration, even while the app scene is foregrounded.
+This avoids treating any open Trix window or selected room as a global push
+suppressor for other rooms. The server-side `mod_client_state` queues for chat
+states, PEP, and presence are disabled so that this push signal does not delay
+normal live metadata; notification visibility is filtered locally after sync.
 
 On 2026-05-10 the XMPP push gateway was deployed on the VPS with
 deployment-local APNs token-auth material. The APNs `.p8` key is mounted into

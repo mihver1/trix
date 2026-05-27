@@ -86,6 +86,7 @@ final class TrixAppModel: ObservableObject {
     private var voipDeviceToken: TrixVoIPDeviceToken?
     private var roomNotificationProfileSnapshot = TrixRoomNotificationProfileSnapshot.empty
     private var hasStarted = false
+    private var applicationIsActive = false
     private let foregroundRefreshInterval: Duration = .seconds(10)
 
     init(
@@ -386,13 +387,15 @@ final class TrixAppModel: ObservableObject {
     }
 
     func setApplicationIsActive(_ isActive: Bool) async {
+        applicationIsActive = isActive
         TrixAPNsCoordinator.shared.setApplicationIsActive(isActive)
 
         guard let session else {
             return
         }
 
-        await trixService.setApplicationActive(isActive, session: session)
+        // Keep XMPP push eligible in foreground; the client filters visible presentation locally.
+        await trixService.setApplicationActive(false, session: session)
     }
 
     func roomNotificationProfile(for roomID: String) -> TrixRoomNotificationProfile {
@@ -454,7 +457,7 @@ final class TrixAppModel: ObservableObject {
         )
 
         let badgeCount = max(payload.badge ?? 0, totalUnreadCount)
-        let shouldScheduleLocalNotification = !applicationIsActive &&
+        let shouldScheduleLocalNotification = applicationIsActive ||
             !payload.presentsRemoteNotification
         let localNotification = shouldScheduleLocalNotification
             ? await localNotificationRequest(
@@ -462,7 +465,8 @@ final class TrixAppModel: ObservableObject {
                 currentRooms: roomListViewModel.rooms,
                 payload: payload,
                 session: session,
-                badgeCount: badgeCount
+                badgeCount: badgeCount,
+                excludingRoomID: applicationIsActive ? selectedRoomID : nil
             )
             : nil
 
@@ -1615,7 +1619,8 @@ final class TrixAppModel: ObservableObject {
         currentRooms: [TrixRoomSummary],
         payload: TrixRemoteNotificationPayload,
         session: TrixSession,
-        badgeCount: Int
+        badgeCount: Int,
+        excludingRoomID: String? = nil
     ) async -> TrixLocalNotificationRequest? {
         let candidateRooms = TrixRoomNotificationPlanner.candidateRooms(
             previousRooms: previousRooms,
@@ -1659,7 +1664,8 @@ final class TrixAppModel: ObservableObject {
         return TrixRoomNotificationPlanner.localNotificationRequest(
             candidates: candidates,
             payload: payload,
-            badgeCount: badgeCount
+            badgeCount: badgeCount,
+            excludingRoomID: excludingRoomID
         )
     }
 
@@ -1679,6 +1685,7 @@ final class TrixAppModel: ObservableObject {
         do {
             pushRegistration = try await trixService.registerAPNsToken(apnsDeviceToken, session: session)
             pushRegistrationBlocker = nil
+            await trixService.setApplicationActive(false, session: session)
         } catch TrixClientError.apnsGatewayUnavailable {
             pushRegistration = nil
             pushRegistrationBlocker = .pushGatewayUnavailable

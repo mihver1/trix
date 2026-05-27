@@ -20,7 +20,12 @@ final class TrixiOSAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificat
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([])
+        let userInfo = notification.request.content.userInfo
+        completionHandler(
+            TrixUserNotificationPresentation.shouldPresentForegroundNotification(userInfo: userInfo)
+                ? TrixUserNotificationPresentation.foregroundOptions
+                : []
+        )
     }
 
     func application(

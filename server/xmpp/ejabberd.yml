@@ -109,7 +109,10 @@ modules:
   mod_blocking: {}
   mod_caps: {}
   mod_carboncopy: {}
-  mod_client_state: {}
+  mod_client_state:
+    queue_chat_states: false
+    queue_pep: false
+    queue_presence: false
   mod_configure: {}
   mod_disco: {}
   mod_fail2ban: {}
